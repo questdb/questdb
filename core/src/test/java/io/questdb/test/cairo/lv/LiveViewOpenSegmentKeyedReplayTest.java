@@ -1312,15 +1312,14 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testAKeyedResumeUnderARootAboveTheFrontierTruncatesItBeforeItsSeal() throws Exception {
+    public void testAKeyedResumeAfterADepartureAndARowlessCycleSealsItsOwnFrontier() throws Exception {
         // A pure delete of the open day's newest hour leaves the view's frontier below the
         // departed rows' timestamps, which the view has already seen. A cycle that puts no row
-        // through the window then seals its root at the newest timestamp seen rather than at
-        // the frontier, so a root sits above the frontier when the next correction arrives:
-        // an insert-only row between the two, which the keyed route resumes. Its output ends
-        // below that root, so the resume truncates it after the hand-back and seals the new
-        // frontier. The base lost an hour the view keeps, which a shadow of the base carries
-        // for the recompute.
+        // through the window then moves the head's base coordinate on the root at the frontier
+        // and seals no root above it, so the next correction - an insert-only row between the
+        // frontier and the departed rows, which the keyed route resumes - finds no root above
+        // the frontier to truncate and seals its own. The base lost an hour the view keeps,
+        // which a shadow of the base carries for the recompute.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "true");
@@ -1343,23 +1342,26 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
                 Assert.assertEquals(ts("2026-01-04T08:40:00.000000Z"), instance.getHeadCheckpointMaxTs());
 
                 execute("CREATE TABLE tx_shadow AS (SELECT * FROM tx) TIMESTAMP(created_at) PARTITION BY HOUR");
+                final long ladderBefore = ladderSize();
+                final long headBaseBefore = instance.getHeadCheckpointBaseSeqTxn();
                 setCurrentMicros(currentMicros + 6 * Micros.MINUTE_MICROS);
                 execute("ALTER TABLE tx DROP PARTITION LIST '2026-01-02T00'");
                 drainWalQueue();
                 driveRefreshToQuiescence(job);
                 Assert.assertEquals(
-                        "the cycle without rows must seal at the newest timestamp the view has seen",
-                        ts("2026-01-04T09:40:00.000000Z"),
+                        "the cycle without rows keeps the head on the root at the frontier",
+                        ts("2026-01-04T08:40:00.000000Z"),
                         instance.getHeadCheckpointMaxTs()
                 );
+                Assert.assertEquals("and moves its base coordinate to its own commit", headBaseBefore + 1, instance.getHeadCheckpointBaseSeqTxn());
+                Assert.assertEquals("no root above the frontier", ladderBefore, ladderSize());
 
-                final long ladderTail = ladderSize();
                 hooks(job).setForceOpenSegmentKeyedReplay(true);
                 execute("INSERT INTO tx_shadow VALUES " + row(4, 8, 50, "acct-1"));
                 commit(row(4, 8, 50, "acct-1"), job);
                 Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_RESUME_COUNT));
-                Assert.assertEquals(2, job.getStatsForTest().get(SPLICE_FRONTIER_TRUNCATE_COUNT));
-                Assert.assertEquals("the root above the frontier gives way to the frontier's", ladderTail, ladderSize());
+                Assert.assertEquals("no root above the frontier to truncate", 1, job.getStatsForTest().get(SPLICE_FRONTIER_TRUNCATE_COUNT));
+                Assert.assertEquals("the resume seals its own frontier", ladderBefore + 1, ladderSize());
                 final LongList ladder = snapshotCheckpointLadder(instance);
                 Assert.assertEquals(ts("2026-01-04T08:50:00.000000Z"), ladder.getQuick(ladder.size() - 2));
                 Assert.assertEquals(ts("2026-01-04T08:50:00.000000Z"), instance.getHeadCheckpointMaxTs());

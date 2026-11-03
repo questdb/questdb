@@ -48,6 +48,7 @@ import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewState;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.vm.api.MemoryCR;
+import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlException;
@@ -578,6 +579,42 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
     }
 
     /**
+     * One WAL segment per base commit, so the count {@link #purgeBaseWalAndCountSegments} returns
+     * reads the purge floor, and a purge job that runs whenever that helper drives it.
+     */
+    protected static void configureWalPurge() {
+        setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 1);
+        // WalPurgeJob is interval-gated off the simulated clock.
+        setProperty(PropertyKey.CAIRO_WAL_PURGE_INTERVAL, 0);
+    }
+
+    /**
+     * Runs the purge job over the table {@code base} with every hold but the views' lifted, and
+     * returns the WAL segments its WAL directories still hold.
+     */
+    protected static long purgeBaseWalAndCountSegments() {
+        releaseSavePointHolds("base");
+        engine.releaseInactive();
+        setCurrentMicros(currentMicros + 60_000_000L);
+        try (WalPurgeJob purgeJob = new WalPurgeJob(engine)) {
+            purgeJob.drain(0);
+        }
+        final File tableDir = new File(engine.getConfiguration().getDbRoot(), engine.verifyTableName("base").getDirName());
+        final File[] walDirs = tableDir.listFiles(f -> f.isDirectory() && f.getName().startsWith(WalUtils.WAL_NAME_BASE));
+        if (walDirs == null) {
+            return 0;
+        }
+        long segments = 0;
+        for (File walDir : walDirs) {
+            final File[] segmentDirs = walDir.listFiles(File::isDirectory);
+            if (segmentDirs != null) {
+                segments += segmentDirs.length;
+            }
+        }
+        return segments;
+    }
+
+    /**
      * The refresh job's private checkpoint timeline writer, for the tests that read what a seal
      * or a repair left behind in it.
      */
@@ -850,6 +887,41 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
                         syncs.getSyncCount(kind, true)
                 );
             }
+        }
+    }
+
+    /**
+     * Asserts no root of {@code instance}'s checkpoint timeline, when it has one, sits above the
+     * newest row the view's table holds. A restart, and an in-place restore of the runtime, floor
+     * their restore at that row and put the head there, so a root above it makes every later
+     * publication of the timeline fail.
+     */
+    protected void assertNoCheckpointRootAboveTheNewestRow(LiveViewInstance instance) {
+        try (
+                Path checkpointsDir = new Path().of(engine.getConfiguration().getDbRoot())
+                        .concat(instance.getLiveViewToken())
+                        .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
+                Path timelinePath = new Path()
+        ) {
+            LiveViewCheckpointLayout.timelinePath(timelinePath, checkpointsDir);
+            if (!engine.getConfiguration().getFilesFacade().exists(timelinePath.$())) {
+                return;
+            }
+        }
+        final LongList ladder = snapshotCheckpointLadder(instance);
+        if (ladder.size() == 0) {
+            return;
+        }
+        final long newestRootTs = ladder.getQuick(ladder.size() - 2);
+        long durableMaxTs = Numbers.LONG_NULL;
+        try (TableReader reader = engine.getReader(instance.getLiveViewToken())) {
+            if (reader.size() > 0) {
+                durableMaxTs = reader.getMaxTimestamp();
+            }
+        }
+        if (durableMaxTs == Numbers.LONG_NULL || newestRootTs > durableMaxTs) {
+            Assert.fail("live view '" + instance.getDefinition().getViewName() + "' keeps a checkpoint root above the newest row its table holds [root="
+                    + newestRootTs + ", newestRow=" + durableMaxTs + ']');
         }
     }
 

@@ -624,9 +624,12 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
      * how a mat view's refresh removes its newest bucket: the repair's output ends below the
      * root those rows sealed. One run in three puts a late synthetic row below the deleted rows
      * in the same commit, and one in three in the next pass. No generated row sits in the band,
-     * so it deletes the synthetic rows alone.
+     * so it deletes the synthetic rows alone. Then two passes past any duration cadence the knobs
+     * draw that put no row through the window: a synthetic row the filter drops each, or, over a
+     * view with no filter, one column added to the base. The departure left the newest timestamp
+     * the view has seen above the newest row it holds, and no root may sit there.
      */
-    private void departureEpisode(Rnd rnd, PassShape shape) throws Exception {
+    private void departureEpisode(Rnd rnd, PassShape shape, boolean isFiltered) throws Exception {
         pass(rnd, shape, -1, PIN_NO, false);
         insertSyntheticBatch(maxInsertedTs + 1 + rnd.nextInt(1_000_000));
         drainWalQueue();
@@ -660,6 +663,24 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
             drainWalQueue();
             pass(rnd, shape, -1, PIN_NO, false);
         }
+        for (int k = 0, n = isFiltered ? 2 : 1; k < n; k++) {
+            setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
+            if (isFiltered) {
+                long t = maxInsertedTs + 1;
+                while (!syntheticTs.add(t)) {
+                    t++;
+                }
+                maxInsertedTs = t;
+                execute("INSERT INTO base (ts, sym, i, x) VALUES (" + t + "::timestamp, '" + SYNTHETIC_KEY + "', -1, 1.0)");
+            } else {
+                execute("ALTER TABLE base ADD COLUMN departure_stretch INT");
+                ledger.driftCredits++;
+            }
+            drainWalQueue();
+            pass(rnd, shape, -1, PIN_NO, false);
+        }
+        driveRefreshToQuiescence(job);
+        assertNoCheckpointRootAboveTheNewestRow(viewInstance());
     }
 
     /**
@@ -1057,7 +1078,7 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
                 tieInClosedSegmentEpisode(rnd, shape, rows, isFiltered);
             }
             if (steer == STEER_MIXED || steer == STEER_ANCHORS) {
-                departureEpisode(rnd, shape);
+                departureEpisode(rnd, shape, isFiltered);
             }
             if (faultPct > 0 && firedThisRun == 0) {
                 // No drawn fault fired. One in-order row above every other one, whose forward

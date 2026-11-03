@@ -4574,10 +4574,21 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * committed block the apply has not landed: the counter legitimately leads the table
      * there, so "cannot tell" declines the seal without retiring anything and the next
      * cadence asks again.
+     * <p>
+     * The same read holds the seal's boundary to the newest row the table holds. A restart,
+     * and the in-place restores of the runtime, floor their restore at that row, restore the
+     * newest root at or below it and put the head there, so a root above it makes every later
+     * publication of the timeline fail against it. The newest timestamp the view has seen
+     * stays above that row once a correction moved the view's newest rows out, and a cycle
+     * without rows seals there, so a boundary above the table's newest row is declined: not
+     * as a failure, since nothing went wrong, but as a cadence declines a seal, leaving the
+     * head, the counters and the batch minimum as they are. A table with no row declines
+     * every boundary.
      *
+     * @param boundaryTs the timestamp the seal would stamp its boundary with
      * @return true when the seal may proceed
      */
-    private boolean isEmittedRowCountDurable(LiveViewInstance instance, long appendedRows) {
+    private boolean isSealBackedByDurableOutput(LiveViewInstance instance, long appendedRows, long boundaryTs) {
         final TableToken token = instance.getLiveViewToken();
         final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(token);
         if (!tracker.isInitialised() || tracker.getWriterTxn() < tracker.getSeqTxn()) {
@@ -4591,8 +4602,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             return false;
         }
         final long durableRows;
+        final long durableMaxTs;
         try (TableReader lvReader = engine.getReader(token)) {
             durableRows = lvReader.size();
+            durableMaxTs = durableRows > 0 ? lvReader.getMaxTimestamp() : Numbers.LONG_NULL;
         } catch (Throwable t) {
             LOG.error().$("could not measure live view rows before a checkpoint seal [view=")
                     .$(instance.getDefinition().getViewName())
@@ -4601,6 +4614,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         }
         final long emittedRows = instance.getLvRowsTotal();
         if (emittedRows == durableRows) {
+            if (boundaryTs > durableMaxTs) {
+                stats.inc(SEAL_ABOVE_DURABLE_FRONTIER_DECLINE_COUNT);
+                LOG.debug().$("live view checkpoint boundary above the newest durable row, seal declined [view=")
+                        .$(instance.getDefinition().getViewName())
+                        .$(", boundary=").$ts(boundaryTs)
+                        .$(", durableMaxTs=").$ts(durableMaxTs).I$();
+                return false;
+            }
             return true;
         }
         instance.recordCheckpointRowCountMismatch();
@@ -8479,6 +8500,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         // their pre-repair total and advances only by the exact insert
                         // delta at the head seal.
                         instance.setLvRowsTotal(isKeyed ? durableRowsBeforeRepair : anchorLvRowPosition);
+                        if (!isKeyed && anchorMaxTs == instance.getHeadCheckpointMaxTs()) {
+                            // The primary now holds the head root's state and nothing fed since,
+                            // so the batch minimum no longer names the rows the forward drain fed
+                            // after the head. The replay below lowers it by exactly the rows it
+                            // feeds, as the restart's restore does. A keyed resume folds into the
+                            // isolated runtime and leaves the primary's own rows in place.
+                            instance.resetMinSeenTsSinceCheckpoint();
+                        }
                         anchorRowPosition = anchorLvRowPosition;
                         if (timelineCapture != null) {
                             // The anchor's own position anchors every root the capture
@@ -10718,7 +10747,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         //    warm-up never read. The splice stands only over a root already at F
                         //    that counts every row the view holds, once the truncate drops any
                         //    root above F as above; otherwise the timeline retires, as such a
-                        //    repair did before the splice existed.
+                        //    repair did before the splice existed. The head is re-stamped on that
+                        //    root, so a stretch without rows moves its base coordinate.
                         final long headRootMaxTs = timelineSplice.getHeadRootMaxTimestamp();
                         if (isSealable) {
                             isFrontierTruncated = durableMaxTsAfterRepair < headRootMaxTs;
@@ -10813,6 +10843,24 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                 isFrontierTruncated
                                         ? !isFrontierRootKept
                                         : timelineSplice == null || headMaxTs > timelineSplice.getHeadRootMaxTimestamp()
+                        );
+                    } else if (isFrontierTruncated ? isFrontierRootKept : isFrontierRootRestorable) {
+                        // The repair emitted nothing over a root at the frontier that counts every
+                        // row the view holds, and the generation is valid at this commit, so the
+                        // head goes back on that root. A re-stamp, which appends no root and so
+                        // freezes nothing of a runtime holding only what the replay warmed from
+                        // L, and names no root identity a later resume could reuse that runtime
+                        // under. A truncate that retired the timeline kept no root to stand on.
+                        // The answer goes unread: the marker resolution below keeps the timeline
+                        // over the root at the frontier whether or not the re-stamp landed.
+                        maybeWriteHeadCheckpoint(
+                                instance,
+                                windowFactory,
+                                effectiveSeqTxn,
+                                durableMaxTsAfterRepair,
+                                0L,
+                                true,
+                                false
                         );
                     }
                     // A published splice wrote its marker at the replacement commit, so only a
@@ -11792,8 +11840,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      */
     /**
      * @return true when a head checkpoint was actually sealed. False covers every skip - the
-     * capability and cadence gates, a boundary that did not clear the head, and a swallowed
-     * write failure - so a caller must not treat the call as having sealed unconditionally.
+     * capability and cadence gates, a boundary above the newest row the view's table holds,
+     * a boundary that did not clear the head, and a swallowed write failure - so a caller
+     * must not treat the call as having sealed unconditionally.
      */
     private boolean maybeWriteHeadCheckpoint(
             LiveViewInstance instance,
@@ -11897,8 +11946,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // The permanent row invariant, taken where the number it protects is about
         // to become durable: the root appended below carries lvRowsTotal as its
         // cumulative lvRowPosition, so a counter that disagrees with the table
-        // writes a ladder nothing downstream detects.
-        if (!isEmittedRowCountDurable(instance, appendedRows)) {
+        // writes a ladder nothing downstream detects. The same read keeps the
+        // boundary at or below the newest row the table holds.
+        if (!isSealBackedByDurableOutput(instance, appendedRows, batchMaxTs)) {
             return false;
         }
 
@@ -12006,10 +12056,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * Two shapes, told apart by whether anything reached the window since the head was
      * set:
      * <ul>
-     *     <li>Nothing did, and the head sits at the runtime frontier. The head's root is the
-     *     generation's newest, every head names the base coordinate its generation is valid
-     *     at, and the commits consumed since put nothing through the window, so the same
-     *     root is also valid at the consumed commit. {@link #advanceHeadCheckpointBase}
+     *     <li>Nothing did. The head sits at the newest row the view's table holds, its root
+     *     is the generation's newest, every head names the base coordinate its generation is
+     *     valid at, and the commits consumed since put nothing through the window, so the
+     *     same root is also valid at the consumed commit. {@link #advanceHeadCheckpointBase}
      *     publishes it there once the duration cadence elapses.</li>
      *     <li>Rows did, and no cadence has sealed them yet. The ordinary seal runs over them
      *     at the runtime frontier with this cycle's zero rows, so its duration trigger fires
@@ -12020,6 +12070,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * leaves the frontier where it was. A runtime whose rows since the head all tie the
      * head's timestamp seals nothing: no boundary above the head holds them until a row
      * above it arrives.
+     * <p>
+     * The newest timestamp the view has seen is no guide to the first shape. A correction
+     * that moved the view's newest rows out leaves it above the newest row the table holds,
+     * and above the head the repair put there, until a row reaches it again. No seal may
+     * stamp it then: the seal declines a boundary above the table's newest row, which is
+     * what a view with no head meets here after such a correction.
      * <p>
      * The caller has persisted the consumed watermark, so the coordinate published here
      * never runs ahead of the applied watermark a restore checks it against.
@@ -12043,7 +12099,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             return;
         }
         final long headMaxTs = instance.getHeadCheckpointMaxTs();
-        if (instance.getMinSeenTsSinceCheckpoint() == Long.MAX_VALUE && frontierTs == headMaxTs) {
+        if (instance.getMinSeenTsSinceCheckpoint() == Long.MAX_VALUE && headMaxTs != Numbers.LONG_NULL) {
+            // A frontier above the head means a correction moved the rows above it out, not
+            // that rows wait unsealed there: those would have lowered the batch minimum.
             advanceHeadCheckpointBase(instance, windowFactory, consumedSeqTxn);
             return;
         }
@@ -12054,11 +12112,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
     /**
      * Moves the head checkpoint to the consumed base commit without a new root, for a head
-     * at the runtime frontier that nothing reached the window after: the filter rejected
-     * every row since, so the head root's state is the state at the later commit too. The
-     * publication keeps the timeline and moves the generation's base coordinate, which is
-     * where a restore starts its base WAL replay and what {@code WalPurgeJob} holds the
-     * base WAL back to.
+     * at the newest row the view's table holds that nothing reached the window after: the
+     * filter rejected every row since, so the head root's state is the state at the later
+     * commit too. The newest timestamp the view has seen can stand above the head, once a
+     * correction moved the rows above it out. The publication keeps the timeline and moves
+     * the generation's base coordinate, which is where a restore starts its base WAL replay
+     * and what {@code WalPurgeJob} holds the base WAL back to.
      * <p>
      * The head's root identity stays what it was. A repair's splice that re-stamped the
      * head leaves it cleared, and the publication then names the newest root by its

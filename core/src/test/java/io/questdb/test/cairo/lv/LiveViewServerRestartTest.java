@@ -292,6 +292,75 @@ public class LiveViewServerRestartTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testDepartedNewestRowThenCommitsWithoutRowsSurviveTwoServerRestarts() throws Exception {
+        // The newest row of a filtered view over a deduplicating base leaves it through an upsert
+        // to a value the filter rejects, and commits whose rows the filter rejects follow, each
+        // past a one-microsecond duration cadence. The newest timestamp the view has seen stays at
+        // the departed row, above the newest row the view holds, where no root may seal: a boot
+        // puts the head back on the newest row, and each publication after it would fail against
+        // such a root until the timeline retired. The base lost the day of the view's oldest row,
+        // which only the timeline keeps: each cold boot must restore from it, and the commits
+        // without rows between the two boots must publish without a failure.
+        assertMemoryLeak(() -> {
+            final String rowsSql = "SELECT ts::varchar, sym, x, s FROM " + DEPARTED_VIEW + " ORDER BY 1";
+            final String expected = """
+                    2025-12-31T12:00:00.000000Z\ta\t0.5\t0.5
+                    2026-01-01T00:01:00.000000Z\ta\t1.5\t2.0
+                    2026-01-01T00:02:00.000000Z\ta\t2.5\t4.5
+                    """;
+            try (TestServerMain serverMain = startServer(1, 1); Connection conn = connect()) {
+                execute(conn, "CREATE TABLE " + DEPARTED_BASE + " (ts TIMESTAMP, sym SYMBOL, x DOUBLE)"
+                        + " TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, sym)");
+                execute(conn, "CREATE LIVE VIEW " + DEPARTED_VIEW + " FLUSH EVERY 100ms START FROM BEGINNING AS"
+                        + " SELECT ts, sym, x, sum(x) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) s"
+                        + " FROM " + DEPARTED_BASE + " WHERE x > 0");
+                final String[] statements = {
+                        "INSERT INTO " + DEPARTED_BASE + " VALUES ('2025-12-31T12:00:00.000000Z', 'a', 0.5)",
+                        "ALTER TABLE " + DEPARTED_BASE + " DROP PARTITION LIST '2025-12-31'",
+                        "INSERT INTO " + DEPARTED_BASE + " VALUES ('2026-01-01T00:01:00.000000Z', 'a', 1.5)",
+                        // One root seals both rows, at the newer of them.
+                        "INSERT INTO " + DEPARTED_BASE + " VALUES ('2026-01-01T00:02:00.000000Z', 'a', 2.5), ('2026-01-01T00:03:00.000000Z', 'a', 4.5)",
+                        // The newest row leaves the view.
+                        "INSERT INTO " + DEPARTED_BASE + " VALUES ('2026-01-01T00:03:00.000000Z', 'a', -4.5)",
+                        "INSERT INTO " + DEPARTED_BASE + " VALUES ('2026-01-01T00:04:00.000000Z', 'a', -1.0)",
+                        "INSERT INTO " + DEPARTED_BASE + " VALUES ('2026-01-01T00:05:00.000000Z', 'a', -1.0)",
+                        "INSERT INTO " + DEPARTED_BASE + " VALUES ('2026-01-01T00:06:00.000000Z', 'a', -1.0)"
+                };
+                for (String statement : statements) {
+                    execute(conn, statement);
+                    awaitCaughtUp(serverMain, conn, DEPARTED_BASE, DEPARTED_VIEW);
+                }
+                TestUtils.assertEquals(expected, readRows(conn, rowsSql));
+                assertActive(conn, DEPARTED_VIEW);
+                assertNoRefreshFaults(serverMain, DEPARTED_VIEW);
+            }
+            try (TestServerMain serverMain = startServer(1, 1); Connection conn = connect()) {
+                assertRestartRestoredFromTimeline(serverMain, conn, DEPARTED_VIEW);
+                TestUtils.assertEquals(DEPARTED_VIEW + " must come back with the rows it had", expected, readRows(conn, rowsSql));
+                for (int minute = 7; minute <= 9; minute++) {
+                    execute(conn, "INSERT INTO " + DEPARTED_BASE + " VALUES ('2026-01-01T00:0" + minute + ":00.000000Z', 'a', -1.0)");
+                    awaitCaughtUp(serverMain, conn, DEPARTED_BASE, DEPARTED_VIEW);
+                }
+                // No publication of the commits without rows failed.
+                assertActive(conn, DEPARTED_VIEW);
+                assertNoRefreshFaults(serverMain, DEPARTED_VIEW);
+            }
+            try (TestServerMain serverMain = startServer(1, 1); Connection conn = connect()) {
+                assertRestartRestoredFromTimeline(serverMain, conn, DEPARTED_VIEW);
+                TestUtils.assertEquals(DEPARTED_VIEW + " must come back with the rows it had", expected, readRows(conn, rowsSql));
+                assertNoRefreshFaults(serverMain, DEPARTED_VIEW);
+            }
+            capture.drain();
+            Assert.assertEquals(
+                    "both restarts must restore from the timeline",
+                    2,
+                    capture.countOccurrences("restored live view from checkpoint timeline [view=" + DEPARTED_VIEW + ",")
+            );
+            capture.assertNotLogged("live view checkpoint timeline rebuild does not match durable materialization");
+        });
+    }
+
+    @Test
     public void testDepartedNewestRowSurvivesAServerRestart() throws Exception {
         // The newest row of a filtered view over a deduplicating base leaves it through an
         // upsert to a value the filter rejects, and a late row lands between the root below it
@@ -797,6 +866,18 @@ public class LiveViewServerRestartTest extends AbstractBootstrapTest {
                 PropertyKey.CAIRO_LIVE_VIEW_ENABLED.getEnvVarName(), "true",
                 PropertyKey.LIVE_VIEW_REFRESH_WORKER_COUNT.getEnvVarName(), "2",
                 PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS.getEnvVarName(), String.valueOf(checkpointRows),
+                PropertyKey.HTTP_MIN_ENABLED.getEnvVarName(), "false",
+                PropertyKey.LINE_TCP_ENABLED.getEnvVarName(), "false"
+        );
+    }
+
+    // As above, with the duration trigger of the seal cadence at checkpointMaxDurationMicros.
+    private TestServerMain startServer(int checkpointRows, long checkpointMaxDurationMicros) {
+        return startWithEnvVariables(
+                PropertyKey.CAIRO_LIVE_VIEW_ENABLED.getEnvVarName(), "true",
+                PropertyKey.LIVE_VIEW_REFRESH_WORKER_COUNT.getEnvVarName(), "2",
+                PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS.getEnvVarName(), String.valueOf(checkpointRows),
+                PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_MAX_DURATION_MICROS.getEnvVarName(), String.valueOf(checkpointMaxDurationMicros),
                 PropertyKey.HTTP_MIN_ENABLED.getEnvVarName(), "false",
                 PropertyKey.LINE_TCP_ENABLED.getEnvVarName(), "false"
         );

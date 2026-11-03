@@ -26,6 +26,7 @@ package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
@@ -34,10 +35,9 @@ import io.questdb.cairo.lv.LiveViewCheckpointSuperblock;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreWriter;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.cairo.lv.LiveViewRefreshStats;
 import io.questdb.cairo.lv.LiveViewState;
 import io.questdb.cairo.lv.LiveViewWindow;
-import io.questdb.cairo.wal.WalPurgeJob;
-import io.questdb.cairo.wal.WalUtils;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
@@ -54,6 +54,7 @@ import org.junit.Test;
 
 import java.io.File;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * A refresh cycle that consumes base commits and puts no row through the window - the
@@ -67,6 +68,22 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 public class LiveViewNoRowCheckpointTest extends AbstractLiveViewTest {
     private static final long CADENCE_MICROS = 1_000_000;
+    // The root ladder departTheNewestRow leaves: the day the base lost, 00:01, and the new
+    // frontier 00:02.
+    private static final String DEPARTURE_LADDER = """
+            2025-12-31T12:00:00.000000Z -> 1
+            2026-01-01T00:01:00.000000Z -> 2
+            2026-01-01T00:02:00.000000Z -> 3
+            """;
+    // The rows departTheNewestRow leaves: three rows of a, each summing itself and the two before.
+    private static final String DEPARTURE_ROWS = """
+            ts\tsym\tx\ts
+            2025-12-31T12:00:00.000000Z\ta\t0.5\t0.5
+            2026-01-01T00:01:00.000000Z\ta\t1.5\t2.0
+            2026-01-01T00:02:00.000000Z\ta\t2.5\t4.5
+            """;
+    // Past the cadence, so a cycle refreshed this long after the last head write is due.
+    private static final long DEPARTURE_STEP_MICROS = 1_200_000;
     private static final long START_MICROS = 1_000_000_000_000L;
     private static final long STEP_MICROS = 300_000;
 
@@ -134,7 +151,7 @@ public class LiveViewNoRowCheckpointTest extends AbstractLiveViewTest {
                 Assert.assertEquals(6, instance.getStateReader().getLvConsumedSeqTxn());
                 Assert.assertEquals(Numbers.LONG_NULL, instance.getHeadCheckpointBaseSeqTxn());
                 Assert.assertEquals(Numbers.LONG_NULL, instance.getCheckpointTimelineWalPurgeFloor());
-                Assert.assertEquals(0, countWalSegments(purgeBaseWal()));
+                Assert.assertEquals(0, purgeBaseWalAndCountSegments());
                 assertViewMatchesRecompute();
             }
         });
@@ -186,11 +203,307 @@ public class LiveViewNoRowCheckpointTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testDepartureOfUnsealedNewestRowsThenNoRowStretchKeepsTheTimeline() throws Exception {
+        assertDepartureThenNoRowStretch(DepartureShape.UNSEALED, DrainPath.RAW_WAL, "-4.5", FirstEvent.RESTART);
+    }
+
+    @Test
+    public void testDepartureStateDropsWithoutLeaks() throws Exception {
+        // The view drops in the state a departure and the cycles without rows after it leave:
+        // the head on the root at the newest row it holds, below the newest timestamp it has seen.
+        configureCadence(CADENCE_MICROS);
+        assertMemoryLeak(() -> {
+            createDedupBaseView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = departTheNewestRow(job, DepartureShape.ONE_ROOT, DrainPath.RAW_WAL, "-4.5");
+                for (int i = 6; i <= 8; i++) {
+                    commitRejected(job, DrainPath.RAW_WAL, i, DEPARTURE_STEP_MICROS);
+                }
+                Assert.assertEquals(8, instance.getHeadCheckpointBaseSeqTxn());
+                Assert.assertEquals(ts(minute(2)), instance.getHeadCheckpointMaxTs());
+                execute("DROP LIVE VIEW lv");
+                drainJob(job);
+                Assert.assertNull(engine.getLiveViewRegistry().getViewInstance("lv"));
+            }
+        });
+    }
+
+    @Test
+    public void testDepartureThatEmptiesTheViewSealsNothingWithoutRows() throws Exception {
+        // The view's one row departs, and the repair leaves the view with no row and no timeline.
+        // The newest timestamp the view has seen stays at the departed row, where no row of the
+        // view sits: each cycle without rows declines the seal there rather than open a history
+        // at a timestamp no restart could restore from.
+        configureCadence(CADENCE_MICROS);
+        assertMemoryLeak(() -> {
+            createDedupBaseView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(START_MICROS);
+                commit(job, minute(1), "a", 1.5, DEPARTURE_STEP_MICROS);
+                commit(job, minute(1), "a", -1.5, DEPARTURE_STEP_MICROS);
+                final LiveViewInstance instance = instance();
+                Assert.assertEquals(Numbers.LONG_NULL, instance.getHeadCheckpointMaxTs());
+                Assert.assertEquals(ts(minute(1)), instance.getLatestSeenTs());
+                final long declinesBefore = sealAboveFrontierDeclines(job);
+                for (int i = 3; i <= 8; i++) {
+                    commit(job, minute(i), "a", -1.0, DEPARTURE_STEP_MICROS);
+                }
+                // No head, so every cycle asks for a first root, and each one declines it.
+                Assert.assertEquals(6, sealAboveFrontierDeclines(job) - declinesBefore);
+                Assert.assertEquals(Numbers.LONG_NULL, instance.getHeadCheckpointMaxTs());
+                Assert.assertEquals(0, instance.getCheckpointSealFailures());
+                assertNoTimeline(instance);
+                assertQuery("SELECT ts, sym, x, s FROM lv")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("ts\tsym\tx\ts\n");
+            }
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                commit(job, minute(9), "a", -1.0, DEPARTURE_STEP_MICROS);
+                final LiveViewInstance instance = instance();
+                Assert.assertFalse(instance.isCheckpointRecoveryBlocked());
+                assertQuery("SELECT view_status FROM live_views() WHERE view_name = 'lv'")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("view_status\nactive\n");
+                assertQuery("SELECT ts, sym, x, s FROM lv")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("ts\tsym\tx\ts\n");
+                commit(job, minute(10), "a", 4.0, DEPARTURE_STEP_MICROS);
+                assertCheckpointLadder(instance, false, "2026-01-01T00:10:00.000000Z -> 1\n");
+                assertQuery("SELECT ts, sym, x, s FROM lv")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tsym\tx\ts
+                                2026-01-01T00:10:00.000000Z\ta\t4.0\t4.0
+                                """);
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
+    public void testDepartureThenAFailedNoRowPublicationRetries() throws Exception {
+        // The first publication of the stretch after a departure fails, which counts as a failed
+        // seal does and leaves the head and the purge floor where they were. The head keeps its
+        // write time, so the next cycle is due again and publishes.
+        configureWalPurge();
+        configureCadence(CADENCE_MICROS);
+        assertMemoryLeak(() -> {
+            createDedupBaseView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = departTheNewestRow(job, DepartureShape.ONE_ROOT, DrainPath.RAW_WAL, "-4.5");
+                final long floorBefore = instance.getCheckpointTimelineWalPurgeFloor();
+                job.setCheckpointTimelineTestFailureStage(LiveViewCheckpointTimelineStoreWriter.TEST_FAIL_AFTER_METADATA_PUBLISH);
+                commitRejected(job, DrainPath.RAW_WAL, 6, DEPARTURE_STEP_MICROS);
+                Assert.assertEquals(1, instance.getCheckpointSealFailures());
+                Assert.assertEquals(5, instance.getHeadCheckpointBaseSeqTxn());
+                Assert.assertEquals(floorBefore, instance.getCheckpointTimelineWalPurgeFloor());
+                job.setCheckpointTimelineTestFailureStage(0);
+                commitRejected(job, DrainPath.RAW_WAL, 7, DEPARTURE_STEP_MICROS);
+                Assert.assertEquals(1, instance.getCheckpointSealFailures());
+                Assert.assertEquals(7, instance.getHeadCheckpointBaseSeqTxn());
+                for (int i = 8; i <= 11; i++) {
+                    commitRejected(job, DrainPath.RAW_WAL, i, DEPARTURE_STEP_MICROS);
+                }
+                assertDepartureStretchAdvancedTheHead(job, instance);
+                Assert.assertEquals(1, instance.getCheckpointSealFailures());
+            }
+            assertDepartureStateSurvivesTwoRestarts(DrainPath.RAW_WAL, 12, DEPARTURE_ROWS);
+        });
+    }
+
+    @Test
+    public void testDepartureThenNoRowStretchKeepsPurgedWalOrderedBehindTheHead() throws Exception {
+        // The purge runs between the consumed watermark's advance and the head's, on the first
+        // cycle of the stretch: the head still names the departure's commit, so the purge keeps
+        // every commit above it, and the restarts replay what they need from them.
+        configureWalPurge();
+        configureCadence(CADENCE_MICROS);
+        assertMemoryLeak(() -> {
+            createDedupBaseView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = departTheNewestRow(job, DepartureShape.ONE_ROOT, DrainPath.RAW_WAL, "-4.5");
+                Assert.assertEquals(5, instance.getCheckpointTimelineWalPurgeFloor());
+                final AtomicLong segmentsAtTheHook = new AtomicLong(-1);
+                hooks(job).setSimulateNoRowHeadCheckpointStart(() -> {
+                    Assert.assertEquals(6, instance.getStateReader().getLvConsumedSeqTxn());
+                    Assert.assertEquals(5, instance.getHeadCheckpointBaseSeqTxn());
+                    segmentsAtTheHook.set(purgeBaseWalAndCountSegments());
+                });
+                commitRejected(job, DrainPath.RAW_WAL, 6, DEPARTURE_STEP_MICROS);
+                hooks(job).setSimulateNoRowHeadCheckpointStart(null);
+                Assert.assertEquals("the purge keeps the commit above the head's", 6 - 5, segmentsAtTheHook.get());
+                Assert.assertEquals(6, instance.getHeadCheckpointBaseSeqTxn());
+                for (int i = 7; i <= 11; i++) {
+                    commitRejected(job, DrainPath.RAW_WAL, i, DEPARTURE_STEP_MICROS);
+                }
+                assertDepartureStretchAdvancedTheHead(job, instance);
+            }
+            assertDepartureStateSurvivesTwoRestarts(DrainPath.RAW_WAL, 12, DEPARTURE_ROWS);
+        });
+    }
+
+    @Test
+    public void testDepartureThenNoRowStretchKeepsTheTimelineAcrossRestartsAppliedBase() throws Exception {
+        assertDepartureThenNoRowStretch(DepartureShape.ONE_ROOT, DrainPath.APPLIED_BASE, "-4.5", FirstEvent.RESTART);
+    }
+
+    @Test
+    public void testDepartureThenNoRowStretchKeepsTheTimelineAcrossRestartsLead() throws Exception {
+        assertDepartureThenNoRowStretch(DepartureShape.ONE_ROOT, DrainPath.LEAD, null, FirstEvent.RESTART);
+    }
+
+    @Test
+    public void testDepartureThenNoRowStretchKeepsTheTimelineAcrossRestartsRawWal() throws Exception {
+        assertDepartureThenNoRowStretch(DepartureShape.ONE_ROOT, DrainPath.RAW_WAL, "-4.5", FirstEvent.RESTART);
+    }
+
+    @Test
+    public void testDepartureThenNoRowStretchKeepsTheNextAnchoredSealIncremental() throws Exception {
+        // A departure over an anchored view: the resume truncates the root the departed row
+        // sealed and seals the new frontier, imaging every key. The stretch of rejected commits
+        // after it carries that root's baselines forward and seals nothing at the departed row,
+        // so the next row's seal images its own key alone.
+        configureCadence(CADENCE_MICROS);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, amount DOUBLE, fee DECIMAL(38,2)) TIMESTAMP(ts) PARTITION BY DAY WAL "
+                    + "DEDUP UPSERT KEYS(ts, sym)");
+            createAnchoredViewOverBase();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(START_MICROS);
+                seedAccounts(job);
+                final LiveViewInstance instance = instance();
+                execute("INSERT INTO base VALUES ('2026-01-01T11:00:20.000000Z', 'acct-1', 2.0, 1.00::decimal(38,2)), "
+                        + "('2026-01-01T11:00:21.000000Z', 'acct-1', 3.0, 1.00::decimal(38,2))");
+                refresh(job, DEPARTURE_STEP_MICROS);
+                assertCheckpointLadder(instance, false, """
+                        2026-01-01T11:00:08.000000Z -> 8
+                        2026-01-01T11:00:21.000000Z -> 10
+                        """);
+                execute("INSERT INTO base VALUES ('2026-01-01T11:00:21.000000Z', 'acct-1', -1.0, 1.00::decimal(38,2))");
+                refresh(job, DEPARTURE_STEP_MICROS);
+                final String ladder = """
+                        2026-01-01T11:00:08.000000Z -> 8
+                        2026-01-01T11:00:20.000000Z -> 9
+                        """;
+                assertCheckpointLadder(instance, false, ladder);
+                Assert.assertEquals(ts("2026-01-01T11:00:20.000000Z"), instance.getHeadCheckpointMaxTs());
+                Assert.assertEquals(ts("2026-01-01T11:00:21.000000Z"), instance.getLatestSeenTs());
+                for (int i = 4; i <= 7; i++) {
+                    execute("INSERT INTO base VALUES ('2026-01-01T11:00:3" + i + ".000000Z', 'acct-2', -1.0, 1.00::decimal(38,2))");
+                    refresh(job, DEPARTURE_STEP_MICROS);
+                    Assert.assertEquals(i, instance.getHeadCheckpointBaseSeqTxn());
+                }
+                assertCheckpointLadder(instance, false, ladder);
+
+                final long windowCaptures = instance.getCheckpointCaptureLedgerForTest().getWindowCaptures();
+                final long windowIncremental = instance.getCheckpointCaptureLedgerForTest().getWindowIncrementalCaptures();
+                final long windowImaged = instance.getCheckpointCaptureLedgerForTest().getWindowKeysImaged();
+                final long functionCaptures = instance.getCheckpointCaptureLedgerForTest().getFunctionCaptures();
+                final long functionIncremental = instance.getCheckpointCaptureLedgerForTest().getFunctionIncrementalCaptures();
+                final long functionImaged = instance.getCheckpointCaptureLedgerForTest().getFunctionKeysImaged();
+                execute("INSERT INTO base VALUES ('2026-01-01T11:00:50.000000Z', 'acct-3', 1.0, 1.25::decimal(38,2))");
+                refresh(job, DEPARTURE_STEP_MICROS);
+                assertCheckpointLadder(instance, false, ladder + "2026-01-01T11:00:50.000000Z -> 10\n");
+                Assert.assertEquals(1, instance.getCheckpointCaptureLedgerForTest().getWindowCaptures() - windowCaptures);
+                Assert.assertEquals(1, instance.getCheckpointCaptureLedgerForTest().getWindowIncrementalCaptures() - windowIncremental);
+                Assert.assertEquals(1, instance.getCheckpointCaptureLedgerForTest().getWindowKeysImaged() - windowImaged);
+                Assert.assertEquals(1, instance.getCheckpointCaptureLedgerForTest().getFunctionCaptures() - functionCaptures);
+                Assert.assertEquals(1, instance.getCheckpointCaptureLedgerForTest().getFunctionIncrementalCaptures() - functionIncremental);
+                Assert.assertEquals(1, instance.getCheckpointCaptureLedgerForTest().getFunctionKeysImaged() - functionImaged);
+                assertAnchoredViewMatchesRecompute();
+            }
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+            assertRestoredFromTimeline("lv");
+            assertAnchoredViewMatchesRecompute();
+        });
+    }
+
+    @Test
+    public void testDepartureThenNoRowStretchKeepsTheTimelineWithJitDisabled() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(SqlJitMode.JIT_MODE_DISABLED));
+        assertDepartureThenNoRowStretch(DepartureShape.ONE_ROOT, DrainPath.RAW_WAL, "-4.5", FirstEvent.RESTART);
+    }
+
+    @Test
+    public void testDepartureThenNoRowStretchSurvivesASchemaChangeThenARestart() throws Exception {
+        assertDepartureThenNoRowStretch(DepartureShape.ONE_ROOT, DrainPath.RAW_WAL, "-4.5", FirstEvent.SCHEMA_CHANGE);
+    }
+
+    @Test
+    public void testDepartureThenThreeFailedPublicationsOpenNoHistoryAboveTheFrontier() throws Exception {
+        // Three failed publications of the stretch after a departure retire the timeline and
+        // clear the head, with the newest timestamp the view has seen still at the departed row.
+        // Past the cooldown each cycle without rows declines a first root there, above the newest
+        // row the view holds. The next matching row opens a fresh history at its own timestamp,
+        // which the restart restores from.
+        configureCadence(CADENCE_MICROS);
+        assertMemoryLeak(() -> {
+            createDedupBaseView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = departTheNewestRow(job, DepartureShape.ONE_ROOT, DrainPath.RAW_WAL, "-4.5");
+                final long resetsBefore = instance.getCheckpointTimelineResets();
+                job.setCheckpointTimelineTestFailureStage(LiveViewCheckpointTimelineStoreWriter.TEST_FAIL_AFTER_METADATA_PUBLISH);
+                for (int i = 6; i <= 8; i++) {
+                    commitRejected(job, DrainPath.RAW_WAL, i, DEPARTURE_STEP_MICROS);
+                }
+                job.setCheckpointTimelineTestFailureStage(0);
+                Assert.assertEquals(3, instance.getCheckpointSealFailures());
+                Assert.assertEquals(resetsBefore + 1, instance.getCheckpointTimelineResets());
+                Assert.assertEquals(Numbers.LONG_NULL, instance.getHeadCheckpointMaxTs());
+                Assert.assertTrue(instance.isSealOnCooldown(currentMicros));
+                assertNoTimeline(instance);
+
+                setCurrentMicros(currentMicros + 2 * Micros.MINUTE_MICROS);
+                final long declinesBefore = sealAboveFrontierDeclines(job);
+                for (int i = 9; i <= 11; i++) {
+                    commitRejected(job, DrainPath.RAW_WAL, i, DEPARTURE_STEP_MICROS);
+                    Assert.assertEquals(i - 8, sealAboveFrontierDeclines(job) - declinesBefore);
+                }
+                Assert.assertEquals(3, instance.getCheckpointSealFailures());
+                Assert.assertEquals(Numbers.LONG_NULL, instance.getHeadCheckpointMaxTs());
+                assertNoTimeline(instance);
+
+                commit(job, minute(10), "a", 4.0, DEPARTURE_STEP_MICROS);
+                Assert.assertEquals(ts(minute(10)), instance.getHeadCheckpointMaxTs());
+                assertCheckpointLadder(instance, false, "2026-01-01T00:10:00.000000Z -> 4\n");
+            }
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+            assertRestoredFromTimeline("lv");
+            assertDepartedViewRows(DEPARTURE_ROWS + "2026-01-01T00:10:00.000000Z\ta\t4.0\t8.0\n");
+        });
+    }
+
+    @Test
+    public void testDepartureToNullThenNoRowStretchKeepsTheTimeline() throws Exception {
+        assertDepartureThenNoRowStretch(DepartureShape.ONE_ROOT, DrainPath.RAW_WAL, "NULL", FirstEvent.RESTART);
+    }
+
+    @Test
+    public void testDepartureToZeroThenNoRowStretchKeepsTheTimeline() throws Exception {
+        assertDepartureThenNoRowStretch(DepartureShape.ONE_ROOT, DrainPath.RAW_WAL, "0.0", FirstEvent.RESTART);
+    }
+
+    @Test
     public void testDepartureThenNoRowCyclesReleaseBaseWal() throws Exception {
         // One commit seals two rows under one root at the newer of them, and an upsert then moves
         // that row out of the filter. The resume leaves the view's head at the row below it, with
         // no root above: the stretch of rejected commits after it then moves the head's base
-        // coordinate and the generation's on the duration cadence, as it does after any row.
+        // coordinate and the generation's on the duration cadence, as it does after any row, and
+        // puts no root above the newest row the view holds, which a restart restores from.
         configureWalPurge();
         configureCadence(CADENCE_MICROS);
         final long stepMicros = 1_200_000;
@@ -211,6 +524,11 @@ public class LiveViewNoRowCheckpointTest extends AbstractLiveViewTest {
                 }
                 Assert.assertEquals(9, instance.getStateReader().getLvConsumedSeqTxn());
                 Assert.assertEquals(9, instance.getHeadCheckpointBaseSeqTxn());
+                Assert.assertEquals(ts(minute(2)), instance.getHeadCheckpointMaxTs());
+                assertCheckpointLadder(instance, false, """
+                        2026-01-01T00:01:00.000000Z -> 1
+                        2026-01-01T00:02:00.000000Z -> 2
+                        """);
                 Assert.assertEquals(0, instance.getCheckpointSealFailures());
                 assertQuery("SELECT checkpoint_timeline_normalized_base_seqtxn FROM live_views() WHERE view_name = 'lv'")
                         .noLeakCheck()
@@ -218,23 +536,33 @@ public class LiveViewNoRowCheckpointTest extends AbstractLiveViewTest {
                         .returns("checkpoint_timeline_normalized_base_seqtxn\n9\n");
                 // The older of the two superblock slots, which the publication at seqTxn 9 left at 8.
                 Assert.assertEquals(8, instance.getCheckpointTimelineWalPurgeFloor());
-                Assert.assertEquals("the purge must keep only the segments above the floor", 9 - 8, countWalSegments(purgeBaseWal()));
+                Assert.assertEquals("the purge must keep only the segments above the floor", 9 - 8, purgeBaseWalAndCountSegments());
                 assertViewMatchesRecompute();
+            }
+            final String rows = """
+                    ts\tsym\tx\ts
+                    2026-01-01T00:01:00.000000Z\ta\t1.5\t1.5
+                    2026-01-01T00:02:00.000000Z\ta\t2.5\t4.0
+                    """;
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // The restore puts the newest timestamp seen back at the newest row, and the
+                // root there is the newest, so every cycle without rows publishes.
+                for (int i = 10; i <= 12; i++) {
+                    commit(job, minute(i), "a", -1.0, stepMicros);
+                }
+                assertRestoredFromTimeline("lv");
+                final LiveViewInstance instance = instance();
+                Assert.assertEquals(0, instance.getCheckpointSealFailures());
+                Assert.assertEquals(12, instance.getHeadCheckpointBaseSeqTxn());
+                assertDepartedViewRows(rows);
             }
             restartCycle();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveRefreshToQuiescence(job);
             }
             assertRestoredFromTimeline("lv");
-            assertQuery("SELECT ts, sym, x, s FROM lv")
-                    .noLeakCheck()
-                    .timestamp("ts")
-                    .expectSize()
-                    .returns("""
-                            ts\tsym\tx\ts
-                            2026-01-01T00:01:00.000000Z\ta\t1.5\t1.5
-                            2026-01-01T00:02:00.000000Z\ta\t2.5\t4.0
-                            """);
+            assertDepartedViewRows(rows);
             assertViewMatchesRecompute();
         });
     }
@@ -326,7 +654,7 @@ public class LiveViewNoRowCheckpointTest extends AbstractLiveViewTest {
                 Assert.assertEquals(
                         "the purge must keep only the segments above the floor",
                         13 - 9,
-                        countWalSegments(purgeBaseWal())
+                        purgeBaseWalAndCountSegments()
                 );
             }
         });
@@ -789,6 +1117,61 @@ public class LiveViewNoRowCheckpointTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testZeroRowResumeAtTheHeadThenNoRowStretchReleasesBaseWal() throws Exception {
+        // The newest row departs unsealed above the head's root, so the resume anchors on that
+        // root, emits nothing and re-versions no root. The runtime then holds the head root's
+        // state with nothing fed since, and the stretch of rejected commits moves the head's base
+        // coordinate on the duration cadence, with no root above the newest row the view holds.
+        configureWalPurge();
+        configureCadence(CADENCE_MICROS);
+        assertMemoryLeak(() -> {
+            createDedupBaseView();
+            final String ladder = """
+                    2025-12-31T12:00:00.000000Z -> 1
+                    2026-01-01T00:01:00.000000Z -> 2
+                    """;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(START_MICROS);
+                commitTheDayTheBaseLoses(job);
+                commit(job, minute(1), "a", 1.5, DEPARTURE_STEP_MICROS);
+                // 300ms after the root at 00:01, and 600ms after it the departure: inside the
+                // cadence, so no root seals 00:02.
+                commit(job, minute(2), "a", 2.5, STEP_MICROS);
+                commit(job, minute(2), "a", -2.5, STEP_MICROS);
+                final LiveViewInstance instance = instance();
+                assertCheckpointLadder(instance, false, ladder);
+                Assert.assertEquals(ts(minute(1)), instance.getHeadCheckpointMaxTs());
+                Assert.assertEquals(3, instance.getHeadCheckpointBaseSeqTxn());
+                Assert.assertEquals(ts(minute(2)), instance.getLatestSeenTs());
+                Assert.assertEquals(Long.MAX_VALUE, instance.getMinSeenTsSinceCheckpoint());
+                final long generationBefore = publishedCheckpointGeneration(instance);
+                // The head was written at seqTxn 3, 1.8s before seqTxn 6: each cycle is due.
+                for (int i = 6; i <= 11; i++) {
+                    commitRejected(job, DrainPath.RAW_WAL, i, DEPARTURE_STEP_MICROS);
+                }
+                Assert.assertEquals(generationBefore + 6, publishedCheckpointGeneration(instance));
+                assertCheckpointLadder(instance, false, ladder);
+                Assert.assertEquals(ts(minute(1)), instance.getHeadCheckpointMaxTs());
+                Assert.assertEquals(11, instance.getHeadCheckpointBaseSeqTxn());
+                assertTimelineBase(2, 11);
+                Assert.assertEquals(10, instance.getCheckpointTimelineWalPurgeFloor());
+                Assert.assertEquals("the purge must keep only the segments above the floor", 11 - 10, purgeBaseWalAndCountSegments());
+                Assert.assertEquals(0, instance.getCheckpointSealFailures());
+                Assert.assertEquals(0, sealAboveFrontierDeclines(job));
+            }
+            assertDepartureStateSurvivesTwoRestarts(
+                    DrainPath.RAW_WAL,
+                    12,
+                    """
+                            ts\tsym\tx\ts
+                            2025-12-31T12:00:00.000000Z\ta\t0.5\t0.5
+                            2026-01-01T00:01:00.000000Z\ta\t1.5\t2.0
+                            """
+            );
+        });
+    }
+
+    @Test
     public void testUnmatchedRowsAfterAnUnsealedRowSealItAtTheCadence() throws Exception {
         configureCadence(CADENCE_MICROS);
         assertMemoryLeak(() -> {
@@ -813,6 +1196,13 @@ public class LiveViewNoRowCheckpointTest extends AbstractLiveViewTest {
                 assertViewMatchesRecompute();
             }
         });
+    }
+
+    private static void assertNoTimeline(LiveViewInstance instance) {
+        try (Path dir = checkpointsDir(instance); Path timelinePath = new Path()) {
+            LiveViewCheckpointLayout.timelinePath(timelinePath, dir);
+            Assert.assertFalse("the view keeps no timeline", configuration.getFilesFacade().exists(timelinePath.$()));
+        }
     }
 
     private static void assertRefused(Runnable publication, String message) {
@@ -851,13 +1241,6 @@ public class LiveViewNoRowCheckpointTest extends AbstractLiveViewTest {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_MAX_DURATION_MICROS, durationMicros);
     }
 
-    private static void configureWalPurge() {
-        // One WAL segment per commit, so the segment count reads the purge floor.
-        setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 1);
-        // WalPurgeJob is interval-gated off the simulated clock.
-        setProperty(PropertyKey.CAIRO_WAL_PURGE_INTERVAL, 0);
-    }
-
     private static int countFiles(File dir) {
         final File[] files = dir.listFiles();
         Assert.assertNotNull(files);
@@ -866,22 +1249,6 @@ public class LiveViewNoRowCheckpointTest extends AbstractLiveViewTest {
             count += file.isDirectory() ? countFiles(file) : 1;
         }
         return count;
-    }
-
-    private static long countWalSegments(String tableDirName) {
-        final File tableDir = new File(engine.getConfiguration().getDbRoot(), tableDirName);
-        final File[] walDirs = tableDir.listFiles(f -> f.isDirectory() && f.getName().startsWith(WalUtils.WAL_NAME_BASE));
-        if (walDirs == null) {
-            return 0;
-        }
-        long segments = 0;
-        for (File walDir : walDirs) {
-            final File[] segmentDirs = walDir.listFiles(File::isDirectory);
-            if (segmentDirs != null) {
-                segments += segmentDirs.length;
-            }
-        }
-        return segments;
     }
 
     private static LiveViewInstance instance() {
@@ -894,18 +1261,8 @@ public class LiveViewNoRowCheckpointTest extends AbstractLiveViewTest {
         return "2026-01-01T00:" + (minute < 10 ? "0" : "") + minute + ":00.000000Z";
     }
 
-    /**
-     * Runs the purge job over the base table with every hold but the view's lifted, and
-     * returns the base table's directory name.
-     */
-    private static String purgeBaseWal() {
-        releaseSavePointHolds("base");
-        engine.releaseInactive();
-        setCurrentMicros(currentMicros + 60_000_000L);
-        try (WalPurgeJob purgeJob = new WalPurgeJob(engine)) {
-            purgeJob.drain(0);
-        }
-        return engine.verifyTableName("base").getDirName();
+    private static long sealAboveFrontierDeclines(LiveViewRefreshJob job) {
+        return job.getStatsForTest().get(LiveViewRefreshStats.SEAL_ABOVE_DURABLE_FRONTIER_DECLINE_COUNT);
     }
 
     private static void restartCycle() {
@@ -965,6 +1322,127 @@ public class LiveViewNoRowCheckpointTest extends AbstractLiveViewTest {
                 assertViewMatchesRecompute();
             }
         });
+    }
+
+    private void assertDepartedViewRows(String rows) throws Exception {
+        assertQuery("SELECT ts, sym, x, s FROM lv")
+                .noLeakCheck()
+                .timestamp("ts")
+                .expectSize()
+                .returns(rows);
+    }
+
+    /**
+     * Two restarts around three rejected commits from {@code firstSeqTxn}. Each restart puts the
+     * head and the newest timestamp seen at the newest row the view holds, where the newest root
+     * sits, so every cycle without rows publishes: the first at once, for a head this process
+     * restored rather than wrote, the others 1.2s after the one before. The second restart
+     * restores from the timeline the first left.
+     */
+    private void assertDepartureStateSurvivesTwoRestarts(DrainPath drainPath, int firstSeqTxn, String rows) throws Exception {
+        restartCycle();
+        try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+            for (int i = firstSeqTxn; i < firstSeqTxn + 3; i++) {
+                commitRejected(job, drainPath, i, DEPARTURE_STEP_MICROS);
+                Assert.assertEquals(i, instance().getHeadCheckpointBaseSeqTxn());
+            }
+            assertRestoredFromTimeline("lv");
+            final LiveViewInstance instance = instance();
+            Assert.assertEquals(0, instance.getCheckpointSealFailures());
+            Assert.assertEquals(0, sealAboveFrontierDeclines(job));
+            assertDepartedViewRows(rows);
+        }
+        assertRestartRestoresTheDepartedRows(rows);
+    }
+
+    /**
+     * The departure {@link #departTheNewestRow} builds, then the rejected commits 6 to 11, each
+     * refreshed 1.2s after the one before and so each due, then {@code firstEvent} and the
+     * restarts after it.
+     */
+    private void assertDepartureThenNoRowStretch(
+            DepartureShape shape,
+            DrainPath drainPath,
+            String departingX,
+            FirstEvent firstEvent
+    ) throws Exception {
+        configureWalPurge();
+        configureCadence(CADENCE_MICROS);
+        assertMemoryLeak(() -> {
+            if (drainPath == DrainPath.LEAD) {
+                createFilteredView();
+            } else {
+                createDedupBaseView();
+            }
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = departTheNewestRow(job, shape, drainPath, departingX);
+                final long generationBefore = publishedCheckpointGeneration(instance);
+                for (int i = 6; i <= 11; i++) {
+                    commitRejected(job, drainPath, i, DEPARTURE_STEP_MICROS);
+                }
+                Assert.assertEquals("one publication per cycle", generationBefore + 6, publishedCheckpointGeneration(instance));
+                assertDepartureStretchAdvancedTheHead(job, instance);
+                Assert.assertEquals(0, instance.getCheckpointSealFailures());
+                if (firstEvent == FirstEvent.SCHEMA_CHANGE) {
+                    final long runtimeRestoresBefore = instance.getCheckpointRuntimeRestores();
+                    final long rebuildAttemptsBefore = instance.getCheckpointRebuildAttempts();
+                    final long resetsBefore = instance.getCheckpointTimelineResets();
+                    execute("ALTER TABLE base ADD COLUMN y INT");
+                    refresh(job, DEPARTURE_STEP_MICROS);
+                    // The drift recovery restores the runtime from the timeline in place.
+                    Assert.assertEquals(runtimeRestoresBefore + 1, instance.getCheckpointRuntimeRestores());
+                    Assert.assertEquals(rebuildAttemptsBefore, instance.getCheckpointRebuildAttempts());
+                    for (int i = 13; i <= 15; i++) {
+                        commitRejected(job, drainPath, i, DEPARTURE_STEP_MICROS);
+                    }
+                    Assert.assertEquals(0, instance.getCheckpointSealFailures());
+                    Assert.assertEquals(resetsBefore, instance.getCheckpointTimelineResets());
+                    Assert.assertEquals(15, instance.getHeadCheckpointBaseSeqTxn());
+                    Assert.assertEquals(ts(minute(2)), instance.getHeadCheckpointMaxTs());
+                    assertCheckpointLadder(instance, false, DEPARTURE_LADDER);
+                }
+            }
+            if (firstEvent == FirstEvent.RESTART) {
+                assertDepartureStateSurvivesTwoRestarts(drainPath, 12, DEPARTURE_ROWS);
+            } else {
+                assertRestartRestoresTheDepartedRows(DEPARTURE_ROWS);
+            }
+        });
+    }
+
+    /**
+     * What the rejected commits 6 to 11 after {@link #departTheNewestRow} leave: each cycle was
+     * due, so each published the root at the newest row the view holds at its own commit, and
+     * none sealed a root above it.
+     */
+    private void assertDepartureStretchAdvancedTheHead(LiveViewRefreshJob job, LiveViewInstance instance) throws Exception {
+        assertCheckpointLadder(instance, false, DEPARTURE_LADDER);
+        Assert.assertEquals(ts(minute(2)), instance.getHeadCheckpointMaxTs());
+        Assert.assertEquals(11, instance.getStateReader().getLvConsumedSeqTxn());
+        Assert.assertEquals(11, instance.getHeadCheckpointBaseSeqTxn());
+        assertTimelineBase(3, 11);
+        // The older of the two superblock slots.
+        Assert.assertEquals(10, instance.getCheckpointTimelineWalPurgeFloor());
+        Assert.assertEquals("the purge must keep only the segments above the floor", 11 - 10, purgeBaseWalAndCountSegments());
+        Assert.assertEquals(0, sealAboveFrontierDeclines(job));
+    }
+
+    private void assertRestartRestoresTheDepartedRows(String rows) throws Exception {
+        restartCycle();
+        try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+            driveRefreshToQuiescence(job);
+        }
+        assertRestoredFromTimeline("lv");
+        Assert.assertFalse(instance().isCheckpointRecoveryBlocked());
+        assertDepartedViewRows(rows);
+    }
+
+    private void assertTimelineBase(long entries, long normalizedBaseSeqTxn) throws Exception {
+        assertQuery(
+                "SELECT checkpoint_timeline_entries, checkpoint_timeline_normalized_base_seqtxn FROM live_views() WHERE view_name = 'lv'"
+        ).noLeakCheck().noRandomAccess().returns(
+                "checkpoint_timeline_entries\tcheckpoint_timeline_normalized_base_seqtxn\n" + entries + "\t" + normalizedBaseSeqTxn + "\n"
+        );
     }
 
     private void assertAnchoredViewMatchesRecompute() throws Exception {
@@ -1131,23 +1609,75 @@ public class LiveViewNoRowCheckpointTest extends AbstractLiveViewTest {
     }
 
     private void commit(LiveViewRefreshJob job, String ts, String sym, double x, long stepMicros) throws Exception {
-        execute("INSERT INTO base VALUES ('" + ts + "', '" + sym + "', " + x + ")");
+        execute("INSERT INTO base (ts, sym, x) VALUES ('" + ts + "', '" + sym + "', " + x + ")");
         refresh(job, stepMicros);
     }
 
     private void commitRejected(LiveViewRefreshJob job, DrainPath drainPath, int minute) throws Exception {
+        commitRejected(job, drainPath, minute, STEP_MICROS);
+    }
+
+    private void commitRejected(LiveViewRefreshJob job, DrainPath drainPath, int minute, long stepMicros) throws Exception {
         if (drainPath == DrainPath.APPLIED_BASE) {
             // The dedup keys collapse the repeated row, so the applied base differs from the
             // raw WAL, and the cycle reads the applied base.
-            execute("INSERT INTO base VALUES ('" + minute(minute) + "', 'a', -1.0), ('" + minute(minute) + "', 'a', -1.0)");
-            refresh(job);
+            execute("INSERT INTO base (ts, sym, x) VALUES ('" + minute(minute) + "', 'a', -1.0), ('" + minute(minute) + "', 'a', -1.0)");
+            refresh(job, stepMicros);
         } else {
-            commit(job, minute(minute), "a", -1.0);
+            commit(job, minute(minute), "a", -1.0, stepMicros);
         }
+    }
+
+    // The one row of a day the base then drops (seqTxn 1 and 2), which the view walks past and
+    // keeps: a rebuild from the applied base would lose it, and the restatement guard refuses one.
+    private void commitTheDayTheBaseLoses(LiveViewRefreshJob job) throws Exception {
+        commit(job, "2025-12-31T12:00:00.000000Z", "a", 0.5, DEPARTURE_STEP_MICROS);
+        execute("ALTER TABLE base DROP PARTITION LIST '2025-12-31'");
+        refresh(job, DEPARTURE_STEP_MICROS);
+    }
+
+    /**
+     * Over the day the base loses (seqTxn 1 and 2), a root at 00:01 (3), then 00:02 and 00:03 in
+     * one commit (4), which a root at 00:03 seals for {@link DepartureShape#ONE_ROOT} and the
+     * cadence leaves unsealed for {@link DepartureShape#UNSEALED}. Then 00:03 departs (5): an
+     * upsert to {@code departingX}, or a REPLACE_RANGE deleting it on the lead drain's base. The
+     * resume repairing it leaves a root and the head at 00:02, with nothing fed since, and the
+     * newest timestamp the view has seen still at 00:03.
+     */
+    private LiveViewInstance departTheNewestRow(
+            LiveViewRefreshJob job,
+            DepartureShape shape,
+            DrainPath drainPath,
+            String departingX
+    ) throws Exception {
+        setCurrentMicros(START_MICROS);
+        commitTheDayTheBaseLoses(job);
+        commit(job, minute(1), "a", 1.5, DEPARTURE_STEP_MICROS);
+        execute("INSERT INTO base (ts, sym, x) VALUES ('" + minute(2) + "', 'a', 2.5), ('" + minute(3) + "', 'a', 4.5)");
+        refresh(job, shape == DepartureShape.ONE_ROOT ? DEPARTURE_STEP_MICROS : STEP_MICROS);
+        final LiveViewInstance instance = instance();
+        Assert.assertEquals(ts(minute(shape == DepartureShape.ONE_ROOT ? 3 : 1)), instance.getHeadCheckpointMaxTs());
+        if (drainPath == DrainPath.LEAD) {
+            replaceBaseRange(ts(minute(3)), ts(minute(3)) + 1, Double.NaN);
+        } else {
+            execute("INSERT INTO base (ts, sym, x) VALUES ('" + minute(3) + "', 'a', " + departingX + ")");
+        }
+        refresh(job, DEPARTURE_STEP_MICROS);
+        assertCheckpointLadder(instance, false, DEPARTURE_LADDER);
+        Assert.assertEquals(ts(minute(2)), instance.getHeadCheckpointMaxTs());
+        Assert.assertEquals(5, instance.getHeadCheckpointBaseSeqTxn());
+        Assert.assertEquals(ts(minute(3)), instance.getLatestSeenTs());
+        Assert.assertEquals(Long.MAX_VALUE, instance.getMinSeenTsSinceCheckpoint());
+        assertDepartedViewRows(DEPARTURE_ROWS);
+        return instance;
     }
 
     private void createAnchoredView() throws Exception {
         execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, amount DOUBLE, fee DECIMAL(38,2)) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        createAnchoredViewOverBase();
+    }
+
+    private void createAnchoredViewOverBase() throws Exception {
         // The DECIMAL sum keeps a root of its own beside the window's, fused or not.
         execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " +
                 "SELECT ts, sym, sum(amount) OVER w AS s, sum(fee) OVER w AS f FROM base WHERE amount > 0 " +
@@ -1192,6 +1722,21 @@ public class LiveViewNoRowCheckpointTest extends AbstractLiveViewTest {
         Assert.assertEquals(1, instance.getHeadCheckpointBaseSeqTxn());
         Assert.assertEquals(8, instance.getCheckpointCaptureLedgerForTest().getWindowKeysImaged());
         assertTimeline(1, 1, 1);
+    }
+
+    private enum DepartureShape {
+        // 00:02 and 00:03 sealed under one root at 00:03: the resume's splice re-versions that
+        // root, truncates it at the new frontier and seals a root there.
+        ONE_ROOT,
+        // 00:02 and 00:03 unsealed above the root at 00:01: the resume seals the new frontier.
+        UNSEALED
+    }
+
+    private enum FirstEvent {
+        // A restart, which restores the runtime from the timeline.
+        RESTART,
+        // A base column added, whose drift recovery restores the runtime in place.
+        SCHEMA_CHANGE
     }
 
     private enum DrainPath {

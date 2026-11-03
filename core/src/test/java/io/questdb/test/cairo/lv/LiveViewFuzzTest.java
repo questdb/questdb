@@ -298,6 +298,16 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // The refresh jobs runDedupFuzz and runReplaceRangeFuzz ran, summed, so a batch can assert
     // which repairs its departures reached.
     private final LiveViewRouteCoverage coverage = new LiveViewRouteCoverage();
+    // Heads a departure left below the newest timestamp the view has seen whose base coordinate
+    // the stretch of cycles without rows after it moved, over a batch: see commitRowlessStretch.
+    private int departureHeadAdvances;
+    // Departure episodes a batch ran. The episodes draw their stretch length and their unsealed
+    // shape from it rather than from the run's random sequence, so a pinned-seed batch draws what
+    // it drew before they existed.
+    private int departureEpisodes;
+    // Departure episodes of a batch whose departed rows no root sealed, so the resume repairing
+    // their departure anchored on the head's own root and emitted nothing: see departNewestRows.
+    private int unsealedDepartures;
 
     @Test
     public void testFuzzAnchored() throws Exception {
@@ -512,6 +522,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         // departNewestRowsOverSparseRoots for the RANGE-frame runs, which take one shape each.
         coverage.assertReachedStat(LiveViewRefreshStats.SPLICE_FRONTIER_TRUNCATE_COUNT);
         assertReachedEveryHeadMissSpliceOutcome();
+        assertReachedEveryRowlessStretchOutcome();
     }
 
     @Test
@@ -853,6 +864,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         // departNewestRowsOverSparseRoots for the RANGE-frame runs, which take one shape each.
         coverage.assertReachedStat(LiveViewRefreshStats.SPLICE_FRONTIER_TRUNCATE_COUNT);
         assertReachedEveryHeadMissSpliceOutcome();
+        assertReachedEveryRowlessStretchOutcome();
     }
 
     @Test
@@ -1683,6 +1695,18 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         coverage.assertReachedStat(LiveViewRefreshStats.HEAD_MISS_SPLICE_ZERO_ROW_RETIRE_COUNT);
     }
 
+    // A departure that leaves a head below the newest timestamp the view has seen, which every
+    // batch's departNewestRows runs and its truncating and keeping sparse departures leave, then
+    // the stretch of cycles without rows after it moved that head's base coordinate. One of them
+    // left its departed rows unsealed above the head, which every batch's departNewestRows does
+    // one episode in three. The batch's retiring sparse departure leaves no head, and the seal
+    // declined the first root the stretch after it asked for above the view's newest row.
+    private void assertReachedEveryRowlessStretchOutcome() {
+        Assert.assertTrue("no stretch without rows moved the head a departure left", departureHeadAdvances > 0);
+        Assert.assertTrue("no departure left its departed rows unsealed above the head", unsealedDepartures > 0);
+        coverage.assertReachedStat(LiveViewRefreshStats.SEAL_ABOVE_DURABLE_FRONTIER_DECLINE_COUNT);
+    }
+
     // The route of the restart after departNewestRowsOverSparseRoots: the rebuild from the applied
     // base when the departure retired the timeline, a restore when it kept or truncated it, over
     // any day the base has lost since.
@@ -1735,8 +1759,11 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
      * whose base has dedup keys, through an upsert of each of them to a value the filter rejects.
      * Either way the root below them is the anchor, and resuming from it reads no more rows than
      * a localized rebuild would. One run in three adds a late row the filter keeps between the
-     * two batches in the same commit, and one in three in the next commit. {@code usedTs} is the
-     * run's pool of taken timestamps, or null on a base whose dedup keys keep every row unique.
+     * two batches in the same commit, and one in three in the next commit. One episode in three,
+     * when {@code isUnsealedDepartureAllowed}, commits the departed batch inside the cadence
+     * instead, so the resume anchors on the head's own root and emits nothing, and adds no late
+     * row. {@code usedTs} is the run's pool of taken timestamps, or null on a base whose dedup
+     * keys keep every row unique.
      *
      * @return true when rows departed, and the caller restarts
      */
@@ -1746,7 +1773,8 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             TableToken baseToken,
             @Nullable LongHashSet usedTs,
             int symCount,
-            boolean withWhere
+            boolean withWhere,
+            boolean isUnsealedDepartureAllowed
     ) throws Exception {
         final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
         final long baseMaxTs = queryTimestamp("SELECT max(ts) FROM base");
@@ -1762,29 +1790,74 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         commitEpisodeBatch(rnd, fromTs + 1 + rnd.nextInt(1_000_000), usedTs, symCount, keptTs, null);
         drainWalQueue();
         driveRefreshToQuiescence(job);
-        final long[] departedTs = new long[4];
-        final int[] departedSym = new int[4];
-        commitEpisodeBatch(rnd, keptTs[3] + 2 + rnd.nextInt(1_000_000), usedTs, symCount, departedTs, departedSym);
-        drainWalQueue();
-        driveRefreshToQuiescence(job);
+        // One episode in three whose kept batch sealed the head, under a duration cadence the
+        // episode's passes cannot outlast, commits the departed batch with no row cadence: no root
+        // seals it, so the resume repairing its departure anchors on the head's own root and
+        // emits nothing.
+        final boolean isDepartedBatchUnsealed = isUnsealedDepartureAllowed
+                && departureEpisodes++ % 3 == 1
+                && instance.getHeadCheckpointMaxTs() == keptTs[3]
+                && engine.getConfiguration().getLiveViewCheckpointMaxDurationMicros() >= Micros.MINUTE_MICROS;
+        final long rowsCadence = isDepartedBatchUnsealed ? beginSparseCheckpointCadence() : Numbers.LONG_NULL;
+        try {
+            final long[] departedTs = new long[4];
+            final int[] departedSym = new int[4];
+            commitEpisodeBatch(rnd, keptTs[3] + 2 + rnd.nextInt(1_000_000), usedTs, symCount, departedTs, departedSym);
+            drainWalQueue();
+            driveRefreshToQuiescence(job);
+            if (isDepartedBatchUnsealed) {
+                Assert.assertEquals("no root seals the departed batch", keptTs[3], instance.getHeadCheckpointMaxTs());
+            }
 
-        int lateMode = rnd.nextInt(3);
-        long lateTs = Numbers.LONG_NULL;
-        for (int attempt = 0; lateMode > 0 && attempt < 16; attempt++) {
-            final long t = keptTs[3] + 1 + rnd.nextLong(departedTs[0] - keptTs[3] - 1);
-            if (usedTs == null || usedTs.add(t)) {
-                lateTs = t;
-                break;
+            int lateMode = rnd.nextInt(3);
+            long lateTs = Numbers.LONG_NULL;
+            for (int attempt = 0; lateMode > 0 && attempt < 16; attempt++) {
+                final long t = keptTs[3] + 1 + rnd.nextLong(departedTs[0] - keptTs[3] - 1);
+                if (usedTs == null || usedTs.add(t)) {
+                    lateTs = t;
+                    break;
+                }
+            }
+            if (lateTs == Numbers.LONG_NULL || isDepartedBatchUnsealed) {
+                // A late row the filter keeps would give the resume a row to emit.
+                lateMode = 0;
+            }
+            final int lateSym = rnd.nextInt(symCount);
+            final long lateI = 1 + rnd.nextInt(1000);
+            final double lateX = rnd.nextDouble() * 1000.0;
+            departNewestBatch(job, baseToken, usedTs, withWhere, departedTs, departedSym, keptTs[3], lateMode, lateTs, lateSym, lateI, lateX);
+            if (isDepartedBatchUnsealed) {
+                Assert.assertEquals("the departure keeps the head on the kept batch's root", keptTs[3], instance.getHeadCheckpointMaxTs());
+                Assert.assertEquals("with nothing fed since it", Long.MAX_VALUE, instance.getMinSeenTsSinceCheckpoint());
+                Assert.assertEquals(departedTs[3], instance.getLatestSeenTs());
+                unsealedDepartures++;
+            }
+        } finally {
+            if (isDepartedBatchUnsealed) {
+                endSparseCheckpointCadence(rowsCadence);
             }
         }
-        if (lateTs == Numbers.LONG_NULL) {
-            lateMode = 0;
-        }
-        final int lateSym = rnd.nextInt(symCount);
-        final long lateI = 1 + rnd.nextInt(1000);
-        final double lateX = rnd.nextDouble() * 1000.0;
+        return true;
+    }
+
+    // The departure departNewestRows commits: the departed batch upserted out of the filter or
+    // deleted by a REPLACE_RANGE, with the late row lateMode names.
+    private void departNewestBatch(
+            LiveViewRefreshJob job,
+            TableToken baseToken,
+            @Nullable LongHashSet usedTs,
+            boolean withWhere,
+            long[] departedTs,
+            int[] departedSym,
+            long keptHighTs,
+            int lateMode,
+            long lateTs,
+            int lateSym,
+            long lateI,
+            double lateX
+    ) throws Exception {
         final boolean isUpsert = usedTs == null && withWhere;
-        LOG.info().$("LV fuzz departure: keptHighTs=").$ts(keptTs[3]).$(", departedLowTs=").$ts(departedTs[0])
+        LOG.info().$("LV fuzz departure: keptHighTs=").$ts(keptHighTs).$(", departedLowTs=").$ts(departedTs[0])
                 .$(", departedHighTs=").$ts(departedTs[3]).$(", upsert=").$(isUpsert)
                 .$(", lateMode=").$(lateMode).$(", lateTs=").$ts(lateTs).$();
         if (isUpsert) {
@@ -1812,7 +1885,6 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             drainWalQueue();
             driveRefreshToQuiescence(job);
         }
-        return true;
     }
 
     /**
@@ -1974,6 +2046,101 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             final LongList ladder = snapshotCheckpointLadder(instance);
             Assert.assertEquals("the newest root sits at the new frontier", frontierTs, ladder.getQuick(ladder.size() - 2));
             Assert.assertEquals("the newest root counts every row of the view", countRows("lv"), ladder.getQuick(ladder.size() - 1));
+        }
+    }
+
+    /**
+     * Three commits whose rows the view's filter drops, each past any duration cadence a run
+     * draws. A restart put the head and the newest timestamp the view has seen at the newest
+     * row it holds, so none of them may fail a publication or retire the timeline.
+     */
+    private void commitRowlessCyclesAfterARestart(LiveViewRefreshJob job, @Nullable LongHashSet usedTs) throws Exception {
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+        Assert.assertNotNull(instance);
+        final long sealFailures = instance.getCheckpointSealFailures();
+        final long resets = instance.getCheckpointTimelineResets();
+        long ts = Math.max(queryTimestamp("SELECT max(ts) FROM base"), instance.getLatestSeenTs());
+        for (int c = 0; c < 3; c++) {
+            ts = commitRowTheFilterDrops(job, usedTs, ts);
+        }
+        Assert.assertEquals("a cycle without rows failed a publication", sealFailures, instance.getCheckpointSealFailures());
+        Assert.assertEquals("a cycle without rows retired the timeline", resets, instance.getCheckpointTimelineResets());
+        assertNoCheckpointRootAboveTheNewestRow(instance);
+    }
+
+    // One row the view's filter drops, above afterTs and every timestamp usedTs holds, committed
+    // past any duration cadence a run draws and refreshed. Returns its timestamp.
+    private long commitRowTheFilterDrops(LiveViewRefreshJob job, @Nullable LongHashSet usedTs, long afterTs) throws Exception {
+        long ts = afterTs + 1;
+        while (usedTs != null && !usedTs.add(ts)) {
+            ts++;
+        }
+        setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
+        execute("INSERT INTO base (ts, sym, i, x) VALUES (" + ts + "::timestamp, '" + SYMBOLS[0] + "', -1, 0.0)");
+        drainWalQueue();
+        driveRefreshToQuiescence(job);
+        return ts;
+    }
+
+    /**
+     * Commits that put no row through the view after a departure, each past any duration cadence
+     * a run draws: one to three rows the view's filter drops, or, over a view with no filter, one
+     * column added to the base, which the view takes by restoring its runtime from the timeline
+     * in place, or, once the departure retired the timeline, a REPLACE_RANGE above every row that
+     * deletes nothing. A departure leaves the newest timestamp the view has seen above the newest
+     * row it holds, where a cycle without rows once sealed a root every later restart failed
+     * against. Asserts no root sits above that row, and that a head the departure left below that
+     * timestamp moved its base coordinate.
+     */
+    private void commitRowlessStretch(LiveViewRefreshJob job, @Nullable LongHashSet usedTs, boolean withWhere) throws Exception {
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+        Assert.assertNotNull(instance);
+        final long headMaxTs = instance.getHeadCheckpointMaxTs();
+        final boolean isDepartureHead = headMaxTs != Numbers.LONG_NULL && headMaxTs < instance.getLatestSeenTs();
+        final long headBaseSeqTxn = instance.getHeadCheckpointBaseSeqTxn();
+        LOG.info().$("LV fuzz rowless stretch: head=").$ts(headMaxTs).$(", latestSeen=").$ts(instance.getLatestSeenTs())
+                .$(", filtered=").$(withWhere).$();
+        if (withWhere) {
+            long ts = Math.max(queryTimestamp("SELECT max(ts) FROM base"), instance.getLatestSeenTs());
+            for (int c = 0, n = 1 + departureEpisodes % 3; c < n; c++) {
+                ts = commitRowTheFilterDrops(job, usedTs, ts);
+            }
+        } else if (hasCheckpointTimeline(instance)) {
+            setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
+            execute("ALTER TABLE base ADD COLUMN rowless_stretch INT");
+            drainWalQueue();
+            driveRefreshToQuiescence(job);
+        } else {
+            // With no timeline to restore from, the column would have the view rebuilt from the
+            // base. A REPLACE_RANGE above every row deletes nothing and puts no row through the
+            // window instead: the departure that retired the timeline left no head, so the cycle
+            // asks for a first root at the newest timestamp the view has seen, above its newest
+            // row, and the seal declines it.
+            setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
+            final long lo = Math.max(queryTimestamp("SELECT max(ts) FROM base"), instance.getLatestSeenTs()) + 1;
+            replaceBaseRange(lo, lo + 1, Double.NaN);
+            drainWalQueue();
+            driveRefreshToQuiescence(job);
+        }
+        assertNoCheckpointRootAboveTheNewestRow(instance);
+        if (isDepartureHead) {
+            Assert.assertTrue(
+                    "the stretch must move the base coordinate of the head the departure left",
+                    instance.getHeadCheckpointBaseSeqTxn() > headBaseSeqTxn
+            );
+            departureHeadAdvances++;
+        }
+    }
+
+    private boolean hasCheckpointTimeline(LiveViewInstance instance) {
+        try (
+                Path checkpointsDir = new Path().of(configuration.getDbRoot())
+                        .concat(instance.getLiveViewToken())
+                        .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
+                Path timelinePath = new Path()
+        ) {
+            LiveViewCheckpointLayout.timelinePath(timelinePath, checkpointsDir);
+            return configuration.getFilesFacade().exists(timelinePath.$());
         }
     }
 
@@ -3784,6 +3951,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 final long rowsCadence = beginSparseCheckpointCadence();
                 try {
                     departNewestRowsOverSparseRoots(rnd, job, engine.verifyTableName("base"), null, symCount, withWhere, n, sparseDepartureShape);
+                    commitRowlessStretch(job, null, withWhere);
                     if (sparseDepartureShape != SPARSE_DEPARTURE_RETIRE) {
                         rowsBeforeTheDrop = dropTheOldestDayTheViewHolds(rnd, job, oracleOrderedSql, viewOrderedSql);
                     }
@@ -3794,14 +3962,25 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                     job = new LiveViewRefreshJob(0, engine, 1);
                     driveRefreshToQuiescence(job);
                     assertSparseDepartureRestartRoute(sparseDepartureShape);
+                    if (withWhere) {
+                        commitRowlessCyclesAfterARestart(job, null);
+                        coverage.absorb(job);
+                        job = Misc.free(job);
+                        engine.getLiveViewRegistry().clear();
+                        engine.buildViewGraphs();
+                        job = new LiveViewRefreshJob(0, engine, 1);
+                        driveRefreshToQuiescence(job);
+                        assertRestoredFromTimeline("lv");
+                    }
                 } finally {
                     endSparseCheckpointCadence(rowsCadence);
                 }
-            } else if (departNewestRows(rnd, job, engine.verifyTableName("base"), null, symCount, withWhere)) {
+            } else if (departNewestRows(rnd, job, engine.verifyTableName("base"), null, symCount, withWhere, anchor == null)) {
                 // An anchored run draws repair knobs that can take the departure off the chained
                 // resume, and one route there does not keep the timeline: a declined chain whose
                 // replay emits no row retires it. The default knobs keep the chain.
                 final boolean isTimelineKept = anchor == null;
+                commitRowlessStretch(job, null, withWhere);
                 if (isTimelineKept) {
                     rowsBeforeTheDrop = dropTheOldestDayTheViewHolds(rnd, job, oracleOrderedSql, viewOrderedSql);
                 }
@@ -3814,6 +3993,18 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 if (isTimelineKept) {
                     // No fault struck the run, so the departure left a root at the view's frontier.
                     assertRestoredFromTimeline("lv");
+                }
+                if (withWhere) {
+                    commitRowlessCyclesAfterARestart(job, null);
+                    coverage.absorb(job);
+                    job = Misc.free(job);
+                    engine.getLiveViewRegistry().clear();
+                    engine.buildViewGraphs();
+                    job = new LiveViewRefreshJob(0, engine, 1);
+                    driveRefreshToQuiescence(job);
+                    if (isTimelineKept) {
+                        assertRestoredFromTimeline("lv");
+                    }
                 }
             }
         } finally {
@@ -5679,6 +5870,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 final long rowsCadence = beginSparseCheckpointCadence();
                 try {
                     departNewestRowsOverSparseRoots(rnd, job, baseToken, usedTs, symCount, withWhere, n, sparseDepartureShape);
+                    commitRowlessStretch(job, usedTs, withWhere);
                     if (sparseDepartureShape != SPARSE_DEPARTURE_RETIRE) {
                         rowsBeforeTheDrop = dropTheOldestDayTheViewHolds(rnd, job, oracleOrderedSql, viewOrderedSql);
                     }
@@ -5690,10 +5882,22 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                     job = new LiveViewRefreshJob(0, engine, 1);
                     driveRefreshToQuiescence(job);
                     assertSparseDepartureRestartRoute(sparseDepartureShape);
+                    if (withWhere) {
+                        commitRowlessCyclesAfterARestart(job, usedTs);
+                        coverage.absorb(job);
+                        assertNoRefreshFaults("lv");
+                        job = Misc.free(job);
+                        engine.getLiveViewRegistry().clear();
+                        engine.buildViewGraphs();
+                        job = new LiveViewRefreshJob(0, engine, 1);
+                        driveRefreshToQuiescence(job);
+                        assertRestoredFromTimeline("lv");
+                    }
                 } finally {
                     endSparseCheckpointCadence(rowsCadence);
                 }
-            } else if (departNewestRows(rnd, job, baseToken, usedTs, symCount, withWhere)) {
+            } else if (departNewestRows(rnd, job, baseToken, usedTs, symCount, withWhere, true)) {
+                commitRowlessStretch(job, usedTs, withWhere);
                 rowsBeforeTheDrop = dropTheOldestDayTheViewHolds(rnd, job, oracleOrderedSql, viewOrderedSql);
                 coverage.absorb(job);
                 // The restart below registers a fresh instance whose fault count starts at zero,
@@ -5707,6 +5911,17 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 driveRefreshToQuiescence(job);
                 // No fault struck the run, so the departure left a root at the view's frontier.
                 assertRestoredFromTimeline("lv");
+                if (withWhere) {
+                    commitRowlessCyclesAfterARestart(job, usedTs);
+                    coverage.absorb(job);
+                    assertNoRefreshFaults("lv");
+                    job = Misc.free(job);
+                    engine.getLiveViewRegistry().clear();
+                    engine.buildViewGraphs();
+                    job = new LiveViewRefreshJob(0, engine, 1);
+                    driveRefreshToQuiescence(job);
+                    assertRestoredFromTimeline("lv");
+                }
             }
         } finally {
             coverage.absorb(job);

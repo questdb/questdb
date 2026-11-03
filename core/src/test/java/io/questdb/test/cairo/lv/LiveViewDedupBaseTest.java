@@ -626,7 +626,24 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
                 "9999-12-31T23:",
                 ":00.000000Z",
                 "9999-12-31T23:59:59.999998Z",
-                "9999-12-31T23:59:59.999999Z"
+                "9999-12-31T23:59:59.999999Z",
+                false
+        );
+    }
+
+    @Test
+    public void testAnUpsertMovingTheRowAtTheLargestMicrosecondTimestampOutOfTheFilterThenACycleWithoutRowsRestores() throws Exception {
+        // The departure leaves the newest timestamp the view has seen one microsecond above the
+        // newest row it holds. A cycle without rows past the cadence moves the head on the root
+        // at that row and seals nothing at the timestamp above it.
+        assertRowAtTheLargestTimestampLeavingTheFilterRestores(
+                "TIMESTAMP",
+                "9999-12-30T23:55:00.000000Z",
+                "9999-12-31T23:",
+                ":00.000000Z",
+                "9999-12-31T23:59:59.999998Z",
+                "9999-12-31T23:59:59.999999Z",
+                true
         );
     }
 
@@ -638,7 +655,22 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
                 "2261-12-31T23:",
                 ":00.000000000Z",
                 "2261-12-31T23:59:59.999999998Z",
-                "2261-12-31T23:59:59.999999999Z"
+                "2261-12-31T23:59:59.999999999Z",
+                false
+        );
+    }
+
+    @Test
+    public void testAnUpsertMovingTheRowAtTheLargestNanosecondTimestampOutOfTheFilterThenACycleWithoutRowsRestores() throws Exception {
+        // As above, one nanosecond above the newest row the view holds.
+        assertRowAtTheLargestTimestampLeavingTheFilterRestores(
+                "TIMESTAMP_NS",
+                "2261-12-30T23:55:00.000000000Z",
+                "2261-12-31T23:",
+                ":00.000000000Z",
+                "2261-12-31T23:59:59.999999998Z",
+                "2261-12-31T23:59:59.999999999Z",
+                true
         );
     }
 
@@ -2572,6 +2604,11 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
      * largest timestamp, so the repair truncates the timeline at that timestamp and seals a root
      * one step below it, which each restart restores from.
      *
+     * With {@code isCycleWithoutRowsAfter}, the base then drops the day below, a commit the view
+     * puts no row through, past the duration cadence: the head stays on the root at the new
+     * frontier, moves its base coordinate to that commit, and no root seals the timestamp above
+     * the frontier the view has seen.
+     *
      * @param hourPrefix   the last hour of the range, up to its minute
      * @param minuteSuffix what follows the minute of a row at a whole minute
      */
@@ -2581,7 +2618,8 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
             String hourPrefix,
             String minuteSuffix,
             String frontierTs,
-            String largestTs
+            String largestTs,
+            boolean isCycleWithoutRowsAfter
     ) throws Exception {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
         assertMemoryLeak(() -> {
@@ -2610,6 +2648,20 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
                 Assert.assertEquals(1, job.getStatsForTest().get(LiveViewRefreshStats.HEAD_MISS_SPLICE_FRONTIER_TRUNCATE_COUNT));
                 Assert.assertEquals("the splice, the truncate and the seal", generationBefore + 3, departureGeneration());
                 assertCheckpointLadder(departureView(), isNanos, dayBelowTs + " -> 1\n" + frontierTs + " -> 61\n");
+                if (isCycleWithoutRowsAfter) {
+                    final LiveViewInstance instance = departureView();
+                    final long frontier = instance.getHeadCheckpointMaxTs();
+                    Assert.assertEquals(frontier + 1, instance.getLatestSeenTs());
+                    Assert.assertEquals(4, instance.getHeadCheckpointBaseSeqTxn());
+                    setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
+                    execute("ALTER TABLE base DROP PARTITION LIST '" + dayBelowTs.substring(0, 10) + "'");
+                    drainWalQueue();
+                    driveRefreshToQuiescence(job);
+                    Assert.assertEquals(5, instance.getHeadCheckpointBaseSeqTxn());
+                    Assert.assertEquals(frontier, instance.getHeadCheckpointMaxTs());
+                    Assert.assertEquals(0, instance.getCheckpointSealFailures());
+                    assertCheckpointLadder(instance, isNanos, dayBelowTs + " -> 1\n" + frontierTs + " -> 61\n");
+                }
             }
             // The row a day below sits outside every one-minute frame above it, and the kept row's
             // frame holds itself alone: 23:58 sits more than a minute below it.

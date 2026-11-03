@@ -86,6 +86,13 @@ public class LiveViewMatViewBaseTest extends AbstractLiveViewTest {
                 ('2026-01-02T00:10:00.000000Z', 'a', 16.0),
                 ('2026-01-02T01:10:00.000000Z', 'b', 32.0)
             """;
+    // The roots departNewestBucketsThroughAHeadMissRebuild leaves: the newest at the new frontier
+    // 00:57, which counts the bucket a day below and the 58 buckets from 00:00 to 00:57.
+    private static final String DEPARTED_BUCKETS_LADDER = """
+            2025-12-31T23:55:00.000000Z -> 1
+            2026-01-01T00:30:00.000000Z -> 32
+            2026-01-01T00:57:00.000000Z -> 59
+            """;
     // A one-minute RANGE frame over the mat view's one-minute buckets.
     private static final String MINUTE_RANGE_VIEW_SQL = "SELECT ts, k, sum(sv) OVER (PARTITION BY k ORDER BY ts "
             + "RANGE BETWEEN '1' MINUTE PRECEDING AND CURRENT ROW) AS s FROM mvbase";
@@ -375,35 +382,9 @@ public class LiveViewMatViewBaseTest extends AbstractLiveViewTest {
         // new frontier and seals a root there. Each restart restores from it.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 29);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, k SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, k)");
-            execute("CREATE MATERIALIZED VIEW mvbase AS (SELECT ts, k, sum(v) AS sv FROM base WHERE v > 0 SAMPLE BY 1m) PARTITION BY DAY");
-            drainWalAndMatViewQueues(engine);
-            setCurrentMicros(0L);
-            execute("CREATE LIVE VIEW lv_on_mv FLUSH EVERY 100ms START FROM NOW AS " + MINUTE_RANGE_VIEW_SQL);
+            createMinuteRangeViewOverMatView();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                refreshMatViewAndView(job, "INSERT INTO base (ts, k, v) VALUES ('2025-12-31T23:55:10.000000Z', 'a', 0.5)");
-                refreshMatViewAndView(job, "INSERT INTO base (ts, k, v) VALUES " + minuteRowsOfA(0, 30, "1.0"));
-                refreshMatViewAndView(job, "INSERT INTO base (ts, k, v) VALUES " + minuteRowsOfA(31, 59, "1.0"));
-                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv_on_mv");
-                Assert.assertNotNull(instance);
-                assertCheckpointLadder(instance, false, """
-                        2025-12-31T23:55:00.000000Z -> 1
-                        2026-01-01T00:30:00.000000Z -> 32
-                        2026-01-01T00:59:00.000000Z -> 61
-                        """);
-                final long headMissRepairsBefore = countHeadMissRepairs(job);
-                refreshMatViewAndView(
-                        job,
-                        "INSERT INTO base (ts, k, v) VALUES ('2026-01-01T00:57:00.000000Z', 'a', 5.0), "
-                                + "('2026-01-01T00:58:00.000000Z', 'a', -1.0), ('2026-01-01T00:59:00.000000Z', 'a', -1.0)"
-                );
-                Assert.assertEquals("the head-miss rebuild repairs the departure", headMissRepairsBefore + 1, countHeadMissRepairs(job));
-                Assert.assertEquals(1, job.getStatsForTest().get(LiveViewRefreshStats.HEAD_MISS_SPLICE_FRONTIER_TRUNCATE_COUNT));
-                assertCheckpointLadder(instance, false, """
-                        2025-12-31T23:55:00.000000Z -> 1
-                        2026-01-01T00:30:00.000000Z -> 32
-                        2026-01-01T00:57:00.000000Z -> 59
-                        """);
+                departNewestBucketsThroughAHeadMissRebuild(job);
             }
             assertMinuteRangeViewMatchesRecompute();
             for (int restart = 0; restart < 2; restart++) {
@@ -412,6 +393,50 @@ public class LiveViewMatViewBaseTest extends AbstractLiveViewTest {
                 assertMinuteRangeViewMatchesRecompute();
                 assertViewActive();
             }
+        });
+    }
+
+    @Test
+    public void testNewestBucketsLeavingTheMatViewThenRefreshesWithoutRowsRestoreFromTheTimeline() throws Exception {
+        // The departure of the case above leaves the view's newest row at 00:57, with the newest
+        // timestamp the view has seen still at 00:59. Base rows the mat view's filter drops then
+        // make its incremental refreshes commit buckets without a row, which the view consumes
+        // with no row through its window, each past the duration cadence: the head stays on the
+        // root at 00:57 and moves its base coordinate to each of them, and no root seals 00:59,
+        // above the newest row the view holds. Each restart restores from the root at 00:57, and
+        // the refreshes without rows between the two publish without a failure.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 29);
+        assertMemoryLeak(() -> {
+            createMinuteRangeViewOverMatView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = departNewestBucketsThroughAHeadMissRebuild(job);
+                Assert.assertEquals(ts("2026-01-01T00:57:00.000000Z"), instance.getHeadCheckpointMaxTs());
+                Assert.assertEquals(ts("2026-01-01T00:59:00.000000Z"), instance.getLatestSeenTs());
+                refreshMatViewWithoutRowsPastTheCadence(job, instance, 1);
+                assertCheckpointLadder(instance, false, DEPARTED_BUCKETS_LADDER);
+                Assert.assertEquals(0, instance.getCheckpointSealFailures());
+                Assert.assertEquals(0, job.getStatsForTest().get(LiveViewRefreshStats.SEAL_ABOVE_DURABLE_FRONTIER_DECLINE_COUNT));
+            }
+            assertMinuteRangeViewMatchesRecompute();
+
+            restartCycle();
+            assertRestoredFromTimeline("lv_on_mv");
+            assertMinuteRangeViewMatchesRecompute();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv_on_mv");
+                Assert.assertNotNull(instance);
+                Assert.assertEquals(ts("2026-01-01T00:57:00.000000Z"), instance.getLatestSeenTs());
+                refreshMatViewWithoutRowsPastTheCadence(job, instance, 4);
+                assertCheckpointLadder(instance, false, DEPARTED_BUCKETS_LADDER);
+                Assert.assertEquals(0, instance.getCheckpointSealFailures());
+                Assert.assertEquals(0, instance.getCheckpointTimelineResets());
+            }
+            assertMinuteRangeViewMatchesRecompute();
+
+            restartCycle();
+            assertRestoredFromTimeline("lv_on_mv");
+            assertMinuteRangeViewMatchesRecompute();
+            assertViewActive();
         });
     }
 
@@ -671,10 +696,77 @@ public class LiveViewMatViewBaseTest extends AbstractLiveViewTest {
                         """);
     }
 
+    private void createMinuteRangeViewOverMatView() throws Exception {
+        execute("CREATE TABLE base (ts TIMESTAMP, k SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, k)");
+        execute("CREATE MATERIALIZED VIEW mvbase AS (SELECT ts, k, sum(v) AS sv FROM base WHERE v > 0 SAMPLE BY 1m) PARTITION BY DAY");
+        drainWalAndMatViewQueues(engine);
+        setCurrentMicros(0L);
+        execute("CREATE LIVE VIEW lv_on_mv FLUSH EVERY 100ms START FROM NOW AS " + MINUTE_RANGE_VIEW_SQL);
+    }
+
+    /**
+     * A bucket a day below, then the buckets from 00:00 to 00:59 in two commits, each sealing a root
+     * at its newest bucket under a cadence of 29 rows. A base correction then rewrites the newest
+     * three buckets: 00:57 keeps a new sum, and 00:58 and 00:59 lose every row the mat view's filter
+     * keeps, which its incremental refresh commits as one REPLACE_RANGE holding the bucket at 00:57.
+     * The root below the correction sits half an hour under it, so the live view repairs it with a
+     * rebuild warming its one-minute frame from a minute below the correction, whose output ends
+     * below the root it spliced at 00:59: the repair truncates at the new frontier 00:57 and seals a
+     * root there.
+     */
+    private LiveViewInstance departNewestBucketsThroughAHeadMissRebuild(LiveViewRefreshJob job) throws Exception {
+        refreshMatViewAndView(job, "INSERT INTO base (ts, k, v) VALUES ('2025-12-31T23:55:10.000000Z', 'a', 0.5)");
+        refreshMatViewAndView(job, "INSERT INTO base (ts, k, v) VALUES " + minuteRowsOfA(0, 30, "1.0"));
+        refreshMatViewAndView(job, "INSERT INTO base (ts, k, v) VALUES " + minuteRowsOfA(31, 59, "1.0"));
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv_on_mv");
+        Assert.assertNotNull(instance);
+        assertCheckpointLadder(instance, false, """
+                2025-12-31T23:55:00.000000Z -> 1
+                2026-01-01T00:30:00.000000Z -> 32
+                2026-01-01T00:59:00.000000Z -> 61
+                """);
+        final long headMissRepairsBefore = countHeadMissRepairs(job);
+        refreshMatViewAndView(
+                job,
+                "INSERT INTO base (ts, k, v) VALUES ('2026-01-01T00:57:00.000000Z', 'a', 5.0), "
+                        + "('2026-01-01T00:58:00.000000Z', 'a', -1.0), ('2026-01-01T00:59:00.000000Z', 'a', -1.0)"
+        );
+        Assert.assertEquals("the head-miss rebuild repairs the departure", headMissRepairsBefore + 1, countHeadMissRepairs(job));
+        Assert.assertEquals(1, job.getStatsForTest().get(LiveViewRefreshStats.HEAD_MISS_SPLICE_FRONTIER_TRUNCATE_COUNT));
+        assertCheckpointLadder(instance, false, DEPARTED_BUCKETS_LADDER);
+        return instance;
+    }
+
     private void refreshMatViewAndView(LiveViewRefreshJob job, String insert) throws Exception {
         execute(insert);
         drainWalAndMatViewQueues(engine);
         driveRefreshToQuiescence(job);
+    }
+
+    /**
+     * Three base rows the mat view's filter drops, a minute apart from {@code 01:0fromMinute:10},
+     * each committed past the duration cadence. The mat view's incremental refresh commits each one's
+     * bucket with no row, which the live view consumes with no row through its window: the first
+     * cycle over the refresh's commits comes due and moves the head's base coordinate to a commit of
+     * that refresh, on the root at the view's newest row 00:57.
+     */
+    private void refreshMatViewWithoutRowsPastTheCadence(LiveViewRefreshJob job, LiveViewInstance instance, int fromMinute) throws Exception {
+        final TableToken matViewToken = engine.verifyTableName("mvbase");
+        for (int minute = fromMinute; minute < fromMinute + 3; minute++) {
+            final long consumedBefore = instance.getStateReader().getLvConsumedSeqTxn();
+            setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
+            refreshMatViewAndView(job, "INSERT INTO base (ts, k, v) VALUES ('2026-01-01T01:0" + minute + ":10.000000Z', 'a', -1.0)");
+            final long matViewSeqTxn = engine.getTableSequencerAPI().lastTxn(matViewToken);
+            Assert.assertTrue("the mat view's refresh commits", matViewSeqTxn > consumedBefore);
+            Assert.assertEquals("the view consumes the mat view's refresh", matViewSeqTxn, instance.getStateReader().getLvConsumedSeqTxn());
+            Assert.assertEquals(ts("2026-01-01T00:57:00.000000Z"), instance.getHeadCheckpointMaxTs());
+            final long headBaseSeqTxn = instance.getHeadCheckpointBaseSeqTxn();
+            Assert.assertTrue(
+                    "the head's base coordinate must move to a commit of the refresh [consumedBefore=" + consumedBefore
+                            + ", headBase=" + headBaseSeqTxn + ", matViewSeqTxn=" + matViewSeqTxn + ']',
+                    headBaseSeqTxn > consumedBefore && headBaseSeqTxn <= matViewSeqTxn
+            );
+        }
     }
 
     /**
