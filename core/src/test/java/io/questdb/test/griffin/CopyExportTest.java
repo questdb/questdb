@@ -923,6 +923,47 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyParquetExportTempTableEncodingFollowsAlterSetParquet() throws Exception {
+        // The export worker compiles the select of a queued COPY again and builds the temp table from the PARQUET(...)
+        // settings the select carries then, so a setting that changes after COPY is queued, or between two exports,
+        // applies to the next file.
+        assertMemoryLeak(() -> {
+            createTableWithParquetSettingsAndConvertedColumn("converted", true, ConvertedColumnExportSource.VIEW_CREATED_AFTER_TYPE_CHANGE);
+            final String query = "SELECT * FROM converted_v";
+            assertExportMode(query, ParquetExportMode.TEMP_TABLE);
+            final FilesFacade ff = configuration.getFilesFacade();
+
+            // No export job runs yet, so the setting changes after COPY is queued and before the worker runs it.
+            runAndFetchCopyExportID("COPY (" + query + ") TO 'queued' WITH FORMAT PARQUET", sqlExecutionContext);
+            execute("ALTER TABLE converted ALTER COLUMN metric SET PARQUET(DELTA_BINARY_PACKED)");
+            drainWalAndViewQueues();
+            // A pooled reader keeps the PARQUET(...) setting it loaded before the ALTER, so the test releases the
+            // readers for the export to compile its select over the new setting.
+            engine.releaseAllReaders();
+            try (CopyExportRequestJob job = new CopyExportRequestJob(engine)) {
+                Assert.assertTrue("the queued export must be picked up", job.run());
+            }
+            assertExportFinished();
+            assertParquetMatchesQuery(query, parquetPath("queued"));
+            ParquetTestUtils.assertColumnsUseEncoding(parquetPath("queued"), ff, ParquetEncoding.ENCODING_DELTA_BINARY_PACKED, 0);
+            ParquetTestUtils.assertColumnsDoNotUseDictionaryEncoding(parquetPath("queued"), ff, 0);
+
+            execute("ALTER TABLE converted ALTER COLUMN metric SET PARQUET(default)");
+            drainWalAndViewQueues();
+            engine.releaseAllReaders();
+            // copyToParquet() compiles the COPY again. One compiled COPY (SELECT ...) run twice, as a server-side
+            // PostgreSQL wire prepared statement runs it, fails with "table does not exist [table=copy.<id>]" (#8152),
+            // so no test runs it that way yet.
+            copyToParquet("COPY (" + query + ") TO 'reset' WITH FORMAT PARQUET");
+            assertParquetMatchesQuery(query, parquetPath("reset"));
+            // metric has no setting now, so it takes the INT default, PLAIN
+            ParquetTestUtils.assertColumnsUseEncoding(parquetPath("reset"), ff, ParquetEncoding.ENCODING_PLAIN, 0);
+            ParquetTestUtils.assertColumnsDoNotUseDictionaryEncoding(parquetPath("reset"), ff, 0);
+            ParquetTestUtils.assertColumnsDoNotUseEncoding(parquetPath("reset"), ff, ParquetEncoding.ENCODING_DELTA_BINARY_PACKED, 0);
+        });
+    }
+
+    @Test
     public void testCopyParquetExportTempTableKeepsParquetCompression() throws Exception {
         // COMPRESSION_CODEC sets the codec of the file and a column's PARQUET(..., ZSTD(3)) setting overrides it.
         // 100_000 LONG values take 800_000 bytes as uncompressed PLAIN, so only a compressed v fits a smaller file.
