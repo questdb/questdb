@@ -24,7 +24,12 @@
 
 package io.questdb.test.cutlass.websocket;
 
+import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.wal.DurabilityTier;
+import io.questdb.cairo.wal.DurableAckRegistry;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpRawSocket;
@@ -36,16 +41,21 @@ import io.questdb.cutlass.qwp.websocket.WebSocketOpcode;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.ServerDisconnectException;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cutlass.qwp.QwpWireTestFixtures;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.test.cutlass.websocket.QwpIngressWireHarness.*;
 
@@ -205,14 +215,17 @@ public class QwpIngressIdleWriterReleaseTest extends AbstractCairoTest {
     @Test
     public void testDisconnectClearsActivityBeforeReuse() throws Exception {
         assertMemoryLeak(() -> {
-            try (IdleReleaseFixture f = new IdleReleaseFixture(30_000, PING)) {
-                // Seed activity to verify that disconnect clears it.
+            byte[] data = clientEncodedFrame(1, "tab");
+            try (IdleReleaseFixture f = new IdleReleaseFixture(30_000, concat(data, PING))) {
+                f.drive(data.length);
+                Assert.assertEquals("a data pass stamps its completion time", 1_000_000, f.state.getLastDataPassEndMicros());
+                // Seed the activity flag too, to verify that disconnect clears both.
                 f.state.addData(f.recvBuffer, f.recvBuffer);
                 f.state.onDisconnected();
                 f.state.of(-1, AllowAllSecurityContext.INSTANCE);
+                Assert.assertEquals(0, f.state.getLastDataPassEndMicros());
                 f.clock.calls = 0;
                 f.clock.nowMicros = 31_000_000;
-                Assert.assertEquals(0, f.state.getLastDataPassEndMicros());
                 f.drive(PING.length);
                 Assert.assertEquals("reused state must run the PING idle check", 1, f.clock.calls);
                 Assert.assertEquals(0, f.state.getLastDataPassEndMicros());
@@ -226,22 +239,75 @@ public class QwpIngressIdleWriterReleaseTest extends AbstractCairoTest {
             execute("CREATE TABLE tab1 (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             byte[] first = clientEncodedFrame(1, "tab");
             byte[] second = clientEncodedFrame(1, "tab1");
-            try (IdleReleaseFixture f = new IdleReleaseFixture(30_000, 1, concat(first, PING, second))) {
+            try (IdleReleaseFixture f = new IdleReleaseFixture(30_000, 1, concat(first, PING, second, first))) {
                 f.drive(first.length);
                 f.clock.nowMicros += 30_000_000;
                 f.drive(PING.length);
                 Assert.assertEquals(0, f.state.getCachedTableCount());
 
-                // The next connection on this state starts with the whole table limit.
+                // The next connection on this state starts with the whole table limit
+                // and does not remember the released tab: tab1 takes the only slot.
                 f.state.onDisconnected();
                 f.state.of(-1, AllowAllSecurityContext.INSTANCE);
                 f.sentFrames.clear();
                 f.drive(second.length);
                 Assert.assertFalse(hasErrorResponseForSeq(f.sentFrames, 0));
                 Assert.assertEquals(0, maxCumulativeOkAck(f.sentFrames));
+
+                f.drive(first.length);
+                int refusal = indexOfBinaryFrame(f.sentFrames, QwpConstants.STATUS_WRITE_ERROR, 1);
+                Assert.assertTrue("tab, released by the previous connection, must not bypass the limit", refusal > -1);
+                Assert.assertEquals("too many distinct tables, limit: 1", errorMessage(f.sentFrames.getQuick(refusal)));
             }
             drainWalQueue();
+            assertQuery("SELECT count() FROM tab").expectSize().noRandomAccess().returns("count\n1\n");
             assertQuery("SELECT count() FROM tab1").expectSize().noRandomAccess().returns("count\n1\n");
+        });
+    }
+
+    @Test
+    public void testDurableAckCoversReleasedAndReacquiredTable() throws Exception {
+        assertMemoryLeak(() -> {
+            byte[] first = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tab", 100, 1_000_000));
+            byte[] second = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tab", 200, 2_000_000));
+            try (IdleReleaseFixture f = new IdleReleaseFixture(30_000, concat(first, PING, PING, second, PING))) {
+                final String dirName = engine.verifyTableName("tab").getDirName();
+                final HashMap<String, Long> frontiers = new HashMap<>();
+                frontiers.put(dirName, -1L);
+                f.useDurableAck(new FrontierRegistry(frontiers), DurabilityTier.LOCAL);
+
+                f.drive(first.length);
+                Assert.assertEquals(1, sequencerTxn("tab"));
+                Assert.assertEquals(1, okAckSeqTxn(f.sentFrames, 0, "tab"));
+
+                // The frontier lags: the idle PING releases the writer with a durable ack still owed.
+                f.clock.nowMicros += 30_000_000;
+                f.drive(PING.length);
+                Assert.assertEquals(0, f.state.getCachedTableCount());
+                Assert.assertEquals(-1, durableAckSeqTxn(f.sentFrames, "tab"));
+
+                frontiers.put(dirName, 1L);
+                f.drive(PING.length);
+                Assert.assertEquals("the release must keep the durable ack owed for the table", 1, durableAckSeqTxn(f.sentFrames, "tab"));
+
+                f.drive(second.length);
+                Assert.assertEquals(1, f.state.getCachedTableCount());
+                Assert.assertEquals(2, sequencerTxn("tab"));
+                Assert.assertEquals("OK ack must name the re-acquired table's commit", 2, okAckSeqTxn(f.sentFrames, 1, "tab"));
+
+                frontiers.put(dirName, 2L);
+                f.drive(PING.length);
+                Assert.assertEquals("the durable ack must cover the re-acquired table's commit", 2, durableAckSeqTxn(f.sentFrames, "tab"));
+            }
+            drainWalQueue();
+            assertQuery("SELECT v, ts FROM tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            v\tts
+                            100\t1970-01-01T00:00:01.000000Z
+                            200\t1970-01-01T00:00:02.000000Z
+                            """);
         });
     }
 
@@ -365,6 +431,143 @@ public class QwpIngressIdleWriterReleaseTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIdleReleaseSurvivesWriterCloseFailure() throws Exception {
+        // Closing a WAL writer msyncs its column files only when the commit mode is not NOSYNC,
+        // and the suite runs either mode, so pin one whose msync failure does not stop the engine.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "async");
+        final AtomicBoolean isMsyncFailing = new AtomicBoolean();
+        final AtomicInteger failedMsyncCount = new AtomicInteger();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public void msync(long addr, long len, boolean async) {
+                if (isMsyncFailing.get()) {
+                    failedMsyncCount.incrementAndGet();
+                    throw CairoException.critical(5).put("could not msync");
+                }
+                super.msync(addr, len, async);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE tab1 (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            byte[] both = clientEncodedFrame(1, "tab", "tab1");
+            byte[] more = clientEncodedFrame(1, "tab1");
+            try (IdleReleaseFixture f = new IdleReleaseFixture(30_000, concat(both, PING, more))) {
+                f.drive(both.length);
+                Assert.assertEquals(2, f.state.getCachedTableCount());
+
+                // A dropped table's writer cannot go back to the pool: the release closes it, and the close fails.
+                execute("DROP TABLE tab");
+                isMsyncFailing.set(true);
+                f.clock.nowMicros += 30_000_000;
+                f.sentFrames.clear();
+                try {
+                    f.drive(PING.length);
+                } finally {
+                    isMsyncFailing.set(false);
+                }
+                Assert.assertTrue("the release must close the dropped table's writer", failedMsyncCount.get() > 0);
+                Assert.assertEquals("the PING must still be answered", 1, countFrames(f.sentFrames, WebSocketOpcode.PONG));
+                Assert.assertEquals("the release must go on to the next idle writer", 0, f.state.getCachedTableCount());
+                Assert.assertEquals(0, engine.getBusyWalWriterCount());
+
+                f.drive(more.length);
+                Assert.assertEquals(1, maxCumulativeOkAck(f.sentFrames));
+            }
+            drainWalQueue();
+            assertQuery("SELECT count() FROM tab1").expectSize().noRandomAccess().returns("count\n2\n");
+        });
+    }
+
+    @Test
+    public void testOkAckNamesReacquiredTableCommit() throws Exception {
+        assertMemoryLeak(() -> {
+            byte[] first = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tab", 100, 1_000_000));
+            byte[] second = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tab", 300, 3_000_000));
+            byte[] third = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tab", 400, 4_000_000));
+            try (IdleReleaseFixture f = new IdleReleaseFixture(30_000, concat(first, PING, second, third))) {
+                f.drive(first.length);
+                Assert.assertEquals(1, sequencerTxn("tab"));
+                Assert.assertEquals(1, okAckSeqTxn(f.sentFrames, 0, "tab"));
+
+                f.clock.nowMicros += 30_000_000;
+                f.drive(PING.length);
+                Assert.assertEquals(0, f.state.getCachedTableCount());
+
+                // Another writer commits while the table is released. The re-acquired writer
+                // must report this connection's commits, and only those.
+                execute("INSERT INTO tab VALUES (200, '1970-01-01T00:00:02.000000Z')");
+                Assert.assertEquals(2, sequencerTxn("tab"));
+
+                f.drive(second.length);
+                Assert.assertEquals(1, f.state.getCachedTableCount());
+                Assert.assertEquals(3, sequencerTxn("tab"));
+                Assert.assertEquals("OK ack must name the re-acquired table's commit", 3, okAckSeqTxn(f.sentFrames, 1, "tab"));
+
+                f.drive(third.length);
+                Assert.assertEquals(4, sequencerTxn("tab"));
+                Assert.assertEquals(4, okAckSeqTxn(f.sentFrames, 2, "tab"));
+            }
+            drainWalQueue();
+            assertQuery("SELECT v, ts FROM tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            v\tts
+                            100\t1970-01-01T00:00:01.000000Z
+                            200\t1970-01-01T00:00:02.000000Z
+                            300\t1970-01-01T00:00:03.000000Z
+                            400\t1970-01-01T00:00:04.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testOkAckSeqTxnStaysAboveRecreatedNameAfterRelease() throws Exception {
+        assertMemoryLeak(() -> {
+            byte[] first = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tab", 100, 1_000_000));
+            byte[] second = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tab", 200, 2_000_000));
+            byte[] third = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tab", 300, 3_000_000));
+            try (IdleReleaseFixture f = new IdleReleaseFixture(30_000, concat(first, second, PING, third))) {
+                final String oldDirName = engine.verifyTableName("tab").getDirName();
+                final HashMap<String, Long> frontiers = new HashMap<>();
+                // Durable at once, so nothing stays pending for the name across the release.
+                frontiers.put(oldDirName, Long.MAX_VALUE);
+                f.useDurableAck(new FrontierRegistry(frontiers), DurabilityTier.LOCAL);
+
+                // Separate receive passes, so each frame commits its own seqTxn.
+                f.drive(first.length);
+                f.drive(second.length);
+                Assert.assertEquals(2, sequencerTxn("tab"));
+                Assert.assertEquals("the client holds a durable watermark of 2", 2, durableAckSeqTxn(f.sentFrames, "tab"));
+
+                f.clock.nowMicros += 30_000_000;
+                f.drive(PING.length);
+                Assert.assertEquals(0, f.state.getCachedTableCount());
+
+                execute("DROP TABLE tab");
+                execute("CREATE TABLE tab (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                final TableToken recreated = engine.verifyTableName("tab");
+                Assert.assertNotEquals(oldDirName, recreated.getDirName());
+                frontiers.put(recreated.getDirName(), -1L);
+
+                f.drive(third.length);
+                Assert.assertEquals(1, sequencerTxn("tab"));
+                // The re-created table's seqTxn 1 goes on the wire above the watermark 2
+                // the client holds for the name: 1 + (2 + 1 - 1) = 3.
+                Assert.assertEquals(3, okAckSeqTxn(f.sentFrames, 2, "tab"));
+            }
+            drainWalQueue();
+            assertQuery("SELECT v, ts FROM tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            v\tts
+                            300\t1970-01-01T00:00:03.000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testPartialFrameDoesNotReadClock() throws Exception {
         assertMemoryLeak(() -> {
             byte[] data = clientEncodedFrame(1, "tab");
@@ -450,10 +653,24 @@ public class QwpIngressIdleWriterReleaseTest extends AbstractCairoTest {
         });
     }
 
+    private static int countFrames(ObjList<byte[]> frames, int opcode) {
+        int count = 0;
+        for (int i = 0, n = frames.size(); i < n; i++) {
+            if ((frames.getQuick(i)[0] & 0x0F) == opcode) {
+                count++;
+            }
+        }
+        return count;
+    }
+
     // Server error frame: [ws header 2][status 1][seq 8][message length 2, LE][message].
     private static String errorMessage(byte[] frame) {
         int length = (frame[11] & 0xFF) | (frame[12] & 0xFF) << 8;
         return new String(frame, 13, length, StandardCharsets.UTF_8);
+    }
+
+    private static long sequencerTxn(String table) {
+        return engine.getTableSequencerAPI().lastTxn(engine.verifyTableName(table));
     }
 
     private static class CountingClock implements MicrosecondClock {
@@ -467,6 +684,33 @@ public class QwpIngressIdleWriterReleaseTest extends AbstractCairoTest {
         }
     }
 
+    // Local-tier registry whose per-directory durable frontier the test sets.
+    private record FrontierRegistry(HashMap<String, Long> frontiers) implements DurableAckRegistry {
+        @Override
+        public long getLocalDurableSeqTxn(CharSequence tableDirName) {
+            return frontiers.getOrDefault(tableDirName.toString(), -1L);
+        }
+
+        @Override
+        public long getReplicatedDurableSeqTxn(CharSequence tableDirName) {
+            return -1L;
+        }
+
+        @Override
+        public boolean isEnabled() {
+            return true;
+        }
+
+        @Override
+        public boolean isTierSetAvailable(int tiers) {
+            return !DurabilityTier.hasReplicated(tiers);
+        }
+
+        @Override
+        public void onTableDropped(TableToken tableToken) {
+        }
+    }
+
     private static class IdleReleaseFixture implements AutoCloseable {
         private final CountingClock clock = new CountingClock();
         private final PhasedNetworkFacade network;
@@ -477,6 +721,7 @@ public class QwpIngressIdleWriterReleaseTest extends AbstractCairoTest {
         private boolean isSendBlocked;
         private boolean isSendDisconnected;
         private Runnable onSend;
+        private DurableAckRegistry previousDurableAckRegistry;
         private long recvBuffer;
         private long sendBuffer;
 
@@ -567,11 +812,23 @@ public class QwpIngressIdleWriterReleaseTest extends AbstractCairoTest {
             } finally {
                 recvBuffer = Unsafe.free(recvBuffer, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
                 sendBuffer = Unsafe.free(sendBuffer, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                if (previousDurableAckRegistry != null) {
+                    engine.setDurableAckRegistry(previousDurableAckRegistry);
+                }
             }
         }
 
         private void drive(int bytes) throws Exception {
             QwpIngressWireHarness.drive(processor, context, network, bytes);
+        }
+
+        // Negotiates durable acks on the connection and reads them from the given
+        // registry; close() restores the engine's registry.
+        private void useDurableAck(DurableAckRegistry registry, int tiers) {
+            previousDurableAckRegistry = engine.getDurableAckRegistry();
+            engine.setDurableAckRegistry(registry);
+            state.setDurableAckEnabled(true);
+            state.setDurableAckTiers(tiers);
         }
     }
 }

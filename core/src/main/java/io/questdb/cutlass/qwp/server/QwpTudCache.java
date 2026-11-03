@@ -84,7 +84,9 @@ public class QwpTudCache implements QuietCloseable {
     // limit like a cached table: releasing a writer must not let the connection write to
     // more distinct tables than the limit allows. A lookup that takes the table back sets
     // TABLE_REACQUIRED instead of removing the entry, because removal scans the map's key
-    // list. The limit bounds the entries; reset() and a distressed clear() forget them.
+    // list. Entries stay until reset() or a distressed clear(). A TABLE_REACQUIRED entry no
+    // longer counts, so a table evicted after a lookup took it back leaves an entry the
+    // limit does not bound: one per such table name, until the connection ends.
     private final LowerCaseUtf8SequenceIntHashMap releasedTables = new LowerCaseUtf8SequenceIntHashMap();
     private final StringSink tableNameUtf16 = new StringSink();
     private final LowerCaseUtf8SequenceObjHashMap<WalTableUpdateDetails> tableUpdateDetails = new LowerCaseUtf8SequenceObjHashMap<>();
@@ -687,7 +689,19 @@ public class QwpTudCache implements QuietCloseable {
                 releasedTableCount++;
                 tableUpdateDetails.removeAtQuick(keyIndex, i);
                 cachedTableCount = tableUpdateDetails.size();
-                Misc.free(tud);
+                try {
+                    Misc.free(tud);
+                } catch (Throwable th) {
+                    // A writer that cannot go back to the pool, such as one of a table
+                    // dropped while the connection idled, is closed here, and closing
+                    // does file IO that can fail. The entry is already out of the map
+                    // and the pool has released its slot. Swallowing keeps the loop
+                    // releasing the remaining entries and keeps the failure from
+                    // tearing down the connection through handlePing(), as reset()
+                    // swallows the same failure at disconnect.
+                    LOG.error().$("could not close idle writer [table=").$(releasedName)
+                            .$(", e=").$safe(th.getMessage()).I$();
+                }
             } else {
                 i++;
             }
