@@ -65,6 +65,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Uuid;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.Arrays;
 
@@ -318,6 +319,22 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private MemoryCARW memory;
     private RecordMetadata metadata;
     private SymbolTableSource symbolTableSource;
+
+    /**
+     * Exposes {@code isGenuineIntegerType} to QueryEngineTypeFactsTest, which checks it for every type.
+     */
+    @TestOnly
+    public static boolean isGenuineIntegerTypeForTesting(int columnType) {
+        return isGenuineIntegerType(columnType);
+    }
+
+    /**
+     * Exposes {@code isWidthSensitiveType} to QueryEngineTypeFactsTest, which checks it for every type.
+     */
+    @TestOnly
+    public static boolean isWidthSensitiveTypeForTesting(int columnType) {
+        return isWidthSensitiveType(columnType);
+    }
 
     @Override
     public void clear() {

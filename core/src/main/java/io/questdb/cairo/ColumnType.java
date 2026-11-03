@@ -33,6 +33,7 @@ import io.questdb.std.LowerCaseAsciiCharSequenceIntHashMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 // ColumnType layout - 32bit
 //
@@ -638,6 +639,15 @@ public final class ColumnType {
         return tagOf(columnType) == INTERVAL;
     }
 
+    /**
+     * Exposes {@code isNarrowingCast} to TypeRelationGoldenTest and RelationCoverageTest, which check
+     * every type pair.
+     */
+    @TestOnly
+    public static boolean isNarrowingCastForTesting(int fromType, int toType) {
+        return isNarrowingCast(fromType, toType);
+    }
+
     public static boolean isNull(int columnType) {
         return columnType == NULL;
     }
@@ -729,6 +739,14 @@ public final class ColumnType {
 
     public static boolean isVarcharOrString(int columnType) {
         return columnType == VARCHAR || columnType == VARCHAR_SLICE || columnType == STRING;
+    }
+
+    /**
+     * Exposes {@code isWideningCast0} to RelationCoverageTest, which checks every tag pair.
+     */
+    @TestOnly
+    public static boolean isWideningCastForTesting(short fromTag, short toTag) {
+        return isWideningCast0(fromTag, toTag);
     }
 
     public static void makeUtf16DefaultString() {

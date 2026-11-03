@@ -39,6 +39,7 @@ import io.questdb.std.Transient;
 import io.questdb.std.ex.BytecodeException;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 public class RecordSinkFactory {
     // Default bytecode size limit. Methods larger than 8KB may not be fully optimized
@@ -459,6 +460,14 @@ public class RecordSinkFactory {
         }
         final short tag = ColumnType.tagOf(type);
         return tag == ColumnType.RECORD || tag == ColumnType.NULL;
+    }
+
+    /**
+     * Exposes {@code sinkOpcode} to TypeRelationGoldenTest, which checks it for every type.
+     */
+    @TestOnly
+    public static int sinkOpcodeForTesting(int type, String kind) {
+        return sinkOpcode(type, kind);
     }
 
     /**

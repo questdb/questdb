@@ -63,6 +63,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Uuid;
 import io.questdb.std.str.DirectString;
 import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * Analyzes sort column types at compile time, produces a byte-comparable
@@ -259,6 +260,14 @@ public class SortKeyEncoder implements QuietCloseable {
     }
 
     /**
+     * Exposes {@code fixedColumnByteWidth} to TypeRelationGoldenTest, which checks it for every type.
+     */
+    @TestOnly
+    public static int fixedColumnByteWidthForTesting(int columnType) {
+        return fixedColumnByteWidth(columnType);
+    }
+
+    /**
      * Checks whether all sort columns can be encoded into a byte-comparable
      * key. Every column type that ORDER BY accepts is encodable.
      */
@@ -271,6 +280,23 @@ public class SortKeyEncoder implements QuietCloseable {
             }
         }
         return true;
+    }
+
+    /**
+     * Exposes {@code keyKind} to TypeRelationGoldenTest, which checks it for every type.
+     */
+    @TestOnly
+    public static int keyKindForTesting(int columnType) {
+        return keyKind(columnType);
+    }
+
+    /**
+     * Exposes {@code SortKeyMaterializingRecordCursor.materializeOpcode}, of a class private to this
+     * package, to TypeRelationGoldenTest, which checks it for every type.
+     */
+    @TestOnly
+    public static int materializeOpcodeForTesting(int columnType) {
+        return SortKeyMaterializingRecordCursor.materializeOpcode(columnType);
     }
 
     /**

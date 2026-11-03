@@ -31,7 +31,6 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.lang.reflect.Field;
-import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 
 /**
@@ -63,25 +62,25 @@ public class QueryEngineTypeFactsTest {
     }
 
     @Test
-    public void testJitGenuineIntegerLeaf() throws Exception {
-        assertTypes("INT LONG DATE TIMESTAMP TIMESTAMP_NS", fact(CompiledFilterIRSerializer.class, "isGenuineIntegerType"));
+    public void testJitGenuineIntegerLeaf() {
+        assertTypes("INT LONG DATE TIMESTAMP TIMESTAMP_NS", CompiledFilterIRSerializer::isGenuineIntegerTypeForTesting);
     }
 
     @Test
-    public void testJitWidthSensitiveInKey() throws Exception {
-        assertTypes("BYTE SHORT INT", fact(CompiledFilterIRSerializer.class, "isWidthSensitiveType"));
+    public void testJitWidthSensitiveInKey() {
+        assertTypes("BYTE SHORT INT", CompiledFilterIRSerializer::isWidthSensitiveTypeForTesting);
     }
 
     @Test
-    public void testWhereKeyColumn() throws Exception {
-        assertTypes("INT LONG STRING SYMBOL VARCHAR", fact(WhereClauseParser.class, "isKeyColumnType"));
+    public void testWhereKeyColumn() {
+        assertTypes("INT LONG STRING SYMBOL VARCHAR", WhereClauseParser::isKeyColumnTypeForTesting);
     }
 
     @Test
-    public void testWhereTimestampBound() throws Exception {
+    public void testWhereTimestampBound() {
         assertTypes(
                 "INT LONG DATE TIMESTAMP STRING SYMBOL VARCHAR TIMESTAMP_NS",
-                fact(WhereClauseParser.class, "canCastToTimestamp")
+                WhereClauseParser::canCastToTimestampForTesting
         );
     }
 
@@ -102,12 +101,6 @@ public class QueryEngineTypeFactsTest {
             }
         }
         Assert.assertEquals(expected, actual.toString());
-    }
-
-    private static Fact fact(Class<?> owner, String name) throws NoSuchMethodException {
-        final Method method = owner.getDeclaredMethod(name, int.class);
-        method.setAccessible(true);
-        return type -> (boolean) method.invoke(null, type);
     }
 
     @FunctionalInterface

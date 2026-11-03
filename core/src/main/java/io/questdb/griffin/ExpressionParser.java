@@ -45,6 +45,7 @@ import io.questdb.std.ObjStack;
 import io.questdb.std.ObjectPool;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.griffin.OperatorExpression.Operator.In;
 import static io.questdb.griffin.OperatorExpression.UNARY;
@@ -110,6 +111,14 @@ public class ExpressionParser {
         this.sqlParser = sqlParser;
         this.characterStore = characterStore;
         this.windowExpressionPool = windowExpressionPool;
+    }
+
+    /**
+     * Exposes {@code cannotCastTo} to CastTargetTagTest, which checks every tag.
+     */
+    @TestOnly
+    public static boolean cannotCastToForTesting(int targetTag, boolean isFromNull) {
+        return cannotCastTo(targetTag, isFromNull);
     }
 
     public static int extractGeoHashSuffix(int position, CharSequence tok) throws SqlException {

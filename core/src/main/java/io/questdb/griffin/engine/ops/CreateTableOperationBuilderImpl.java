@@ -49,6 +49,7 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 public class CreateTableOperationBuilderImpl implements CreateTableOperationBuilder, Mutable {
     private final LowerCaseCharSequenceObjHashMap<CreateTableColumnModel> columnModels = new LowerCaseCharSequenceObjHashMap<>();
@@ -77,6 +78,14 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     private CharSequence volumeAlias;
     private int volumePosition;
     private boolean walEnabled;
+
+    /**
+     * Exposes {@code isCompatibleCast} to TypeRelationGoldenTest, which checks every type pair.
+     */
+    @TestOnly
+    public static boolean isCompatibleCastForTesting(int from, int to) {
+        return isCompatibleCast(from, to);
+    }
 
     public void addColumnModel(CharSequence columnName, CreateTableColumnModel model) throws SqlException {
         if (columnModels.get(columnName) != null) {

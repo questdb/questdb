@@ -33,8 +33,6 @@ import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.lang.reflect.Field;
-
 /**
  * ALTER TABLE ... ALTER COLUMN ... TYPE admits a conversion by rule A of
  * {@code RelationRules.alter} (the compiler's {@code columnConversionSupport}) and then runs it through
@@ -53,13 +51,12 @@ public class ColumnConversionSoundnessTest extends AbstractCairoTest {
 
     @Test
     public void testEveryAdmittedConversionHasAConverter() throws Exception {
-        final boolean[][] support = columnConversionSupport();
         assertMemoryLeak(() -> {
             final StringSink failures = new StringSink();
             int cells = 0;
             for (ColumnTypeTag from : ColumnTypeTag.values()) {
                 for (ColumnTypeTag to : ColumnTypeTag.values()) {
-                    if (from.code() < 0 || to.code() < 0 || !support[from.code()][to.code()]) {
+                    if (from.code() < 0 || to.code() < 0 || !SqlCompilerImpl.isColumnConversionSupportedForTesting(from.code(), to.code())) {
                         continue;
                     }
                     for (String fromDdl : ddlTypesOf(from)) {
@@ -76,12 +73,6 @@ public class ColumnConversionSoundnessTest extends AbstractCairoTest {
             Assert.assertTrue("no admitted cells found", cells > 0);
             Assert.assertEquals("admitted conversions with no converter path:\n" + failures, 0, failures.length());
         });
-    }
-
-    private static boolean[][] columnConversionSupport() throws Exception {
-        final Field field = SqlCompilerImpl.class.getDeclaredField("columnConversionSupport");
-        field.setAccessible(true);
-        return (boolean[][]) field.get(null);
     }
 
     private static void convert(String fromDdl, String toDdl, StringSink failures) throws Exception {

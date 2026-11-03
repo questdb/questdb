@@ -67,6 +67,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.ArrayDeque;
 
@@ -3532,6 +3533,22 @@ public final class WhereClauseParser implements Mutable {
         // per wrapped literal down in the recursion.
         wrapTimestampLiterals(expressionNodePool, predicate, unitToken, Integer.toString(stride), timestamp);
         node.copyFrom(predicate);
+    }
+
+    /**
+     * Exposes {@code canCastToTimestamp} to QueryEngineTypeFactsTest, which checks it for every type.
+     */
+    @TestOnly
+    public static boolean canCastToTimestampForTesting(int type) {
+        return canCastToTimestamp(type);
+    }
+
+    /**
+     * Exposes {@code isKeyColumnType} to QueryEngineTypeFactsTest, which checks it for every type.
+     */
+    @TestOnly
+    public static boolean isKeyColumnTypeForTesting(int columnType) {
+        return isKeyColumnType(columnType);
     }
 
     /**

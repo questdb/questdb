@@ -385,6 +385,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
+    /**
+     * Exposes {@code columnConversionSupport} to TypeRelationGoldenTest and ColumnConversionSoundnessTest,
+     * which check every tag pair.
+     */
+    @TestOnly
+    public static boolean isColumnConversionSupportedForTesting(int fromTag, int toTag) {
+        return columnConversionSupport[fromTag][toTag];
+    }
+
     @Override
     public void clear() {
         clearExceptSqlText();
@@ -590,6 +599,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     @Override
     public BytecodeAssembler getAsm() {
         return asm;
+    }
+
+    /**
+     * Exposes the code generator to RelationCoverageTest, which asks it for the UNION cast of every type
+     * pair.
+     */
+    @TestOnly
+    public SqlCodeGenerator getCodeGeneratorForTesting() {
+        return codeGenerator;
     }
 
     @Override

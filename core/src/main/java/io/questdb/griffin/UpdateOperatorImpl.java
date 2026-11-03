@@ -61,6 +61,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Rows;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.ColumnType.isVarSize;
 import static io.questdb.cairo.TableUtils.dFile;
@@ -101,6 +102,14 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
         this.fileOpenOpts = configuration.getWriterFileOpenOpts();
         this.ff = configuration.getFilesFacade();
         this.path = path;
+    }
+
+    /**
+     * Exposes {@code updateOpcode} to TypeRelationGoldenTest, which checks it for every type.
+     */
+    @TestOnly
+    public static int updateOpcodeForTesting(int columnType) {
+        return updateOpcode(columnType);
     }
 
     @Override

@@ -33,6 +33,7 @@ import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryR;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * Typed read/write of fixed-width column slots for live-view checkpoint
@@ -98,6 +99,14 @@ public final class LiveViewSnapshotKeyCodec {
             total += slotSize;
         }
         return total;
+    }
+
+    /**
+     * Exposes {@code byteSizeOfType} to TypeRelationGoldenTest, which checks it for every type.
+     */
+    @TestOnly
+    public static int byteSizeOfTypeForTesting(int columnType) {
+        return byteSizeOfType(columnType);
     }
 
     /**

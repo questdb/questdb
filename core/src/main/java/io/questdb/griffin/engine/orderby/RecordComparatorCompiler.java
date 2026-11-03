@@ -49,6 +49,7 @@ import io.questdb.std.Transient;
 import io.questdb.std.Uuid;
 import io.questdb.std.ex.BytecodeException;
 import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.TestOnly;
 
 public class RecordComparatorCompiler {
     private static final Log LOG = LogFactory.getLog(RecordComparatorCompiler.class);
@@ -109,6 +110,14 @@ public class RecordComparatorCompiler {
 
     public RecordComparatorCompiler(BytecodeAssembler asm) {
         this.asm = asm;
+    }
+
+    /**
+     * Exposes {@code comparatorOpcode} to TypeRelationGoldenTest, which checks it for every type.
+     */
+    @TestOnly
+    public static int comparatorOpcodeForTesting(int columnType) throws SqlException {
+        return comparatorOpcode(columnType);
     }
 
     /**

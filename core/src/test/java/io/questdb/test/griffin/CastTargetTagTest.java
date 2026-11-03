@@ -32,8 +32,6 @@ import io.questdb.test.cairo.types.TypeConformanceTypes;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
-import java.lang.reflect.Method;
-
 /**
  * Pins, per tag, the two parse-time cast-target predicates: whether a type name becomes a type
  * constant in {@code FunctionParser.createConstant} (the cast target of {@code cast(x as T)}), and
@@ -42,18 +40,13 @@ import java.lang.reflect.Method;
  * out, and this table pins their answers. A type registered later is left out: its type driver's
  * answers are the ones javac names for it.
  * <p>
- * Cell notation: {@code X} true, {@code .} false. The predicates are package-private, hence
- * reflection.
+ * Cell notation: {@code X} true, {@code .} false. The predicates are package-private; their
+ * {@code ForTesting} accessors expose them.
  */
 public class CastTargetTagTest {
 
     @Test
-    public void testCastTargetTags() throws Exception {
-        final Method isTypeConstantTag = FunctionParser.class.getDeclaredMethod("isTypeConstantTag", ColumnTypeTag.class);
-        isTypeConstantTag.setAccessible(true);
-        final Method cannotCastTo = ExpressionParser.class.getDeclaredMethod("cannotCastTo", int.class, boolean.class);
-        cannotCastTo.setAccessible(true);
-
+    public void testCastTargetTags() {
         final StringSink sink = new StringSink();
         sink.put("tag           typeConst castFromValue castFromNull\n");
         for (ColumnTypeTag tag : ColumnTypeTag.values()) {
@@ -64,9 +57,9 @@ public class CastTargetTagTest {
             for (int i = tag.name().length(); i < 14; i++) {
                 sink.put(' ');
             }
-            sink.put((boolean) isTypeConstantTag.invoke(null, tag) ? 'X' : '.').put("         ");
-            sink.put((boolean) cannotCastTo.invoke(null, (int) tag.code(), false) ? '.' : 'X').put("             ");
-            sink.put((boolean) cannotCastTo.invoke(null, (int) tag.code(), true) ? '.' : 'X').put('\n');
+            sink.put(FunctionParser.isTypeConstantTagForTesting(tag) ? 'X' : '.').put("         ");
+            sink.put(ExpressionParser.cannotCastToForTesting(tag.code(), false) ? '.' : 'X').put("             ");
+            sink.put(ExpressionParser.cannotCastToForTesting(tag.code(), true) ? '.' : 'X').put('\n');
         }
         TestUtils.assertEquals(
                 """

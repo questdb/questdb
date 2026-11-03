@@ -31,11 +31,13 @@ import io.questdb.cairo.idx.CoveringCompressor;
 import io.questdb.cairo.lv.LiveViewInMemoryBuffer;
 import io.questdb.cairo.lv.LiveViewSnapshotKeyCodec;
 import io.questdb.cairo.lv.LiveViewWindow;
+import io.questdb.cairo.map.OrderedMap;
 import io.questdb.cairo.map.RecordValueSinkFactory;
 import io.questdb.cairo.map.Unordered4Map;
 import io.questdb.cairo.map.Unordered8Map;
 import io.questdb.cairo.sql.CoveredColumnDecoder;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.RecordToRowCopierUtils;
 import io.questdb.griffin.SqlCodeGenerator;
@@ -50,6 +52,7 @@ import io.questdb.griffin.engine.groupby.GroupByColumnSink;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilderImpl;
 import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
 import io.questdb.griffin.engine.orderby.SortKeyEncoder;
+import io.questdb.griffin.engine.table.AsyncFilterAtom;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.StringSink;
@@ -58,9 +61,6 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.lang.reflect.Field;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 
 /**
@@ -94,9 +94,6 @@ public class TypeRelationGoldenTest {
     @Test
     public void testColumnConversionSupport() throws Exception {
         // ALTER TABLE ... ALTER COLUMN ... TYPE: SqlCompilerImpl.isCompatibleColumnTypeChange
-        final Field field = SqlCompilerImpl.class.getDeclaredField("columnConversionSupport");
-        field.setAccessible(true);
-        final boolean[][] support = (boolean[][]) field.get(null);
         assertGolden(
                 """
                                                    1111111111222222222233333333334444444444555
@@ -155,7 +152,7 @@ public class TypeRelationGoldenTest {
                         51 INTERVAL(us)  .....................................................
                         52 INTERVAL(ns)  .....................................................
                         """,
-                renderBoolean((from, to) -> support[ColumnType.tagOf(from)][ColumnType.tagOf(to)])
+                renderBoolean((from, to) -> SqlCompilerImpl.isColumnConversionSupportedForTesting(ColumnType.tagOf(from), ColumnType.tagOf(to)))
         );
     }
 
@@ -425,11 +422,6 @@ public class TypeRelationGoldenTest {
     public void testCopierArms() throws Exception {
         // the pairs the three RecordToRowCopier implementations have an arm for; a NULL source
         // reads through the target's arm, a VARCHAR_SLICE source through VARCHAR's
-        final Method method = RecordToRowCopierUtils.class.getDeclaredMethod("copyOpcode", int.class, int.class);
-        method.setAccessible(true);
-        final Field field = RecordToRowCopierUtils.class.getDeclaredField("COPY_NONE");
-        field.setAccessible(true);
-        final int none = field.getInt(null);
         assertGolden(
                 """
                                                    1111111111222222222233333333334444444444555
@@ -488,7 +480,7 @@ public class TypeRelationGoldenTest {
                         51 INTERVAL(us)  .....................................................
                         52 INTERVAL(ns)  .....................................................
                         """,
-                renderBoolean((from, to) -> (int) method.invoke(null, from, to) != none)
+                renderBoolean(RecordToRowCopierUtils::hasCopyOpcodeForTesting)
         );
     }
 
@@ -559,8 +551,6 @@ public class TypeRelationGoldenTest {
     @Test
     public void testIsCompatibleCast() throws Exception {
         // CREATE TABLE ... AS (SELECT ...), CAST(col AS type): CreateTableOperationBuilderImpl.isCompatibleCast
-        final Method method = CreateTableOperationBuilderImpl.class.getDeclaredMethod("isCompatibleCast", int.class, int.class);
-        method.setAccessible(true);
         assertGolden(
                 """
                                                    1111111111222222222233333333334444444444555
@@ -619,7 +609,7 @@ public class TypeRelationGoldenTest {
                         51 INTERVAL(us)  .......................................X...........XX
                         52 INTERVAL(ns)  .......................................X...........XX
                         """,
-                renderBoolean((from, to) -> (boolean) method.invoke(null, from, to))
+                renderBoolean(CreateTableOperationBuilderImpl::isCompatibleCastForTesting)
         );
     }
 
@@ -689,8 +679,6 @@ public class TypeRelationGoldenTest {
 
     @Test
     public void testIsNarrowingCast() throws Exception {
-        final Method method = ColumnType.class.getDeclaredMethod("isNarrowingCast", int.class, int.class);
-        method.setAccessible(true);
         assertGolden(
                 """
                                                    1111111111222222222233333333334444444444555
@@ -749,7 +737,7 @@ public class TypeRelationGoldenTest {
                         51 INTERVAL(us)  .....................................................
                         52 INTERVAL(ns)  .....................................................
                         """,
-                renderBoolean((from, to) -> (boolean) method.invoke(null, from, to))
+                renderBoolean(ColumnType::isNarrowingCastForTesting)
         );
     }
 
@@ -825,7 +813,6 @@ public class TypeRelationGoldenTest {
         // in-memory tier stores the type (LiveViewInMemoryBuffer.isColumnTypeSupported); anchor: an
         // admissible ANCHOR EXPRESSION return type (LiveViewWindow.isAnchorType); covered: the arm
         // CoveredColumnDecoder.writeCoveredRow takes (its own tag, or none)
-        final Method codec = method(LiveViewSnapshotKeyCodec.class, "byteSizeOfType", int.class);
         assertGolden(
                 """
                          0 UNDEFINED     codec=. tier=. anchor=. covered=none
@@ -886,7 +873,7 @@ public class TypeRelationGoldenTest {
                     final StringSink row = new StringSink();
                     final ArrayColumnTypes single = new ArrayColumnTypes();
                     single.add(type);
-                    final int width = (int) codec.invoke(null, type);
+                    final int width = LiveViewSnapshotKeyCodec.byteSizeOfTypeForTesting(type);
                     final boolean isKey = LiveViewSnapshotKeyCodec.isAllTypesSupported(single);
                     final boolean isSlot = LiveViewSnapshotKeyCodec.isAllTypesFixedWidth(single);
                     Assert.assertEquals(width >= 0, isSlot);
@@ -912,12 +899,6 @@ public class TypeRelationGoldenTest {
         // fixed map slot (SqlCodeGenerator.isFixedSizePrevSlotEligible); latest: a LATEST ON key
         // (SqlCodeGenerator.isLatestOnKeyType); memo: the memoizer SqlCodeGenerator.memoized wraps a
         // virtual column in (. = none)
-        final Method wal = method(Class.forName("io.questdb.cairo.wal.WalEventWriter"), "bindValueOpcode", int.class);
-        final Method touch = method(Class.forName("io.questdb.griffin.engine.table.AsyncFilterAtom"), "preTouchOpcode", int.class);
-        final Method hold = method(Class.forName("io.questdb.cairo.map.OrderedMapFixedSizeRecord"), "keyHolderOpcode", int.class);
-        final Method prev = method(SqlCodeGenerator.class, "isFixedSizePrevSlotEligible", int.class);
-        final Method latest = method(SqlCodeGenerator.class, "isLatestOnKeyType", int.class);
-        final Method memo = method(SqlCodeGenerator.class, "memoized", Function.class);
         final String[] holders = {".", "l256", "ival"};
         final String[] layouts = {"fixed", "varchar", "offset", "array"};
         assertGolden(
@@ -979,8 +960,8 @@ public class TypeRelationGoldenTest {
                 renderPerType(type -> {
                     final int tag = ColumnType.tagOf(type);
                     final StringSink row = new StringSink();
-                    row.put("wal=").put(arm(wal, tag, type));
-                    row.put(" touch=").put(arm(touch, tag, type));
+                    row.put("wal=").put(arm(WalWriter::bindValueOpcodeForTesting, tag, type));
+                    row.put(" touch=").put(arm(AsyncFilterAtom::preTouchOpcodeForTesting, tag, type));
                     String zipped;
                     try {
                         zipped = Long.toString(CoveringCompressor.maxCompressedSize(1, type));
@@ -988,16 +969,16 @@ public class TypeRelationGoldenTest {
                         zipped = "!";
                     }
                     row.put(" zip=").put(zipped);
-                    row.put(" hold=").put(holders[(int) hold.invoke(null, type)]);
+                    row.put(" hold=").put(holders[OrderedMap.keyHolderOpcodeForTesting(type)]);
                     row.put(" lay=").put(layouts[CoveredColumnDecoder.coveredLayout(type)]);
-                    row.put(" prev=").put((boolean) prev.invoke(null, tag) ? "X" : ".");
-                    row.put(" latest=").put((boolean) latest.invoke(null, type) ? "X" : ".");
+                    row.put(" prev=").put(SqlCodeGenerator.isFixedSizePrevSlotEligibleForTesting(tag) ? "X" : ".");
+                    row.put(" latest=").put(SqlCodeGenerator.isLatestOnKeyTypeForTesting(type) ? "X" : ".");
                     final Function typed = (Function) Proxy.newProxyInstance(
                             Function.class.getClassLoader(),
                             new Class<?>[]{Function.class},
                             (proxy, m, args) -> m.getName().equals("getType") ? type : null
                     );
-                    final Function wrapped = (Function) memo.invoke(null, typed);
+                    final Function wrapped = SqlCodeGenerator.memoizedForTesting(typed);
                     row.put(" memo=").put(wrapped == typed ? "." : wrapped.getClass().getSimpleName().replace("FunctionMemoizer", ""));
                     return row.toString();
                 })
@@ -1191,86 +1172,83 @@ public class TypeRelationGoldenTest {
         // double, wide, symbol, variable); mat: SortKeyMaterializingRecordCursor; agg:
         // GroupByColumnSink (none = the sink appends nothing); upd: UpdateOperatorImpl (none =
         // rejected at the first row); map: the single-column key eligibility of Unordered4/8Map
-        final Method sink = method(RecordSinkFactory.class, "sinkOpcode", int.class, String.class);
-        final Method cmp = method(RecordComparatorCompiler.class, "comparatorOpcode", int.class);
-        final Method kind = method(SortKeyEncoder.class, "keyKind", int.class);
-        final Method width = method(SortKeyEncoder.class, "fixedColumnByteWidth", int.class);
-        final Method mat = method(Class.forName("io.questdb.griffin.engine.orderby.SortKeyMaterializingRecordCursor"), "materializeOpcode", int.class);
-        final Method upd = method(UpdateOperatorImpl.class, "updateOpcode", int.class);
-        final String[] kinds = {"signed", "unsigned", "float", "double", "wide", "symbol", "variable"};
-        // TIMESTAMP_NS map=. is a known inconsistency: only the plain TIMESTAMP type takes the
-        // 8-byte map
-        assertGolden(
-                """
-                         0 UNDEFINED     sink=! vsink=. cmp=! key=./-1 mat=! agg=none upd=none map=.
-                         1 BOOLEAN       sink=X vsink=X cmp=X key=unsigned/1 mat=X agg=X upd=X map=.
-                         2 BYTE          sink=X vsink=X cmp=X key=signed/1 mat=X agg=X upd=X map=.
-                         3 SHORT         sink=X vsink=X cmp=X key=signed/2 mat=X agg=X upd=X map=.
-                         4 CHAR          sink=X vsink=X cmp=X key=unsigned/2 mat=X agg=X upd=X map=.
-                         5 INT           sink=X vsink=X cmp=X key=signed/4 mat=X agg=X upd=X map=4
-                         6 LONG          sink=X vsink=X cmp=X key=signed/8 mat=X agg=X upd=X map=8
-                         7 DATE          sink=X vsink=X cmp=X key=signed/8 mat=X agg=X upd=X map=8
-                         8 TIMESTAMP     sink=X vsink=X cmp=X key=signed/8 mat=X agg=X upd=X map=8
-                         9 FLOAT         sink=X vsink=X cmp=X key=float/4 mat=X agg=X upd=X map=.
-                        10 DOUBLE        sink=X vsink=X cmp=X key=double/8 mat=X agg=X upd=X map=.
-                        11 STRING        sink=X vsink=. cmp=X key=variable/-1 mat=! agg=none upd=X map=.
-                        12 SYMBOL        sink=X vsink=X cmp=X key=symbol/-1 mat=! agg=none upd=X map=4
-                        13 LONG256       sink=X vsink=X cmp=X key=wide/32 mat=! agg=none upd=none map=.
-                        14 GEOBYTE       sink=X vsink=X cmp=X key=signed/1 mat=X agg=X upd=X map=.
-                        15 GEOSHORT      sink=X vsink=X cmp=X key=signed/2 mat=X agg=X upd=X map=.
-                        16 GEOINT        sink=X vsink=X cmp=X key=signed/4 mat=X agg=X upd=X map=.
-                        17 GEOLONG       sink=X vsink=X cmp=X key=signed/8 mat=X agg=X upd=X map=.
-                        18 BINARY        sink=X vsink=. cmp=! key=./-1 mat=! agg=none upd=X map=.
-                        19 UUID          sink=X vsink=X cmp=X key=wide/16 mat=! agg=X upd=X map=.
-                        20 CURSOR        sink=! vsink=. cmp=! key=./-1 mat=! agg=none upd=none map=.
-                        21 VAR_ARG       sink=! vsink=. cmp=! key=./-1 mat=! agg=none upd=none map=.
-                        22 RECORD        sink=X vsink=. cmp=! key=./-1 mat=! agg=none upd=none map=.
-                        23 GEOHASH       sink=! vsink=. cmp=! key=./-1 mat=! agg=none upd=none map=.
-                        24 LONG128       sink=X vsink=X cmp=X key=wide/16 mat=! agg=X upd=X map=.
-                        25 IPv4          sink=X vsink=X cmp=X key=unsigned/4 mat=! agg=X upd=X map=4
-                        26 VARCHAR       sink=X vsink=. cmp=X key=variable/-1 mat=! agg=none upd=X map=.
-                        27 ARRAY         sink=X vsink=. cmp=! key=./-1 mat=! agg=none upd=X map=.
-                        28 DECIMAL8      sink=X vsink=X cmp=X key=signed/1 mat=X agg=X upd=X map=.
-                        29 DECIMAL16     sink=X vsink=X cmp=X key=signed/2 mat=X agg=X upd=X map=.
-                        30 DECIMAL32     sink=X vsink=X cmp=X key=signed/4 mat=X agg=X upd=X map=.
-                        31 DECIMAL64     sink=X vsink=X cmp=X key=signed/8 mat=X agg=X upd=X map=.
-                        32 DECIMAL128    sink=X vsink=X cmp=X key=wide/16 mat=X agg=X upd=X map=.
-                        33 DECIMAL256    sink=X vsink=X cmp=X key=wide/32 mat=X agg=X upd=X map=.
-                        34 DECIMAL       sink=! vsink=. cmp=! key=./-1 mat=! agg=none upd=none map=.
-                        35 REGCLASS      sink=! vsink=. cmp=! key=./-1 mat=! agg=none upd=none map=.
-                        36 REGPROCEDURE  sink=! vsink=. cmp=! key=./-1 mat=! agg=none upd=none map=.
-                        37 ARRAY_STRING  sink=! vsink=. cmp=! key=./-1 mat=! agg=none upd=none map=.
-                        38 PARAMETER     sink=! vsink=. cmp=! key=./-1 mat=! agg=none upd=none map=.
-                        39 INTERVAL      sink=X vsink=. cmp=! key=./-1 mat=! agg=none upd=none map=.
-                        40 VARCHAR_SLICE sink=! vsink=. cmp=! key=./-1 mat=! agg=none upd=none map=.
-                        41 NULL          sink=none vsink=. cmp=! key=./-1 mat=! agg=none upd=none map=.
-                        42 TIMESTAMP_NS  sink=X vsink=X cmp=X key=signed/8 mat=X agg=X upd=X map=.
-                        43 GEOHASH(1c)   sink=X vsink=X cmp=X key=signed/1 mat=X agg=X upd=X map=.
-                        44 GEOHASH(8b)   sink=X vsink=X cmp=X key=signed/2 mat=X agg=X upd=X map=.
-                        45 GEOHASH(31b)  sink=X vsink=X cmp=X key=signed/4 mat=X agg=X upd=X map=.
-                        46 GEOHASH(12c)  sink=X vsink=X cmp=X key=signed/8 mat=X agg=X upd=X map=.
-                        47 DECIMAL(5,2)  sink=X vsink=X cmp=X key=signed/4 mat=X agg=X upd=X map=.
-                        48 DECIMAL(18,3) sink=X vsink=X cmp=X key=signed/8 mat=X agg=X upd=X map=.
-                        49 DOUBLE[]      sink=X vsink=. cmp=! key=./-1 mat=! agg=none upd=X map=.
-                        50 DOUBLE[][]    sink=X vsink=. cmp=! key=./-1 mat=! agg=none upd=X map=.
-                        51 INTERVAL(us)  sink=X vsink=. cmp=! key=./-1 mat=! agg=none upd=none map=.
-                        52 INTERVAL(ns)  sink=X vsink=. cmp=! key=./-1 mat=! agg=none upd=none map=.
-                        """,
-                renderPerType(type -> {
-                    final int tag = ColumnType.tagOf(type);
-                    final StringSink row = new StringSink();
-                    row.put("sink=").put(arm(sink, tag, type, "column"));
-                    row.put(" vsink=").put(RecordValueSinkFactory.isSupportedColumnType(type) ? "X" : ".");
-                    row.put(" cmp=").put(arm(cmp, tag, type));
-                    final int k = (int) kind.invoke(null, type);
-                    row.put(" key=").put(k < 0 ? "." : kinds[k]).put('/').put((int) width.invoke(null, type));
-                    row.put(" mat=").put(arm(mat, tag, type));
-                    row.put(" agg=").put(sizeArm(GroupByColumnSink.argTag(type), tag, type));
-                    row.put(" upd=").put(arm(upd, tag, type));
-                    row.put(" map=").put(Unordered4Map.isSupportedKeyType(type) ? "4" : Unordered8Map.isSupportedKeyType(type) ? "8" : ".");
-                    return row.toString();
-                })
-        );
+        // the GroupByColumnSink probe allocates native memory
+        TestUtils.assertMemoryLeak(() -> {
+            final String[] kinds = {"signed", "unsigned", "float", "double", "wide", "symbol", "variable"};
+            // TIMESTAMP_NS map=. is a known inconsistency: only the plain TIMESTAMP type takes the
+            // 8-byte map
+            assertGolden(
+                    """
+                             0 UNDEFINED     sink=! vsink=. cmp=! key=./-1 mat=! agg=none upd=none map=.
+                             1 BOOLEAN       sink=X vsink=X cmp=X key=unsigned/1 mat=X agg=X upd=X map=.
+                             2 BYTE          sink=X vsink=X cmp=X key=signed/1 mat=X agg=X upd=X map=.
+                             3 SHORT         sink=X vsink=X cmp=X key=signed/2 mat=X agg=X upd=X map=.
+                             4 CHAR          sink=X vsink=X cmp=X key=unsigned/2 mat=X agg=X upd=X map=.
+                             5 INT           sink=X vsink=X cmp=X key=signed/4 mat=X agg=X upd=X map=4
+                             6 LONG          sink=X vsink=X cmp=X key=signed/8 mat=X agg=X upd=X map=8
+                             7 DATE          sink=X vsink=X cmp=X key=signed/8 mat=X agg=X upd=X map=8
+                             8 TIMESTAMP     sink=X vsink=X cmp=X key=signed/8 mat=X agg=X upd=X map=8
+                             9 FLOAT         sink=X vsink=X cmp=X key=float/4 mat=X agg=X upd=X map=.
+                            10 DOUBLE        sink=X vsink=X cmp=X key=double/8 mat=X agg=X upd=X map=.
+                            11 STRING        sink=X vsink=. cmp=X key=variable/-1 mat=! agg=none upd=X map=.
+                            12 SYMBOL        sink=X vsink=X cmp=X key=symbol/-1 mat=! agg=none upd=X map=4
+                            13 LONG256       sink=X vsink=X cmp=X key=wide/32 mat=! agg=none upd=none map=.
+                            14 GEOBYTE       sink=X vsink=X cmp=X key=signed/1 mat=X agg=X upd=X map=.
+                            15 GEOSHORT      sink=X vsink=X cmp=X key=signed/2 mat=X agg=X upd=X map=.
+                            16 GEOINT        sink=X vsink=X cmp=X key=signed/4 mat=X agg=X upd=X map=.
+                            17 GEOLONG       sink=X vsink=X cmp=X key=signed/8 mat=X agg=X upd=X map=.
+                            18 BINARY        sink=X vsink=. cmp=! key=./-1 mat=! agg=none upd=X map=.
+                            19 UUID          sink=X vsink=X cmp=X key=wide/16 mat=! agg=X upd=X map=.
+                            20 CURSOR        sink=! vsink=. cmp=! key=./-1 mat=! agg=none upd=none map=.
+                            21 VAR_ARG       sink=! vsink=. cmp=! key=./-1 mat=! agg=none upd=none map=.
+                            22 RECORD        sink=X vsink=. cmp=! key=./-1 mat=! agg=none upd=none map=.
+                            23 GEOHASH       sink=! vsink=. cmp=! key=./-1 mat=! agg=none upd=none map=.
+                            24 LONG128       sink=X vsink=X cmp=X key=wide/16 mat=! agg=X upd=X map=.
+                            25 IPv4          sink=X vsink=X cmp=X key=unsigned/4 mat=! agg=X upd=X map=4
+                            26 VARCHAR       sink=X vsink=. cmp=X key=variable/-1 mat=! agg=none upd=X map=.
+                            27 ARRAY         sink=X vsink=. cmp=! key=./-1 mat=! agg=none upd=X map=.
+                            28 DECIMAL8      sink=X vsink=X cmp=X key=signed/1 mat=X agg=X upd=X map=.
+                            29 DECIMAL16     sink=X vsink=X cmp=X key=signed/2 mat=X agg=X upd=X map=.
+                            30 DECIMAL32     sink=X vsink=X cmp=X key=signed/4 mat=X agg=X upd=X map=.
+                            31 DECIMAL64     sink=X vsink=X cmp=X key=signed/8 mat=X agg=X upd=X map=.
+                            32 DECIMAL128    sink=X vsink=X cmp=X key=wide/16 mat=X agg=X upd=X map=.
+                            33 DECIMAL256    sink=X vsink=X cmp=X key=wide/32 mat=X agg=X upd=X map=.
+                            34 DECIMAL       sink=! vsink=. cmp=! key=./-1 mat=! agg=none upd=none map=.
+                            35 REGCLASS      sink=! vsink=. cmp=! key=./-1 mat=! agg=none upd=none map=.
+                            36 REGPROCEDURE  sink=! vsink=. cmp=! key=./-1 mat=! agg=none upd=none map=.
+                            37 ARRAY_STRING  sink=! vsink=. cmp=! key=./-1 mat=! agg=none upd=none map=.
+                            38 PARAMETER     sink=! vsink=. cmp=! key=./-1 mat=! agg=none upd=none map=.
+                            39 INTERVAL      sink=X vsink=. cmp=! key=./-1 mat=! agg=none upd=none map=.
+                            40 VARCHAR_SLICE sink=! vsink=. cmp=! key=./-1 mat=! agg=none upd=none map=.
+                            41 NULL          sink=none vsink=. cmp=! key=./-1 mat=! agg=none upd=none map=.
+                            42 TIMESTAMP_NS  sink=X vsink=X cmp=X key=signed/8 mat=X agg=X upd=X map=.
+                            43 GEOHASH(1c)   sink=X vsink=X cmp=X key=signed/1 mat=X agg=X upd=X map=.
+                            44 GEOHASH(8b)   sink=X vsink=X cmp=X key=signed/2 mat=X agg=X upd=X map=.
+                            45 GEOHASH(31b)  sink=X vsink=X cmp=X key=signed/4 mat=X agg=X upd=X map=.
+                            46 GEOHASH(12c)  sink=X vsink=X cmp=X key=signed/8 mat=X agg=X upd=X map=.
+                            47 DECIMAL(5,2)  sink=X vsink=X cmp=X key=signed/4 mat=X agg=X upd=X map=.
+                            48 DECIMAL(18,3) sink=X vsink=X cmp=X key=signed/8 mat=X agg=X upd=X map=.
+                            49 DOUBLE[]      sink=X vsink=. cmp=! key=./-1 mat=! agg=none upd=X map=.
+                            50 DOUBLE[][]    sink=X vsink=. cmp=! key=./-1 mat=! agg=none upd=X map=.
+                            51 INTERVAL(us)  sink=X vsink=. cmp=! key=./-1 mat=! agg=none upd=none map=.
+                            52 INTERVAL(ns)  sink=X vsink=. cmp=! key=./-1 mat=! agg=none upd=none map=.
+                            """,
+                    renderPerType(type -> {
+                        final int tag = ColumnType.tagOf(type);
+                        final StringSink row = new StringSink();
+                        row.put("sink=").put(arm(t -> RecordSinkFactory.sinkOpcodeForTesting(t, "column"), tag, type));
+                        row.put(" vsink=").put(RecordValueSinkFactory.isSupportedColumnType(type) ? "X" : ".");
+                        row.put(" cmp=").put(arm(RecordComparatorCompiler::comparatorOpcodeForTesting, tag, type));
+                        final int k = SortKeyEncoder.keyKindForTesting(type);
+                        row.put(" key=").put(k < 0 ? "." : kinds[k]).put('/').put(SortKeyEncoder.fixedColumnByteWidthForTesting(type));
+                        row.put(" mat=").put(arm(SortKeyEncoder::materializeOpcodeForTesting, tag, type));
+                        row.put(" agg=").put(sizeArm(GroupByColumnSink.argTag(type), tag, type));
+                        row.put(" upd=").put(arm(UpdateOperatorImpl::updateOpcodeForTesting, tag, type));
+                        row.put(" map=").put(Unordered4Map.isSupportedKeyType(type) ? "4" : Unordered8Map.isSupportedKeyType(type) ? "8" : ".");
+                        return row.toString();
+                    })
+            );
+        });
     }
 
     @Test
@@ -1436,14 +1414,14 @@ public class TypeRelationGoldenTest {
      * Renders a unary tag relation: {@code X} when the relation yields the type's own tag,
      * {@code none} when it yields a negative "no arm" opcode, {@code !} when it throws.
      */
-    private static String arm(Method relation, int tag, Object... args) {
+    private static String arm(Relation1<Integer> relation, int tag, int type) {
+        final int opcode;
         try {
-            return arm(((Number) relation.invoke(null, args)).intValue(), tag);
-        } catch (InvocationTargetException e) {
+            opcode = relation.apply(type);
+        } catch (Throwable e) {
             return "!";
-        } catch (IllegalAccessException e) {
-            throw new AssertionError(e);
         }
+        return arm(opcode, tag);
     }
 
     private static String arm(int opcode, int tag) {
@@ -1473,12 +1451,6 @@ public class TypeRelationGoldenTest {
             Assert.assertEquals(ColumnType.sizeOf(type), appended);
             return "X";
         }
-    }
-
-    private static Method method(Class<?> clazz, String name, Class<?>... parameterTypes) throws NoSuchMethodException {
-        final Method method = clazz.getDeclaredMethod(name, parameterTypes);
-        method.setAccessible(true);
-        return method;
     }
 
     private static String finish(StringSink sink) {

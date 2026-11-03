@@ -132,6 +132,14 @@ public class AsyncFilterAtom implements StatefulAtom, PerWorkerLockOwner, Planna
         };
     }
 
+    /**
+     * Exposes {@code preTouchOpcode} to TypeRelationGoldenTest, which checks it for every type.
+     */
+    @TestOnly
+    public static int preTouchOpcodeForTesting(int columnType) {
+        return preTouchOpcode(columnType);
+    }
+
     @Override
     public void clear() {
         ownerSelectivityStats.clear();

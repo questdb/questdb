@@ -242,6 +242,15 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         }
     }
 
+    /**
+     * Exposes {@code WalEventWriter.bindValueOpcode}, of a class private to this package, to
+     * TypeRelationGoldenTest, which checks it for every type.
+     */
+    @TestOnly
+    public static int bindValueOpcodeForTesting(int columnType) {
+        return WalEventWriter.bindValueOpcode(columnType);
+    }
+
     @Override
     public void addColumn(@NotNull CharSequence columnName, int columnType, SecurityContext securityContext) {
         addColumn(

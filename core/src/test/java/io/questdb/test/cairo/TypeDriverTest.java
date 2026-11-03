@@ -344,29 +344,31 @@ public class TypeDriverTest {
     }
 
     @Test
-    public void testNullAppenderWritesTheSameBytesAsSetNull() {
+    public void testNullAppenderWritesTheSameBytesAsSetNull() throws Exception {
         // the per-row appender and the batch fill must agree, for every driver
-        try (MemoryCARW mem = Vm.getCARWInstance(4096, 1, MemoryTag.NATIVE_DEFAULT)) {
-            final long buf = Unsafe.malloc(32, MemoryTag.NATIVE_DEFAULT);
-            try {
-                for (short tag = 0; tag <= ColumnType.MAX_TAG; tag++) {
-                    // the writers write a SYMBOL NULL through the symbol map, and its generic appender refuses
-                    if (PSEUDO_TAGS.contains(ColumnTypeTag.of(tag)) || ColumnType.isVarSize(tag) || tag == ColumnType.SYMBOL) {
-                        continue;
+        TestUtils.assertMemoryLeak(() -> {
+            try (MemoryCARW mem = Vm.getCARWInstance(4096, 1, MemoryTag.NATIVE_DEFAULT)) {
+                final long buf = Unsafe.malloc(32, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    for (short tag = 0; tag <= ColumnType.MAX_TAG; tag++) {
+                        // the writers write a SYMBOL NULL through the symbol map, and its generic appender refuses
+                        if (PSEUDO_TAGS.contains(ColumnTypeTag.of(tag)) || ColumnType.isVarSize(tag) || tag == ColumnType.SYMBOL) {
+                            continue;
+                        }
+                        final FixedSizeTypeDriver driver = (FixedSizeTypeDriver) ColumnType.getTypeDriver(tag);
+                        mem.truncate();
+                        driver.newNullAppender(mem, null).run();
+                        Assert.assertEquals(driver.getTypeName(), driver.getMovement().size(), mem.getAppendOffset());
+                        driver.setNull(buf, 1);
+                        for (int b = 0; b < driver.getMovement().size(); b++) {
+                            Assert.assertEquals(driver.getTypeName() + " byte " + b, Unsafe.getByte(buf + b), mem.getByte(b));
+                        }
                     }
-                    final FixedSizeTypeDriver driver = (FixedSizeTypeDriver) ColumnType.getTypeDriver(tag);
-                    mem.truncate();
-                    driver.newNullAppender(mem, null).run();
-                    Assert.assertEquals(driver.getTypeName(), driver.getMovement().size(), mem.getAppendOffset());
-                    driver.setNull(buf, 1);
-                    for (int b = 0; b < driver.getMovement().size(); b++) {
-                        Assert.assertEquals(driver.getTypeName() + " byte " + b, Unsafe.getByte(buf + b), mem.getByte(b));
-                    }
+                } finally {
+                    Unsafe.free(buf, 32, MemoryTag.NATIVE_DEFAULT);
                 }
-            } finally {
-                Unsafe.free(buf, 32, MemoryTag.NATIVE_DEFAULT);
             }
-        }
+        });
     }
 
     @Test
@@ -775,31 +777,33 @@ public class TypeDriverTest {
     }
 
     @Test
-    public void testSetNullWritesTheNullLongs() {
+    public void testSetNullWritesTheNullLongs() throws Exception {
         // the batch fill and the per-long NULL description agree byte for byte, for every fixed type
-        final long mem1 = Unsafe.malloc(32, MemoryTag.NATIVE_DEFAULT);
-        final long mem2 = Unsafe.malloc(32, MemoryTag.NATIVE_DEFAULT);
-        try {
-            for (short tag = 0; tag <= ColumnType.MAX_TAG; tag++) {
-                if (PSEUDO_TAGS.contains(ColumnTypeTag.of(tag)) || ColumnType.isVarSize(tag)) {
-                    continue;
+        TestUtils.assertMemoryLeak(() -> {
+            final long mem1 = Unsafe.malloc(32, MemoryTag.NATIVE_DEFAULT);
+            final long mem2 = Unsafe.malloc(32, MemoryTag.NATIVE_DEFAULT);
+            try {
+                for (short tag = 0; tag <= ColumnType.MAX_TAG; tag++) {
+                    if (PSEUDO_TAGS.contains(ColumnTypeTag.of(tag)) || ColumnType.isVarSize(tag)) {
+                        continue;
+                    }
+                    final TypeDriver driver = ColumnType.getTypeDriver(tag);
+                    final int size = ColumnType.sizeOf(tag);
+                    Assert.assertTrue(size > 0);
+                    driver.setNull(mem2, 1);
+                    Unsafe.putLong(mem1, driver.getNullLong(0));
+                    Unsafe.putLong(mem1 + 8, driver.getNullLong(1));
+                    Unsafe.putLong(mem1 + 16, driver.getNullLong(2));
+                    Unsafe.putLong(mem1 + 24, driver.getNullLong(3));
+                    for (int b = 0; b < size; b++) {
+                        Assert.assertEquals(ColumnType.nameOf(tag) + " byte " + b, Unsafe.getByte(mem1 + b), Unsafe.getByte(mem2 + b));
+                    }
                 }
-                final TypeDriver driver = ColumnType.getTypeDriver(tag);
-                final int size = ColumnType.sizeOf(tag);
-                Assert.assertTrue(size > 0);
-                driver.setNull(mem2, 1);
-                Unsafe.putLong(mem1, driver.getNullLong(0));
-                Unsafe.putLong(mem1 + 8, driver.getNullLong(1));
-                Unsafe.putLong(mem1 + 16, driver.getNullLong(2));
-                Unsafe.putLong(mem1 + 24, driver.getNullLong(3));
-                for (int b = 0; b < size; b++) {
-                    Assert.assertEquals(ColumnType.nameOf(tag) + " byte " + b, Unsafe.getByte(mem1 + b), Unsafe.getByte(mem2 + b));
-                }
+            } finally {
+                Unsafe.free(mem1, 32, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(mem2, 32, MemoryTag.NATIVE_DEFAULT);
             }
-        } finally {
-            Unsafe.free(mem1, 32, MemoryTag.NATIVE_DEFAULT);
-            Unsafe.free(mem2, 32, MemoryTag.NATIVE_DEFAULT);
-        }
+        });
     }
 
     @Test

@@ -56,6 +56,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.TestOnly;
 
 public class RecordToRowCopierUtils {
     public static final int COPIER_TYPE_CHUNKED = 2;  // Force chunked bytecode copier
@@ -232,6 +233,15 @@ public class RecordToRowCopierUtils {
                 .$(", methodSizeLimit=").$(methodSizeLimit)
                 .I$();
         return new LoopingRecordToRowCopier(fromTypes, toMetadata, toColumnFilter);
+    }
+
+    /**
+     * Whether {@code copyOpcode} gives the pair an arm, {@code COPY_UNLIKE} included, which
+     * {@link #hasCopierArm} leaves out; for TypeRelationGoldenTest, which checks every type pair.
+     */
+    @TestOnly
+    public static boolean hasCopyOpcodeForTesting(int fromType, int toType) {
+        return copyOpcode(fromType, toType) != COPY_NONE;
     }
 
     /**

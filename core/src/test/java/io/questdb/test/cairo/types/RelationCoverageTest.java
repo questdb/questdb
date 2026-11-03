@@ -32,13 +32,11 @@ import io.questdb.cairo.IndexType;
 import io.questdb.cairo.RelationRules;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.RecordToRowCopierUtils;
 import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.conditional.CaseCommon;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
@@ -47,9 +45,6 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
-import java.lang.reflect.Field;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
 import java.util.TreeSet;
 
 /**
@@ -71,9 +66,6 @@ public class RelationCoverageTest extends AbstractCairoTest {
         // common type, through a cast factory or through its own getter, which its overload row
         // or its built-in widening declares (OverloadSoundnessTest checks every row against the
         // getters), and the common type must have a CASE function
-        final Field constructors = CaseCommon.class.getDeclaredField("constructors");
-        constructors.setAccessible(true);
-        final ObjList<?> caseConstructors = (ObjList<?>) constructors.get(null);
         final TreeSet<String> gaps = new TreeSet<>();
         for (int i = 0, n = TypeConformanceTypes.ALL.size(); i < n; i++) {
             final TypeConformanceTypes.Entry from = TypeConformanceTypes.ALL.getQuick(i);
@@ -81,7 +73,7 @@ public class RelationCoverageTest extends AbstractCairoTest {
             for (int k = 0; k < row.length; k += 2) {
                 final int other = row[k];
                 final int common = row[k + 1];
-                if (caseConstructors.getQuiet(ColumnType.tagOf(common)) == null) {
+                if (!CaseCommon.hasCaseFunctionForTesting(ColumnType.tagOf(common))) {
                     gaps.add(from.label + " with " + ColumnType.nameOf(other) + " -> " + ColumnType.nameOf(common) + ": no CASE function");
                 }
                 for (int branch : new int[]{from.columnType, other}) {
@@ -134,10 +126,6 @@ public class RelationCoverageTest extends AbstractCairoTest {
     @Test
     public void testExplicitCastHasAFunctionForEveryAdmittedPair() throws Exception {
         // W, C and N admit a cast between two types; cast(x AS T) must resolve to a function
-        final Method isNarrowingCast = ColumnType.class.getDeclaredMethod("isNarrowingCast", int.class, int.class);
-        isNarrowingCast.setAccessible(true);
-        final Method isWideningCast = ColumnType.class.getDeclaredMethod("isWideningCast0", short.class, short.class);
-        isWideningCast.setAccessible(true);
         assertMemoryLeak(() -> {
             // a source is a table column, so a type a table cannot store (INTERVAL) is no source here
             final StringBuilder ddl = new StringBuilder("CREATE TABLE t (");
@@ -160,8 +148,8 @@ public class RelationCoverageTest extends AbstractCairoTest {
                         continue;
                     }
                     if (ColumnType.isBuiltInWideningCast(from.columnType, to.columnType)
-                            || (boolean) isWideningCast.invoke(null, ColumnType.tagOf(from.columnType), ColumnType.tagOf(to.columnType))
-                            || (boolean) isNarrowingCast.invoke(null, from.columnType, to.columnType)) {
+                            || ColumnType.isWideningCastForTesting(ColumnType.tagOf(from.columnType), ColumnType.tagOf(to.columnType))
+                            || ColumnType.isNarrowingCastForTesting(from.columnType, to.columnType)) {
                         try (RecordCursorFactory ignore = select("SELECT cast(c" + i + " AS " + to.ddl + ") FROM t")) {
                             // resolves
                         } catch (SqlException e) {
@@ -187,21 +175,9 @@ public class RelationCoverageTest extends AbstractCairoTest {
         // Every cell the matrix produces is asked directly, so a cell that returns nothing counts
         // as well as one that throws, and types no table stores (INTERVAL, VARCHAR_SLICE, and the
         // pseudo type text[]) take part, since a query can still produce them.
-        final Method generateCastFunction = SqlCodeGenerator.class.getDeclaredMethod(
-                "generateCastFunction",
-                SqlExecutionContext.class,
-                RecordMetadata.class,
-                int.class,
-                int.class,
-                int.class,
-                int.class
-        );
-        generateCastFunction.setAccessible(true);
-        final Field codeGeneratorField = SqlCompilerImpl.class.getDeclaredField("codeGenerator");
-        codeGeneratorField.setAccessible(true);
         assertMemoryLeak(() -> {
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
-                final SqlCodeGenerator codeGenerator = (SqlCodeGenerator) codeGeneratorField.get(compiler);
+                final SqlCodeGenerator codeGenerator = compiler.getCodeGeneratorForTesting();
                 final ObjList<TypeConformanceTypes.Entry> types = new ObjList<>();
                 types.addAll(TypeConformanceTypes.ALL);
                 types.add(new TypeConformanceTypes.Entry("text[]", ColumnType.ARRAY_STRING, "text[]", ColumnTypeTag.ARRAY_STRING, null, null, null, new ObjList<>()));
@@ -218,7 +194,7 @@ public class RelationCoverageTest extends AbstractCairoTest {
                             continue;
                         }
                         for (TypeConformanceTypes.Entry branch : new TypeConformanceTypes.Entry[]{a, b}) {
-                            final String gap = unionCastGap(generateCastFunction, codeGenerator, branch.columnType, unionType);
+                            final String gap = unionCastGap(codeGenerator, branch.columnType, unionType);
                             if (gap != null) {
                                 gaps.add(a.label + " with " + b.label + ": " + gap);
                             }
@@ -273,25 +249,25 @@ public class RelationCoverageTest extends AbstractCairoTest {
 
     // null when the cast cell converts the branch, or refuses with "unsupported cast" a branch the
     // relation rules do not admit into the union type; the failure otherwise
-    private static String unionCastGap(Method generateCastFunction, SqlCodeGenerator codeGenerator, int fromType, int unionType) throws Exception {
+    private static String unionCastGap(SqlCodeGenerator codeGenerator, int fromType, int unionType) {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("c", fromType, IndexType.NONE, 0, false, null));
+        final Function cast;
         try {
-            final Function cast = (Function) generateCastFunction.invoke(codeGenerator, sqlExecutionContext, metadata, 0, fromType, unionType, 0);
-            if (cast == null) {
-                return "no cast function to " + ColumnType.nameOf(unionType);
-            }
-            Misc.free(cast);
-            return null;
-        } catch (InvocationTargetException e) {
-            final Throwable cause = e.getCause();
-            if (cause instanceof SqlException sqlException && Chars.contains(sqlException.getFlyweightMessage(), "unsupported cast")) {
+            cast = codeGenerator.generateCastFunctionForTesting(sqlExecutionContext, metadata, 0, fromType, unionType, 0);
+        } catch (Throwable e) {
+            if (e instanceof SqlException sqlException && Chars.contains(sqlException.getFlyweightMessage(), "unsupported cast")) {
                 return ColumnType.isBuiltInWideningCast(fromType, unionType)
                         ? "unsupported cast to " + ColumnType.nameOf(unionType) + ", which the relations admit"
                         : null;
             }
-            return cause.getClass().getSimpleName() + " " + cause.getMessage();
+            return e.getClass().getSimpleName() + " " + e.getMessage();
         }
+        if (cast == null) {
+            return "no cast function to " + ColumnType.nameOf(unionType);
+        }
+        Misc.free(cast);
+        return null;
     }
 
     private static void assertGaps(String expected, TreeSet<String> gaps) {

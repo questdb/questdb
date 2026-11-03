@@ -120,6 +120,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.ArrayDeque;
 
@@ -187,6 +188,14 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     .put(ColumnType.nameOf(columnType));
         }
         return driver.newColumnFunction(index, columnType);
+    }
+
+    /**
+     * Exposes {@code isTypeConstantTag} to CastTargetTagTest, which checks every tag.
+     */
+    @TestOnly
+    public static boolean isTypeConstantTagForTesting(ColumnTypeTag tag) {
+        return isTypeConstantTag(tag);
     }
 
     /**

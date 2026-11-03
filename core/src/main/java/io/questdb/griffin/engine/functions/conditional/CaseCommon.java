@@ -135,6 +135,15 @@ public class CaseCommon {
         return type;
     }
 
+    /**
+     * Whether a CASE function returns the tag, for RelationCoverageTest, which checks every common type
+     * the CASE rules give.
+     */
+    @TestOnly
+    public static boolean hasCaseFunctionForTesting(int tag) {
+        return constructors.getQuiet(tag) != null;
+    }
+
     private static void addRows(int fromType) {
         // pairs of (next branch type, common type) from RelationRules.caseEscalation()
         final int[] escalation = RelationRules.caseEscalation(fromType);
