@@ -19,12 +19,14 @@ A policy that is a single comparison between the designated timestamp and a
 value `SqlParser.isTimestampFlippablePredicate` proves non-NULL, such as a
 constant, `now()` or `dateadd()` over them (`WHEN ts < dateadd('d', -30, now())`,
 `WHEN ts < '2020-01-01'`), is a timestamp cutoff. The parser flips it into an
-interval, and the view reads like a table. Arithmetic on the clock
-(`now() - 3_600_000_000L`) does not qualify; see "Clock arithmetic thresholds do
-not prune". Every other policy reads the view through a filtered sub-query: a
-per-row filter under a value `WHEN`, and a `LATEST ON` or window-function
-sub-query under `KEEP` and window `WHEN` policies. These queries accept that
-sub-query only in part:
+interval, and the time-frame joins below accept the view as they accept a table.
+The read still goes through a sub-query, which costs some query shapes their
+faster plans; see "Reads go through a filtered sub-query". Arithmetic on the
+clock (`now() - 3_600_000_000L`) does not qualify; see "Clock arithmetic
+thresholds do not prune". Every other policy reads the view through a sub-query
+that provides no time frames: a per-row filter under a value `WHEN`, and a
+`LATEST ON` or window-function sub-query under `KEEP` and window `WHEN` policies.
+These queries accept that sub-query only in part:
 
 | Query over the view | Timestamp cutoff | Any other policy |
 | --- | --- | --- |
@@ -361,12 +363,50 @@ These policies compute the kept set over the whole view on every read. A
 caller's timestamp filter sits above the window; only an equality on every
 `PARTITION BY` key is copied below it. On a 20M-row view, a one-day read under
 `KEEP 2 HIGHEST ON v PARTITION BY k` took 5.0 s against 7.2 ms with no policy.
+A `KEEP [N] HIGHEST/LOWEST` read also holds about 16 bytes of native memory per
+view row, whatever time range it asks for: about 66 MB on a 4M-row view.
 
 - **Why accepted:** narrowing by timestamp below the window would change which
   rows win, because a kept set depends on every row of its group across all
   time. The public docs state the cost.
 - **Follow-up:** push `IN` lists, ranges and partially constrained composite
   keys below the window. They are excluded by predicate shape, not semantics.
+
+### Reads go through a filtered sub-query
+
+A scalar `WHEN` policy, a timestamp cutoff included, turns every read of the
+view into `SELECT * FROM <view> WHERE <keep-filter>`
+(`SqlParser.expandExpiringTable()`). The optimiser gives some query shapes a
+faster plan only when they read a table directly, and those shapes lose it,
+even when the policy hides no rows. On an 8M-row view with 4 query workers:
+
+| Query over the view | No policy | `WHEN ts < dateadd('d', -30, now())` |
+| --- | --- | --- |
+| `SELECT k, sum(v) FROM mv SAMPLE BY 1h` | parallel, 72 ms | single-threaded, 179 ms |
+| `SELECT * FROM mv WHERE k = 'S5' LIMIT -5` | backward scan, 0.26 ms | forward scan, 2.7 ms |
+
+The SAMPLE BY gap grows with the worker count: 1.3x at 2 workers, 2.4x at 4
+and about 4x at 8. Under a value policy such as `WHEN v < -1`, `count()`,
+`max(ts)` and `LIMIT -N` also scan the whole view, and their cost grows with
+it: at 8M rows they took 4.3 ms, 78 ms and 4.5 ms, against under 0.1 ms with no
+policy. A sub-query written by hand over a plain table gets the same plans.
+`GROUP BY timestamp_floor('1h', ts)` keeps the parallel plan, and
+`ORDER BY ts DESC LIMIT n` keeps the backward scan.
+
+- **Why accepted:** the sub-query applies the policy to the view's rows before
+  anything else in the query reads them, so the result is correct under every
+  join, `LATEST ON`, window function and `UNION` without a rule per context.
+  Merging the filter into the enclosing query instead would need its own
+  placement for outer joins, where a `WHERE` on the view's columns drops the
+  rows the join extends with NULLs; for ASOF, LT and SPLICE JOIN, where an
+  expired row must not be chosen as the match; for self-joins; and for
+  `LATEST ON`. A value policy's keep-filter is `NOT (<predicate>)` and keeps
+  NULL rows only while the optimiser leaves it intact, so merging it would
+  expose it to the predicate rewrites of the enclosing query. Each of these
+  costs wrong rows; the sub-query costs speed.
+- **Follow-up:** let parallel SAMPLE BY, the first/last rewrite and the
+  negative-LIMIT backward scan read through a `SELECT * FROM t WHERE ...`
+  sub-query. That also speeds up the same sub-queries written by hand.
 
 ### Clock arithmetic thresholds do not prune
 
@@ -399,6 +439,22 @@ predicates only.
 - **Why accepted:** a bounds threshold derived from a bare LONG would have to
   guess its time unit, which differs between TIMESTAMP and TIMESTAMP_NS columns,
   and a wrong guess feeds the partition wipe that skips the scan.
+
+### A cleanup sweep delays the view's refresh
+
+`RowExpiryCleanupJob.cleanupTable()` holds the view's refresh lock for the
+whole sweep, across every partition it scans or rewrites. A refresh that
+arrives during a sweep runs after the sweep releases the lock; nothing is lost,
+and the refreshes that lost the lock collapse into one. A sweep that counts
+survivors costs about 10-20 ms per million rows it scans: on an 8M-row view
+under `WHEN v < 0.5`, one sweep took 0.66 s. The first sweep after a restart
+scans every partition under a fixed threshold; see "Fixed thresholds reclaim
+through the survivor scan".
+
+- **Why accepted:** the lock keeps a refresh back-fill out of the window between
+  the survivor scan and the `REPLACE_RANGE` commit, which spares the sweep
+  scans whose commit the sequencer gate would refuse anyway.
+- **Follow-up:** release the lock between partitions.
 
 ### Latest-by rewrite scoped to scalar expiry
 
@@ -521,38 +577,6 @@ reads "no policy" and stops hiding expired rows, with no error or log line.
   trailing section. It matters more here because the lost field is a retention
   control, so it needs an operator note wherever downgrades are documented.
 
-### `REBASE WAL` drops a policy set by `ALTER`
-
-`ALTER MATERIALIZED VIEW ... REBASE WAL` drops a policy that `SET EXPIRE` added,
-with no error or log line. This holds for both forms, including the replica's
-`REBASE WAL INTO`. After the rebase, reads show the rows the policy hid, cleanup
-stops, and `SHOW CREATE MATERIALIZED VIEW` prints no policy. Refresh,
-`REFRESH FULL` and a restart do not bring it back, and the next DDL on the view
-rewrites `_meta` without it.
-
-`WalUtils.cloneTableDirForRebase()` resets the metadata version in `_meta` to 0
-and leaves the minor-version field as it was. That field carries a checksum of
-the metadata version and the column count, so after the reset
-`TableUtils.isMetaFormatAtLeast()` fails for every minor version. The reader, the
-writer and `MetadataCache` then all read the policy section as absent. A policy
-given at `CREATE` survives as long as no DDL has run on the view since, because
-the view's metadata version is still 0.
-
-- **Why accepted:** the defect predates `EXPIRE ROWS`, and it lives in rebase
-  code that this feature does not change. The same sequence drops a TTL set by
-  `ALTER`, along with every other setting gated on the minor version. A rebase is
-  a recovery step that an admin runs on a suspended view, and only with
-  `cairo.wal.apply.suspended.write.denied=true`. Running `SET EXPIRE` again after
-  the rebase restores the policy: `TableWriter` writes a fresh minor-version
-  field with every DDL. Wherever `REBASE WAL` is documented, it needs an operator
-  note saying so.
-- **Follow-up:** [questdb/questdb#7536](https://github.com/questdb/questdb/issues/7536).
-  `cloneTableDirForRebase()` and the conversion to WAL in `TableConverter` should
-  rewrite only the checksum after they reset the metadata version, and keep the
-  file's saved minor version. Writing the latest minor version instead would
-  claim sections that an older `_meta` lacks. The fix restores TTL and the other
-  settings as well.
-
 ### WAL apply does not re-check a structural policy
 
 When a user runs `SET EXPIRE` with KEEP LATEST, KEEP HIGHEST/LOWEST or a window
@@ -602,11 +626,14 @@ until a refresh runs, as after a restart, and `REFRESH FULL` recovers it.
 
 - **Why accepted:** resuming the rebuild after a restart needs a durable "full
   refresh pending" flag in the view's persisted state, which is a format change
-  to the `MAT_VIEW_INVALIDATE` WAL event and the `_mv.s` file. Persisting the
-  view as valid while the rebuild runs would avoid the format change, but after
-  a restart the view would report valid while it holds partial rows. The view
-  reports itself invalid, so the state is visible, and `REFRESH FULL` repairs
-  it.
+  to the `MAT_VIEW_INVALIDATE` WAL event and the `_mv.s` file. Earlier versions
+  avoided the format change differently: `REFRESH FULL` persisted the view as
+  valid, with no refreshed base transaction, when the rebuild started. After a
+  restart, an immediate view then rebuilt itself from scratch through its
+  startup refresh. But the view reported valid while it held partial rows,
+  during the rebuild and after the restart until that refresh completed. Now the
+  view reports itself invalid, so the state is visible, and `REFRESH FULL`
+  repairs it. An immediate view gives up the rebuild it used to run on its own.
 - **Pinned by:**
   `MatViewFullRefreshRedeliveryTest.testFullRefreshInterruptedByShutdownStaysInvalidUntilRefreshFull`.
 - **Follow-up:** persist the pending request with the view state, so that
