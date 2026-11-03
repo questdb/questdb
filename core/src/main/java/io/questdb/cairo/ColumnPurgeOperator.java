@@ -74,6 +74,7 @@ public class ColumnPurgeOperator implements Closeable {
     private final SealedPostingFileScanProbe sealedPostingFileScanProbe = new SealedPostingFileScanProbe();
     private final String updateCompleteColumnName;
     private final int updateCompleteColumnWriterIndex;
+    private boolean isLastPurgeHeldByEpoch;
     private long longBytes;
     private int pathTableLen;
     private long purgeLogPartitionFd = -1;
@@ -135,6 +136,14 @@ public class ColumnPurgeOperator implements Closeable {
         txnScoreboard = Misc.free(txnScoreboard);
     }
 
+    /**
+     * True when the last purge left a version or a geometry generation because a save point still names it
+     * ({@link #isVersionHeldByEpoch}, {@link #isGeometryGenerationHeldByEpoch}).
+     */
+    public boolean isLastPurgeHeldByEpoch() {
+        return isLastPurgeHeldByEpoch;
+    }
+
     public boolean purge(@NotNull ColumnPurgeTask task) {
         assert task.getTableToken() != null;
         assert scoreboardUseMode != ScoreboardUseMode.VACUUM_TABLE;
@@ -168,10 +177,23 @@ public class ColumnPurgeOperator implements Closeable {
         return false;
     }
 
+    /**
+     * True when the table's save point still lies inside the superseded range, so recovery would restore a
+     * {@code _txn}/{@code _cv} that names these column files. Separate from the reader check because it holds
+     * when no reader does, notably at startup, where there are no readers but the save point is what the
+     * next recovery restores.
+     */
+    private boolean isVersionHeldByEpoch(long columnVersion, ColumnPurgeTask task) {
+        return task.getTableToken().isWal()
+                && !engine.getTableSequencerAPI().getTxnTracker(task.getTableToken())
+                .isRangeAvailableToEpoch(columnVersion + 1, task.getUpdateTxn());
+    }
+
     private boolean checkScoreboardHasReadersBeforeUpdate(long columnVersion, ColumnPurgeTask task) {
         long updateTxn = task.getUpdateTxn();
         try {
-            return !txnScoreboard.isRangeAvailable(columnVersion + 1, updateTxn);
+            return !txnScoreboard.isRangeAvailable(columnVersion + 1, updateTxn)
+                    || isVersionHeldByEpoch(columnVersion, task);
         } catch (CairoException ex) {
             // Scoreboard can be over allocated, don't stall purge because of that, re-schedule another run instead
             LOG.error().$("cannot lock last txn in scoreboard, column purge will re-run [table=")
@@ -327,6 +349,17 @@ public class ColumnPurgeOperator implements Closeable {
         return ff.exists(BitmapIndexUtils.valueFileName(path, columnName, columnVersion));
     }
 
+    /**
+     * True when a save point's _txn names the retired geometry generation: a tracker pin lies in
+     * [firstWriterTxn, updateTxn), the txns whose _txn points at it. Like {@link #isVersionHeldByEpoch}, checked in
+     * every mode: a recovery that falls back to that save point reads this file.
+     */
+    private boolean isGeometryGenerationHeldByEpoch(long firstWriterTxn, ColumnPurgeTask task) {
+        return task.getTableToken().isWal()
+                && !engine.getTableSequencerAPI().getTxnTracker(task.getTableToken())
+                .isRangeAvailableToEpoch(firstWriterTxn, task.getUpdateTxn());
+    }
+
     private boolean openScoreboardAndTxn(ColumnPurgeTask task) {
         switch (scoreboardUseMode) {
             case BAU_QUEUE_PROCESSING:
@@ -352,6 +385,17 @@ public class ColumnPurgeOperator implements Closeable {
                     LOG.info().$("cannot purge, purge request overlaps with truncate [path=").$(path.trimTo(pathTableLen)).I$();
                     return false;
                 }
+                // A logged update past the committed txn did not survive the stop: a power loss outside adaptive,
+                // or a recovery rewind to a save point before it, dropped it. The version the row names is the
+                // one the table uses now. A WAL replay of the update, if any, queues its own purge; without one,
+                // as on a non-WAL table, the version stays live.
+                if (scoreboardUseMode == ScoreboardUseMode.STARTUP_ONLY && task.getUpdateTxn() > txReader.getTxn()) {
+                    LOG.info().$("cannot purge, update is past the committed txn [path=").$(path.trimTo(pathTableLen))
+                            .$(", updateTxn=").$(task.getUpdateTxn())
+                            .$(", txn=").$(txReader.getTxn())
+                            .I$();
+                    return false;
+                }
                 return true;
             default:
                 return false;
@@ -359,6 +403,7 @@ public class ColumnPurgeOperator implements Closeable {
     }
 
     private boolean purge0(ColumnPurgeTask task) {
+        isLastPurgeHeldByEpoch = false;
         try {
             setTablePath(task.getTableToken());
             final LongList updatedColumnInfo = task.getUpdatedColumnInfo();
@@ -422,11 +467,19 @@ public class ColumnPurgeOperator implements Closeable {
                             continue;
                         }
                         // When a backup checkpoint is in progress its copied _txn may still name this generation.
-                        if (engine.getCheckpointStatus().isInProgress()
+                        // The save point is checked in every mode, STARTUP_ONLY included, as in the column branch:
+                        // it is not a reader, and a recovery that falls back to it restores a _txn naming this file.
+                        final boolean isCheckpointInProgress = engine.getCheckpointStatus().isInProgress();
+                        final boolean isFirstRecordVerified = firstWriterTxn != GEOMETRY_GENERATION_DOES_NOT_VERIFY;
+                        final boolean isHeldByEpoch = !isCheckpointInProgress && isFirstRecordVerified
+                                && isGeometryGenerationHeldByEpoch(firstWriterTxn, task);
+                        if (isCheckpointInProgress
+                                || isHeldByEpoch
                                 || (scoreboardUseMode != ScoreboardUseMode.STARTUP_ONLY
-                                && firstWriterTxn != GEOMETRY_GENERATION_DOES_NOT_VERIFY
+                                && isFirstRecordVerified
                                 && hasReadersOnGeometryGeneration(firstWriterTxn, task.getUpdateTxn()))) {
                             allDone = false;
+                            isLastPurgeHeldByEpoch |= isHeldByEpoch;
                             LOG.debug().$("cannot purge, geometry generation is in use [path=").$(path).I$();
                             continue;
                         }
@@ -528,10 +581,20 @@ public class ColumnPurgeOperator implements Closeable {
                     if (columnVersion < minUnlockedTxnRangeStarts) {
                         // When a backup checkpoint is in progress, defer column purge — the
                         // checkpoint may reference these column versions via snapshotted metadata.
-                        if (engine.getCheckpointStatus().isInProgress()
+                        //
+                        // The save point is checked in every mode, STARTUP_ONLY included. That mode skips the
+                        // reader check because no readers exist at startup, but the save point is not a reader:
+                        // it is what the next recovery restores. Purging a version it names would leave
+                        // recovery restoring a _txn/_cv whose column files are gone, and the writer reopen would
+                        // fail ("SymbolMap does not exist") and suspend the table.
+                        final boolean checkpointInProgress = engine.getCheckpointStatus().isInProgress();
+                        final boolean heldByEpoch = !checkpointInProgress && isVersionHeldByEpoch(columnVersion, task);
+                        if (checkpointInProgress
+                                || heldByEpoch
                                 || (scoreboardUseMode != ScoreboardUseMode.STARTUP_ONLY && checkScoreboardHasReadersBeforeUpdate(columnVersion, task))) {
                             // Reader lock still exists
                             allDone = false;
+                            isLastPurgeHeldByEpoch |= heldByEpoch;
                             LOG.debug().$("cannot purge, version is in use [path=").$(path).I$();
                             continue;
                         } else {

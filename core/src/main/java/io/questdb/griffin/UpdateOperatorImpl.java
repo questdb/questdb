@@ -122,6 +122,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
 
             // Partition to update
             int partitionIndex = -1;
+            boolean isFatalFlushFailure = false;
             try {
                 final TableRecordMetadata tableMetadata = tableWriter.getMetadata();
 
@@ -257,8 +258,16 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                         .I$();
 
                 return rowsUpdated;
+            } catch (Throwable th) {
+                isFatalFlushFailure = sqlExecutionContext.getCairoEngine().isDataSyncFailureFatal(th);
+                if (isFatalFlushFailure) {
+                    // Rollback would only replace this failure with a refusal from the poisoned engine.
+                    tableWriter.markDistressed();
+                    sqlExecutionContext.getCairoEngine().handleDataSyncFailure(th);
+                }
+                throw th;
             } finally {
-                if (partitionIndex > -1) {
+                if (partitionIndex > -1 && !isFatalFlushFailure) {
                     // Rollback here.
                     // Some exceptions can be proceeded without rollback
                     // but update has to be rolled back in case of the caller does not
