@@ -974,17 +974,6 @@ final class AggregateBinder implements Mutable {
         return false;
     }
 
-    private boolean hasHorizonOuterProjection(QueryModel model) {
-        for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
-            final ExpressionNode expression = model.getBottomUpColumns().getQuick(i).getAst();
-            if (expression.type != ExpressionNode.LITERAL && expression.type != ExpressionNode.BIND_VARIABLE
-                    && !ctx.isAggregate(expression) && !(expression.type == ExpressionNode.FUNCTION && ctx.functionFactoryCache.isCursor(expression.token))) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     private boolean hasNestedAggregate(ExpressionNode aggregate) {
         final BindScope scope = ctx.scope();
         for (int i = 0, n = scope.aggregateSelectExpressions.size(); i < n; i++) {
@@ -1502,7 +1491,7 @@ final class AggregateBinder implements Mutable {
                 && !(input instanceof HorizonJoinPlan) && ctx.hasAggregation(model, source);
         aggregate.setExplicitGrouping(groupBy.size() > 0);
         aggregate.setDirectTableInput(hasDirectTableInput(source));
-        aggregate.setKeySpellingKept(input instanceof HorizonJoinPlan ? hasHorizonOuterProjection(model) : groupBy.size() > 0);
+        aggregate.setKeySpellingKept(groupBy.size() > 0);
         scope.referenceScope.clear();
         if (aggregate instanceof SampleByPlan cursor) {
             collectSampleByCursorGrouping(model, source, cursor, executionContext);

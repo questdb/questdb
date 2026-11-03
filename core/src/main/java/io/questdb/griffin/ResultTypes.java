@@ -165,6 +165,14 @@ public final class ResultTypes {
     }
 
     /**
+     * True when GREATEST and LEAST take an argument of the type: a number, a date, a timestamp or NULL.
+     */
+    public static boolean isNumericExtremeArgument(int type) {
+        final short tag = ColumnType.tagOf(type);
+        return tag == ColumnType.NULL || (ColumnType.isDecimal(type) && tag != ColumnType.DECIMAL) || extremeRank(tag) > 0;
+    }
+
+    /**
      * The type {@code greatest()} and {@code least()} produce over numeric and temporal arguments: DOUBLE or FLOAT
      * when present, otherwise the decimal holding every argument, otherwise the most precise temporal type, otherwise
      * the widest integer type; NULL when every argument is NULL.

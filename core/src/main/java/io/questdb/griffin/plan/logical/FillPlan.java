@@ -187,7 +187,7 @@ public final class FillPlan extends ForwardingPlan {
     }
 
     @Override
-    public void visitFacts(PlanFactVisitor visitor) {
+    public void visitFacts(PlanFactRecorder visitor) {
         super.visitFacts(visitor);
         visitor.facts("modes", modes);
         visitor.facts("tokens", tokens);

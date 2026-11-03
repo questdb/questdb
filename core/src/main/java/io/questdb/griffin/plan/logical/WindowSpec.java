@@ -263,7 +263,7 @@ public final class WindowSpec implements PlanFactSource {
     }
 
     @Override
-    public void visitFacts(PlanFactVisitor visitor) {
+    public void visitFacts(PlanFactRecorder visitor) {
         visitor.facts("orderByDirections", orderByDirections);
         visitor.facts("orderByNames", orderByNames);
         visitor.facts("orderByPositions", orderByPositions);

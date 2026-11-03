@@ -37,7 +37,7 @@ public interface PlanFactSource extends Mutable {
      * which {@link #visitReads} hands out; the facts of a part the object owns, such as a join input of a join, come
      * with its own. Clearing the object resets every fact.
      */
-    void visitFacts(PlanFactVisitor visitor);
+    void visitFacts(PlanFactRecorder visitor);
 
     /**
      * Hands the visitor every expression and column id the object reads, not those of a node's inputs, and keeps what

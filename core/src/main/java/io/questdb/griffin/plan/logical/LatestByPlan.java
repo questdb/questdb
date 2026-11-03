@@ -79,7 +79,7 @@ public final class LatestByPlan extends ForwardingPlan {
     }
 
     @Override
-    public void visitFacts(PlanFactVisitor visitor) {
+    public void visitFacts(PlanFactRecorder visitor) {
         super.visitFacts(visitor);
         visitor.fact("algorithm", algorithm);
         visitor.fact("isTimestampOrderInherited", isTimestampOrderInherited);

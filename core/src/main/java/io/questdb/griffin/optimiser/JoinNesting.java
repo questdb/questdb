@@ -36,7 +36,6 @@ import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.PlanExpressionVisitor;
 import io.questdb.griffin.plan.logical.PlanRewriter;
-import io.questdb.griffin.plan.logical.PlanStage;
 import io.questdb.griffin.plan.logical.TreeWalk;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
@@ -102,16 +101,6 @@ final class JoinNesting implements OptimiserPass {
     @Override
     public String getName() {
         return "join nesting";
-    }
-
-    @Override
-    public PlanStage getProducedStage() {
-        return PlanStage.DECORRELATED;
-    }
-
-    @Override
-    public PlanStage getRequiredStage() {
-        return PlanStage.DECORRELATED;
     }
 
     private boolean isRunStep(JoinInput step) {

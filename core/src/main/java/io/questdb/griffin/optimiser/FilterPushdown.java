@@ -53,7 +53,6 @@ import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.PlanRewriter;
-import io.questdb.griffin.plan.logical.PlanStage;
 import io.questdb.griffin.plan.logical.PlanVisitor;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.ScanPlan;
@@ -181,16 +180,6 @@ final class FilterPushdown implements OptimiserPass {
     @Override
     public String getName() {
         return "filter placement";
-    }
-
-    @Override
-    public PlanStage getProducedStage() {
-        return PlanStage.DECORRELATED;
-    }
-
-    @Override
-    public PlanStage getRequiredStage() {
-        return PlanStage.DECORRELATED;
     }
 
     private static boolean canPushThroughProjection(BoundExpression expression, ProjectPlan project) {

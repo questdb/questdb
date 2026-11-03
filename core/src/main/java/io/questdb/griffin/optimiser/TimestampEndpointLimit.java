@@ -30,7 +30,6 @@ import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
-import io.questdb.griffin.plan.logical.PlanStage;
 import io.questdb.griffin.plan.logical.PlanVisitor;
 import io.questdb.griffin.plan.logical.SortDirection;
 import io.questdb.griffin.plan.logical.SortPlan;
@@ -63,16 +62,6 @@ final class TimestampEndpointLimit implements OptimiserPass {
     @Override
     public String getName() {
         return "timestamp endpoint";
-    }
-
-    @Override
-    public PlanStage getProducedStage() {
-        return PlanStage.DECORRELATED;
-    }
-
-    @Override
-    public PlanStage getRequiredStage() {
-        return PlanStage.DECORRELATED;
     }
 
     private int limitEndpointInput(LogicalPlan plan) {

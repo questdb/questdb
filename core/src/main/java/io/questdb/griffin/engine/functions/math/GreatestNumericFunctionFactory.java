@@ -85,15 +85,8 @@ public class GreatestNumericFunctionFactory implements FunctionFactory {
         }
         for (int i = 0, n = args.size(); i < n; i++) {
             final int type = args.getQuick(i).getType();
-            switch (ColumnType.tagOf(type)) {
-                case ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.LONG, ColumnType.INT, ColumnType.SHORT,
-                     ColumnType.BYTE,
-                     ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.DECIMAL8, ColumnType.DECIMAL16,
-                     ColumnType.DECIMAL32,
-                     ColumnType.DECIMAL64, ColumnType.DECIMAL128, ColumnType.DECIMAL256, ColumnType.NULL -> {
-                }
-                default ->
-                        throw SqlException.position(argPositions.getQuick(i)).put("unsupported type: ").put(ColumnType.nameOf(type));
+            if (!ResultTypes.isNumericExtremeArgument(type)) {
+                throw SqlException.position(argPositions.getQuick(i)).put("unsupported type: ").put(ColumnType.nameOf(type));
             }
         }
         final IntList argTypes = ResultTypes.argTypes(args);

@@ -72,7 +72,6 @@ public final class ScanPlan extends LogicalPlan {
     private IntervalScan intervalScan = IntervalScan.NONE;
     private boolean isRandomAccess = true;
     private boolean isSequencedUpdate;
-    private boolean isSinglePartition;
     private boolean isTimestampDropped;
     private boolean isUpdate;
     private WindowJoinStep joinIntervalStep;
@@ -138,7 +137,6 @@ public final class ScanPlan extends LogicalPlan {
         indexRead = IndexRead.NONE;
         intervalScan = IntervalScan.NONE;
         staticIntervals.clear();
-        isSinglePartition = false;
         isTimestampDropped = false;
         joinIntervalStep = null;
         keyPattern = null;
@@ -546,11 +544,6 @@ public final class ScanPlan extends LogicalPlan {
      * Whether the intervals the scan reads lie in a single partition, which lets an index access path emit rows in
      * key order.
      */
-    public boolean isSinglePartition() {
-        checkAccessPath("ScanPlan.isSinglePartition");
-        return isSinglePartition;
-    }
-
     /**
      * Whether the access path emits rows out of designated timestamp order, so its metadata declares no timestamp.
      */
@@ -709,10 +702,6 @@ public final class ScanPlan extends LogicalPlan {
         }
     }
 
-    public void setSinglePartition(boolean isSinglePartition) {
-        this.isSinglePartition = isSinglePartition;
-    }
-
     public void setTimestampDropped(boolean isTimestampDropped) {
         this.isTimestampDropped = isTimestampDropped;
     }
@@ -727,7 +716,7 @@ public final class ScanPlan extends LogicalPlan {
     }
 
     @Override
-    public void visitFacts(PlanFactVisitor visitor) {
+    public void visitFacts(PlanFactRecorder visitor) {
         super.visitFacts(visitor);
         visitor.columnIds("indexedColumnIds", indexedColumnIds);
         visitor.facts("referencedColumnIndexes", referencedColumnIndexes);
@@ -745,7 +734,6 @@ public final class ScanPlan extends LogicalPlan {
         visitor.fact("intervalScan", intervalScan);
         visitor.fact("isRandomAccess", isRandomAccess);
         visitor.fact("isSequencedUpdate", isSequencedUpdate);
-        visitor.fact("isSinglePartition", isSinglePartition);
         visitor.fact("isTimestampDropped", isTimestampDropped);
         visitor.fact("isUpdate", isUpdate);
         visitor.facts("joinIntervals", joinIntervals);

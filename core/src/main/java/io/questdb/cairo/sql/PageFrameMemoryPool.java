@@ -328,7 +328,14 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
      * current hint, so that a walk over them decodes each of them once however often it revisits them.
      */
     public boolean isCachingFrames(int frameCount, long decodedBytes) {
-        return frameCount <= maxCachedBuffers() && decodedBytes <= effectiveBudgetBytes;
+        return isCachingFrames(decodeHint, frameCount, decodedBytes);
+    }
+
+    /**
+     * True when this many Parquet frames, which decode to this many bytes in all, stay cached together under the hint.
+     */
+    public boolean isCachingFrames(ParquetDecodeHint hint, int frameCount, long decodedBytes) {
+        return frameCount <= maxCachedBuffers(hint) && decodedBytes <= hint.applyTo(maxCacheBytes);
     }
 
     @TestOnly
@@ -932,7 +939,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
 
     private ParquetBuffers acquireBuffer(int frameIndex, byte usageBit) {
         assert getBound(usageBit) == null : "acquireBuffer requires the prior pin to have been cleared by tryHit";
-        final boolean isFull = cachedBytes >= effectiveBudgetBytes || getCachedNativeBytes() >= maxNativeBytes || byFrameIndex.size() >= maxCachedBuffers();
+        final boolean isFull = cachedBytes >= effectiveBudgetBytes || getCachedNativeBytes() >= maxNativeBytes || byFrameIndex.size() >= maxCachedBuffers(decodeHint);
         for (ParquetBuffers victim = firstVictim(); victim != null; victim = nextVictim(victim)) {
             if (victim.usageFlags != 0) {
                 continue;
@@ -1289,8 +1296,8 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     // Row-filtered buffers retain only the declared rows, so a declaration may need
     // more entries than the hint's cap before the byte budget binds; it never needs
     // more than the declared frame count.
-    private int maxCachedBuffers() {
-        return Math.max(decodeHint.maxCachedBuffers, recordAtSlices.size());
+    private int maxCachedBuffers(ParquetDecodeHint hint) {
+        return Math.max(hint.maxCachedBuffers, recordAtSlices.size());
     }
 
     /**
@@ -1612,7 +1619,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
 
     private void trimToBudget() {
         ParquetBuffers b = firstVictim();
-        while (b != null && (cachedBytes > effectiveBudgetBytes || getCachedNativeBytes() > maxNativeBytes || byFrameIndex.size() > maxCachedBuffers())) {
+        while (b != null && (cachedBytes > effectiveBudgetBytes || getCachedNativeBytes() > maxNativeBytes || byFrameIndex.size() > maxCachedBuffers(decodeHint))) {
             final ParquetBuffers next = nextVictim(b);
             if (b.usageFlags == 0) {
                 evictAndClose(b);

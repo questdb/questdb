@@ -257,7 +257,7 @@ public final class WindowJoinStep implements PlanFactSource {
     }
 
     @Override
-    public void visitFacts(PlanFactVisitor visitor) {
+    public void visitFacts(PlanFactRecorder visitor) {
         visitor.columnIds("aggregateColumnIds", aggregateColumnIds);
         visitor.output("masterScope", masterScope);
         visitor.output("scope", scope);

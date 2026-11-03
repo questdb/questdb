@@ -2352,7 +2352,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             Window Fast Join
-                              vectorized: false
+                              vectorized: true
                               symbol: t.tag=tag
                               window lo: 2 preceding (include prevailing)
                               window hi: current row

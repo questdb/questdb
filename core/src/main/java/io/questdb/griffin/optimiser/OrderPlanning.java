@@ -116,11 +116,6 @@ final class OrderPlanning implements OptimiserPass {
         return PlanStage.REWRITTEN;
     }
 
-    @Override
-    public PlanStage getRequiredStage() {
-        return PlanStage.DECORRELATED;
-    }
-
     private static void deriveJoinTimestamps(JoinPlan join) {
         final ObjList<JoinInput> steps = join.getOrderedInputs();
         for (int i = 0, n = steps.size(); i < n; i++) {

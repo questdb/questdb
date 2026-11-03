@@ -204,7 +204,7 @@ public final class FunctionSourcePlan extends LogicalPlan {
     }
 
     @Override
-    public void visitFacts(PlanFactVisitor visitor) {
+    public void visitFacts(PlanFactRecorder visitor) {
         super.visitFacts(visitor);
         visitor.output("recordSchema", recordSchema);
         visitor.facts("sourceColumnIndexes", sourceColumnIndexes);

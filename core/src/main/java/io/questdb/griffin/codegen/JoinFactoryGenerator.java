@@ -49,7 +49,6 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.async.PageFrameReduceTaskFactory;
 import io.questdb.griffin.BoundExpressionRewriter;
-import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.FunctionInstantiator;
 import io.questdb.griffin.FunctionResolver;
 import io.questdb.griffin.PlanSink;
@@ -159,7 +158,6 @@ final class JoinFactoryGenerator {
     private final EntityColumnFilter entityColumnFilter;
     private final BoundExpressionRewriter expressionRewriter;
     private final FilterFactoryGenerator filterGenerator;
-    private final FunctionFactoryCache functionFactoryCache;
     private final FunctionInstantiator functionInstantiator;
     private final IntHashSet intHashSet;
     private final PageFrameReduceTaskFactory reduceTaskFactory;
@@ -172,7 +170,6 @@ final class JoinFactoryGenerator {
             FilterFactoryGenerator filterGenerator,
             FunctionInstantiator functionInstantiator,
             BoundExpressionRewriter expressionRewriter,
-            FunctionFactoryCache functionFactoryCache,
             BytecodeAssembler asm,
             EntityColumnFilter entityColumnFilter,
             PageFrameReduceTaskFactory reduceTaskFactory,
@@ -185,7 +182,6 @@ final class JoinFactoryGenerator {
         this.filterGenerator = filterGenerator;
         this.functionInstantiator = functionInstantiator;
         this.expressionRewriter = expressionRewriter;
-        this.functionFactoryCache = functionFactoryCache;
         this.asm = asm;
         this.entityColumnFilter = entityColumnFilter;
         this.reduceTaskFactory = reduceTaskFactory;
@@ -593,21 +589,6 @@ final class JoinFactoryGenerator {
         return symbolShortCircuit;
     }
 
-    // The last window join treats an earlier aggregate's alias as an aggregate when it names a
-    // group-by function; that alias reads a master column, which disables vectorization.
-    private boolean hasAggregateNamedOutput(WindowJoinPlan plan, int stepIndex) {
-        final OutputSchema output = plan.getOutput();
-        for (int s = 0; s < stepIndex; s++) {
-            final IntList ids = plan.getSteps().getQuick(s).getAggregateColumnIds();
-            for (int i = 0, n = ids.size(); i < n; i++) {
-                if (functionFactoryCache.isGroupBy(output.getColumnName(output.getColumnIndexById(ids.getQuick(i))))) {
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
     private boolean isWindowJoinVectorized(WindowJoinPlan plan, int stepIndex, ObjList<GroupByFunction> groupByFunctions, int splitIndex) {
         final WindowJoinStep step = plan.getSteps().getQuick(stepIndex);
         final ObjList<FunctionExpression> aggregates = step.getAggregates();
@@ -615,9 +596,6 @@ final class JoinFactoryGenerator {
         for (int i = 0, n = aggregates.size(); i < n && isVectorized; i++) {
             isVectorized = groupByFunctions.getQuick(i).supportsBatchComputation()
                     && isWindowJoinSlaveOnly(aggregates.getQuick(i), step.getScope(), splitIndex);
-        }
-        if (isVectorized && stepIndex > 0 && stepIndex == plan.getSteps().size() - 1) {
-            isVectorized = !hasAggregateNamedOutput(plan, stepIndex);
         }
         return isVectorized;
     }
@@ -864,7 +842,7 @@ final class JoinFactoryGenerator {
                             slaveSymbolKeyCols,
                             step.getNullExtension(),
                             nullKeyCheck,
-                            step.getNullKeyMatch(),
+                            PlanToFactoryRules.nullKeyMatch(step),
                             step.getBuildSide()
                     );
                 }
@@ -938,7 +916,7 @@ final class JoinFactoryGenerator {
                         slaveSymbolKeyCols,
                         step.getNullExtension(),
                         nullKeyCheck,
-                        step.getNullKeyMatch()
+                        PlanToFactoryRules.nullKeyMatch(step)
                 );
             }
 

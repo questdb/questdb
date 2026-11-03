@@ -41,6 +41,7 @@ import io.questdb.std.LongObjHashMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.ColumnType.*;
 
@@ -92,6 +93,7 @@ public class CaseCommon {
         return arg;
     }
 
+    @TestOnly
     public static int getCommonType(int commonType, int valueType, int valuePos, String undefinedErrorMsg) throws SqlException {
         if (isUndefined(valueType)) {
             throw SqlException.$(valuePos, undefinedErrorMsg);

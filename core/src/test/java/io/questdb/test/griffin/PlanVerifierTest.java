@@ -54,6 +54,7 @@ import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.PlanExpressionVisitor;
 import io.questdb.griffin.plan.logical.PlanFactRecorder;
 import io.questdb.griffin.plan.logical.PlanStage;
+import io.questdb.griffin.plan.logical.PlanToFactoryRules;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.SampleByPlan;
 import io.questdb.griffin.plan.logical.ScanPlan;
@@ -635,25 +636,6 @@ public class PlanVerifierTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFilterUpdateScan() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE fu_t (id INT, x INT)");
-            try (
-                    SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
-                    RecordCursorFactory ignored = compiler.compile("SELECT * FROM (SELECT id, count() c FROM fu_t) WHERE c > 1", sqlExecutionContext)
-                            .getRecordCursorFactory()
-            ) {
-                final LogicalPlan plan = compiler.getPlanForTesting();
-                final FilterPlan filter = find(plan, FilterPlan.class);
-                Assert.assertFalse(filter.hasUpdateScan());
-                verifier.verify(plan, PlanStage.PHYSICAL, PASS);
-                filter.setUpdateScan(true);
-                assertAccessPathsFail(plan, PlanVerifier.FILTER_UPDATE_SCAN, "FilterPlan");
-            }
-        });
-    }
-
-    @Test
     public void testFilterWindowKeepFlagWithoutKeepFlag() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE grouped (s STRING, sym SYMBOL, x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -838,7 +820,7 @@ public class PlanVerifierTest extends AbstractCairoTest {
     @Test
     public void testJoinKeyCheck() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE kc_m (s1 SYMBOL, s2 SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE kc_m (s1 SYMBOL, s2 SYMBOL, ts TIMESTAMP, b BOOLEAN) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE kc_s (s SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             // The join looks up s1 and checks s2 on the master row, so it must hold the key check.
             assertAlgorithmContradicts("SELECT m.ts, s.v FROM kc_m m ASOF JOIN kc_s s ON m.s1 = s.s AND m.s2 = s.s", JoinPlan.class, join -> {
@@ -847,10 +829,11 @@ public class PlanVerifierTest extends AbstractCairoTest {
                 step.setKeyCheck(null);
             }, PlanVerifier.JOIN_KEY_LOOKUP);
             // A join that looks up every key holds none.
-            assertAlgorithmContradicts("SELECT m.ts, s.v FROM kc_m m LT JOIN kc_s s ON m.s1 = s.s", JoinPlan.class, join -> {
+            assertAlgorithmContradicts("SELECT m.ts, m.b, s.v FROM kc_m m LT JOIN kc_s s ON m.s1 = s.s", JoinPlan.class, join -> {
                 final JoinInput step = join.getOrderedInputs().getQuick(1);
                 Assert.assertNull(step.getKeyCheck());
-                step.setKeyCheck(column(1, ColumnType.BOOLEAN));
+                final OutputSchema master = join.getOrderedInputs().getQuick(0).getOutput();
+                step.setKeyCheck(column(master.getColumnId(master.getColumnIndexQuiet("b")), ColumnType.BOOLEAN));
             }, PlanVerifier.JOIN_KEY_LOOKUP);
             try (
                     SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
@@ -917,27 +900,17 @@ public class PlanVerifierTest extends AbstractCairoTest {
             execute("CREATE TABLE nm_b (id INT, x INT, k INT)");
             execute("CREATE TABLE nm_c (id INT, k INT)");
             final String query = "SELECT a.id, b.id, c.id FROM nm_a a %s JOIN nm_b b ON %s JOIN nm_c c ON a.w = c.k AND b.k = c.k";
-            assertAlgorithmContradicts(query.formatted("LEFT", "b.x > 1"), JoinPlan.class, join -> {
-                final JoinInput step = nullExtendedStep(join);
-                Assert.assertEquals(JoinInput.NullKeyMatch.PER_SLAVE_ROW, step.getNullKeyMatch());
-                step.setNullKeyMatch(JoinInput.NullKeyMatch.PER_PAIR);
-            }, PlanVerifier.JOIN_NULL_KEY_MATCH);
-            assertAlgorithmContradicts(query.formatted("RIGHT", "b.x > a.x"), JoinPlan.class, join -> {
-                final JoinInput step = nullExtendedStep(join);
-                Assert.assertEquals(JoinInput.NullKeyMatch.PER_PAIR, step.getNullKeyMatch());
-                step.setNullKeyMatch(JoinInput.NullKeyMatch.PER_SLAVE_ROW);
-            }, PlanVerifier.JOIN_NULL_KEY_MATCH);
-            assertAlgorithmContradicts(query.formatted("FULL", "b.x > rnd_int()"), JoinPlan.class, join -> {
-                final JoinInput step = nullExtendedStep(join);
-                Assert.assertEquals(JoinInput.NullKeyMatch.PER_PAIR, step.getNullKeyMatch());
-                step.setNullKeyMatch(null);
-            }, PlanVerifier.JOIN_NULL_KEY_MATCH);
-            assertAlgorithmContradicts(query.formatted("LEFT", "b.x > 1"), JoinPlan.class, join -> {
-                final JoinInput step = join.getOrderedInputs().getLast();
+            assertNullKeyMatch(query.formatted("LEFT", "b.x > 1"), JoinInput.NullKeyMatch.PER_SLAVE_ROW);
+            assertNullKeyMatch(query.formatted("RIGHT", "b.x > a.x"), JoinInput.NullKeyMatch.PER_PAIR);
+            assertNullKeyMatch(query.formatted("FULL", "b.x > rnd_int()"), JoinInput.NullKeyMatch.PER_PAIR);
+            try (
+                    SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                    RecordCursorFactory ignored = compiler.compile(query.formatted("LEFT", "b.x > 1"), sqlExecutionContext).getRecordCursorFactory()
+            ) {
+                final JoinInput step = find(compiler.getPlanForTesting(), JoinPlan.class).getOrderedInputs().getLast();
                 Assert.assertEquals(JoinInput.NullExtension.BY_KEYS, step.getNullExtension());
-                Assert.assertNull(step.getNullKeyMatch());
-                step.setNullKeyMatch(JoinInput.NullKeyMatch.PER_PAIR);
-            }, PlanVerifier.JOIN_NULL_KEY_MATCH);
+                Assert.assertNull(PlanToFactoryRules.nullKeyMatch(step));
+            }
         });
     }
 
@@ -1764,6 +1737,15 @@ public class PlanVerifierTest extends AbstractCairoTest {
      * The consumer reads the designated timestamp of the light hash join of l and r, so operator planning fixes the
      * join's master side; a side left to the smaller input drops the timestamp and fails the plan.
      */
+    private void assertNullKeyMatch(String sql, JoinInput.NullKeyMatch expected) throws Exception {
+        try (
+                SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                RecordCursorFactory ignored = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()
+        ) {
+            Assert.assertEquals(expected, PlanToFactoryRules.nullKeyMatch(nullExtendedStep(find(compiler.getPlanForTesting(), JoinPlan.class))));
+        }
+    }
+
     private void assertMasterSideBindsTimestamp(String sql, String consumer) throws Exception {
         try (
                 SqlCompilerImpl compiler = new SqlCompilerImpl(engine);

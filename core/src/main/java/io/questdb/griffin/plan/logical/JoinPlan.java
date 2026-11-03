@@ -191,7 +191,7 @@ public final class JoinPlan extends LogicalPlan {
     }
 
     @Override
-    public void visitFacts(PlanFactVisitor visitor) {
+    public void visitFacts(PlanFactRecorder visitor) {
         super.visitFacts(visitor);
         visitor.facts("filterConjunctOrigins", filterConjunctOrigins);
         for (int i = 0, n = inputs.size(); i < n; i++) {

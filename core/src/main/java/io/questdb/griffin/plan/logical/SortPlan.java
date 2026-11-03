@@ -120,7 +120,7 @@ public final class SortPlan extends ForwardingPlan {
     }
 
     @Override
-    public void visitFacts(PlanFactVisitor visitor) {
+    public void visitFacts(PlanFactRecorder visitor) {
         super.visitFacts(visitor);
         visitor.facts("directions", directions);
         visitor.fact("algorithm", algorithm);

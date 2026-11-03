@@ -104,7 +104,7 @@ public final class DomainReadPlan extends LogicalPlan {
     }
 
     @Override
-    public void visitFacts(PlanFactVisitor visitor) {
+    public void visitFacts(PlanFactRecorder visitor) {
         super.visitFacts(visitor);
         visitor.columnIds("producerColumnIds", producerColumnIds);
         visitor.fact("algorithm", algorithm);

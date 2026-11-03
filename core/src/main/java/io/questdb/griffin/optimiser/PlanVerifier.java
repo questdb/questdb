@@ -112,7 +112,6 @@ public final class PlanVerifier {
     public static final String FILL_SHAPE = "fill lists differ in length";
     public static final String FILL_TIMESTAMP = "fill does not designate its bucket timestamp";
     public static final String FILTER_ALGORITHM = "filter algorithm contradicts the filter the generator builds";
-    public static final String FILTER_UPDATE_SCAN = "filter update scan fact contradicts whether its input reads the target of an UPDATE";
     public static final String FUNCTION_OVERLOAD = "function call has no overload";
     public static final String HORIZON_ALGORITHM = "horizon join algorithm contradicts its consumer or inputs";
     public static final String HORIZON_CONSUMER = "horizon join consumer contradicts whether an aggregate reads it directly";
@@ -128,7 +127,6 @@ public final class PlanVerifier {
     public static final String JOIN_KEY_LOOKUP = "join key lookups contradict the keys operator planning checks instead of looking them up";
     public static final String JOIN_NULL_EXTENSION = "join step NULL-extended by its ON residual is not a LEFT, RIGHT or FULL hash join with an ON residual";
     public static final String JOIN_NULL_KEY_CHECK = "join step NULL key check contradicts whether it NULL-extends master rows by its ON residual";
-    public static final String JOIN_NULL_KEY_MATCH = "join step NULL key match contradicts how it NULL-extends or what its ON residual reads";
     public static final String JOIN_ON_KEPT = "join step that does not commute lost an ON condition fact in decorrelation";
     public static final String JOIN_ORDER = "ordered join inputs are not a permutation of the inputs";
     public static final String JOIN_OUTER_CROSS = "OUTER CROSS step does not directly follow a RIGHT or FULL step, or has a key or an ON residual";
@@ -379,7 +377,7 @@ public final class PlanVerifier {
      * Checks the access path of a scan, which access path planning records on a {@link PlanStage#REWRITTEN} plan.
      */
     private void accessPath(ScanPlan scan) {
-        if (!hasPhysicalChoices()) {
+        if (!stage.isRewritten()) {
             return;
         }
         if (scan.getAccessPath() != null) {
@@ -402,7 +400,6 @@ public final class PlanVerifier {
             predicate(output, scan.getKeyPattern());
             predicate(output, scan.getWithin());
         }
-        failIfViolated(PhysicalChoiceVerifier.scan(scan, isPlanned()));
     }
 
     private void clear() {
@@ -531,16 +528,10 @@ public final class PlanVerifier {
             }
         }
         domainReads.add(read);
-        if (hasPhysicalChoices()) {
-            failIfViolated(PhysicalChoiceVerifier.domainRead(read, isPlanned()));
-        }
     }
 
     private void fill(FillPlan fill) {
         forwards(fill, FILL_TIMESTAMP);
-        if (hasPhysicalChoices()) {
-            failIfViolated(PhysicalChoiceVerifier.fill(fill, isPlanned()));
-        }
         final int count = fill.getTargetColumnIds().size();
         if (fill.getModes().size() != count || fill.getValues().size() != count) {
             fail(FILL_SHAPE);
@@ -635,28 +626,14 @@ public final class PlanVerifier {
             if (plain.getSharedInputIds().size() != plain.getSharedSourceIds().size()) {
                 fail(SHARED_SOURCE_IDS);
             }
-            if (hasPhysicalChoices()) {
-                failIfViolated(PhysicalChoiceVerifier.aggregate(plain, isPlanned()));
-            }
         }
         if (aggregate instanceof SampleByPlan sample) {
-            if (hasPhysicalChoices()) {
-                failIfViolated(PhysicalChoiceVerifier.sampleBy(sample, isPlanned()));
-            }
             noColumnReads(sample.getFrom());
             noColumnReads(sample.getTo());
             for (int i = 0, n = sample.getFillValues().size(); i < n; i++) {
                 noColumnReads(sample.getFillValues().getQuick(i));
             }
         }
-    }
-
-    /**
-     * Whether the plan carries the physical choices operator planning records, which {@link PhysicalChoiceVerifier}
-     * checks: from {@link PlanStage#REWRITTEN} on, see {@link PlanStage#isRewritten}.
-     */
-    private boolean hasPhysicalChoices() {
-        return stage.isRewritten();
     }
 
     private void horizonJoin(HorizonJoinPlan horizon) {
@@ -666,9 +643,6 @@ public final class PlanVerifier {
         }
         if (horizon.getConsumer() == null || isAggregated != (horizon.getConsumer() == HorizonJoinPlan.Consumer.AGGREGATE)) {
             fail(HORIZON_CONSUMER);
-        }
-        if (hasPhysicalChoices()) {
-            failIfViolated(PhysicalChoiceVerifier.horizon(horizon, isPlanned()));
         }
         final OutputSchema master = horizon.getMaster().getOutput();
         final OutputSchema output = horizon.getOutput();
@@ -746,9 +720,6 @@ public final class PlanVerifier {
         joinScope.clear();
         for (int i = 0, n = steps.size(); i < n; i++) {
             final JoinInput step = steps.getQuick(i);
-            if (hasPhysicalChoices()) {
-                failIfViolated(PhysicalChoiceVerifier.joinStep(join, ordered.size() > 0 ? i : -1, step, isPlanned()));
-            }
             joinStep(step, isUnordered);
             joinStepKind(steps, i);
         }
@@ -891,9 +862,6 @@ public final class PlanVerifier {
 
     private void latestBy(LatestByPlan latest) {
         forwards(latest, OUTPUT_TIMESTAMP);
-        if (hasPhysicalChoices()) {
-            failIfViolated(PhysicalChoiceVerifier.latestBy(latest, isPlanned()));
-        }
         final OutputSchema input = latest.getChild().getOutput();
         site = "LATEST BY keys";
         resolveAll(input, latest.getKeyColumnIds());
@@ -920,9 +888,6 @@ public final class PlanVerifier {
         }
         noColumnReads(limit.getLo());
         noColumnReads(limit.getHi());
-        if (hasPhysicalChoices()) {
-            failIfViolated(PhysicalChoiceVerifier.limit(limit, isPlanned()));
-        }
     }
 
     private void masterKeys(OutputSchema scope, ObjList<JoinKey> keys) {
@@ -994,17 +959,11 @@ public final class PlanVerifier {
                     fail(EXPRESSION_NULL);
                 }
                 predicate(filter.getChild().getOutput(), filter.getPredicate());
-                if (hasPhysicalChoices()) {
-                    failIfViolated(PhysicalChoiceVerifier.filter(filter, isPlanned()));
-                }
             }
             case ProjectPlan project -> project(project);
             case GroupingPlan grouping -> grouping(grouping);
             case DistinctPlan distinct -> {
                 forwards(distinct, OUTPUT_TIMESTAMP);
-                if (hasPhysicalChoices()) {
-                    failIfViolated(PhysicalChoiceVerifier.distinct(distinct, isPlanned()));
-                }
             }
             case DomainReadPlan read -> domainRead(read);
             case FillPlan fill -> fill(fill);
@@ -1019,11 +978,8 @@ public final class PlanVerifier {
             default -> {
             }
         }
-        if (hasPhysicalChoices()) {
-            failIfViolated(PhysicalChoiceVerifier.timestampReads(plan, isPlanned()));
-            if (plan instanceof WindowPlan window) {
-                failIfViolated(PhysicalChoiceVerifier.windowOrder(window));
-            }
+        if (stage.isRewritten()) {
+            failIfViolated(PhysicalChoiceVerifier.check(plan, isPlanned()));
         }
         site = null;
         reads(plan);
@@ -1168,9 +1124,6 @@ public final class PlanVerifier {
             fail(SET_OPERATION_CAST);
         }
         requestedColumn(operation.getRequestedOrderColumnId(), operation.getOutput());
-        if (hasPhysicalChoices()) {
-            failIfViolated(PhysicalChoiceVerifier.setOperation(operation, isPlanned()));
-        }
         if (PlanToFactoryRules.isRightReleasedFirst(operation)) {
             releasedBranches.add(visited.indexOf(operation.getRight()));
             releasedBranches.add(visited.size());
@@ -1200,9 +1153,6 @@ public final class PlanVerifier {
         site = "sort keys";
         resolveAll(sort.getOutput(), keys);
         forwards(sort, SORT_TIMESTAMP);
-        if (hasPhysicalChoices()) {
-            failIfViolated(PhysicalChoiceVerifier.sort(sort, isPlanned()));
-        }
     }
 
     private void stepPredicates(JoinInput step) {
@@ -1253,9 +1203,6 @@ public final class PlanVerifier {
             resolveAll(input, spec.getOrderByColumnIds());
         }
         site = null;
-        if (hasPhysicalChoices()) {
-            failIfViolated(PhysicalChoiceVerifier.window(window, isPlanned()));
-        }
         final OutputSchema output = window.getOutput();
         final int inputColumns = output.getColumnCount() - count;
         if (inputColumns < 0) {
@@ -1312,9 +1259,6 @@ public final class PlanVerifier {
             }
             site = "window join filter";
             predicate(joinScope, step.getFilter());
-            if (hasPhysicalChoices()) {
-                failIfViolated(PhysicalChoiceVerifier.windowJoinStep(windowJoin, s, step, isPlanned()));
-            }
             final ObjList<FunctionExpression> aggregates = step.getAggregates();
             if (step.getAggregateColumnIds().size() != aggregates.size()) {
                 fail(WINDOW_JOIN_SHAPE);

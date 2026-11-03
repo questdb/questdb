@@ -92,7 +92,7 @@ public final class HorizonJoinSlave implements PlanFactSource {
     }
 
     @Override
-    public void visitFacts(PlanFactVisitor visitor) {
+    public void visitFacts(PlanFactRecorder visitor) {
         JoinKey.visitFacts(keys, visitor);
         visitor.fact("alias", alias);
         visitor.fact("position", position);

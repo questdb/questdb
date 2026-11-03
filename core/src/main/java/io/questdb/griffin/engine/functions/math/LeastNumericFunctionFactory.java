@@ -85,15 +85,8 @@ public class LeastNumericFunctionFactory implements FunctionFactory {
         }
         for (int i = 0, n = args.size(); i < n; i++) {
             final int type = args.getQuick(i).getType();
-            switch (ColumnType.tagOf(type)) {
-                case ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.LONG, ColumnType.INT, ColumnType.SHORT,
-                     ColumnType.BYTE,
-                     ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.DECIMAL8, ColumnType.DECIMAL16,
-                     ColumnType.DECIMAL32,
-                     ColumnType.DECIMAL64, ColumnType.DECIMAL128, ColumnType.DECIMAL256, ColumnType.NULL -> {
-                }
-                default ->
-                        throw SqlException.position(argPositions.getQuick(i)).put("unsupported type: ").put(ColumnType.nameOf(type));
+            if (!ResultTypes.isNumericExtremeArgument(type)) {
+                throw SqlException.position(argPositions.getQuick(i)).put("unsupported type: ").put(ColumnType.nameOf(type));
             }
         }
         final IntList argTypes = ResultTypes.argTypes(args);
@@ -338,7 +331,6 @@ public class LeastNumericFunctionFactory implements FunctionFactory {
 
     private static class LeastDoubleRecordFunction extends DoubleFunction implements MultiArgFunction {
         private final ObjList<Function> args;
-        private final Decimal128 decimal128 = new Decimal128();
         private final Decimal256 decimal256 = new Decimal256();
         private final int n;
         private final StringSink sink = new StringSink();

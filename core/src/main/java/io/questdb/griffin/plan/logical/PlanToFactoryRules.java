@@ -525,7 +525,7 @@ public final class PlanToFactoryRules {
 
     /**
      * How the factory of the join step finds the rows that pass its ON residual with a row whose keys are all NULL, see
-     * {@link JoinInput#getNullKeyMatch}: per slave row when the ON residual reads only the slave input and takes the
+     * {@link JoinInput.NullKeyMatch}: per slave row when the ON residual reads only the slave input and takes the
      * same value for a row on every evaluation, see {@link LogicalPlans#isOrderIndependent}, and per pair of rows
      * otherwise; null for a step its keys NULL-extend.
      */

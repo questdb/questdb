@@ -122,7 +122,7 @@ public final class WindowJoinPlan extends LogicalPlan {
     }
 
     @Override
-    public void visitFacts(PlanFactVisitor visitor) {
+    public void visitFacts(PlanFactRecorder visitor) {
         super.visitFacts(visitor);
         for (int i = 0, n = steps.size(); i < n; i++) {
             steps.getQuick(i).visitFacts(visitor);

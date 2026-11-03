@@ -100,7 +100,7 @@ public final class UnnestSpec implements PlanFactSource {
     }
 
     @Override
-    public void visitFacts(PlanFactVisitor visitor) {
+    public void visitFacts(PlanFactRecorder visitor) {
         visitor.facts("columnAliases", columnAliases);
         visitor.facts("jsonColumnNames", jsonColumnNames);
         visitor.facts("jsonColumnTypes", jsonColumnTypes);

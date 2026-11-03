@@ -57,7 +57,7 @@ public final class DistinctPlan extends ForwardingPlan {
     }
 
     @Override
-    public void visitFacts(PlanFactVisitor visitor) {
+    public void visitFacts(PlanFactRecorder visitor) {
         super.visitFacts(visitor);
         visitor.fact("algorithm", algorithm);
     }

@@ -91,7 +91,7 @@ public abstract sealed class LogicalPlan implements PlanFactSource
     }
 
     @Override
-    public void visitFacts(PlanFactVisitor visitor) {
+    public void visitFacts(PlanFactRecorder visitor) {
         visitor.output("output", output);
         visitor.fact("position", position);
     }

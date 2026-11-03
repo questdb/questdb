@@ -39,7 +39,7 @@ import io.questdb.std.ObjList;
  * The checks of {@link io.questdb.ParanoiaState#PLAN_PARANOIA_MODE} use it: the copier compares a copy with its
  * source, and the plan node pools compare a cleared object with a new one.
  */
-public final class PlanFactRecorder implements PlanFactVisitor, PlanExpressionVisitor, ExpressionVisitor {
+public final class PlanFactRecorder implements PlanExpressionVisitor, ExpressionVisitor {
     private static final String COLUMN = "column";
     private static final String OUTER_COLUMN = "outer column";
     private static final String READ = "read";
@@ -50,12 +50,10 @@ public final class PlanFactRecorder implements PlanFactVisitor, PlanExpressionVi
     private final LongList values = new LongList();
     private IntIntHashMap renamedIds;
 
-    @Override
     public void columnId(String fact, int columnId) {
         add(fact, renamedId(columnId), null);
     }
 
-    @Override
     public void columnIds(String fact, IntList columnIds) {
         add(fact, columnIds.size(), null);
         for (int i = 0, n = columnIds.size(); i < n; i++) {
@@ -63,22 +61,21 @@ public final class PlanFactRecorder implements PlanFactVisitor, PlanExpressionVi
         }
     }
 
-    @Override
     public void fact(String fact, boolean value) {
         add(fact, value ? 1 : 0, null);
     }
 
-    @Override
     public void fact(String fact, long value) {
         add(fact, value, null);
     }
 
-    @Override
+    /**
+     * A value compared by identity, or by content when it is text.
+     */
     public void fact(String fact, Object value) {
         add(fact, 0, value);
     }
 
-    @Override
     public void facts(String fact, IntList values) {
         add(fact, values.size(), null);
         for (int i = 0, n = values.size(); i < n; i++) {
@@ -86,7 +83,6 @@ public final class PlanFactRecorder implements PlanFactVisitor, PlanExpressionVi
         }
     }
 
-    @Override
     public void facts(String fact, LongList values) {
         add(fact, values.size(), null);
         for (int i = 0, n = values.size(); i < n; i++) {
@@ -94,7 +90,9 @@ public final class PlanFactRecorder implements PlanFactVisitor, PlanExpressionVi
         }
     }
 
-    @Override
+    /**
+     * Values compared as {@link #fact(String, Object)} compares one.
+     */
     public void facts(String fact, ObjList<?> values) {
         add(fact, values.size(), null);
         for (int i = 0, n = values.size(); i < n; i++) {
@@ -116,7 +114,6 @@ public final class PlanFactRecorder implements PlanFactVisitor, PlanExpressionVi
         return n == other.names.size() ? null : other.names.getQuick(n);
     }
 
-    @Override
     public void output(String fact, OutputSchema output) {
         add(fact, output.getColumnCount(), null);
         for (int i = 0, n = output.getColumnCount(); i < n; i++) {
@@ -148,7 +145,6 @@ public final class PlanFactRecorder implements PlanFactVisitor, PlanExpressionVi
         source.visitReads(this);
     }
 
-    @Override
     public void reference(String fact, Object planObject) {
         Object recorded = planObject;
         for (int i = 0, n = originals.size(); i < n; i++) {

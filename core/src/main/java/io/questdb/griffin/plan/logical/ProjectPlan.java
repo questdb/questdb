@@ -155,7 +155,7 @@ public final class ProjectPlan extends UnaryPlan {
     }
 
     @Override
-    public void visitFacts(PlanFactVisitor visitor) {
+    public void visitFacts(PlanFactRecorder visitor) {
         super.visitFacts(visitor);
         visitor.columnIds("requestedOrder", requestedOrder.getColumnIds());
         visitor.facts("requestedOrder", requestedOrder.getDirections());

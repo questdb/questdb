@@ -40,7 +40,6 @@ import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
-import io.questdb.griffin.plan.logical.PlanStage;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.SortPlan;
 import io.questdb.griffin.plan.logical.UniqueColumnNames;
@@ -135,16 +134,6 @@ final class AggregateRewrite implements OptimiserPass {
     @Override
     public String getName() {
         return "aggregate rewrite";
-    }
-
-    @Override
-    public PlanStage getProducedStage() {
-        return PlanStage.DECORRELATED;
-    }
-
-    @Override
-    public PlanStage getRequiredStage() {
-        return PlanStage.DECORRELATED;
     }
 
     /**

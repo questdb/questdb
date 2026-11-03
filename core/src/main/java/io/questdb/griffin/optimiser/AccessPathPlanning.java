@@ -299,7 +299,6 @@ final class AccessPathPlanning {
         if (indexOrder == ScanPlan.IndexOrder.NONE && keyCount != 1) {
             indexOrder = unrequestedIndexOrder(scan);
         }
-        scan.setSinglePartition(isSinglePartition);
         scan.setTimestampDropped(isTimestampDropped);
         final int truth = LogicalPlans.constantTruth(residual);
         if (truth == 0) {
@@ -649,7 +648,6 @@ final class AccessPathPlanning {
         }
         final int sortedKeyIndex = sortedSymbolIndexKey(scan, residual, hasModel, isTimestampRequired);
         if (sortedKeyIndex >= 0) {
-            scan.setSinglePartition(true);
             scan.setTimestampDropped(true);
             scan.setIndex(output.getColumnId(sortedKeyIndex), ScanPlan.IndexRead.INDEX);
             final SortDirection indexDirection = scan.getRequestedOrder().size() == 2

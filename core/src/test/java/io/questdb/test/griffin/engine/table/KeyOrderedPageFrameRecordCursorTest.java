@@ -1354,6 +1354,27 @@ public class KeyOrderedPageFrameRecordCursorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBoundedReadOfRowsWiderThanTheirSampleKeepsItsRowGroupsWithinMemoryLimit() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 4 * 1024L);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 16 * 1024 * 1024L);
+        assertMemoryLeak(() -> {
+            // by the one-byte payloads of the first of the 50 row groups they stay decoded within a query memory limit of
+            // 4 MiB; the 1 KiB payloads after it decode to about 5.3 MB, which fits the decode cache but not the limit
+            createCachedRowGroupsTable(5_000, "x <= 100", 1_024);
+            final String tail = "id, s, payload, ts FROM w WHERE ts IN '1970-01-01' AND s IN (" + cachedRowGroupKeys() + ") AND id > 0 ORDER BY s, ts LIMIT 4_000, 4_010";
+            final StringSink expected = new StringSink();
+            printSql("SELECT /*+ no_index(w) */ " + tail, expected);
+            node1.setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 4 * 1024 * 1024L);
+            try (RecordCursorFactory factory = select("SELECT " + tail); RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                TestUtils.assertCursor(expected, cursor, factory.getMetadata(), true, new StringSink());
+            } finally {
+                node1.setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0L);
+            }
+        });
+    }
+
+    @Test
     public void testGatherOfRowsThatFitDecodeCacheDecodesEachRowGroupOnce() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
         node1.setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 4 * 1024L);

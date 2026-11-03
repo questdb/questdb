@@ -132,7 +132,7 @@ public final class WindowPlan extends UnaryPlan {
     }
 
     @Override
-    public void visitFacts(PlanFactVisitor visitor) {
+    public void visitFacts(PlanFactRecorder visitor) {
         super.visitFacts(visitor);
         visitor.columnIds("functionColumnIds", functionColumnIds);
         visitor.columnIds("queryOrder", queryOrder.getColumnIds());

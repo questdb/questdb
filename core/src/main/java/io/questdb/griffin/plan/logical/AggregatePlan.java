@@ -203,7 +203,7 @@ public final class AggregatePlan extends GroupingPlan {
     }
 
     @Override
-    public void visitFacts(PlanFactVisitor visitor) {
+    public void visitFacts(PlanFactRecorder visitor) {
         super.visitFacts(visitor);
         visitor.columnIds("sharedInputIds", sharedInputIds);
         visitor.columnIds("sharedSourceIds", sharedSourceIds);

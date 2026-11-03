@@ -538,6 +538,43 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConsecutiveWindowJoinsOfAliasNamedAfterAggregate() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (ts TIMESTAMP, tag SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE quotes (ts TIMESTAMP, tag SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO trades VALUES
+                    ('2024-01-01T00:00:03.000000Z', 'a', 100.0),
+                    ('2024-01-01T00:00:05.000000Z', 'b', 200.0)
+                    """);
+            execute("""
+                    INSERT INTO quotes VALUES
+                    ('2024-01-01T00:00:01.000000Z', 'a', 1.0),
+                    ('2024-01-01T00:00:02.000000Z', 'a', 2.0),
+                    ('2024-01-01T00:00:03.000000Z', 'b', 4.0),
+                    ('2024-01-01T00:00:04.000000Z', 'a', 8.0),
+                    ('2024-01-01T00:00:05.000000Z', 'b', 16.0)
+                    """);
+            // the alias of the first aggregate names a group-by function, and the second join still sums its slave in batches:
+            // a over [1s, 3s] holds 1 + 2 and over [2s, 4s] holds 2 + 8; b over [3s, 5s] holds 4 + 16 and over [4s, 6s] holds 16
+            assertQuery("""
+                    SELECT t.ts, sum(q.price), sum(q1.price) FROM trades t
+                    WINDOW JOIN quotes q ON tag RANGE BETWEEN 2 SECOND PRECEDING AND CURRENT ROW EXCLUDE PREVAILING
+                    WINDOW JOIN quotes q1 ON tag RANGE BETWEEN 1 SECOND PRECEDING AND 1 SECOND FOLLOWING EXCLUDE PREVAILING
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Window Fast Join", "vectorized: true")
+                    .timestamp("ts")
+                    .returns("""
+                            ts	sum	sum1
+                            2024-01-01T00:00:03.000000Z	3.0	10.0
+                            2024-01-01T00:00:05.000000Z	20.0	16.0
+                            """);
+        });
+    }
+
+    @Test
     public void testConstantArgumentAggregates() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE ca_trades (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");

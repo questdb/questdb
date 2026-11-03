@@ -40,7 +40,7 @@ import org.jetbrains.annotations.Nullable;
  * slave row passes the ON residual with it, and a slave row whose keys are all NULL when no master row does; a join
  * that NULL-extends {@link JoinInput.NullExtension#BY_KEYS} does neither. The NULL key check of a LEFT or FULL join,
  * see {@link JoinInput#getNullKeyCheck}, tells a master row whose keys are all NULL, and the NULL key match of the
- * join, see {@link JoinInput#getNullKeyMatch}, tells whether a master row changes which slave rows pass the ON
+ * join, see {@link JoinInput.NullKeyMatch}, tells whether a master row changes which slave rows pass the ON
  * residual. The {@link SlaveChains} of the join walk the chains of slave rows its join key map refers to.
  */
 final class HashOuterJoinNullKeys {

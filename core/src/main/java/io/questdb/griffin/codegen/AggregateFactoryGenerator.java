@@ -43,7 +43,6 @@ import io.questdb.griffin.FunctionInstantiator;
 import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.LimitBounds;
 import io.questdb.griffin.engine.functions.GroupByFunction;
@@ -613,20 +612,16 @@ public final class AggregateFactoryGenerator {
                 isAdopted = true;
                 return new CountRecordCursorFactory(metadata, base);
             }
-            if (plan.getGroupingExpressions().size() == 0 && aggregates.size() == 1) {
-                final FunctionExpression call = aggregates.getQuick(0);
-                if (call.getArgumentCount() == 0 && call.isAggregate()
-                        && SqlKeywords.isCountKeyword(call.getName())) {
-                    final CharSequence name = PlanToFactoryRules.factoryColumnName(plan, 0);
-                    final RecordMetadata metadata = Chars.equals(name, "count")
-                            ? CountRecordCursorFactory.DEFAULT_COUNT_METADATA
-                            : new GenericRecordMetadata().add(new TableColumnMetadata(Chars.toString(name), ColumnType.LONG));
-                    if (base instanceof SelectedRecordCursorFactory selected && selected.getMetadata().getColumnCount() == 0) {
-                        base = selected.getBaseFactory();
-                    }
-                    isAdopted = true;
-                    return new CountRecordCursorFactory(metadata, base);
+            if (LogicalPlans.isCount(plan)) {
+                final CharSequence name = PlanToFactoryRules.factoryColumnName(plan, 0);
+                final RecordMetadata metadata = Chars.equals(name, "count")
+                        ? CountRecordCursorFactory.DEFAULT_COUNT_METADATA
+                        : new GenericRecordMetadata().add(new TableColumnMetadata(Chars.toString(name), ColumnType.LONG));
+                if (base instanceof SelectedRecordCursorFactory selected && selected.getMetadata().getColumnCount() == 0) {
+                    base = selected.getBaseFactory();
                 }
+                isAdopted = true;
+                return new CountRecordCursorFactory(metadata, base);
             }
             if (plan.getAlgorithm() == AggregatePlan.Algorithm.VECTORISED) {
                 isAdopted = true;

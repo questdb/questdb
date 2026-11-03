@@ -414,6 +414,29 @@ final class PhysicalChoiceVerifier {
     /**
      * Checks a HORIZON JOIN that reads its master by row id, which requires a master with random access.
      */
+    private static String joinSteps(JoinPlan join, boolean isPlanned) {
+        final ObjList<JoinInput> ordered = join.getOrderedInputs();
+        final ObjList<JoinInput> steps = ordered.size() > 0 ? ordered : join.getInputs();
+        for (int i = 0, n = steps.size(); i < n; i++) {
+            final String violation = joinStep(join, ordered.size() > 0 ? i : -1, steps.getQuick(i), isPlanned);
+            if (violation != null) {
+                return violation;
+            }
+        }
+        return null;
+    }
+
+    private static String windowJoinSteps(WindowJoinPlan windowJoin, boolean isPlanned) {
+        final ObjList<WindowJoinStep> steps = windowJoin.getSteps();
+        for (int i = 0, n = steps.size(); i < n; i++) {
+            final String violation = windowJoinStep(windowJoin, i, steps.getQuick(i), isPlanned);
+            if (violation != null) {
+                return violation;
+            }
+        }
+        return null;
+    }
+
     private static String serialHorizon(HorizonJoinPlan horizon, boolean isPlanned) {
         return isUnsatisfied(PhysicalProperties.supportsRandomAccess(horizon.getMaster()), isPlanned) ? PlanVerifier.INPUT_RANDOM_ACCESS : null;
     }
@@ -467,6 +490,36 @@ final class PhysicalChoiceVerifier {
      * Checks the algorithm operator planning records for the DISTINCT, see {@link DistinctPlan.Algorithm}: the
      * time-series one exactly over an input with random access and a designated timestamp.
      */
+    /**
+     * The invariant that a physical choice operator planning records on the node breaks, or null: the choices of the node
+     * and of the parts it owns, and the timestamps and the order they read from its inputs.
+     */
+    static String check(LogicalPlan plan, boolean isPlanned) {
+        final String violation = switch (plan) {
+            case AggregatePlan aggregate -> aggregate(aggregate, isPlanned);
+            case DistinctPlan distinct -> distinct(distinct, isPlanned);
+            case DomainReadPlan read -> domainRead(read, isPlanned);
+            case FillPlan fill -> fill(fill, isPlanned);
+            case FilterPlan filter -> filter(filter, isPlanned);
+            case HorizonJoinPlan horizon -> horizon(horizon, isPlanned);
+            case JoinPlan join -> joinSteps(join, isPlanned);
+            case LatestByPlan latest -> latestBy(latest, isPlanned);
+            case LimitPlan limit -> limit(limit, isPlanned);
+            case SampleByPlan sample -> sampleBy(sample, isPlanned);
+            case ScanPlan scan -> scan(scan, isPlanned);
+            case SetOperationPlan operation -> setOperation(operation, isPlanned);
+            case SortPlan sort -> sort(sort, isPlanned);
+            case WindowJoinPlan windowJoin -> windowJoinSteps(windowJoin, isPlanned);
+            case WindowPlan window -> window(window, isPlanned);
+            default -> null;
+        };
+        if (violation != null) {
+            return violation;
+        }
+        final String timestampRead = timestampReads(plan, isPlanned);
+        return timestampRead == null && plan instanceof WindowPlan window ? windowOrder(window) : timestampRead;
+    }
+
     static String distinct(DistinctPlan distinct, boolean isPlanned) {
         final DistinctPlan.Algorithm algorithm = distinct.getAlgorithm();
         if (algorithm == null) {
@@ -514,9 +567,6 @@ final class PhysicalChoiceVerifier {
     }
 
     static String filter(FilterPlan filter, boolean isPlanned) {
-        if (isPlanned && filter.hasUpdateScan() != LogicalPlans.hasUpdateScan(filter.getChild())) {
-            return PlanVerifier.FILTER_UPDATE_SCAN;
-        }
         final boolean isFused = PlanToFactoryRules.isFusedFilter(filter);
         final FilterPlan.Algorithm algorithm = filter.getAlgorithm();
         if (algorithm == null) {
@@ -610,9 +660,6 @@ final class PhysicalChoiceVerifier {
         }
         if ((step.getNullKeyCheck() != null) != PlanToFactoryRules.isMasterNullKeyChecked(step)) {
             return PlanVerifier.JOIN_NULL_KEY_CHECK;
-        }
-        if (step.getNullKeyMatch() != PlanToFactoryRules.nullKeyMatch(step)) {
-            return PlanVerifier.JOIN_NULL_KEY_MATCH;
         }
         if (step.getFilterAlgorithm() != OperatorPlanning.joinFilterAlgorithm(step)) {
             return PlanVerifier.FILTER_ALGORITHM;

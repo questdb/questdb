@@ -66,7 +66,6 @@ public final class JoinInput implements PlanFactSource {
     private int markoutTimestampColumnId = -1;
     private NullExtension nullExtension = NullExtension.BY_KEYS;
     private BoundExpression nullKeyCheck;
-    private NullKeyMatch nullKeyMatch;
     private BoundExpression onResidual;
     private int position = -1;
     private BoundExpression postJoinFilter;
@@ -111,7 +110,6 @@ public final class JoinInput implements PlanFactSource {
         markoutTimestampColumnId = -1;
         nullExtension = NullExtension.BY_KEYS;
         nullKeyCheck = null;
-        nullKeyMatch = null;
         onResidual = null;
         position = -1;
         postJoinFilter = null;
@@ -216,16 +214,6 @@ public final class JoinInput implements PlanFactSource {
     public BoundExpression getNullKeyCheck() {
         PlanFacts.checkDecided(algorithm != null, "JoinInput.nullKeyCheck");
         return nullKeyCheck;
-    }
-
-    /**
-     * How the factory finds the rows that pass the ON residual with a row whose keys are all NULL, see
-     * {@link #getNullKeyCheck}, which operator planning records for a step that NULL-extends by its ON residual, see
-     * {@link PlanToFactoryRules#nullKeyMatch}; null for any other step.
-     */
-    public NullKeyMatch getNullKeyMatch() {
-        PlanFacts.checkDecided(algorithm != null, "JoinInput.nullKeyMatch");
-        return nullKeyMatch;
     }
 
     public BoundExpression getOnResidual() {
@@ -407,10 +395,6 @@ public final class JoinInput implements PlanFactSource {
         this.nullKeyCheck = nullKeyCheck;
     }
 
-    public void setNullKeyMatch(NullKeyMatch nullKeyMatch) {
-        this.nullKeyMatch = nullKeyMatch;
-    }
-
     public void setOnResidual(BoundExpression onResidual) {
         this.onResidual = onResidual;
     }
@@ -432,7 +416,7 @@ public final class JoinInput implements PlanFactSource {
     }
 
     @Override
-    public void visitFacts(PlanFactVisitor visitor) {
+    public void visitFacts(PlanFactRecorder visitor) {
         JoinKey.visitFacts(keys, visitor);
         visitor.output("output", output);
         visitor.fact("algorithm", algorithm);
@@ -444,7 +428,6 @@ public final class JoinInput implements PlanFactSource {
         visitor.fact("isSubquery", isSubquery);
         visitor.fact("joinType", joinType);
         visitor.fact("nullExtension", nullExtension);
-        visitor.fact("nullKeyMatch", nullKeyMatch);
         visitor.fact("position", position);
         visitor.fact("timeFrameScan", timeFrameScan);
         visitor.fact("toleranceInterval", toleranceInterval);

@@ -136,7 +136,7 @@ public final class HorizonJoinPlan extends LogicalPlan {
     }
 
     @Override
-    public void visitFacts(PlanFactVisitor visitor) {
+    public void visitFacts(PlanFactRecorder visitor) {
         super.visitFacts(visitor);
         visitor.facts("offsetValues", offsetValues);
         visitor.facts("offsets", offsets);

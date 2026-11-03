@@ -214,7 +214,7 @@ public final class SetOperationPlan extends LogicalPlan {
     }
 
     @Override
-    public void visitFacts(PlanFactVisitor visitor) {
+    public void visitFacts(PlanFactRecorder visitor) {
         super.visitFacts(visitor);
         visitor.facts("castTypes", castTypes);
         visitor.facts("symbolColumns", symbolColumns);

@@ -140,10 +140,6 @@ final class PreparedFilter implements Closeable {
         return predicate;
     }
 
-    ObjList<Function> getWorkers() {
-        return workers;
-    }
-
     boolean isJitAllowed() {
         return isJitAllowed;
     }

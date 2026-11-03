@@ -68,7 +68,7 @@ public final class LimitPlan extends ForwardingPlan {
     }
 
     @Override
-    public void visitFacts(PlanFactVisitor visitor) {
+    public void visitFacts(PlanFactRecorder visitor) {
         super.visitFacts(visitor);
         visitor.fact("application", application);
     }

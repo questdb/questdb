@@ -69,6 +69,8 @@ import io.questdb.std.Rows;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.concurrent.atomic.AtomicLong;
+
 /**
  * Reads the rows of a {@link KeyOrderedRowCursorFactory} key by key over all page frames, or, when its Parquet page
  * frames do not stay decoded across the passes of the keys, either returns the rows of each key by row id from the
@@ -213,7 +215,6 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
     // The number of page frames of the scan, known once a pass of a read ordered by keys reads them all, -1 before.
     private int scanFrameCount = -1;
     // The page frame recordA is at, and the position of the read among the tail rows, which counts down to -1.
-    private int tailFrameIndex = -1;
     private long tailRow = -1;
     // The rows the index counts for the keys of a filtered read per row its filter is estimated to keep, which a window
     // takes as many of as it may hold rows.
@@ -311,19 +312,8 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
     @Override
     public void close() {
         super.close();
-        Misc.free(collectedKeyRuns);
-        Misc.free(collectedRows);
-        Misc.free(collectedRuns);
-        Misc.free(frameModel);
+        closeReadLists();
         Misc.free(gatheredRows);
-        Misc.free(keyRowCounts);
-        Misc.free(scanRuns);
-        scanRunCounters.clear();
-        scanRunReaders.clear();
-        Misc.free(symbolKeyIndexes);
-        Misc.free(tailRows);
-        Misc.free(windowFrameFlags);
-        Misc.free(windowStarts);
     }
 
     /**
@@ -424,7 +414,7 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
                 rowCursor = Misc.free(rowCursor);
                 rowCursor = keyCount > 1 ? keyOrderedFactory.getCursor(frame, frameMemory, keyLo, keyHi)
                         : keyOrderedFactory.getCursor(frame, frameMemory);
-                countReadFrame();
+                countWalk(testReadFrames);
                 if (rowCursor.hasNext()) {
                     if (frameMemory == null) {
                         frameMemory = frameMemoryPool.navigateTo(frameIndex, inFrameHi);
@@ -453,13 +443,10 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
         readMode = ReadMode.PASSES;
         memoryTracker = sqlExecutionContext.getMemoryTracker();
         gatheredRows.of(memoryTracker);
-        keyRowCounts.close();
+        closeReadLists();
         keyRowCounts.setMemoryTracker(memoryTracker);
-        collectedKeyRuns.close();
         collectedKeyRuns.setMemoryTracker(memoryTracker);
-        collectedRows.close();
         collectedRows.setMemoryTracker(memoryTracker);
-        collectedRuns.close();
         collectedRuns.setMemoryTracker(memoryTracker);
         collectedFrameCount = 0;
         collectedFrame = null;
@@ -467,24 +454,15 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
         isFrameCollected = true;
         passFrameLo = -1;
         toTopCollectedRows();
-        symbolKeyIndexes.close();
         symbolKeyIndexes.setMemoryTracker(memoryTracker);
-        windowStarts.close();
         windowStarts.setMemoryTracker(memoryTracker);
-        frameModel.close();
         frameModel.setMemoryTracker(memoryTracker);
-        windowFrameFlags.close();
         windowFrameFlags.setMemoryTracker(memoryTracker);
-        scanRuns.close();
         scanRuns.setMemoryTracker(memoryTracker);
-        scanRunCounters.clear();
-        scanRunReaders.clear();
         rowFrameRun = -1;
         toTopDirectRows();
-        tailRows.close();
         tailRows.setMemoryTracker(memoryTracker);
         tailRow = -1;
-        tailFrameIndex = -1;
         windowStartsHi = 0;
         windowStartsRowCount = -1;
         countedKeyCount = 0;
@@ -511,15 +489,7 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
             recordA.clear();
             recordB.clear();
             frameMemoryPool.releaseParquetBuffers();
-            keyRowCounts.close();
-            frameModel.close();
-            scanRuns.close();
-            scanRunCounters.clear();
-            scanRunReaders.clear();
-            windowFrameFlags.close();
-            collectedKeyRuns.close();
-            collectedRows.close();
-            collectedRuns.close();
+            closeReadLists();
             throw th;
         }
     }
@@ -612,7 +582,6 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
         readHi = Long.MAX_VALUE;
         toTopCollectedRows();
         tailRow = tailRows.size() - 1;
-        tailFrameIndex = -1;
         toTopGatheredRows();
         toTopDirectRows();
         if (readMode == ReadMode.DIRECT) {
@@ -632,27 +601,9 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
         return rowCount > Long.MAX_VALUE - position ? Long.MAX_VALUE : position + rowCount;
     }
 
-    private static void countDenseScanFrame() {
+    private static void countWalk(AtomicLong counter) {
         if (isWalkCounterEnabled) {
-            testDenseScanFrames.incrementAndGet();
-        }
-    }
-
-    private static void countDirectModelRun() {
-        if (isWalkCounterEnabled) {
-            testDirectModelRuns.incrementAndGet();
-        }
-    }
-
-    private static void countFrameKeyCount() {
-        if (isWalkCounterEnabled) {
-            testFrameKeyCounts.incrementAndGet();
-        }
-    }
-
-    private static void countReadFrame() {
-        if (isWalkCounterEnabled) {
-            testReadFrames.incrementAndGet();
+            counter.incrementAndGet();
         }
     }
 
@@ -743,18 +694,10 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
         if (collectedRuns.size() + 3 > runCapacity && !isWithinCollectionBudget(collectedRows.getCapacity(), 2 * runCapacity)) {
             return false;
         }
-        appendCollectedRun(frameIndex, key, rowHi);
-        return true;
-    }
-
-    /**
-     * Appends a run of the rows of the key that end at {@code rowHi} among the collected rows to the runs of the page
-     * frame, holding its key in place of its next run until {@link #linkCollectedRuns(long)} links it.
-     */
-    private void appendCollectedRun(int frameIndex, int key, long rowHi) {
         collectedRuns.add(frameIndex);
         collectedRuns.add(rowHi);
         collectedRuns.add(key);
+        return true;
     }
 
     /**
@@ -803,33 +746,26 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
         isExhausted = true;
     }
 
-    /**
-     * Collects the rows of the row cursor of the page frame as a run per key, which the budget of the collection holds
-     * whatever rows of the page frame the filter keeps.
-     */
-    private void collectCursorRows(int frameIndex) {
-        int runKey = -1;
-        while (rowCursor.hasNext()) {
-            final long row = rowCursor.next();
-            final int key = keyOrderedFactory.getCursorKey();
-            if (key != runKey) {
-                if (runKey >= 0) {
-                    appendCollectedRun(frameIndex, runKey, collectedRows.size());
-                }
-                runKey = key;
-            }
-            collectedRows.add((int) row);
-        }
-        if (runKey >= 0) {
-            appendCollectedRun(frameIndex, runKey, collectedRows.size());
-        }
+    private void closeReadLists() {
+        Misc.free(collectedKeyRuns);
+        Misc.free(collectedRows);
+        Misc.free(collectedRuns);
+        Misc.free(frameModel);
+        Misc.free(keyRowCounts);
+        Misc.free(scanRuns);
+        scanRunCounters.clear();
+        scanRunReaders.clear();
+        Misc.free(symbolKeyIndexes);
+        Misc.free(tailRows);
+        Misc.free(windowFrameFlags);
+        Misc.free(windowStarts);
     }
 
     /**
      * Collects the rows of the row cursor of the page frame as a run per key while the lists of the collection grow
      * within its budget, and reports whether it collected all of them.
      */
-    private boolean collectCursorRowsWithinBudget(int frameIndex) {
+    private boolean collectCursorRows(int frameIndex) {
         int runKey = -1;
         while (rowCursor.hasNext()) {
             final long row = rowCursor.next();
@@ -850,25 +786,15 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
     /**
      * Collects the rows that the filter keeps of the keys {@code keyLo} to {@code keyHi} in the page frame as a run per
      * key, links each run to the run of its key before it, and reports whether it did: it collects none of them when
-     * they would grow the memory of the collection past its budget, see {@link #getCollectionBudget()}, which it checks
-     * row by row only when the rows of the page frame could outgrow it. One cursor of the factory over those keys returns
-     * the rows, so that a sequential factory opens the cursors of all of them, which seeks their index cursors, before
-     * it reads the rows of the first, as a scan in frame order does.
+     * they would grow the memory of the collection past its budget, see {@link #getCollectionBudget()}. One cursor of the
+     * factory over those keys returns the rows, so that a sequential factory opens the cursors of all of them, which seeks
+     * their index cursors, before it reads the rows of the first, as a scan in frame order does.
      */
     private boolean collectFrameRows(PageFrame frame, int frameIndex, int keyLo, int keyHi) {
         final long rowLo = collectedRows.size();
         final long runLo = collectedRuns.size();
-        final long rowHi = rowLo + frame.getPartitionHi() - frame.getPartitionLo();
-        final long runHi = runLo + 3L * (keyHi - keyLo);
-        final long rowCapacity = collectedRows.getCapacity();
-        final long runCapacity = collectedRuns.getCapacity();
         rowCursor = keyOrderedFactory.getCursor(frame, frameMemoryPool.navigateTo(frameIndex), keyLo, keyHi);
-        boolean isCollected = true;
-        if (isWithinCollectionBudget(rowHi > rowCapacity ? 2 * rowHi : rowCapacity, runHi > runCapacity ? 2 * runHi : runCapacity)) {
-            collectCursorRows(frameIndex);
-        } else {
-            isCollected = collectCursorRowsWithinBudget(frameIndex);
-        }
+        final boolean isCollected = collectCursorRows(frameIndex);
         rowCursor = Misc.free(rowCursor);
         if (isCollected) {
             linkCollectedRuns(runLo);
@@ -907,7 +833,7 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
         addFrame(frame);
         collectedFrame = frame;
         collectedFrameCount = frameCount;
-        countReadFrame();
+        countWalk(testReadFrames);
         isFrameCollected = false;
         if (!collectFrameRows(frame, collectedFrameCount - 1, 0, 1)) {
             endCollection(collectedFrameCount - 1);
@@ -1360,7 +1286,7 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
             if (isDenseScan) {
                 long frameKeyRowCount = 1;
                 if (isFrameChecked && !isFrameMarkable) {
-                    countFrameKeyCount();
+                    countWalk(testFrameKeyCounts);
                     frameKeyRowCount = keyOrderedFactory.getRowCount(frame, keyLo, keyHi, frame.getPartitionLo(), frame.getPartitionHi() - 1, 0);
                 }
                 if (frameKeyRowCount == 0) {
@@ -1371,7 +1297,7 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
                         prepareSymbolKeyIndexes(keyLo, keyHi);
                         isKeyMapPrepared = true;
                     }
-                    countDenseScanFrame();
+                    countWalk(testDenseScanFrames);
                     remaining = gatherFrame(frameIndex, frameRowCount, keyLo, keyHi, rankLo, rankHi, remaining);
                     continue;
                 }
@@ -1542,7 +1468,7 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
             // in a window than its budget allows; counting those keys page frame by page frame would bound it exactly.
             return (readRowCount + keyCount - 1) / keyCount;
         }
-        return key > 0 ? count - getCumulativeIndexRowCount(key - 1) : count;
+        return count - getKeyPosition(key);
     }
 
     /**
@@ -1723,11 +1649,7 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
             return false;
         }
         final long tailRowId = tailRows.get(tailRow--);
-        final int frameIndex = Numbers.decodeHighInt(tailRowId);
-        if (frameIndex != tailFrameIndex) {
-            frameMemoryPool.navigateTo(frameIndex, recordA);
-            tailFrameIndex = frameIndex;
-        }
+        frameMemoryPool.navigateTo(Numbers.decodeHighInt(tailRowId), recordA);
         recordA.setRowIndex(Numbers.decodeLowInt(tailRowId));
         return true;
     }
@@ -1860,8 +1782,7 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
      * {@link #getMemoryCap()}, so that a tight query memory limit leaves the read to the windows of the gather.
      */
     private boolean isDirectReadAllowed() {
-        return parquetFrameCount > 0
-                && frameMemoryPool.getCacheableBytes(ParquetDecodeHint.SCATTERED, parquetFrameCount, getDecodedBytes()) <= getMemoryCap();
+        return frameMemoryPool.getCacheableBytes(ParquetDecodeHint.SCATTERED, parquetFrameCount, getDecodedBytes()) <= getMemoryCap();
     }
 
     /**
@@ -1869,7 +1790,7 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
      * read decodes no more row groups, see {@link #isDirectModelCheaper(int, long, long)}.
      */
     private boolean isDirectReadCheaper() {
-        countDirectModelRun();
+        countWalk(testDirectModelRuns);
         // the passes of the keys over page frames that stay decoded decode each of them once, as a single window does
         final long windowRows = windowRowCount == Long.MAX_VALUE || isParquetCached ? Long.MAX_VALUE : windowRowCount;
         final long windowCount = windowRows == Long.MAX_VALUE ? 1 : (readRowCount + windowRows - 1) / windowRows;
@@ -2030,8 +1951,7 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
      */
     private boolean isParquetCachedAt(double rowBytes) {
         final long decodedBytes = getDecodedBytes(rowBytes);
-        return frameMemoryPool.getCacheableBytes(walkHint, parquetFrameCount, decodedBytes) >= decodedBytes / parquetFrameCount * parquetFrameCount
-                && decodedBytes <= getMemoryCap();
+        return frameMemoryPool.isCachingFrames(walkHint, parquetFrameCount, decodedBytes) && decodedBytes <= getMemoryCap();
     }
 
     /**
@@ -2253,7 +2173,7 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
                 final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
                 recordA.init(frameMemory);
                 rowCursor = keyOrderedFactory.getCursor(frame, frameMemory, collectedKey, collectedKey + 1);
-                countReadFrame();
+                countWalk(testReadFrames);
                 return true;
             }
         }
@@ -2496,7 +2416,7 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
         final int frameIndex = addFrame(frame);
         final PageFrameMemory frameMemory = frame.getFormat() == PartitionFormat.PARQUET ? null : frameMemoryPool.navigateTo(frameIndex);
         rowCursor = keyOrderedFactory.getCursor(frame, frameMemory, keyLo, keyHi);
-        countReadFrame();
+        countWalk(testReadFrames);
         skipRowCursorRows(rowCount);
     }
 
@@ -2506,7 +2426,7 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
      */
     private void readFrameRowsFrom(PageFrame frame, int key, long firstRow) {
         rowCursor = keyOrderedFactory.getCursor(frame, frameMemoryPool.navigateTo(addFrame(frame)), key, keyHi, firstRow);
-        countReadFrame();
+        countWalk(testReadFrames);
     }
 
     /**
@@ -2568,11 +2488,7 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
                 startGatherOrPasses();
             }
         } else if (isParquetCached && skipCount != RecordCursor.UNBOUNDED_ROW_COUNT && rowCount != RecordCursor.UNBOUNDED_ROW_COUNT) {
-            readMode = getKeyReadMode();
-            frameMemoryPool.setParquetDecodeHint(walkHint);
-            windowRecord.of(recordA);
-            windowRecordB.of(recordB);
-            toTopFrames();
+            startKeyReads();
         } else if (rowCount == RecordCursor.UNBOUNDED_ROW_COUNT) {
             readMode = ReadMode.GATHER;
             setWindowed(readHi < Long.MAX_VALUE);
@@ -2629,8 +2545,7 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
         try {
             PageFrame frame;
             while ((frame = frameCursor.next()) != null) {
-                frameAddressCache.add(frameCount, frame);
-                final int frameIndex = frameCount++;
+                final int frameIndex = addFrame(frame);
                 final long frameRowCount = frame.getPartitionHi() - frame.getPartitionLo();
                 if (frame.getFormat() == PartitionFormat.PARQUET && frameRowCount > 0) {
                     final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
@@ -2928,12 +2843,8 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
     private void startKeyPasses(long position, int key, long rank) {
         assert isDelegatingRecords : "a window fills its record chain only under records that delegate, see startGatherOrPasses()";
         gatheredRows.reset(keyCount, keyCount);
-        readMode = getKeyReadMode();
-        frameMemoryPool.setParquetDecodeHint(walkHint, getMemoryCap());
-        windowRecord.of(recordA);
-        windowRecordB.of(recordB);
         rowCursor = Misc.free(rowCursor);
-        toTopFrames();
+        startKeyReads();
         if (readMode == ReadMode.PASSES) {
             keyLo = 0;
             keyHi = Math.min(keyCount, 1);
@@ -2953,6 +2864,18 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
     }
 
     /**
+     * Leaves the gather to the reads of the keys: their records read the page frames, from the first, which the decode
+     * cache holds under walkHint within {@link #getMemoryCap()}.
+     */
+    private void startKeyReads() {
+        readMode = getKeyReadMode();
+        frameMemoryPool.setParquetDecodeHint(walkHint, getMemoryCap());
+        windowRecord.of(recordA);
+        windowRecordB.of(recordB);
+        toTopFrames();
+    }
+
+    /**
      * Starts the gather of a read ordered by keys, or leaves a read in windows to the passes of its keys over Parquet
      * page frames that stay decoded, which decode them once where each window would decode them, or a filtered read to
      * a pass of each key over page frames that its windows would decode more often, see
@@ -2964,13 +2887,12 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
      */
     private void startGatherOrPasses() {
         if (windowRowCount < Long.MAX_VALUE && isParquetCached) {
-            readMode = getKeyReadMode();
+            startKeyReads();
             return;
         }
         if (!isKeyOrderedByIndex() && isKeyPassCheaper(0, 0)) {
-            readMode = ReadMode.COLLECT;
             endCollection(0);
-            frameMemoryPool.setParquetDecodeHint(walkHint, getMemoryCap());
+            startKeyReads();
             return;
         }
         readMode = isReadRowCountExact || windowRowCount < Long.MAX_VALUE ? ReadMode.GATHER : ReadMode.PENDING;

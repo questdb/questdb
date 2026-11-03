@@ -115,7 +115,7 @@ public final class JoinKey implements Mutable {
         }
     }
 
-    static void visitFacts(ObjList<JoinKey> keys, PlanFactVisitor visitor) {
+    static void visitFacts(ObjList<JoinKey> keys, PlanFactRecorder visitor) {
         visitor.fact("keys", keys.size());
         for (int i = 0, n = keys.size(); i < n; i++) {
             final JoinKey key = keys.getQuick(i);

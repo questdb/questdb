@@ -218,7 +218,7 @@ public abstract sealed class GroupingPlan extends UnaryPlan permits AggregatePla
     }
 
     @Override
-    public void visitFacts(PlanFactVisitor visitor) {
+    public void visitFacts(PlanFactRecorder visitor) {
         super.visitFacts(visitor);
         visitor.fact("bucketKeyIndex", bucketKeyIndex);
         visitor.fact("hasConstantLeadingGroupBy", hasConstantLeadingGroupBy);

@@ -53,14 +53,18 @@ interface OptimiserPass extends Mutable {
     String getName();
 
     /**
-     * The stage of the plan the pass returns.
+     * The stage of the plan the pass returns: the stage it rewrites, unless it moves the plan on.
      */
-    PlanStage getProducedStage();
+    default PlanStage getProducedStage() {
+        return getRequiredStage();
+    }
 
     /**
-     * The stage of the plan the pass rewrites.
+     * The stage of the plan the pass rewrites: a decorrelated plan, unless the pass needs an earlier one.
      */
-    PlanStage getRequiredStage();
+    default PlanStage getRequiredStage() {
+        return PlanStage.DECORRELATED;
+    }
 
     /**
      * Checks, under paranoia, the invariants only the pass knows of the plan it returned, before the optimiser verifies

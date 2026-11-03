@@ -170,7 +170,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             this.aggregateGenerator = new AggregateFactoryGenerator(configuration, this, filterGenerator, functionInstantiator, asm,
                     entityColumnFilter, tmpIndexes, tmpValues, tmpMasterKeys, reduceTaskFactory);
             this.joinGenerator = new JoinFactoryGenerator(configuration, this, filterGenerator, functionInstantiator, expressionRewriter,
-                    functionResolver.getFunctionFactoryCache(), asm, entityColumnFilter, reduceTaskFactory, tmpSink, temporaries.ids, tmpIndexes);
+                    asm, entityColumnFilter, reduceTaskFactory, tmpSink, temporaries.ids, tmpIndexes);
             this.latestByGenerator = new LatestByFactoryGenerator(configuration, this, asm, tmpLongs);
             this.projectionGenerator = new ProjectionFactoryGenerator(functionInstantiator);
             this.scanGenerator = new ScanFactoryGenerator(configuration, filterGenerator, latestByGenerator, functionInstantiator,
@@ -448,7 +448,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                 }
                 return filterGenerator.generate(frame, residual, input.getOutput(), base, predicate, producerLo,
-                        executionContext, filter.hasUpdateScan(), filter.getAlgorithm(), null, false);
+                        executionContext, LogicalPlans.hasUpdateScan(filter.getChild()), filter.getAlgorithm(), null, false);
             }
             case ProjectPlan project -> {
                 return projectionGenerator.generateProjection(frame, project, base, executionContext);
@@ -572,11 +572,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 : generate(frame, source, executionContext);
     }
 
-    RecordCursorFactory generateFilteredScan(GenerationFrame frame, ScanPlan scan, PreparedFilter filter,
-                                             SqlExecutionContext executionContext) throws SqlException {
-        return scanGenerator.generateFiltered(frame, scan, scan.getResidual(), filter, executionContext);
-    }
-
     /**
      * Builds the factory under {@code filter}, the node the plan records a parallel consumer steals, without the
      * filter, and prepares the filter over it in {@code target}, which owns the filter function from then on, also on
@@ -598,7 +593,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             try {
                 final Function function = functionInstantiator.instantiate(predicate, input.getOutput(), leaf.getMetadata(), executionContext);
                 target.of(predicate, input.getOutput(), function, filter.getAlgorithm() == FilterPlan.Algorithm.PARALLEL
-                        && FilterFactoryGenerator.isJitApplicable(filter.hasUpdateScan(), executionContext));
+                        && FilterFactoryGenerator.isJitApplicable(LogicalPlans.hasUpdateScan(filter.getChild()), executionContext));
                 if (input instanceof FunctionSourcePlan source) {
                     scanGenerator.configurePushdown(frame, source, leaf, predicate, executionContext);
                 }
