@@ -47,6 +47,8 @@ import io.questdb.cutlass.line.tcp.WalTableUpdateDetails;
 import io.questdb.cutlass.qwp.protocol.QwpArrayColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpColumnDef;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
+import io.questdb.cutlass.qwp.protocol.QwpSchemaCache;
+import io.questdb.cutlass.qwp.protocol.QwpSchemaCacheEntry;
 import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -57,16 +59,20 @@ import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.WeakClosableObjectPool;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 import io.questdb.tasks.TelemetryTask;
+import org.jetbrains.annotations.TestOnly;
 
 /**
- * Cache for table update details in QWP v1 processing.
+ * Cache for table update details in QWP v1 processing. It is also the schema cache of
+ * the connection's block cursor: each table's last schema parse lives on the table's
+ * entry, so it goes when the entry goes.
  */
-public class QwpTudCache implements QuietCloseable {
+public class QwpTudCache implements QwpSchemaCache, QuietCloseable {
     private static final Log LOG = LogFactory.getLog(QwpTudCache.class);
     private final boolean autoCreateNewColumns;
     private final boolean autoCreateNewTables;
@@ -91,6 +97,9 @@ public class QwpTudCache implements QuietCloseable {
     private CommittedTxnConsumer committedTxnConsumer;
     private MemoryMARW ddlMem;
     private boolean isDistressed = false;
+    // The entry getCachedTableUpdateDetails() found last, checked before the hash
+    // lookup. A freed entry has no writer; reset() and the distressed clear() forget it.
+    private WalTableUpdateDetails lastCachedTud;
     private Path path;
     private WeakClosableObjectPool<SymbolCache> symbolCachePool;
 
@@ -179,6 +188,7 @@ public class QwpTudCache implements QuietCloseable {
             tableUpdateDetails.clear();
             cachedTableCount = 0;
             isDistressed = false;
+            lastCachedTud = null;
         }
     }
 
@@ -321,10 +331,45 @@ public class QwpTudCache implements QuietCloseable {
      * This cache's entry for the table name, or null when it has none. A plain lookup:
      * unlike {@link #getTableUpdateDetails}, it neither checks the entry for staleness
      * nor applies pending structure changes, so it cannot commit, roll back or evict
-     * anything.
+     * anything. The entry found last is checked first: a block's schema lookup and its
+     * commit batch lookup ask for the same table one after the other.
      */
     public WalTableUpdateDetails getCachedTableUpdateDetails(Utf8Sequence tableNameUtf8) {
-        return tableUpdateDetails.get(tableNameUtf8);
+        WalTableUpdateDetails tud = lastCachedTud;
+        // An entry leaves the map only when freed, and a freed entry has no writer.
+        if (tud == null || tud.getWriter() == null || !Utf8s.equalsIgnoreCaseAscii(tud.getTableNameUtf8(), tableNameUtf8)) {
+            tud = tableUpdateDetails.get(tableNameUtf8);
+            if (tud != null) {
+                lastCachedTud = tud;
+            }
+        }
+        return tud;
+    }
+
+    /**
+     * The number of open tables whose entry holds a schema parse.
+     */
+    @TestOnly
+    public int getCachedSchemaCount() {
+        int count = 0;
+        final ObjList<Utf8Sequence> keys = tableUpdateDetails.keys();
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            if (tableUpdateDetails.valueQuick(i).getQwpSchemaCacheEntry().getRetainedBytes() > 0) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    /**
+     * The table's slot for its last schema parse, on the table's entry, or null when
+     * this cache has no entry for the table yet. Like
+     * {@link #getCachedTableUpdateDetails}, it changes nothing in the cache.
+     */
+    @Override
+    public QwpSchemaCacheEntry getSchemaCacheEntry(DirectUtf8Sequence tableName) {
+        final WalTableUpdateDetails tud = getCachedTableUpdateDetails(tableName);
+        return tud != null ? tud.getQwpSchemaCacheEntry() : null;
     }
 
     /**
@@ -668,6 +713,7 @@ public class QwpTudCache implements QuietCloseable {
         }
         tableUpdateDetails.clear();
         cachedTableCount = 0;
+        lastCachedTud = null;
     }
 
     /**

@@ -31,7 +31,6 @@ import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.DEFAULT_MAX_ROWS_PER_TABLE;
-import static io.questdb.cutlass.qwp.protocol.QwpConstants.DEFAULT_MAX_TABLES_PER_CONNECTION;
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.HEADER_SIZE;
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.MAX_SYMBOL_DICTIONARY_SIZE;
 
@@ -80,15 +79,7 @@ public class QwpMessageCursor implements Mutable {
     }
 
     public QwpMessageCursor(int maxRowsPerTable) {
-        this(maxRowsPerTable, DEFAULT_MAX_TABLES_PER_CONNECTION);
-    }
-
-    /**
-     * @param maxRowsPerTable     the most rows a table block may carry
-     * @param schemaCacheCapacity the most tables whose schema parse the block cursor keeps
-     */
-    public QwpMessageCursor(int maxRowsPerTable, int schemaCacheCapacity) {
-        this.tableBlockCursor = new QwpTableBlockCursor(maxRowsPerTable, schemaCacheCapacity);
+        this.tableBlockCursor = new QwpTableBlockCursor(maxRowsPerTable);
     }
 
     @Override
@@ -105,11 +96,6 @@ public class QwpMessageCursor implements Mutable {
         connectionSymbolDict = null;
         symbolDictRedefined = false;
         releaseDictRollbackScratch();
-    }
-
-    @TestOnly
-    public int getCachedSchemaCount() {
-        return tableBlockCursor.getCachedSchemaCount();
     }
 
     @TestOnly
@@ -222,6 +208,13 @@ public class QwpMessageCursor implements Mutable {
     public void releaseCachedResources() {
         clear();
         tableBlockCursor.releaseCachedResources();
+    }
+
+    /**
+     * Sets where table blocks keep each table's schema parse; null parses every block.
+     */
+    public void setSchemaCache(QwpSchemaCache schemaCache) {
+        tableBlockCursor.setSchemaCache(schemaCache);
     }
 
     /**

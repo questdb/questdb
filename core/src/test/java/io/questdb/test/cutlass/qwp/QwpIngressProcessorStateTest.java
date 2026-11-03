@@ -663,6 +663,92 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
     }
 
     /**
+     * The block cursor keeps a table's schema parse on the table's entry in the
+     * connection's table cache: none before the table is open, one shared by every
+     * spelling of its name while it is open, and none once the entry is freed, which
+     * also drops the freed entry's own caches. A block parsed before its table was
+     * open leaves its parse in the entry when it is appended to the table.
+     */
+    @Test
+    public void testSchemaParseLivesWithItsTableEntry() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE parse_a (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            LineHttpProcessorConfiguration lineConfig = new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            try (
+                    QwpTudCache cache = new QwpTudCache(engine, true, true, new DefaultColumnTypes(lineConfig), PartitionBy.DAY);
+                    QwpWalAppender appender = new QwpWalAppender(true, 127, 50);
+                    QwpStreamingDecoder decoder = new QwpStreamingDecoder()
+            ) {
+                decoder.setSchemaCache(cache);
+                Assert.assertNotSame("no entry, no parse kept",
+                        appendOneRow(decoder, appender, null, "parse_a", null, false),
+                        appendOneRow(decoder, appender, null, "parse_a", null, false));
+                final ObjList<QwpColumnDef> schema;
+                final WalTableUpdateDetails tud;
+                try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
+                     QwpTableBuffer table = new QwpTableBuffer("parse_a")) {
+                    table.getOrCreateColumn("val", QwpConstants.TYPE_LONG, false).addLong(1);
+                    table.getOrCreateDesignatedTimestampColumn(QwpConstants.TYPE_TIMESTAMP).addLong(1_000_000L);
+                    table.nextRow();
+                    final int length = encoder.encode(table);
+                    final QwpTableBlockCursor block = decoder.decode(encoder.getBuffer().getBufferPtr(), length).nextTable();
+                    // The table opens after the block was parsed, as on a connection's first block.
+                    tud = cache.getTableUpdateDetails(AllowAllSecurityContext.INSTANCE, new Utf8String("parse_a"), null, null, 10);
+                    Assert.assertNull(tud.getQwpSchemaCacheEntry().getColumns());
+                    Assert.assertTrue("an empty slot is a cache", tud.hasQwpCaches());
+                    Assert.assertEquals("an open table without a parse", 0, cache.getCachedSchemaCount());
+                    appender.appendToWalStreaming(AllowAllSecurityContext.INSTANCE, block, tud);
+                    schema = block.getSchema();
+                }
+                Assert.assertSame("the append left the parse in the entry", schema, tud.getQwpSchemaCacheEntry().getColumns());
+                Assert.assertTrue(tud.hasQwpCaches());
+                Assert.assertSame(schema, appendOneRow(decoder, appender, null, "parse_a", null, false));
+                Assert.assertSame("the table's entry serves every spelling of its name",
+                        schema, appendOneRow(decoder, appender, null, "PARSE_A", null, false));
+                Assert.assertEquals(1, cache.getCachedSchemaCount());
+                cache.reset();
+                Assert.assertFalse("a freed entry keeps no cache", tud.hasQwpCaches());
+                Assert.assertEquals(0, cache.getCachedSchemaCount());
+                Assert.assertNotSame("the parse went with the entry",
+                        schema, appendOneRow(decoder, appender, null, "parse_a", null, false));
+            }
+            drainWalQueue();
+            assertQuery("SELECT count() FROM parse_a").noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
+        });
+    }
+
+    /**
+     * Successive connections on one pooled connection state write more and more tables:
+     * each keeps a schema parse per table it writes, and none survives its disconnect.
+     * A table's first block on a connection parses before its entry exists, so each
+     * table gets two frames.
+     */
+    @Test
+    public void testSchemaParsesGoWithTheConnection() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration config = new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            try (QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, config)) {
+                for (int connection = 1; connection <= 3; connection++) {
+                    state.of(connection, AllowAllSecurityContext.INSTANCE);
+                    final int tableCount = 10 * connection;
+                    for (int frame = 0; frame < 2 * tableCount; frame++) {
+                        prepareLongBlocks(state, 1, "conn_table_" + frame % tableCount);
+                        Assert.assertEquals(QwpIngressProcessorState.COMMIT_BATCH_JOINED, state.joinCommitBatch(frame, 0, 0));
+                        state.clearMessageState();
+                    }
+                    Assert.assertTrue(state.commitBatch());
+                    Assert.assertEquals(tableCount, state.getCachedSchemaCount());
+                    state.onDisconnected();
+                    Assert.assertEquals("connection " + connection + " left parses behind", 0, state.getCachedSchemaCount());
+                }
+            }
+            drainWalQueue();
+            assertQuery("SELECT count() FROM conn_table_0").noLeakCheck().noRandomAccess().expectSize().returns("count\n6\n");
+            assertQuery("SELECT count() FROM conn_table_29").noLeakCheck().noRandomAccess().expectSize().returns("count\n2\n");
+        });
+    }
+
+    /**
      * A schema is settled for a table once Phase 1 resolved it onto that table's
      * writer, and stays settled while other tables resolve theirs, until the table's
      * own metadata changes.
@@ -678,6 +764,7 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                     QwpWalAppender appender = new QwpWalAppender(true, 127, 50);
                     QwpStreamingDecoder decoder = new QwpStreamingDecoder()
             ) {
+                decoder.setSchemaCache(cache);
                 final WalTableUpdateDetails tudA = cache.getTableUpdateDetails(
                         AllowAllSecurityContext.INSTANCE, new Utf8String("settle_a"), null, null, 10);
                 final WalTableUpdateDetails tudB = cache.getTableUpdateDetails(

@@ -24,6 +24,8 @@
 
 package io.questdb.test.cutlass.qwp.e2e;
 
+import io.questdb.PropertyKey;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.client.LineSenderServerException;
@@ -42,6 +44,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cutlass.qwp.load.QwpRow;
 import io.questdb.test.cutlass.qwp.load.QwpTable;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -441,13 +444,18 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
      * Each producer cycles its rows through three tables, so its flushes carry rows of
      * several tables and its frames interleave them, and the server batches their
      * commits across tables. The server bounces mid-stream: the client replays from
-     * its acked watermark, and a batch that committed some of its tables before a
-     * failure sends their rows again, which the tables' DEDUP keys absorb. Every
-     * table must end up holding exactly its rows.
+     * its acked watermark, sending again rows the server committed before it could ack
+     * them, which the tables' DEDUP keys absorb. Every table must end up holding
+     * exactly its rows. A batch commit that fails on one table after others committed
+     * is covered by QwpIngressCommitBatchTest: nothing here fails a commit.
      */
     @Test
     public void testOracleMultiTableTortureUnderServerBounces() throws Exception {
+        // Without fsync: the tiny frames make many tiny commits, and syncing each one
+        // can outlast the client's drain timeout on a slow disk.
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         assertMemoryLeak(() -> {
+            Assert.assertEquals("test setup: commits must not sync", CommitMode.NOSYNC, configuration.getCommitMode());
             Rnd master = TestUtils.generateRandom(LOG);
             final String[] tableNames = {TABLE_NAME + "_a", TABLE_NAME + "_b", TABLE_NAME + "_c"};
             final QwpTable[] oracles = new QwpTable[tableNames.length];

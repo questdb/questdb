@@ -27,9 +27,11 @@ package io.questdb.cutlass.line.tcp;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cutlass.qwp.protocol.QwpSchemaCacheEntry;
 import io.questdb.std.Pool;
 import io.questdb.std.str.Utf8String;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 public class WalTableUpdateDetails extends TableUpdateDetails {
     // Highest seqTxn already handed to the ingress committed-txn consumer (the QWP
@@ -68,6 +70,9 @@ public class WalTableUpdateDetails extends TableUpdateDetails {
     // own, so frames of several interleaved tables all skip Phase 1. Lives and dies with
     // this entry, which bounds it by the table cache. QWP ingest path only.
     private QwpWalAppender.ColumnMapping qwpColumnMapping;
+    // This table's last QWP schema parse, kept for the block cursor (QwpSchemaCache).
+    // Lives and dies with this entry, like the column mapping. QWP ingest path only.
+    private QwpSchemaCacheEntry qwpSchemaCacheEntry;
     // Position of this table in the QWP connection's commit batch, -1 before it first
     // joins one. Only a hint: the batch confirms that the entry at this position is this
     // table's before using it, so the batch need not reset it. QWP ingest path only.
@@ -97,6 +102,17 @@ public class WalTableUpdateDetails extends TableUpdateDetails {
         this.lastReportedSeqTxn = writer.getLastSeqTxn();
     }
 
+    /**
+     * Drops the QWP caches with the writer: a closed entry can stay reachable, for
+     * example from a map that does not clear its values, and must not keep them.
+     */
+    @Override
+    public void close() {
+        super.close();
+        qwpColumnMapping = null;
+        qwpSchemaCacheEntry = null;
+    }
+
     public long getLastReportedSeqTxn() {
         return lastReportedSeqTxn;
     }
@@ -109,9 +125,27 @@ public class WalTableUpdateDetails extends TableUpdateDetails {
         return qwpCommitBatchSlot;
     }
 
+    /**
+     * This table's slot for its last QWP schema parse, created on first use.
+     */
+    public QwpSchemaCacheEntry getQwpSchemaCacheEntry() {
+        if (qwpSchemaCacheEntry == null) {
+            qwpSchemaCacheEntry = new QwpSchemaCacheEntry();
+        }
+        return qwpSchemaCacheEntry;
+    }
+
     @Override
     public ThreadLocalDetails getThreadLocalDetails(int workerId) {
         return super.getThreadLocalDetails(0);
+    }
+
+    /**
+     * Whether this entry still holds a QWP cache: its column mapping or its schema slot.
+     */
+    @TestOnly
+    public boolean hasQwpCaches() {
+        return qwpColumnMapping != null || qwpSchemaCacheEntry != null;
     }
 
     public void setLastReportedSeqTxn(long seqTxn) {

@@ -1570,6 +1570,60 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     }
 
     /**
+     * A table keeps its position in the batch of an earlier pass. In the next pass that
+     * position lies past the batch's tables or holds another table, and the table must
+     * join the new batch as a new table, not as the stale entry. So must a table that a
+     * rowless block opened without joining any batch.
+     */
+    @Test
+    public void testTablesOfEarlierPassRejoinLaterBatch() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            final String[] tables = {"a", "b", "c", "d", "e"};
+            final long[] txnBefore = new long[tables.length];
+            for (int t = 0; t < tables.length; t++) {
+                execute("CREATE TABLE " + tables[t] + " (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                txnBefore[t] = engine.getTableSequencerAPI().lastTxn(engine.verifyTableName(tables[t]));
+            }
+            try (Connection connection = new Connection(
+                    engine,
+                    httpConfig,
+                    AllowAllSecurityContext.INSTANCE,
+                    false,
+                    // pass 1: a takes position 0, b position 1
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 100L, 1_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 200L, 2_000_000L)),
+                    // pass 2: b's old position 1 is past the one-table batch, then holds d
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("c", 300L, 3_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 400L, 4_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("d", 500L, 5_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 600L, 6_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("c", 700L, 7_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 800L, 8_000_000L)),
+                    // e opens without rows, then joins
+                    createMaskedFrame(WebSocketOpcode.BINARY, qwpMessage(tableBlock("e"))),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("e", 900L, 9_000_000L))
+            )) {
+                connection.deliverFrames(2);
+                connection.deliverFrames(8);
+                Assert.assertEquals(9, maxCumulativeOkAck(connection.sentFrames()));
+            }
+            drainWalQueue();
+            assertQuery("SELECT v FROM a").noLeakCheck().expectSize().returns("v\n100\n600\n");
+            assertQuery("SELECT v FROM b").noLeakCheck().expectSize().returns("v\n200\n400\n800\n");
+            assertQuery("SELECT v FROM c").noLeakCheck().expectSize().returns("v\n300\n700\n");
+            assertQuery("SELECT v FROM d").noLeakCheck().expectSize().returns("v\n500\n");
+            assertQuery("SELECT v FROM e").noLeakCheck().expectSize().returns("v\n900\n");
+            final long[] expectedCommits = {2, 2, 1, 1, 1};
+            for (int t = 0; t < tables.length; t++) {
+                Assert.assertEquals("one commit per table per pass [table=" + tables[t] + ']',
+                        txnBefore[t] + expectedCommits[t],
+                        engine.getTableSequencerAPI().lastTxn(engine.verifyTableName(tables[t])));
+            }
+        });
+    }
+
+    /**
      * A frame names a table past the connection's table limit: its lookup fails
      * before it appends anything, so the batch commits, and the frame gets its own
      * NACK.
@@ -2153,14 +2207,6 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     }
 
     /**
-     * A control frame, a fragment or an oversized frame behind a commit batch makes
-     * the batch commit first. When a demote refuses that commit, the server sends its
-     * role-change CLOSE and half-closes; without durable acks the connection then
-     * drains instead of waiting for the echo. Nothing may follow that CLOSE: on a real
-     * socket a write after the half-close fails, and the abortive teardown can discard
-     * the client's unread final ack.
-     */
-    /**
      * With table auto-creation off, a frame names a table that does not exist. As the
      * frame's first block, nothing of the frame touched a writer: the batch commits, and
      * the frame gets its own NACK. Behind a block the frame appended to the batch, the
@@ -2203,6 +2249,14 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * A control frame, a fragment or an oversized frame behind a commit batch makes
+     * the batch commit first. When a demote refuses that commit, the server sends its
+     * role-change CLOSE and half-closes; without durable acks the connection then
+     * drains instead of waiting for the echo. Nothing may follow that CLOSE: on a real
+     * socket a write after the half-close fails, and the abortive teardown can discard
+     * the client's unread final ack.
+     */
     private void assertNothingFollowsRoleChangeClose(byte[] trailingFrame) throws Exception {
         assertMemoryLeak(() -> {
             final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);

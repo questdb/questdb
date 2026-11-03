@@ -353,9 +353,6 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     private long failedCommitBatchSequence = -1;
     private long firstCommitBatchSequence = -1;
     private long lastCommitBatchSequence = -1;
-    // The entry the last frame joined, checked before the table lookup: consecutive
-    // frames of one table find it with one name comparison.
-    private CommitBatchEntry lastJoinedCommitBatchEntry;
     private QwpMessageCursor preparedMessageCursor;
     private QwpTableBlockCursor preparedTableBlock;
     private int sendState = SEND_STATE_READY;
@@ -377,8 +374,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         this.maxResponseErrorMessageLength = Math.max(0, (int) ((maxResponseContentLength - 100) / 1.5));
         try {
             this.streamingDecoder = new QwpStreamingDecoder(
-                    configuration.getQwpMaxRowsPerTable(),
-                    configuration.getQwpMaxTablesPerConnection()
+                    configuration.getQwpMaxRowsPerTable()
             );
             this.walAppender = new QwpWalAppender(
                     configuration.autoCreateNewColumns(),
@@ -401,6 +397,9 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
             // the cache needs its own hook into recordCommittedTable to keep
             // durable-ack bookkeeping in sync with a salvaged txn.
             this.tudCache.setCommittedTxnConsumer(committedTxnConsumer);
+            // Each table keeps its schema parse on its cache entry, so the parses
+            // never outlive the tables this connection holds open.
+            this.streamingDecoder.setSchemaCache(tudCache);
 
             this.bufferSize = initBufferSize;
             this.bufferAddress = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_HTTP_CONN);
@@ -640,6 +639,14 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         return failedCommitBatchSequence;
     }
 
+    /**
+     * The number of tables this connection holds open whose entry keeps a schema parse.
+     */
+    @TestOnly
+    public int getCachedSchemaCount() {
+        return tudCache.getCachedSchemaCount();
+    }
+
     @TestOnly
     public int getCommitBatchTableCount() {
         return commitBatchEntries.size();
@@ -716,7 +723,6 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
                         walAppender.appendToWalStreaming(securityContext, block, entry.tud, false);
                         messageAppendedRows = true;
                         entry.rows += blockRows;
-                        lastJoinedCommitBatchEntry = entry;
                         assert entry.writer.getUncommittedRowCount() == entry.rows : "a joining block committed or lost batch rows";
                     }
                 } else {
@@ -780,7 +786,6 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         }
         commitBatchEntries.clear();
         commitBatchFrames.clear();
-        lastJoinedCommitBatchEntry = null;
         failedCommitBatchSequence = -1;
         firstCommitBatchSequence = -1;
         lastCommitBatchSequence = -1;
@@ -1994,7 +1999,6 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         entry.of(tud, writer, seq, rows);
         tud.setQwpCommitBatchSlot(commitBatchEntries.size());
         commitBatchEntries.add(entry);
-        lastJoinedCommitBatchEntry = entry;
     }
 
     // What joinCommitBatch answers for a frame that cannot join: a boundary while the
@@ -2005,16 +2009,11 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     }
 
     // The batch entry of the named table, or null when the table is not in the batch.
-    // Looks the table up in the cache without side effects (see getCachedTableUpdateDetails).
+    // Looks the table up in the cache without side effects (see getCachedTableUpdateDetails);
+    // the block's schema lookup has just found it.
     private CommitBatchEntry findCommitBatchEntry(DirectUtf8Sequence tableName) {
         if (commitBatchEntries.size() == 0) {
             return null;
-        }
-        // Set by every join and add, cleared with the entries.
-        final CommitBatchEntry last = lastJoinedCommitBatchEntry;
-        assert last != null;
-        if (Utf8s.equalsIgnoreCaseAscii(last.tud.getTableNameUtf8(), tableName)) {
-            return last;
         }
         final WalTableUpdateDetails tud = tudCache.getCachedTableUpdateDetails(tableName);
         if (tud == null) {
