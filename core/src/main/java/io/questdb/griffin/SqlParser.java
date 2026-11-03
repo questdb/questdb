@@ -5524,12 +5524,14 @@ public class SqlParser {
         // expect [group by]
 
         if (tok != null && isGroupKeyword(tok)) {
+            final int groupByPosition = lexer.lastTokenPosition();
             if (hasPivot) {
                 IQueryModel parentModel = queryModelPool.next();
                 parentModel.setNestedModel(model);
                 model = parentModel;
             }
             expectBy(lexer);
+            model.setGroupByPosition(groupByPosition);
             tok = parseGroupByColumns(lexer, (QueryModel) model, sqlParserCallback);
         }
 
@@ -5863,11 +5865,15 @@ public class SqlParser {
     ) throws SqlException {
         CharSequence tok = tokIncludingLocalBrace(lexer, "literal");
 
-        // Check for ROLLUP/CUBE/GROUPING SETS as the first token
-        if (isRollupKeyword(tok) || isCubeKeyword(tok)) {
-            int kwPos = lexer.lastTokenPosition();
+        // Check for grouping syntax only when its required following token is present.
+        boolean isRollup = isRollupKeyword(tok);
+        boolean isCube = isCubeKeyword(tok);
+        boolean isGrouping = isGroupingKeyword(tok);
+        int firstTokenPosition = lexer.lastTokenPosition();
+        boolean firstTokenLookedAhead = (isRollup || isCube || isGrouping);
+        if ((isRollup || isCube) && hasGroupingSyntaxLookahead(lexer, tok, firstTokenPosition, "(")) {
+            int kwPos = firstTokenPosition;
             guardAgainstLatestOnWithGroupingSets(model, kwPos);
-            boolean isRollup = isRollupKeyword(tok);
             ObjList<ExpressionNode> columns = parseParenthesizedColumnList(lexer, model, sqlParserCallback);
             if (columns.size() == 0) {
                 throw SqlException.$(kwPos, isRollup ? "ROLLUP requires at least one column" : "CUBE requires at least one column");
@@ -5889,8 +5895,8 @@ public class SqlParser {
             return optTokAfterGroupingSets(lexer);
         }
 
-        if (isGroupingKeyword(tok)) {
-            int kwPos = lexer.lastTokenPosition();
+        if (isGrouping && hasGroupingSyntaxLookahead(lexer, tok, firstTokenPosition, "SETS")) {
+            int kwPos = firstTokenPosition;
             guardAgainstLatestOnWithGroupingSets(model, kwPos);
             tok = optTok(lexer);
             if (tok == null || !isSetsKeyword(tok)) {
@@ -5901,45 +5907,66 @@ public class SqlParser {
         }
 
         // Plain GROUP BY parsing - may contain ROLLUP/CUBE after plain columns (composite)
-        lexer.unparseLast();
+        if (!firstTokenLookedAhead) {
+            lexer.unparseLast();
+        }
         ObjList<ExpressionNode> plainColumns = new ObjList<>();
+        boolean firstPlainTokenLookedAhead = firstTokenLookedAhead;
         do {
-            tok = tokIncludingLocalBrace(lexer, "literal");
-            // Check if the current token is ROLLUP/CUBE (composite syntax)
-            if (isRollupKeyword(tok) || isCubeKeyword(tok)) {
-                int kwPos = lexer.lastTokenPosition();
-                guardAgainstLatestOnWithGroupingSets(model, kwPos);
-                boolean isRollup = isRollupKeyword(tok);
-                int plainCount = plainColumns.size();
-                for (int i = 0; i < plainCount; i++) {
-                    model.addGroupBy(plainColumns.getQuick(i));
+            if (!firstPlainTokenLookedAhead) {
+                tok = tokIncludingLocalBrace(lexer, "literal");
+            }
+            // Check whether the current token starts composite grouping syntax.
+            boolean isCompositeRollup = isRollupKeyword(tok);
+            boolean isCompositeCube = isCubeKeyword(tok);
+            boolean isGroupingCandidate = isGroupingKeyword(tok);
+            int kwPos = lexer.lastTokenPosition();
+            boolean isFirstPlainToken = firstPlainTokenLookedAhead;
+            firstPlainTokenLookedAhead = false;
+            boolean compositeLookedAhead = false;
+            if (!isFirstPlainToken && (isCompositeRollup || isCompositeCube)) {
+                compositeLookedAhead = true;
+                if (hasGroupingSyntaxLookahead(lexer, tok, kwPos, "(")) {
+                    guardAgainstLatestOnWithGroupingSets(model, kwPos);
+                    boolean isRollupSyntax = isCompositeRollup;
+                    int plainCount = plainColumns.size();
+                    for (int i = 0; i < plainCount; i++) {
+                        model.addGroupBy(plainColumns.getQuick(i));
+                    }
+                    ObjList<ExpressionNode> rollupCols = parseParenthesizedColumnList(lexer, model, sqlParserCallback);
+                    if (rollupCols.size() == 0) {
+                        throw SqlException.$(kwPos, isRollupSyntax ? "ROLLUP requires at least one column" : "CUBE requires at least one column");
+                    }
+                    ensureColumnReferences(rollupCols);
+                    if (!isRollupSyntax && rollupCols.size() > 15) {
+                        throw SqlException.$(kwPos, "CUBE supports at most 15 columns");
+                    }
+                    int rollupStart = plainCount;
+                    for (int i = 0, n = rollupCols.size(); i < n; i++) {
+                        model.addGroupBy(rollupCols.getQuick(i));
+                    }
+                    // Check all columns (plain + rollup) for mixed qualification
+                    checkMixedQualification(model.getGroupBy());
+                    int maxSets = configuration.getSqlMaxGroupingSets();
+                    if (isRollupSyntax) {
+                        expandRollupComposite(model, plainCount, rollupStart, rollupCols.size(), kwPos, maxSets);
+                    } else {
+                        expandCubeComposite(model, plainCount, rollupStart, rollupCols.size(), kwPos, maxSets);
+                    }
+                    return optTokAfterGroupingSets(lexer);
                 }
-                ObjList<ExpressionNode> rollupCols = parseParenthesizedColumnList(lexer, model, sqlParserCallback);
-                if (rollupCols.size() == 0) {
-                    throw SqlException.$(kwPos, isRollup ? "ROLLUP requires at least one column" : "CUBE requires at least one column");
-                }
-                ensureColumnReferences(rollupCols);
-                if (!isRollup && rollupCols.size() > 15) {
-                    throw SqlException.$(kwPos, "CUBE supports at most 15 columns");
-                }
-                int rollupStart = plainCount;
-                for (int i = 0, n = rollupCols.size(); i < n; i++) {
-                    model.addGroupBy(rollupCols.getQuick(i));
-                }
-                // Check all columns (plain + rollup) for mixed qualification
-                checkMixedQualification(model.getGroupBy());
-                int maxSets = configuration.getSqlMaxGroupingSets();
-                if (isRollup) {
-                    expandRollupComposite(model, plainCount, rollupStart, rollupCols.size(), kwPos, maxSets);
-                } else {
-                    expandCubeComposite(model, plainCount, rollupStart, rollupCols.size(), kwPos, maxSets);
-                }
-                return optTokAfterGroupingSets(lexer);
             }
 
-            // Regular expression
-            lexer.unparseLast();
-            ExpressionNode n = expr(lexer, model, sqlParserCallback, model.getDecls());
+            ExpressionNode n;
+            boolean isTokenAlreadyRewound = (isFirstPlainToken && firstTokenLookedAhead) || compositeLookedAhead;
+            if (!isTokenAlreadyRewound) {
+                if (isGroupingCandidate) {
+                    lexer.backTo(kwPos, tok);
+                } else {
+                    lexer.unparseLast();
+                }
+            }
+            n = expr(lexer, model, sqlParserCallback, model.getDecls());
             if (n == null || (n.type != ExpressionNode.LITERAL && n.type != ExpressionNode.CONSTANT && n.type != ExpressionNode.FUNCTION && n.type != ExpressionNode.OPERATION)) {
                 throw SqlException.$(n == null ? lexer.lastTokenPosition() : n.position, "literal expected");
             }
@@ -5953,6 +5980,17 @@ public class SqlParser {
             model.addGroupBy(plainColumns.getQuick(i));
         }
         return tok;
+    }
+
+    private boolean hasGroupingSyntaxLookahead(GenericLexer lexer, CharSequence token, int tokenPosition, CharSequence expected) throws SqlException {
+        final CharSequence nextToken = SqlUtil.fetchNext(lexer);
+        final boolean matches = nextToken != null && Chars.equalsIgnoreCase(nextToken, expected);
+        if (matches) {
+            lexer.unparseLast();
+        } else {
+            lexer.backTo(tokenPosition, token);
+        }
+        return matches;
     }
 
     /**

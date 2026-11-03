@@ -24,8 +24,24 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
+import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
+import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
+import io.questdb.griffin.engine.table.AsyncGroupingSetsRecordCursorFactory;
+import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.mp.TestWorkerPool;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class GroupingSetsTest extends AbstractCairoTest {
 
@@ -63,12 +79,18 @@ public class GroupingSetsTest extends AbstractCairoTest {
     public void testAsyncGroupingSetsMultipleFrames() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (a INT, b INT, x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO t SELECT (x % 4)::INT, (x % 7)::INT, x, ((x - 1) / 700 * 86400000000L)::TIMESTAMP FROM long_sequence(2_800)");
+            execute("INSERT INTO t SELECT (x % 4)::INT, (x % 7)::INT, x, ((x - 1) / 700 * 86_400_000_000L)::TIMESTAMP FROM long_sequence(2_800)");
             sqlExecutionContext.setParallelGroupByEnabled(true);
             String groupedQuery = "SELECT a, b, GROUPING_ID(a, b) AS gid, SUM(x) AS n FROM t GROUP BY GROUPING SETS ((a, b), (a), ())";
             assertQuery(groupedQuery)
                     .withContext(sqlExecutionContext)
                     .assertsPlanContaining("Async Group By");
+            assertQuery("SELECT COUNT() AS group_count, SUM(n) AS row_count FROM (" + groupedQuery + ")")
+                    .withContext(sqlExecutionContext)
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("group_count\trow_count\n33\t11764200\n");
+            sqlExecutionContext.setParallelGroupByEnabled(false);
             assertQuery("SELECT COUNT() AS group_count, SUM(n) AS row_count FROM (" + groupedQuery + ")")
                     .withContext(sqlExecutionContext)
                     .expectSize()
@@ -99,6 +121,29 @@ public class GroupingSetsTest extends AbstractCairoTest {
                             + "1\tnull\t7.0\n"
                             + "2\tnull\t5.0\n"
                             + "null\tnull\t12.0\n");
+        });
+    }
+
+    @Test
+    public void testAsyncGroupingSetsWithoutGroupingFunction() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, b INT, v DOUBLE)");
+            execute("INSERT INTO t VALUES (1, 10, 3), (1, 20, 4), (2, 10, 5)");
+            sqlExecutionContext.setParallelGroupByEnabled(true);
+            String query = "SELECT a, b, SUM(v) AS s FROM t GROUP BY GROUPING SETS ((a, b), (a), ()) ORDER BY a, b";
+            assertQuery(query)
+                    .withContext(sqlExecutionContext)
+                    .assertsPlanContaining("Async Group By");
+            assertQuery(query)
+                    .withContext(sqlExecutionContext)
+                    .expectSize()
+                    .returns("a\tb\ts\n"
+                            + "null\tnull\t12.0\n"
+                            + "1\tnull\t7.0\n"
+                            + "1\t10\t3.0\n"
+                            + "1\t20\t4.0\n"
+                            + "2\tnull\t5.0\n"
+                            + "2\t10\t5.0\n");
         });
     }
 
@@ -388,6 +433,30 @@ public class GroupingSetsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDistinctRollupWithDataNull() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT)");
+            execute("INSERT INTO t VALUES (null), (1)");
+
+            assertQuery("SELECT DISTINCT a FROM t GROUP BY ROLLUP(a) ORDER BY a")
+                    .expectSize()
+                    .returns("a\nnull\n1\n");
+        });
+    }
+
+    @Test
+    public void testDistinctWithDuplicateGroupingSets() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT)");
+            execute("INSERT INTO t VALUES (1), (2)");
+
+            assertQuery("SELECT DISTINCT a FROM t GROUP BY GROUPING SETS ((a), (a)) ORDER BY a")
+                    .expectSize()
+                    .returns("a\n1\n2\n");
+        });
+    }
+
+    @Test
     public void testDuplicateGroupingSets() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (sym SYMBOL, val DOUBLE)");
@@ -405,6 +474,210 @@ public class GroupingSetsTest extends AbstractCairoTest {
                             "B\t20.0\n",
                     "SELECT sym, SUM(val) s FROM t GROUP BY GROUPING SETS ((sym), (sym)) ORDER BY sym, s"
             );
+        });
+    }
+
+    @Test
+    public void testEmptyGroupingSetsConstantProjection() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, v INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO t VALUES (1, 10, 1000), (2, 20, 2000)");
+            assertQuery("SELECT 1 AS x FROM t GROUP BY GROUPING SETS (())")
+                    .expectSize().noRandomAccess()
+                    .returns("x\n1\n");
+        });
+    }
+
+    @Test
+    public void testEmptyGroupingSetsDuplicateCountFunctionMultiplicity() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, v INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO t VALUES (1, 10, 1000), (2, 20, 2000)");
+
+            assertQuery("SELECT COUNT() AS n FROM t GROUP BY GROUPING SETS ((), ())")
+                    .expectSize().noRandomAccess()
+                    .returns("n\n2\n2\n");
+        });
+    }
+
+    @Test
+    public void testEmptyGroupingSetsDuplicateCountStarMultiplicity() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, v INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO t VALUES (1, 10, 1000), (2, 20, 2000)");
+
+            assertQuery("SELECT COUNT(*) AS n FROM t GROUP BY GROUPING SETS ((), ())")
+                    .expectSize().noRandomAccess()
+                    .returns("n\n2\n2\n");
+        });
+    }
+
+    @Test
+    public void testEmptyGroupingSetsDuplicateMaxTimestampMultiplicity() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, v INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO t VALUES (1, 10, 1000), (2, 20, 2000)");
+
+            assertQuery("SELECT MAX(ts) AS ts FROM t GROUP BY GROUPING SETS ((), ())")
+                    .inferTimestamp()
+                    .expectSize().noRandomAccess()
+                    .returns("ts\n1970-01-01T00:00:00.002000Z\n1970-01-01T00:00:00.002000Z\n");
+        });
+    }
+
+    @Test
+    public void testEmptyGroupingSetsDuplicateSumMultiplicity() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, v INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO t VALUES (1, 10, 1000), (2, 20, 2000)");
+
+            assertQuery("SELECT SUM(v) AS v FROM t GROUP BY GROUPING SETS ((), ())")
+                    .expectSize().noRandomAccess()
+                    .returns("v\n30\n30\n");
+        });
+    }
+
+    @Test
+    public void testEmptyGroupingSetsGrandTotal() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, v INT)");
+            execute("INSERT INTO t VALUES (1, 10), (1, 20), (2, 30)");
+
+            String singleSetQuery = "SELECT COUNT(*) AS n, SUM(v) AS s " +
+                    "FROM t GROUP BY GROUPING SETS (())";
+            String duplicateSetsQuery = "SELECT COUNT(*) AS n, SUM(v) AS s " +
+                    "FROM t GROUP BY GROUPING SETS ((), ())";
+            String populatedSingleSet = "n\ts\n3\t60\n";
+            String populatedDuplicateSets = populatedSingleSet + "3\t60\n";
+
+            for (int i = 0; i < 2; i++) {
+                sqlExecutionContext.setParallelGroupByEnabled(i == 1);
+                assertQuery(singleSetQuery).withContext(sqlExecutionContext).expectSize().noRandomAccess().returns(populatedSingleSet);
+                assertQuery(duplicateSetsQuery).withContext(sqlExecutionContext).expectSize().noRandomAccess().returns(populatedDuplicateSets);
+            }
+
+            assertQuery("SELECT a, GROUPING_ID(a) AS gid, COUNT(*) AS n, SUM(v) AS s " +
+                    "FROM t GROUP BY GROUPING SETS ((a), ()) ORDER BY gid, a")
+                    .expectSize()
+                    .returns("a\tgid\tn\ts\n1\t0\t2\t30\n2\t0\t1\t30\nnull\t1\t3\t60\n");
+
+            execute("TRUNCATE TABLE t");
+            String emptySingleSet = "n\ts\n0\tnull\n";
+            String emptyDuplicateSets = emptySingleSet + "0\tnull\n";
+            for (int i = 0; i < 2; i++) {
+                sqlExecutionContext.setParallelGroupByEnabled(i == 1);
+                assertQuery(singleSetQuery).withContext(sqlExecutionContext).expectSize().noRandomAccess().returns(emptySingleSet);
+                assertQuery(duplicateSetsQuery).withContext(sqlExecutionContext).expectSize().noRandomAccess().returns(emptyDuplicateSets);
+            }
+
+            String invalidGroupingIdQuery = "SELECT GROUPING_ID(a), COUNT(*) FROM t GROUP BY GROUPING SETS (())";
+            assertException(invalidGroupingIdQuery, invalidGroupingIdQuery.indexOf("a)"),
+                    "argument must be a grouping key column");
+        });
+    }
+
+    @Test
+    public void testEmptyGroupingSetsProjectionValidation() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, v INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO t VALUES (1, 10, 1000), (2, 20, 2000)");
+
+            String invalidQuery = "SELECT a, SUM(v) FROM t GROUP BY GROUPING SETS (())";
+            assertQuery(invalidQuery)
+                    .fails(invalidQuery.indexOf("a,"), "column must appear in GROUP BY clause or aggregate function");
+        });
+    }
+
+    @Test
+    public void testEmptyGroupingSetsRejectsStarProjection() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, v INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO t VALUES (1, 10, 1000), (2, 20, 2000)");
+
+            String[] queries = {
+                    "SELECT * FROM t GROUP BY GROUPING SETS (())",
+                    "SELECT t.* FROM t GROUP BY GROUPING SETS (())",
+                    "SELECT *, SUM(v) FROM t GROUP BY GROUPING SETS (())",
+                    "SELECT * FROM t WHERE a > 0 GROUP BY GROUPING SETS (())"
+            };
+            int unexpectedSuccesses = 0;
+            StringBuilder unexpectedQueries = new StringBuilder();
+            for (int i = 0; i < 2; i++) {
+                sqlExecutionContext.setParallelGroupByEnabled(i == 1);
+                for (String query : queries) {
+                    try {
+                        assertQuery(query)
+                                .withContext(sqlExecutionContext)
+                                .fails(query.indexOf('*'), "column must appear in GROUP BY clause or aggregate function");
+                    } catch (AssertionError e) {
+                        unexpectedSuccesses++;
+                        unexpectedQueries.append(i == 0 ? "serial: " : "parallel: ").append(query).append('\n');
+                    }
+                }
+            }
+            Assert.assertEquals(unexpectedQueries.toString(), 0, unexpectedSuccesses);
+        });
+    }
+
+    @Test
+    public void testEmptyGroupingSetWildcardWithAllSourceColumnsGrouped() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, b INT, v INT, ts TIMESTAMP)");
+            execute("INSERT INTO t VALUES (1, 2, 3, 1000)");
+            execute("CREATE TABLE t2 (a INT)");
+            execute("INSERT INTO t2 VALUES (1)");
+
+            for (int i = 0; i < 2; i++) {
+                sqlExecutionContext.setParallelGroupByEnabled(i == 1);
+                assertQuery("SELECT * FROM t GROUP BY ROLLUP(a, b, v, ts) ORDER BY a, b, v, ts")
+                        .withContext(sqlExecutionContext)
+                        .expectSize()
+                        .returns("a\tb\tv\tts\nnull\tnull\tnull\t\n1\tnull\tnull\t\n1\t2\tnull\t\n1\t2\t3\t\n1\t2\t3\t1970-01-01T00:00:00.001000Z\n");
+                assertQuery("SELECT * FROM t GROUP BY CUBE(a, b, v, ts) ORDER BY a, b, v, ts")
+                        .withContext(sqlExecutionContext)
+                        .expectSize()
+                        .returns("a\tb\tv\tts\n" +
+                                "null\tnull\tnull\t\n" +
+                                "null\tnull\tnull\t1970-01-01T00:00:00.001000Z\n" +
+                                "null\tnull\t3\t\n" +
+                                "null\tnull\t3\t1970-01-01T00:00:00.001000Z\n" +
+                                "null\t2\tnull\t\n" +
+                                "null\t2\tnull\t1970-01-01T00:00:00.001000Z\n" +
+                                "null\t2\t3\t\n" +
+                                "null\t2\t3\t1970-01-01T00:00:00.001000Z\n" +
+                                "1\tnull\tnull\t\n" +
+                                "1\tnull\tnull\t1970-01-01T00:00:00.001000Z\n" +
+                                "1\tnull\t3\t\n" +
+                                "1\tnull\t3\t1970-01-01T00:00:00.001000Z\n" +
+                                "1\t2\tnull\t\n" +
+                                "1\t2\tnull\t1970-01-01T00:00:00.001000Z\n" +
+                                "1\t2\t3\t\n" +
+                                "1\t2\t3\t1970-01-01T00:00:00.001000Z\n");
+                assertQuery("SELECT * FROM t GROUP BY GROUPING SETS ((a, b, v, ts), ()) ORDER BY a, b, v, ts")
+                        .withContext(sqlExecutionContext)
+                        .expectSize()
+                        .returns("a\tb\tv\tts\nnull\tnull\tnull\t\n1\t2\t3\t1970-01-01T00:00:00.001000Z\n");
+                assertQuery("SELECT * FROM t2 GROUP BY ROLLUP(a) ORDER BY a")
+                        .withContext(sqlExecutionContext)
+                        .expectSize()
+                        .returns("a\nnull\n1\n");
+
+                String insufficientKeysQuery = "SELECT * FROM t GROUP BY ROLLUP(a)";
+                assertQuery(insufficientKeysQuery)
+                        .withContext(sqlExecutionContext)
+                        .fails(insufficientKeysQuery.indexOf('*'), "column must appear in GROUP BY clause or aggregate function");
+            }
+        });
+    }
+
+    @Test
+    public void testEmptyGroupingSetWithWindowJoinFailsWithoutCrashing() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP) TIMESTAMP(ts)");
+            String query = "SELECT t.ts FROM t WINDOW JOIN t t2 RANGE BETWEEN 1 SECOND PRECEDING " +
+                    "AND 1 SECOND FOLLOWING GROUP BY GROUPING SETS (())";
+            assertQuery(query)
+                    .fails(query.indexOf("GROUP BY"), "GROUP BY cannot be used with WINDOW JOIN");
         });
     }
 
@@ -571,6 +844,22 @@ public class GroupingSetsTest extends AbstractCairoTest {
                     "SELECT SUM(quantity), GROUPING(symbol) " +
                             "FROM trades",
                     22,
+                    "GROUPING() / GROUPING_ID() can only be used with GROUPING SETS, ROLLUP, or CUBE"
+            );
+        });
+    }
+
+    @Test
+    public void testGroupingFunctionOutsideGroupingSetsSampleBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE trades (symbol SYMBOL, quantity DOUBLE, ts TIMESTAMP)" +
+                            " TIMESTAMP(ts) PARTITION BY DAY"
+            );
+
+            assertException(
+                    "SELECT ts, GROUPING(symbol), SUM(quantity) FROM trades SAMPLE BY 1d ALIGN TO FIRST OBSERVATION",
+                    11,
                     "GROUPING() / GROUPING_ID() can only be used with GROUPING SETS, ROLLUP, or CUBE"
             );
         });
@@ -763,8 +1052,6 @@ public class GroupingSetsTest extends AbstractCairoTest {
             );
         });
     }
-
-    // ==================== SAMPLE BY + GROUPING SETS tests ====================
 
     @Test
     public void testGroupingIdSupportsExpressionAlias() throws Exception {
@@ -1174,8 +1461,8 @@ public class GroupingSetsTest extends AbstractCairoTest {
             execute("CREATE TABLE t (x INT, y DOUBLE)");
             assertException(
                     "SELECT x, SUM(y) FROM t GROUP BY GROUPING x",
-                    33,
-                    "expected SETS after GROUPING"
+                    42,
+                    "unexpected token [x]"
             );
         });
     }
@@ -1241,6 +1528,51 @@ public class GroupingSetsTest extends AbstractCairoTest {
                             + "1\t0\t3.0\n"
                             + "2\t0\t5.0\n"
                             + "null\t1\t8.0\n");
+        });
+    }
+
+    @Test
+    public void testGroupingSyntaxWordsCanBeColumnNames() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (cube INT, rollup INT, grouping INT, v INT)");
+            execute("INSERT INTO t VALUES (1, 10, 100, 2), (1, 20, 200, 3)");
+
+            assertQuery("SELECT cube, rollup, grouping, SUM(v) FROM t GROUP BY cube, rollup, grouping ORDER BY cube, rollup, grouping")
+                    .expectSize()
+                    .returns("cube\trollup\tgrouping\tSUM\n"
+                            + "1\t10\t100\t2\n"
+                            + "1\t20\t200\t3\n");
+            assertQuery("SELECT rollup, cube, SUM(v) FROM t GROUP BY rollup, cube ORDER BY rollup, cube")
+                    .expectSize()
+                    .returns("rollup\tcube\tSUM\n10\t1\t2\n20\t1\t3\n");
+        });
+    }
+
+    @Test
+    public void testGroupingSyntaxWordsInExpressionsAndCaseVariants() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (cube INT, rollup INT, grouping INT, v INT)");
+            execute("INSERT INTO t VALUES (1, 10, 100, 2), (2, 20, 200, 3)");
+
+            assertQuery("SELECT cube + 1 AS k, SUM(v) AS s FROM t GROUP BY cube + 1 ORDER BY k")
+                    .expectSize()
+                    .returns("k\ts\n2\t2\n3\t3\n");
+            assertQuery("SELECT rollup * 2 AS k, SUM(v) AS s FROM t GROUP BY rollup * 2 ORDER BY k")
+                    .expectSize()
+                    .returns("k\ts\n20\t2\n40\t3\n");
+            assertQuery("SELECT cube::string AS k, SUM(v) AS s FROM t GROUP BY cube::string ORDER BY k")
+                    .expectSize()
+                    .returns("k\ts\n1\t2\n2\t3\n");
+            assertQuery("SELECT grouping + 1 AS k, SUM(v) AS s FROM t GROUP BY grouping + 1 ORDER BY k")
+                    .expectSize()
+                    .returns("k\ts\n101\t2\n201\t3\n");
+
+            assertQuery("SELECT cube, SUM(v) AS s FROM t GROUP BY grouping sets ((cube), ()) ORDER BY cube")
+                    .expectSize()
+                    .returns("cube\ts\nnull\t5\n1\t2\n2\t3\n");
+            assertQuery("SELECT cube, SUM(v) AS s FROM t GROUP BY cube ORDER BY cube")
+                    .expectSize()
+                    .returns("cube\ts\n1\t2\n2\t3\n");
         });
     }
 
@@ -1334,6 +1666,30 @@ public class GroupingSetsTest extends AbstractCairoTest {
                     40,
                     "mixing qualified and unqualified references to the same column"
             );
+        });
+    }
+
+    @Test
+    public void testPostingIndexDistinctRollupGrandTotal() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL INDEX TYPE POSTING)");
+            execute("INSERT INTO t VALUES ('A'), ('B')");
+
+            assertQuery("SELECT sym FROM t GROUP BY ROLLUP(sym) ORDER BY sym")
+                    .expectSize()
+                    .returns("sym\n\nA\nB\n");
+        });
+    }
+
+    @Test
+    public void testPostingIndexDistinctWithDuplicateGroupingSets() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL INDEX TYPE POSTING)");
+            execute("INSERT INTO t VALUES ('A'), ('B')");
+
+            assertQuery("SELECT sym FROM t GROUP BY GROUPING SETS ((sym), (sym)) ORDER BY sym")
+                    .expectSize()
+                    .returns("sym\nA\nA\nB\nB\n");
         });
     }
 
@@ -1499,8 +1855,6 @@ public class GroupingSetsTest extends AbstractCairoTest {
             );
         });
     }
-
-    // ==================== GROUPING() function tests ====================
 
     @Test
     public void testRollupEquivalentToGroupingSets() throws Exception {
@@ -2107,7 +2461,7 @@ public class GroupingSetsTest extends AbstractCairoTest {
     public void testRollupReorderedKeysMultipleFrames() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (a INT, b INT, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO t SELECT (1 + (x % 3) / 2)::INT, (10 + (x % 3) % 2 * 10)::INT, (CASE x % 3 WHEN 0 THEN 3 WHEN 1 THEN 4 ELSE 5 END)::DOUBLE, ((x - 1) / 1_000 * 86400000000L)::TIMESTAMP FROM long_sequence(3_000)");
+            execute("INSERT INTO t SELECT (1 + (x % 3) / 2)::INT, (10 + (x % 3) % 2 * 10)::INT, (CASE x % 3 WHEN 0 THEN 3 WHEN 1 THEN 4 ELSE 5 END)::DOUBLE, ((x - 1) / 1_000 * 86_400_000_000L)::TIMESTAMP FROM long_sequence(3_000)");
             for (int mode = 0; mode < 2; mode++) {
                 sqlExecutionContext.setParallelGroupByEnabled(mode == 1);
                 String query = "SELECT b, a, GROUPING_ID(a,b) AS gid, SUM(v) AS s FROM t GROUP BY ROLLUP(a,b) ORDER BY gid,a,b";
@@ -2248,15 +2602,21 @@ public class GroupingSetsTest extends AbstractCairoTest {
             execute("CREATE TABLE products (id INT, name SYMBOL)");
             execute("INSERT INTO products VALUES (1, 'A'), (2, 'B')");
             execute("INSERT INTO orders VALUES (1, 10), (1, 20), (2, 30)");
+            final String expected = "name\tSUM\n" +
+                    "\t60\n" +
+                    "A\t30\n" +
+                    "B\t30\n";
+            final String query = "SELECT p.name, SUM(o.qty) FROM orders o" +
+                    " JOIN products p ON o.product_id = p.id" +
+                    " GROUP BY ROLLUP(p.name) ORDER BY p.name";
+            sqlExecutionContext.setParallelGroupByEnabled(true);
             assertGroupingSetsQuery(
-                    "name\tSUM\n" +
-                            "\t60\n" +
-                            "A\t30\n" +
-                            "B\t30\n",
-                    "SELECT p.name, SUM(o.qty) FROM orders o" +
-                            " JOIN products p ON o.product_id = p.id" +
-                            " GROUP BY ROLLUP(p.name) ORDER BY p.name"
+                    expected,
+                    query
             );
+            sqlExecutionContext.setParallelGroupByEnabled(false);
+            assertGroupingSetsQuery(expected, query);
+            sqlExecutionContext.setParallelGroupByEnabled(true);
         });
     }
 
@@ -2440,6 +2800,168 @@ public class GroupingSetsTest extends AbstractCairoTest {
                             "FROM trades " +
                             "SAMPLE BY 1h CUBE(symbol, side)"
             );
+        });
+    }
+
+    @Test
+    public void testSampleByFillDuplicateGroupingSets() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, b INT, v INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO t VALUES (1, 2, 3, '2024-01-01T00:00:00.000000Z'), (1, 2, 5, '2024-01-03T00:00:00.000000Z')");
+            for (int i = 0; i < 2; i++) {
+                sqlExecutionContext.setParallelGroupByEnabled(i == 1);
+                String duplicateKeyCardinalityQuery = "SELECT ts, a, COUNT(*) FROM t SAMPLE BY 1d GROUPING SETS ((a), (a, a)) FILL(NULL)";
+                assertQuery(duplicateKeyCardinalityQuery)
+                        .withContext(sqlExecutionContext)
+                        .fails(duplicateKeyCardinalityQuery.indexOf("FILL(") + "FILL(".length(), "SAMPLE BY FILL is not supported with duplicate grouping sets");
+
+                String duplicateKeyRollupQuery = "SELECT ts, a, COUNT(*) FROM t SAMPLE BY 1d ROLLUP(a, a) FILL(0)";
+                assertQuery(duplicateKeyRollupQuery)
+                        .withContext(sqlExecutionContext)
+                        .fails(duplicateKeyRollupQuery.indexOf("FILL(") + "FILL(".length(), "SAMPLE BY FILL is not supported with duplicate grouping sets");
+
+                String duplicateKeyCubeQuery = "SELECT ts, a, COUNT(*) FROM t SAMPLE BY 1d CUBE(a, a) FILL(NULL)";
+                assertQuery(duplicateKeyCubeQuery)
+                        .withContext(sqlExecutionContext)
+                        .fails(duplicateKeyCubeQuery.indexOf("FILL(") + "FILL(".length(), "SAMPLE BY FILL is not supported with duplicate grouping sets");
+
+                String unequalSetQuery = "SELECT ts, a, b, v, COUNT(*) FROM t SAMPLE BY 1d GROUPING SETS ((a, a, b), (a, b, v)) FILL(NULL) ORDER BY ts, v";
+                assertGroupingSetsQuery(
+                        "ts\ta\tb\tv\tCOUNT\n" +
+                                "2024-01-01T00:00:00.000000Z\t1\t2\tnull\t1\n" +
+                                "2024-01-01T00:00:00.000000Z\t1\t2\t3\t1\n" +
+                                "2024-01-01T00:00:00.000000Z\t1\t2\t5\tnull\n" +
+                                "2024-01-02T00:00:00.000000Z\t1\t2\tnull\tnull\n" +
+                                "2024-01-02T00:00:00.000000Z\t1\t2\t3\tnull\n" +
+                                "2024-01-02T00:00:00.000000Z\t1\t2\t5\tnull\n" +
+                                "2024-01-03T00:00:00.000000Z\t1\t2\tnull\t1\n" +
+                                "2024-01-03T00:00:00.000000Z\t1\t2\t3\tnull\n" +
+                                "2024-01-03T00:00:00.000000Z\t1\t2\t5\t1\n",
+                        unequalSetQuery
+                );
+
+                String fillNoneQuery = "SELECT ts, a, COUNT(*) FROM t SAMPLE BY 1d GROUPING SETS ((a), (a, a)) FILL(NONE) ORDER BY ts, a";
+                assertGroupingSetsQuery(
+                        "ts\ta\tCOUNT\n" +
+                                "2024-01-01T00:00:00.000000Z\t1\t1\n" +
+                                "2024-01-01T00:00:00.000000Z\t1\t1\n" +
+                                "2024-01-03T00:00:00.000000Z\t1\t1\n" +
+                                "2024-01-03T00:00:00.000000Z\t1\t1\n",
+                        fillNoneQuery
+                );
+
+                String[] duplicateQueries = {
+                        "SELECT ts, COUNT(*) FROM t SAMPLE BY 1d GROUPING SETS ((), ()) FILL(NULL)",
+                        "SELECT ts, a, COUNT(*) FROM t SAMPLE BY 1d GROUPING SETS ((a), (a)) FILL(NULL)",
+                        "SELECT ts, a, b, COUNT(*) FROM t SAMPLE BY 1d GROUPING SETS ((a, b), (b, a)) FILL(0)",
+                        "SELECT ts, a, COUNT(*) FROM t SAMPLE BY 1d ROLLUP(a, a) FILL(0)",
+                        "SELECT ts, a, COUNT(*) FROM t SAMPLE BY 1d CUBE(a, a) FILL(NULL)"
+                };
+                for (String query : duplicateQueries) {
+                    assertQuery(query)
+                            .withContext(sqlExecutionContext)
+                            .fails(query.indexOf("FILL(") + "FILL(".length(), "SAMPLE BY FILL is not supported with duplicate grouping sets");
+                }
+                assertGroupingSetsQuery(
+                        "ts\ta\tCOUNT\n" +
+                                "2024-01-01T00:00:00.000000Z\tnull\t1\n" +
+                                "2024-01-01T00:00:00.000000Z\t1\t1\n" +
+                                "2024-01-02T00:00:00.000000Z\tnull\tnull\n" +
+                                "2024-01-02T00:00:00.000000Z\t1\tnull\n" +
+                                "2024-01-03T00:00:00.000000Z\tnull\t1\n" +
+                                "2024-01-03T00:00:00.000000Z\t1\t1\n",
+                        "SELECT ts, a, COUNT(*) FROM t SAMPLE BY 1d GROUPING SETS ((a), ()) FILL(NULL) ORDER BY ts, a"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testSampleByFillDuplicateGroupingSetsWithUnequalDistinctKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, b INT, v INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO t VALUES (1, 2, 3, '2024-01-01T00:00:00.000000Z')");
+            String query = "SELECT ts, a, b, v, COUNT(*) FROM t SAMPLE BY 1d GROUPING SETS ((a, a, b), (a, b, v)) FILL(NULL) ORDER BY ts, v";
+            String expected = "ts\ta\tb\tv\tCOUNT\n" +
+                    "2024-01-01T00:00:00.000000Z\t1\t2\tnull\t1\n" +
+                    "2024-01-01T00:00:00.000000Z\t1\t2\t3\t1\n";
+            for (int i = 0; i < 2; i++) {
+                sqlExecutionContext.setParallelGroupByEnabled(i == 1);
+                assertQuery(query).withContext(sqlExecutionContext).inferTimestamp().returns(expected);
+            }
+        });
+    }
+
+    @Test
+    public void testSampleByFillNoneWithDuplicateGroupingSets() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO t VALUES (1, '2024-01-01T00:00:00.000000Z'), (1, '2024-01-03T00:00:00.000000Z')");
+            String[] queries = {
+                    "SELECT ts, a, COUNT(*) FROM t SAMPLE BY 1d GROUPING SETS ((a), (a, a)) FILL(NONE) ORDER BY ts, a",
+                    "SELECT ts, a, COUNT(*) FROM t SAMPLE BY 1d ROLLUP(a, a) FILL(NONE) ORDER BY ts, a",
+                    "SELECT ts, a, COUNT(*) FROM t SAMPLE BY 1d CUBE(a, a) FILL(NONE) ORDER BY ts, a"
+            };
+            String explicitExpected = "ts\ta\tCOUNT\n" +
+                    "2024-01-01T00:00:00.000000Z\t1\t1\n" +
+                    "2024-01-01T00:00:00.000000Z\t1\t1\n" +
+                    "2024-01-03T00:00:00.000000Z\t1\t1\n" +
+                    "2024-01-03T00:00:00.000000Z\t1\t1\n";
+            String rollupExpected = "ts\ta\tCOUNT\n" +
+                    "2024-01-01T00:00:00.000000Z\tnull\t1\n" +
+                    "2024-01-01T00:00:00.000000Z\t1\t1\n" +
+                    "2024-01-01T00:00:00.000000Z\t1\t1\n" +
+                    "2024-01-03T00:00:00.000000Z\tnull\t1\n" +
+                    "2024-01-03T00:00:00.000000Z\t1\t1\n" +
+                    "2024-01-03T00:00:00.000000Z\t1\t1\n";
+            String cubeExpected = "ts\ta\tCOUNT\n" +
+                    "2024-01-01T00:00:00.000000Z\tnull\t1\n" +
+                    "2024-01-01T00:00:00.000000Z\t1\t1\n" +
+                    "2024-01-01T00:00:00.000000Z\t1\t1\n" +
+                    "2024-01-01T00:00:00.000000Z\t1\t1\n" +
+                    "2024-01-03T00:00:00.000000Z\tnull\t1\n" +
+                    "2024-01-03T00:00:00.000000Z\t1\t1\n" +
+                    "2024-01-03T00:00:00.000000Z\t1\t1\n" +
+                    "2024-01-03T00:00:00.000000Z\t1\t1\n";
+            String[] expected = {explicitExpected, rollupExpected, cubeExpected};
+            for (int i = 0; i < 2; i++) {
+                sqlExecutionContext.setParallelGroupByEnabled(i == 1);
+                for (int j = 0; j < queries.length; j++) {
+                    assertQuery(queries[j]).withContext(sqlExecutionContext).inferTimestamp().sizeMayVary().returns(expected[j]);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSampleByRejectsExplicitGroupByClause() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, v INT, ts TIMESTAMP) TIMESTAMP(ts)");
+
+            String query = "SELECT a, SUM(v) FROM t SAMPLE BY 1d ROLLUP(a) GROUP BY GROUPING SETS ((a))";
+            assertException(
+                    query,
+                    query.indexOf("GROUP BY"),
+                    "SELECT query must not contain both GROUP BY and SAMPLE BY"
+            );
+
+            query = "SELECT a, SUM(v) FROM t SAMPLE BY 1d ROLLUP(a) GROUP BY GROUPING SETS (())";
+            assertException(
+                    query,
+                    query.indexOf("GROUP BY"),
+                    "SELECT query must not contain both GROUP BY and SAMPLE BY"
+            );
+
+            query = "SELECT a, SUM(v) FROM t SAMPLE BY 1d GROUP BY ROLLUP(a)";
+            assertException(
+                    query,
+                    query.indexOf("ROLLUP(a)") + "ROLLUP(".length(),
+                    "SELECT query must not contain both GROUP BY and SAMPLE BY"
+            );
+
+            assertQuery("SELECT ts, a, SUM(v) FROM t SAMPLE BY 1d ROLLUP(a)")
+                    .timestamp("ts")
+                    .returns("ts\ta\tSUM\n");
         });
     }
 
@@ -2690,6 +3212,29 @@ public class GroupingSetsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByRollupRejectsAdditionalGroupBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, b INT, v INT, ts TIMESTAMP)");
+
+            String query = "SELECT a, b, SUM(v) FROM t " +
+                    "SAMPLE BY 1d ROLLUP(a) GROUP BY b";
+            assertException(
+                    query,
+                    query.indexOf("GROUP BY"),
+                    "SELECT query must not contain both GROUP BY and SAMPLE BY"
+            );
+
+            query = "SELECT a, b, SUM(v) FROM t " +
+                    "SAMPLE BY 1d ROLLUP(a) GROUP BY ROLLUP(b)";
+            assertException(
+                    query,
+                    query.indexOf("GROUP BY"),
+                    "SELECT query must not contain both GROUP BY and SAMPLE BY"
+            );
+        });
+    }
+
+    @Test
     public void testSampleByRollupReorderedKeys() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (a INT, b INT, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -2741,6 +3286,21 @@ public class GroupingSetsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByRollupWithFirstObservationAlignmentNotSupported() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+
+            String query = "SELECT ts, a, SUM(v) FROM t " +
+                    "SAMPLE BY 1d ROLLUP(a) ALIGN TO FIRST OBSERVATION";
+            assertException(
+                    query,
+                    query.indexOf("1d"),
+                    "SAMPLE BY with grouping sets requires calendar alignment"
+            );
+        });
+    }
+
+    @Test
     public void testSampleByRollupWithFrom() throws Exception {
         assertMemoryLeak(() -> {
             execute(
@@ -2771,7 +3331,31 @@ public class GroupingSetsTest extends AbstractCairoTest {
         });
     }
 
-    // ==================== Error / validation tests ====================
+    @Test
+    public void testSampleByRollupWithNonLiteralFromNotSupported() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+
+            String rollupQuery = "SELECT ts, a, SUM(v) FROM t SAMPLE BY 1d ROLLUP(a) FROM now()";
+            String cubeQuery = "SELECT ts, a, SUM(v) FROM t SAMPLE BY 1d CUBE(a) FROM now()";
+            String groupingSetsQuery = "SELECT ts, a, SUM(v) FROM t SAMPLE BY 1d GROUPING SETS ((a), ()) FROM now()";
+            assertException(
+                    rollupQuery,
+                    rollupQuery.indexOf("now()"),
+                    "non-literal FROM bounds are not supported with SAMPLE BY grouping sets"
+            );
+            assertException(
+                    cubeQuery,
+                    cubeQuery.indexOf("now()"),
+                    "non-literal FROM bounds are not supported with SAMPLE BY grouping sets"
+            );
+            assertException(
+                    groupingSetsQuery,
+                    groupingSetsQuery.indexOf("now()"),
+                    "non-literal FROM bounds are not supported with SAMPLE BY grouping sets"
+            );
+        });
+    }
 
     @Test
     public void testTrailingGroupingItemsAfterCompositeCubeRejected() throws Exception {
@@ -2842,6 +3426,142 @@ public class GroupingSetsTest extends AbstractCairoTest {
                     69,
                     "grouping items after ROLLUP, CUBE, or GROUPING SETS are not supported"
             );
+        });
+    }
+
+    @Test
+    public void testWorkerPoolGroupingSetsMergeAndReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            try (WorkerPool pool = new TestWorkerPool(4)) {
+                TestUtils.execute(pool, (engine, compiler, context) -> {
+                    execute(compiler,
+                            "CREATE TABLE t (a INT, b INT, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                            context);
+                    execute(compiler,
+                            "INSERT INTO t SELECT (x % 4)::INT, (x % 7)::INT, x, ((x - 1) / 700 * 86_400_000_000L)::TIMESTAMP FROM long_sequence(2_800)",
+                            context);
+                    execute(compiler, "ALTER TABLE t CONVERT PARTITION TO PARQUET WHERE ts >= 0", context);
+                    context.setParallelGroupByEnabled(true);
+                    String query = "SELECT a, b, GROUPING_ID(a, b) AS gid, SUM(v) AS n " +
+                            "FROM t GROUP BY GROUPING SETS ((a, b), (a), ()) ORDER BY gid, a, b";
+                    final Thread ownerThread = Thread.currentThread();
+                    String aggregateQuery = query.replace("SUM(v)",
+                            "SUM(CASE WHEN test_latched_counter() THEN v ELSE v END)");
+                    AtomicBoolean isSingleThreadWorkerObserved = new AtomicBoolean();
+                    TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
+                        @Override
+                        public boolean onGet(Record record, int count) {
+                            if (Thread.currentThread() != ownerThread) {
+                                isSingleThreadWorkerObserved.set(true);
+                            }
+                            return true;
+                        }
+                    });
+                    context.setParallelGroupByEnabled(false);
+                    try {
+                        assertQuery("SELECT gid, COUNT() AS group_count, SUM(n) AS row_count FROM (" + aggregateQuery + ") GROUP BY gid ORDER BY gid")
+                                .withContext(context)
+                                .expectSize()
+                                .noLeakCheck()
+                                .returns("gid\tgroup_count\trow_count\n0\t28\t3921400\n1\t4\t3921400\n3\t1\t3921400\n");
+                        Assert.assertFalse("single-threaded grouping must stay on the owner", isSingleThreadWorkerObserved.get());
+                    } finally {
+                        TestLatchedCounterFunctionFactory.reset(null);
+                    }
+                    context.setParallelGroupByEnabled(true);
+                    AtomicBoolean isWorkerObserved = new AtomicBoolean();
+                    TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
+                        @Override
+                        public boolean onGet(Record record, int count) {
+                            if (Thread.currentThread() != ownerThread) {
+                                isWorkerObserved.set(true);
+                            }
+                            return true;
+                        }
+                    });
+                    try {
+                        assertQuery("SELECT gid, COUNT() AS group_count, SUM(n) AS row_count FROM (" + aggregateQuery + ") GROUP BY gid ORDER BY gid")
+                                .withContext(context)
+                                .expectSize()
+                                .withPlanContaining("Async Group By")
+                                .noLeakCheck()
+                                .returns("gid\tgroup_count\trow_count\n0\t28\t3921400\n1\t4\t3921400\n3\t1\t3921400\n");
+                        Assert.assertTrue("a non-owner worker must process grouping-set input", isWorkerObserved.get());
+                    } finally {
+                        TestLatchedCounterFunctionFactory.reset(null);
+                    }
+                }, configuration, LOG);
+            }
+        });
+    }
+
+    @Test
+    public void testWorkerPoolGroupingSetsWorkerCancellationReleasesParquetBuffers() throws Exception {
+        assertMemoryLeak(() -> {
+            try (WorkerPool pool = new TestWorkerPool(4)) {
+                TestUtils.execute(pool, (engine, compiler, executionContext) -> {
+                    execute(compiler,
+                            "CREATE TABLE t (a INT, b INT, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                            executionContext);
+                    execute(compiler,
+                            "INSERT INTO t SELECT (x % 4)::INT, (x % 7)::INT, x, ((x - 1) / 700 * 86_400_000_000L)::TIMESTAMP FROM long_sequence(2_800)",
+                            executionContext);
+                    execute(compiler, "ALTER TABLE t CONVERT PARTITION TO PARQUET WHERE ts >= 0", executionContext);
+
+                    SqlExecutionContextImpl context = (SqlExecutionContextImpl) executionContext;
+                    AtomicBoolean isCancellationInjected = new AtomicBoolean();
+                    SqlExecutionCircuitBreakerConfiguration breakerConfiguration =
+                            new DefaultSqlExecutionCircuitBreakerConfiguration();
+                    try (NetworkSqlExecutionCircuitBreaker breaker = new NetworkSqlExecutionCircuitBreaker(engine, breakerConfiguration)) {
+                        context.with(
+                                context.getSecurityContext(),
+                                context.getBindVariableService(),
+                                context.getRandom(),
+                                context.getRequestFd(),
+                                breaker
+                        );
+                        context.setParallelGroupByEnabled(true);
+                        final Thread testThread = Thread.currentThread();
+                        TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
+                            @Override
+                            public boolean onGet(Record record, int count) {
+                                if (count >= 64 && Thread.currentThread() != testThread) {
+                                    isCancellationInjected.set(true);
+                                    breaker.cancel();
+                                }
+                                return true;
+                            }
+                        });
+                        String query = "SELECT a, b, GROUPING_ID(a, b) AS gid, " +
+                                "SUM(CASE WHEN test_latched_counter() THEN v ELSE v END) AS n " +
+                                "FROM t GROUP BY GROUPING SETS ((a, b), (a), ())";
+                        try {
+                            try (RecordCursorFactory factory = compiler.compile(query, context).getRecordCursorFactory()) {
+                                Assert.assertTrue(
+                                        "cancellation must exercise async grouping sets",
+                                        factory.getBaseFactory() instanceof AsyncGroupingSetsRecordCursorFactory
+                                );
+                                context.changePageFrameSizes(1, 1);
+                                try (RecordCursor cursor = factory.getCursor(context)) {
+                                    try {
+                                        while (cursor.hasNext()) {
+                                            // Keep consuming until a worker cancels the query from its aggregate expression.
+                                        }
+                                        Assert.fail("expected worker cancellation during grouping-set dispatch");
+                                    } catch (CairoException e) {
+                                        TestUtils.assertContains(e.getFlyweightMessage(), "cancelled by user");
+                                        Assert.assertTrue(e.isCancellation());
+                                        Assert.assertTrue(e.isInterruption());
+                                    }
+                                }
+                            }
+                            Assert.assertTrue("the aggregate expression must cancel from a worker", isCancellationInjected.get());
+                        } finally {
+                            TestLatchedCounterFunctionFactory.reset(null);
+                        }
+                    }
+                }, configuration, LOG);
+            }
         });
     }
 

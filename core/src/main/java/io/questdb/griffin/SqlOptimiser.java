@@ -807,6 +807,18 @@ public class SqlOptimiser implements Mutable {
         return viewNameExpr != null && TableUtils.getTableFunctionView(viewNameExpr, executionContext).isDependency(tableToken);
     }
 
+    private static boolean isSameGroupingSetKey(CharSequence left, CharSequence right) {
+        if (Chars.equalsIgnoreCase(left, right)) {
+            return true;
+        }
+        int dotPos = Chars.indexOfLastUnquoted(left, '.');
+        if (dotPos >= 0 && Chars.equalsIgnoreCase(right, left, dotPos + 1, left.length())) {
+            return true;
+        }
+        dotPos = Chars.indexOfLastUnquoted(right, '.');
+        return dotPos >= 0 && Chars.equalsIgnoreCase(left, right, dotPos + 1, right.length());
+    }
+
     /**
      * Reports whether every bound in a timestamp predicate is known at parse time, so that
      * analyzeAndOffset() can bake the calendar offset into the interval bounds. A bind variable or a
@@ -1222,6 +1234,15 @@ public class SqlOptimiser implements Mutable {
 
     private static void unlinkDependencies(IQueryModel model, int parent, int child) {
         model.getJoinModels().getQuick(parent).removeDependency(child);
+    }
+
+    private static int wildcardPosition(ExpressionNode ast) {
+        int position = ast.position;
+        int dot = Chars.indexOfLastUnquoted(ast.token, '.');
+        if (dot > -1) {
+            position += dot + 1;
+        }
+        return position;
     }
 
     private void addColumnToSelectModel(IQueryModel model, IntList insertColumnIndexes, ObjList<QueryColumn> insertColumnAliases, CharSequence timestampAlias) {
@@ -3486,6 +3507,7 @@ public class SqlOptimiser implements Mutable {
             QueryColumn qc,
             boolean hasJoins,
             boolean isGroupBy,
+            boolean hasEmptyGroupingSet,
             IQueryModel baseModel,
             IQueryModel translatingModel,
             IQueryModel innerModel,
@@ -3507,7 +3529,8 @@ public class SqlOptimiser implements Mutable {
                     baseModel.getJoinModels().getQuick(index),
                     hasJoins,
                     isGroupBy,
-                    qc.getAst().position,
+                    wildcardPosition(qc.getAst()),
+                    hasEmptyGroupingSet,
                     translatingModel,
                     innerModel,
                     windowModel,
@@ -3535,6 +3558,7 @@ public class SqlOptimiser implements Mutable {
                         hasJoins,
                         isGroupBy,
                         qc.getAst().position,
+                        hasEmptyGroupingSet,
                         translatingModel,
                         innerModel,
                         windowModel,
@@ -3551,6 +3575,7 @@ public class SqlOptimiser implements Mutable {
             boolean hasJoins,
             boolean isGroupBy,
             int wildcardPosition,
+            boolean hasEmptyGroupingSet,
             IQueryModel translatingModel,
             IQueryModel innerModel,
             IQueryModel windowModel,
@@ -3564,6 +3589,9 @@ public class SqlOptimiser implements Mutable {
             // this is a check to see if a column has to be added to a wildcard list
             QueryColumn qc = srcModel.getAliasToColumnMap().get(name);
             if (qc.isIncludeIntoWildcard()) {
+                if (hasEmptyGroupingSet && isGroupBy && !groupByModel.getAliasToColumnMap().contains(name)) {
+                    throw SqlException.$(wildcardPosition, "column must appear in GROUP BY clause or aggregate function");
+                }
                 CharSequence token;
                 if (hasJoins) {
                     CharacterStoreEntry characterStoreEntry = characterStore.newEntry();
@@ -9998,7 +10026,10 @@ public class SqlOptimiser implements Mutable {
             return model;
         }
 
-        if (model.isDistinct() && configuration.isSqlDistinctGroupByRewriteEnabled()) {
+        if (model.isDistinct()
+                && !model.hasGroupingSets()
+                && (model.getNestedModel() == null || !model.getNestedModel().hasGroupingSets())
+                && configuration.isSqlDistinctGroupByRewriteEnabled()) {
             // bingo
             // create wrapper models
             final IQueryModel wrapperNested = queryModelPool.next();
@@ -10894,9 +10925,64 @@ public class SqlOptimiser implements Mutable {
             final ExpressionNode sampleByFrom = nested.getSampleByFrom();
             final ExpressionNode sampleByTo = nested.getSampleByTo();
 
-            final ObjList<ExpressionNode> groupBy = nested.getGroupBy();
-            if (sampleBy != null && groupBy != null && groupBy.size() > 0 && !nested.hasGroupingSets()) {
-                throw SqlException.$(groupBy.getQuick(0).position, "SELECT query must not contain both GROUP BY and SAMPLE BY");
+            if (sampleBy != null && nested.hasGroupingSets() && sampleByOffset == null) {
+                throw SqlException.$(sampleBy.position, "SAMPLE BY with grouping sets requires calendar alignment");
+            }
+            if (sampleBy != null && nested.hasGroupingSets()
+                    && sampleByFrom != null && sampleByFrom.type != CONSTANT) {
+                throw SqlException.$(sampleByFrom.position, "non-literal FROM bounds are not supported with SAMPLE BY grouping sets");
+            }
+
+            final boolean isFillNone = sampleByFillSize == 0
+                    || sampleByFillSize == 1 && Chars.equalsLowerCaseAscii(sampleByFill.getQuick(0).token, "none");
+            if (sampleBy != null && nested.hasGroupingSets() && !isFillNone) {
+                final ObjList<IntList> groupingSets = nested.getGroupingSets();
+                final ObjList<ExpressionNode> groupBy = nested.getGroupBy();
+                for (int i = 0, n = groupingSets.size(); i < n; i++) {
+                    final IntList left = groupingSets.getQuick(i);
+                    for (int j = i + 1; j < n; j++) {
+                        final IntList right = groupingSets.getQuick(j);
+                        boolean isDuplicate = true;
+                        for (int k = 0, m = left.size(); k < m; k++) {
+                            final CharSequence leftKey = groupBy.getQuick(left.getQuick(k)).token;
+                            boolean hasMatch = false;
+                            for (int l = 0, r = right.size(); l < r; l++) {
+                                if (isSameGroupingSetKey(leftKey, groupBy.getQuick(right.getQuick(l)).token)) {
+                                    hasMatch = true;
+                                    break;
+                                }
+                            }
+                            if (!hasMatch) {
+                                isDuplicate = false;
+                                break;
+                            }
+                        }
+                        for (int k = 0, m = right.size(); isDuplicate && k < m; k++) {
+                            final CharSequence rightKey = groupBy.getQuick(right.getQuick(k)).token;
+                            boolean hasMatch = false;
+                            for (int l = 0, r = left.size(); l < r; l++) {
+                                if (isSameGroupingSetKey(rightKey, groupBy.getQuick(left.getQuick(l)).token)) {
+                                    hasMatch = true;
+                                    break;
+                                }
+                            }
+                            if (!hasMatch) {
+                                isDuplicate = false;
+                            }
+                        }
+                        if (isDuplicate) {
+                            throw SqlException.$(sampleByFill.getQuick(0).position, "SAMPLE BY FILL is not supported with duplicate grouping sets");
+                        }
+                    }
+                }
+            }
+
+            if (sampleBy != null && nested.getGroupByPosition() > 0) {
+                final int groupByPosition = nested.getGroupBy().size() > 0
+                        && nested.getGroupBy().getQuick(0).position > nested.getGroupByPosition()
+                        ? nested.getGroupBy().getQuick(0).position
+                        : nested.getGroupByPosition();
+                throw SqlException.$(groupByPosition, "SELECT query must not contain both GROUP BY and SAMPLE BY");
             }
 
             if (sampleBy != null && isWindowJoin(nested)) {
@@ -11121,6 +11207,7 @@ public class SqlOptimiser implements Mutable {
                 tsFloorFunc.token = TimestampFloorFromOffsetUtcFunctionFactory.NAME;
                 tsFloorFunc.type = FUNCTION;
                 tsFloorFunc.paramCount = 5;
+                tsFloorFunc.position = sampleBy.position;
 
                 CharacterStoreEntry characterStoreEntry = characterStore.newEntry();
                 characterStoreEntry.put('\'').put(sampleBy.token).put('\'');
@@ -11179,7 +11266,7 @@ public class SqlOptimiser implements Mutable {
                         queryColumnPool.next().of(timestampAlias, tsFloorFunc)
                 );
 
-                if (timestampOnly || nested.getGroupBy().size() > 0) {
+                if (timestampOnly || nested.getGroupBy().size() > 0 || nested.hasGroupingSets()) {
                     nested.addGroupBy(tsFloorFunc);
                 }
 
@@ -13150,6 +13237,18 @@ public class SqlOptimiser implements Mutable {
         final IQueryModel baseModel = model.getNestedModel();
         final boolean hasJoins = baseModel.getJoinModels().size() > 1;
 
+        IQueryModel groupingSetsModel = model.hasGroupingSets() ? model : baseModel;
+        boolean hasEmptyGroupingSet = false;
+        if (groupingSetsModel.hasGroupingSets()) {
+            ObjList<IntList> groupingSets = groupingSetsModel.getGroupingSets();
+            for (int i = 0, n = groupingSets.size(); i < n; i++) {
+                if (groupingSets.getQuick(i).size() == 0) {
+                    hasEmptyGroupingSet = true;
+                    break;
+                }
+            }
+        }
+
         final boolean isWindowJoin = isWindowJoin(baseModel);
         if (isWindowJoin) {
             rewriteStatus |= REWRITE_STATUS_USE_WINDOW_JOIN_MODE;
@@ -13165,10 +13264,13 @@ public class SqlOptimiser implements Mutable {
             groupByModel.moveSampleByFrom(baseModel);
         }
 
-        boolean hasHorizonAggregation = baseModel.getGroupBy().size() > 0;
+        boolean hasHorizonAggregation = baseModel.getGroupBy().size() > 0 || baseModel.hasGroupingSets();
         if (hasHorizonAggregation) {
             if (isWindowJoin) {
-                throw SqlException.$(baseModel.getGroupBy().getQuick(0).position, "GROUP BY cannot be used with WINDOW JOIN");
+                final int groupByPosition = baseModel.getGroupBy().size() > 0
+                        ? baseModel.getGroupBy().getQuick(0).position
+                        : baseModel.getGroupByPosition();
+                throw SqlException.$(groupByPosition, "GROUP BY cannot be used with WINDOW JOIN");
             }
             groupByModel.moveGroupByFrom(baseModel);
             // group by should be implemented even if there are no aggregate functions
@@ -13307,7 +13409,7 @@ public class SqlOptimiser implements Mutable {
         // if there are explicit group by columns then nothing else should go to group by model
         // select columns should either match group by columns exactly or go to outer virtual model
         final ObjList<ExpressionNode> groupBy = groupByModel.getGroupBy();
-        final boolean hasGroupByClause = groupBy.size() > 0;
+        final boolean hasGroupByClause = groupBy.size() > 0 || groupByModel.hasGroupingSets();
         // For HORIZON JOIN, GROUP BY is validation-only (no-op); skip GROUP BY column processing
         // since HORIZON JOIN handles aggregation internally
         final boolean explicitGroupBy = hasGroupByClause && !isHorizonJoin;
@@ -13487,6 +13589,7 @@ public class SqlOptimiser implements Mutable {
                                 qc,
                                 hasJoins,
                                 (rewriteStatus & REWRITE_STATUS_USE_GROUP_BY_MODEL) != 0,
+                                hasEmptyGroupingSet,
                                 baseModel,
                                 translatingModel0,
                                 innerVirtualModel,
@@ -14174,6 +14277,7 @@ public class SqlOptimiser implements Mutable {
                         && nested.getNestedModel() == null
                         && nested.getTableName() != null
                         && model.getSampleBy() == null
+                        && !model.hasGroupingSets()
                         && model.getGroupBy().size() == 0
         ) {
             final ObjList<QueryColumn> queryColumns = model.getBottomUpColumns();

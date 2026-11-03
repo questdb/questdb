@@ -302,6 +302,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     ObjList<ExpressionNode> getGroupBy();
 
+    int getGroupByPosition();
+
     ObjList<IntList> getGroupingSets();
 
     LowerCaseCharSequenceObjHashMap<CharSequence> getHints();
@@ -617,6 +619,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
     void setFillValues(ObjList<ExpressionNode> fillValues);
 
     void setForceBackwardScan(boolean forceBackwardScan);
+
+    void setGroupByPosition(int groupByPosition);
 
     void setIsCteModel(boolean isCteModel);
 

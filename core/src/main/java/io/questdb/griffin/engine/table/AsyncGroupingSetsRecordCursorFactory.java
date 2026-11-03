@@ -273,7 +273,7 @@ public class AsyncGroupingSetsRecordCursorFactory extends AbstractRecordCursorFa
                 record.setRowIndex(row);
                 for (int setIndex = 0; setIndex < setCount; setIndex++) {
                     NullingRecord keyRecord = atom.getNullingRecord(slotId, setIndex);
-                    keyRecord.of(record, atom.getNulledColumns(setIndex));
+                    keyRecord.of(record);
                     atom.setCurrentGroupingSet(slotId, setIndex);
                     Map map = atom.getMap(slotId, setIndex);
                     MapKey key = map.withKey();

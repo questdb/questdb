@@ -257,6 +257,14 @@ public class NullingRecord implements Record {
 
     public void of(Record base, IntList nulledColumns) {
         this.base = base;
+        setNulledColumns(nulledColumns);
+    }
+
+    public void of(Record base) {
+        this.base = base;
+    }
+
+    public void setNulledColumns(IntList nulledColumns) {
         if (nulledColumns == null || nulledColumns.size() == 0) {
             this.isColumnNulled = null;
         } else {

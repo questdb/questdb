@@ -767,7 +767,7 @@ class LateralJoinRewriter implements Mutable {
     }
 
     // Returns true if any lateral join was found in the model tree.
-    private boolean analyzeCorrelation(IQueryModel model, int lateralDepth) {
+    private boolean analyzeCorrelation(IQueryModel model, int lateralDepth) throws SqlException {
         if (!model.isOptimisable()) {
             return false;
         }
@@ -787,6 +787,7 @@ class LateralJoinRewriter implements Mutable {
                 IQueryModel topInner = joinModel.getNestedModel();
                 assert topInner != null;
                 collectCorrelatedRefs(topInner, model, i, newDepth);
+                rejectCorrelatedGroupingSets(topInner, newDepth);
                 analyzeCorrelation(topInner, newDepth);
             } else if (joinModel.getNestedModel() != null) {
                 hasLateral |= analyzeCorrelation(joinModel.getNestedModel(), lateralDepth);
@@ -1361,6 +1362,10 @@ class LateralJoinRewriter implements Mutable {
     //   After:  SELECT __outer_ref__.id, count(*) FROM trades ... GROUP BY __outer_ref__.id
     private void compensateAggregate(IQueryModel inner) throws SqlException {
         ObjList<ExpressionNode> groupBy = inner.getGroupBy();
+        if (groupBy != null && groupBy.size() > 0 && inner.hasGroupingSets() && groupingCols.size() > 0) {
+            throw SqlException.$(inner.getGroupByPosition(),
+                    "correlated GROUPING SETS are not supported with LATERAL");
+        }
         if (groupBy != null && groupBy.size() > 0) {
             for (int i = 0, n = groupingCols.size(); i < n; i++) {
                 ExpressionNode col = groupingCols.getQuick(i);
@@ -2449,6 +2454,17 @@ class LateralJoinRewriter implements Mutable {
             for (int i = 0, m = n.args.size(); i < m; i++) {
                 sqlNodeStack.push(n.args.getQuick(i));
             }
+        }
+        return false;
+    }
+
+    private boolean hasCorrelatedAtDepthInNestedChain(IQueryModel model, int depth) {
+        IQueryModel current = model;
+        while (current != null) {
+            if (current.isOwnCorrelatedAtDepth(depth, -1)) {
+                return true;
+            }
+            current = current.getNestedModel();
         }
         return false;
     }
@@ -3734,6 +3750,35 @@ class LateralJoinRewriter implements Mutable {
             result = result == null ? lifted : createBinaryOp("and", result, lifted);
         }
         return result;
+    }
+
+    private void rejectCorrelatedGroupingSets(IQueryModel model, int depth) throws SqlException {
+        IQueryModel current = model;
+        while (current != null) {
+            if (current.hasGroupingSets() && hasCorrelatedAtDepthInNestedChain(current, depth)) {
+                int position = current.getGroupByPosition();
+                if (position == 0 && current.getSampleBy() != null) {
+                    position = current.getSampleBy().position;
+                }
+                if (position == 0 && current.getGroupBy() != null && current.getGroupBy().size() > 0) {
+                    position = current.getGroupBy().getQuick(0).position;
+                }
+                if (position == 0 && current.getBottomUpColumns().size() > 0) {
+                    ExpressionNode firstColumn = current.getBottomUpColumns().getQuick(0).getAst();
+                    if (firstColumn != null) {
+                        position = firstColumn.position;
+                    }
+                }
+                throw SqlException.$(position, "correlated GROUPING SETS are not supported with LATERAL");
+            }
+            for (int i = 1, n = current.getJoinModels().size(); i < n; i++) {
+                rejectCorrelatedGroupingSets(current.getJoinModels().getQuick(i).getNestedModel(), depth);
+            }
+            if (current.getUnionModel() != null) {
+                rejectCorrelatedGroupingSets(current.getUnionModel(), depth);
+            }
+            current = current.getNestedModel();
+        }
     }
 
     private void rejectCorrelatedScalarCountLimit() throws SqlException {

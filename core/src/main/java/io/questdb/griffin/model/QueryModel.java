@@ -147,6 +147,7 @@ public class QueryModel implements IQueryModel {
     private ExpressionNode fillTo;
     private ObjList<ExpressionNode> fillValues;
     private boolean forceBackwardScan;
+    private int groupByPosition;
     // Each IntList contains indices into groupBy for columns active in that grouping set.
     // Empty IntList = empty set () = grand total. Null means no GROUPING SETS syntax.
     private ObjList<IntList> groupingSets;
@@ -419,6 +420,7 @@ public class QueryModel implements IQueryModel {
         orderByAdviceMnemonic = OrderByMnemonic.ORDER_BY_UNKNOWN;
         isSelectTranslation = false;
         groupBy.clear();
+        groupByPosition = 0;
         groupingSets = null;
         dependencies.clear();
         parsedWhere.clear();
@@ -824,6 +826,11 @@ public class QueryModel implements IQueryModel {
     @Override
     public ObjList<ExpressionNode> getGroupBy() {
         return groupBy;
+    }
+
+    @Override
+    public int getGroupByPosition() {
+        return groupByPosition;
     }
 
     @Override
@@ -1544,6 +1551,7 @@ public class QueryModel implements IQueryModel {
     public void moveGroupByFrom(IQueryModel model) {
         ObjList<ExpressionNode> thatGroupBy = model.getGroupBy();
         groupBy.addAll(thatGroupBy);
+        groupByPosition = model.getGroupByPosition();
         if (model instanceof QueryModel that) {
             groupingSets = that.groupingSets;
             that.groupingSets = null;
@@ -1820,6 +1828,11 @@ public class QueryModel implements IQueryModel {
     @Override
     public void setForceBackwardScan(boolean forceBackwardScan) {
         this.forceBackwardScan = forceBackwardScan;
+    }
+
+    @Override
+    public void setGroupByPosition(int groupByPosition) {
+        this.groupByPosition = groupByPosition;
     }
 
     @Override

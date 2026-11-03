@@ -69,6 +69,7 @@ public class AsyncGroupingSetsAtom implements StatefulAtom, Reopenable, Closeabl
     private final ObjList<GroupByAllocator> allocators;
     private final CairoConfiguration configuration;
     private final ObjList<RecordSink> functionSinks;
+    private final ObjList<ObjList<GroupingFunction>> groupingFunctions;
     private final ObjList<Map> maps;
     private final @Nullable ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
     private final ObjList<ObjList<Function>> perWorkerKeyFunctions;
@@ -128,6 +129,7 @@ public class AsyncGroupingSetsAtom implements StatefulAtom, Reopenable, Closeabl
         }
         this.recordSinks = new ObjList<>(workerCount + 1);
         this.functionSinks = new ObjList<>(workerCount + 1);
+        this.groupingFunctions = new ObjList<>(workerCount + 1);
         this.updaters = new ObjList<>(workerCount + 1);
         this.allocators = new ObjList<>(workerCount + 1);
 
@@ -295,12 +297,9 @@ public class AsyncGroupingSetsAtom implements StatefulAtom, Reopenable, Closeabl
     }
 
     public void setCurrentGroupingSet(int slotId, int setIndex) {
-        ObjList<GroupByFunction> functions = getGroupByFunctions(slotId);
+        ObjList<GroupingFunction> functions = groupingFunctions.getQuick(slotIndex(slotId));
         for (int i = 0, n = functions.size(); i < n; i++) {
-            GroupByFunction function = functions.getQuick(i);
-            if (function instanceof GroupingFunction groupingFunction) {
-                groupingFunction.setCurrentSet(setIndex);
-            }
+            functions.getQuick(i).setCurrentSet(setIndex);
         }
     }
 
@@ -370,6 +369,14 @@ public class AsyncGroupingSetsAtom implements StatefulAtom, Reopenable, Closeabl
         final ObjList<GroupByFunction> groupByFunctions = slotId < 0 || perWorkerGroupByFunctions == null
                 ? ownerGroupByFunctions
                 : perWorkerGroupByFunctions.getQuick(slotId);
+        final ObjList<GroupingFunction> slotGroupingFunctions = new ObjList<>();
+        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+            GroupByFunction function = groupByFunctions.getQuick(i);
+            if (function instanceof GroupingFunction groupingFunction) {
+                slotGroupingFunctions.add(groupingFunction);
+            }
+        }
+        groupingFunctions.extendAndSet(index, slotGroupingFunctions);
         recordSinks.extendAndSet(index, RecordSinkFactory.getInstance(
                 sinkClass, baseColumnTypes, listColumnFilter, null, null, null, null, null
         ));
@@ -385,7 +392,9 @@ public class AsyncGroupingSetsAtom implements StatefulAtom, Reopenable, Closeabl
         for (int set = 0; set < setCount; set++) {
             int mapIndex = index * setCount + set;
             maps.extendAndSet(mapIndex, null);
-            nullingRecords.extendAndSet(mapIndex, new NullingRecord());
+            NullingRecord nullingRecord = new NullingRecord();
+            nullingRecord.setNulledColumns(nulledColumnsPerSet.getQuick(set));
+            nullingRecords.extendAndSet(mapIndex, nullingRecord);
         }
     }
 

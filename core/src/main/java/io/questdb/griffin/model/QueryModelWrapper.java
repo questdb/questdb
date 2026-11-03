@@ -383,6 +383,11 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public int getGroupByPosition() {
+        return delegate.getGroupByPosition();
+    }
+
+    @Override
     public ObjList<IntList> getGroupingSets() {
         return delegate.getGroupingSets();
     }
@@ -1209,6 +1214,11 @@ public class QueryModelWrapper implements IQueryModel {
 
     @Override
     public void setLimitPosition(int limitPosition) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void setGroupByPosition(int groupByPosition) {
         throw new UnsupportedOperationException();
     }
 

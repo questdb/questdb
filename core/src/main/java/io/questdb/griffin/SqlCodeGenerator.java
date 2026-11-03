@@ -10115,6 +10115,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         null
                 );
 
+                if (!model.hasGroupingSets()) {
+                    guardAgainstGroupingFunctionWithoutGroupingSets(groupByFunctions);
+                }
+
                 final ObjList<GroupByFunction> groupByFunctions0 = groupByFunctions;
                 final ObjList<Function> outerProjectionFunctions0 = outerProjectionFunctions;
                 innerProjectionFunctions = null;
@@ -10187,6 +10191,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     model.getColumns(),
                     null
             );
+
+            if (!model.hasGroupingSets()) {
+                guardAgainstGroupingFunctionWithoutGroupingSets(groupByFunctions);
+            }
 
             boolean isFillNone = fillCount == 0 || fillCount == 1 && Chars.equalsLowerCaseAscii(sampleByFill.getQuick(0).token, "none");
             // The first/last index optimisation reads values straight from raw page addresses
@@ -10935,7 +10943,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             // generate special case plan for "select count() from somewhere"
             columns = model.getColumns();
-            if (columns.size() == 1) {
+            if (!model.hasGroupingSets() && columns.size() == 1) {
                 CharSequence columnName = columns.getQuick(0).getName();
                 columnExpr = columns.getQuick(0).getAst();
                 if (columnExpr.type == FUNCTION && columnExpr.paramCount == 0 && isCountKeyword(columnExpr.token)) {
@@ -10951,7 +10959,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // If that column is a SYMBOL with posting index, enumerate keys via index instead of full scan.
             // Also works when the WHERE clause contains only interval (timestamp) filters — the interval
             // is pushed into IntervalPartitionFrameCursorFactory which bounds the row range per partition.
-            if (columns.size() == 1 && columns.getQuick(0).getAst().type == LITERAL
+            if (!model.hasGroupingSets() && columns.size() == 1 && columns.getQuick(0).getAst().type == LITERAL
                     && !SqlHints.hasNoIndexHint(model)
                     && !SqlHints.hasNoCoveringHint(model)
                     && executionContext.isCoveringIndexEnabled()) {
@@ -11558,7 +11566,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
 
-            if (keyTypes.getColumnCount() == 0) {
+            if (keyTypes.getColumnCount() == 0 && !model.hasGroupingSets()) {
                 assert outerProjectionFunctions.size() == groupByFunctions.size();
 
                 // Transfer ownership to the factory constructor.

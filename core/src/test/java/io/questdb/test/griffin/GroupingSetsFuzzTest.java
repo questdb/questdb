@@ -75,6 +75,77 @@ public class GroupingSetsFuzzTest extends AbstractCairoTest {
                         ") ORDER BY grp, symbol, side";
 
                 assertEquivalent(cubeQuery, gsQuery, i);
+
+                String groupByUnionQuery = "SELECT * FROM (" +
+                        "SELECT symbol, side, SUM(quantity) AS s, 0 AS grp " +
+                        "FROM t GROUP BY symbol, side UNION ALL " +
+                        "SELECT symbol, NULL AS side, SUM(quantity) AS s, 1 AS grp " +
+                        "FROM t GROUP BY symbol UNION ALL " +
+                        "SELECT NULL AS symbol, side, SUM(quantity) AS s, 2 AS grp " +
+                        "FROM t GROUP BY side UNION ALL " +
+                        "SELECT NULL AS symbol, NULL AS side, SUM(quantity) AS s, 3 AS grp " +
+                        "FROM t" +
+                        ") ORDER BY grp, symbol, side";
+
+                // Plain GROUP BY branches independently represent each CUBE level.
+                assertEquivalent(cubeQuery, groupByUnionQuery, i, "plain GROUP BY UNION ALL");
+            }
+        });
+    }
+
+    @Test
+    public void testRollupAndGroupingSetsMatchPlainGroupByUnion() throws Exception {
+        assertMemoryLeak(() -> {
+            for (int i = 0; i < ITERATIONS; i++) {
+                execute("DROP TABLE IF EXISTS t");
+                createRandomTable();
+
+                String rollupQuery = "SELECT * FROM (" +
+                        "SELECT symbol, side, SUM(quantity) AS s, GROUPING_ID(symbol, side) AS grp " +
+                        "FROM t GROUP BY ROLLUP(symbol, side)" +
+                        ") ORDER BY grp, symbol, side";
+                String rollupOracle = "SELECT * FROM (" +
+                        "SELECT symbol, side, SUM(quantity) AS s, 0 AS grp FROM t GROUP BY symbol, side UNION ALL " +
+                        "SELECT symbol, NULL AS side, SUM(quantity) AS s, 1 AS grp FROM t GROUP BY symbol UNION ALL " +
+                        "SELECT NULL AS symbol, NULL AS side, SUM(quantity) AS s, 3 AS grp FROM t" +
+                        ") ORDER BY grp, symbol, side";
+                assertEquivalent(rollupQuery, rollupOracle, i, "ROLLUP plain GROUP BY UNION ALL");
+
+                String groupingSetsQuery = "SELECT * FROM (" +
+                        "SELECT symbol, side, SUM(quantity) AS s, GROUPING_ID(symbol, side) AS grp " +
+                        "FROM t GROUP BY GROUPING SETS ((symbol, side), (side), ())" +
+                        ") ORDER BY grp, symbol, side";
+                String groupingSetsOracle = "SELECT * FROM (" +
+                        "SELECT symbol, side, SUM(quantity) AS s, 0 AS grp FROM t GROUP BY symbol, side UNION ALL " +
+                        "SELECT NULL AS symbol, side, SUM(quantity) AS s, 2 AS grp FROM t GROUP BY side UNION ALL " +
+                        "SELECT NULL AS symbol, NULL AS side, SUM(quantity) AS s, 3 AS grp FROM t" +
+                        ") ORDER BY grp, symbol, side";
+                assertEquivalent(groupingSetsQuery, groupingSetsOracle, i, "GROUPING SETS plain GROUP BY UNION ALL");
+            }
+        });
+    }
+
+    @Test
+    public void testRollupDetailMatchesGroupBy() throws Exception {
+        // Detail rows from ROLLUP(symbol) must match GROUP BY symbol
+        assertMemoryLeak(() -> {
+            for (int i = 0; i < ITERATIONS; i++) {
+                execute("DROP TABLE IF EXISTS t");
+                createRandomTable();
+
+                String agg = randomAggregate("quantity");
+
+                // Detail rows from ROLLUP: filter to grouped level
+                String rollupDetail = "SELECT symbol, v FROM (" +
+                        "SELECT symbol, " + agg + " AS v, GROUPING(symbol) AS g " +
+                        "FROM t GROUP BY ROLLUP(symbol)" +
+                        ") WHERE g = 0 ORDER BY symbol";
+
+                // Standalone GROUP BY
+                String groupBy = "SELECT symbol, " + agg + " AS v " +
+                        "FROM t GROUP BY symbol ORDER BY symbol";
+
+                assertEquivalent(rollupDetail, groupBy, i, agg);
             }
         });
     }
@@ -123,31 +194,6 @@ public class GroupingSetsFuzzTest extends AbstractCairoTest {
                 String standalone = "SELECT " + agg + " AS v FROM t";
 
                 assertEquivalent(rollupGrand, standalone, i, agg);
-            }
-        });
-    }
-
-    @Test
-    public void testRollupDetailMatchesGroupBy() throws Exception {
-        // Detail rows from ROLLUP(symbol) must match GROUP BY symbol
-        assertMemoryLeak(() -> {
-            for (int i = 0; i < ITERATIONS; i++) {
-                execute("DROP TABLE IF EXISTS t");
-                createRandomTable();
-
-                String agg = randomAggregate("quantity");
-
-                // Detail rows from ROLLUP: filter to grouped level
-                String rollupDetail = "SELECT symbol, v FROM (" +
-                        "SELECT symbol, " + agg + " AS v, GROUPING(symbol) AS g " +
-                        "FROM t GROUP BY ROLLUP(symbol)" +
-                        ") WHERE g = 0 ORDER BY symbol";
-
-                // Standalone GROUP BY
-                String groupBy = "SELECT symbol, " + agg + " AS v " +
-                        "FROM t GROUP BY symbol ORDER BY symbol";
-
-                assertEquivalent(rollupDetail, groupBy, i, agg);
             }
         });
     }
@@ -236,6 +282,29 @@ public class GroupingSetsFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByCubeEquivalentToGroupingSets() throws Exception {
+        // SAMPLE BY 1h CUBE(symbol, side) must match the explicit expansion
+        assertMemoryLeak(() -> {
+            for (int i = 0; i < ITERATIONS; i++) {
+                execute("DROP TABLE IF EXISTS t");
+                createRandomTimestampTableTwoKeys();
+
+                String cubeQuery = "SELECT * FROM (" +
+                        "SELECT ts, symbol, side, SUM(quantity) AS s, GROUPING_ID(symbol, side) AS grp " +
+                        "FROM t SAMPLE BY 1h CUBE(symbol, side)" +
+                        ") ORDER BY ts, grp, symbol, side";
+
+                String gsQuery = "SELECT * FROM (" +
+                        "SELECT ts, symbol, side, SUM(quantity) AS s, GROUPING_ID(symbol, side) AS grp " +
+                        "FROM t SAMPLE BY 1h GROUPING SETS ((symbol, side), (symbol), (side), ())" +
+                        ") ORDER BY ts, grp, symbol, side";
+
+                assertEquivalent(cubeQuery, gsQuery, i);
+            }
+        });
+    }
+
+    @Test
     public void testSampleByRollupEquivalentToGroupingSets() throws Exception {
         // SAMPLE BY 1h ROLLUP(symbol) must match
         // SAMPLE BY 1h GROUPING SETS ((symbol), ())
@@ -255,29 +324,6 @@ public class GroupingSetsFuzzTest extends AbstractCairoTest {
                         ") ORDER BY ts, g, symbol";
 
                 assertEquivalent(rollupQuery, gsQuery, i);
-            }
-        });
-    }
-
-    @Test
-    public void testSampleByCubeEquivalentToGroupingSets() throws Exception {
-        // SAMPLE BY 1h CUBE(symbol, side) must match the explicit expansion
-        assertMemoryLeak(() -> {
-            for (int i = 0; i < ITERATIONS; i++) {
-                execute("DROP TABLE IF EXISTS t");
-                createRandomTimestampTableTwoKeys();
-
-                String cubeQuery = "SELECT * FROM (" +
-                        "SELECT ts, symbol, side, SUM(quantity) AS s, GROUPING_ID(symbol, side) AS grp " +
-                        "FROM t SAMPLE BY 1h CUBE(symbol, side)" +
-                        ") ORDER BY ts, grp, symbol, side";
-
-                String gsQuery = "SELECT * FROM (" +
-                        "SELECT ts, symbol, side, SUM(quantity) AS s, GROUPING_ID(symbol, side) AS grp " +
-                        "FROM t SAMPLE BY 1h GROUPING SETS ((symbol, side), (symbol), (side), ())" +
-                        ") ORDER BY ts, grp, symbol, side";
-
-                assertEquivalent(cubeQuery, gsQuery, i);
             }
         });
     }
