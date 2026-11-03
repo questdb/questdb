@@ -126,10 +126,45 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
+    public void testO3MergeWithIoFailuresDrawFailAfterCalls() {
+        final Rnd rnd = generateRandom(LOG);
+        // Round 0 starts before any apply made calls, so it only measures.
+        Assert.assertEquals(Integer.MAX_VALUE, drawFailAfterCalls(rnd, 0, 3, 0, Long.MAX_VALUE));
+        // 3 drawn rounds, and the applies so far made at most 1000 and at least 20 calls. Drawn
+        // rounds 1 and 2 fail at a call from the first half of the most, the rounds that the run
+        // adds from round 3 on at a call within the fewest.
+        final StringSink ranges = new StringSink();
+        for (int round = 1; round <= 4; round++) {
+            int lo = Integer.MAX_VALUE;
+            int hi = Integer.MIN_VALUE;
+            for (int i = 0; i < 20_000; i++) {
+                final int failAfterCalls = drawFailAfterCalls(rnd, round, 3, 1000, 20);
+                lo = Math.min(lo, failAfterCalls);
+                hi = Math.max(hi, failAfterCalls);
+            }
+            ranges.put("round ").put(round).put(": [").put(lo).put(", ").put(hi).put("]\n");
+        }
+        TestUtils.assertEquals(
+                """
+                        round 1: [1, 500]
+                        round 2: [1, 500]
+                        round 3: [1, 20]
+                        round 4: [1, 20]
+                        """,
+                ranges
+        );
+        // When the bound falls below 1, the round fails at the first call: a drawn round after
+        // applies of at most 1 call, an added round after an apply of 0 calls.
+        Assert.assertEquals(1, drawFailAfterCalls(rnd, 1, 3, 1, 1));
+        Assert.assertEquals(1, drawFailAfterCalls(rnd, 3, 3, 1000, 0));
+    }
+
+    @Test
     public void testO3MergeWithIoFailuresInAddedRounds() throws Exception {
         // Round 0 is the only drawn round and only measures, so every failure fires in a round
-        // that the run adds.
+        // that the run adds. The run adds no round after one fires, so exactly one fires.
         runO3MergeWithIoFailures(1, MAX_ADDED_IO_FAILURE_ROUNDS);
+        Assert.assertEquals(1, fuzzer.getIoFailuresObserved());
     }
 
     @Test
@@ -306,6 +341,22 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
             assertRowGroupSizes(walTable, rowGroupSize, true);
             assertParquetMetaInvariants(walTable);
         });
+    }
+
+    /**
+     * Draws the file system call at which the WAL apply of a round fails. Until an apply has made
+     * calls (walApplyCallsMax is 0), it returns Integer.MAX_VALUE, so the round only measures.
+     * A drawn round, below drawnRounds, fails at a call from [1, walApplyCallsMax / 2], a round
+     * that the run adds at a call from [1, walApplyCallsMin]. A bound below 1 counts as 1.
+     */
+    private static int drawFailAfterCalls(Rnd rnd, int round, int drawnRounds, long walApplyCallsMax, long walApplyCallsMin) {
+        if (walApplyCallsMax == 0) {
+            return Integer.MAX_VALUE; // first round: measure only
+        }
+        if (round < drawnRounds) {
+            return 1 + rnd.nextInt((int) Math.min(Integer.MAX_VALUE - 1, Math.max(1, walApplyCallsMax / 2)));
+        }
+        return 1 + rnd.nextInt((int) Math.min(Integer.MAX_VALUE - 1, Math.max(1, walApplyCallsMin)));
     }
 
     private static int findPartitionIndex(TableReader reader, long partitionTs) {
@@ -666,15 +717,10 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
                     // Apply to WAL table (writes via WalWriter, then drains WAL queue
                     // which triggers O3 merge with the Parquet partition).
                     if (hasWalIoFailures) {
-                        final int failAfterCalls;
-                        if (walApplyCallsMax == 0) {
-                            failAfterCalls = Integer.MAX_VALUE; // first round: measure only
-                        } else if (round < rounds) {
-                            failAfterCalls = 1 + rnd.nextInt((int) Math.min(Integer.MAX_VALUE - 1, Math.max(1, walApplyCallsMax / 2)));
-                        } else {
+                        if (round >= rounds) {
                             addedRounds++;
-                            failAfterCalls = 1 + rnd.nextInt((int) Math.min(Integer.MAX_VALUE - 1, Math.max(1, walApplyCallsMin)));
                         }
+                        final int failAfterCalls = drawFailAfterCalls(rnd, round, rounds, walApplyCallsMax, walApplyCallsMin);
                         final long calls = fuzzer.applyWalWithIoFailure(transactions, walTable, rnd, failAfterCalls);
                         walApplyCallsMax = Math.max(walApplyCallsMax, calls);
                         walApplyCallsMin = Math.min(walApplyCallsMin, calls);
