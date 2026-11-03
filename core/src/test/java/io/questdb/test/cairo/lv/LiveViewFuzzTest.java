@@ -283,6 +283,14 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     private static final int REMOVAL_DROP_PARTITION = 1;
     private static final int REMOVAL_TRUNCATE = 0;
     private static final int REMOVAL_TTL = 2;
+    // The outcomes of the head-miss rebuild's end-of-table splice departNewestRowsOverSparseRoots
+    // sets up, one per shape: the splice kept roots above the new frontier and the rebuild
+    // truncates there, the rebuild emits no row over a root at the frontier and keeps the
+    // timeline, or it emits none with no root there and retires the timeline.
+    private static final int SPARSE_DEPARTURE_KEEP = 1;
+    private static final int SPARSE_DEPARTURE_RETIRE = 2;
+    private static final int SPARSE_DEPARTURE_SHAPES = 3;
+    private static final int SPARSE_DEPARTURE_TRUNCATE = 0;
     private static final String[] SYMBOLS = {
             "AA", "BB", "CC", "DD", "EE", "FF", "GG", "HH",
             "II", "JJ", "KK", "LL", "MM", "NN", "OO", "PP"
@@ -488,15 +496,22 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         // - a removed row the LV never emitted must not leak onto the raw-WAL path.
         final Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1 + rnd.nextInt(4));
+        final int firstSparseDepartureShape = rnd.nextInt(SPARSE_DEPARTURE_SHAPES);
         assertMemoryLeak(() -> {
-            for (int i = 0; i < DEDUP_VARIANTS.length; i++) {
-                runDedupFuzz(rnd, DEDUP_VARIANTS[i], 120 + rnd.nextInt(160),
-                        true, rnd.nextBoolean(), rnd.nextBoolean(), true, null);
+            for (int i = 0, rangeFrameRuns = 0; i < DEDUP_VARIANTS.length; i++) {
+                final int variant = DEDUP_VARIANTS[i];
+                final int sparseDepartureShape = isRangeFrameVariant(variant)
+                        ? (firstSparseDepartureShape + rangeFrameRuns++) % SPARSE_DEPARTURE_SHAPES
+                        : -1;
+                runDedupFuzz(rnd, variant, 120 + rnd.nextInt(160),
+                        true, rnd.nextBoolean(), rnd.nextBoolean(), true, null, sparseDepartureShape);
             }
         });
         coverage.log(LOG, "dedup");
-        // Each run ends moving its newest rows out of the view: see departNewestRows.
+        // Each run ends moving its newest rows out of the view: see departNewestRows, and
+        // departNewestRowsOverSparseRoots for the RANGE-frame runs, which take one shape each.
         coverage.assertReachedStat(LiveViewRefreshStats.SPLICE_FRONTIER_TRUNCATE_COUNT);
+        assertReachedEveryHeadMissSpliceOutcome();
     }
 
     @Test
@@ -510,7 +525,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             for (int i = 0; i < 3; i++) {
                 runDedupFuzz(rnd, rnd.nextInt(ANCHORED_VARIANT_COUNT), 120 + rnd.nextInt(160),
                         true, true, rnd.nextBoolean(), true,
-                        LiveViewFuzzAnchor.draw(rnd, rnd.nextInt(LiveViewFuzzAnchor.DAILY_EPOCH)));
+                        LiveViewFuzzAnchor.draw(rnd, rnd.nextInt(LiveViewFuzzAnchor.DAILY_EPOCH)), -1);
             }
         });
     }
@@ -833,9 +848,11 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         // trigger end to end, under optional restart / SEED / IN MEMORY:
         // any ghost row a converging replay failed to erase diverges from the
         // recompute oracle at quiescence.
-        runReplaceRangeFuzzVariants(TestUtils.generateRandom(LOG));
-        // Each run ends moving its newest rows out of the view: see departNewestRows.
+        runReplaceRangeFuzzVariants(TestUtils.generateRandom(LOG), true);
+        // Each run ends moving its newest rows out of the view: see departNewestRows, and
+        // departNewestRowsOverSparseRoots for the RANGE-frame runs, which take one shape each.
         coverage.assertReachedStat(LiveViewRefreshStats.SPLICE_FRONTIER_TRUNCATE_COUNT);
+        assertReachedEveryHeadMissSpliceOutcome();
     }
 
     @Test
@@ -846,7 +863,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         // generation no restart could restore, and the restart after the run's departure episode
         // failed its row count and stopped the view over the day the run dropped. The rebuild
         // retires the timeline instead, and the restart after the departure restores.
-        runReplaceRangeFuzzVariants(TestUtils.generateRandom(LOG, 437310277036417L, 1793666395061L));
+        runReplaceRangeFuzzVariants(TestUtils.generateRandom(LOG, 437310277036417L, 1793666395061L), false);
         coverage.assertReachedStat(LiveViewRefreshStats.HEAD_MISS_SPLICE_ZERO_ROW_RETIRE_COUNT);
     }
 
@@ -856,7 +873,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         // ending below a root the splice kept, which the rebuild truncates at the view's new
         // frontier, and with no row emitted and no root at the frontier, which retires the
         // timeline. A random run reaches either only now and then.
-        runReplaceRangeFuzzVariants(TestUtils.generateRandom(LOG, 449697238060352L, 1793678782022L));
+        runReplaceRangeFuzzVariants(TestUtils.generateRandom(LOG, 449697238060352L, 1793678782022L), false);
         coverage.assertReachedStat(LiveViewRefreshStats.HEAD_MISS_SPLICE_FRONTIER_TRUNCATE_COUNT);
         coverage.assertReachedStat(LiveViewRefreshStats.HEAD_MISS_SPLICE_ZERO_ROW_RETIRE_COUNT);
     }
@@ -1009,6 +1026,14 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             case 6 -> "ts, sym, dense_rank() OVER w AS v";
             default -> throw new IllegalArgumentException("anchored variant=" + variant);
         };
+    }
+
+    // Appends one (ts, sym, i, x) row to an INSERT's VALUES list.
+    private static void appendEpisodeRow(StringSink values, long ts, int symIdx, long iv, double xv) {
+        if (values.length() > 0) {
+            values.put(", ");
+        }
+        values.put('(').put(ts).put("::timestamp, '").put(SYMBOLS[symIdx]).put("', ").put(iv).put(", ").put(xv).put(')');
     }
 
     // Appends one (ts, sym, i, x) row through a WalWriter. A negative symIdx writes
@@ -1173,6 +1198,20 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         }
     }
 
+    /**
+     * Leaves the checkpoint cadence to the clock for departNewestRowsOverSparseRoots: no row
+     * count, and no learned duration shorter than the configured one, seals a root, so one
+     * seals only once the clock moves past the default duration, as the server's default row
+     * count leaves the roots of a view with few rows. Returns the row cadence it replaced, for
+     * {@link #endSparseCheckpointCadence}.
+     */
+    private static long beginSparseCheckpointCadence() {
+        final long rowsCadence = engine.getConfiguration().getLiveViewCheckpointRows();
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ADAPTIVE_CADENCE_ENABLED, "false");
+        return rowsCadence;
+    }
+
     // Boundaries [0, ..., len] splitting a segment of length len into 1..~10
     // contiguous commits.
     private static int[] commitBounds(Rnd rnd, int len) {
@@ -1237,6 +1276,33 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         return "ts, sym, d, " + agg + " OVER (" + frame + ") AS v";
     }
 
+    // Draws four rows a millisecond apart from fromTs, on random keys and with values the run's
+    // filter keeps, onto an INSERT's VALUES list. Fills tsOut, and symOut when not null, with
+    // what it drew.
+    private static void drawEpisodeBatch(
+            Rnd rnd,
+            StringSink values,
+            long fromTs,
+            @Nullable LongHashSet usedTs,
+            int symCount,
+            long[] tsOut,
+            @Nullable int[] symOut
+    ) {
+        long t = fromTs;
+        for (int k = 0; k < tsOut.length; k++, t += 1_000) {
+            while (usedTs != null && !usedTs.add(t)) {
+                t++;
+            }
+            final int sym = rnd.nextInt(symCount);
+            tsOut[k] = t;
+            if (symOut != null) {
+                symOut[k] = sym;
+            }
+            final long i = 1 + rnd.nextInt(1000);
+            appendEpisodeRow(values, t, sym, i, rnd.nextDouble() * 1000.0);
+        }
+    }
+
     // Drops the last `count` data rows from a printSql output (a header line plus
     // one '\n'-terminated line per row), keeping the header. Used to turn the full
     // recompute into the applied prefix (recompute minus the un-flushed lead) the
@@ -1257,6 +1323,18 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             sb.put(lines[i]).put('\n');
         }
         return sb.toString();
+    }
+
+    // Puts back the cadence beginSparseCheckpointCadence replaced.
+    private static void endSparseCheckpointCadence(long rowsCadence) {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, rowsCadence);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ADAPTIVE_CADENCE_ENABLED, (String) null);
+    }
+
+    // Whether the variant's window has a RANGE frame, which a localized rebuild can run to the end
+    // of the base table behind: a ROWS frame needs a finite convergence bound.
+    private static boolean isRangeFrameVariant(int variant) {
+        return variant == RANGE_SUM_VARIANT || variant == RANGE_AVG_VARIANT || variant == RANGE_FIRST_VALUE_VARIANT;
     }
 
     // Opens the inner LiveViewRecordCursor for the SELECT (unwrapping any
@@ -1597,6 +1675,25 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         }
     }
 
+    // Every outcome of the head-miss rebuild's end-of-table splice, which a batch's RANGE-frame runs
+    // reach one each through departNewestRowsOverSparseRoots.
+    private void assertReachedEveryHeadMissSpliceOutcome() {
+        coverage.assertReachedStat(LiveViewRefreshStats.HEAD_MISS_SPLICE_FRONTIER_TRUNCATE_COUNT);
+        coverage.assertReachedStat(LiveViewRefreshStats.HEAD_MISS_SPLICE_ZERO_ROW_KEEP_COUNT);
+        coverage.assertReachedStat(LiveViewRefreshStats.HEAD_MISS_SPLICE_ZERO_ROW_RETIRE_COUNT);
+    }
+
+    // The route of the restart after departNewestRowsOverSparseRoots: the rebuild from the applied
+    // base when the departure retired the timeline, a restore when it kept or truncated it, over
+    // any day the base has lost since.
+    private void assertSparseDepartureRestartRoute(int shape) {
+        if (shape == SPARSE_DEPARTURE_RETIRE) {
+            assertRebuiltFromAppliedBase("lv");
+        } else {
+            assertRestoredFromTimeline("lv");
+        }
+    }
+
     // CREATE must have resolved and persisted exactly the boundary the run's oracle folds into
     // its WHERE. Without this the oracle would silently drift from the view under test: a NOW
     // that read a clock the harness did not pin, or a literal that lost precision on the way
@@ -1659,7 +1756,10 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             return false;
         }
         final long[] keptTs = new long[4];
-        commitEpisodeBatch(rnd, baseMaxTs + 1 + rnd.nextInt(1_000_000), usedTs, symCount, keptTs, null);
+        // Above the view's START FROM boundary too, which the run's replace bands can leave above
+        // every base row: rows below it never reach the view.
+        final long fromTs = Math.max(baseMaxTs, instance.getDefinition().getViewLowerBoundTimestamp());
+        commitEpisodeBatch(rnd, fromTs + 1 + rnd.nextInt(1_000_000), usedTs, symCount, keptTs, null);
         drainWalQueue();
         driveRefreshToQuiescence(job);
         final long[] departedTs = new long[4];
@@ -1715,6 +1815,168 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         return true;
     }
 
+    /**
+     * The sparse-root counterpart of {@link #departNewestRows}, for a RANGE-frame view. Commits a
+     * kept and a departed batch of four rows on a day of their own above every row the base and
+     * the view hold, under {@link #beginSparseCheckpointCadence}, so a root seals only where the
+     * clock has moved past the duration cadence, then moves the departed batch out of the view. The departed batch sits
+     * more than twice the frame's width above the kept one, so a rebuild warming its state from one
+     * frame below the departed rows reads none of the rows a resume from a root under them reads,
+     * and the plan prices the rebuild below the resume: the head-miss rebuild repairs the departure
+     * through its end-of-table splice. Asserts the splice ends the way {@code shape} names:
+     * <ul>
+     *     <li>{@link #SPARSE_DEPARTURE_RETIRE}: the two batches commit together, so no root sits
+     *     at the kept batch's newest row, whether the cadence seals the departed batch or not, and
+     *     the departure emits no row: the rebuild retires the timeline;</li>
+     *     <li>{@link #SPARSE_DEPARTURE_TRUNCATE}: a root sits at the departed batch's newest row,
+     *     and the departure either keeps the departed batch's first row, which the rebuild emits
+     *     below that root, or, over a filtered view, emits no row above a root at the kept batch's
+     *     newest row: the rebuild truncates the timeline at the new frontier;</li>
+     *     <li>{@link #SPARSE_DEPARTURE_KEEP}: a root sits at the kept batch's newest row and none
+     *     above it, and the departure emits no row: the rebuild keeps the timeline.</li>
+     * </ul>
+     * A resume from a root at the kept batch's newest row reads more than the rebuild only over
+     * rows the filter drops above that root, so only a filtered view takes those shapes. The rows
+     * leave as they do in departNewestRows.
+     *
+     * @param frameMinutes the width of the view's RANGE frame, in minutes
+     */
+    private void departNewestRowsOverSparseRoots(
+            Rnd rnd,
+            LiveViewRefreshJob job,
+            TableToken baseToken,
+            @Nullable LongHashSet usedTs,
+            int symCount,
+            boolean withWhere,
+            int frameMinutes,
+            int shape
+    ) throws Exception {
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+        Assert.assertNotNull(instance);
+        Assert.assertEquals(LiveViewState.SEED_STATE_ACTIVE, instance.getStateReader().getSeedState());
+        final long baseMaxTs = queryTimestamp("SELECT max(ts) FROM base");
+        Assert.assertNotEquals(Numbers.LONG_NULL, baseMaxTs);
+        final boolean isZeroRowTruncate = shape == SPARSE_DEPARTURE_TRUNCATE && withWhere && rnd.nextBoolean();
+        final boolean isKeptBatchSealed = shape == SPARSE_DEPARTURE_KEEP || isZeroRowTruncate;
+        final boolean isDepartedBatchSealed = shape == SPARSE_DEPARTURE_TRUNCATE
+                || (shape == SPARSE_DEPARTURE_RETIRE && rnd.nextBoolean());
+        final boolean isRowKept = shape == SPARSE_DEPARTURE_TRUNCATE && !isZeroRowTruncate;
+        // The rows start the day above the base table's newest row, so that day's partition holds
+        // them alone: the plan prices a scan of a partition as its share of the rows spread from
+        // the partition's floor to its newest row. That day is also above the view's runtime
+        // frontier, which a correction that moved the view's newest rows out leaves above them,
+        // and above its START FROM boundary, which the run's replace bands can leave above every
+        // base row.
+        final long floorTs = Math.max(
+                Math.max(baseMaxTs, instance.getLatestSeenTs()),
+                instance.getDefinition().getViewLowerBoundTimestamp()
+        );
+        final long keptFromTs = floorTs - floorTs % Micros.DAY_MICROS + Micros.DAY_MICROS + 1 + rnd.nextLong(Micros.SECOND_MICROS);
+        final long[] keptTs = new long[4];
+        final StringSink values = new StringSink();
+        drawEpisodeBatch(rnd, values, keptFromTs, usedTs, symCount, keptTs, null);
+        if (isKeptBatchSealed) {
+            setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
+            execute("INSERT INTO base (ts, sym, i, x) VALUES " + values);
+            drainWalQueue();
+            driveRefreshToQuiescence(job);
+            Assert.assertEquals("a root seals the kept batch", keptTs[3], instance.getHeadCheckpointMaxTs());
+            values.clear();
+        }
+        final long departedFromTs = keptTs[3] + (2L * frameMinutes + 1) * Micros.MINUTE_MICROS + 1 + rnd.nextLong(Micros.SECOND_MICROS);
+        if (isKeptBatchSealed) {
+            // Rows the filter drops above the kept batch's root, just below the frame under the
+            // departed batch: a resume from that root reads them, and the rebuild does not. Ahead
+            // of the departed rows in the commit, which the drain then takes in timestamp order.
+            for (int k = 2; k >= 1; k--) {
+                long t = departedFromTs - frameMinutes * Micros.MINUTE_MICROS - k * 1_000L;
+                while (usedTs != null && !usedTs.add(t)) {
+                    t--;
+                }
+                appendEpisodeRow(values, t, rnd.nextInt(symCount), -1, rnd.nextDouble() * 1000.0);
+            }
+        }
+        final long[] departedTs = new long[4];
+        final int[] departedSym = new int[4];
+        drawEpisodeBatch(rnd, values, departedFromTs, usedTs, symCount, departedTs, departedSym);
+        if (isDepartedBatchSealed) {
+            setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
+        }
+        execute("INSERT INTO base (ts, sym, i, x) VALUES " + values);
+        drainWalQueue();
+        driveRefreshToQuiescence(job);
+        if (isDepartedBatchSealed) {
+            Assert.assertEquals("a root seals the departed batch", departedTs[3], instance.getHeadCheckpointMaxTs());
+        } else if (isKeptBatchSealed) {
+            Assert.assertEquals("no root seals the departed batch", keptTs[3], instance.getHeadCheckpointMaxTs());
+        }
+
+        final boolean isUpsert = usedTs == null && withWhere;
+        final long keptI = 1 + rnd.nextInt(1000);
+        final double keptX = rnd.nextDouble() * 1000.0;
+        LOG.info().$("LV fuzz sparse departure: shape=").$(shape).$(", keptHighTs=").$ts(keptTs[3])
+                .$(", departedLowTs=").$ts(departedTs[0]).$(", departedHighTs=").$ts(departedTs[3])
+                .$(", keptSealed=").$(isKeptBatchSealed).$(", departedSealed=").$(isDepartedBatchSealed)
+                .$(", rowKept=").$(isRowKept).$(", upsert=").$(isUpsert).$();
+        final long truncatesBefore = job.getStatsForTest().get(LiveViewRefreshStats.HEAD_MISS_SPLICE_FRONTIER_TRUNCATE_COUNT);
+        final long keepsBefore = job.getStatsForTest().get(LiveViewRefreshStats.HEAD_MISS_SPLICE_ZERO_ROW_KEEP_COUNT);
+        final long retiresBefore = job.getStatsForTest().get(LiveViewRefreshStats.HEAD_MISS_SPLICE_ZERO_ROW_RETIRE_COUNT);
+        final long headMissRepairsBefore = countHeadMissRepairs(job);
+        final long resetsBefore = instance.getCheckpointTimelineResets();
+        if (isUpsert) {
+            values.clear();
+            for (int k = 0; k < departedTs.length; k++) {
+                if (k == 0 && isRowKept) {
+                    appendEpisodeRow(values, departedTs[k], departedSym[k], keptI, keptX);
+                } else {
+                    appendEpisodeRow(values, departedTs[k], departedSym[k], -1, 0.0);
+                }
+            }
+            execute("INSERT INTO base (ts, sym, i, x) VALUES " + values);
+        } else {
+            try (WalWriter walWriter = engine.getWalWriter(baseToken)) {
+                if (isRowKept) {
+                    appendRow(walWriter, departedTs[0], departedSym[0], keptI, keptX);
+                }
+                walWriter.commitWithParams(departedTs[0], departedTs[3] + 1, WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE);
+            }
+        }
+        drainWalQueue();
+        driveRefreshToQuiescence(job);
+        Assert.assertEquals("the head-miss rebuild repairs the departure", headMissRepairsBefore + 1, countHeadMissRepairs(job));
+        Assert.assertEquals(
+                "the splice truncates at the frontier",
+                shape == SPARSE_DEPARTURE_TRUNCATE ? 1 : 0,
+                job.getStatsForTest().get(LiveViewRefreshStats.HEAD_MISS_SPLICE_FRONTIER_TRUNCATE_COUNT) - truncatesBefore
+        );
+        Assert.assertEquals(
+                "the splice keeps the timeline",
+                shape == SPARSE_DEPARTURE_KEEP ? 1 : 0,
+                job.getStatsForTest().get(LiveViewRefreshStats.HEAD_MISS_SPLICE_ZERO_ROW_KEEP_COUNT) - keepsBefore
+        );
+        Assert.assertEquals(
+                "the splice retires the timeline",
+                shape == SPARSE_DEPARTURE_RETIRE ? 1 : 0,
+                job.getStatsForTest().get(LiveViewRefreshStats.HEAD_MISS_SPLICE_ZERO_ROW_RETIRE_COUNT) - retiresBefore
+        );
+        final long frontierTs = isRowKept ? departedTs[0] : keptTs[3];
+        Assert.assertEquals("the view's new frontier", frontierTs, queryTimestamp("SELECT max(ts) FROM lv"));
+        if (shape == SPARSE_DEPARTURE_RETIRE) {
+            Assert.assertEquals("the timeline retires", resetsBefore + 1, instance.getCheckpointTimelineResets());
+        } else {
+            // A truncate that keeps no root retires the timeline too, and the seal at the frontier
+            // opens a fresh one: a view with no root below its new frontier. Either way, what a
+            // restart restores from is the newest root, at the frontier, counting every row of the
+            // view.
+            if (shape == SPARSE_DEPARTURE_KEEP) {
+                Assert.assertEquals("the timeline stays", resetsBefore, instance.getCheckpointTimelineResets());
+            }
+            final LongList ladder = snapshotCheckpointLadder(instance);
+            Assert.assertEquals("the newest root sits at the new frontier", frontierTs, ladder.getQuick(ladder.size() - 2));
+            Assert.assertEquals("the newest root counts every row of the view", countRows("lv"), ladder.getQuick(ladder.size() - 1));
+        }
+    }
+
     // Four rows a millisecond apart from fromTs, on random keys and with values the run's filter
     // keeps, in one commit. Fills tsOut, and symOut when not null, with what it wrote.
     private void commitEpisodeBatch(
@@ -1725,22 +1987,9 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             long[] tsOut,
             @Nullable int[] symOut
     ) throws SqlException {
-        final StringSink sink = new StringSink();
-        sink.put("INSERT INTO base (ts, sym, i, x) VALUES ");
-        long t = fromTs;
-        for (int k = 0; k < tsOut.length; k++, t += 1_000) {
-            while (usedTs != null && !usedTs.add(t)) {
-                t++;
-            }
-            final int sym = rnd.nextInt(symCount);
-            tsOut[k] = t;
-            if (symOut != null) {
-                symOut[k] = sym;
-            }
-            sink.put(k > 0 ? ", (" : "(").put(t).put("::timestamp, '").put(SYMBOLS[sym]).put("', ")
-                    .put(1 + rnd.nextInt(1000)).put(", ").put(rnd.nextDouble() * 1000.0).put(')');
-        }
-        execute(sink);
+        final StringSink values = new StringSink();
+        drawEpisodeBatch(rnd, values, fromTs, usedTs, symCount, tsOut, symOut);
+        execute("INSERT INTO base (ts, sym, i, x) VALUES " + values);
     }
 
     // One randomized REPLACE_RANGE commit against the base: picks a band whose
@@ -3361,6 +3610,8 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // oracle recomputes the window over the applied (post-dedup) base and orders
     // both sides by (ts, sym::string) - a total order because (ts, sym) is the dedup
     // key; genericStringMatch tolerates SYMBOL-vs-STRING on the sym passthrough.
+    // sparseDepartureShape is the SPARSE_DEPARTURE_* shape an unanchored run ends on, through
+    // departNewestRowsOverSparseRoots, or -1 for departNewestRows.
     private void runDedupFuzz(
             Rnd rnd,
             int variant,
@@ -3369,7 +3620,8 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             boolean restart,
             boolean seed,
             boolean removals,
-            @Nullable LiveViewFuzzAnchor anchor
+            @Nullable LiveViewFuzzAnchor anchor,
+            int sparseDepartureShape
     ) throws Exception {
         // Pin the clock a day below the data (see runFuzz): START FROM NOW resolves the
         // CREATE-moment clock into the view's lower bound, and this harness wants that bound to
@@ -3394,7 +3646,8 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         final int stepMode = rnd.nextInt(3);
         final int baseStepMax = stepMode == 0 ? 5_000_000 : stepMode == 1 ? 60_000_000 : 900_000_000;
         final int dayJumpEvery = stepMode == 0 ? 20 : 12;
-        final boolean withWhere = rnd.nextInt(3) == 0;
+        // The sparse departure that keeps the timeline needs rows the filter drops.
+        final boolean withWhere = rnd.nextInt(3) == 0 || sparseDepartureShape == SPARSE_DEPARTURE_KEEP;
 
         final String projection = anchor != null ? anchoredViewProjection(variant) : projection(variant, n);
         final String oracleProjection = anchor != null ? anchoredOracleProjection(variant, anchor.bucket) : projection;
@@ -3469,6 +3722,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 .$(", o3=").$(o3).$(", restart=").$(restart).$(", preCount=").$(preCount)
                 .$(", startMode=").$(startMode).$(", boundary=").$(boundary)
                 .$(", removals=").$(removals).$(", where=").$(withWhere).$(", indexed=").$(isIndexed)
+                .$(", sparseDeparture=").$(sparseDepartureShape)
                 .$(", knobs=[").$(knobLog).$("], sql=").$(viewSql).$();
 
         final String oracleOrderedSql = "(" + oracleSql + ") ORDER BY ts, sym::string";
@@ -3526,7 +3780,24 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             // view from the base, which erases a ghost row or restores a missing row the main loop
             // left, so the check after that restart does not stand in for this one.
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, oracleOrderedSql, viewOrderedSql, LOG, true);
-            if (departNewestRows(rnd, job, engine.verifyTableName("base"), null, symCount, withWhere)) {
+            if (sparseDepartureShape >= 0) {
+                final long rowsCadence = beginSparseCheckpointCadence();
+                try {
+                    departNewestRowsOverSparseRoots(rnd, job, engine.verifyTableName("base"), null, symCount, withWhere, n, sparseDepartureShape);
+                    if (sparseDepartureShape != SPARSE_DEPARTURE_RETIRE) {
+                        rowsBeforeTheDrop = dropTheOldestDayTheViewHolds(rnd, job, oracleOrderedSql, viewOrderedSql);
+                    }
+                    coverage.absorb(job);
+                    job = Misc.free(job);
+                    engine.getLiveViewRegistry().clear();
+                    engine.buildViewGraphs();
+                    job = new LiveViewRefreshJob(0, engine, 1);
+                    driveRefreshToQuiescence(job);
+                    assertSparseDepartureRestartRoute(sparseDepartureShape);
+                } finally {
+                    endSparseCheckpointCadence(rowsCadence);
+                }
+            } else if (departNewestRows(rnd, job, engine.verifyTableName("base"), null, symCount, withWhere)) {
                 // An anchored run draws repair knobs that can take the departure off the chained
                 // resume, and one route there does not keep the timeline: a declined chain whose
                 // replay emits no row retires it. The default knobs keep the chain.
@@ -5234,13 +5505,19 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     }
 
     // Every fixed-width variant through runReplaceRangeFuzz, each with its own random knobs, under
-    // a row cadence drawn once for the batch.
-    private void runReplaceRangeFuzzVariants(Rnd rnd) throws Exception {
+    // a row cadence drawn once for the batch. With isSparseDepartureDrawn, the RANGE-frame runs
+    // end on departNewestRowsOverSparseRoots, taking its shapes in turn from one the batch draws.
+    private void runReplaceRangeFuzzVariants(Rnd rnd, boolean isSparseDepartureDrawn) throws Exception {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1 + rnd.nextInt(4));
+        final int firstSparseDepartureShape = isSparseDepartureDrawn ? rnd.nextInt(SPARSE_DEPARTURE_SHAPES) : -1;
         assertMemoryLeak(() -> {
-            for (int i = 0; i < FIXED_WIDTH_VARIANTS.length; i++) {
-                runReplaceRangeFuzz(rnd, FIXED_WIDTH_VARIANTS[i], 120 + rnd.nextInt(160),
-                        rnd.nextBoolean(), rnd.nextBoolean(), rnd.nextBoolean());
+            for (int i = 0, rangeFrameRuns = 0; i < FIXED_WIDTH_VARIANTS.length; i++) {
+                final int variant = FIXED_WIDTH_VARIANTS[i];
+                final int sparseDepartureShape = isSparseDepartureDrawn && isRangeFrameVariant(variant)
+                        ? (firstSparseDepartureShape + rangeFrameRuns++) % SPARSE_DEPARTURE_SHAPES
+                        : -1;
+                runReplaceRangeFuzz(rnd, variant, 120 + rnd.nextInt(160),
+                        rnd.nextBoolean(), rnd.nextBoolean(), rnd.nextBoolean(), sparseDepartureShape);
             }
         });
         coverage.log(LOG, "replace range");
@@ -5258,13 +5535,16 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // history, per-commit O3 refresh, optional quiescent restarts); replace
     // events fire between insert commits and once more after the last insert,
     // so at least one band lands over fully-settled data every run.
+    // sparseDepartureShape is the SPARSE_DEPARTURE_* shape the run ends on, through
+    // departNewestRowsOverSparseRoots, or -1 for departNewestRows.
     private void runReplaceRangeFuzz(
             Rnd rnd,
             int variant,
             int rowCount,
             boolean restart,
             boolean seed,
-            boolean inMemory
+            boolean inMemory,
+            int sparseDepartureShape
     ) throws Exception {
         // Pin the clock a day below the data, like runFuzz: START FROM NOW resolves the
         // CREATE-moment clock into the view's lower bound, and this harness wants that bound
@@ -5279,7 +5559,8 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         final int stepMode = rnd.nextInt(3);
         final int baseStepMax = stepMode == 0 ? 5_000_000 : stepMode == 1 ? 60_000_000 : 900_000_000;
         final int dayJumpEvery = stepMode == 0 ? 20 : 12;
-        final boolean withWhere = rnd.nextInt(3) == 0;
+        // The sparse departure that keeps the timeline needs rows the filter drops.
+        final boolean withWhere = rnd.nextInt(3) == 0 || sparseDepartureShape == SPARSE_DEPARTURE_KEEP;
 
         execute("DROP LIVE VIEW IF EXISTS lv");
         execute("DROP TABLE IF EXISTS base");
@@ -5327,7 +5608,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 .$(", n=").$(n).$(", symCount=").$(symCount).$(", stepMode=").$(stepMode)
                 .$(", restart=").$(restart).$(", preCount=").$(preCount)
                 .$(", startMode=").$(startMode).$(", boundary=").$(boundary).$(", inMem=").$(inMemory)
-                .$(", where=").$(withWhere).$(", sql=").$(viewSql).$();
+                .$(", where=").$(withWhere).$(", sparseDeparture=").$(sparseDepartureShape).$(", sql=").$(viewSql).$();
 
         final TableToken baseToken = engine.verifyTableName("base");
         final String oracleOrderedSql = "(" + oracleSql + ") ORDER BY 1, 2";
@@ -5394,7 +5675,25 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             // view from the base, which erases a ghost row or restores a missing row the main loop
             // left, so the check after that restart does not stand in for this one.
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, oracleOrderedSql, viewOrderedSql, LOG, true);
-            if (departNewestRows(rnd, job, baseToken, usedTs, symCount, withWhere)) {
+            if (sparseDepartureShape >= 0) {
+                final long rowsCadence = beginSparseCheckpointCadence();
+                try {
+                    departNewestRowsOverSparseRoots(rnd, job, baseToken, usedTs, symCount, withWhere, n, sparseDepartureShape);
+                    if (sparseDepartureShape != SPARSE_DEPARTURE_RETIRE) {
+                        rowsBeforeTheDrop = dropTheOldestDayTheViewHolds(rnd, job, oracleOrderedSql, viewOrderedSql);
+                    }
+                    coverage.absorb(job);
+                    assertNoRefreshFaults("lv");
+                    job = Misc.free(job);
+                    engine.getLiveViewRegistry().clear();
+                    engine.buildViewGraphs();
+                    job = new LiveViewRefreshJob(0, engine, 1);
+                    driveRefreshToQuiescence(job);
+                    assertSparseDepartureRestartRoute(sparseDepartureShape);
+                } finally {
+                    endSparseCheckpointCadence(rowsCadence);
+                }
+            } else if (departNewestRows(rnd, job, baseToken, usedTs, symCount, withWhere)) {
                 rowsBeforeTheDrop = dropTheOldestDayTheViewHolds(rnd, job, oracleOrderedSql, viewOrderedSql);
                 coverage.absorb(job);
                 // The restart below registers a fresh instance whose fault count starts at zero,
