@@ -67,8 +67,8 @@ public class DeferredSingleSymbolFilterPageFrameRecordCursorFactory extends Page
     // ... from this many rows spread over at least PARALLEL_MIN_PARTITIONS partitions
     static final long PARALLEL_MIN_SPREAD_ROWS = 16_384;
     static final int PARALLEL_MIN_PARTITIONS = 64;
-    // partitions whose counts an estimate reads at most, by stride past that
-    private static final int ESTIMATE_MAX_PARTITIONS = 256;
+    // the partitions an estimate probes at most, as the GROUP BY gather's estimate; by stride past that
+    private static final int ESTIMATE_MAX_PARTITIONS = IndexGatherRecordCursorFactory.ESTIMATE_SAMPLE_PARTITIONS;
     // tests: the thresholds in force, see setParallelThresholdsForTesting()
     private static long parallelMinRows = PARALLEL_MIN_ROWS;
     private static long parallelMinSpreadRows = PARALLEL_MIN_SPREAD_ROWS;
@@ -81,6 +81,8 @@ public class DeferredSingleSymbolFilterPageFrameRecordCursorFactory extends Page
     private long parallelOpens;
     // the rows an open reads at most (a constant LIMIT), or Long.MAX_VALUE; see setParallelScan()
     private long parallelRowsCap = Long.MAX_VALUE;
+    // tests: the partition counts the last open's estimate read
+    private long lastEstimateProbes;
     // tests: the last open's estimate of the symbol's rows
     private long lastEstimateRows = -1;
     private long serialOpens;
@@ -183,6 +185,14 @@ public class DeferredSingleSymbolFilterPageFrameRecordCursorFactory extends Page
         setParallelThresholdsForTesting(PARALLEL_MIN_ROWS, PARALLEL_MIN_SPREAD_ROWS, PARALLEL_MIN_PARTITIONS);
     }
 
+    /**
+     * Tests: the partitions whose posting counts the last open's estimate read.
+     */
+    @TestOnly
+    public long getLastEstimateProbes() {
+        return lastEstimateProbes;
+    }
+
     @TestOnly
     public long getLastEstimateRows() {
         return lastEstimateRows;
@@ -236,6 +246,7 @@ public class DeferredSingleSymbolFilterPageFrameRecordCursorFactory extends Page
     // Whether this open's selection is large enough for the parallel plan: from the posting index's
     // counts of the symbol, a partition at a time, sampled by stride past ESTIMATE_MAX_PARTITIONS.
     private boolean isParallelWorthIt(SqlExecutionContext executionContext) throws SqlException {
+        lastEstimateProbes = 0;
         final long minRows = Math.min(parallelMinRows, parallelMinSpreadRows);
         if (parallelRowsCap < minRows) {
             // a LIMIT reads fewer rows than any parallel open needs
@@ -286,6 +297,7 @@ public class DeferredSingleSymbolFilterPageFrameRecordCursorFactory extends Page
                 }
                 final long hiInclusive = frame.getRowHi() - 1;
                 final long entryMax = posting.getEntryMaxValue();
+                lastEstimateProbes++;
                 long count = posting.estimateMatchesClamped(indexKey, frame.getRowLo(), hiInclusive, entryMax >= 0 ? Math.min(hiInclusive, entryMax) : hiInclusive);
                 if (count == AbstractPostingIndexReader.ESTIMATE_REJECT || count == Numbers.LONG_NULL) {
                     count = frame.getRowHi() - frame.getRowLo();
@@ -297,6 +309,7 @@ public class DeferredSingleSymbolFilterPageFrameRecordCursorFactory extends Page
                 }
             }
             if (sampledPartitions == 0) {
+                lastEstimateRows = 0;
                 return false;
             }
             final long rows = Math.min(sampledRows * stride, parallelRowsCap);

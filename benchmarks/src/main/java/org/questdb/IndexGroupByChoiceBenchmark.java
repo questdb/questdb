@@ -69,7 +69,8 @@ import java.util.concurrent.TimeUnit;
  * A cell is {@code <shape>-<key>-<partitions>-<switches>}:
  * <ul>
  *   <li>shape {@code eq}: {@code count(), sum(a) ... = 'k7'}; {@code keyed}: the same grouped by the
- *   key; {@code in2}: {@code count(), sum(a) ... IN} two keys;</li>
+ *   key; {@code in2}: {@code count(), sum(a) ... IN} two keys; {@code rows}: no GROUP BY,
+ *   {@code ts, a ... = 'k2'}, the single-symbol scan and its per-open estimate;</li>
  *   <li>key {@code 1}: a 1% key of {@code psym} ({@code 'k' || x % 100}); {@code 20}: a 20% key of
  *   {@code p5} ({@code 'k' || x % 5});</li>
  *   <li>1M rows in 100, 1000 or 4000 hourly partitions;</li>
@@ -101,6 +102,7 @@ public class IndexGroupByChoiceBenchmark {
             "eq-20-100-on", "eq-20-1000-on", "eq-20-4000-on",
             "keyed-20-100-on", "keyed-20-1000-on", "keyed-20-4000-on",
             "in2-20-100-on", "in2-20-1000-on", "in2-20-4000-on",
+            "rows-1-100-on", "rows-1-1000-on", "rows-1-4000-on", "rows-1-1000-allOff",
             "inK50-100-on", "inK500-100-on", "inK5000-100-on", "inK20000-100-on", "inK20000-1-on",
     })
     public String cell;
@@ -218,6 +220,7 @@ public class IndexGroupByChoiceBenchmark {
                 case "eq" -> "SELECT count(), sum(a) FROM t WHERE " + column + " = 'k2'";
                 case "keyed" -> "SELECT " + column + ", count(), sum(a) FROM t WHERE " + column + " = 'k2'";
                 case "in2" -> "SELECT count(), sum(a) FROM t WHERE " + column + " IN ('k2', 'k3')";
+                case "rows" -> "SELECT ts, a FROM t WHERE " + column + " = 'k2'";
                 default -> throw new IllegalArgumentException(cell);
             };
         }

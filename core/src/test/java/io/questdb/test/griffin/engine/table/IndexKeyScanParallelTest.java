@@ -268,6 +268,131 @@ public class IndexKeyScanParallelTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEstimateProbesAtMost64Partitions() throws Exception {
+        // An open's estimate reads the posting counts of at most 64 partitions, by stride
+        // ceil(P / 64) past that; below 64 partitions (and 1M rows) the table gate skips it.
+        // 4 rows an hour: k1, k2, k3 ('r' in the first hour) and NULL, one of each.
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FRAME_DISPATCH_ENABLED, "true");
+            DeferredSingleSymbolFilterPageFrameRecordCursorFactory.setParallelThresholdsForTesting(Long.MAX_VALUE, 1, 64);
+            final int[] partitions = {63, 64, 65, 100, 1000};
+            // stride 1, 1, 2, 2, 16
+            final int[] strides = {1, 1, 2, 2, 16};
+            final int[] probes = {0, 64, 33, 50, 63};
+            for (int i = 0; i < partitions.length; i++) {
+                final int p = partitions[i];
+                final String table = "t" + p;
+                createHourly(engine, sqlExecutionContext, table, p, 4, "case when x % 4 = 0 then null when x = 3 then 'r' else 'k' || (x % 4) end");
+                final boolean gated = probes[i] == 0;
+                // a symbol in every partition, and NULL, likewise
+                for (String key : new String[]{"'k1'", "null"}) {
+                    final String query = "select ts, a from " + table + " where s = " + key;
+                    try (RecordCursorFactory factory = select(query)) {
+                        assertOpen(engine, sqlExecutionContext, factory, query, query, probes[i], gated ? 4L * p : (long) probes[i] * strides[i], p, null);
+                    }
+                }
+                // a symbol in the first partition only: the first frame is always probed
+                String query = "select ts, a from " + table + " where s = 'r'";
+                try (RecordCursorFactory factory = select(query)) {
+                    assertOpen(engine, sqlExecutionContext, factory, query, query, probes[i], gated ? 4L * p : strides[i], 1, false);
+                }
+                // an absent symbol: no probe
+                query = "select ts, a from " + table + " where s = 'nope'";
+                try (RecordCursorFactory factory = select(query)) {
+                    assertOpen(engine, sqlExecutionContext, factory, query, query, 0, 0, 0, false);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testEstimateBoundedInEachContextOnTestContext() throws Exception {
+        assertMemoryLeak(() -> assertEstimateBoundedInEachContext(engine, sqlExecutionContext));
+    }
+
+    @Test
+    public void testEstimateBoundedInEachContextOnWorkerPool() throws Exception {
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(pool, (engine, compiler, ctx) -> assertEstimateBoundedInEachContext(engine, ctx), configuration, LOG);
+        });
+    }
+
+    @Test
+    public void testEstimateOverIntervalFrames() throws Exception {
+        // An interval cursor bounds its frames by the (interval, partition) pairs: the stride
+        // comes from that bound. 100 DAY partitions, 400 half-hour windows from 00:00 every 6h;
+        // rows sit at minute 5 of each 10, off the windows' edges: 3 rows a window.
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FRAME_DISPATCH_ENABLED, "true");
+            DeferredSingleSymbolFilterPageFrameRecordCursorFactory.setParallelThresholdsForTesting(Long.MAX_VALUE, 1, 0);
+            final String windows = "ts in '1970-01-01T00:00;30m;6h;400'";
+            // a row every 10 minutes all day: 4 frames a day, 400 frames, bound 400, stride 7,
+            // probes ceil(400 / 7) = 58 of 3 rows each
+            execute("create table full_day (s symbol index type posting, a long, ts timestamp) timestamp(ts) partition by day bypass wal");
+            execute("insert into full_day select 'k1', x, ((x - 1) * 600_000_000L + 300_000_000L)::timestamp from long_sequence(14_400)");
+            String query = "select ts, a from full_day where s = 'k1' and " + windows;
+            try (RecordCursorFactory factory = select(query)) {
+                assertOpen(engine, sqlExecutionContext, factory, query, query, 58, 58 * 3 * 7, 1200, null);
+            }
+            // rows only in each day's first hour: the windows at 06, 12 and 18h hold no
+            // rows and emit no frame, 100 frames; the bound still counts 397 pairs (the last day's
+            // later windows lie past the data), stride 7, probes ceil(100 / 7) = 15
+            execute("create table early (s symbol index type posting, a long, ts timestamp) timestamp(ts) partition by day bypass wal");
+            execute("insert into early select 'k1', x, ((x - 1) / 6 * 86_400_000_000L + (x - 1) % 6 * 600_000_000L + 300_000_000L)::timestamp from long_sequence(600)");
+            query = "select ts, a from early where s = 'k1' and " + windows;
+            try (RecordCursorFactory factory = select(query)) {
+                assertOpen(engine, sqlExecutionContext, factory, query, query, 15, 15 * 3 * 7, 300, null);
+            }
+        });
+    }
+
+    @Test
+    public void testEstimateOverParquetPartitions() throws Exception {
+        // Parquet frames count in the stride but are not probed: the estimate follows the native
+        // partitions only. 1000 hours of 4 rows, the first 900 Parquet: stride 16, frames 912..992.
+        assertMemoryLeak(() -> {
+            createHourly(engine, sqlExecutionContext, "tp", 1000, 4, "case when x % 4 = 0 then null else 'k' || (x % 4) end");
+            execute("alter table tp convert partition to parquet where ts < '1970-02-07T12'");
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FRAME_DISPATCH_ENABLED, "true");
+            DeferredSingleSymbolFilterPageFrameRecordCursorFactory.setParallelThresholdsForTesting(Long.MAX_VALUE, 90, 0);
+            final String query = "select ts, a from tp where s = 'k1'";
+            try (RecordCursorFactory factory = select(query)) {
+                assertOpen(engine, sqlExecutionContext, factory, query, query, 6, 6 * 16, 1000, true);
+            }
+        });
+    }
+
+    @Test
+    public void testEstimateWithoutProbesResetsTheLastEstimate() throws Exception {
+        // One factory, bound to native partitions, then to Parquet ones and past the table: an
+        // open that probes nothing reports no rows, not the previous open's estimate.
+        assertMemoryLeak(() -> {
+            createHourly(engine, sqlExecutionContext, "tq", 100, 4, "case when x % 4 = 0 then null else 'k' || (x % 4) end");
+            execute("alter table tq convert partition to parquet where ts < '1970-01-03T02'");
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FRAME_DISPATCH_ENABLED, "true");
+            DeferredSingleSymbolFilterPageFrameRecordCursorFactory.setParallelThresholdsForTesting(Long.MAX_VALUE, 1, 0);
+            final String query = "select ts, a from tq where s = 'k1' and ts >= $1 and ts < $2";
+            final long hour = 3_600_000_000L;
+            // hours [lo, hi), probes, estimate, rows
+            final long[][] binds = {
+                    {60, 70, 10, 10, 10},
+                    {10, 20, 0, 0, 10},
+                    {60, 70, 10, 10, 10},
+                    {500, 600, 0, 0, 0},
+            };
+            try (RecordCursorFactory factory = select(query)) {
+                for (long[] bind : binds) {
+                    bindVariableService.clear();
+                    bindVariableService.setTimestamp(0, bind[0] * hour);
+                    bindVariableService.setTimestamp(1, bind[1] * hour);
+                    assertOpen(engine, sqlExecutionContext, factory, query, query + " " + bind[0] + ".." + bind[1], bind[2], bind[3], (int) bind[4], null);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testLimitBoundsTheParallelOpen() throws Exception {
         // A constant LIMIT caps what an open reads: below the thresholds it keeps the serial scan
         // without counting the symbol's rows; above them the parallel plan stops dispatching frames
@@ -363,6 +488,101 @@ public class IndexKeyScanParallelTest extends AbstractCairoTest {
         // filter (Parquet frames are always filtered)
         Assert.assertTrue(IndexKeyPageFrameCursor.TEST_INDEX_FRAMES.get() > 0);
         Assert.assertEquals(nativeColumnTops, IndexKeyPageFrameCursor.TEST_FILTER_FRAMES.get() > 0);
+    }
+
+    // 1000 hours of 20 rows: F in 18 of each hour's rows, m in one, k in one of every 100 rows
+    // (hours 4, 9, 14, ...); a = x
+    private static void assertEstimateBoundedInEachContext(CairoEngine engine, SqlExecutionContext ctx) throws Exception {
+        createHourly(engine, ctx, "t", 1000, 20, "case when x % 100 = 0 then 'k' when x % 10 = 0 then 'm' else 'F' end");
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FRAME_DISPATCH_ENABLED, "true");
+        // a bound key, per open, at the default thresholds: stride 16, 63 probes; F reads
+        // 63 x 18 x 16 = 18 144 rows over 1 008 partitions (parallel), k the 12 sampled hours
+        // that are 4 mod 5, 12 x 16 = 192 rows (serial)
+        String query = "select ts, a from t where s = $1";
+        try (RecordCursorFactory factory = engine.select(query, ctx)) {
+            final String[] keys = {"F", "k", "nope", "F"};
+            final long[] probes = {63, 63, 0, 63};
+            final long[] estimates = {18_144, 192, 0, 18_144};
+            final int[] rows = {18_000, 200, 0, 18_000};
+            final boolean[] parallel = {true, false, false, true};
+            for (int i = 0; i < keys.length; i++) {
+                ctx.getBindVariableService().clear();
+                ctx.getBindVariableService().setStr(0, keys[i]);
+                assertOpen(engine, ctx, factory, query, query + " [" + keys[i] + ']', probes[i], estimates[i], rows[i], parallel[i]);
+            }
+        }
+        // an interval: 672 hours, stride 11, 62 probes, 62 x 18 x 11 = 12 276 rows (serial)
+        query = "select ts, a from t where s = 'F' and ts >= '1970-01-02' and ts < '1970-01-30'";
+        try (RecordCursorFactory factory = engine.select(query, ctx)) {
+            assertOpen(engine, ctx, factory, query, query, 62, 12_276, 672 * 18, false);
+        }
+        // GROUP BY with the index choice and the parallel index GROUP BY off: the scan below it
+        setProperty(PropertyKey.CAIRO_SQL_INDEX_SCAN_CHOICE_ENABLED, "false");
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_INDEX_GROUPBY_ENABLED, "false");
+        try {
+            query = "select count(), sum(a) from t where s = 'F'";
+            try (RecordCursorFactory factory = engine.select(query, ctx)) {
+                final DeferredSingleSymbolFilterPageFrameRecordCursorFactory scan = findScan(factory);
+                Assert.assertNotNull(query, scan);
+                // x in 1..20 000 not a multiple of 10: 18 000 rows, sum 200 010 000 - 20 010 000
+                TestUtils.assertEquals("count\tsum\n18000\t180000000\n", print(factory, ctx));
+                Assert.assertEquals(63, scan.getLastEstimateProbes());
+                Assert.assertEquals(18_144, scan.getLastEstimateRows());
+                Assert.assertArrayEquals(new long[]{0, 1}, scan.getOpenCounts());
+            }
+        } finally {
+            setProperty(PropertyKey.CAIRO_SQL_INDEX_SCAN_CHOICE_ENABLED, "true");
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_INDEX_GROUPBY_ENABLED, "true");
+        }
+    }
+
+    // opens the factory and checks the estimate's probes and rows, the plan the open chose (when
+    // parallel is not null) and the rows against the serial scan with the frame dispatch off
+    private static void assertOpen(
+            CairoEngine engine,
+            SqlExecutionContext ctx,
+            RecordCursorFactory factory,
+            String query,
+            String label,
+            long probes,
+            long estimate,
+            int rows,
+            Boolean parallel
+    ) throws Exception {
+        final DeferredSingleSymbolFilterPageFrameRecordCursorFactory scan = findScan(factory);
+        Assert.assertNotNull(label, scan);
+        Assert.assertNotNull(label, scan.getParallelScan());
+        final long[] before = scan.getOpenCounts();
+        final String actual = print(factory, ctx);
+        final long[] after = scan.getOpenCounts();
+        Assert.assertEquals(label + " probes", probes, scan.getLastEstimateProbes());
+        Assert.assertEquals(label + " estimate", estimate, scan.getLastEstimateRows());
+        if (parallel != null) {
+            Assert.assertEquals(label + " parallel", parallel ? 1 : 0, after[1] - before[1]);
+        }
+        Assert.assertEquals(label + " opens", 1, after[0] - before[0] + after[1] - before[1]);
+        int lines = 0;
+        for (int i = 0, n = actual.length(); i < n; i++) {
+            if (actual.charAt(i) == '\n') {
+                lines++;
+            }
+        }
+        Assert.assertEquals(label + " rows", rows + 1, lines);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FRAME_DISPATCH_ENABLED, "false");
+        try {
+            TestUtils.assertEquals(label, print(engine, ctx, query), actual);
+        } finally {
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FRAME_DISPATCH_ENABLED, "true");
+        }
+    }
+
+    // partitions hours of rowsPerPartition rows each, s from the given expression of x, a = x
+    private static void createHourly(CairoEngine engine, SqlExecutionContext ctx, String table, int partitions, int rowsPerPartition, String symbol) throws Exception {
+        engine.execute("create table " + table + " (s symbol index type posting, a long, ts timestamp) timestamp(ts) partition by hour bypass wal", ctx);
+        engine.execute(
+                "insert into " + table + " select " + symbol + ", x, ((x - 1) * " + (3_600_000_000L / rowsPerPartition) + "L)::timestamp from long_sequence(" + (long) partitions * rowsPerPartition + ")",
+                ctx
+        );
     }
 
     // 4 days by the hour; A in half the rows, B in a quarter, R0..R49 rare, every 17th NULL; s2
