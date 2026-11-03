@@ -105,7 +105,7 @@ public class MatViewRefreshTypeChangeTest extends AbstractCairoTest {
             assertQuery("SELECT invalidation_reason FROM materialized_views").withEngine(reopened).withContext(context)
                     .noRandomAccess().noLeakCheck().returns("""
                             invalidation_reason
-                            inconvertible value: `not-a-timestamp` [SYMBOL -> TIMESTAMP]
+                            inconvertible value: `not-a-timestamp` [SYMBOL -> TIMESTAMP] [from=at, to=at]
                             """);
         }
     }

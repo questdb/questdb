@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.PropServerConfiguration;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
@@ -997,6 +998,17 @@ public class SqlParser {
         return c == ' ' || c == '\t' || c == '\n' || c == '\r';
     }
 
+    // True when the parser named the column after the column it references: the name of a plain column reference
+    // without its table prefix, and without the suffix that tells a duplicate name apart. A column name longer than
+    // the default cairo.sql.column.alias.generated.max.size does not count, whatever the current setting: the
+    // default rules name such a reference after the column name cut to that size, and the setting can change
+    // between the view's CREATE and a refresh.
+    private static boolean isNamedAfterReferencedColumn(CharSequence alias, CharSequence token) {
+        final int lo = Chars.indexOfLastUnquoted(token, '.') + 1;
+        return token.length() - lo <= PropServerConfiguration.COLUMN_ALIAS_GENERATED_MAX_SIZE_DEFAULT
+                && Chars.equals(alias, 0, alias.length(), token, lo, token.length());
+    }
+
     private static boolean isValidSampleByPeriodLetter(CharSequence token) {
         if (token.length() != 1) return false;
         return switch (token.charAt(0)) {
@@ -1019,6 +1031,51 @@ public class SqlParser {
         return Chars.equals(token, ZERO_OFFSET.token)
                 || Chars.equals(token, "'+00:00'")
                 || Chars.equals(token, "'-00:00'");
+    }
+
+    /**
+     * Returns true when the parsed query names its columns: in every select model of its own text, each column
+     * without an explicit alias is a wildcard, or a plain column reference that the parser named after its
+     * column, whose name is at most 64 characters long, see
+     * {@link #isNamedAfterReferencedColumn(CharSequence, CharSequence)}. Such names do not depend on the server
+     * version or the {@code cairo.sql.column.alias.*} settings, so a materialized view whose SQL names its
+     * columns maps them to its own columns by name. Any other
+     * unaliased column has a generated name, a duplicate name's suffix included. Wildcards and plain references
+     * carry names up from subqueries, CTEs and join branches, so the walk covers those too. A model expanded
+     * from a regular view is not part of the text; its columns reach the query as plain columns.
+     */
+    private static boolean namesItsColumns(@Nullable IQueryModel model) {
+        for (IQueryModel m = model; m != null; m = m.getNestedModel()) {
+            if (m.getViewNameExpr() != null) {
+                // the regular view's own models sit below this one, as its nested, join and union models
+                return true;
+            }
+            final ObjList<QueryColumn> columns = m.getBottomUpColumns();
+            for (int i = 0, n = columns.size(); i < n; i++) {
+                final QueryColumn column = columns.getQuick(i);
+                if (column.getAliasPosition() != QueryColumn.SYNTHESIZED_ALIAS_POSITION) {
+                    continue;
+                }
+                final ExpressionNode ast = column.getAst();
+                if (ast.type != ExpressionNode.LITERAL) {
+                    return false;
+                }
+                if (!ast.isWildcard() && !isNamedAfterReferencedColumn(column.getAlias(), ast.token)) {
+                    return false;
+                }
+            }
+            final ObjList<IQueryModel> joinModels = m.getJoinModels();
+            for (int i = 0, n = joinModels.size(); i < n; i++) {
+                final IQueryModel joinModel = joinModels.getQuick(i);
+                if (joinModel != m && !namesItsColumns(joinModel)) {
+                    return false;
+                }
+            }
+            if (!namesItsColumns(m.getUnionModel())) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static CreateLiveViewOperationBuilder parseCreateLiveViewExt(
@@ -9856,6 +9913,10 @@ public class SqlParser {
         recordStatementTextLength(lexer);
         final ExecutionModel model = parse0(lexer, executionContext, sqlParserCallback);
         attachViewReads(model);
+        if (executionContext.isViewSqlCompile() && model.getModelType() == ExecutionModel.QUERY) {
+            // The optimiser renames and wraps models, so only the parser's output shows the names the SQL wrote.
+            executionContext.setViewSqlGeneratedColumnNames(!namesItsColumns((IQueryModel) model));
+        }
         return model;
     }
 

@@ -30,6 +30,7 @@ import io.questdb.cairo.file.AppendableBlock;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.RecordToRowCopier;
+import io.questdb.griffin.engine.table.SelectedRecord;
 import io.questdb.std.Chars;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
@@ -173,6 +174,10 @@ public class MatViewState implements QuietCloseable {
     private volatile boolean dropped;
     private volatile boolean invalid;
     private String invalidationReason;
+    // Protected by this.latch.
+    // Whether the cached factory's SQL relies on generated column names, so the cached copier, and one rebuilt
+    // for the factory after a view schema change, copies by position; see MatViewColumnMapping.
+    private boolean isRecordCopyPositional;
     // Atomic token/txn pair covered by the last successful FULL refresh. This is intentionally
     // independent of lastRefreshBaseTxn: incremental and range refreshes cannot repair arbitrary
     // UPDATE, TRUNCATE, or schema invalidations even when they advance another watermark.
@@ -776,6 +781,13 @@ public class MatViewState implements QuietCloseable {
         return recordRowCopierMetadataVersion;
     }
 
+    // Returns the projection that the cached copier reads the query's record through, or null when the copier
+    // reads it as it is, for an identity or positional column mapping.
+    @TestOnly
+    public @Nullable SelectedRecord getRecordProjectionForTesting() {
+        return MatViewColumnMapping.getRecordProjection(recordToRowCopier);
+    }
+
     public RecordToRowCopier getRecordToRowCopier() {
         return recordToRowCopier;
     }
@@ -915,6 +927,10 @@ public class MatViewState implements QuietCloseable {
     @TestOnly
     public boolean isPendingInvalidationForcedForTesting() {
         return isPendingInvalidationForced(pendingInvalidationMarker);
+    }
+
+    public boolean isRecordCopyPositional() {
+        return isRecordCopyPositional;
     }
 
     /**
@@ -1399,6 +1415,12 @@ public class MatViewState implements QuietCloseable {
     @TestOnly
     public void setOnPendingInvalidationMarkerReadForTesting(Runnable onPendingInvalidationMarkerReadForTesting) {
         this.onPendingInvalidationMarkerReadForTesting = onPendingInvalidationMarkerReadForTesting;
+    }
+
+    // Records how the copier built from the next cached factory copies, see isRecordCopyPositional.
+    public void setRecordCopyPositional(boolean isRecordCopyPositional) {
+        assert latch.get();
+        this.isRecordCopyPositional = isRecordCopyPositional;
     }
 
     public void setRefreshIntervals(LongList refreshIntervals) {

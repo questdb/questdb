@@ -185,6 +185,12 @@ public class MatViewRefreshSqlExecutionContext extends SqlExecutionContextImpl {
         return tableToken == baseTableReader.getTableToken();
     }
 
+    // Refresh compiles nothing but the view's own SQL, so the parser always reports whether it names its columns.
+    @Override
+    public boolean isViewSqlCompile() {
+        return true;
+    }
+
     public void of(TableReader baseTableReader, TableToken viewTableToken, boolean isPassthrough) {
         this.viewTableToken = viewTableToken;
         this.baseTableReader = baseTableReader;

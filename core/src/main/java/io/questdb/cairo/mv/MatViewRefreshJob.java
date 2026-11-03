@@ -28,12 +28,11 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.EntityColumnFilter;
 import io.questdb.cairo.EntryUnavailableException;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -45,7 +44,6 @@ import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.ExpiryPolicyVersionChangedException;
 import io.questdb.griffin.RecordToRowCopier;
-import io.questdb.griffin.RecordToRowCopierUtils;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
@@ -59,6 +57,7 @@ import io.questdb.mp.continuation.Fiber;
 import io.questdb.mp.continuation.FiberRuntime;
 import io.questdb.mp.continuation.FiberTask;
 import io.questdb.mp.continuation.LaunchResult;
+import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Chars;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTracker;
@@ -99,7 +98,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     // viewState.refreshIntervals reference -- mutating the cache would persist
     // lossy clusters on the next cache write and survive across restarts.
     private final LongList clusteredIntervals = new LongList();
-    private final EntityColumnFilter columnFilter = new EntityColumnFilter();
     private final long busyRetryTimeoutUs;
     private final CairoConfiguration configuration;
     private final CairoEngine engine;
@@ -123,6 +121,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private long maxRunDurationNanos = MAX_RUN_DURATION_NANOS;
     @TestOnly
     private volatile Runnable onBaseReaderSnapshotForTesting;
+    @TestOnly
+    private volatile Runnable onBatchCommittedForTesting;
     @TestOnly
     private volatile Runnable onBeforeRefreshLockForTesting;
     @TestOnly
@@ -272,6 +272,16 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     @TestOnly
     public void setOnBaseReaderSnapshotForTesting(Runnable onBaseReaderSnapshotForTesting) {
         this.onBaseReaderSnapshotForTesting = onBaseReaderSnapshotForTesting;
+    }
+
+    /**
+     * Test seam: runs after insertAsSelect() commits a batch that is not the refresh's last, before it writes the
+     * next row. A test can change the view's schema here, as another writer of the view would between two batch
+     * commits of a running refresh. Persistent: fires on every pass until reset.
+     */
+    @TestOnly
+    public void setOnBatchCommittedForTesting(Runnable onBatchCommittedForTesting) {
+        this.onBatchCommittedForTesting = onBatchCommittedForTesting;
     }
 
     /**
@@ -1563,26 +1573,24 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         return true;
     }
 
-    private RecordToRowCopier getRecordToRowCopier(TableWriterAPI tableWriter, RecordCursorFactory factory, SqlCompiler compiler) {
-        final RecordMetadata fromMetadata = factory.getMetadata();
-        final RecordMetadata toMetadata = tableWriter.getMetadata();
-        for (int i = 0, n = fromMetadata.getColumnCount(); i < n; i++) {
-            final int fromType = fromMetadata.getColumnType(i);
-            final int toType = toMetadata.getColumnType(i);
-            if (!RecordToRowCopierUtils.isCopierConvertible(fromType, toType)) {
-                // The error describes a view/query schema mismatch, not a SQL token, so it carries no position.
-                throw CairoException.nonCritical().put("inconvertible types: ").put(ColumnType.nameOf(fromType))
-                        .put(" -> ").put(ColumnType.nameOf(toType))
-                        .put(" [from=").put(fromMetadata.getColumnName(i))
-                        .put(", to=").put(toMetadata.getColumnName(i)).put(']');
-            }
+    // Builds the copier from the query's columns to the view's: by position when the view's SQL relies on generated
+    // column names, by name otherwise, see MatViewColumnMapping.
+    private RecordToRowCopier getRecordToRowCopier(
+            TableToken viewToken,
+            WalWriter walWriter,
+            RecordCursorFactory factory,
+            BytecodeAssembler asm,
+            boolean isPositional,
+            boolean hasTopLevelProjectionWildcard
+    ) {
+        if (isPositional) {
+            validateViewSchema(viewToken, factory.getMetadata(), walWriter.getMetadata(), hasTopLevelProjectionWildcard);
         }
-        columnFilter.of(fromMetadata.getColumnCount());
-        return RecordToRowCopierUtils.generateCopier(
-                compiler.getAsm(),
-                fromMetadata,
-                toMetadata,
-                columnFilter,
+        return MatViewColumnMapping.newRecordToRowCopier(
+                asm,
+                factory.getMetadata(),
+                walWriter.getMetadata(),
+                isPositional,
                 configuration
         );
     }
@@ -1599,6 +1607,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
         RecordCursorFactory factory = null;
         RecordToRowCopier copier = viewState.getRecordToRowCopier();
+        // A reused factory keeps the metadata version its copier was built for, so that insertAsSelect() still
+        // rebuilds a copier that a view schema change made stale.
+        long copierMetadataVersion = viewState.getRecordRowCopierMetadataVersion();
         final long previousRefreshStartTimestamp = viewState.getLastRefreshStartTimestampUs();
         boolean refreshStartStamped = false;
         boolean returned = false;
@@ -1622,17 +1633,22 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 try {
                     try (SqlCompiler compiler = engine.getSqlCompiler()) {
                         refreshSqlExecutionContext.resetTopLevelProjectionWildcard();
+                        refreshSqlExecutionContext.setViewSqlGeneratedColumnNames(true);
                         final CompiledQuery compiledQuery = compiler.compile(viewSql, refreshSqlExecutionContext);
                         assert compiledQuery.getType() == CompiledQuery.SELECT;
                         factory = compiledQuery.getRecordCursorFactory();
-                        validateViewSchema(
+                        final boolean isPositional = refreshSqlExecutionContext.hasViewSqlGeneratedColumnNames();
+                        // A new factory can expose different result types even when the view schema is unchanged.
+                        copier = getRecordToRowCopier(
                                 viewToken,
-                                factory.getMetadata(),
-                                walWriter.getMetadata(),
+                                walWriter,
+                                factory,
+                                compiler.getAsm(),
+                                isPositional,
                                 refreshSqlExecutionContext.hasTopLevelProjectionWildcard()
                         );
-                        // A new factory can expose different result types even when the view schema is unchanged.
-                        copier = getRecordToRowCopier(walWriter, factory, compiler);
+                        viewState.setRecordCopyPositional(isPositional);
+                        copierMetadataVersion = walWriter.getMetadata().getMetadataVersion();
                     }
                 } finally {
                     refreshSqlExecutionContext.setMemoryTracker(null);
@@ -1652,7 +1668,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             viewState.returnRecordFactory(
                     factory,
                     copier,
-                    walWriter.getMetadata().getMetadataVersion(),
+                    copierMetadataVersion,
                     finalExpiryPolicyVersion
             );
             if (refreshStartStamped) {
@@ -1927,9 +1943,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             expiryPolicyVersion = viewState.getRecordFactoryExpiryPolicyVersion();
             factory = viewState.acquireRecordFactory();
             copier = viewState.getRecordToRowCopier();
+            boolean isPositional = viewState.isRecordCopyPositional();
             if (walWriter.getMetadata().getMetadataVersion() != viewState.getRecordRowCopierMetadataVersion()) {
                 factory = Misc.free(factory);
             }
+            // The view metadata version the copier was built for.
+            long copierMetadataVersion = walWriter.getMetadata().getMetadataVersion();
 
             OUTER:
             for (int i = 0; i <= maxRetries; i++) {
@@ -1946,24 +1965,29 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         try (SqlCompiler compiler = engine.getSqlCompiler()) {
                             LOG.info().$("compiling materialized view [view=").$(viewTableToken).$(", attempt=").$(i).I$();
                             refreshSqlExecutionContext.resetTopLevelProjectionWildcard();
+                            refreshSqlExecutionContext.setViewSqlGeneratedColumnNames(true);
                             final CompiledQuery compiledQuery = compiler.compile(viewSql, refreshSqlExecutionContext);
                             assert compiledQuery.getType() == CompiledQuery.SELECT;
                             factory = compiledQuery.getRecordCursorFactory();
                             expiryPolicyVersion = engine.getMetadataCache().getExpiryPolicyVersion();
-                            // The view's schema is fixed at create time while its SQL is recompiled on
-                            // every cache miss, so the two can drift apart. The copier maps cursor columns
-                            // onto view columns by position, so a query whose columns moved would copy
-                            // values into the wrong columns and leave the view full of garbage while
-                            // reporting itself valid. validateViewSchema() refuses a changed column count,
-                            // and under a top-level wildcard a moved column.
-                            validateViewSchema(
+                            // The view's schema and its SQL can drift apart: the SQL is recompiled on every
+                            // cache miss. A SQL that names its columns maps them to the view's columns by
+                            // name. One that relies on generated names copies by position, where a query
+                            // whose columns moved would copy values into the wrong columns and leave the view
+                            // full of garbage while reporting itself valid, so validateViewSchema() refuses
+                            // a changed column count, and under a top-level wildcard a moved column.
+                            isPositional = refreshSqlExecutionContext.hasViewSqlGeneratedColumnNames();
+                            // A new factory can expose different result types even when the view schema is unchanged.
+                            copier = getRecordToRowCopier(
                                     viewTableToken,
-                                    factory.getMetadata(),
-                                    walWriter.getMetadata(),
+                                    walWriter,
+                                    factory,
+                                    compiler.getAsm(),
+                                    isPositional,
                                     refreshSqlExecutionContext.hasTopLevelProjectionWildcard()
                             );
-                            // A new factory can expose different result types even when the view schema is unchanged.
-                            copier = getRecordToRowCopier(walWriter, factory, compiler);
+                            viewState.setRecordCopyPositional(isPositional);
+                            copierMetadataVersion = walWriter.getMetadata().getMetadataVersion();
                         } catch (SqlException e) {
                             factory = Misc.free(factory);
                             if (e.isTableBusy()) {
@@ -1996,6 +2020,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     final CharSequence timestampName = walWriter.getMetadata().getColumnName(viewTimestampIndex);
                     int cursorTimestampIndex = factory.getMetadata().getColumnIndexQuiet(timestampName);
                     if (cursorTimestampIndex < 0) {
+                        // Only a positional copy gets here, since a name mapping requires the timestamp's name.
                         // validateViewSchema() accepts a column whose name changed in place, so the alias rules
                         // in effect may name the timestamp differently from the view. The copier maps columns by
                         // position, and so does this lookup then.
@@ -2049,6 +2074,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                         WAL_DEDUP_MODE_REPLACE_RANGE
                                 );
                                 viewState.recordCommitNanos(System.nanoTime() - commitStart);
+                                runBatchCommittedSeamForTesting();
+                                if (walWriter.getMetadata().getMetadataVersion() != copierMetadataVersion) {
+                                    copier = rebuildRecordToRowCopier(viewTableToken, walWriter, factory, isPositional);
+                                    copierMetadataVersion = walWriter.getMetadata().getMetadataVersion();
+                                }
                                 if (pendingScanRangeTsUnits > 0) {
                                     viewState.recordScanMetrics(pendingScanSampleNanos, pendingScanRangeTsUnits);
                                     pendingScanSampleNanos = 0L;
@@ -2077,7 +2107,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                             .put(']');
                                 }
                                 final TableWriter.Row row = walWriter.newRow(timestamp);
-                                copier.copy(refreshSqlExecutionContext, record, row);
+                                try {
+                                    copier.copy(refreshSqlExecutionContext, record, row);
+                                } catch (ImplicitCastException e) {
+                                    appendCastErrorColumns(copier, factory.getMetadata(), walWriter.getMetadata(), record, e);
+                                    throw e;
+                                }
                                 row.append();
                                 insertedRows++;
                             }
@@ -2136,6 +2171,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                             hi,
                                             WAL_DEDUP_MODE_REPLACE_RANGE
                                     );
+                                    runBatchCommittedSeamForTesting();
+                                    if (walWriter.getMetadata().getMetadataVersion() != copierMetadataVersion) {
+                                        copier = rebuildRecordToRowCopier(viewTableToken, walWriter, factory, isPositional);
+                                        copierMetadataVersion = walWriter.getMetadata().getMetadataVersion();
+                                    }
                                 }
                                 viewState.recordCommitNanos(System.nanoTime() - commitStart);
                                 viewState.recordScanMetrics(pendingScanSampleNanos, pendingScanRangeTsUnits);
@@ -2636,6 +2676,27 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         return true;
     }
 
+    // Appends the query column and the view column whose value the copier could not convert to the error, as
+    // [from=<query column>, to=<view column>], the way the inconvertible types error names them. The error becomes
+    // the refresh error and the invalidation reason. The generated copiers do not know which column they convert,
+    // so MatViewColumnMapping.findFailingColumn() replays the failing row through the looping copier into a row
+    // that discards the values. A conversion the writer row performs itself, such as text to UUID, does not run
+    // there, so the replay finds no column and the error stays as it is.
+    private void appendCastErrorColumns(
+            RecordToRowCopier copier,
+            RecordMetadata queryMetadata,
+            RecordMetadata viewMetadata,
+            Record record,
+            ImplicitCastException e
+    ) {
+        final int position = MatViewColumnMapping.findFailingColumn(refreshSqlExecutionContext, copier, queryMetadata, viewMetadata, record);
+        if (position > -1) {
+            e.put(" [from=").put(queryMetadata.getColumnName(MatViewColumnMapping.getQueryColumnIndex(copier, position)))
+                    .put(", to=").put(viewMetadata.getColumnName(MatViewColumnMapping.getViewColumnIndex(copier, position)))
+                    .put(']');
+        }
+    }
+
     private boolean processNotifications() {
         boolean refreshed = false;
         refreshQueueDeferred = false;
@@ -2954,6 +3015,26 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         }
 
         return true;
+    }
+
+    // A batch commit applies the view schema changes that other writers sequenced since this writer's previous
+    // commit, such as a view column added or dropped, and moves the writer's metadata version. The copier writes
+    // view columns by index, and a dropped column's buffer is gone, so the rows after the commit need a copier
+    // built for the new schema. The factory, and so the query's columns, stay as they are.
+    private RecordToRowCopier rebuildRecordToRowCopier(
+            TableToken viewToken,
+            WalWriter walWriter,
+            RecordCursorFactory factory,
+            boolean isPositional
+    ) {
+        LOG.info().$("view schema changed during refresh, rebuilding record copier [view=").$(viewToken)
+                .$(", metadataVersion=").$(walWriter.getMetadata().getMetadataVersion())
+                .I$();
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            // The compile checked a top-level wildcard's column names against the view's; a view column never
+            // moves, so only the column count of a positional copy needs the check again.
+            return getRecordToRowCopier(viewToken, walWriter, factory, compiler.getAsm(), isPositional, false);
+        }
     }
 
     private boolean refreshDependentViewsIncremental(
@@ -3428,6 +3509,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         }
     }
 
+    private void runBatchCommittedSeamForTesting() {
+        final Runnable seam = onBatchCommittedForTesting;
+        if (seam != null) {
+            seam.run();
+        }
+    }
+
     private void runBeforeRefreshLockSeamForTesting() {
         final Runnable seam = onBeforeRefreshLockForTesting;
         if (seam != null) {
@@ -3692,11 +3780,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Verifies that the recompiled view query still projects the view's schema. The record-to-row copier
-     * maps cursor columns onto view columns by position, so a query that quietly changes shape would write
-     * each value into the neighbouring column. Refusing the refresh here leaves the view invalid, which is
-     * what an operator can see and act on; a copy by position produces a view that reports itself valid and
-     * holds garbage.
+     * Verifies that the recompiled view query still projects the view's schema, for a view whose SQL relies on
+     * generated column names. Its record-to-row copier maps cursor columns onto view columns by position, so a
+     * query that quietly changes shape would write each value into the neighbouring column. Refusing the refresh
+     * here leaves the view invalid, which is what an operator can see and act on; a copy by position produces a
+     * view that reports itself valid and holds garbage. A view whose SQL names its columns maps them by name
+     * instead, see {@link MatViewColumnMapping}.
      * <p>
      * The column count must always match. Column names are compared only when the query has a wildcard in
      * its top-level select list, for example {@code SELECT * FROM v} over a regular view that ALTER VIEW can

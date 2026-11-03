@@ -178,6 +178,8 @@ import static io.questdb.tasks.TableWriterTask.*;
 public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // Sink slot 8 when the write left the partition's geometry alone.
     public static final long NO_GEOMETRY_REF = 0L;
+    // A row that discards every value written to it.
+    public static final Row NOOP_ROW = new NoOpRow();
     public static final int O3_BLOCK_DATA = 2;
     public static final int O3_BLOCK_MERGE = 3;
     public static final int O3_BLOCK_NONE = -1;
@@ -258,7 +260,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      */
     private static final Runnable NOOP = () -> {
     };
-    private static final Row NOOP_ROW = new NoOpRow();
     private static final int O3_ERRNO_FATAL = Integer.MAX_VALUE - 1;
     private static final int POSTING_SEAL_PURGE_CLOSE_QUEUE_RETRY_COUNT = 32;
     private static final String POSTING_SEAL_PURGE_PENDING_FILE_NAME = "_posting_seal_purge_pending.d";

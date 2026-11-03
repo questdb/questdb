@@ -294,6 +294,17 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     int hasInterval();
 
+    /**
+     * In view-SQL compile mode ({@link #isViewSqlCompile()}), returns what the parser found in the materialized
+     * view SQL it parsed last: true when some select model of the SQL's own text relies on a generated column
+     * name, so the SQL does not name its columns, see {@link #setViewSqlGeneratedColumnNames(boolean)}. Refresh
+     * then copies the query's columns into the view's columns by position, as before name mapping existed.
+     * Returns true until the parser reports, which is the positional copy that is safe for every view.
+     */
+    default boolean hasViewSqlGeneratedColumnNames() {
+        return true;
+    }
+
     void initNow();
 
     /**
@@ -490,6 +501,15 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     boolean isValidationOnly();
 
+    /**
+     * Returns true while the context compiles a materialized view's own SQL, as refresh does. In this mode the
+     * parser checks whether the SQL names its columns and reports it through
+     * {@link #setViewSqlGeneratedColumnNames(boolean)}.
+     */
+    default boolean isViewSqlCompile() {
+        return false;
+    }
+
     boolean isWalApplication();
 
     /**
@@ -667,6 +687,24 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     }
 
     void setUseSimpleCircuitBreaker(boolean value);
+
+    /**
+     * Turns view-SQL compile mode on or off, see {@link #isViewSqlCompile()}. A context whose mode is fixed
+     * ignores the call.
+     */
+    default void setViewSqlCompile(boolean isViewSqlCompile) {
+    }
+
+    /**
+     * The parser reports here, in view-SQL compile mode, whether the materialized view SQL it has just parsed
+     * relies on generated column names: a select model of the SQL's own text has a column without an explicit
+     * alias that is not a wildcard or a plain column reference named after its column, or a reference to a column
+     * whose name is longer than 64 characters, the default generated name size. Generated names change
+     * with the server version and the {@code cairo.sql.column.alias.*} settings, so refresh maps such a view's
+     * columns by position instead of by name.
+     */
+    default void setViewSqlGeneratedColumnNames(boolean hasViewSqlGeneratedColumnNames) {
+    }
 
     default boolean shouldLogSql() {
         return true;

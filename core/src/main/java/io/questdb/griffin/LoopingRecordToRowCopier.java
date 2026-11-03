@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnFilter;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
@@ -75,11 +76,32 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
 
     @Override
     public void copy(SqlExecutionContext context, Record record, TableWriter.Row row) {
-        final int n = toColumnFilter.getColumnCount();
+        copy(context, record, row, 0, toColumnFilter.getColumnCount());
+    }
+
+    /**
+     * Copies the record column by column, as {@link #copy(SqlExecutionContext, Record, TableWriter.Row)} does,
+     * and returns the position in the column filter of the first column whose value fails to convert, or -1 when
+     * every column converts. Materialized view refresh replays a row that failed its copier through this method,
+     * into a row that discards the values, to name the column it could not convert.
+     */
+    public int findFailingColumn(SqlExecutionContext context, Record record, TableWriter.Row row) {
+        for (int i = 0, n = toColumnFilter.getColumnCount(); i < n; i++) {
+            try {
+                copy(context, record, row, i, i + 1);
+            } catch (ImplicitCastException e) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    // Copies the columns at positions [lo, hi) of the column filter.
+    private void copy(SqlExecutionContext context, Record record, TableWriter.Row row, int lo, int hi) {
         final Decimal128 decimal128 = context.getDecimal128();
         final Decimal256 decimal256 = context.getDecimal256();
 
-        for (int i = 0; i < n; i++) {
+        for (int i = lo; i < hi; i++) {
             final int toColumnIndex = toColumnFilter.getColumnIndexFactored(i);
 
             // Skip timestamp column (handled externally)
