@@ -276,6 +276,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     public void clear() {
         this.executionRequirements.clear();
         this.executionRequirementPosition = -1;
+        this.deferredViewMetadataRequirements = null;
         this.positionStack.clear();
         this.functionStack.clear();
         this.lastFunctionFactorySignature = null;

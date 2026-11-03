@@ -1345,12 +1345,94 @@ public class PivotTest extends AbstractSqlParserTest {
 
     @Test
     public void testPivotSubqueryAcceptsCatalogueFunctionInView() throws Exception {
-        assertViewPivotAcceptsCatalogueRead("SELECT table_name FROM tables() WHERE table_name = 'data'");
+        assertViewPivotAccepts("SELECT table_name FROM tables() WHERE table_name = 'data'");
+    }
+
+    @Test
+    public void testPivotSubqueryAcceptsNestedCatalogueFunctionInView() throws Exception {
+        // the IN subquery's plan keeps the nested sub-query, so the deferred check of its catalogue function runs
+        assertViewPivotAccepts("SELECT CASE WHEN (SELECT count() FROM tables()) > 0 THEN 'data' ELSE 'other' END FROM long_sequence(1)");
+    }
+
+    @Test
+    public void testPivotSubqueryAcceptsNestedShowStatementInView() throws Exception {
+        assertViewPivotAccepts("SELECT CASE WHEN (SELECT count() FROM (SHOW TABLES)) > 0 THEN 'data' ELSE 'other' END FROM long_sequence(1)");
+    }
+
+    @Test
+    public void testPivotSubqueryAcceptsNestedTableFunctionInView() throws Exception {
+        assertViewPivotAccepts("SELECT CASE WHEN (SELECT count() FROM long_sequence(3)) > 0 THEN 'data' ELSE 'other' END FROM long_sequence(1)");
     }
 
     @Test
     public void testPivotSubqueryAcceptsShowStatementInView() throws Exception {
-        assertViewPivotAcceptsCatalogueRead("SELECT table_name FROM (SHOW TABLES) WHERE table_name = 'data'");
+        assertViewPivotAccepts("SELECT table_name FROM (SHOW TABLES) WHERE table_name = 'data'");
+    }
+
+    @Test
+    public void testPivotSubqueryCompilerRejectsAgainAfterDeferredCheck() throws Exception {
+        // preparePivotForSelectSubquery() generates a view's PIVOT IN subquery on a compiler it borrows from the pool. That
+        // compiler may have deferred the check of a sub-query nested in another view's PIVOT IN subquery when it compiled
+        // last, and it must still reject administrative table functions and scalars.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (cat VARCHAR, val INT)");
+            execute("INSERT INTO data VALUES ('a', 42)");
+            final ObjList<TableFunctionTestUtils.CloseCountingRecordCursorFactory> factories = new ObjList<>();
+            TableFunctionTestUtils.register(
+                    engine,
+                    "admin_cursor",
+                    SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT,
+                    factories
+            );
+            final AtomicInteger constructionCount = new AtomicInteger();
+            registerAdminScalar(new AtomicInteger(SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT), constructionCount);
+            try (
+                    SqlCompiler parser = engine.getSqlCompiler();
+                    SqlCompiler compiler = engine.getSqlCompiler()
+            ) {
+                execute("""
+                        CREATE VIEW v_column AS (
+                            SELECT cat, CASE WHEN val > (SELECT count() FROM admin_cursor()) THEN 1 ELSE 0 END n FROM data
+                        )""");
+                // compiler derives pv's columns: its optimiser defers the check of admin_cursor(), in the column of v_column
+                // that pv's PIVOT IN subquery does not read, and accepts the view
+                final CompiledQuery cq = parser.compile(
+                        "CREATE VIEW pv AS (SELECT * FROM data PIVOT (SUM(val) FOR cat IN (SELECT cat FROM v_column)))",
+                        sqlExecutionContext
+                );
+                try (Operation op = cq.getOperation()) {
+                    compiler.execute(op, sqlExecutionContext);
+                }
+                Assert.assertNotNull(engine.getTableTokenIfExists("pv"));
+
+                // a later view compile that borrows the compiler for its PIVOT IN subquery flags the context like this
+                final String[][] subqueries = {
+                        {"SELECT admin_scalar() FROM data", "admin_scalar"},
+                        {"SELECT permission FROM admin_cursor()", "admin_cursor"}
+                };
+                for (String[] subquery : subqueries) {
+                    sqlExecutionContext.setViewMetadataSubquery(true);
+                    try {
+                        Misc.free(compiler.compile(subquery[0], sqlExecutionContext).getRecordCursorFactory());
+                        Assert.fail("expected " + subquery[1] + " to be rejected");
+                    } catch (SqlException e) {
+                        TestUtils.assertContains(
+                                e.getFlyweightMessage(),
+                                "administrative function cannot be used in view PIVOT IN subquery: " + subquery[1]
+                        );
+                        Assert.assertEquals(subquery[0].indexOf(subquery[1]), e.getPosition());
+                    } finally {
+                        sqlExecutionContext.setViewMetadataSubquery(false);
+                    }
+                }
+            } finally {
+                TableFunctionTestUtils.unregister(engine, "admin_cursor");
+                TableFunctionTestUtils.unregister(engine, "admin_scalar");
+            }
+            Assert.assertEquals(0, constructionCount.get());
+            assertViewCompileFlagsClear();
+            assertNothingBusy();
+        });
     }
 
     @Test
@@ -5061,15 +5143,21 @@ public class PivotTest extends AbstractSqlParserTest {
         });
     }
 
-    private void assertViewPivotAcceptsCatalogueRead(String inQuery) throws Exception {
+    private void assertViewPivotAccepts(String inQuery) throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE data (cat VARCHAR, val INT)");
             execute("INSERT INTO data VALUES ('data', 42), ('other', 7)");
-            // A catalogue read needs no Enterprise security context, so a view's PIVOT IN subquery may make
-            // one: CREATE VIEW, COMPILE VIEW and the view compiler job accept it.
-            execute("CREATE VIEW pv AS (SELECT * FROM data PIVOT (SUM(val) FOR cat IN (" + inQuery + ")))");
+            // A table function or SHOW statement that needs no Enterprise security context, such as a catalogue read,
+            // runs in a view's PIVOT IN subquery, directly or in a nested sub-query: every view compile accepts it.
+            final String query = "SELECT * FROM data PIVOT (SUM(val) FOR cat IN (" + inQuery + "))";
+            execute("CREATE VIEW pv AS (" + query + ")");
+            execute("ALTER VIEW pv AS (" + query + ")");
+            execute("CREATE OR REPLACE VIEW pv AS (" + query + ")");
             execute("COMPILE VIEW pv");
             drainViewQueue();
+            try (SqlExecutionContext startupContext = engine.createViewCompilerContext(1)) {
+                ViewCompilerJob.compileAllViews(engine, startupContext, new ObjList<>());
+            }
             assertViewStatus("valid", "");
             assertQuery("SELECT * FROM pv")
                     .noLeakCheck()
