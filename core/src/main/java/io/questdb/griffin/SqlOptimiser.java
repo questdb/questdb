@@ -807,7 +807,17 @@ public class SqlOptimiser implements Mutable {
         return viewNameExpr != null && TableUtils.getTableFunctionView(viewNameExpr, executionContext).isDependency(tableToken);
     }
 
-    private static boolean isSameGroupingSetKey(CharSequence left, CharSequence right) {
+    private static boolean isSameGroupingSetKey(IQueryModel selectModel, CharSequence left, CharSequence right) {
+        // A key may name a SELECT alias, as in "a x ... GROUPING SETS ((a), (x))", so compare the
+        // columns the aliases stand for.
+        final QueryColumn leftColumn = selectModel.getAliasToColumnMap().get(left);
+        if (leftColumn != null && leftColumn.getAst().type == LITERAL) {
+            left = leftColumn.getAst().token;
+        }
+        final QueryColumn rightColumn = selectModel.getAliasToColumnMap().get(right);
+        if (rightColumn != null && rightColumn.getAst().type == LITERAL) {
+            right = rightColumn.getAst().token;
+        }
         if (Chars.equalsIgnoreCase(left, right)) {
             return true;
         }
@@ -5888,6 +5898,28 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    // SAMPLE BY over a subquery leaves the designated timestamp unset until code generation, but
+    // the grouping sets rewrite needs it here. Find it the same way SUBSAMPLE does, so the query
+    // behaves as if the subquery carried an explicit TIMESTAMP(...). A union, or an ORDER BY other
+    // than ascending on the timestamp, loses the designated timestamp, as it does for SAMPLE BY
+    // without grouping sets.
+    private ExpressionNode inferGroupingSetsSampleByTimestamp(IQueryModel nested) throws SqlException {
+        final IQueryModel subquery = nested.getNestedModel();
+        boolean isOrdered = true;
+        for (IQueryModel m = subquery; m != null && isOrdered; m = m.getNestedModel()) {
+            isOrdered = m.getUnionModel() == null
+                    && (m.getOrderBy().size() == 0
+                    || (isOrderedByDesignatedTimestamp(m) && m.getOrderByDirection().getQuick(0) == IQueryModel.ORDER_DIRECTION_ASCENDING));
+        }
+        final CharSequence timestamp = isOrdered ? findVisibleSubsampleTimestamp(subquery) : null;
+        if (timestamp == null) {
+            throw SqlException.$(subquery.getModelPosition(), "base query does not provide designated TIMESTAMP column");
+        }
+        final ExpressionNode node = nextLiteral(timestamp, nested.getModelPosition());
+        nested.setTimestamp(node);
+        return node;
+    }
+
     private void initialiseOperatorExpressions() {
         final OperatorRegistry registry = OperatorExpression.getRegistry();
         opGeq = registry.map.get(">=");
@@ -10920,7 +10952,7 @@ public class SqlOptimiser implements Mutable {
                     ? nested.getSampleByTimezoneName()
                     : null;
             final ExpressionNode sampleByUnit = nested.getSampleByUnit();
-            final ExpressionNode timestamp = nested.getTimestamp();
+            ExpressionNode timestamp = nested.getTimestamp();
             final int sampleByFillSize = sampleByFill.size();
             final ExpressionNode sampleByFrom = nested.getSampleByFrom();
             final ExpressionNode sampleByTo = nested.getSampleByTo();
@@ -10933,8 +10965,13 @@ public class SqlOptimiser implements Mutable {
                 throw SqlException.$(sampleByFrom.position, "non-literal FROM bounds are not supported with SAMPLE BY grouping sets");
             }
 
-            final boolean isFillNone = sampleByFillSize == 0
-                    || sampleByFillSize == 1 && Chars.equalsLowerCaseAscii(sampleByFill.getQuick(0).token, "none");
+            boolean isFillNone = true;
+            for (int i = 0; i < sampleByFillSize; i++) {
+                if (!isNoneKeyword(sampleByFill.getQuick(i).token)) {
+                    isFillNone = false;
+                    break;
+                }
+            }
             if (sampleBy != null && nested.hasGroupingSets() && !isFillNone) {
                 final ObjList<IntList> groupingSets = nested.getGroupingSets();
                 final ObjList<ExpressionNode> groupBy = nested.getGroupBy();
@@ -10947,7 +10984,7 @@ public class SqlOptimiser implements Mutable {
                             final CharSequence leftKey = groupBy.getQuick(left.getQuick(k)).token;
                             boolean hasMatch = false;
                             for (int l = 0, r = right.size(); l < r; l++) {
-                                if (isSameGroupingSetKey(leftKey, groupBy.getQuick(right.getQuick(l)).token)) {
+                                if (isSameGroupingSetKey(model, leftKey, groupBy.getQuick(right.getQuick(l)).token)) {
                                     hasMatch = true;
                                     break;
                                 }
@@ -10961,7 +10998,7 @@ public class SqlOptimiser implements Mutable {
                             final CharSequence rightKey = groupBy.getQuick(right.getQuick(k)).token;
                             boolean hasMatch = false;
                             for (int l = 0, r = left.size(); l < r; l++) {
-                                if (isSameGroupingSetKey(rightKey, groupBy.getQuick(left.getQuick(l)).token)) {
+                                if (isSameGroupingSetKey(model, rightKey, groupBy.getQuick(left.getQuick(l)).token)) {
                                     hasMatch = true;
                                     break;
                                 }
@@ -10991,6 +11028,10 @@ public class SqlOptimiser implements Mutable {
 
             if (sampleBy != null && isHorizonJoin(nested)) {
                 throw SqlException.$(sampleBy.position, "SAMPLE BY cannot be used with HORIZON JOIN");
+            }
+
+            if (sampleBy != null && nested.hasGroupingSets() && timestamp == null && nested.getTableName() == null && nested.getNestedModel() != null) {
+                timestamp = inferGroupingSetsSampleByTimestamp(nested);
             }
 
             // Day-or-larger stride + non-UTC TIME ZONE: DST makes UTC bucket widths

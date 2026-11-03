@@ -626,6 +626,8 @@ public class GroupingSetsTest extends AbstractCairoTest {
             execute("INSERT INTO t VALUES (1, 2, 3, 1000)");
             execute("CREATE TABLE t2 (a INT)");
             execute("INSERT INTO t2 VALUES (1)");
+            execute("CREATE TABLE t3 (b INT)");
+            execute("INSERT INTO t3 VALUES (1)");
 
             for (int i = 0; i < 2; i++) {
                 sqlExecutionContext.setParallelGroupByEnabled(i == 1);
@@ -661,11 +663,20 @@ public class GroupingSetsTest extends AbstractCairoTest {
                         .withContext(sqlExecutionContext)
                         .expectSize()
                         .returns("a\nnull\n1\n");
+                assertQuery("SELECT * FROM t2 JOIN t3 ON t2.a = t3.b GROUP BY ROLLUP(a, b) ORDER BY a, b")
+                        .withContext(sqlExecutionContext)
+                        .expectSize()
+                        .returns("a\tb\nnull\tnull\n1\tnull\n1\t1\n");
 
                 String insufficientKeysQuery = "SELECT * FROM t GROUP BY ROLLUP(a)";
                 assertQuery(insufficientKeysQuery)
                         .withContext(sqlExecutionContext)
                         .fails(insufficientKeysQuery.indexOf('*'), "column must appear in GROUP BY clause or aggregate function");
+
+                String insufficientJoinKeysQuery = "SELECT * FROM t2 JOIN t3 ON t2.a = t3.b GROUP BY ROLLUP(a)";
+                assertQuery(insufficientJoinKeysQuery)
+                        .withContext(sqlExecutionContext)
+                        .fails(insufficientJoinKeysQuery.indexOf('*'), "column must appear in GROUP BY clause or aggregate function");
             }
         });
     }
@@ -2852,7 +2863,11 @@ public class GroupingSetsTest extends AbstractCairoTest {
 
                 String[] duplicateQueries = {
                         "SELECT ts, COUNT(*) FROM t SAMPLE BY 1d GROUPING SETS ((), ()) FILL(NULL)",
+                        "SELECT ts, COUNT(*) FROM t SAMPLE BY 1d GROUPING SETS ((), ()) FILL(0)",
+                        "SELECT ts, COUNT(*) FROM t SAMPLE BY 1d GROUPING SETS ((), ()) FROM '2024-01-01' TO '2024-01-03' FILL(NULL)",
                         "SELECT ts, a, COUNT(*) FROM t SAMPLE BY 1d GROUPING SETS ((a), (a)) FILL(NULL)",
+                        "SELECT ts, a x, COUNT(*) FROM t SAMPLE BY 1d GROUPING SETS ((a), (x)) FILL(NULL)",
+                        "SELECT ts, a x, COUNT(*) FROM t SAMPLE BY 1d GROUPING SETS ((x), (a, x)) FILL(0)",
                         "SELECT ts, a, b, COUNT(*) FROM t SAMPLE BY 1d GROUPING SETS ((a, b), (b, a)) FILL(0)",
                         "SELECT ts, a, COUNT(*) FROM t SAMPLE BY 1d ROLLUP(a, a) FILL(0)",
                         "SELECT ts, a, COUNT(*) FROM t SAMPLE BY 1d CUBE(a, a) FILL(NULL)"
@@ -2928,6 +2943,17 @@ public class GroupingSetsTest extends AbstractCairoTest {
                 sqlExecutionContext.setParallelGroupByEnabled(i == 1);
                 for (int j = 0; j < queries.length; j++) {
                     assertQuery(queries[j]).withContext(sqlExecutionContext).inferTimestamp().sizeMayVary().returns(expected[j]);
+                }
+                // FILL(NONE, NONE) gets the same error as it does without grouping sets,
+                // not the duplicate grouping sets error
+                String[] fillNoneNoneQueries = {
+                        "SELECT ts, a, COUNT(*) c, SUM(a) s FROM t SAMPLE BY 1d FILL(NONE, NONE)",
+                        "SELECT ts, a, COUNT(*) c, SUM(a) s FROM t SAMPLE BY 1d GROUPING SETS ((a), (a, a)) FILL(NONE, NONE)"
+                };
+                for (String query : fillNoneNoneQueries) {
+                    assertQuery(query)
+                            .withContext(sqlExecutionContext)
+                            .fails(query.indexOf("FILL(") + "FILL(".length(), "FILL(NONE) cannot be combined with other fill values");
                 }
             }
         });
@@ -3156,6 +3182,67 @@ public class GroupingSetsTest extends AbstractCairoTest {
                     78,
                     "FILL(PREV) and FILL(LINEAR) are not supported with ROLLUP, CUBE, or GROUPING SETS"
             );
+        });
+    }
+
+    @Test
+    public void testSampleByRollupFromSubquery() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, v INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO t VALUES (1, 3, '2024-01-01T00:00:00.000000Z'), (2, 5, '2024-01-01T01:00:00.000000Z'), (1, 7, '2024-01-02T00:00:00.000000Z')");
+            String expected = "ts\ta\tsum\n" +
+                    "2024-01-01T00:00:00.000000Z\tnull\t8\n" +
+                    "2024-01-01T00:00:00.000000Z\t1\t3\n" +
+                    "2024-01-01T00:00:00.000000Z\t2\t5\n" +
+                    "2024-01-02T00:00:00.000000Z\tnull\t7\n" +
+                    "2024-01-02T00:00:00.000000Z\t1\t7\n";
+            for (int i = 0; i < 2; i++) {
+                sqlExecutionContext.setParallelGroupByEnabled(i == 1);
+                assertQuery("SELECT ts, a, sum(v) FROM (SELECT * FROM t) SAMPLE BY 1d ROLLUP(a) ORDER BY ts, a")
+                        .withContext(sqlExecutionContext)
+                        .inferRandomAccess()
+                        .inferTimestamp()
+                        .sizeMayVary()
+                        .returns(expected);
+                assertQuery("SELECT ts, a, sum(v) FROM (SELECT * FROM t WHERE v > 0) SAMPLE BY 1d ROLLUP(a) ORDER BY ts, a")
+                        .withContext(sqlExecutionContext)
+                        .inferRandomAccess()
+                        .inferTimestamp()
+                        .sizeMayVary()
+                        .returns(expected);
+                assertQuery("SELECT ts, a, sum(v) FROM (SELECT * FROM t ORDER BY ts) SAMPLE BY 1d ROLLUP(a) ORDER BY ts, a")
+                        .withContext(sqlExecutionContext)
+                        .inferRandomAccess()
+                        .inferTimestamp()
+                        .sizeMayVary()
+                        .returns(expected);
+                assertQuery("WITH s AS (SELECT ts, a, v FROM t) SELECT ts, a, sum(v) FROM s SAMPLE BY 1d ROLLUP(a) ORDER BY ts, a")
+                        .withContext(sqlExecutionContext)
+                        .inferRandomAccess()
+                        .inferTimestamp()
+                        .sizeMayVary()
+                        .returns(expected);
+                assertQuery("SELECT k, a, sum(v) FROM (SELECT ts k, a, v FROM t) SAMPLE BY 1d ROLLUP(a) ORDER BY k, a")
+                        .withContext(sqlExecutionContext)
+                        .inferRandomAccess()
+                        .inferTimestamp()
+                        .sizeMayVary()
+                        .returns(expected.replace("ts\t", "k\t"));
+
+                // Without a designated timestamp the subquery is rejected, also where it has
+                // the timestamp column but loses its order
+                String[] noTimestampQueries = {
+                        "SELECT a, sum(v) FROM (SELECT a, v FROM t) SAMPLE BY 1d ROLLUP(a)",
+                        "SELECT ts, a, sum(v) FROM (SELECT * FROM t ORDER BY a) SAMPLE BY 1d ROLLUP(a)",
+                        "SELECT ts, a, sum(v) FROM (SELECT * FROM t ORDER BY ts DESC) SAMPLE BY 1d ROLLUP(a)",
+                        "SELECT ts, a, sum(v) FROM (SELECT a, v, ts FROM t UNION ALL SELECT a, v, ts FROM t) SAMPLE BY 1d ROLLUP(a)"
+                };
+                for (String query : noTimestampQueries) {
+                    assertQuery(query)
+                            .withContext(sqlExecutionContext)
+                            .fails(query.indexOf("(SELECT") + 1, "base query does not provide designated TIMESTAMP column");
+                }
+            }
         });
     }
 
