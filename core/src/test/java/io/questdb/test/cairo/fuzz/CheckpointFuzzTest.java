@@ -71,6 +71,42 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
+    public void testCheckpointCopyRebuildsIncompleteBitmapIndex() throws Exception {
+        Assume.assumeFalse(Os.isWindows());
+        setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, "bitmap");
+        assertMemoryLeak(() -> {
+            execute("create table x (s symbol index, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into x select 'a', '2024-01-01'::timestamp from long_sequence(100)");
+            drainWalQueue();
+            final TableToken tableToken = engine.verifyTableName("x");
+            checkpointCreate(false, false);
+
+            // Model a value file copied before the corresponding key file's size update.
+            final FilesFacade ff = configuration.getFilesFacade();
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).put(TableUtils.CHECKPOINT_META_FILE_NAME)
+                        .concat(tableToken).concat("2024-01-01").concat("s.v");
+                final long fd = ff.openRW(path.$(), configuration.getWriterFileOpenOpts());
+                Assert.assertTrue(fd > -1);
+                try {
+                    Assert.assertTrue(ff.truncate(fd, 0));
+                } finally {
+                    ff.close(fd);
+                }
+            }
+
+            checkpointRecover();
+            execute("insert into x values ('b', '2024-01-01T01:00')");
+            drainWalQueue();
+            Assert.assertFalse("table suspended", engine.getTableSequencerAPI().isSuspended(tableToken));
+            assertQuery("select count() from x where s = 'a'")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n100\n");
+            assertQuery("select count() from x where s = 'b'")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n1\n");
+        });
+    }
+
+    @Test
     public void testCheckpointEjectedWalApply() throws Exception {
         Rnd rnd = generateRandom(LOG);
         runEjectedWalApplyBody(rnd);
@@ -126,6 +162,8 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
     }
 
     private void checkpointCreate(boolean legacy, boolean hardLinkCopy) throws SqlException {
+        // A file-by-file copy can capture an index header after its value file. Rebuild those indexes on restore.
+        setProperty(PropertyKey.CAIRO_CHECKPOINT_RECOVERY_REBUILD_COLUMN_INDEXES, Boolean.toString(!hardLinkCopy));
         LOG.info().$("creating checkpoint").$();
 
         if (legacy) {
