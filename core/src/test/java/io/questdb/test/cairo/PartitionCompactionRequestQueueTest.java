@@ -100,6 +100,14 @@ public class PartitionCompactionRequestQueueTest {
     }
 
     @Test
+    public void testFullQueueRefusesConversionSeq() {
+        final PartitionCompactionRequestQueue queue = new PartitionCompactionRequestQueue(2);
+        Assert.assertTrue(queue.tryRequest(TOKEN_A, 1));
+        Assert.assertTrue(queue.tryRequest(TOKEN_B, 2));
+        Assert.assertEquals("a full queue must refuse", -1, queue.tryRequestParquetConversionSeq(TOKEN_A, 3));
+    }
+
+    @Test
     public void testFullQueueRefusesUntilPolled() {
         final PartitionCompactionRequestQueue queue = new PartitionCompactionRequestQueue(4);
         for (int i = 0; i < 4; i++) {
@@ -130,5 +138,30 @@ public class PartitionCompactionRequestQueueTest {
         Assert.assertSame(TOKEN_A, request.getTableToken());
         Assert.assertEquals(30, request.getLogicalPartitionTimestamp());
         Assert.assertFalse("an empty queue must report nothing", queue.poll(request));
+    }
+
+    @Test
+    public void testTakenRequestStaysUnconsumedUntilReleased() {
+        final PartitionCompactionRequestQueue queue = new PartitionCompactionRequestQueue(4);
+        final long seqA = queue.tryRequestParquetConversionSeq(TOKEN_A, 10);
+        final long seqB = queue.tryRequestParquetConversionSeq(TOKEN_B, 20);
+        Assert.assertTrue(seqA > -1);
+        Assert.assertTrue(seqB > seqA);
+        Assert.assertFalse("a queued request is not consumed", queue.isConsumed(seqA));
+
+        final PartitionCompactionRequestQueue.Request request = new PartitionCompactionRequestQueue.Request();
+        Assert.assertEquals(seqA, queue.take(request));
+        Assert.assertSame(TOKEN_A, request.getTableToken());
+        Assert.assertFalse("a request being served is not consumed", queue.isConsumed(seqA));
+        Assert.assertEquals("an unreleased request is taken again", seqA, queue.take(request));
+
+        queue.release(seqA);
+        Assert.assertTrue(queue.isConsumed(seqA));
+        Assert.assertFalse(queue.isConsumed(seqB));
+        Assert.assertEquals(seqB, queue.take(request));
+        Assert.assertSame(TOKEN_B, request.getTableToken());
+        queue.release(seqB);
+        Assert.assertTrue(queue.isConsumed(seqB));
+        Assert.assertEquals("an empty queue has nothing to take", -1, queue.take(request));
     }
 }

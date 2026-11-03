@@ -36,6 +36,9 @@ import io.questdb.std.Os;
  * keeps asking
  * until it sees it, and the job ignores a request whose logical partition is already plain or already has a swap
  * in flight.
+ * <p>
+ * A request's slot stays unconsumed until the job is done serving it, so a requester that keeps the sequence of its
+ * request ({@link #tryRequestParquetConversionSeq}) can tell, with {@link #isConsumed}, when to hand over more work.
  */
 public class PartitionCompactionRequestQueue {
     public static final int KIND_FOLD = 0;
@@ -63,24 +66,53 @@ public class PartitionCompactionRequestQueue {
     }
 
     /**
-     * Takes the oldest request into {@code sink}. Single consumer.
+     * Whether the job is done serving the request published at {@code seq}, as returned by
+     * {@link #tryRequestParquetConversionSeq}. Any thread.
+     */
+    public boolean isConsumed(long seq) {
+        return seq <= subSeq.current();
+    }
+
+    /**
+     * Takes the oldest request into {@code sink} and consumes it. Single consumer.
      *
      * @return false when the queue is empty
      */
     public boolean poll(Request sink) {
-        long cursor;
-        while ((cursor = subSeq.next()) == -2) {
-            Os.pause();
-        }
-        if (cursor < 0) {
+        final long seq = take(sink);
+        if (seq < 0) {
             return false;
         }
-        final Request request = queue.get(cursor);
-        sink.of(request.tableToken, request.logicalPartitionTimestamp, request.kind);
-        // Not kept alive by a consumed slot.
-        request.of(null, Long.MIN_VALUE, KIND_FOLD);
-        subSeq.done(cursor);
+        release(seq);
         return true;
+    }
+
+    /**
+     * Consumes the request {@link #take taken} at {@code seq}. Single consumer.
+     */
+    public void release(long seq) {
+        // Not kept alive by a consumed slot.
+        queue.get(seq).of(null, Long.MIN_VALUE, KIND_FOLD);
+        subSeq.done(seq);
+    }
+
+    /**
+     * Takes the oldest request into {@code sink} without consuming it: {@link #isConsumed} stays false for it until
+     * {@link #release} is called with the returned sequence. Single consumer.
+     *
+     * @return the request's sequence, or -1 when the queue is empty
+     */
+    public long take(Request sink) {
+        long seq;
+        while ((seq = subSeq.next()) == -2) {
+            Os.pause();
+        }
+        if (seq < 0) {
+            return -1;
+        }
+        final Request request = queue.get(seq);
+        sink.of(request.tableToken, request.logicalPartitionTimestamp, request.kind);
+        return seq;
     }
 
     /**
@@ -89,13 +121,22 @@ public class PartitionCompactionRequestQueue {
      * @return false when the queue is full and the request was not taken
      */
     public boolean tryRequest(TableToken tableToken, long logicalPartitionTimestamp) {
-        return tryRequest(tableToken, logicalPartitionTimestamp, KIND_FOLD);
+        return tryRequest(tableToken, logicalPartitionTimestamp, KIND_FOLD) >= 0;
     }
 
     /**
      * Asks for the logical partition to be converted into one parquet folder; false when the queue is full.
      */
     public boolean tryRequestParquetConversion(TableToken tableToken, long logicalPartitionTimestamp) {
+        return tryRequestParquetConversionSeq(tableToken, logicalPartitionTimestamp) >= 0;
+    }
+
+    /**
+     * Asks for the logical partition to be converted into one parquet folder.
+     *
+     * @return the request's sequence, for {@link #isConsumed}, or -1 when the queue is full
+     */
+    public long tryRequestParquetConversionSeq(TableToken tableToken, long logicalPartitionTimestamp) {
         return tryRequest(tableToken, logicalPartitionTimestamp, KIND_PARQUET_CONVERSION);
     }
 
@@ -103,20 +144,20 @@ public class PartitionCompactionRequestQueue {
      * Asks for a parquet copy installed beside the native files; false when the queue is full.
      */
     public boolean tryRequestParquetGeneration(TableToken tableToken, long logicalPartitionTimestamp) {
-        return tryRequest(tableToken, logicalPartitionTimestamp, KIND_PARQUET_GENERATION);
+        return tryRequest(tableToken, logicalPartitionTimestamp, KIND_PARQUET_GENERATION) >= 0;
     }
 
-    private boolean tryRequest(TableToken tableToken, long logicalPartitionTimestamp, int kind) {
-        long cursor;
-        while ((cursor = pubSeq.next()) == -2) {
+    private long tryRequest(TableToken tableToken, long logicalPartitionTimestamp, int kind) {
+        long seq;
+        while ((seq = pubSeq.next()) == -2) {
             Os.pause();
         }
-        if (cursor < 0) {
-            return false;
+        if (seq < 0) {
+            return -1;
         }
-        queue.get(cursor).of(tableToken, logicalPartitionTimestamp, kind);
-        pubSeq.done(cursor);
-        return true;
+        queue.get(seq).of(tableToken, logicalPartitionTimestamp, kind);
+        pubSeq.done(seq);
+        return seq;
     }
 
     public static class Request {

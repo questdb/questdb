@@ -2373,13 +2373,15 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
      * Serves requests off the engine's {@link PartitionCompactionRequestQueue}, ahead of and apart from the sweep:
      * it runs even when the sweep is disabled, and charges neither of the sweep's budgets. Requests that need no
      * fold - mostly repeats, since a requester keeps asking until it sees the fold land - are drained in one go;
-     * it stops after the first one that dispatches a fold, so a backlog of copies cannot hold the sweep off.
+     * it stops after the first one that dispatches a fold, so a backlog of copies cannot hold the sweep off. Each
+     * request is consumed only once served, so its requester can tell when to hand over more work.
      *
      * @return true when a fold was dispatched, so the worker comes back for the next request without idling
      */
     private boolean serveCompactionRequests(long nowMicros) {
         final PartitionCompactionRequestQueue queue = engine.getPartitionCompactionRequestQueue();
-        while (queue.poll(request)) {
+        long seq;
+        while ((seq = queue.take(request)) >= 0) {
             final TableToken tableToken = request.getTableToken();
             final long logicalPartitionTimestamp = request.getLogicalPartitionTimestamp();
             try {
@@ -2392,8 +2394,12 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                         .$(", error=").$safe(e.getMessage()).I$();
                 return true;
             } finally {
-                txReader.clear();
-                columnVersionReader.clear();
+                try {
+                    txReader.clear();
+                    columnVersionReader.clear();
+                } finally {
+                    queue.release(seq);
+                }
             }
         }
         return false;
