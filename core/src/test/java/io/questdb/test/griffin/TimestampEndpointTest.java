@@ -155,13 +155,12 @@ public class TimestampEndpointTest extends AbstractCairoTest {
                     .withPlan("""
                             Timestamp Endpoint
                               value: max(ts)
-                                SelectedRecord
-                                    Async JIT Filter workers: 1
-                                      limit: 1
-                                      filter: l<3
-                                        PageFrame
-                                            Row backward scan
-                                            Frame backward scan on: t
+                                Async JIT Filter workers: 1
+                                  limit: 1
+                                  filter: l<3
+                                    PageFrame
+                                        Row backward scan
+                                        Frame backward scan on: t
                             """)
                     .returns("""
                             r

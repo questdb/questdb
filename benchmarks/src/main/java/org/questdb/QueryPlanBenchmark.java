@@ -175,7 +175,8 @@ public class QueryPlanBenchmark {
             case "endpoint_over_sub_query" -> "SELECT max(ts) FROM (SELECT * FROM t WHERE a > 5)";
             case "negative_limit_no_match" -> "SELECT m.a, n.x FROM p m JOIN p n ON m.a = n.b WHERE m.a > 5 LIMIT -10";
             case "negative_limit_few_right" -> "SELECT m.a, n.x FROM t m JOIN f n ON m.a = n.b WHERE m.a > 5 LIMIT -10";
-            case "negative_limit_empty_right" -> "SELECT m.a, n.x FROM t m JOIN e n ON m.a = n.b WHERE m.a > 5 LIMIT -10";
+            case "negative_limit_empty_right" ->
+                    "SELECT m.a, n.x FROM t m JOIN e n ON m.a = n.b WHERE m.a > 5 LIMIT -10";
             default -> throw new IllegalArgumentException("unknown query: " + query);
         };
         factory = engine.select(sql, ctx);
