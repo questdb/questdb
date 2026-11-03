@@ -40,6 +40,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicIntegerArray;
@@ -66,9 +67,11 @@ import java.util.concurrent.locks.ReentrantLock;
  * Memory: the row id array holds blocks x joinable keys entries, at most {@link #MAX_ENTRIES}; two
  * key-to-slot int arrays span up to the highest joinable master and slave key. They are allocated
  * by the first lookup that needs a block and charged to the query's tracker. If the tracker
- * refuses them, the summaries switch off for the query and every
- * lookup answers {@link #UNAVAILABLE}: the caller falls back to the plain scan, so the summaries
- * never make a query fail that the plain scan serves.
+ * refuses them, the summaries switch off for the query and every lookup answers
+ * {@link #UNAVAILABLE}: the caller falls back to the plain scan. Allocated, they hold their memory
+ * until the next {@link #of} or {@link #close()}, or until {@link #release()}: an owner that can go
+ * on with less memory once the query's limit refuses it more, as the parallel ASOF JOIN does when it
+ * switches to its serial way, calls that, so that the summaries do not keep the memory it needs.
  * <p>
  * Thread safety: a block is scanned under a lock (striped over the blocks); a reader that needs a
  * block another worker is scanning waits for the lock, checking the query's circuit breaker, and then
@@ -150,6 +153,11 @@ public class WindowJoinPrevailingSummaries implements QuietCloseable {
         return framesPerBlock;
     }
 
+    @TestOnly
+    public boolean isAllocated() {
+        return isAllocated;
+    }
+
     public boolean isEnabled() {
         return blockCount > 0 && !isUnavailable;
     }
@@ -187,6 +195,18 @@ public class WindowJoinPrevailingSummaries implements QuietCloseable {
         } finally {
             lock.unlock();
         }
+    }
+
+    /**
+     * Frees the summaries and switches them off for the rest of the query, as a refused allocation
+     * does: every lookup from here on answers {@link #UNAVAILABLE}, which the caches take as the
+     * plain scan. The arrays go at once: the caller guarantees that no lookup runs meanwhile.
+     */
+    public void release() {
+        rowIds.close();
+        slotArrays.close();
+        isAllocated = false;
+        isUnavailable = true;
     }
 
     /**
