@@ -2130,6 +2130,8 @@ public class TableReader implements Closeable, SymbolTableSource {
 
                 // Delta mappings are reconciled against the next pinned catalog source,
                 // whose format and incarnation can differ from this _txn partition.
+                // Every refreshed partition counts as changed so symbol counts reload.
+                changed = true;
                 if (!forceTruncate && !txFile.getPartitionHasDelta(partitionIndex)) {
                     if (openPartitionNameTxn == txPartitionNameTxn && openPartitionColumnVersion == columnVersionReader.getMaxPartitionVersion(txPartTs)) {
                         // We used to skip reloading partition size if the row count is the same and name txn is the same.
@@ -2164,7 +2166,6 @@ public class TableReader implements Closeable, SymbolTableSource {
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_FORMAT,
                                 txFile.isPartitionParquet(partitionIndex) ? PartitionFormat.PARQUET : PartitionFormat.NATIVE);
                     }
-                    changed = true;
                 } else if (forceTruncate) {
                     if (openPartitionSize > -1 && txPartitionSize > -1) { // Don't force re-open if not yet opened
                         closePartition(partitionIndex);

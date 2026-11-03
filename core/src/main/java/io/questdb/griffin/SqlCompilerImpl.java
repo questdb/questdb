@@ -2790,6 +2790,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 tok = expectToken(lexer, "'partition'");
                 if (isPartitionKeyword(tok)) {
                     executionContext.getSecurityContext().authorizeAlterTableAttachPartition(tableToken);
+                    if (!executionContext.isWalApplication()) {
+                        validateAlterTableAttachOrDetach(tableNamePosition, tableToken, true);
+                    }
                     alterTableDropConvertDetachOrAttachPartition(tableMetadata, tableToken, PartitionAction.ATTACH, executionContext);
                 } else {
                     throw SqlException.$(lexer.lastTokenPosition(), "'partition' expected");
@@ -2798,6 +2801,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 tok = expectToken(lexer, "'partition'");
                 if (isPartitionKeyword(tok)) {
                     executionContext.getSecurityContext().authorizeAlterTableDetachPartition(tableToken);
+                    if (!executionContext.isWalApplication()) {
+                        validateAlterTableAttachOrDetach(tableNamePosition, tableToken, false);
+                    }
                     alterTableDropConvertDetachOrAttachPartition(tableMetadata, tableToken, PartitionAction.DETACH, executionContext);
                 } else {
                     throw SqlException.$(lexer.lastTokenPosition(), "'partition' expected");
@@ -6536,6 +6542,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         keywordBasedExecutors.put("cancel", this::compileCancel);
         keywordBasedExecutors.put("refresh", this::compileRefresh);
         keywordBasedExecutors.put("backup", this::compileBackup);
+    }
+
+    /**
+     * Refuses {@code ALTER TABLE ... ATTACH PARTITION} or {@code DETACH PARTITION} on the issuing
+     * node; the WAL apply skips it. A no-op here: Enterprise overrides it to refuse a table whose
+     * partitions have external state.
+     */
+    protected void validateAlterTableAttachOrDetach(int pos, TableToken tableToken, boolean isAttach) throws SqlException {
     }
 
     /**
