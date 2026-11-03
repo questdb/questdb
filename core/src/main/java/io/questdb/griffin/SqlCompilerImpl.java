@@ -1906,12 +1906,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             tok = expectToken(lexer, "column name");
             final int columnNamePosition = lexer.lastTokenPosition();
             columnName = Chars.toString(unquote(tok));
-            final int columnIndex = tableMetadata.getColumnIndexQuiet(columnName);
-            if (columnIndex < 0) {
+            if (tableMetadata.getColumnIndexQuiet(columnName) < 0) {
                 throw SqlException.invalidColumn(columnNamePosition, columnName);
             }
-            if (!tableMetadata.isColumnIndexed(columnIndex)) {
-                throw SqlException.$(columnNamePosition, "column is not indexed [column=").put(columnName).put(']');
+            // The WAL sequencer metadata does not track indexes added or dropped by ALTER, the table metadata does
+            try (TableMetadata metadata = engine.getTableMetadata(tableToken)) {
+                final int columnIndex = metadata.getColumnIndexQuiet(columnName);
+                if (columnIndex < 0 || !metadata.isColumnIndexed(columnIndex)) {
+                    throw SqlException.$(columnNamePosition, "column is not indexed [column=").put(columnName).put(']');
+                }
             }
             tok = SqlUtil.fetchNext(lexer);
         }

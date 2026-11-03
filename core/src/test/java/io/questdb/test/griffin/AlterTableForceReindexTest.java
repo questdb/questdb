@@ -117,6 +117,50 @@ public class AlterTableForceReindexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testColumnIndexDroppedWal() throws Exception {
+        assertMemoryLeak(() -> {
+            // b's index comes from CREATE TABLE, which the WAL sequencer metadata keeps after DROP INDEX
+            createTable(true);
+            execute("alter table t alter column b drop index");
+            drainWalQueue();
+            final String[] before = partitionDirs();
+            String sql = "alter table t force reindex parquet column b";
+            assertExceptionNoLeakCheck(sql, sql.lastIndexOf('b'), "column is not indexed [column=b]");
+            // an indexed column the WAL apply job has not added to the table yet
+            execute("alter table t add column z symbol index");
+            sql = "alter table t force reindex parquet column z";
+            assertExceptionNoLeakCheck(sql, sql.lastIndexOf('z'), "column is not indexed [column=z]");
+            Assert.assertArrayEquals(before, partitionDirs());
+        });
+    }
+
+    @Test
+    public void testColumnIndexedByAlterWal() throws Exception {
+        assertMemoryLeak(() -> {
+            // c's index comes from ALTER TABLE, which the WAL sequencer metadata does not record
+            createTable(true);
+            final String[] before = partitionDirs();
+            execute("alter table t force reindex parquet column c partition list '2024-01-02'");
+            releaseSavePointHolds("t");
+            final String[] after = partitionDirs();
+            Assert.assertEquals(before[0], after[0]);
+            Assert.assertNotEquals(before[1], after[1]);
+            Assert.assertEquals(before[2], after[2]);
+            Assert.assertEquals(before[3], after[3]);
+            assertIndexQueries(K1_ROWS);
+
+            execute("alter table t force reindex parquet column c");
+            releaseSavePointHolds("t");
+            final String[] afterAll = partitionDirs();
+            for (int i = 0; i < 3; i++) {
+                Assert.assertNotEquals(after[i], afterAll[i]);
+            }
+            Assert.assertEquals(after[3], afterAll[3]);
+            assertIndexQueries(K1_ROWS);
+        });
+    }
+
+    @Test
     public void testDroppedConnectionStopsAfterCurrentPartition() throws Exception {
         assertInterruptedAfterFirstPartition(SqlExecutionCircuitBreaker.STATE_BROKEN_CONNECTION, "remote disconnected, query aborted");
     }

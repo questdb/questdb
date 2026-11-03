@@ -551,8 +551,9 @@ public class StaleParquetColumnTopTest extends AbstractCairoTest {
 
             assertIndexQuery(indexQuery + " and ts in '2024-01-01T05'", covering, day1Hour5Result);
             assertIndexQuery(indexQuery + " and ts in '2024-01-02'", covering, day2Result);
-            // a second run finds nothing to repair and rebuilds the same indexes
-            execute("alter table " + table + " force reindex parquet partition list '2024-01-01'");
+            // a second run finds nothing to repair and rebuilds the same index; the fixtures added it by ALTER,
+            // which the WAL sequencer metadata does not record
+            execute("alter table " + table + " force reindex parquet column s partition list '2024-01-01'");
             assertIndexQuery(indexQuery + " and ts in '2024-01-01T05'", covering, day1Hour5Result);
             // each run writes a new partition directory version and removes the replaced one
             final File tableDir = new File(configuration.getDbRoot().toString(), fixture);
