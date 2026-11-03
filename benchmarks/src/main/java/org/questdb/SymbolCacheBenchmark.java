@@ -34,6 +34,8 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.Misc;
 import io.questdb.std.str.Utf8StringSink;
 import org.openjdk.jmh.annotations.Benchmark;
@@ -63,8 +65,9 @@ import java.util.concurrent.TimeUnit;
  * 1,000,000 distinct symbols: its first day holds each key once in key order, its second day holds
  * 1,000 sparse keys above 4,095. Table {@code low} has 1,000 distinct symbols.
  * <p>
- * The {@code firstScan} benchmarks open a new reader per invocation; {@code gc.alloc.rate.norm}
- * then shows the heap each reader needs for its values.
+ * The {@code first} benchmarks open a new reader per invocation; {@code gc.alloc.rate.norm} then
+ * shows the heap each reader needs for its values. {@code firstProjection} reads symbols from the
+ * record, {@code firstFunction} reads them through a function, the two paths CACHE treats apart.
  * <p>
  * Build and run:
  * <pre>
@@ -87,17 +90,19 @@ import java.util.concurrent.TimeUnit;
 public class SymbolCacheBenchmark {
     private static final String DAY_ONE = "ts IN '2024-01-01'";
     private static final String DAY_TWO = "ts IN '2024-01-02'";
+    private static final String STRING_IN = "SELECT count() FROM t WHERE " + DAY_ONE + " AND s::STRING IN ('symbol1', 'symbol2', 'symbol3')";
     private final Utf8StringSink sink = new Utf8StringSink();
     private SqlExecutionContext context;
+    private RecordCursorFactory castStringIn;
+    private RecordCursorFactory castStringInSerial;
     private RecordCursorFactory denseHighKeys;
     private CairoEngine engine;
-    private RecordCursorFactory hashStringIn;
-    private RecordCursorFactory hashStringInSerial;
     private RecordCursorFactory likeDense;
     private RecordCursorFactory likeSparse;
     private RecordCursorFactory lowKeys;
     private RecordCursorFactory lowStrings;
     private RecordCursorFactory sparseHighKeys;
+    private RecordCursorFactory symbolFunction;
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
@@ -108,10 +113,41 @@ public class SymbolCacheBenchmark {
     }
 
     @Benchmark
+    public long castStringIn() throws SqlException {
+        return readCount(castStringIn);
+    }
+
+    @Benchmark
+    public long castStringInSerial() throws SqlException {
+        return readCount(castStringInSerial);
+    }
+
+    @Benchmark
+    public long castStringInWorkers(Workers state) throws SqlException {
+        return readCount(state.castStringIn, state.context);
+    }
+
+    @Benchmark
     @BenchmarkMode(Mode.SingleShotTime)
     @Warmup(iterations = 5, batchSize = 1)
     @Measurement(iterations = 20, batchSize = 1)
-    public long firstScanNoOtherReader(NoOtherReader state) throws SqlException {
+    public long firstFunctionNoOtherReader(NoOtherReader state) throws SqlException {
+        return readCount(symbolFunction);
+    }
+
+    @Benchmark
+    @BenchmarkMode(Mode.SingleShotTime)
+    @Warmup(iterations = 5, batchSize = 1)
+    @Measurement(iterations = 20, batchSize = 1)
+    public long firstFunctionWithOpenReader(OpenReader state) throws SqlException {
+        return readCount(symbolFunction);
+    }
+
+    @Benchmark
+    @BenchmarkMode(Mode.SingleShotTime)
+    @Warmup(iterations = 5, batchSize = 1)
+    @Measurement(iterations = 20, batchSize = 1)
+    public long firstProjectionNoOtherReader(NoOtherReader state) throws SqlException {
         return readSymbols(denseHighKeys);
     }
 
@@ -119,18 +155,8 @@ public class SymbolCacheBenchmark {
     @BenchmarkMode(Mode.SingleShotTime)
     @Warmup(iterations = 5, batchSize = 1)
     @Measurement(iterations = 20, batchSize = 1)
-    public long firstScanWithOpenReader(OpenReader state) throws SqlException {
+    public long firstProjectionWithOpenReader(OpenReader state) throws SqlException {
         return readSymbols(denseHighKeys);
-    }
-
-    @Benchmark
-    public long hashStringIn() throws SqlException {
-        return readCount(hashStringIn);
-    }
-
-    @Benchmark
-    public long hashStringInSerial() throws SqlException {
-        return readCount(hashStringInSerial);
     }
 
     @Benchmark
@@ -156,6 +182,11 @@ public class SymbolCacheBenchmark {
     @Benchmark
     public long readDenseHighKeys() throws SqlException {
         return readSymbols(denseHighKeys);
+    }
+
+    @Benchmark
+    public long readFunctionSerial() throws SqlException {
+        return readCount(symbolFunction);
     }
 
     @Benchmark
@@ -193,10 +224,10 @@ public class SymbolCacheBenchmark {
         lowStrings = engine.select("SELECT str FROM low", context);
         likeDense = engine.select("SELECT count() FROM t WHERE " + DAY_ONE + " AND s LIKE '%1%'", context);
         likeSparse = engine.select("SELECT count() FROM t WHERE " + DAY_ONE + " AND s LIKE '%99999%'", context);
-        final String stringIn = "SELECT count() FROM t WHERE " + DAY_ONE + " AND s::STRING IN ('symbol1', 'symbol2', 'symbol3')";
-        hashStringIn = engine.select(stringIn, context);
+        castStringIn = engine.select(STRING_IN, context);
         context.setParallelFilterEnabled(false);
-        hashStringInSerial = engine.select(stringIn, context);
+        castStringInSerial = engine.select(STRING_IN, context);
+        symbolFunction = engine.select("SELECT count() FROM t WHERE " + DAY_ONE + " AND length(s) > 0", context);
         context.setParallelFilterEnabled(true);
     }
 
@@ -208,8 +239,9 @@ public class SymbolCacheBenchmark {
         lowStrings = Misc.free(lowStrings);
         likeDense = Misc.free(likeDense);
         likeSparse = Misc.free(likeSparse);
-        hashStringIn = Misc.free(hashStringIn);
-        hashStringInSerial = Misc.free(hashStringInSerial);
+        castStringIn = Misc.free(castStringIn);
+        castStringInSerial = Misc.free(castStringInSerial);
+        symbolFunction = Misc.free(symbolFunction);
         engine = Misc.free(engine);
     }
 
@@ -227,6 +259,10 @@ public class SymbolCacheBenchmark {
     }
 
     private long readCount(RecordCursorFactory factory) throws SqlException {
+        return readCount(factory, context);
+    }
+
+    private long readCount(RecordCursorFactory factory, SqlExecutionContext context) throws SqlException {
         try (RecordCursor cursor = factory.getCursor(context)) {
             final Record record = cursor.getRecord();
             return cursor.hasNext() ? record.getLong(0) : -1;
@@ -268,11 +304,38 @@ public class SymbolCacheBenchmark {
             this.benchmark = benchmark;
             reader = benchmark.engine.getReader("t");
             benchmark.readSymbols(benchmark.denseHighKeys);
+            benchmark.readCount(benchmark.symbolFunction);
         }
 
         @TearDown(Level.Trial)
         public void tearDown() {
             reader = Misc.free(reader);
+        }
+    }
+
+    @State(Scope.Benchmark)
+    public static class Workers {
+        private static final int WORKER_COUNT = 4;
+        private SqlExecutionContext context;
+        private RecordCursorFactory castStringIn;
+        private WorkerPool pool;
+
+        @Setup(Level.Trial)
+        public void setUp(SymbolCacheBenchmark benchmark) throws SqlException {
+            pool = new WorkerPool(() -> WORKER_COUNT);
+            WorkerPoolUtils.setupQueryJobs(pool, benchmark.engine, true);
+            pool.start();
+            context = new SqlExecutionContextImpl(benchmark.engine, WORKER_COUNT).with(
+                    benchmark.engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                    null, null, -1, null
+            );
+            castStringIn = benchmark.engine.select(STRING_IN, context);
+        }
+
+        @TearDown(Level.Trial)
+        public void tearDown() {
+            castStringIn = Misc.free(castStringIn);
+            pool.halt();
         }
     }
 }

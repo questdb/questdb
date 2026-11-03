@@ -56,6 +56,7 @@ import io.questdb.griffin.engine.functions.cast.CastStrToDoubleArrayFunctionFact
 import io.questdb.griffin.engine.functions.cast.CastStrToGeoHashFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToUuidFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastSymbolToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastUuidToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastUuidToVarcharFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastVarcharToDecimalFunctionFactory;
@@ -1177,6 +1178,15 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     return arg0;
                 }
             }
+        }
+
+        // IN compares symbol keys directly, so the cast would only add per-row text hashing.
+        if (
+                SqlKeywords.isInKeyword(node.token)
+                        && argCount > 0
+                        && args.getQuick(0) instanceof CastSymbolToStrFunctionFactory.Func cast
+        ) {
+            args.setQuick(0, cast.getArg());
         }
 
         undefinedVariables.clear();
