@@ -35,6 +35,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
 import io.questdb.cairo.lv.LiveViewCheckpointRecoveryPhase;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairMarker;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineReader;
+import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreWriter;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewRefreshStats;
@@ -627,7 +628,24 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
                 ":00.000000Z",
                 "9999-12-31T23:59:59.999998Z",
                 "9999-12-31T23:59:59.999999Z",
-                false
+                AfterLargestTimestampDeparture.NOTHING
+        );
+    }
+
+    @Test
+    public void testAnUpsertMovingTheRowAtTheLargestMicrosecondTimestampOutOfTheFilterThenThreeFailedPublicationsSealNothingAboveIt() throws Exception {
+        // The departure leaves the newest timestamp the view has seen one microsecond above the
+        // newest row it holds, and three failed publications clear the head over it. Each cycle
+        // without rows past the seal cooldown asks for a first root at that timestamp, and the
+        // seal declines it.
+        assertRowAtTheLargestTimestampLeavingTheFilterRestores(
+                "TIMESTAMP",
+                "9999-12-30T23:55:00.000000Z",
+                "9999-12-31T23:",
+                ":00.000000Z",
+                "9999-12-31T23:59:59.999998Z",
+                "9999-12-31T23:59:59.999999Z",
+                AfterLargestTimestampDeparture.FAILED_PUBLICATIONS
         );
     }
 
@@ -643,7 +661,7 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
                 ":00.000000Z",
                 "9999-12-31T23:59:59.999998Z",
                 "9999-12-31T23:59:59.999999Z",
-                true
+                AfterLargestTimestampDeparture.CYCLE_WITHOUT_ROWS
         );
     }
 
@@ -656,7 +674,22 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
                 ":00.000000000Z",
                 "2261-12-31T23:59:59.999999998Z",
                 "2261-12-31T23:59:59.999999999Z",
-                false
+                AfterLargestTimestampDeparture.NOTHING
+        );
+    }
+
+    @Test
+    public void testAnUpsertMovingTheRowAtTheLargestNanosecondTimestampOutOfTheFilterThenThreeFailedPublicationsSealNothingAboveIt() throws Exception {
+        // As above, one nanosecond above the newest row the view holds: a microsecond reading of
+        // the two timestamps would take them for one and seal a root at the departed row.
+        assertRowAtTheLargestTimestampLeavingTheFilterRestores(
+                "TIMESTAMP_NS",
+                "2261-12-30T23:55:00.000000000Z",
+                "2261-12-31T23:",
+                ":00.000000000Z",
+                "2261-12-31T23:59:59.999999998Z",
+                "2261-12-31T23:59:59.999999999Z",
+                AfterLargestTimestampDeparture.FAILED_PUBLICATIONS
         );
     }
 
@@ -670,7 +703,7 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
                 ":00.000000000Z",
                 "2261-12-31T23:59:59.999999998Z",
                 "2261-12-31T23:59:59.999999999Z",
-                true
+                AfterLargestTimestampDeparture.CYCLE_WITHOUT_ROWS
         );
     }
 
@@ -2604,10 +2637,17 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
      * largest timestamp, so the repair truncates the timeline at that timestamp and seals a root
      * one step below it, which each restart restores from.
      *
-     * With {@code isCycleWithoutRowsAfter}, the base then drops the day below, a commit the view
-     * puts no row through, past the duration cadence: the head stays on the root at the new
-     * frontier, moves its base coordinate to that commit, and no root seals the timestamp above
-     * the frontier the view has seen.
+     * With {@link AfterLargestTimestampDeparture#CYCLE_WITHOUT_ROWS}, the base then drops the day
+     * below, a commit the view puts no row through, past the duration cadence: the head stays on
+     * the root at the new frontier, moves its base coordinate to that commit, and no root seals
+     * the timestamp above the frontier the view has seen.
+     * <p>
+     * With {@link AfterLargestTimestampDeparture#FAILED_PUBLICATIONS}, three commits of rows the
+     * filter drops at the departed timestamp fail their publications, which retires the timeline
+     * and clears the head. Past the seal cooldown, each such commit asks for a first root at the
+     * departed timestamp, one step above the newest row the view holds, and the seal declines it.
+     * A row the filter keeps at that timestamp then opens a fresh history there, which each
+     * restart restores from.
      *
      * @param hourPrefix   the last hour of the range, up to its minute
      * @param minuteSuffix what follows the minute of a row at a whole minute
@@ -2619,7 +2659,7 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
             String minuteSuffix,
             String frontierTs,
             String largestTs,
-            boolean isCycleWithoutRowsAfter
+            AfterLargestTimestampDeparture after
     ) throws Exception {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
         assertMemoryLeak(() -> {
@@ -2648,7 +2688,48 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
                 Assert.assertEquals(1, job.getStatsForTest().get(LiveViewRefreshStats.HEAD_MISS_SPLICE_FRONTIER_TRUNCATE_COUNT));
                 Assert.assertEquals("the splice, the truncate and the seal", generationBefore + 3, departureGeneration());
                 assertCheckpointLadder(departureView(), isNanos, dayBelowTs + " -> 1\n" + frontierTs + " -> 61\n");
-                if (isCycleWithoutRowsAfter) {
+                if (after == AfterLargestTimestampDeparture.FAILED_PUBLICATIONS) {
+                    final LiveViewInstance instance = departureView();
+                    Assert.assertEquals(instance.getHeadCheckpointMaxTs() + 1, instance.getLatestSeenTs());
+                    final long resetsBefore = instance.getCheckpointTimelineResets();
+                    // Each row ties the departed timestamp on a symbol of its own, so the drain
+                    // takes it in order and the dedup keys collapse nothing.
+                    job.setCheckpointTimelineTestFailureStage(LiveViewCheckpointTimelineStoreWriter.TEST_FAIL_AFTER_METADATA_PUBLISH);
+                    setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
+                    for (int i = 0; i < 3; i++) {
+                        commitDeparture(job, "('" + largestTs + "', 'r" + i + "', -1.0)");
+                    }
+                    job.setCheckpointTimelineTestFailureStage(0);
+                    Assert.assertEquals(3, instance.getCheckpointSealFailures());
+                    Assert.assertEquals(resetsBefore + 1, instance.getCheckpointTimelineResets());
+                    Assert.assertEquals(Numbers.LONG_NULL, instance.getHeadCheckpointMaxTs());
+                    Assert.assertTrue(instance.isSealOnCooldown(currentMicros));
+                    assertNoDepartureTimeline();
+
+                    setCurrentMicros(currentMicros + 2 * Micros.MINUTE_MICROS);
+                    final long declinesBefore = job.getStatsForTest().get(LiveViewRefreshStats.SEAL_ABOVE_DURABLE_FRONTIER_DECLINE_COUNT);
+                    for (int i = 3; i < 6; i++) {
+                        commitDeparture(job, "('" + largestTs + "', 'r" + i + "', -1.0)");
+                        Assert.assertEquals(
+                                "one declined first root per cycle",
+                                i - 2,
+                                job.getStatsForTest().get(LiveViewRefreshStats.SEAL_ABOVE_DURABLE_FRONTIER_DECLINE_COUNT) - declinesBefore
+                        );
+                    }
+                    Assert.assertEquals(3, instance.getCheckpointSealFailures());
+                    Assert.assertEquals(Numbers.LONG_NULL, instance.getHeadCheckpointMaxTs());
+                    assertNoDepartureTimeline();
+
+                    // A kept row at the departed timestamp: the newest row the view holds, so
+                    // the seal at it goes through.
+                    commitDeparture(job, "('" + largestTs + "', 'r6', 2.0)");
+                    Assert.assertEquals(
+                            "the seal at the newest row goes through",
+                            3,
+                            job.getStatsForTest().get(LiveViewRefreshStats.SEAL_ABOVE_DURABLE_FRONTIER_DECLINE_COUNT) - declinesBefore
+                    );
+                    assertCheckpointLadder(instance, isNanos, largestTs + " -> 62\n");
+                } else if (after == AfterLargestTimestampDeparture.CYCLE_WITHOUT_ROWS) {
                     final LiveViewInstance instance = departureView();
                     final long frontier = instance.getHeadCheckpointMaxTs();
                     Assert.assertEquals(frontier + 1, instance.getLatestSeenTs());
@@ -2664,11 +2745,13 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
                 }
             }
             // The row a day below sits outside every one-minute frame above it, and the kept row's
-            // frame holds itself alone: 23:58 sits more than a minute below it.
+            // frame holds itself alone: 23:58 sits more than a minute below it. The kept row at the
+            // departed timestamp is the one row of its symbol.
             final String rows = "ts\tsym\tx\ts\n"
                     + dayBelowTs + "\ta\t0.5\t0.5\n"
                     + minuteRows
-                    + frontierTs + "\ta\t5.0\t5.0\n";
+                    + frontierTs + "\ta\t5.0\t5.0\n"
+                    + (after == AfterLargestTimestampDeparture.FAILED_PUBLICATIONS ? largestTs + "\tr6\t2.0\t2.0\n" : "");
             assertDepartureRows(rows);
             assertNoRefreshFaults("lv");
             for (int restart = 0; restart < 2; restart++) {
@@ -2732,6 +2815,13 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
                 .timestamp("ts")
                 .expectSize()
                 .returns(expected);
+    }
+
+    private void assertNoDepartureTimeline() {
+        try (Path dir = departureCheckpointsDir(); Path timelinePath = new Path()) {
+            LiveViewCheckpointLayout.timelinePath(timelinePath, dir);
+            Assert.assertFalse("the view keeps no timeline", configuration.getFilesFacade().exists(timelinePath.$()));
+        }
     }
 
     /**
@@ -2962,5 +3052,16 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
             drainJob(job);
             drainWalQueue();
         }
+    }
+
+    // What assertRowAtTheLargestTimestampLeavingTheFilterRestores commits after the departure.
+    private enum AfterLargestTimestampDeparture {
+        // Three failed publications of cycles without rows, then cycles without rows past the
+        // seal cooldown, then a kept row at the departed timestamp.
+        FAILED_PUBLICATIONS,
+        // One cycle without rows past the duration cadence.
+        CYCLE_WITHOUT_ROWS,
+        // Nothing: the restarts follow the departure.
+        NOTHING
     }
 }
