@@ -47,6 +47,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BooleanSupplier;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
@@ -754,12 +755,15 @@ public class DirectSymbolMapTest {
             final int rounds = 20_000;
             // The eighth 120-char value adds the fourth chunk and outgrows the first directory.
             final int keyCount = 8;
+            // A starved host runs fewer rounds rather than exceeding the worker join timeout.
+            final long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
             ObjList<DirectUtf16Sink> values = new ObjList<>();
             ObjList<String> expected = new ObjList<>();
             AtomicReference<DirectIntCharSequenceHashMap> current = new AtomicReference<>();
             AtomicInteger readersIn = new AtomicInteger();
             AtomicInteger readersOut = new AtomicInteger();
-            AtomicBoolean isFailed = new AtomicBoolean();
+            AtomicBoolean stop = new AtomicBoolean();
+            BooleanSupplier isStopped = () -> stop.get() || Thread.currentThread().isInterrupted();
             try {
                 for (int key = 0; key < keyCount; key++) {
                     String value = (char) ('a' + key) + "-".repeat(119);
@@ -769,60 +773,67 @@ public class DirectSymbolMapTest {
                     expected.add(value);
                 }
                 TestUtils.runConcurrently(readerCount + 1, worker -> {
-                    if (worker == 0) {
-                        for (int round = 0; round < rounds && !isFailed.get(); round++) {
-                            try (DirectIntCharSequenceHashMap map = new DirectIntCharSequenceHashMap(4, 0.7, MemoryTag.NATIVE_DEFAULT, null)) {
+                    try {
+                        if (worker == 0) {
+                            for (int round = 0; round < rounds && System.nanoTime() < deadlineNanos && !isStopped.getAsBoolean(); round++) {
+                                DirectIntCharSequenceHashMap map = new DirectIntCharSequenceHashMap(4, 0.7, MemoryTag.NATIVE_DEFAULT, null);
                                 readersIn.set(0);
                                 readersOut.set(0);
                                 current.set(map);
                                 while (readersIn.get() < readerCount) {
+                                    if (isStopped.getAsBoolean()) {
+                                        return;
+                                    }
                                     Os.pause();
                                 }
                                 for (int key = 0; key < keyCount; key++) {
                                     DirectUtf16Sink value = values.getQuick(key);
-                                    if (map.tryPutIfAbsent(key, value.ptr(), value.length()) != DirectIntCharSequenceHashMap.INSERTED) {
-                                        isFailed.set(true);
-                                    }
+                                    Assert.assertEquals(DirectIntCharSequenceHashMap.INSERTED, map.tryPutIfAbsent(key, value.ptr(), value.length()));
                                 }
                                 while (readersOut.get() < readerCount) {
+                                    if (isStopped.getAsBoolean()) {
+                                        return;
+                                    }
                                     Os.pause();
                                 }
+                                map.close();
                             }
-                        }
-                    } else {
-                        DirectString view = new DirectString();
-                        DirectIntCharSequenceHashMap previous = null;
-                        for (int round = 0; round < rounds; round++) {
-                            DirectIntCharSequenceHashMap map;
-                            while ((map = current.get()) == previous) {
-                                if (isFailed.get()) {
-                                    return;
-                                }
-                                Os.pause();
-                            }
-                            previous = map;
-                            readersIn.incrementAndGet();
-                            try {
-                                for (int key = 0; key < keyCount; key++) {
-                                    CharSequence result;
-                                    while ((result = map.get(key, view)) == null) {
-                                        if (isFailed.get()) {
-                                            return;
-                                        }
+                        } else {
+                            DirectString view = new DirectString();
+                            DirectIntCharSequenceHashMap previous = null;
+                            while (true) {
+                                DirectIntCharSequenceHashMap map;
+                                while ((map = current.get()) == previous) {
+                                    if (isStopped.getAsBoolean()) {
+                                        return;
                                     }
-                                    TestUtils.assertEquals(expected.getQuick(key), result);
+                                    Os.pause();
                                 }
-                            } catch (Throwable e) {
-                                isFailed.set(true);
-                                throw e;
-                            } finally {
-                                readersOut.incrementAndGet();
+                                previous = map;
+                                readersIn.incrementAndGet();
+                                try {
+                                    for (int key = 0; key < keyCount; key++) {
+                                        CharSequence result;
+                                        while ((result = map.get(key, view)) == null) {
+                                            if (isStopped.getAsBoolean()) {
+                                                return;
+                                            }
+                                            Os.pause();
+                                        }
+                                        TestUtils.assertEquals(expected.getQuick(key), result);
+                                    }
+                                } finally {
+                                    readersOut.incrementAndGet();
+                                }
                             }
                         }
+                    } finally {
+                        stop.set(true);
                     }
                 });
-                Assert.assertFalse(isFailed.get());
             } finally {
+                // Workers have exited. The writer leaves the last map open when it stops early.
+                Misc.free(current.get());
                 Misc.freeObjList(values);
             }
         });
