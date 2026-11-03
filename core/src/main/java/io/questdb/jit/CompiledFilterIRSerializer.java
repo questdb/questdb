@@ -6287,15 +6287,30 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             globalTypesObserver.observe(typeCode);
         }
 
-        private void handleOperation(ExpressionNode node) {
+        private void handleOperation(ExpressionNode node) throws SqlException {
+            final boolean isUnaryMinus = node.paramCount == 1 && Chars.equals(node.token, '-');
+            if ((isUnaryMinus || isArithmeticOperation(node)) && (isSymbolColumn(node.lhs) || isSymbolColumn(node.rhs))) {
+                // The Java filter does arithmetic on the symbol key, while the IR would
+                // compare the result against a symbol constant, so leave it to Java
+                throw SqlException.position(node.position)
+                        .put("arithmetic over symbol column is not supported by JIT");
+            }
             if (isArithmeticOperation(node)) {
                 hasArithmeticOperations = true;
                 if (arithmeticNode == null) {
                     arithmeticNode = node;
                 }
-            } else if (node.paramCount == 1 && Chars.equals(node.token, '-')) {
+            } else if (isUnaryMinus) {
                 markUnaryMinus(node);
             }
+        }
+
+        private boolean isSymbolColumn(ExpressionNode node) {
+            if (node == null || node.type != ExpressionNode.LITERAL) {
+                return false;
+            }
+            final int columnIndex = metadata.getColumnIndexQuiet(node.token);
+            return columnIndex != -1 && ColumnType.tagOf(metadata.getColumnType(columnIndex)) == ColumnType.SYMBOL;
         }
 
         private void markUnaryMinus(ExpressionNode node) {
