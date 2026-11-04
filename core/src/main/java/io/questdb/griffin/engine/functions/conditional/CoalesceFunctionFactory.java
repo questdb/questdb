@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.conditional;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -100,7 +101,12 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
 
         for (int i = 0; i < argsSize; i++) {
-            args.setQuick(i, CaseCommon.getCastFunction(args.getQuick(i), argPositions.getQuick(i), returnType, configuration, sqlExecutionContext));
+            final Function arg = args.getQuick(i);
+            // a timestamp argument keeps its unit: the timestamp coalesce converts only the value it
+            // returns, which is cheaper than converting every argument it reads
+            if (!ColumnType.isTimestamp(returnType) || !ColumnType.isTimestamp(arg.getType())) {
+                args.setQuick(i, CaseCommon.getCastFunction(arg, argPositions.getQuick(i), returnType, configuration, sqlExecutionContext));
+            }
         }
 
         return switch (tagOf(returnType)) {
@@ -593,6 +599,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
     }
 
     private static class TimestampCoalesceFunction extends TimestampFunction implements MultiArgCoalesceFunction {
+        private final IntList argTypes;
         private final ObjList<Function> args;
         private final int size;
 
@@ -600,6 +607,10 @@ public class CoalesceFunctionFactory implements FunctionFactory {
             super(columnType);
             this.args = args;
             this.size = args.size();
+            this.argTypes = new IntList(size);
+            for (int i = 0; i < size; i++) {
+                argTypes.add(ColumnType.getTimestampType(args.getQuick(i).getType()));
+            }
         }
 
         @Override
@@ -610,9 +621,10 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         @Override
         public long getTimestamp(Record rec) {
             for (int i = 0; i < size; i++) {
-                final long value = args.getQuick(i).getTimestamp(rec);
+                Function arg = args.getQuick(i);
+                long value = arg.getTimestamp(rec);
                 if (value != Numbers.LONG_NULL) {
-                    return value;
+                    return timestampDriver.from(value, argTypes.getQuick(i));
                 }
             }
             return Numbers.LONG_NULL;
@@ -1155,6 +1167,8 @@ public class CoalesceFunctionFactory implements FunctionFactory {
     }
 
     private static class TwoTimestampCoalesceFunction extends TimestampFunction implements BinaryCoalesceFunction {
+        private final int arg0Type;
+        private final int arg1Type;
         private final Function args0;
         private final Function args1;
 
@@ -1163,6 +1177,8 @@ public class CoalesceFunctionFactory implements FunctionFactory {
             assert args.size() == 2;
             this.args0 = args.getQuick(0);
             this.args1 = args.getQuick(1);
+            this.arg0Type = ColumnType.getTimestampType(args0.getType());
+            this.arg1Type = ColumnType.getTimestampType(args1.getType());
         }
 
         @Override
@@ -1177,8 +1193,11 @@ public class CoalesceFunctionFactory implements FunctionFactory {
 
         @Override
         public long getTimestamp(Record rec) {
-            final long value = args0.getTimestamp(rec);
-            return value != Numbers.LONG_NULL ? value : args1.getTimestamp(rec);
+            long value = args0.getTimestamp(rec);
+            if (value != Numbers.LONG_NULL) {
+                return timestampDriver.from(value, arg0Type);
+            }
+            return timestampDriver.from(args1.getTimestamp(rec), arg1Type);
         }
     }
 

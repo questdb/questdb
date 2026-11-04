@@ -86,7 +86,7 @@ public class CaseCommon {
             return DecimalUtil.getImplicitCastFunction(arg, argPosition, toType, sqlExecutionContext);
         }
         if (ColumnType.isTimestamp(argType) && ColumnType.isTimestamp(toType) && argType != toType) {
-            // CASE and coalesce read their timestamp arguments without converting units
+            // CASE reads its timestamp arguments without converting units; coalesce converts its own
             return new CastTimestampToTimestampFunctionFactory.Func(arg, argType, toType);
         }
         final int keyIndex = castFactories.keyIndex(Numbers.encodeLowHighInts(argType, toType));
