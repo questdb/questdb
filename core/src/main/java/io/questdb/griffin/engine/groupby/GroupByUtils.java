@@ -248,6 +248,8 @@ public class GroupByUtils {
             // slots for the group-by functions. They are added first because each group-by function is likely
             // to require several slots. The number of slots for each function is not known upfront and
             // is effectively evaluated in the first loop.
+            // 0-based index of the current aggregate in the FILL list. GROUPING() columns take no slot.
+            int fillAggregateIndex = 0;
             for (int i = 0, n = columns.size(); i < n; i++) {
                 final QueryColumn column = columns.getQuick(i);
                 final ExpressionNode node = column.getAst();
@@ -285,13 +287,12 @@ public class GroupByUtils {
                         }
                         // GROUPING() columns are fill keys and take no fill value.
                         if (fillCount > 0 && !(groupByFunc instanceof GroupingFunction)) {
-                            // 0-based index of the just-added aggregate. The Math.min clamp
-                            // below covers only the single-fill broadcast case (FILL(NULL)
-                            // applied to N aggregates -- every iteration lands on fill[0]).
-                            // The multi-fill count mismatch (fillCount > 1, fillCount <
-                            // aggregateCount) is rejected as "not enough fill values" up
-                            // front, so it cannot reach this loop.
-                            int funcIndex = outGroupByFunctions.size() - 1;
+                            // The Math.min clamp below covers only the single-fill broadcast
+                            // case (FILL(NULL) applied to N aggregates -- every iteration
+                            // lands on fill[0]). The multi-fill count mismatch (fillCount > 1,
+                            // fillCount < aggregateCount) is rejected as "not enough fill
+                            // values" up front, so it cannot reach this loop.
+                            int funcIndex = fillAggregateIndex++;
                             int sampleByFlags = groupByFunc.getSampleByFlags();
                             ExpressionNode fillNode = sampleByFill.getQuick(Math.min(funcIndex, fillCount - 1));
                             if (validateFill) {
@@ -432,12 +433,7 @@ public class GroupByUtils {
             IntList projectionFunctionFlags
     ) throws SqlException {
         IntList keyColumnIndices = new IntList(model.getGroupBy().size());
-        IQueryModel chooseModel = model;
-        while (chooseModel != null
-                && chooseModel.getSelectModelType() != IQueryModel.SELECT_MODEL_CHOOSE
-                && chooseModel.getSelectModelType() != IQueryModel.SELECT_MODEL_NONE) {
-            chooseModel = chooseModel.getNestedModel();
-        }
+        IQueryModel chooseModel = findChooseModel(model);
         boolean hasGroupingFunction = false;
         for (int i = 0, n = innerProjectionFunctions.size(); i < n; i++) {
             if (innerProjectionFunctions.getQuick(i) instanceof GroupingFunction) {
@@ -653,6 +649,26 @@ public class GroupByUtils {
             }
         }
         return nonGroupByFunctions;
+    }
+
+    /**
+     * Returns the AST of the group-by model column that carries the GROUP BY key at the given
+     * index. The GROUP BY list keeps the keys as written, which over a join are table-qualified,
+     * while the column reads the name the nested select-choose model projects.
+     */
+    public static ExpressionNode findGroupingKeyColumnAst(IQueryModel model, int keyIndex) {
+        final ExpressionNode key = model.getGroupBy().getQuick(keyIndex);
+        final IQueryModel chooseModel = findChooseModel(model);
+        final ObjList<QueryColumn> columns = model.getColumns();
+        for (int i = 0; ; i++) {
+            // The optimiser replaces GROUP BY aliases and positions with the projected expressions,
+            // so every key matches a column of the group-by model.
+            assert i < columns.size() : "grouping key does not match a key expression: " + key.token;
+            final ExpressionNode ast = columns.getQuick(i).getAst();
+            if (ExpressionNode.compareNodesGroupBy(key, ast, chooseModel)) {
+                return ast;
+            }
+        }
     }
 
     /**
@@ -926,6 +942,18 @@ public class GroupByUtils {
         }
 
         return false;
+    }
+
+    // The select-choose model under a group-by model resolves table-qualified GROUP BY keys,
+    // such as q.c over a join, to the column names the group-by model reads.
+    private static IQueryModel findChooseModel(IQueryModel model) {
+        IQueryModel chooseModel = model;
+        while (chooseModel != null
+                && chooseModel.getSelectModelType() != IQueryModel.SELECT_MODEL_CHOOSE
+                && chooseModel.getSelectModelType() != IQueryModel.SELECT_MODEL_NONE) {
+            chooseModel = chooseModel.getNestedModel();
+        }
+        return chooseModel;
     }
 
     /**

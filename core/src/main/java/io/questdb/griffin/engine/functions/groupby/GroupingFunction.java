@@ -116,16 +116,16 @@ public class GroupingFunction extends IntFunction implements GroupByFunction {
      * {@link io.questdb.griffin.engine.groupby.GroupingSetsRecordCursorFactory}
      * after construction, once the grouping set layout is known.
      *
-     * @param groupingIds      per-set bitmask indicating which keys are rolled up
+     * @param groupingSets     per-set key positions the set groups by; every other key is rolled up
      * @param keyColumnIndices maps key position to base column index
      */
-    public void init(IntList groupingIds, IntList keyColumnIndices) throws SqlException {
-        int setCount = groupingIds.size();
+    public void init(ObjList<IntList> groupingSets, IntList keyColumnIndices) throws SqlException {
+        int setCount = groupingSets.size();
         int keyCount = keyColumnIndices.size();
         perSetValues = new int[setCount];
 
         for (int s = 0; s < setCount; s++) {
-            int fullMask = groupingIds.getQuick(s);
+            IntList activeKeys = groupingSets.getQuick(s);
             int result = 0;
             for (int a = 0, nArgs = argColumnIndices.size(); a < nArgs; a++) {
                 int argBaseIdx = argColumnIndices.getQuick(a);
@@ -147,11 +147,12 @@ public class GroupingFunction extends IntFunction implements GroupByFunction {
                     throw SqlException.$(argumentPosition, "argument must be a grouping key column");
                 }
                 argKeyPositions.setQuick(a, keyPos);
-                // Extract the bit for this key position from the full bitmask.
-                // Bit (keyCount - 1 - keyPos) in the full mask tells whether
-                // this key is rolled up (1) or active (0).
-                int bit = (fullMask >> (keyCount - 1 - keyPos)) & 1;
-                result |= (bit << (argColumnIndices.size() - 1 - a));
+                // The key is rolled up (1) when the set does not group by it, active (0)
+                // otherwise. GroupingIdFunctionFactory caps the arguments at 31, so the
+                // result fits an INT however many keys the query has.
+                if (!activeKeys.contains(keyPos)) {
+                    result |= 1 << (argColumnIndices.size() - 1 - a);
+                }
             }
             perSetValues[s] = result;
         }

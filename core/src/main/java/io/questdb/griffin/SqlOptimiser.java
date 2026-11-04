@@ -11363,8 +11363,16 @@ public class SqlOptimiser implements Mutable {
                         queryColumnPool.next().of(timestampAlias, tsFloorFunc)
                 );
 
+                // The node that becomes the bucket column of the group-by model.
+                ExpressionNode fillBucketKey = tsFloorFunc;
                 if (timestampOnly || nested.getGroupBy().size() > 0 || nested.hasGroupingSets()) {
-                    nested.addGroupBy(tsFloorFunc);
+                    // The GROUP BY gets its own copy, as an explicit GROUP BY gets a clone of the
+                    // projection it names. Over a join, rewriteSelectClause0 qualifies and
+                    // translates the GROUP BY keys in place, so a node shared with the projection
+                    // would be rewritten twice and lose the column it reads. The group-by model
+                    // then carries the copy as its bucket column.
+                    fillBucketKey = ExpressionNode.deepClone(expressionNodePool, tsFloorFunc);
+                    nested.addGroupBy(fillBucketKey);
                 }
 
                 // For SAMPLE BY with GROUPING SETS, add the timestamp column index
@@ -11391,7 +11399,7 @@ public class SqlOptimiser implements Mutable {
                 // instead of guessing from column names: a user column such as first(ts) AS ts
                 // carries the timestamp's name but is not the bucket, and rewriteSelectClause0
                 // may rename the bucket's alias when an aggregate claims it first (#7838).
-                nested.setFillBucketKey(tsFloorFunc);
+                nested.setFillBucketKey(fillBucketKey);
                 nested.setFillTimezoneName(hasFillFastPathTz ? sampleByTimezoneName : null);
                 nested.setFillValues(sampleByFill);
                 // Propagate offset to the fill cursor only when the sampler grid

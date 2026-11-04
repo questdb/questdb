@@ -1879,13 +1879,29 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return false;
     }
 
-    // True when the SAMPLE BY fill under this model emits gap rows. FILL(NONE) emits none.
+    private static boolean hasColumnAst(ObjList<QueryColumn> columns, ExpressionNode ast) {
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            if (columns.getQuick(i).getAst() == ast) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // True when this model owns a SAMPLE BY fill that emits gap rows. FILL(NONE) emits none.
+    // Like findFillBucketIndex, ownership means this model's columns carry the fill's bucket key,
+    // so an outer GROUP BY over a SAMPLE BY ... FILL sub-query does not own the inner fill.
     private static boolean hasNonNoneFill(IQueryModel model) {
         IQueryModel curr = model;
         while (curr != null && curr.getFillStride() == null) {
             curr = curr.getNestedModel();
         }
-        if (curr == null || curr.getFillValues() == null) {
+        if (curr == null) {
+            return false;
+        }
+        // SqlOptimiser.rewriteSampleBy records the bucket key and the fill values with the stride.
+        assert curr.getFillBucketKey() != null && curr.getFillValues() != null;
+        if (!hasColumnAst(model.getBottomUpColumns(), curr.getFillBucketKey())) {
             return false;
         }
         final ObjList<ExpressionNode> fillValues = curr.getFillValues();
@@ -1974,6 +1990,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                  ColumnType.TIMESTAMP -> true;
             default -> false;
         };
+    }
+
+    private static boolean isGroupingFunctionNode(ExpressionNode node) {
+        return node.type == FUNCTION
+                && (Chars.equalsIgnoreCase(node.token, "grouping") || Chars.equalsIgnoreCase(node.token, "grouping_id"));
     }
 
     /**
@@ -2161,24 +2182,29 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             throw SqlException.$(groupBy.getQuick(rolledUpKeys.getQuick(31)).position,
                     "SAMPLE BY FILL with grouping sets supports at most 31 rolled-up keys");
         }
-        final ExpressionNode first = groupBy.getQuick(rolledUpKeys.getQuick(0));
+        // The arguments are the key columns as the group-by model reads them, which over a join
+        // differ from the table-qualified GROUP BY nodes.
+        final ExpressionNode first = GroupByUtils.findGroupingKeyColumnAst(model, rolledUpKeys.getQuick(0));
         final ExpressionNode groupingId = expressionNodePool.next().of(FUNCTION, "grouping_id", 0, first.position);
         groupingId.paramCount = argCount;
         if (argCount == 1) {
             groupingId.rhs = first;
         } else if (argCount == 2) {
             groupingId.lhs = first;
-            groupingId.rhs = groupBy.getQuick(rolledUpKeys.getQuick(1));
+            groupingId.rhs = GroupByUtils.findGroupingKeyColumnAst(model, rolledUpKeys.getQuick(1));
         } else {
             // ExpressionNode stores three or more arguments in reverse order.
             for (int a = argCount - 1; a >= 0; a--) {
-                groupingId.args.add(groupBy.getQuick(rolledUpKeys.getQuick(a)));
+                groupingId.args.add(GroupByUtils.findGroupingKeyColumnAst(model, rolledUpKeys.getQuick(a)));
             }
         }
 
         final ObjList<QueryColumn> columns = model.getColumns();
+        // generateFill resolves the bottom-up columns by alias, including the ones an outer
+        // query pruned, so the hidden alias must differ from those too.
+        final ObjList<QueryColumn> bottomUpColumns = model.getBottomUpColumns();
         String alias = "grouping_set_fill_key";
-        for (int suffix = 1; hasColumnAlias(columns, alias); suffix++) {
+        for (int suffix = 1; hasColumnAlias(columns, alias) || hasColumnAlias(bottomUpColumns, alias); suffix++) {
             alias = "grouping_set_fill_key" + suffix;
         }
         final QueryColumn column = queryColumnPool.next().of(alias, groupingId);
@@ -4785,6 +4811,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     continue;
                 }
                 if (SqlUtil.isTimestampFloorFunction(ast)) {
+                    continue;
+                }
+                // GROUPING() and GROUPING_ID() are fill keys, never fill values. The AST
+                // decides it, because a column an outer query pruned has no factory index.
+                if (isGroupingSetsFill && isGroupingFunctionNode(ast)) {
                     continue;
                 }
                 // Non-aggregate FUNCTION/OPERATION used as a grouping key (e.g.
@@ -11466,11 +11497,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     model.hasGroupingSets()
                             && enableParallelGroupBy
                             && keyTypes.getColumnCount() > 0
-                            && keyTypes.getColumnCount() <= 31
                             && executionContext.getSharedQueryWorkerCount() > 0
                             && model.getGroupingSets().size() <= ASYNC_GROUPING_SETS_MAP_BUDGET
                             / (executionContext.getSharedQueryWorkerCount() + 1)
-                            && factory.supportsPageFrameCursor()
+                            && (factory.supportsPageFrameCursor() || factory.supportsFilterStealing())
                             && SqlUtil.isParallelismSupported(keyFunctions)
                             && GroupByUtils.isParallelismSupported(groupByFunctions)
             ) {
@@ -11485,6 +11515,34 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (workerFunctions != null) {
                     perWorkerGroupByFunctions = workerFunctions.getGroupByFunctions();
                     perWorkerKeyFunctions = workerFunctions.getKeyFunctions();
+                }
+
+                // Take over the filter of a filtered scan, as the plain parallel GROUP BY does,
+                // so that the workers filter and aggregate each page frame in one pass.
+                CompiledFilter compiledFilter = null;
+                MemoryCARW bindVarMemory = null;
+                ObjList<Function> bindVarFunctions = null;
+                Function filter = null;
+                if (!factory.supportsPageFrameCursor()) {
+                    IQueryModel.restoreWhereClause(expressionNodePool, model);
+                    final RecordCursorFactory filterFactory = factory;
+                    final RecordCursorFactory filterBase = filterFactory.getBaseFactory();
+                    assert filterBase.supportsPageFrameCursor();
+                    // The catch below frees the worker filter copies, and until halfClose() returns
+                    // it frees the filter factory as a whole, with every handle it holds.
+                    perWorkerFilters = compileWorkerFiltersConditionally(
+                            executionContext,
+                            filterFactory.getFilter(),
+                            executionContext.getSharedQueryWorkerCount(),
+                            filterFactory.getStealFilterExpr(),
+                            filterBase.getMetadata()
+                    );
+                    compiledFilter = filterFactory.getCompiledFilter();
+                    bindVarMemory = filterFactory.getBindVarMemory();
+                    bindVarFunctions = filterFactory.getBindVarFunctions();
+                    filter = filterFactory.getFilter();
+                    filterFactory.halfClose();
+                    factory = filterBase;
                 }
                 IntList fillKeyColumnPositions = new IntList();
                 int tsIdx = outerProjectionMetadata.getTimestampIndex();
@@ -11502,10 +11560,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 final ObjList<Function> keyFunctions0 = keyFunctions;
                 final ObjList<ObjList<Function>> perWorkerKeyFunctions0 = perWorkerKeyFunctions;
                 final ObjList<Function> recordFunctions0 = outerProjectionFunctions;
+                final ObjList<Function> perWorkerFilters0 = perWorkerFilters;
                 innerProjectionFunctions = null;
                 outerProjectionFunctions = null;
                 perWorkerGroupByFunctions = null;
                 perWorkerKeyFunctions = null;
+                perWorkerFilters = null;
 
                 return generateGroupingSetsFill(
                         model,
@@ -11524,6 +11584,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 keyFunctions0,
                                 perWorkerKeyFunctions0,
                                 recordFunctions0,
+                                compiledFilter,
+                                bindVarMemory,
+                                bindVarFunctions,
+                                filter,
+                                perWorkerFilters0,
                                 model.getGroupingSets(),
                                 groupingSetKeyColumnIndices,
                                 executionContext.getSharedQueryWorkerCount()
@@ -11754,8 +11819,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 keyFunctions,
                                 outerProjectionFunctions0,
                                 model.getGroupingSets(),
-                                groupingSetKeyColumnIndices,
-                                model.getGroupByPosition() > 0 ? model.getGroupByPosition() : model.getModelPosition()
+                                groupingSetKeyColumnIndices
                         ),
                         executionContext,
                         fillKeyColumnPositions,

@@ -48,6 +48,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.async.UnorderedPageFrameReducer;
 import io.questdb.cairo.sql.async.UnorderedPageFrameSequence;
+import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -58,7 +59,9 @@ import io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.engine.groupby.NullingRecord;
 import io.questdb.griffin.engine.groupby.VirtualFunctionSkewedSymbolRecordCursor;
+import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -76,6 +79,7 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
  */
 public class AsyncGroupingSetsRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final UnorderedPageFrameReducer AGGREGATE = AsyncGroupingSetsRecordCursorFactory::aggregate;
+    private static final UnorderedPageFrameReducer FILTER_AND_AGGREGATE = AsyncGroupingSetsRecordCursorFactory::filterAndAggregate;
     private RecordCursorFactory base;
     private AsyncGroupingSetsCursor cursor;
     private UnorderedPageFrameSequence<AsyncGroupingSetsAtom> frameSequence;
@@ -98,6 +102,11 @@ public class AsyncGroupingSetsRecordCursorFactory extends AbstractRecordCursorFa
             @NotNull ObjList<Function> keyFunctions,
             @NotNull ObjList<ObjList<Function>> perWorkerKeyFunctions,
             @NotNull ObjList<Function> recordFunctions,
+            @Nullable CompiledFilter compiledFilter,
+            @Nullable MemoryCARW bindVarMemory,
+            @Nullable ObjList<Function> bindVarFunctions,
+            @Nullable Function filter,
+            @Nullable ObjList<Function> perWorkerFilters,
             @NotNull ObjList<IntList> groupingSets,
             @NotNull IntList keyColumnIndices,
             int workerCount
@@ -119,6 +128,11 @@ public class AsyncGroupingSetsRecordCursorFactory extends AbstractRecordCursorFa
                     perWorkerGroupByFunctions,
                     keyFunctions,
                     perWorkerKeyFunctions,
+                    compiledFilter,
+                    bindVarMemory,
+                    bindVarFunctions,
+                    filter,
+                    perWorkerFilters,
                     groupingSets,
                     keyColumnIndices,
                     workerCount
@@ -128,7 +142,7 @@ public class AsyncGroupingSetsRecordCursorFactory extends AbstractRecordCursorFa
                     configuration,
                     messageBus,
                     atom,
-                    AGGREGATE,
+                    filter != null ? FILTER_AND_AGGREGATE : AGGREGATE,
                     workerCount
             );
             this.cursor = new AsyncGroupingSetsCursor(
@@ -210,10 +224,15 @@ public class AsyncGroupingSetsRecordCursorFactory extends AbstractRecordCursorFa
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("Async Group By");
+        if (usesCompiledFilter()) {
+            sink.type("Async JIT Group By");
+        } else {
+            sink.type("Async Group By");
+        }
         sink.meta("workers").val(workerCount);
         sink.optAttr("keys", GroupByRecordCursorFactory.getKeys(recordFunctions, getMetadata()));
         sink.optAttr("values", frameSequence.getAtom().getOwnerGroupByFunctions(), true);
+        sink.optAttr("filter", frameSequence.getAtom().getFilterContext().getFilter(-1), true);
         sink.attr("vectorized").val(false);
         sink.attr("groupingSets").val(true);
         sink.child(base);
@@ -221,7 +240,7 @@ public class AsyncGroupingSetsRecordCursorFactory extends AbstractRecordCursorFa
 
     @Override
     public boolean usesCompiledFilter() {
-        return base.usesCompiledFilter();
+        return frameSequence.getAtom().getFilterContext().getCompiledFilter() != null;
     }
 
     @Override
@@ -269,27 +288,10 @@ public class AsyncGroupingSetsRecordCursorFactory extends AbstractRecordCursorFa
             RecordSink recordSink = atom.getRecordSink(slotId);
             RecordSink functionSink = atom.getFunctionSink(slotId);
             GroupByFunctionsUpdater updater = atom.getUpdater(slotId);
-            int setCount = atom.getSetCount();
             for (long row = 0; row < frameRowCount; row++) {
                 circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 record.setRowIndex(row);
-                for (int setIndex = 0; setIndex < setCount; setIndex++) {
-                    NullingRecord keyRecord = atom.getNullingRecord(slotId, setIndex);
-                    keyRecord.of(record);
-                    atom.setCurrentGroupingSet(slotId, setIndex);
-                    Map map = atom.getMap(slotId, setIndex);
-                    MapKey key = map.withKey();
-                    recordSink.copy(keyRecord, key);
-                    if (functionSink != null) {
-                        functionSink.copy(record, key);
-                    }
-                    MapValue value = key.createValue();
-                    if (value.isNew()) {
-                        updater.updateNew(value, record, baseRowId + row);
-                    } else {
-                        updater.updateExisting(value, record, baseRowId + row);
-                    }
-                }
+                aggregateRow(atom, slotId, record, baseRowId + row, recordSink, functionSink, updater);
             }
         } finally {
             try {
@@ -302,51 +304,120 @@ public class AsyncGroupingSetsRecordCursorFactory extends AbstractRecordCursorFa
         }
     }
 
+    // Adds one input row to the map of every grouping set.
+    private static void aggregateRow(
+            AsyncGroupingSetsAtom atom,
+            int slotId,
+            PageFrameMemoryRecord record,
+            long rowId,
+            RecordSink recordSink,
+            @Nullable RecordSink functionSink,
+            GroupByFunctionsUpdater updater
+    ) {
+        for (int setIndex = 0, setCount = atom.getSetCount(); setIndex < setCount; setIndex++) {
+            NullingRecord keyRecord = atom.getNullingRecord(slotId, setIndex);
+            keyRecord.of(record);
+            atom.setCurrentGroupingSet(slotId, setIndex);
+            Map map = atom.getMap(slotId, setIndex);
+            MapKey key = map.withKey();
+            recordSink.copy(keyRecord, key);
+            if (functionSink != null) {
+                functionSink.copy(record, key);
+            }
+            MapValue value = key.createValue();
+            if (value.isNew()) {
+                updater.updateNew(value, record, rowId);
+            } else {
+                updater.updateExisting(value, record, rowId);
+            }
+        }
+    }
+
+    private static void filterAndAggregate(
+            int workerId,
+            @NotNull PageFrameMemoryRecord record,
+            int frameIndex,
+            @NotNull SqlExecutionCircuitBreaker circuitBreaker,
+            @NotNull UnorderedPageFrameSequence<?> frameSequence,
+            @Nullable UnorderedPageFrameSequence<?> stealingFrameSequence
+    ) {
+        long frameRowCount = frameSequence.getFrameRowCount(frameIndex);
+        assert frameRowCount > 0;
+        @SuppressWarnings("unchecked") AsyncGroupingSetsAtom atom =
+                ((UnorderedPageFrameSequence<AsyncGroupingSetsAtom>) frameSequence).getAtom();
+        boolean owner = stealingFrameSequence == frameSequence;
+        int slotId = atom.acquireSlot(workerId, owner, circuitBreaker);
+        AsyncFilterContext filterContext = atom.getFilterContext();
+        PageFrameMemoryPool memoryPool = filterContext.getMemoryPool(slotId);
+        // navigateTo() decodes the frame and can throw, so it sits inside the try that releases
+        // the slot.
+        try {
+            PageFrameMemory frameMemory = memoryPool.navigateTo(frameIndex);
+            record.init(frameMemory);
+
+            DirectLongList rows = filterContext.getFilteredRows(slotId);
+            rows.clear();
+            CompiledFilter compiledFilter = filterContext.getCompiledFilter();
+            if (compiledFilter == null || frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
+                AsyncFilterUtils.applyFilter(filterContext.getFilter(slotId), rows, record, frameRowCount);
+            } else {
+                AsyncFilterUtils.applyCompiledFilter(
+                        compiledFilter,
+                        filterContext.getBindVarMemory(),
+                        filterContext.getBindVarFunctions(),
+                        frameMemory,
+                        frameSequence.getPageFrameAddressCache(),
+                        filterContext.getDataAddresses(slotId),
+                        filterContext.getAuxAddresses(slotId),
+                        rows,
+                        frameRowCount
+                );
+            }
+
+            long baseRowId = Rows.toRowID(frameIndex, 0);
+            RecordSink recordSink = atom.getRecordSink(slotId);
+            RecordSink functionSink = atom.getFunctionSink(slotId);
+            GroupByFunctionsUpdater updater = atom.getUpdater(slotId);
+            for (long p = 0, n = rows.size(); p < n; p++) {
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+                long row = rows.get(p);
+                record.setRowIndex(row);
+                aggregateRow(atom, slotId, record, baseRowId + row, recordSink, functionSink, updater);
+            }
+        } finally {
+            try {
+                memoryPool.releaseParquetBuffers();
+            } finally {
+                atom.releaseSlot(slotId);
+            }
+        }
+    }
+
     private static void initGroupingFunctions(
             ObjList<GroupByFunction> ownerFunctions,
             @Nullable ObjList<ObjList<GroupByFunction>> workerFunctions,
             ObjList<IntList> groupingSets,
             IntList keyColumnIndices
     ) throws SqlException {
-        IntList groupingIds = new IntList(groupingSets.size());
-        for (int setIndex = 0, setCount = groupingSets.size(); setIndex < setCount; setIndex++) {
-            IntList activeKeys = groupingSets.getQuick(setIndex);
-            int mask = 0;
-            for (int keyIndex = 0, keyCount = keyColumnIndices.size(); keyIndex < keyCount; keyIndex++) {
-                if (!containsValue(activeKeys, keyIndex)) {
-                    mask |= 1 << (keyCount - 1 - keyIndex);
-                }
-            }
-            groupingIds.add(mask);
-        }
-        initGroupingFunctions(ownerFunctions, groupingIds, keyColumnIndices);
+        initGroupingFunctions(ownerFunctions, groupingSets, keyColumnIndices);
         if (workerFunctions != null) {
             for (int i = 0, n = workerFunctions.size(); i < n; i++) {
-                initGroupingFunctions(workerFunctions.getQuick(i), groupingIds, keyColumnIndices);
+                initGroupingFunctions(workerFunctions.getQuick(i), groupingSets, keyColumnIndices);
             }
         }
     }
 
     private static void initGroupingFunctions(
             ObjList<GroupByFunction> functions,
-            IntList groupingIds,
+            ObjList<IntList> groupingSets,
             IntList keyColumnIndices
     ) throws SqlException {
         for (int i = 0, n = functions.size(); i < n; i++) {
             GroupByFunction function = functions.getQuick(i);
             if (function instanceof GroupingFunction groupingFunction) {
-                groupingFunction.init(groupingIds, keyColumnIndices);
+                groupingFunction.init(groupingSets, keyColumnIndices);
             }
         }
-    }
-
-    private static boolean containsValue(IntList list, int value) {
-        for (int i = 0, n = list.size(); i < n; i++) {
-            if (list.getQuick(i) == value) {
-                return true;
-            }
-        }
-        return false;
     }
 
     private static class AsyncGroupingSetsCursor extends VirtualFunctionSkewedSymbolRecordCursor {

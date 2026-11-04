@@ -37,6 +37,7 @@ import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.PerWorkerLocks;
@@ -49,6 +50,7 @@ import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdaterFactory;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.engine.groupby.NullingRecord;
+import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTracker;
@@ -98,10 +100,16 @@ public class AsyncGroupingSetsAtom implements StatefulAtom, Reopenable, Closeabl
             @Nullable ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions,
             @NotNull ObjList<Function> ownerKeyFunctions,
             @NotNull ObjList<ObjList<Function>> perWorkerKeyFunctions,
+            @Nullable CompiledFilter compiledFilter,
+            @Nullable MemoryCARW bindVarMemory,
+            @Nullable ObjList<Function> bindVarFunctions,
+            @Nullable Function ownerFilter,
+            @Nullable ObjList<Function> perWorkerFilters,
             @NotNull ObjList<IntList> groupingSets,
             @NotNull IntList keyColumnIndices,
             int workerCount
     ) {
+        assert perWorkerFilters == null || perWorkerFilters.size() == workerCount;
         final int setCount = groupingSets.size();
         this.configuration = configuration;
         this.ownerGroupByFunctions = ownerGroupByFunctions;
@@ -112,7 +120,21 @@ public class AsyncGroupingSetsAtom implements StatefulAtom, Reopenable, Closeabl
         this.workerCount = workerCount;
         this.keyTypes = new ArrayColumnTypes().addAll(keyTypes);
         this.valueTypes = new ArrayColumnTypes().addAll(valueTypes);
-        this.filterContext = new AsyncFilterContext(configuration, null, null, null, null, null, null, workerCount, 0, 0L, 0L);
+        // No late materialization: every grouping set reads the key and value columns of each
+        // filtered row, so the frame is decoded in full anyway.
+        this.filterContext = new AsyncFilterContext(
+                configuration,
+                compiledFilter,
+                bindVarMemory,
+                bindVarFunctions,
+                ownerFilter,
+                null,
+                perWorkerFilters,
+                workerCount,
+                0,
+                0L,
+                0L
+        );
         this.locks = new PerWorkerLocks(configuration, workerCount);
         this.maps = new ObjList<>((workerCount + 1) * setCount);
         this.nullingRecords = new ObjList<>((workerCount + 1) * setCount);
