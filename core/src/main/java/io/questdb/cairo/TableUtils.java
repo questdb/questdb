@@ -33,6 +33,7 @@ import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewState;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewState;
+import io.questdb.cairo.pool.WriterPool;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
@@ -1666,7 +1667,9 @@ public final class TableUtils {
                 && !getCommandName(CMD_STORAGE_POLICY).equals(lockReason)
                 // The compaction sweep holds the writer to land its swap the same way STORAGE POLICY does.
                 && !getCommandName(CMD_COMPOSITE_PARTITION_SWAP).equals(lockReason)
-                && !getCommandName(CMD_PARQUET_PARTITION_SWAP).equals(lockReason);
+                && !getCommandName(CMD_PARQUET_PARTITION_SWAP).equals(lockReason)
+                // A publisher that finds the writer back in the pool ticks the queue under this reason.
+                && !WriterPool.OWNERSHIP_REASON_ASYNC_COMMAND.equals(lockReason);
     }
 
     public static boolean isValidColumnName(CharSequence columnName, int fsFileNameLimit) {
