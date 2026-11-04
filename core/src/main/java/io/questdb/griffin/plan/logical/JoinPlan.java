@@ -109,6 +109,18 @@ public final class JoinPlan extends LogicalPlan {
         return orderedInputs;
     }
 
+    /**
+     * True when an input reads columns of the inputs before it, see {@link JoinInput#isDependent}.
+     */
+    public boolean hasDependentStep() {
+        for (int i = 0, n = inputs.size(); i < n; i++) {
+            if (inputs.getQuick(i).isDependent()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public boolean hasExplicitTimestamp() {
         return hasExplicitTimestamp;
     }

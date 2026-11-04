@@ -22,16 +22,8 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
+package io.questdb.griffin.plan.logical;
 
-import io.questdb.griffin.plan.logical.BoundExpression;
-import io.questdb.griffin.plan.logical.ColumnExpression;
-import io.questdb.griffin.plan.logical.ExpressionVisitor;
-import io.questdb.griffin.plan.logical.LogicalPlan;
-import io.questdb.griffin.plan.logical.OuterColumnExpression;
-import io.questdb.griffin.plan.logical.PlanExpressionVisitor;
-import io.questdb.griffin.plan.logical.PlanVisitor;
-import io.questdb.griffin.plan.logical.TreeWalk;
 import io.questdb.std.IntList;
 
 /**

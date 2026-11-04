@@ -24,8 +24,6 @@
 
 package io.questdb.griffin.optimiser;
 
-import io.questdb.griffin.LogicalPlans;
-import io.questdb.griffin.PlanNodePools;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
@@ -36,7 +34,9 @@ import io.questdb.griffin.plan.logical.JoinGraph;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.griffin.plan.logical.JoinPlan;
+import io.questdb.griffin.plan.logical.LogicalPlans;
 import io.questdb.griffin.plan.logical.OutputSchema;
+import io.questdb.griffin.plan.logical.PlanNodePools;
 import io.questdb.griffin.plan.logical.TreeWalk;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;

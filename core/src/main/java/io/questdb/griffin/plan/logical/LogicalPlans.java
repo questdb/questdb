@@ -22,43 +22,12 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
+package io.questdb.griffin.plan.logical;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.griffin.plan.logical.AggregatePlan;
-import io.questdb.griffin.plan.logical.BindVariableExpression;
-import io.questdb.griffin.plan.logical.BoundExpression;
-import io.questdb.griffin.plan.logical.ColumnExpression;
-import io.questdb.griffin.plan.logical.ComparisonOperator;
-import io.questdb.griffin.plan.logical.ConstantExpression;
-import io.questdb.griffin.plan.logical.CursorExpression;
-import io.questdb.griffin.plan.logical.DistinctPlan;
-import io.questdb.griffin.plan.logical.ExpressionVisitor;
-import io.questdb.griffin.plan.logical.FilterPlan;
-import io.questdb.griffin.plan.logical.FunctionExpression;
-import io.questdb.griffin.plan.logical.FunctionSourcePlan;
-import io.questdb.griffin.plan.logical.GroupingPlan;
-import io.questdb.griffin.plan.logical.HorizonJoinPlan;
-import io.questdb.griffin.plan.logical.JoinInput;
-import io.questdb.griffin.plan.logical.JoinKey;
-import io.questdb.griffin.plan.logical.JoinKind;
-import io.questdb.griffin.plan.logical.JoinPlan;
-import io.questdb.griffin.plan.logical.LimitPlan;
-import io.questdb.griffin.plan.logical.LogicalPlan;
-import io.questdb.griffin.plan.logical.OuterColumnExpression;
-import io.questdb.griffin.plan.logical.OutputSchema;
-import io.questdb.griffin.plan.logical.PlanVisitor;
-import io.questdb.griffin.plan.logical.ProjectPlan;
-import io.questdb.griffin.plan.logical.SampleByPlan;
-import io.questdb.griffin.plan.logical.ScanPlan;
-import io.questdb.griffin.plan.logical.SetOperationPlan;
-import io.questdb.griffin.plan.logical.SortPlan;
-import io.questdb.griffin.plan.logical.TreeWalk;
-import io.questdb.griffin.plan.logical.TypeExpression;
-import io.questdb.griffin.plan.logical.UnaryPlan;
-import io.questdb.griffin.plan.logical.WindowJoinPlan;
-import io.questdb.griffin.plan.logical.WindowPlan;
-import io.questdb.griffin.plan.logical.WindowSpec;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlKeywords;
+import io.questdb.griffin.SymbolKeyExtractor;
 import io.questdb.std.Chars;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntIntHashMap;
@@ -381,6 +350,12 @@ public final class LogicalPlans {
         return plan instanceof JoinPlan join && join.hasExplicitTimestamp();
     }
 
+    /**
+     * Whether the plan reads a table function over a data source outside the database.
+     */
+    public static boolean hasExternalDataSource(LogicalPlan plan) {
+        return !plan.walkTopDown(EXTERNAL_SOURCES);
+    }
     /**
      * True when the value of an aggregate function is defined by the table order of its input rows.
      */
@@ -1375,10 +1350,4 @@ public final class LogicalPlans {
         return isComputing && inputStability != SEQUENCE_STABLE ? 0 : inputStability;
     }
 
-    /**
-     * Whether the plan reads a table function over a data source outside the database.
-     */
-    static boolean hasExternalDataSource(LogicalPlan plan) {
-        return !plan.walkTopDown(EXTERNAL_SOURCES);
-    }
 }

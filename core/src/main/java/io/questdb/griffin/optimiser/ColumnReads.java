@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.optimiser;
 
-import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
@@ -44,6 +43,7 @@ import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LatestByPlan;
 import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
+import io.questdb.griffin.plan.logical.LogicalPlans;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.PlanExpressionVisitor;
 import io.questdb.griffin.plan.logical.ProjectPlan;
@@ -92,15 +92,6 @@ final class ColumnReads implements Mutable {
             return expression;
         }
     };
-
-    private static boolean hasDependentStep(ObjList<JoinInput> steps) {
-        for (int i = 0, n = steps.size(); i < n; i++) {
-            if (steps.getQuick(i).isDependent()) {
-                return true;
-            }
-        }
-        return false;
-    }
 
     /**
      * A count reads the columns of an input that would otherwise compute them anyway: a set operation compares them,
@@ -202,7 +193,7 @@ final class ColumnReads implements Mutable {
                         readColumnIds.add(step.getInput().getOutput().getTimestampColumnId());
                     }
                 }
-                if (hasDependentStep(steps)) {
+                if (join.hasDependentStep()) {
                     // Decorrelation rewrites the join and may re-read an input whole as a shared source.
                     for (int i = 0, n = steps.size(); i < n; i++) {
                         if (steps.getQuick(i).getInput() != null) {

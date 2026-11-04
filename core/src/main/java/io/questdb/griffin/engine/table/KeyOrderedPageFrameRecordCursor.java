@@ -677,7 +677,7 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
      */
     private boolean addCollectedRow(long row) {
         final long rowCapacity = collectedRows.getCapacity();
-        if (collectedRows.size() == rowCapacity && !isWithinCollectionBudget(2 * rowCapacity, collectedRuns.getCapacity())) {
+        if (collectedRows.size() == rowCapacity && isOverCollectionBudget(2 * rowCapacity, collectedRuns.getCapacity())) {
             return false;
         }
         collectedRows.add((int) row);
@@ -691,7 +691,7 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
      */
     private boolean addCollectedRun(int frameIndex, int key, long rowHi) {
         final long runCapacity = collectedRuns.getCapacity();
-        if (collectedRuns.size() + 3 > runCapacity && !isWithinCollectionBudget(collectedRows.getCapacity(), 2 * runCapacity)) {
+        if (collectedRuns.size() + 3 > runCapacity && isOverCollectionBudget(collectedRows.getCapacity(), 2 * runCapacity)) {
             return false;
         }
         collectedRuns.add(frameIndex);
@@ -785,12 +785,13 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
 
     /**
      * Collects the rows that the filter keeps of the keys {@code keyLo} to {@code keyHi} in the page frame as a run per
-     * key, links each run to the run of its key before it, and reports whether it did: it collects none of them when
-     * they would grow the memory of the collection past its budget, see {@link #getCollectionBudget()}. One cursor of the
+     * key and links each run to the run of its key before it. When they would grow the memory of the collection past
+     * its budget, see {@link #getCollectionBudget()}, it collects none of them and ends the collection at the page frame.
+     * One cursor of the
      * factory over those keys returns the rows, so that a sequential factory opens the cursors of all of them, which seeks
      * their index cursors, before it reads the rows of the first, as a scan in frame order does.
      */
-    private boolean collectFrameRows(PageFrame frame, int frameIndex, int keyLo, int keyHi) {
+    private void collectFrameRows(PageFrame frame, int frameIndex, int keyLo, int keyHi) {
         final long rowLo = collectedRows.size();
         final long runLo = collectedRuns.size();
         rowCursor = keyOrderedFactory.getCursor(frame, frameMemoryPool.navigateTo(frameIndex), keyLo, keyHi);
@@ -798,11 +799,11 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
         rowCursor = Misc.free(rowCursor);
         if (isCollected) {
             linkCollectedRuns(runLo);
-            return true;
+        } else {
+            collectedRows.setPos(rowLo);
+            collectedRuns.setPos(runLo);
+            endCollection(frameIndex);
         }
-        collectedRows.setPos(rowLo);
-        collectedRuns.setPos(runLo);
-        return false;
     }
 
     /**
@@ -820,9 +821,7 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
         }
         if (!isFrameCollected) {
             isFrameCollected = true;
-            if (!collectFrameRows(collectedFrame, collectedFrameCount - 1, 1, keyCount)) {
-                endCollection(collectedFrameCount - 1);
-            }
+            collectFrameRows(collectedFrame, collectedFrameCount - 1, 1, keyCount);
             return;
         }
         final PageFrame frame = frameCursor.next();
@@ -835,9 +834,7 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
         collectedFrameCount = frameCount;
         countWalk(testReadFrames);
         isFrameCollected = false;
-        if (!collectFrameRows(frame, collectedFrameCount - 1, 0, 1)) {
-            endCollection(collectedFrameCount - 1);
-        }
+        collectFrameRows(frame, collectedFrameCount - 1, 0, 1);
     }
 
     /**
@@ -1430,7 +1427,8 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
         final long cacheBytes = frameMemoryPool.getCacheableBytes(ParquetDecodeHint.SCATTERED, parquetFrameCount, decodedBytes)
                 - frameMemoryPool.getCacheableBytes(ParquetDecodeHint.MONOTONIC, parquetFrameCount, decodedBytes);
         final long sortEntryBytes = readRowCount * 2 * Long.BYTES;
-        return Math.max(Math.min(sortEntryBytes + Math.max(cacheBytes, 0), memoryCap), sortEntryBytes);
+        final long cappedBytes = Math.min(sortEntryBytes + Math.max(cacheBytes, 0), memoryCap);
+        return Math.max(cappedBytes, sortEntryBytes);
     }
 
     /**
@@ -1569,7 +1567,7 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
         final long decodedBytes = getDecodedBytes();
         final long frameBytes = Math.max(decodedBytes / parquetFrameCount, 1);
         final long cacheBytes = Math.min(frameMemoryPool.getCacheableBytes(ParquetDecodeHint.SCATTERED, parquetFrameCount, decodedBytes), getMemoryCap());
-        return (int) Math.max(Math.min(cacheBytes / frameBytes, parquetFrameCount), 1);
+        return Math.clamp(cacheBytes / frameBytes, 1, parquetFrameCount);
     }
 
     /**
@@ -1955,12 +1953,12 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
     }
 
     /**
-     * True when the lists of the collection may grow to {@code rowCapacity} rows and {@code runCapacity} longs of runs
-     * within the budget of the collection, see {@link #getCollectionBudget()}, and within the capacity of an int list.
+     * True when lists of the collection of {@code rowCapacity} rows and {@code runCapacity} longs of runs would pass
+     * the budget of the collection, see {@link #getCollectionBudget()}, or the capacity of an int list.
      */
-    private boolean isWithinCollectionBudget(long rowCapacity, long runCapacity) {
-        return rowCapacity <= Numbers.MAX_SAFE_INT_POW_2
-                && rowCapacity * Integer.BYTES + (runCapacity + collectedKeyRuns.getCapacity()) * Long.BYTES <= getCollectionBudget();
+    private boolean isOverCollectionBudget(long rowCapacity, long runCapacity) {
+        return rowCapacity > Numbers.MAX_SAFE_INT_POW_2
+                || rowCapacity * Integer.BYTES + (runCapacity + collectedKeyRuns.getCapacity()) * Long.BYTES > getCollectionBudget();
     }
 
     /**
@@ -2645,7 +2643,7 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
         if (isExhausted) {
             return;
         }
-        final long position = directPosition + Math.min(rowCount.get(), Math.max(readRowCount - directPosition, 0));
+        final long position = directPosition + Math.clamp(readRowCount - directPosition, 0, rowCount.get());
         rowCount.dec(position - directPosition);
         if (position > directPosition) {
             positionDirectRows(position);
@@ -2686,7 +2684,7 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
                 count = windowStartsRowCount;
             }
             if (count >= 0) {
-                final long skippedCount = skipCount > 0 ? Math.max(0, Math.min(skipCount, count - gatherLo)) : 0;
+                final long skippedCount = skipCount > 0 ? Math.clamp(count - gatherLo, 0, skipCount) : 0;
                 gatherLo += skippedCount;
                 rowCount.dec(skippedCount);
                 readHi = addRows(gatherLo, requestedMaxRowsAfterSkip);
@@ -2973,7 +2971,7 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
             windowColumnTypes.add(ColumnType.LONG);
             // the chain reserves the memory of a window up front, which pages of the OS page size round the least
             pageSize = Numbers.ceilPow2(Math.min(configuration.getSqlSortValuePageSize(), Files.PAGE_SIZE));
-            final int maxPages = (int) Math.min(Math.max(1L, configuration.getSqlSortValueMaxBytes() / pageSize), Integer.MAX_VALUE);
+            final int maxPages = Math.clamp(configuration.getSqlSortValueMaxBytes() / pageSize, 1, Integer.MAX_VALUE);
             final String maxBytesKey = PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_BYTES.getPropertyPath();
             rows = new RecordChain(metadata, rowSink, pageSize, maxPages, maxBytesKey);
             windowRows = new RecordChain(windowColumnTypes, new RowIdRecordSink(rowSink), pageSize, maxPages, maxBytesKey);
@@ -3209,12 +3207,7 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
     /**
      * Copies the columns of a record and then its row id.
      */
-    private static class RowIdRecordSink implements RecordSink {
-        private final RecordSink sink;
-
-        private RowIdRecordSink(RecordSink sink) {
-            this.sink = sink;
-        }
+    private record RowIdRecordSink(RecordSink sink) implements RecordSink {
 
         @Override
         public void copy(Record r, RecordSinkSPI w) {

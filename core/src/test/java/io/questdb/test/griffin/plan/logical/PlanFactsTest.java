@@ -26,12 +26,12 @@ package io.questdb.test.griffin.plan.logical;
 
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.PlanNodePools;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.PlanFacts;
+import io.questdb.griffin.plan.logical.PlanNodePools;
 import io.questdb.griffin.plan.logical.PlanStage;
 import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.griffin.plan.logical.SortPlan;

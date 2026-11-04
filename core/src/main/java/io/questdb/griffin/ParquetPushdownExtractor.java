@@ -33,6 +33,7 @@ import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.FunctionExpression;
+import io.questdb.griffin.plan.logical.LogicalPlans;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;

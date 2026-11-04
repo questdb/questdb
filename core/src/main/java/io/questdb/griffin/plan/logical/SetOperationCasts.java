@@ -22,14 +22,11 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
+package io.questdb.griffin.plan.logical;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.griffin.plan.logical.ColumnExpression;
-import io.questdb.griffin.plan.logical.LogicalPlan;
-import io.questdb.griffin.plan.logical.OutputSchema;
-import io.questdb.griffin.plan.logical.ProjectPlan;
-import io.questdb.griffin.plan.logical.SetOperationPlan;
+import io.questdb.griffin.DecimalUtil;
+import io.questdb.griffin.SqlException;
 import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;

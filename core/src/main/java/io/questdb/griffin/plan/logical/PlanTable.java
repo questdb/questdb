@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
+package io.questdb.griffin.plan.logical;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SymbolMapReader;

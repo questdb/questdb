@@ -26,15 +26,11 @@ package io.questdb.griffin.optimiser;
 
 import io.questdb.ParanoiaState;
 import io.questdb.cairo.ColumnType;
-import io.questdb.griffin.BoundExpressionRewriter.ConjunctTest;
 import io.questdb.griffin.CharacterStore;
 import io.questdb.griffin.CharacterStoreEntry;
-import io.questdb.griffin.LogicalPlans;
-import io.questdb.griffin.PlanNodePools;
-import io.questdb.griffin.PlanReadIds;
-import io.questdb.griffin.SetOperationCasts;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.plan.logical.BoundExpression;
+import io.questdb.griffin.plan.logical.BoundExpressionRewriter.ConjunctTest;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.CursorExpression;
 import io.questdb.griffin.plan.logical.DomainReadPlan;
@@ -50,13 +46,17 @@ import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
+import io.questdb.griffin.plan.logical.LogicalPlans;
 import io.questdb.griffin.plan.logical.OuterColumnExpression;
 import io.questdb.griffin.plan.logical.OutputSchema;
+import io.questdb.griffin.plan.logical.PlanNodePools;
+import io.questdb.griffin.plan.logical.PlanReadIds;
 import io.questdb.griffin.plan.logical.PlanStage;
 import io.questdb.griffin.plan.logical.PlanToFactoryRules;
 import io.questdb.griffin.plan.logical.PlanVisitor;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.ScanPlan;
+import io.questdb.griffin.plan.logical.SetOperationCasts;
 import io.questdb.griffin.plan.logical.SetOperationPlan;
 import io.questdb.griffin.plan.logical.SortPlan;
 import io.questdb.griffin.plan.logical.TreeWalk;
@@ -245,15 +245,6 @@ final class Decorrelation implements OptimiserPass {
         }
     }
 
-    private static boolean hasDependentStep(JoinPlan join) {
-        for (int i = 1, n = join.getInputs().size(); i < n; i++) {
-            if (join.getInputs().getQuick(i).isDependent()) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     private static boolean hasNullableOuterTypes(BoundExpression expression) {
         return expression.walk(NON_NULLABLE_OUTER_COLUMNS);
     }
@@ -354,7 +345,7 @@ final class Decorrelation implements OptimiserPass {
         if (domains.hasDecorrelatedSteps()) {
             ctx.realign(plan);
         }
-        return plan instanceof JoinPlan join && hasDependentStep(join) ? decorrelateJoin(join) : result;
+        return plan instanceof JoinPlan join && join.hasDependentStep() ? decorrelateJoin(join) : result;
     }
 
     /**

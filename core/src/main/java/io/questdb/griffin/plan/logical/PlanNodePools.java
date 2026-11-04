@@ -22,49 +22,13 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
+package io.questdb.griffin.plan.logical;
 
 import io.questdb.ParanoiaState;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.griffin.StaticTypeFunction;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.WindowExpression;
-import io.questdb.griffin.plan.logical.AggregatePlan;
-import io.questdb.griffin.plan.logical.BindVariableExpression;
-import io.questdb.griffin.plan.logical.ColumnExpression;
-import io.questdb.griffin.plan.logical.ConstantExpression;
-import io.questdb.griffin.plan.logical.CursorExpression;
-import io.questdb.griffin.plan.logical.DistinctPlan;
-import io.questdb.griffin.plan.logical.DomainReadPlan;
-import io.questdb.griffin.plan.logical.FillPlan;
-import io.questdb.griffin.plan.logical.FilterPlan;
-import io.questdb.griffin.plan.logical.FunctionExpression;
-import io.questdb.griffin.plan.logical.FunctionSourcePlan;
-import io.questdb.griffin.plan.logical.HashJoinAggregation;
-import io.questdb.griffin.plan.logical.HorizonJoinPlan;
-import io.questdb.griffin.plan.logical.HorizonJoinSlave;
-import io.questdb.griffin.plan.logical.JoinDependency;
-import io.questdb.griffin.plan.logical.JoinEquality;
-import io.questdb.griffin.plan.logical.JoinGraph;
-import io.questdb.griffin.plan.logical.JoinInput;
-import io.questdb.griffin.plan.logical.JoinPlan;
-import io.questdb.griffin.plan.logical.LatestByPlan;
-import io.questdb.griffin.plan.logical.LimitPlan;
-import io.questdb.griffin.plan.logical.OuterColumnExpression;
-import io.questdb.griffin.plan.logical.PlanFactRecorder;
-import io.questdb.griffin.plan.logical.PlanFactSource;
-import io.questdb.griffin.plan.logical.PlanFacts;
-import io.questdb.griffin.plan.logical.ProjectPlan;
-import io.questdb.griffin.plan.logical.SampleByPlan;
-import io.questdb.griffin.plan.logical.ScanPlan;
-import io.questdb.griffin.plan.logical.SetOperationPlan;
-import io.questdb.griffin.plan.logical.SortPlan;
-import io.questdb.griffin.plan.logical.Subquery;
-import io.questdb.griffin.plan.logical.TypeExpression;
-import io.questdb.griffin.plan.logical.UnnestSpec;
-import io.questdb.griffin.plan.logical.WindowJoinPlan;
-import io.questdb.griffin.plan.logical.WindowJoinStep;
-import io.questdb.griffin.plan.logical.WindowPlan;
-import io.questdb.griffin.plan.logical.WindowSpec;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjectFactory;
 import io.questdb.std.ObjectPool;
@@ -112,7 +76,7 @@ public final class PlanNodePools implements Mutable {
     public final ObjectPool<SetOperationPlan> setOperations;
     public final ObjectPool<SortPlan> sorts;
     public final ObjectPool<StaticTypeFunction> staticTypes;
-    final ObjectPool<Subquery> subqueries;
+    public final ObjectPool<Subquery> subqueries;
     public final ObjectPool<ExpressionNode> syntheticNodes;
     public final ObjectPool<TypeExpression> types;
     public final WindowExpression unboundedWindow = WindowExpression.FACTORY.newInstance();

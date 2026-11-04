@@ -25,10 +25,9 @@
 package io.questdb.griffin.optimiser;
 
 import io.questdb.ParanoiaState;
-import io.questdb.griffin.BoundExpressionRewriter;
-import io.questdb.griffin.PlanNodePools;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
+import io.questdb.griffin.plan.logical.BoundExpressionRewriter;
 import io.questdb.griffin.plan.logical.DistinctPlan;
 import io.questdb.griffin.plan.logical.DomainReadPlan;
 import io.questdb.griffin.plan.logical.FillPlan;
@@ -46,6 +45,7 @@ import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.PlanExpressionVisitor;
 import io.questdb.griffin.plan.logical.PlanFactRecorder;
+import io.questdb.griffin.plan.logical.PlanNodePools;
 import io.questdb.griffin.plan.logical.PlanVisitor;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.SampleByPlan;

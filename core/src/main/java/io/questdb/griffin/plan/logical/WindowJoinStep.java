@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.plan.logical;
 
-import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.window.WindowContextImpl;

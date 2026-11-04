@@ -25,9 +25,9 @@
 package io.questdb.griffin.bind;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.griffin.SetOperationCasts;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.plan.logical.OutputSchema;
+import io.questdb.griffin.plan.logical.SetOperationCasts;
 import io.questdb.griffin.plan.logical.SetOperationPlan;
 import io.questdb.std.IntList;
 

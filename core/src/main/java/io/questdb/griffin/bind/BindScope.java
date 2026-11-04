@@ -26,7 +26,6 @@ package io.questdb.griffin.bind;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.griffin.CharacterStore;
-import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.PreparedFunctions;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.model.ExpressionNode;
@@ -35,6 +34,7 @@ import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.JoinEquality;
 import io.questdb.griffin.plan.logical.LogicalPlan;
+import io.questdb.griffin.plan.logical.LogicalPlans;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.Subquery;
 import io.questdb.griffin.plan.logical.WindowSpec;

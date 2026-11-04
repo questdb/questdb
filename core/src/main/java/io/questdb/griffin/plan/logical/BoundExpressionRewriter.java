@@ -22,19 +22,13 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
+package io.questdb.griffin.plan.logical;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.griffin.plan.logical.BindVariableExpression;
-import io.questdb.griffin.plan.logical.BoundExpression;
-import io.questdb.griffin.plan.logical.ColumnExpression;
-import io.questdb.griffin.plan.logical.ConstantExpression;
-import io.questdb.griffin.plan.logical.CursorExpression;
-import io.questdb.griffin.plan.logical.FunctionExpression;
-import io.questdb.griffin.plan.logical.OuterColumnExpression;
-import io.questdb.griffin.plan.logical.OutputSchema;
-import io.questdb.griffin.plan.logical.ProjectPlan;
-import io.questdb.griffin.plan.logical.TypeExpression;
+import io.questdb.griffin.FunctionFactoryCache;
+import io.questdb.griffin.FunctionFactoryDescriptor;
+import io.questdb.griffin.PreparedFunctions;
+import io.questdb.griffin.SqlException;
 import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.Mutable;
@@ -74,6 +68,15 @@ public final class BoundExpressionRewriter implements Mutable {
             flags |= BoundExpression.RUNTIME_CONSTANT;
         }
         return flags;
+    }
+
+    public static ColumnExpression projectionColumn(ProjectPlan projection, int columnId, int type) {
+        final int index = projection.getOutput().getColumnIndexById(columnId);
+        if (index < 0 || !(projection.getExpressions().getQuick(index) instanceof ColumnExpression column)
+                || column.getDataType() != type) {
+            throw new IllegalArgumentException("column-only projection with unchanged types required");
+        }
+        return column;
     }
 
     /**
@@ -477,6 +480,23 @@ public final class BoundExpressionRewriter implements Mutable {
     }
 
     /**
+     * Removes the innermost projected timestamp offset, the one over the timestamp column.
+     */
+    public BoundExpression unwrapProjectedOffsets(BoundExpression expression) {
+        if (!(expression instanceof FunctionExpression call)) {
+            return expression;
+        }
+        if (call.isProjectedOffset() && call.argumentAt(2) instanceof ColumnExpression) {
+            return call.argumentAt(2);
+        }
+        final ObjList<BoundExpression> args = rewriteArguments.next();
+        for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
+            args.add(unwrapProjectedOffsets(call.argumentAt(i)));
+        }
+        return functions.next().of(call, args);
+    }
+
+    /**
      * The flags of a call whose column arguments were replaced by expressions: their non-determinism, randomness,
      * lack of random access, lack of parallelism and instability carry over to the call.
      */
@@ -683,32 +703,6 @@ public final class BoundExpressionRewriter implements Mutable {
             }
         }
         return args == null ? expression : functions.next().of(call, args, substitutedFlags(call, args));
-    }
-
-    static ColumnExpression projectionColumn(ProjectPlan projection, int columnId, int type) {
-        final int index = projection.getOutput().getColumnIndexById(columnId);
-        if (index < 0 || !(projection.getExpressions().getQuick(index) instanceof ColumnExpression column)
-                || column.getDataType() != type) {
-            throw new IllegalArgumentException("column-only projection with unchanged types required");
-        }
-        return column;
-    }
-
-    /**
-     * Removes the innermost projected timestamp offset, the one over the timestamp column.
-     */
-    BoundExpression unwrapProjectedOffsets(BoundExpression expression) {
-        if (!(expression instanceof FunctionExpression call)) {
-            return expression;
-        }
-        if (call.isProjectedOffset() && call.argumentAt(2) instanceof ColumnExpression) {
-            return call.argumentAt(2);
-        }
-        final ObjList<BoundExpression> args = rewriteArguments.next();
-        for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
-            args.add(unwrapProjectedOffsets(call.argumentAt(i)));
-        }
-        return functions.next().of(call, args);
     }
 
     /**

@@ -25,12 +25,12 @@
 package io.questdb.test.griffin.plan.logical;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.optimiser.PlanVerifier;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.FunctionSourcePlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
+import io.questdb.griffin.plan.logical.LogicalPlans;
 import io.questdb.griffin.plan.logical.PlanStage;
 import io.questdb.griffin.plan.logical.PlanToFactoryRules;
 import io.questdb.griffin.plan.logical.ProjectPlan;

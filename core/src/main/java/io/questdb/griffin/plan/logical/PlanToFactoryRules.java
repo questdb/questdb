@@ -29,7 +29,6 @@ import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.map.RecordValueSinkFactory;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.engine.groupby.vect.VectorAggregateConstructors;
 import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunctionConstructor;

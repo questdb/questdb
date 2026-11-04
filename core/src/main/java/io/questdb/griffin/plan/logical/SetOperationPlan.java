@@ -128,7 +128,7 @@ public final class SetOperationPlan extends LogicalPlan {
 
     /**
      * True when the operation casts the columns of both branches to {@link #getCastTypes()}, see
-     * {@link io.questdb.griffin.SetOperationCasts#recordCasts}.
+     * {@link io.questdb.griffin.plan.logical.SetOperationCasts#recordCasts}.
      */
     public boolean isCastRequired() {
         return isCastRequired;
@@ -184,7 +184,7 @@ public final class SetOperationPlan extends LogicalPlan {
     /**
      * Reindexes symbol restoration after retaining original output ordinals, in ascending order;
      * {@code remappedSymbolColumns} is a temporary list. The caller records the cast facts of the retained columns
-     * again, see {@link io.questdb.griffin.SetOperationCasts#recordCasts}.
+     * again, see {@link io.questdb.griffin.plan.logical.SetOperationCasts#recordCasts}.
      */
     public void retainColumns(IntList retainedColumnIndexes, IntList remappedSymbolColumns) {
         checkRewritable("SetOperationPlan.retainColumns");

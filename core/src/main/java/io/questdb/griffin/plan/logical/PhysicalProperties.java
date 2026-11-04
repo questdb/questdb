@@ -27,7 +27,6 @@ package io.questdb.griffin.plan.logical;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.engine.LimitBounds;
 import io.questdb.std.Chars;
 import io.questdb.std.Numbers;

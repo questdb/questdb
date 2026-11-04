@@ -54,6 +54,7 @@ import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.plan.logical.FunctionSourcePlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.PhysicalProperties;
+import io.questdb.griffin.plan.logical.PlanNodePools;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;

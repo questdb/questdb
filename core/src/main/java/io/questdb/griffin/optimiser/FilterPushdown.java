@@ -25,9 +25,6 @@
 package io.questdb.griffin.optimiser;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.griffin.BoundExpressionRewriter.ConjunctSplit;
-import io.questdb.griffin.BoundExpressionRewriter.ConjunctTest;
-import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.OperatorExpression;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlKeywords;
@@ -35,6 +32,8 @@ import io.questdb.griffin.SymbolKeyExtractor;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BindVariableExpression;
 import io.questdb.griffin.plan.logical.BoundExpression;
+import io.questdb.griffin.plan.logical.BoundExpressionRewriter.ConjunctSplit;
+import io.questdb.griffin.plan.logical.BoundExpressionRewriter.ConjunctTest;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ComparisonOperator;
 import io.questdb.griffin.plan.logical.ConstantExpression;
@@ -51,6 +50,7 @@ import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LatestByPlan;
 import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
+import io.questdb.griffin.plan.logical.LogicalPlans;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.PlanRewriter;
 import io.questdb.griffin.plan.logical.PlanVisitor;
