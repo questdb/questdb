@@ -152,6 +152,10 @@ public class SymbolMapLowSlice implements QuietCloseable {
     }
 
     // Test hook.
+    protected void onGrowFilled() {
+    }
+
+    // Test hook.
     protected void onValueCopied() {
     }
 
@@ -186,6 +190,7 @@ public class SymbolMapLowSlice implements QuietCloseable {
         Unsafe.putLong(a + RETIRED_OFFSET, current);
         //noinspection NonAtomicOperationOnVolatileField
         allocatedBytes += bytes;
+        onGrowFilled();
         // Publishes the header and the copied slots.
         array = a;
         return a;

@@ -54,6 +54,7 @@ import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
@@ -84,6 +85,7 @@ public class HttpResponseSink implements Closeable, Mutable {
     private final HttpRawSocketImpl rawSocket = new HttpRawSocketImpl();
     private final SimpleResponseImpl simpleResponse = new SimpleResponseImpl();
     private final ResponseSinkImpl sink = new ResponseSinkImpl();
+    private long asciiJsonWordCount;
     private boolean chunkedRequestDone;
     private boolean compressedHeaderDone;
     private boolean compressedOutputReady;
@@ -310,6 +312,11 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
         assert sendBuf.getReadNAvailable() == 0;
         sendBuf.clearAndPrepareToWriteToBuffer();
+    }
+
+    @TestOnly
+    long getAsciiJsonWordCount() {
+        return asciiJsonWordCount;
     }
 
     HttpResponseHeader getHeader() {
@@ -712,6 +719,7 @@ public class HttpResponseSink implements Closeable, Mutable {
                 i += 4;
             }
             buffer._wptr = destination;
+            asciiJsonWordCount += (i - lo) >> 2;
             return Utf8Sink.super.escapeJsonStr(cs, i, hi);
         }
 

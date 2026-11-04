@@ -213,6 +213,18 @@ public class HttpConnectionContextTest extends AbstractOomSweepTest {
     }
 
     @Test
+    public void testEscapeJsonStrCopiesAsciiWords() throws Exception {
+        assertMemoryLeak(() -> {
+            String ascii = "abcdefgh".repeat(8);
+            assertAsciiJsonWords(ascii, 256, 16);
+            assertAsciiJsonWords(ascii + "ab", 256, 16);
+            assertAsciiJsonWords("abc", 256, 0);
+            assertAsciiJsonWords("abcdefgh", 8, 2);
+            assertAsciiJsonWords("abcdefg\"hijklmnop", 256, 1);
+        });
+    }
+
+    @Test
     public void testEscapeJsonStrExhaustionAndExactFit() throws Exception {
         assertMemoryLeak(() -> {
             assertNativeHttpOverflow("abcdef", "preabcde");
@@ -342,6 +354,7 @@ public class HttpConnectionContextTest extends AbstractOomSweepTest {
                 expected.escapeJsonStr(input);
                 response.escapeJsonStr(direct);
                 assertNativeEquals(expected, address, 128 - raw.getBufferSize());
+                Assert.assertEquals(0, http.getAsciiJsonWordCount());
             }
         });
     }
@@ -362,6 +375,20 @@ public class HttpConnectionContextTest extends AbstractOomSweepTest {
                 Assert.assertFalse(breaker.isTimerSet());
             }
         });
+    }
+
+    private static void assertAsciiJsonWords(String input, int capacity, long expectedWords) {
+        try (DirectUtf16Sink nativeInput = new DirectUtf16Sink(256);
+             DirectUtf8Sink expected = new DirectUtf8Sink(256);
+             HttpConnectionContext http = newHttp(capacity)) {
+            nativeInput.put(input);
+            expected.escapeJsonStr(input);
+            HttpRawSocket raw = http.getRawResponseSocket();
+            long address = raw.getBufferAddress();
+            http.getChunkedResponse().escapeJsonStr(new DirectString().of(nativeInput.ptr(), input.length()));
+            assertNativeEquals(expected, address, capacity - raw.getBufferSize());
+            Assert.assertEquals(expectedWords, http.getAsciiJsonWordCount());
+        }
     }
 
     private static void assertConstructorRollback(HttpFullFatServerConfiguration httpConfig, CountingSocketFactory socketFactory) {

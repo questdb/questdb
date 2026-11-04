@@ -384,6 +384,36 @@ public class SymbolMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSharedLowCachePublishesGrownArrayLast() throws Exception {
+        assertMemoryLeak(() -> {
+            DirectString view = new DirectString();
+            int[] publishedCapacity = {0};
+            int[] grows = {0};
+            try (
+                    DirectUtf16Sink chars = new DirectUtf16Sink(64);
+                    SymbolMapLowSlice slice = new SymbolMapLowSlice() {
+                        @Override
+                        protected void onGrowFilled() {
+                            grows[0]++;
+                            Assert.assertEquals(publishedCapacity[0], capacity());
+                        }
+                    }
+            ) {
+                chars.put("abcd");
+                Assert.assertEquals(SymbolMapLowSlice.INSERTED, slice.tryPut(0, 65, chars.ptr(), chars.length()));
+                Assert.assertEquals(1, grows[0]);
+                Assert.assertEquals(64, slice.capacity());
+                publishedCapacity[0] = 64;
+                Assert.assertEquals(SymbolMapLowSlice.INSERTED, slice.tryPut(64, 65, chars.ptr(), chars.length()));
+                Assert.assertEquals(2, grows[0]);
+                Assert.assertEquals(128, slice.capacity());
+                TestUtils.assertEquals("abcd", slice.get(0, view));
+                TestUtils.assertEquals("abcd", slice.get(64, view));
+            }
+        });
+    }
+
+    @Test
     public void testSharedLowCacheLongValuesUseMap() throws Exception {
         assertMemoryLeak(() -> {
             // 30 chars fill a slot, 31 do not

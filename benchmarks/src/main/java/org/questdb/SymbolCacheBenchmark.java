@@ -93,8 +93,10 @@ public class SymbolCacheBenchmark {
     private static final String STRING_IN = "SELECT count() FROM t WHERE " + DAY_ONE + " AND s::STRING IN ('symbol1', 'symbol2', 'symbol3')";
     private final Utf8StringSink sink = new Utf8StringSink();
     private SqlExecutionContext context;
+    private RecordCursorFactory castStringDistinctAgg;
     private RecordCursorFactory castStringIn;
     private RecordCursorFactory castStringInSerial;
+    private RecordCursorFactory castStringNotEqualAll;
     private RecordCursorFactory denseHighKeys;
     private CairoEngine engine;
     private RecordCursorFactory likeDense;
@@ -102,6 +104,7 @@ public class SymbolCacheBenchmark {
     private RecordCursorFactory lowKeys;
     private RecordCursorFactory lowStrings;
     private RecordCursorFactory sparseHighKeys;
+    private RecordCursorFactory stringDistinctAgg;
     private RecordCursorFactory symbolFunction;
 
     public static void main(String[] args) throws RunnerException {
@@ -110,6 +113,11 @@ public class SymbolCacheBenchmark {
                 .addProfiler("gc")
                 .build();
         new Runner(opt).run();
+    }
+
+    @Benchmark
+    public long castStringDistinctAgg() throws SqlException {
+        return readCount(castStringDistinctAgg);
     }
 
     @Benchmark
@@ -125,6 +133,11 @@ public class SymbolCacheBenchmark {
     @Benchmark
     public long castStringInWorkers(Workers state) throws SqlException {
         return readCount(state.castStringIn, state.context);
+    }
+
+    @Benchmark
+    public long castStringNotEqualAll() throws SqlException {
+        return readCount(castStringNotEqualAll);
     }
 
     @Benchmark
@@ -224,11 +237,19 @@ public class SymbolCacheBenchmark {
         lowStrings = engine.select("SELECT str FROM low", context);
         likeDense = engine.select("SELECT count() FROM t WHERE " + DAY_ONE + " AND s LIKE '%1%'", context);
         likeSparse = engine.select("SELECT count() FROM t WHERE " + DAY_ONE + " AND s LIKE '%99999%'", context);
+        castStringNotEqualAll = engine.select("SELECT count() FROM t WHERE " + DAY_ONE + " AND s::STRING <> ALL('{symbol1,symbol2,symbol3}'::text[])", context);
+        castStringDistinctAgg = engine.select("SELECT length(string_distinct_agg(s::STRING, ',')) FROM t WHERE " + DAY_ONE, context);
+        stringDistinctAgg = engine.select("SELECT length(string_distinct_agg(s, ',')) FROM t WHERE " + DAY_ONE, context);
         castStringIn = engine.select(STRING_IN, context);
         context.setParallelFilterEnabled(false);
         castStringInSerial = engine.select(STRING_IN, context);
         symbolFunction = engine.select("SELECT count() FROM t WHERE " + DAY_ONE + " AND length(s) > 0", context);
         context.setParallelFilterEnabled(true);
+    }
+
+    @Benchmark
+    public long stringDistinctAgg() throws SqlException {
+        return readCount(stringDistinctAgg);
     }
 
     @TearDown(Level.Trial)
@@ -241,6 +262,9 @@ public class SymbolCacheBenchmark {
         likeSparse = Misc.free(likeSparse);
         castStringIn = Misc.free(castStringIn);
         castStringInSerial = Misc.free(castStringInSerial);
+        castStringNotEqualAll = Misc.free(castStringNotEqualAll);
+        castStringDistinctAgg = Misc.free(castStringDistinctAgg);
+        stringDistinctAgg = Misc.free(stringDistinctAgg);
         symbolFunction = Misc.free(symbolFunction);
         engine = Misc.free(engine);
     }
