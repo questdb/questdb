@@ -527,6 +527,17 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             int scanDirection
     ) throws SqlException {
         final int selectTextPosition = createTableOperation.getSelectTextPosition();
+        for (int i = 0, n = selectMetadata.getColumnCount(); i < n; i++) {
+            final int columnType = selectMetadata.getColumnType(i);
+            if (!ColumnType.isPersisted(ColumnType.tagOf(columnType))) {
+                final CharSequence columnName = selectMetadata.getColumnName(i);
+                final CreateTableColumnModel columnModel = createColumnModelMap.get(columnName);
+                final int position = selectTextPosition + (columnModel != null ? columnModel.getColumnNamePos() : 0);
+                throw SqlException.position(position)
+                        .put("non-persisted type: ")
+                        .put(ColumnType.nameOf(ColumnType.tagOf(columnType)));
+            }
+        }
         // SELECT validation
         if (createTableOperation.getTimestampColumnName() == null) {
             if (selectMetadata.getTimestampIndex() == -1) {
