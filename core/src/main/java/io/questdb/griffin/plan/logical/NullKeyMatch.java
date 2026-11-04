@@ -25,7 +25,7 @@
 package io.questdb.griffin.plan.logical;
 
 /**
- * How the factory of a step NULL-extended by its ON residual, see {@link NullExtension#BY_ON_RESIDUAL}, finds the
+ * How the factory of a step NULL-extended by its ON residual, see {@link JoinNullExtension#BY_ON_RESIDUAL}, finds the
  * rows that pass the ON residual with a row whose keys are all NULL: the slave rows that pass it with such a master
  * row, and for a RIGHT or FULL step the rows of the NULL key chain that pass it with some master row.
  */

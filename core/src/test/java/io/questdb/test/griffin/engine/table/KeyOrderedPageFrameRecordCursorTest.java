@@ -1655,45 +1655,50 @@ public class KeyOrderedPageFrameRecordCursorTest extends AbstractCairoTest {
     public void testGatherOfLateWideRowFitsQueryMemoryLimitOfSort() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
         assertMemoryLeak(() -> {
-            // the last of the 8_000 rows, past the sample of the gather, holds a value of 1 MiB; a sort of the rows fits
-            // a query memory limit of 1.56 MB under a decode cache of 256 KiB, and of 1.8 MB under the default one
+            // the last of the 2_000 rows, past the sample of the gather, holds a value of 1 MiB; a sort of the rows fits
+            // each of the limits, and a window reaches all but the highest of them under each decode cache
             execute("""
                     CREATE TABLE t AS (
-                        SELECT x id, ('k' || (x % 2_000))::SYMBOL s,
-                            rpad('w', CASE WHEN x = 8_000 THEN 1_048_576 ELSE 16 END, 'w')::VARCHAR v, timestamp_sequence(0, 1_000) ts
-                        FROM long_sequence(8_000)
+                        SELECT x id, ('k' || (x % 500))::SYMBOL s,
+                            rpad('w', CASE WHEN x = 2_000 THEN 1_048_576 ELSE 16 END, 'w')::VARCHAR v, timestamp_sequence(0, 1_000) ts
+                        FROM long_sequence(2_000)
                     ), INDEX(s) TIMESTAMP(ts) PARTITION BY DAY
                     """);
-            execute("INSERT INTO t VALUES (8_001, 'k1', 'w', '1970-01-03')");
+            execute("INSERT INTO t VALUES (2_001, 'k1', 'w', '1970-01-03')");
             execute("ALTER TABLE t CONVERT PARTITION TO PARQUET WHERE ts < '1970-01-03'");
             final StringSink keys = new StringSink();
             keys.put("'k0'");
-            for (int i = 1; i < 2_000; i++) {
+            for (int i = 1; i < 500; i++) {
                 keys.put(", 'k").put(i).put('\'');
             }
             final String tail = "id, s, v, ts FROM t WHERE ts IN '1970-01-01' AND s IN (" + keys + ") AND id > 0 ORDER BY s, ts";
+            final String sortSql = "SELECT /*+ no_index(t) */ " + tail;
             final StringSink expected = new StringSink();
-            printSql("SELECT /*+ no_index(t) */ " + tail, expected);
+            printSql(sortSql, expected);
             final String expectedRows = expected.toString();
-            printSql("SELECT /*+ no_index(t) */ " + tail + " LIMIT 7_000, 7_010", expected);
+            printSql(sortSql + " LIMIT 1_900, 1_910", expected);
             final String expectedPage = expected.toString();
-            printSql("SELECT /*+ no_index(t) */ " + tail + " LIMIT -7", expected);
+            printSql(sortSql + " LIMIT -7", expected);
             final String expectedLast = expected.toString();
             final long[][] limits = {
-                    {256 * 1024L, 1_600_000, 1_800_000, 2_200_000, 2_250_000, 2_400_000},
-                    {256 * 1024 * 1024L, 1_800_000, 2_000_000, 2_200_000, 2_250_000, 2_400_000},
+                    {256 * 1024L, 1_260_000, 1_800_000, 2_100_000, 2_160_000},
+                    {256 * 1024 * 1024L, 1_260_000, 1_800_000, 2_340_000, 2_400_000},
             };
             final StringSink actual = new StringSink();
             for (long[] cacheLimits : limits) {
                 node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, cacheLimits[0]);
                 for (int i = 1; i < cacheLimits.length; i++) {
                     try (
+                            RecordCursorFactory sortFactory = select(sortSql);
                             RecordCursorFactory factory = select("SELECT " + tail);
-                            RecordCursorFactory pageFactory = select("SELECT " + tail + " LIMIT 7_000, 7_010");
+                            RecordCursorFactory pageFactory = select("SELECT " + tail + " LIMIT 1_900, 1_910");
                             RecordCursorFactory lastFactory = select("SELECT " + tail + " LIMIT -7")
                     ) {
                         node1.setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, cacheLimits[i]);
                         try {
+                            try (RecordCursor cursor = sortFactory.getCursor(sqlExecutionContext)) {
+                                TestUtils.assertCursor(expectedRows, cursor, sortFactory.getMetadata(), true, actual);
+                            }
                             try (RecordCursor cursor = factory.getBaseFactory().getCursor(sqlExecutionContext)) {
                                 Assert.assertTrue(cursor.getRecord() instanceof DelegatingRecord);
                                 final LongList rowIds = new LongList();

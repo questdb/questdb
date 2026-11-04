@@ -26,6 +26,7 @@ package io.questdb.test.griffin.engine.table;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.FullPartitionFrameCursorFactory;
 import io.questdb.cairo.GenericRecordMetadata;
@@ -37,6 +38,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
@@ -45,10 +47,12 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursorFactory;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.table.BwdTableReaderPageFrameCursor;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorImpl;
@@ -145,6 +149,57 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                         final RecordCursor.Counter counter = new RecordCursor.Counter();
                         cursor.calculateSize(sqlExecutionContext.getCircuitBreaker(), counter);
                         Assert.assertEquals(query, 1_000, counter.get());
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testFailedOpenReleasesFilterState() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT x id, ('k' || (x % 4))::SYMBOL s, ('k' || (x % 4))::SYMBOL s2, timestamp_sequence(0, 1_000) ts
+                        FROM long_sequence(100)
+                    ), INDEX(s) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            final String[][] shapes = {
+                    {"s IN ('k1', 'k2')", "FilterOnValues", "id\n1\n"},
+                    {"s NOT IN ('k1', 'k2')", "FilterOnExcludedValues", "id\n3\n"},
+                    {"s IN (SELECT s FROM t WHERE id = 1)", "FilterOnSubQuery", "id\n1\n"}
+            };
+            for (String[] shape : shapes) {
+                final String sql = "SELECT id FROM t WHERE " + shape[0] + " AND s = s2 AND id > 0 AND id::STRING ~ $1";
+                bindVariableService.clear();
+                bindVariableService.setStr(0, "[");
+                try (RecordCursorFactory factory = select(sql)) {
+                    assertMalformedRegexFailsOpen(factory, sql);
+                }
+                try (RecordCursorFactory factory = select(sql)) {
+                    assertMalformedRegexFailsOpen(factory, sql);
+                    bindVariableService.setStr(0, "^[13]$");
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        TestUtils.assertCursor(shape[2], cursor, factory.getMetadata(), true, new StringSink());
+                    }
+                }
+                bindVariableService.setStr(0, "^[13]$");
+                assertQuery(sql).noLeakCheck().withPlanContaining(shape[1]).sizeMayVary().returns(shape[2]);
+                try (RecordCursorFactory factory = select(sql)) {
+                    final SqlExecutionCircuitBreaker breaker = new AtomicBooleanCircuitBreaker(engine) {
+                        @Override
+                        public void statefulThrowExceptionIfTrippedTimeThrottledOrYield() {
+                            throw CairoException.queryCancelled();
+                        }
+                    };
+                    final SqlExecutionCircuitBreaker previous = sqlExecutionContext.getCircuitBreaker();
+                    ((SqlExecutionContextImpl) sqlExecutionContext).with(breaker);
+                    try (RecordCursor ignored = factory.getCursor(sqlExecutionContext)) {
+                        Assert.fail(sql);
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "cancelled by user");
+                    } finally {
+                        ((SqlExecutionContextImpl) sqlExecutionContext).with(previous);
                     }
                 }
             }
@@ -1428,6 +1483,15 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                         """);
             }
         });
+    }
+
+    private static void assertMalformedRegexFailsOpen(RecordCursorFactory factory, String sql) throws Exception {
+        try (RecordCursor ignored = factory.getCursor(sqlExecutionContext)) {
+            Assert.fail(sql);
+        } catch (SqlException e) {
+            Assert.assertEquals(sql, sql.indexOf("$1") + 1, e.getPosition());
+            TestUtils.assertContains(e.getFlyweightMessage(), "Unclosed character class");
+        }
     }
 
     private static void assertRemainingRows(RecordCursor cursor, String expected) {

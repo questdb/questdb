@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.functions.groupby;
 
+import io.questdb.PropertyKey;
 import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.mp.TestWorkerPool;
@@ -135,6 +136,7 @@ public class ArgMinVarcharTimestampGroupByFunctionFactoryTest extends AbstractCa
 
     @Test
     public void testArgMinParallelKeyedAndNotKeyed() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 100_000);
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE tab AS (
@@ -143,8 +145,8 @@ public class ArgMinVarcharTimestampGroupByFunctionFactoryTest extends AbstractCa
                             ('s' || (x % 100))::SYMBOL sym_value,
                             ('v' || x)::STRING str_value,
                             ('v' || x)::VARCHAR varchar_value,
-                            CASE WHEN x <= 1_000_000 THEN null ELSE (2_000_001 - x)::TIMESTAMP END key
-                        FROM long_sequence(2_000_000)
+                            CASE WHEN x <= 100_000 THEN null ELSE (200_001 - x)::TIMESTAMP END key
+                        FROM long_sequence(200_000)
                     )""");
             try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
                 TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
@@ -160,11 +162,11 @@ public class ArgMinVarcharTimestampGroupByFunctionFactoryTest extends AbstractCa
                             .expectSize()
                             .returns("""
                                     sym\tk\ts\tv
-                                    0\ts0\tv2000000\tv2000000
-                                    1\ts96\tv1999996\tv1999996
-                                    2\ts97\tv1999997\tv1999997
-                                    3\ts98\tv1999998\tv1999998
-                                    4\ts99\tv1999999\tv1999999
+                                    0\ts0\tv200000\tv200000
+                                    1\ts96\tv199996\tv199996
+                                    2\ts97\tv199997\tv199997
+                                    3\ts98\tv199998\tv199998
+                                    4\ts99\tv199999\tv199999
                                     """);
                     assertQuery("SELECT arg_min(sym_value, key) k, arg_min(str_value, key) s, arg_min(varchar_value, key) v FROM tab")
                             .withEngine(engine)
@@ -172,7 +174,7 @@ public class ArgMinVarcharTimestampGroupByFunctionFactoryTest extends AbstractCa
                             .noLeakCheck()
                             .noRandomAccess()
                             .expectSize()
-                            .returns("k\ts\tv\ns0\tv2000000\tv2000000\n");
+                            .returns("k\ts\tv\ns0\tv200000\tv200000\n");
                 }, configuration, LOG);
             }
         });

@@ -212,27 +212,32 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
             close();
             this.frameCursor = frameCursor;
         }
-        recordA.of(frameCursor);
-        recordB.of(frameCursor);
-        rowCursorFactory.init(frameCursor, sqlExecutionContext);
-        circuitBreaker = sqlExecutionContext.getCircuitBreaker();
-        // Consult the breaker at open (time-throttled), so a scan over an empty table (zero frames, so the
-        // per-frame check in hasNext never runs) still observes cancellation/timeout even when this cursor is
-        // not the query's first breaker consultation. The time-throttled variant checks cancellation/timeout
-        // unconditionally (so the count-throttle window can't skip it, unlike statefulThrowExceptionIfTripped())
-        // while bounding the connection probe to once per wall-clock window, matching the per-frame check above.
-        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
-        areCursorsPrepared = false;
-        isExhausted = false;
-        rowCursor = Misc.free(rowCursor);
-        maxRowsAfterSkip = RecordCursor.UNBOUNDED_ROW_COUNT;
-        rowsProducedSinceSkip = 0;
-        cachedSkipWalkFrameCount = -1;
-        cachedSkipWalkTarget = NO_SKIP_WALK;
-        // prepare for page frame iteration
-        super.init(sqlExecutionContext.getMemoryTracker());
-        if (filter != null) {
-            filter.init(this, sqlExecutionContext);
+        try {
+            recordA.of(frameCursor);
+            recordB.of(frameCursor);
+            rowCursorFactory.init(frameCursor, sqlExecutionContext);
+            circuitBreaker = sqlExecutionContext.getCircuitBreaker();
+            // Consult the breaker at open (time-throttled), so a scan over an empty table (zero frames, so the
+            // per-frame check in hasNext never runs) still observes cancellation/timeout even when this cursor is
+            // not the query's first breaker consultation. The time-throttled variant checks cancellation/timeout
+            // unconditionally (so the count-throttle window can't skip it, unlike statefulThrowExceptionIfTripped())
+            // while bounding the connection probe to once per wall-clock window, matching the per-frame check above.
+            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+            areCursorsPrepared = false;
+            isExhausted = false;
+            rowCursor = Misc.free(rowCursor);
+            maxRowsAfterSkip = RecordCursor.UNBOUNDED_ROW_COUNT;
+            rowsProducedSinceSkip = 0;
+            cachedSkipWalkFrameCount = -1;
+            cachedSkipWalkTarget = NO_SKIP_WALK;
+            // prepare for page frame iteration
+            super.init(sqlExecutionContext.getMemoryTracker());
+            if (filter != null) {
+                filter.init(this, sqlExecutionContext);
+            }
+        } catch (Throwable th) {
+            Misc.free(this, th);
+            throw th;
         }
     }
 

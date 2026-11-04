@@ -201,9 +201,9 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
         } catch (Throwable th) {
             failure = th;
         }
-        failure = Misc.freeBestEffort(failure, filter);
         failure = Misc.freeBestEffort(failure, rowCursorFactory);
         failure = Misc.freeBestEffort(failure, cursor);
+        failure = Misc.freeBestEffort(failure, filter);
         failure = Misc.freeObjListBestEffort(failure, cursorFactories);
         CairoException.rethrowCleanupFailure(failure);
     }

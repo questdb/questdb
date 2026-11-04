@@ -131,6 +131,23 @@ pub(crate) fn mark_written_by_questdb(
     parquet_file_size: u64,
     parquet_meta_file: &mut File,
 ) -> ParquetResult<i64> {
+    mark_written_by_questdb_with_sync_data(
+        parquet_file,
+        parquet_file_size,
+        parquet_meta_file,
+        File::sync_data,
+    )
+}
+
+fn mark_written_by_questdb_with_sync_data<S>(
+    parquet_file: &mut File,
+    parquet_file_size: u64,
+    parquet_meta_file: &mut File,
+    sync_data: S,
+) -> ParquetResult<i64>
+where
+    S: FnMut(&File) -> std::io::Result<()>,
+{
     let mut committed_size = [0u8; 8];
     parquet_meta_file.seek(SeekFrom::Start(0))?;
     parquet_meta_file.read_exact(&mut committed_size)?;
@@ -175,7 +192,7 @@ pub(crate) fn mark_written_by_questdb(
     parquet_meta_file
         .write_all(&append_bytes)
         .context("could not append _pm footer")?;
-    publish_parquet_meta_with_sync(parquet_meta_file, new_size, true, true, File::sync_data)?;
+    publish_parquet_meta_with_sync(parquet_meta_file, new_size, true, true, sync_data)?;
     Ok(new_size as i64)
 }
 
@@ -460,6 +477,79 @@ mod tests {
         let reader = ParquetMetaReader::from_file_size(pm, size).unwrap();
         reader.verify_checksum().unwrap();
         reader.footer().feature_flags().is_written_by_questdb()
+    }
+
+    #[test]
+    fn mark_sync_failure_preserves_a_readable_committed_snapshot_and_retries() {
+        for fail_on in [1, 2] {
+            let parquet = questdb_parquet(&[1.0, 2.0, 3.0]);
+            let (parquet_file, pm_file) = files(&parquet, None);
+            let before = read_pm(&pm_file);
+            let old_size = before.len() as u64;
+            let mut parquet_fd = File::open(parquet_file.path()).unwrap();
+            let mut pm_fd = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(pm_file.path())
+                .unwrap();
+            let mut calls = 0;
+            let err = super::mark_written_by_questdb_with_sync_data(
+                &mut parquet_fd,
+                parquet.len() as u64,
+                &mut pm_fd,
+                |_| {
+                    calls += 1;
+                    let bytes = read_pm(&pm_file);
+                    let header = u64::from_le_bytes(bytes[..8].try_into().unwrap());
+                    assert_eq!(
+                        header,
+                        if calls == 1 {
+                            old_size
+                        } else {
+                            bytes.len() as u64
+                        }
+                    );
+                    assert_eq!(&before[8..], &bytes[8..before.len()]);
+                    assert!(bytes.len() > before.len());
+                    let appended =
+                        ParquetMetaReader::from_file_size(&bytes, bytes.len() as u64).unwrap();
+                    appended.verify_checksum().unwrap();
+                    assert!(appended.footer().feature_flags().is_written_by_questdb());
+                    assert_eq!(appended.footer().prev_parquet_meta_file_size(), old_size);
+                    assert_eq!(appended.row_group_count(), 1);
+                    if calls == fail_on {
+                        Err(std::io::Error::other("marker sync fault"))
+                    } else {
+                        Ok(())
+                    }
+                },
+            )
+            .unwrap_err();
+            assert_eq!(calls, fail_on);
+            let expected = if fail_on == 1 {
+                "could not fsync appended _pm snapshot before publication"
+            } else {
+                "could not fsync published _pm header"
+            };
+            assert!(err.to_string().contains(expected), "{err}");
+            assert!(err.to_string().contains("marker sync fault"), "{err}");
+            let failed = read_pm(&pm_file);
+            let committed_size = u64::from_le_bytes(failed[..8].try_into().unwrap());
+            let committed = ParquetMetaReader::from_file_size(&failed, committed_size).unwrap();
+            committed.verify_checksum().unwrap();
+            assert_eq!(committed.row_group_count(), 1);
+            assert_eq!(
+                committed.footer().feature_flags().is_written_by_questdb(),
+                fail_on == 2
+            );
+            let retry = mark(&parquet_file, parquet.len() as u64, &pm_file);
+            assert_eq!(retry, if fail_on == 1 { failed.len() as i64 } else { 0 });
+            let after = read_pm(&pm_file);
+            assert!(committed_footer_is_written_by_questdb(&after));
+            assert_eq!(failed.len(), after.len());
+            assert_eq!(0, mark(&parquet_file, parquet.len() as u64, &pm_file));
+            assert_eq!(after, read_pm(&pm_file));
+        }
     }
 
     #[test]

@@ -248,9 +248,9 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
         } catch (Throwable th) {
             failure = th;
         }
-        failure = Misc.freeBestEffort(failure, filter);
         failure = Misc.freeBestEffort(failure, rowCursorFactory);
         failure = Misc.freeBestEffort(failure, cursor);
+        failure = Misc.freeBestEffort(failure, filter);
         failure = Misc.freeObjListBestEffort(failure, keyExcludedValueFunctions);
         CairoException.rethrowCleanupFailure(failure);
     }
