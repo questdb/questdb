@@ -69,6 +69,12 @@ public class CompositeAwarePartitionFrameCursor implements PartitionFrameCursor 
      * frames are disjoint row ranges, and {@link #next(long)} cuts a range only at a piece
      * boundary strictly inside it: a partition of c pieces has c - 1 such boundaries, each inside
      * at most one range, so each adds at most one frame. Parquet partitions are never composite.
+     * <p>
+     * Known gap: a parquet partition with an index row map is split by {@link #nextRowGroup()}
+     * into one frame per run of row groups sharing a shift, and those extra frames are not
+     * counted here, so the bound can undercount for such partitions. It only matters near the
+     * per-key covering frame ceiling (2^19 frames); counting the runs, or answering -1 when such
+     * a partition is present, would close it.
      * Counting the composite partitions the delegate never visits over-counts, which is the
      * direction the {@link PartitionFrameCursor#getFrameCountUpperBound()} contract allows.
      * <p>
