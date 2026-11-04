@@ -582,14 +582,13 @@ public class WorkerPoolManagerTest {
     }
 
     @Test
-    public void testScrapeBeforeWorkersStartExportsParseableJobStartMetrics() {
+    public void testScrapeBeforeWorkersStartExportsNaNJobStartMetrics() {
         final Metrics metrics = new Metrics(true, new MetricsRegistryImpl());
-        final WorkerPoolManager workerPoolManager = new WorkerPoolManager(createServerConfig(1, metrics, null)) {
-            @Override
-            protected void configureWorkerPools(WorkerPool sharedPoolQuery, WorkerPool sharedPoolWrite) {
-            }
-        };
+        final WorkerPoolManager workerPoolManager = createMetricsWorkerPoolManager(metrics, null);
         try (DirectUtf8Sink sink = new DirectUtf8Sink(1024)) {
+            // the registry renders gauges before the manager target updates them, so the second scrape sees the update
+            metrics.scrapeIntoPrometheus(sink);
+            sink.clear();
             metrics.scrapeIntoPrometheus(sink);
             final String scraped = sink.toString();
             TestUtils.assertContains(scraped, "questdb_workers_job_start_micros_min NaN\n");
@@ -815,17 +814,17 @@ public class WorkerPoolManagerTest {
 
             @Override
             public WorkerPoolConfiguration getSharedWorkerPoolNetworkConfiguration() {
-                return TestWorkerPool.withRandomMode(rnd, () -> workerCount);
+                return TestWorkerPool.withRandomMode(rnd, poolConfiguration(workerCount, metrics));
             }
 
             @Override
             public WorkerPoolConfiguration getSharedWorkerPoolQueryConfiguration() {
-                return TestWorkerPool.withRandomMode(rnd, () -> workerCount);
+                return TestWorkerPool.withRandomMode(rnd, poolConfiguration(workerCount, metrics));
             }
 
             @Override
             public WorkerPoolConfiguration getSharedWorkerPoolWriteConfiguration() {
-                return TestWorkerPool.withRandomMode(rnd, () -> workerCount);
+                return TestWorkerPool.withRandomMode(rnd, poolConfiguration(workerCount, metrics));
             }
 
             @Override
@@ -885,6 +884,20 @@ public class WorkerPoolManagerTest {
                 throw new RuntimeException(END_MESSAGE);
             }
             return false; // not eager
+        };
+    }
+
+    private static WorkerPoolConfiguration poolConfiguration(int workerCount, Metrics metrics) {
+        return new WorkerPoolConfiguration() {
+            @Override
+            public Metrics getMetrics() {
+                return metrics;
+            }
+
+            @Override
+            public int getWorkerCount() {
+                return workerCount;
+            }
         };
     }
 

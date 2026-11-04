@@ -264,6 +264,13 @@ public class MetricsRegistryTest {
         assertWorkerMetrics(metrics, metricsRegistry, Numbers.LONG_NULL, Numbers.LONG_NULL, "NaN", "NaN");
     }
 
+    private static void assertScrapable(Target target, CharSequence expected) {
+        try (DirectUtf8Sink sink = new DirectUtf8Sink(32)) {
+            target.scrapeIntoPrometheus(sink);
+            TestUtils.assertEquals(expected, sink.toString());
+        }
+    }
+
     private static void assertWorkerMetrics(
             WorkerMetrics metrics,
             MetricsRegistry metricsRegistry,
@@ -279,13 +286,6 @@ public class MetricsRegistryTest {
             final String scraped = sink.toString();
             TestUtils.assertContains(scraped, "questdb_workers_job_start_micros_min " + expectedScrapedMin + '\n');
             TestUtils.assertContains(scraped, "questdb_workers_job_start_micros_max " + expectedScrapedMax + '\n');
-        }
-    }
-
-    private static void assertScrapable(Target target, CharSequence expected) {
-        try (DirectUtf8Sink sink = new DirectUtf8Sink(32)) {
-            target.scrapeIntoPrometheus(sink);
-            TestUtils.assertEquals(expected, sink.toString());
         }
     }
 

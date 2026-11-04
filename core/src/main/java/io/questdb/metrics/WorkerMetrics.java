@@ -54,11 +54,11 @@ public class WorkerMetrics implements Mutable {
     }
 
     public synchronized void update(long candidateMin, long candidateMax) {
-        // LONG_NULL is Long.MIN_VALUE, so any candidate replaces a max with no sample
         final long currentMin = min.getValue();
         if (currentMin == Numbers.LONG_NULL || candidateMin < currentMin) {
             min.setValue(candidateMin);
         }
+        // LONG_NULL equals Long.MIN_VALUE, so any sample replaces a max with no value
         if (candidateMax > max.getValue()) {
             max.setValue(candidateMax);
         }
