@@ -576,6 +576,10 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         return keyMem.getFd() != -1;
     }
 
+    /**
+     * A {@code null} columnVersionReader names covering sidecars with {@link TableUtils#COLUMN_NAME_TXN_NONE}, as a
+     * self-contained index bundle does.
+     */
     @Override
     public void of(
             CairoConfiguration configuration,
@@ -1264,7 +1268,9 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                     continue;
                 }
                 sidecarColumnTypes.add(metadata.getColumnType(denseIdx));
-                sidecarCovTs.add(columnVersionReader.getColumnNameTxn(partitionTimestamp, writerIdx));
+                sidecarCovTs.add(columnVersionReader != null
+                        ? columnVersionReader.getColumnNameTxn(partitionTimestamp, writerIdx)
+                        : TableUtils.COLUMN_NAME_TXN_NONE);
             }
             coverCount = count;
         } catch (Throwable e) {
