@@ -61,7 +61,6 @@ import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -1794,34 +1793,6 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         return -1;
     }
 
-    /**
-     * The seqTxn that the cumulative OK-ACK for {@code seq} names for
-     * {@code table}, or -1 when there is no such ack or it has no entry for the
-     * table. After [status][seq LE] an OK-ACK carries [count u16 LE], then per
-     * table [name length u16 LE][name UTF-8][seqTxn i64 LE].
-     */
-    private static long okAckSeqTxn(ObjList<byte[]> frames, long seq, String table) {
-        final byte[] name = table.getBytes(StandardCharsets.UTF_8);
-        for (int i = 0, n = frames.size(); i < n; i++) {
-            byte[] f = frames.getQuick(i);
-            if (!isBinaryFrame(f) || f[2] != QwpConstants.STATUS_OK || readLeLong(f, 3) != seq) {
-                continue;
-            }
-            int pos = 13;
-            for (int entry = 0, count = readLeShort(f, 11); entry < count; entry++) {
-                int nameLen = readLeShort(f, pos);
-                pos += 2;
-                boolean isMatch = Arrays.equals(f, pos, pos + nameLen, name, 0, name.length);
-                pos += nameLen;
-                if (isMatch) {
-                    return readLeLong(f, pos);
-                }
-                pos += 8;
-            }
-        }
-        return -1;
-    }
-
     private static byte[] oversizedFrameHeader(long len) {
         // BINARY, FIN, masked, 64-bit length above the configured receive buffer;
         // the payload never needs to arrive: the header alone is refused.
@@ -1833,10 +1804,6 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         }
         System.arraycopy(DEFAULT_MASK_KEY, 0, header, 10, 4);
         return header;
-    }
-
-    private static int readLeShort(byte[] buf, int offset) {
-        return (buf[offset] & 0xFF) | (buf[offset + 1] & 0xFF) << 8;
     }
 
     /**
