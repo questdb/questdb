@@ -5100,6 +5100,54 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReleasedTablesCountAgainstMaxTables() throws Exception {
+        assertMemoryLeak(() -> {
+            for (String table : new String[]{"rel_a", "rel_b", "rel_c"}) {
+                execute("CREATE TABLE " + table + " (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            }
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(engine, true, true, defaultColumnTypes, PartitionBy.DAY)) {
+                tudOf(cache, "rel_a");
+                cache.releaseIdleWriters();
+                Assert.assertEquals(0, cache.size());
+                tudOf(cache, "rel_b");
+                // Released rel_a and cached rel_b fill the limit.
+                assertTooManyTables(cache, "rel_c");
+
+                // Taking rel_a back, under any letter case, does not count it twice.
+                tudOf(cache, "REL_A");
+                Assert.assertEquals(2, cache.size());
+                assertTooManyTables(cache, "rel_c");
+
+                // A stale rel_a is evicted and taken again in its own slot.
+                execute("DROP TABLE rel_a");
+                execute("CREATE TABLE rel_a (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                tudOf(cache, "rel_a");
+                Assert.assertEquals(2, cache.size());
+                assertTooManyTables(cache, "rel_c");
+
+                // A distressed clear frees every slot, released tables included.
+                cache.releaseIdleWriters();
+                Assert.assertEquals(0, cache.size());
+                assertTooManyTables(cache, "rel_c");
+                cache.setDistressed();
+                cache.clear();
+                tudOf(cache, "rel_c");
+                tudOf(cache, "rel_a");
+                assertTooManyTables(cache, "rel_b");
+
+                // So does reset().
+                cache.releaseIdleWriters();
+                assertTooManyTables(cache, "rel_b");
+                cache.reset();
+                tudOf(cache, "rel_b");
+            }
+        });
+    }
+
+    @Test
     public void testLookupDuringRenameWindowRefusesInsteadOfRebinding() throws Exception {
         // C1: CairoEngine.rename() publishes the RENAME to the sequencer change
         // log BEFORE it updates the name registry. Inside that window a cache-hit
@@ -6752,6 +6800,16 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         boolean ackable = state.refreshDeferredAckCoverage();
         state.clearMessageState();
         return ackable;
+    }
+
+    // tudOf() looks tables up under a table limit of 2.
+    private static void assertTooManyTables(QwpTudCache cache, String tableName) {
+        try {
+            cache.getTableUpdateDetails(AllowAllSecurityContext.INSTANCE, new Utf8String(tableName), null, null, 2);
+            Assert.fail("the table limit must refuse " + tableName);
+        } catch (CairoException e) {
+            TestUtils.assertEquals("too many distinct tables, limit: 2", e.getFlyweightMessage());
+        }
     }
 
     private static WalTableUpdateDetails tudOf(QwpTudCache cache, String tableName) {
