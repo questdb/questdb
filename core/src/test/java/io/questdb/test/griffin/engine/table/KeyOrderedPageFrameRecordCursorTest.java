@@ -934,6 +934,32 @@ public class KeyOrderedPageFrameRecordCursorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSkipAfterSizeOfCollectedRowsSkipsNothing() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT x id, ('k' || (x % 7))::SYMBOL s, x::TIMESTAMP ts FROM long_sequence(97)
+                    ), INDEX(s) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            final String tail = "id, s, ts FROM t WHERE ts IN '1970-01-01' AND s IN ('k0', 'k1', 'k2', 'k3', 'k4', 'k5', 'k6') AND id % 3 != 0 ORDER BY s, ts";
+            final StringSink expected = new StringSink();
+            printSql("SELECT /*+ no_index(t) */ " + tail, expected);
+            try (RecordCursorFactory factory = select("SELECT " + tail); RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                final RecordCursor.Counter counter = new RecordCursor.Counter();
+                cursor.calculateSize(sqlExecutionContext.getCircuitBreaker(), counter);
+                // 97 rows without the 32 multiples of 3
+                Assert.assertEquals(65, counter.get());
+                counter.set(7);
+                cursor.skipRows(counter, 5);
+                Assert.assertEquals("the size moved the cursor to its end", 7, counter.get());
+                Assert.assertFalse(cursor.hasNext());
+                cursor.toTop();
+                TestUtils.assertCursor(expected, cursor, factory.getMetadata(), true, new StringSink());
+            }
+        });
+    }
+
+    @Test
     public void testFilteredPassesOfClusteredKeysDecodeTheRowGroupsTheyShareOnce() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
         node1.setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 4 * 1024L);
@@ -1621,6 +1647,101 @@ public class KeyOrderedPageFrameRecordCursorTest extends AbstractCairoTest {
                     Assert.assertTrue("decodes: " + decodeCount, decodeCount <= 24 * 25);
                 }
                 execute("DROP TABLE w");
+            }
+        });
+    }
+
+    @Test
+    public void testGatherOfLateWideRowFitsQueryMemoryLimitOfSort() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        assertMemoryLeak(() -> {
+            // the last of the 8_000 rows, past the sample of the gather, holds a value of 1 MiB; a sort of the rows fits
+            // a query memory limit of 1.56 MB under a decode cache of 256 KiB, and of 1.8 MB under the default one
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT x id, ('k' || (x % 2_000))::SYMBOL s,
+                            rpad('w', CASE WHEN x = 8_000 THEN 1_048_576 ELSE 16 END, 'w')::VARCHAR v, timestamp_sequence(0, 1_000) ts
+                        FROM long_sequence(8_000)
+                    ), INDEX(s) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("INSERT INTO t VALUES (8_001, 'k1', 'w', '1970-01-03')");
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET WHERE ts < '1970-01-03'");
+            final StringSink keys = new StringSink();
+            keys.put("'k0'");
+            for (int i = 1; i < 2_000; i++) {
+                keys.put(", 'k").put(i).put('\'');
+            }
+            final String tail = "id, s, v, ts FROM t WHERE ts IN '1970-01-01' AND s IN (" + keys + ") AND id > 0 ORDER BY s, ts";
+            final StringSink expected = new StringSink();
+            printSql("SELECT /*+ no_index(t) */ " + tail, expected);
+            final String expectedRows = expected.toString();
+            printSql("SELECT /*+ no_index(t) */ " + tail + " LIMIT 7_000, 7_010", expected);
+            final String expectedPage = expected.toString();
+            printSql("SELECT /*+ no_index(t) */ " + tail + " LIMIT -7", expected);
+            final String expectedLast = expected.toString();
+            final long[][] limits = {
+                    {256 * 1024L, 1_600_000, 1_800_000, 2_200_000, 2_250_000, 2_400_000},
+                    {256 * 1024 * 1024L, 1_800_000, 2_000_000, 2_200_000, 2_250_000, 2_400_000},
+            };
+            final StringSink actual = new StringSink();
+            for (long[] cacheLimits : limits) {
+                node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, cacheLimits[0]);
+                for (int i = 1; i < cacheLimits.length; i++) {
+                    try (
+                            RecordCursorFactory factory = select("SELECT " + tail);
+                            RecordCursorFactory pageFactory = select("SELECT " + tail + " LIMIT 7_000, 7_010");
+                            RecordCursorFactory lastFactory = select("SELECT " + tail + " LIMIT -7")
+                    ) {
+                        node1.setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, cacheLimits[i]);
+                        try {
+                            try (RecordCursor cursor = factory.getBaseFactory().getCursor(sqlExecutionContext)) {
+                                Assert.assertTrue(cursor.getRecord() instanceof DelegatingRecord);
+                                final LongList rowIds = new LongList();
+                                assertRowIds(expectedRows, factory, cursor, rowIds, -1, 0);
+                                cursor.toTop();
+                                TestUtils.assertCursor(expectedRows, cursor, factory.getMetadata(), true, actual);
+                                assertRecordAt(expectedRows, factory, cursor, rowIds);
+                            }
+                            try (RecordCursor cursor = pageFactory.getCursor(sqlExecutionContext)) {
+                                TestUtils.assertCursor(expectedPage, cursor, pageFactory.getMetadata(), true, actual);
+                            }
+                            try (RecordCursor cursor = lastFactory.getCursor(sqlExecutionContext)) {
+                                TestUtils.assertCursor(expectedLast, cursor, lastFactory.getMetadata(), true, actual);
+                            }
+                        } finally {
+                            node1.setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0L);
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testGatherOverRssLimitKeepsItsRecordsAndFails() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 8);
+        assertMemoryLeak(() -> {
+            createGatherTable();
+            try (RecordCursorFactory factory = select("SELECT * FROM t WHERE ts IN '1970-01-01' ORDER BY s, ts")) {
+                try (RecordCursor cursor = factory.getBaseFactory().getCursor(sqlExecutionContext)) {
+                    Assert.assertFalse("the read holds its rows in one way", cursor.getRecord() instanceof DelegatingRecord);
+                    Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + 16 * 1024);
+                    try {
+                        cursor.hasNext();
+                        Assert.fail("expected the RSS limit inside the gather");
+                    } catch (CairoException e) {
+                        Assert.assertTrue(e.isOutOfMemory());
+                    } finally {
+                        Unsafe.setRssMemLimit(0);
+                    }
+                }
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    int count = 0;
+                    while (cursor.hasNext()) {
+                        count++;
+                    }
+                    Assert.assertEquals(2_080, count);
+                }
             }
         });
     }

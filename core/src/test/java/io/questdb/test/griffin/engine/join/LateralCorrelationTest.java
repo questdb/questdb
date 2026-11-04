@@ -350,6 +350,23 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCorrelationOverRecordSourceCopiesItsFields() throws Exception {
+        assertMemoryLeak(() -> {
+            // the OID of pg_class is 1259 in PostgreSQL
+            for (String[] c : new String[][]{{"3", "0"}, {"1259", "1"}}) {
+                assertQuery("""
+                        SELECT t.v, q.c
+                        FROM (SELECT (pg_catalog.pg_class()).oid v) t
+                        JOIN LATERAL (
+                            SELECT count() c FROM long_sequence(%s) l WHERE l.x::INT = t.v
+                        ) q
+                        """.formatted(c[0])
+                ).noLeakCheck().noRandomAccess().sizeMayVary().returns("v\tc\n1259\t" + c[1] + "\n");
+            }
+        });
+    }
+
+    @Test
     public void testCommaGroupLateralFirstInput() throws Exception {
         assertMemoryLeak(() -> {
             createCommaGroupTables();

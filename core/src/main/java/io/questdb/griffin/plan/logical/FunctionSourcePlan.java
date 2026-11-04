@@ -206,7 +206,7 @@ public final class FunctionSourcePlan extends LogicalPlan {
     @Override
     public void visitFacts(PlanFactRecorder visitor) {
         super.visitFacts(visitor);
-        visitor.output("recordSchema", recordSchema);
+        visitor.recordFields("recordSchema", recordSchema);
         visitor.facts("sourceColumnIndexes", sourceColumnIndexes);
         visitor.fact("hasExternalDataSource", hasExternalDataSource);
         visitor.fact("isDeterministic", isDeterministic);

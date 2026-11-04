@@ -510,57 +510,6 @@ public final class IntervalUtils {
     }
 
     /**
-     * Whether a tick expression spells a fraction finer than the driver's precision. Static parsing
-     * resolves such an expression at nanosecond precision and keeps only the values of the driver's
-     * precision inside its intervals.
-     */
-    public static boolean hasSubPrecisionDigits(TimestampDriver timestampDriver, CharSequence seq, int lo, int lim) {
-        if (!ColumnType.isTimestampMicro(timestampDriver.getTimestampType())) {
-            return false;
-        }
-        boolean hasFinerDigit = false;
-        boolean isYear = true;
-        int bracketDepth = 0;
-        int fractionDigits = -1;
-        int integerDigits = 0;
-        int yearListDepth = 0;
-        for (int i = lo; i < lim; i++) {
-            final char c = seq.charAt(i);
-            if (c >= '0' && c <= '9') {
-                if (fractionDigits < 0) {
-                    integerDigits++;
-                } else if (++fractionDigits > 6 && c != '0') {
-                    hasFinerDigit = true;
-                }
-            } else {
-                if (isYear && integerDigits >= 3 && isBeyondNanoRange(seq, lo, i - integerDigits, i)) {
-                    return false;
-                }
-                fractionDigits = c == '.' ? 0 : -1;
-                if (c == '[') {
-                    bracketDepth++;
-                    if (isYear) {
-                        yearListDepth = bracketDepth;
-                    }
-                } else if (c == ']') {
-                    yearListDepth = Math.min(yearListDepth, --bracketDepth);
-                    isYear = false;
-                } else if (c == ',') {
-                    isYear = bracketDepth <= yearListDepth;
-                } else if (c == '.' && i + 1 < lim && seq.charAt(i + 1) == '.' && bracketDepth <= yearListDepth) {
-                    isYear = true;
-                    fractionDigits = -1;
-                    i++;
-                } else if (!Chars.isAsciiWhitespace(c) && ((c != '-' && c != '+') || integerDigits > 0)) {
-                    isYear = false;
-                }
-                integerDigits = 0;
-            }
-        }
-        return hasFinerDigit;
-    }
-
-    /**
      * Intersects two lists of intervals compacted in one list in place.
      * Intervals to be chronologically ordered and result list will be ordered as well.
      * <p>
@@ -4256,6 +4205,57 @@ public final class IntervalUtils {
             }
         }
         return false;
+    }
+
+    /**
+     * Whether a tick expression spells a fraction finer than the driver's precision. Static parsing
+     * resolves such an expression at nanosecond precision and keeps only the values of the driver's
+     * precision inside its intervals.
+     */
+    private static boolean hasSubPrecisionDigits(TimestampDriver timestampDriver, CharSequence seq, int lo, int lim) {
+        if (!ColumnType.isTimestampMicro(timestampDriver.getTimestampType())) {
+            return false;
+        }
+        boolean hasFinerDigit = false;
+        boolean isYear = true;
+        int bracketDepth = 0;
+        int fractionDigits = -1;
+        int integerDigits = 0;
+        int yearListDepth = 0;
+        for (int i = lo; i < lim; i++) {
+            final char c = seq.charAt(i);
+            if (c >= '0' && c <= '9') {
+                if (fractionDigits < 0) {
+                    integerDigits++;
+                } else if (++fractionDigits > 6 && c != '0') {
+                    hasFinerDigit = true;
+                }
+            } else {
+                if (isYear && integerDigits >= 3 && isBeyondNanoRange(seq, lo, i - integerDigits, i)) {
+                    return false;
+                }
+                fractionDigits = c == '.' ? 0 : -1;
+                if (c == '[') {
+                    bracketDepth++;
+                    if (isYear) {
+                        yearListDepth = bracketDepth;
+                    }
+                } else if (c == ']') {
+                    yearListDepth = Math.min(yearListDepth, --bracketDepth);
+                    isYear = false;
+                } else if (c == ',') {
+                    isYear = bracketDepth <= yearListDepth;
+                } else if (c == '.' && i + 1 < lim && seq.charAt(i + 1) == '.' && bracketDepth <= yearListDepth) {
+                    isYear = true;
+                    fractionDigits = -1;
+                    i++;
+                } else if (!Chars.isAsciiWhitespace(c) && ((c != '-' && c != '+') || integerDigits > 0)) {
+                    isYear = false;
+                }
+                integerDigits = 0;
+            }
+        }
+        return hasFinerDigit;
     }
 
     private static boolean isBeyondNanoRange(CharSequence seq, int lo, int yearLo, int yearHi) {

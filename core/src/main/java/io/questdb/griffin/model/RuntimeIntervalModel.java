@@ -248,9 +248,6 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
             }
             int divider = outIntervals.size();
 
-            // Get day filter mask (stored in high byte of periodCount)
-            int dayFilterMask = IntervalUtils.decodeDayFilterMask(intervals, i);
-
             switch (dynamicFunction) {
                 case null -> {
                     if (operation == IntervalOperation.INTERSECT_INTERVALS) {
@@ -273,17 +270,6 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                         // copy 4 longs to output and apply the operation
                         outIntervals.add(intervals, i, i + STATIC_LONGS_PER_DYNAMIC_INTERVAL);
                         IntervalUtils.applyLastEncodedInterval(timestampDriver, outIntervals);
-                        // Apply day filter if specified
-                        if (dayFilterMask != 0) {
-                            // Check if the interval's lo timestamp matches the day filter
-                            long lo = outIntervals.getQuick(divider);
-                            int dayOfWeek = timestampDriver.getDayOfWeek(lo);
-                            if ((dayFilterMask & (1 << (dayOfWeek - 1))) == 0) {
-                                // Day doesn't match filter - remove this interval
-                                outIntervals.setPos(divider);
-                                continue;
-                            }
-                        }
                     }
                 }
                 case CompiledTickExpression compiled -> {
@@ -381,15 +367,6 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                                 return;
                             } else {
                                 negatedNothing(outIntervals, divider, firstFuncApplied);
-                                continue;
-                            }
-                        }
-
-                        // Apply day filter if specified
-                        if (dayFilterMask != 0) {
-                            int dayOfWeek = timestampDriver.getDayOfWeek(lo);
-                            if ((dayFilterMask & (1 << (dayOfWeek - 1))) == 0) {
-                                // Day doesn't match filter - skip this interval
                                 continue;
                             }
                         }

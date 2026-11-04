@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.table;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypeDriver;
 import io.questdb.cairo.EntityColumnFilter;
@@ -80,13 +81,13 @@ import java.util.concurrent.atomic.AtomicLong;
  * whose rows fit it gathers them in one pass.
  * The windows rest on estimates of the bytes of the rows, which the gather measures row by row: a window ends where its
  * rows outgrow the memory of the record chain, see {@link #gatherWindow(long, int, long)}, and the passes of the keys
- * take over where they decode fewer page frames than the windows, see {@link #isKeyPassCheaper(int, long)}. A filtered
- * read over page frames that stay decoded collects the row indexes of its keys in one pass over the page
- * frames instead of a pass per key, see {@link #collectNextRows()}, and returns the rows of its first key while the
- * pass goes on. The collection takes no more memory than its budget, see {@link #getCollectionBudget()}, and each key
- * reads its rows past the page frames the collection went over in a pass of its own. A filtered read whose outer cursor
- * reads only its last rows, see {@link #expectLastRows(long)}, finds them key by key from its last key back instead, see
- * {@link #collectTailRows(long)}.
+ * take over where they decode fewer page frames than the windows, see {@link #isKeyPassCheaper(int, long)}, or where the
+ * windows reach a memory limit of the query that a sort fits. A filtered read over page frames that stay decoded
+ * collects the row indexes of its keys in one pass over the page frames instead of a pass per key, see
+ * {@link #collectNextRows()}, and returns the rows of its first key while the pass goes on. The collection takes no
+ * more memory than its budget, see {@link #getCollectionBudget()}, and each key reads its rows past the page frames the
+ * collection went over in a pass of its own. A filtered read whose outer cursor reads only its last rows, see {@link #expectLastRows(long)}, finds
+ * them key by key from its last key back instead, see {@link #collectTailRows(long)}.
  */
 final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
     // The bytes of a row in the record chain of a gather, past the values of its var-size columns.
@@ -558,8 +559,10 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
                 rowCount.dec(skipCount);
             }
             case COLLECT -> {
-                readHi = addRows(rowCount.get(), requestedMaxRowsAfterSkip);
-                skipCollectedRows(rowCount, keyCount);
+                if (!isExhausted) {
+                    readHi = addRows(rowCount.get(), requestedMaxRowsAfterSkip);
+                    skipCollectedRows(rowCount, keyCount);
+                }
             }
             case PASSES -> {
                 if (keyCount > 1) {
@@ -1180,31 +1183,41 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
      * once. A read whose rows from the window on, in windows of the bytes its rows took, would decode more page frames
      * than the passes of its keys from there, see {@link #isKeyPassCheaper(int, long)}, or whose Parquet page frames stay
      * decoded across those passes at those bytes, see {@link #isParquetCachedAt(double)}, which then decode each of them
-     * once, takes those passes instead, see {@link #startKeyPasses(long, int, long)}, and reports false.
+     * once, takes those passes instead, see {@link #startKeyPasses(long, int, long)}, and reports false. So does a read
+     * whose window reaches a memory limit of the query that a sort of its rows fits, see
+     * {@link #isSortWithinMemoryLimit()}, since those passes hold no record chain.
      */
     private boolean gatherWindow(long position, int keyLo, long rankLo) {
         frameMemoryPool.setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
         int keyLimit = keyCount;
         long decodeCountLo = frameMemoryPool.getDecodeCount();
-        while (!gatherWindowRows(position, keyLo, rankLo, keyLimit)) {
-            final long decodeCount = frameMemoryPool.getDecodeCount();
-            discardedFrameCount += decodeCount - decodeCountLo;
-            decodeCountLo = decodeCount;
-            final boolean hasRowIds = gatheredRows.isWindowed;
-            isParquetCached = isParquetCached && isParquetCachedAt(getPassRowBytes());
-            replanWindows();
-            if (isParquetCached || isKeyPassCheaper(keyLo, rankLo)) {
-                startKeyPasses(position, keyLo, rankLo);
-                return false;
-            }
-            frameMemoryPool.setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
-            if (hasRowIds) {
-                final int gapKey = endFilledWindow(position, keyLo, rankLo);
-                if (gapKey < 0) {
-                    return true;
+        try {
+            while (!gatherWindowRows(position, keyLo, rankLo, keyLimit)) {
+                final long decodeCount = frameMemoryPool.getDecodeCount();
+                discardedFrameCount += decodeCount - decodeCountLo;
+                decodeCountLo = decodeCount;
+                final boolean hasRowIds = gatheredRows.isWindowed;
+                isParquetCached = isParquetCached && isParquetCachedAt(getPassRowBytes());
+                replanWindows();
+                if (isParquetCached || isKeyPassCheaper(keyLo, rankLo)) {
+                    startKeyPasses(position, keyLo, rankLo);
+                    return false;
                 }
-                keyLimit = gapKey + 1;
+                frameMemoryPool.setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
+                if (hasRowIds) {
+                    final int gapKey = endFilledWindow(position, keyLo, rankLo);
+                    if (gapKey < 0) {
+                        return true;
+                    }
+                    keyLimit = gapKey + 1;
+                }
             }
+        } catch (CairoException e) {
+            if (!e.isOutOfMemory() || !isSortWithinMemoryLimit()) {
+                throw e;
+            }
+            startKeyPasses(position, keyLo, rankLo);
+            return false;
         }
         return true;
     }
@@ -1959,6 +1972,15 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
     private boolean isOverCollectionBudget(long rowCapacity, long runCapacity) {
         return rowCapacity > Numbers.MAX_SAFE_INT_POW_2
                 || rowCapacity * Integer.BYTES + (runCapacity + collectedKeyRuns.getCapacity()) * Long.BYTES > getCollectionBudget();
+    }
+
+    /**
+     * Whether the memory limit of the query holds the entries of a sort of the rows the read returns, a row id and a key
+     * for each. A read under no limit of the query, which only the memory of the process bounds, fails at that memory.
+     */
+    private boolean isSortWithinMemoryLimit() {
+        final long limit = memoryTracker != null ? memoryTracker.getLimit() : 0;
+        return limit > 0 && limit >= Math.min(readRowCount, readHi) * 2 * Long.BYTES;
     }
 
     /**

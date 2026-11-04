@@ -216,20 +216,16 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         }
 
         final int size = staticIntervals.size();
-        final boolean noDynamicIntervals = dynamicRangeList.size() == 0;
-        final boolean isStaticParse = noDynamicIntervals || IntervalUtils.hasSubPrecisionDigits(timestampDriver, seq, lo, lim);
         try {
             parsedIntervals.clear();
-            IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, parsedIntervals, IntervalOperation.INTERSECT, sink, isStaticParse);
-            if (noDynamicIntervals) {
+            IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, parsedIntervals, IntervalOperation.INTERSECT, sink, true);
+            if (dynamicRangeList.size() == 0) {
                 staticIntervals.add(parsedIntervals);
                 if (intervalApplied) {
                     IntervalUtils.intersectInPlace(staticIntervals, size);
                 }
-            } else if (isStaticParse) {
-                appendStaticIntervals();
             } else {
-                appendParsedDynamicIntervals();
+                appendStaticIntervals();
             }
             intervalApplied = true;
         } finally {
@@ -776,22 +772,18 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         }
 
         final int size = staticIntervals.size();
-        final boolean noDynamicIntervals = dynamicRangeList.size() == 0;
-        final boolean isStaticParse = noDynamicIntervals || IntervalUtils.hasSubPrecisionDigits(timestampDriver, seq, lo, lim);
         try {
             parsedIntervals.clear();
-            IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, parsedIntervals, IntervalOperation.SUBTRACT, sink, isStaticParse);
-            if (noDynamicIntervals) {
+            IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, parsedIntervals, IntervalOperation.SUBTRACT, sink, true);
+            if (dynamicRangeList.size() == 0) {
                 staticIntervals.add(parsedIntervals);
                 IntervalUtils.invert(staticIntervals, size);
                 if (intervalApplied) {
                     IntervalUtils.intersectInPlace(staticIntervals, size);
                 }
-            } else if (isStaticParse) {
+            } else {
                 IntervalUtils.invert(parsedIntervals, 0);
                 appendStaticIntervals();
-            } else {
-                appendParsedDynamicIntervals();
             }
             intervalApplied = true;
         } finally {
@@ -869,20 +861,16 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
         // Parse and expand the interval string (may produce multiple pairs for periodic intervals).
         final int size = staticIntervals.size();
-        final boolean noDynamicIntervals = dynamicRangeList.size() == 0;
-        final boolean isStaticParse = noDynamicIntervals || IntervalUtils.hasSubPrecisionDigits(timestampDriver, seq, lo, lim);
         try {
             parsedIntervals.clear();
-            IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, parsedIntervals, IntervalOperation.UNION, sink, isStaticParse);
-            if (noDynamicIntervals) {
+            IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, parsedIntervals, IntervalOperation.UNION, sink, true);
+            if (dynamicRangeList.size() == 0) {
                 staticIntervals.add(parsedIntervals);
                 if (intervalApplied) {
                     IntervalUtils.unionInPlace(staticIntervals, size);
                 }
-            } else if (isStaticParse) {
-                appendStaticUnion();
             } else {
-                appendParsedDynamicIntervals();
+                appendStaticUnion();
             }
             intervalApplied = true;
         } finally {
@@ -1013,15 +1001,6 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             intervalApplied = true;
         } catch (Throwable th) {
             CairoException.rethrowCleanupFailure(Misc.freeBestEffort(th, function));
-        }
-    }
-
-    private void appendParsedDynamicIntervals() {
-        final int intervalCount = parsedIntervals.size() / IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL;
-        reserveEncodedIntervals(intervalCount, 0);
-        staticIntervals.add(parsedIntervals);
-        for (int i = 0; i < intervalCount; i++) {
-            addDynamicFunction(null, 0, false);
         }
     }
 

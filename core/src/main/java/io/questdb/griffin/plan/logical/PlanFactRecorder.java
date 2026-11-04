@@ -118,10 +118,7 @@ public final class PlanFactRecorder implements PlanExpressionVisitor, Expression
         add(fact, output.getColumnCount(), null);
         for (int i = 0, n = output.getColumnCount(); i < n; i++) {
             columnId(fact, output.getColumnId(i));
-            add(fact, output.getColumnType(i), output.getColumnName(i));
-            add(fact, (output.isVisible(i) ? 1 : 0) | (output.isSymbolTableStatic(i) ? 2 : 0) | (output.isNameProtected(i) ? 4 : 0),
-                    output.getColumnQualifier(i));
-            add(fact, 0, output.getMetadata(i));
+            outputColumn(fact, output, i);
         }
         add(fact, output.getTimestampIndex(), null);
     }
@@ -143,6 +140,19 @@ public final class PlanFactRecorder implements PlanExpressionVisitor, Expression
         values.clear();
         source.visitFacts(this);
         source.visitReads(this);
+    }
+
+    /**
+     * Records the fields of a RECORD column, whose ids are their positions in the record rather than plan columns, so
+     * that the renaming does not apply to them.
+     */
+    public void recordFields(String fact, OutputSchema fields) {
+        add(fact, fields.getColumnCount(), null);
+        for (int i = 0, n = fields.getColumnCount(); i < n; i++) {
+            add(fact, fields.getColumnId(i), null);
+            outputColumn(fact, fields, i);
+        }
+        add(fact, fields.getTimestampIndex(), null);
     }
 
     public void reference(String fact, Object planObject) {
@@ -216,6 +226,13 @@ public final class PlanFactRecorder implements PlanExpressionVisitor, Expression
         names.add(name);
         values.add(value);
         objects.add(object);
+    }
+
+    private void outputColumn(String fact, OutputSchema output, int index) {
+        add(fact, output.getColumnType(index), output.getColumnName(index));
+        add(fact, (output.isVisible(index) ? 1 : 0) | (output.isSymbolTableStatic(index) ? 2 : 0) | (output.isNameProtected(index) ? 4 : 0),
+                output.getColumnQualifier(index));
+        add(fact, 0, output.getMetadata(index));
     }
 
     private int renamedId(int columnId) {

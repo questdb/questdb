@@ -577,6 +577,119 @@ public class IntervalExtractionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRuntimeTimestampUnionKeepsStaticDisjuncts() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE u (ts TIMESTAMP, id INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO u VALUES
+                    (0, 0), (1, 1), (2, 2), (500_000, 3), (999_999, 4), (1_000_000, 5), (1_000_001, 6),
+                    (86_400_000_000, 7), (172_800_000_000, 8), (172_800_000_001, 9), (172_800_500_000, 10),
+                    (172_801_000_000, 11), (172_801_000_001, 12)
+                    """);
+            final String sql = "SELECT id FROM u WHERE ts = $1 OR ts IN '1970-01-[01,03]T00:00:00.000000001;1s' ORDER BY id";
+            bindVariableService.setTimestamp(0, 0);
+            assertQuery(sql).noLeakCheck().assertsPlanContaining("Interval forward scan on: u");
+            // each range holds the microseconds 1 to 1_000_000 of its day: ceil(1 ns / 1000) and floor(1 s / 1000)
+            final String staticIds = "1\n2\n3\n4\n5\n9\n10\n11\n";
+            final long[] bounds = {0, 1, 1_000_000, 172_800_500_000L, Numbers.LONG_NULL, Long.MIN_VALUE + 1, Long.MAX_VALUE, 0};
+            try (RecordCursorFactory factory = select(sql)) {
+                for (long bound : bounds) {
+                    bindVariableService.setTimestamp(0, bound);
+                    assertRowsOnly(factory, "id\n" + (bound == 0 ? "0\n" : "") + staticIds);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testDayFilterAppliesBesideRuntimeBounds() throws Exception {
+        assertMemoryLeak(() -> {
+            // January 1, 2024 is a Monday, so ids 1 and 8 are the Mondays and ids 2 and 9 the Tuesdays
+            execute("CREATE TABLE w (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO w
+                    SELECT x::INT, timestamp_sequence('2024-01-01', 86_400_000_000) FROM long_sequence(14)
+                    """);
+            // the predicate, with the rows it keeps below the bound of 2024-01-05, which holds ids 1 to 4
+            final String[][] predicates = {
+                    {"ts IN '2024-01-02#Mon'", ""},
+                    {"ts IN '2024-01-01#Mon'", "1"},
+                    {"ts IN '2024-01-02#Tue'", "2"},
+                    {"ts IN '2024-01-09#Mon'", ""},
+                    {"ts IN '2024-01-[01,02]#Mon'", "1"},
+                    {"ts IN '2024-01-[02,01]#Mon'", "1"},
+                    {"ts IN '2024-01-[02,03]#Mon'", ""},
+                    {"ts IN '2024-01-[02,08]#Mon'", ""},
+                    {"ts IN '[2024-01-02,2024-01-01]#Mon'", "1"},
+                    {"ts IN '2024-01-[02,03]'", "2,3"},
+                    {"ts IN '2024-01-[02,08]'", "2"},
+                    {"ts IN '2024-01-[08,02]'", "2"},
+                    {"ts IN '[2024-01-02,2024-01-08]'", "2"},
+                    {"ts IN '2024-01-[02,08]T00:00;1s'", "2"},
+                    {"ts IN '2024-01-01;1s;1d;3'", "1,2,3"},
+                    {"ts IN '2024-01-03;1s;1d;4'", "3,4"},
+                    {"ts IN '2024-01-01#Tue;1s;1d;3'", "2"},
+                    {"ts IN '2024-01-01#Mon;1s;1d;3'", "1"},
+                    {"ts IN '2024-01-02#Mon;1s;1d;2'", ""},
+                    {"ts NOT IN '2024-01-02#Mon'", "1,2,3,4"},
+                    {"ts NOT IN '2024-01-01#Mon'", "2,3,4"},
+                    {"ts NOT IN '2024-01-[01,02]#Mon'", "2,3,4"},
+                    {"ts NOT IN '2024-01-[02,01]#Mon'", "2,3,4"},
+                    {"ts NOT IN '2024-01-[02,03]'", "1,4"},
+                    {"ts NOT IN '2024-01-01;1s;1d;2'", "3,4"},
+                    {"ts NOT IN '2024-01-01#Tue;1s;1d;3'", "1,3,4"},
+            };
+            final String[] bounds = {"ts < $1", "ts < (SELECT ts FROM w WHERE id = 5)", "ts < '2024-01-05'"};
+            final long bound = 1_704_412_800_000_000L;
+            for (String[] predicate : predicates) {
+                final String expected = "id\n" + (predicate[1].isEmpty() ? "" : predicate[1].replace(',', '\n') + "\n");
+                for (String upper : bounds) {
+                    bindVariableService.clear();
+                    bindVariableService.setTimestamp(0, bound);
+                    assertRowsOnly("SELECT id FROM w WHERE " + predicate[0] + " AND " + upper + " ORDER BY id", expected);
+                    assertRowsOnly("SELECT id FROM w WHERE " + upper + " AND " + predicate[0] + " ORDER BY id", expected);
+                }
+                bindVariableService.clear();
+                bindVariableService.setTimestamp(0, Numbers.LONG_NULL);
+                assertRowsOnly("SELECT id FROM w WHERE " + predicate[0] + " AND ts < $1 ORDER BY id", "id\n");
+                assertRowsOnly("SELECT id FROM w WHERE ts < $1 AND " + predicate[0] + " ORDER BY id", "id\n");
+            }
+            for (String format : new String[]{"SELECT id FROM w WHERE %s AND ts < $1", "SELECT id FROM w WHERE ts < $1 AND %s"}) {
+                final String sql = format.formatted("ts IN '[1000..3000]-01-01'");
+                bindVariableService.clear();
+                bindVariableService.setTimestamp(0, bound);
+                assertExceptionNoLeakCheck(sql, sql.indexOf('\''), "too many intervals");
+            }
+            final String[][] unions = {
+                    {"ts = $1 OR ts IN '2024-01-[02,03]#Tue'", "2\n5\n"},
+                    {"ts IN '2024-01-[02,03]#Tue' OR ts = $1", "2\n5\n"},
+                    {"ts = $1 OR ts IN '2024-01-[03,04]#Tue'", "5\n"},
+                    {"ts IN '2024-01-[03,04]#Tue' OR ts = $1", "5\n"},
+                    {"(ts = $1 OR ts IN '2024-01-[02,03]#Tue') AND ts < '2024-01-03'", "2\n"},
+            };
+            for (String[] union : unions) {
+                bindVariableService.clear();
+                bindVariableService.setTimestamp(0, bound);
+                assertRowsOnly("SELECT id FROM w WHERE " + union[0] + " ORDER BY id", "id\n" + union[1]);
+            }
+            // date variables re-evaluate at runtime: today is the Tuesday, yesterday the Monday
+            setCurrentMicros(1_704_153_600_000_000L);
+            final String[][] variables = {
+                    {"ts IN '$today#Mon'", ""},
+                    {"ts IN '$today#Tue'", "2\n"},
+                    {"ts IN '[$today,$yesterday]#Mon'", "1\n"},
+                    {"ts NOT IN '$today#Mon'", "1\n2\n3\n4\n"},
+            };
+            for (String[] variable : variables) {
+                bindVariableService.clear();
+                bindVariableService.setTimestamp(0, bound);
+                assertRowsOnly("SELECT id FROM w WHERE " + variable[0] + " AND ts < $1 ORDER BY id", "id\n" + variable[1]);
+                assertRowsOnly("SELECT id FROM w WHERE ts < $1 AND " + variable[0] + " ORDER BY id", "id\n" + variable[1]);
+            }
+        });
+    }
+
+    @Test
     public void testRuntimeTimestampFunctionsKeepNamedParameterLinksAndResidual() throws Exception {
         for (boolean isNanos : new boolean[]{false, true}) {
             assertMemoryLeak(() -> {
