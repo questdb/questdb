@@ -2492,8 +2492,9 @@ public class IntervalFilterTest extends AbstractCairoTest {
         final Rnd rnd = TestUtils.generateRandom(LOG);
         // case 6: the date or day range, the values, the tenths, the global zone and the day filter
         final Pattern timeListPattern = Pattern.compile("2024-01-(\\d\\d|\\[(\\d\\d)\\.\\.(\\d\\d)])T\\[([^]]+)]:\\[00\\.\\.59](\\.\\[0\\.\\.9])?(@[^#;]+)?(#[^;]+)?(;\\d+m)?");
-        // case 7: the time of the later element and the day filter
-        final Pattern coveredPattern = Pattern.compile("\\[2024-01-(\\d\\d),2024-01-\\d\\dT(.+)](#.+)?");
+        // case 7: the covering day, the zoned element in between, the time of the later element
+        // and the day filter
+        final Pattern coveredPattern = Pattern.compile("\\[2024-01-(\\d\\d)(?:,(2024-01-\\[\\d\\d\\.\\.\\d\\d]@[^,]+))?,2024-01-\\d\\dT(.+)](#.+)?");
         // case 8: the outer values, the inner values, the seconds bracket and the day filter
         final Pattern nestedPattern = Pattern.compile("2024-01-\\d\\dT\\[([^]]+)]\\[([^]]+)](\\[00\\.\\.59])?(#.+)?");
         final String overCapError = "Bracket expansion produces too many intervals (max 1024)";
@@ -2508,6 +2509,7 @@ public class IntervalFilterTest extends AbstractCairoTest {
             boolean hasFilteredValues = false;
             boolean hasDayRangeOfSmallCalls = false;
             final boolean[] hasCoveredSpelling = new boolean[3];
+            boolean hasCoveredElementAfterZonedElement = false;
             boolean hasNestedMinutes = false;
             boolean hasNestedSeconds = false;
             boolean hasNestedZoneAndFilter = false;
@@ -2539,18 +2541,33 @@ public class IntervalFilterTest extends AbstractCairoTest {
                 final Matcher covered = coveredPattern.matcher(tick);
                 if (covered.matches()) {
                     // the list parses, while its later element fails alone
-                    final String laterTime = covered.group(2);
+                    final String laterTime = covered.group(3);
                     // [HH..HH]:00:..., [HH:MM,HH:MM]:... or [HH:MM]:...
                     final int spelling = laterTime.charAt(3) == '.' ? 0 : laterTime.charAt(6) == ',' ? 1 : 2;
                     intervals.clear();
                     IntervalUtils.parseTickExpr(timestampDriver, configuration, tick, 0, tick.length(), 0, intervals, sink);
-                    final String laterElement = "2024-01-" + covered.group(1) + 'T' + laterTime + (covered.group(3) != null ? covered.group(3) : "");
+                    final String laterElement = "2024-01-" + covered.group(1) + 'T' + laterTime;
+                    final String dayFilter = covered.group(4) != null ? covered.group(4) : "";
+                    final String laterElementAlone = laterElement + dayFilter;
                     intervals.clear();
                     try {
-                        IntervalUtils.parseTickExpr(timestampDriver, configuration, laterElement, 0, laterElement.length(), 0, intervals, sink);
+                        IntervalUtils.parseTickExpr(timestampDriver, configuration, laterElementAlone, 0, laterElementAlone.length(), 0, intervals, sink);
                     } catch (SqlException e) {
                         TestUtils.assertContains(e.getFlyweightMessage(), overCapError);
                         hasCoveredSpelling[spelling] = true;
+                    }
+                    if (covered.group(2) != null) {
+                        // The later element merges after the zoned element restored the merge range
+                        // of the list. Without the covering day the list fails, so merges from the
+                        // start of the zoned element would fail as well.
+                        final String uncoveredList = '[' + covered.group(2) + ',' + laterElement + ']' + dayFilter;
+                        intervals.clear();
+                        try {
+                            IntervalUtils.parseTickExpr(timestampDriver, configuration, uncoveredList, 0, uncoveredList.length(), 0, intervals, sink);
+                        } catch (SqlException e) {
+                            TestUtils.assertContains(e.getFlyweightMessage(), overCapError);
+                            hasCoveredElementAfterZonedElement = true;
+                        }
                     }
                     continue;
                 }
@@ -2572,6 +2589,7 @@ public class IntervalFilterTest extends AbstractCairoTest {
             Assert.assertTrue("covered element of hour brackets", hasCoveredSpelling[0]);
             Assert.assertTrue("covered element of two time list values", hasCoveredSpelling[1]);
             Assert.assertTrue("covered element of one time list value", hasCoveredSpelling[2]);
+            Assert.assertTrue("covered element after a zoned element", hasCoveredElementAfterZonedElement);
             Assert.assertTrue("nested minutes", hasNestedMinutes);
             Assert.assertTrue("nested seconds", hasNestedSeconds);
             Assert.assertTrue("nested values with a zone under a day filter", hasNestedZoneAndFilter);
@@ -2798,11 +2816,19 @@ public class IntervalFilterTest extends AbstractCairoTest {
             case 7 -> {
                 // A later element of 1,200 or 6,000 intervals that never touch, more than the cap
                 // (1,024), all in the first element's day. With no time zone of its own it adds
-                // them to the merge range of the list, whose merges union them into that day. No
-                // time zone, with which the element fails by design, and no duration, which would
+                // them to the merge range of the list, whose merges union them into that day, also
+                // after an element in between whose time zone gives it a merge range of its own,
+                // which it closes by restoring the merge range of the list. No time zone on the
+                // later element, with which it fails by design, and no duration, which would
                 // shorten the covering day.
                 final int hour = 6 + rnd.nextInt(13);
-                sink.put("[2024-01-").put(twoDigits(day)).put(",2024-01-").put(twoDigits(day)).put("T[").put(twoDigits(hour));
+                sink.put("[2024-01-").put(twoDigits(day));
+                if (rnd.nextBoolean()) {
+                    final int zonedDay = 1 + rnd.nextInt(20);
+                    sink.put(",2024-01-[").put(twoDigits(zonedDay)).put("..").put(twoDigits(zonedDay + rnd.nextInt(3))).put(']')
+                            .put(rnd.nextBoolean() ? "@+05:00" : "@-03:30");
+                }
+                sink.put(",2024-01-").put(twoDigits(day)).put("T[").put(twoDigits(hour));
                 switch (rnd.nextInt(3)) {
                     case 0 -> sink.put("..").put(twoDigits(hour + 1)).put("]:00:[00..59].[0..9]0]");
                     case 1 -> {

@@ -81,6 +81,19 @@ public class TickExprTest {
         }
     };
     private static final StringSink sink = new StringSink();
+    // A merge threshold and cap above the interval count of every tick string that a test parses
+    // with it, so that only the final union runs
+    private static final CairoConfiguration unmergedConfiguration = new DefaultCairoConfiguration(".") {
+        @Override
+        public int getSqlIntervalIncrementalMergeThreshold() {
+            return 5_000_000;
+        }
+
+        @Override
+        public int getSqlIntervalMaxIntervalsAfterMerge() {
+            return 10_000_000;
+        }
+    };
     private final LongList a = new LongList();
     private final LongList b = new LongList();
     private final LongList out = new LongList();
@@ -1592,6 +1605,54 @@ public class TickExprTest {
         assertBracketInterval(
                 "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-01T23:59:59.999999Z},{lo=2024-01-15T00:00:00.000000Z, hi=2024-01-15T23:59:59.999999Z}]",
                 "[2024-01-[01..07]#Mon,2024-01-15]"
+        );
+    }
+
+    @Test
+    public void testDateListCoveredElementAfterZonedDateVariableDay() throws SqlException {
+        // The time zone of the date variable range gives its day, the Monday 2024-01-08, a merge
+        // range of its own, and the day restores the merge range of the list when it closes its
+        // own. The third element adds its 1,200 slots of 10 ms, which never touch, to the merge
+        // range of the list, so its merges union them into the first element's day before they
+        // count them against the cap (1,024). Merges from the start of the zoned day would count
+        // every slot, since no interval there covers them.
+        Assert.assertEquals(1_024, configuration.getSqlIntervalMaxIntervalsAfterMerge());
+        final ZoneOffset plus5 = ZoneOffset.ofHours(5);
+        final LongList expected = new LongList();
+        addLocalDays(expected, LocalDate.of(2024, 1, 1), LocalDate.of(2024, 1, 2), ZoneOffset.UTC);
+        // the minutes 09:00 and 10:00 of the zoned day
+        addLocalBlock(expected, LocalDateTime.of(2024, 1, 8, 9, 0), plus5, Micros.MINUTE_MICROS);
+        addLocalBlock(expected, LocalDateTime.of(2024, 1, 8, 10, 0), plus5, Micros.MINUTE_MICROS);
+        for (CairoConfiguration cfg : new CairoConfiguration[]{configuration, mergeThreshold4Configuration}) {
+            assertTickExprIntervals(cfg, expected, "[2024-01-01T00:00;1d,$today..$today@+05:00,2024-01-01T09:[00..01]:[00..59].[0..9]0]T[09..10]:00");
+        }
+        // control: without the covering day, the slots exceed the cap
+        assertTickExprErrorAtMonday(
+                "[$today..$today@+05:00,2024-01-01T09:[00..01]:[00..59].[0..9]0]T[09..10]:00",
+                "Bracket expansion produces too many intervals (max 1024)"
+        );
+    }
+
+    @Test
+    public void testDateListCoveredElementAfterZonedElement() throws SqlException {
+        // The second element's time zone gives it a merge range of its own, and the element
+        // restores the merge range of the list when it closes its own. The third element adds its
+        // 1,200 slots of 10 ms, which never touch, to the merge range of the list, so its merges
+        // union them into the first element's day before they count them against the cap
+        // (1,024). Merges from the start of the zoned element would count every slot, since no
+        // interval there covers them.
+        Assert.assertEquals(1_024, configuration.getSqlIntervalMaxIntervalsAfterMerge());
+        final LongList expected = new LongList();
+        addLocalDays(expected, LocalDate.of(2024, 1, 1), LocalDate.of(2024, 1, 2), ZoneOffset.UTC);
+        // the zoned element's days 2024-01-05 and 2024-01-06 at +05:00
+        addLocalDays(expected, LocalDate.of(2024, 1, 5), LocalDate.of(2024, 1, 7), ZoneOffset.ofHours(5));
+        for (CairoConfiguration cfg : new CairoConfiguration[]{configuration, mergeThreshold4Configuration}) {
+            assertTickExprIntervals(cfg, expected, "[2024-01-01,2024-01-[05..06]@+05:00,2024-01-01T[09..10]:00:[00..59].[0..9]0]");
+        }
+        // control: without the covering day, the slots exceed the cap
+        assertTickExprErrorAtMonday(
+                "[2024-01-[05..06]@+05:00,2024-01-01T[09..10]:00:[00..59].[0..9]0]",
+                "Bracket expansion produces too many intervals (max 1024)"
         );
     }
 
@@ -3727,6 +3788,17 @@ public class TickExprTest {
                 "[$today-2d..$today]",
                 "2026-01-22T10:30:00.000000Z"
         );
+    }
+
+    @Test
+    public void testDateVariableRangeOverMaxIntervalsMessage() {
+        // Each day of the range adds 24 one-minute intervals an hour apart, which never touch. A day
+        // with no time zone or tick calendar adds them to the merge range of the list, so the merge
+        // after each bracket value counts the intervals of every day. It passes the cap (1,024) at
+        // the 17th value of the 43rd day, before the check after that day, and reports it as every
+        // other bracket expansion does. testDateVariableRangeDayFilterOverMaxIntervalsMessage
+        // covers the check after each day.
+        assertTickExprErrorAtMonday("[$today..$today+100d]T[00..23]:00", "Bracket expansion produces too many intervals (max 1024)");
     }
 
     @Test
@@ -6115,6 +6187,28 @@ public class TickExprTest {
     }
 
     @Test
+    public void testTimeListInheritedZoneFilterAfterDroppedTail() throws SqlException {
+        // The values of testTimeListNestedZoneFilterAfterDroppedTail, which inherit the time zone
+        // of the string or of the date list element instead of carrying their own: Sunday
+        // 2024-01-07 and Monday 2024-01-08 at 09:00 at +05:00, which is 04:00Z on the same day, so
+        // the day filter drops Sunday by its local and its UTC day alike. A value that inherits a
+        // zone also finishes the filter of the leaves below it before it starts, so the dropped
+        // Sunday leaves never move Monday's first leaves below the start of their value, where its
+        // zone would miss them and leave them in local time.
+        final ZoneOffset plus5 = ZoneOffset.ofHours(5);
+        // the 16 touching seconds 00-15 of each minute from 09:00 local on Monday
+        final LongList minutes24 = new LongList();
+        for (int minute = 0; minute < 24; minute++) {
+            addLocalBlock(minutes24, LocalDateTime.of(2024, 1, 8, 9, minute), plus5, 16 * Micros.SECOND_MICROS);
+        }
+        for (CairoConfiguration cfg : new CairoConfiguration[]{configuration, mergeThreshold4Configuration, unmergedConfiguration}) {
+            // two values per day, each of 384 leaves
+            assertTickExprIntervals(cfg, minutes24, "2024-01-[07..08]T[09:,09:][00..23]:[00..15]@+05:00#mon");
+            assertTickExprIntervals(cfg, minutes24, "[2024-01-[07..08]@+05:00]T[09:,09:][00..23]:[00..15]#mon");
+        }
+    }
+
+    @Test
     public void testTimeListNestedZoneFilterAfterDroppedTail() throws SqlException {
         // Sunday 2024-01-07 and Monday 2024-01-08 at 09:00 at +05:00, which is 04:00Z on the same
         // day, so the day filter drops Sunday by its local and its UTC day alike. The last leaves of
@@ -6131,17 +6225,6 @@ public class TickExprTest {
             }
             addLocalBlock(minutes24, LocalDateTime.of(2024, 1, 8, 9, minute), plus5, 16 * Micros.SECOND_MICROS);
         }
-        final CairoConfiguration unmergedConfiguration = new DefaultCairoConfiguration(".") {
-            @Override
-            public int getSqlIntervalIncrementalMergeThreshold() {
-                return 5_000_000;
-            }
-
-            @Override
-            public int getSqlIntervalMaxIntervalsAfterMerge() {
-                return 10_000_000;
-            }
-        };
         for (CairoConfiguration cfg : new CairoConfiguration[]{configuration, mergeThreshold4Configuration, unmergedConfiguration}) {
             // nested time lists: the inner values merge in the outer value's range
             assertTickExprIntervals(
