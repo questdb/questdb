@@ -65,6 +65,7 @@ import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.function.LongPredicate;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ANY;
 
@@ -89,7 +90,6 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             "1970-01-01T00:00:10.000000Z\tnull\t1.0\n",
             "1970-01-01T00:00:11.000000Z\t1\tnull\n",
     };
-
     // Rows of the a1o fixture built by testNarrowIntArithVsFloatColumnCoversEveryOperator, in
     // insertion order, as CursorPrinter.println() renders "select k, i".
     private static final String[] A1O_ROWS = {
@@ -103,7 +103,6 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             "1970-01-01T00:00:07.000000Z\t16777217\n",
             "1970-01-01T00:00:08.000000Z\t16777217\n",
     };
-
     // Rows of the a1q fixture, in insertion order, as CursorPrinter.println() renders
     // "select k, b, s, f". See testNarrowIntArithMagnitudeBoundVsFloatColumnPinsBoundaryRows.
     private static final String[] A1Q_ROWS = {
@@ -120,7 +119,6 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             "1970-01-01T00:00:10.000000Z\t0\t0\t0.0\n",
             "1970-01-01T00:00:11.000000Z\t5\t5\t5.0\n",
     };
-
     // Rows of the a2f fixture built by createA2fTable(), in insertion order, as
     // CursorPrinter.println() renders "select k, i, f".
     private static final String[] A2F_ROWS = {
@@ -134,7 +132,6 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             "1970-01-01T00:00:07.000000Z\tnull\t1.0\n",
             "1970-01-01T00:00:08.000000Z\t1\tnull\n",
     };
-
     // Rows of the a3w fixture built by createA3wTable(), in insertion order, as
     // CursorPrinter.println() renders "select k".
     private static final String[] A3W_ROWS = {
@@ -150,7 +147,6 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             "2024-01-02T09:00:00.000000Z\n",
             "2024-01-02T10:00:00.000000Z\n",
     };
-
     // Rows of the a4f fixture built by createA4fTable(), in insertion order, as
     // CursorPrinter.println() renders "select k, f".
     private static final String[] A4F_ROWS = {
@@ -168,7 +164,6 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             "1970-01-01T00:00:11.000000Z\tnull\n",
             "1970-01-01T00:00:12.000000Z\t-1.0\n",
     };
-
     // Execution hints as getOptions() encodes them, bits 4-5. READ from the constants of the same
     // name in CompiledFilterIRSerializer rather than re-spelled here: they are private, but
     // io.questdb is an open module, so the same reflection
@@ -208,7 +203,6 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     private static final int N_SIMD = 512;
     private static final int N_SIMD_WITH_SCALAR_TAIL = N_SIMD + 3;
     private static final QueryModel queryModel = QueryModel.FACTORY.newInstance();
-
     private static final StringSink jitSink = new StringSink();
     // Rows the current batch-length sweep has returned across its iterations; see
     // assertJitMatchesJavaOnBatchLengths.
@@ -223,6 +217,56 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         Assume.assumeTrue(JitUtil.isJitSupported());
         super.setUp();
         // compiler.setEnableJitNullChecks(true);
+    }
+
+    @Test
+    public void testBindVariableOperands() throws Exception {
+        // The backends load a bind variable into a register once, ahead of the row loop. An
+        // operation or a conversion that wrote into its operand would corrupt the variable for
+        // every later row.
+        assertMemoryLeak(() -> {
+            // Every column holds 840 * k, k = 1..7. 840 divides by each k, so integer and floating
+            // point division agree. The scalar tail of the vectorized loop holds k = 3, 4, 5.
+            execute("CREATE TABLE bv AS (" +
+                    "SELECT x id, v::INT i, v l, v::FLOAT f, v::DOUBLE d, ('s' || x % 3)::SYMBOL s, x::TIMESTAMP ts" +
+                    " FROM (SELECT x, 840 * (x % 7 + 1) v FROM long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + "))" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY");
+            bindVariableService.clear();
+            bindVariableService.setInt("vi", 840);
+            bindVariableService.setLong("vl", 840);
+            bindVariableService.setFloat("vf", 840);
+            bindVariableService.setDouble("vd", 840);
+            bindVariableService.setInt("wi", 840 * 840);
+            bindVariableService.setLong("wl", 840 * 840);
+            bindVariableService.setFloat("wf", 840 * 840);
+            bindVariableService.setDouble("wd", 840 * 840);
+
+            final LongPredicate isBelow5 = id -> id % 7 + 1 < 5;
+            final String types = "ilfd";
+            for (int i = 0, n = types.length(); i < n; i++) {
+                final char c = types.charAt(i);
+                for (int j = 0; j < n; j++) {
+                    final String v = ":v" + types.charAt(j);
+                    final String w = ":w" + types.charAt(j);
+                    assertBindVariableFilter(v + " + " + c + " < 5_040", isBelow5);
+                    assertBindVariableFilter(c + " + " + v + " < 5_040", isBelow5);
+                    assertBindVariableFilter(v + " - " + c + " > -3_360", isBelow5);
+                    assertBindVariableFilter(c + " - " + v + " < 3_360", isBelow5);
+                    assertBindVariableFilter(v + " * " + c + " < 3_528_000", isBelow5);
+                    assertBindVariableFilter(c + " * " + v + " < 3_528_000", isBelow5);
+                    assertBindVariableFilter(w + " / " + c + " > 168", isBelow5);
+                    assertBindVariableFilter(c + " / " + v + " < 5", isBelow5);
+                    assertBindVariableFilter("-" + v + " + " + c + " < 3_360", isBelow5);
+                    assertBindVariableFilter(v + " < " + c, id -> id % 7 + 1 > 1);
+                    assertBindVariableFilter(v + " = " + c, id -> id % 7 + 1 == 1);
+                    assertBindVariableFilter(c + " = " + v, id -> id % 7 + 1 == 1);
+                    assertBindVariableFilter(v + " <> " + c, id -> id % 7 + 1 != 1);
+                    assertBindVariableFilter(c + " <> " + v, id -> id % 7 + 1 != 1);
+                }
+            }
+            assertBindVariableFilter("s = 's1' AND :vi - i > -3_360", id -> id % 3 == 1 && id % 7 + 1 < 5);
+            assertBindVariableFilter("(s = 's1' OR s = 's2') AND :wd / d > 168", id -> id % 3 != 0 && id % 7 + 1 < 5);
+        });
     }
 
     @Test
@@ -3359,6 +3403,85 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFloatRuntimePairTolerance() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ft (id INT, f FLOAT, g FLOAT, b BYTE, sh SHORT)");
+            bindVariableService.setFloat("posInf", Float.POSITIVE_INFINITY);
+            bindVariableService.setFloat("negInf", Float.NEGATIVE_INFINITY);
+            // FLOAT JIT uses a rounded epsilon and subtraction; Java compares at DOUBLE width.
+            // Two full vectors, mixed masks in both halves, and three scalar tail rows.
+            execute("""
+                    INSERT INTO ft VALUES
+                      (0, 1e-10, 0, 0, 0), (1, 9.999999439624929e-11, 0, 0, 0),
+                      (2, -1e-10, 0, 0, 0), (3, 0, 0, 0, 0),
+                      (4, 1.000000082740371e-10, 0, 0, 0), (5, -9.999999439624929e-11, 0, 0, 0),
+                      (6, -1.000000082740371e-10, 0, 0, 0), (7, 0, 1e-10, 0, 0),
+                      (8, 5, 5, 0, 0), (9, NULL, NULL, 0, 0),
+                      (10, NULL, 0, 0, 0), (11, 0, NULL, 0, 0),
+                      (12, :posInf, :negInf, 0, 0), (13, :negInf, :posInf, 0, 0),
+                      (14, :posInf, 0, 0, 0), (15, :negInf, 0, 0, 0),
+                      (16, 0, -1e-10, 0, 0), (17, 1e-10, -1e-20, 0, 0), (18, -1e-10, 1e-20, 0, 0)
+                    """);
+            assertJitToleranceQuery("SELECT id FROM ft WHERE f < g", "id\n2\n6\n7\n15\n18\n", "id\n6\n15\n");
+            assertJitToleranceQuery("SELECT id FROM ft WHERE f <= g", "id\n1\n2\n3\n5\n6\n7\n8\n9\n12\n13\n15\n18\n", "id\n0\n1\n2\n3\n5\n6\n7\n8\n9\n12\n13\n15\n16\n17\n18\n");
+            assertJitToleranceQuery("SELECT id FROM ft WHERE f > g", "id\n0\n4\n14\n16\n17\n", "id\n4\n14\n");
+            assertJitToleranceQuery("SELECT id FROM ft WHERE f >= g", "id\n0\n1\n3\n4\n5\n8\n9\n12\n13\n14\n16\n17\n", "id\n0\n1\n2\n3\n4\n5\n7\n8\n9\n12\n13\n14\n16\n17\n18\n");
+            assertJitToleranceQuery("SELECT id FROM ft WHERE f = g", "id\n1\n3\n5\n8\n9\n12\n13\n", "id\n0\n1\n2\n3\n5\n7\n8\n9\n12\n13\n16\n17\n18\n");
+            assertJitToleranceQuery("SELECT id FROM ft WHERE f <> g", "id\n0\n2\n4\n6\n7\n10\n11\n14\n15\n16\n17\n18\n", "id\n4\n6\n10\n11\n14\n15\n");
+            assertJitToleranceQuery("SELECT id FROM ft WHERE f + 0 > g + 0", "id\n0\n4\n14\n16\n17\n", "id\n4\n14\n");
+            assertJitToleranceQuery("SELECT id FROM ft WHERE f + 0 = g + 0", "id\n1\n3\n5\n8\n9\n12\n13\n", "id\n0\n1\n2\n3\n5\n7\n8\n9\n12\n13\n16\n17\n18\n");
+            assertJitToleranceQuery("SELECT id FROM ft WHERE b < f", "id\n0\n4\n8\n12\n14\n17\n", "id\n4\n8\n12\n14\n");
+            assertJitToleranceQuery("SELECT id FROM ft WHERE sh > f", "id\n2\n6\n13\n15\n18\n", "id\n6\n13\n15\n");
+        });
+    }
+
+    @Test
+    public void testFloatToleranceBindReopen() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ft (id INT, f FLOAT, s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO ft VALUES (0, 1e-10, 'a', 0), (1, 9.999999439624929e-11, 'b', 1),"
+                    + " (2, 0, 'c', 2), (3, 5, 'd', 3), (4, NULL, 'e', 4)");
+            final int callerJitMode = sqlExecutionContext.getJitMode();
+            try {
+                for (int jitMode : new int[]{SqlJitMode.JIT_MODE_DISABLED, SqlJitMode.JIT_MODE_FORCE_SCALAR, SqlJitMode.JIT_MODE_ENABLED}) {
+                    sqlExecutionContext.setJitMode(jitMode);
+                    for (String suffix : List.of("", " LATEST ON ts PARTITION BY s")) {
+                        bindVariableService.setFloat("bound", 0);
+                        try (RecordCursorFactory factory = select("SELECT id FROM ft WHERE f = :bound" + suffix)) {
+                            Assert.assertEquals(jitMode != SqlJitMode.JIT_MODE_DISABLED, factory.usesCompiledFilter());
+                            assertFactory(factory).withContext(sqlExecutionContext).inferRandomAccess().sizeMayVary().returns(jitMode == SqlJitMode.JIT_MODE_DISABLED ? "id\n1\n2\n" : "id\n0\n1\n2\n");
+                            bindVariableService.setFloat("bound", 1e-10f);
+                            assertFactory(factory).withContext(sqlExecutionContext).inferRandomAccess().sizeMayVary().returns(jitMode == SqlJitMode.JIT_MODE_DISABLED ? "id\n0\n1\n" : "id\n0\n1\n2\n");
+                            bindVariableService.setFloat("bound", Float.NaN);
+                            assertFactory(factory).withContext(sqlExecutionContext).inferRandomAccess().sizeMayVary().returns("id\n4\n");
+                            bindVariableService.setFloat("bound", Float.POSITIVE_INFINITY);
+                            assertFactory(factory).withContext(sqlExecutionContext).inferRandomAccess().sizeMayVary().returns("id\n4\n");
+                        }
+                    }
+                }
+            } finally {
+                sqlExecutionContext.setJitMode(callerJitMode);
+            }
+        });
+    }
+
+    @Test
+    public void testFloatTolerancePreservesArithmeticRounding() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ft (id INT, f FLOAT, g FLOAT)");
+            execute("""
+                    INSERT INTO ft
+                      SELECT x,
+                        CASE x % 4 WHEN 1 THEN 16_777_216 WHEN 2 THEN -16_777_216 WHEN 3 THEN 1 ELSE 0 END,
+                        CASE x % 4 WHEN 1 THEN 1 WHEN 2 THEN -1 WHEN 3 THEN 1 ELSE 0 END
+                      FROM long_sequence(11)
+                    """);
+            assertJitToleranceQuery("SELECT id FROM ft WHERE f + g = f + 0", "id\n1\n2\n4\n5\n6\n8\n9\n10\n");
+            assertJitToleranceQuery("SELECT id FROM ft WHERE f + g <> f + 0", "id\n3\n7\n11\n");
+        });
+    }
+
+    @Test
     public void testFloatingDivisionByZeroMatchesJava() throws Exception {
         // DivDoubleFunctionFactory and DivFloatFunctionFactory fold a non-finite quotient to NaN
         // ("Numbers.isFinite(d) ? d : Double.NaN"), so the Java filter reads a division by zero as
@@ -5423,6 +5546,32 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFloatColumnVsZeroToleranceBoundConstant() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ft (f FLOAT, id INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO ft VALUES (1e-10, 1, 0), (-1e-10, 2, 1), (0, 3, 2), (5, 4, 3), (NULL, 5, 4)");
+            // The excess tolerance can come from the FLOAT row, with an exact zero bound.
+            assertJitToleranceQuery("SELECT id FROM ft WHERE f > 0", "id\n1\n4\n", "id\n4\n");
+            assertJitToleranceQuery("SELECT id FROM ft WHERE f < 0", "id\n2\n", "id\n");
+            assertJitToleranceQuery("SELECT id FROM ft WHERE f <= 0", "id\n2\n3\n", "id\n1\n2\n3\n");
+            assertJitToleranceQuery("SELECT id FROM ft WHERE f >= 0", "id\n1\n3\n4\n", "id\n1\n2\n3\n4\n");
+            assertJitToleranceQuery("SELECT id FROM ft WHERE 0 < f", "id\n1\n4\n", "id\n4\n");
+            assertJitToleranceQuery("SELECT id FROM ft WHERE -f > 0", "id\n2\n", "id\n");
+            assertJitToleranceQuery("SELECT id FROM ft WHERE f + 0 > 0", "id\n1\n4\n", "id\n4\n");
+            assertJitToleranceQuery("SELECT id FROM ft WHERE f = 0", "id\n3\n", "id\n1\n2\n3\n");
+            assertJitToleranceQuery("SELECT id FROM ft WHERE f <> 0", "id\n1\n2\n4\n5\n", "id\n4\n5\n");
+            assertJitToleranceQuery("SELECT id FROM ft WHERE f < 1.000000013351432e-10", "id\n2\n3\n", "id\n2\n");
+            assertJitToleranceQuery("SELECT id FROM ft WHERE f IN (0, 5.0)", "id\n3\n4\n", "id\n1\n2\n3\n4\n");
+            assertJitToleranceQuery("SELECT id FROM ft WHERE f NOT IN (0, 5.0)", "id\n1\n2\n5\n", "id\n5\n");
+            assertJitToleranceQuery("SELECT id FROM ft WHERE f IN (1.000000013351432e-10, NULL)", "id\n1\n5\n", "id\n1\n3\n5\n");
+            bindVariableService.setFloat("tiny", 1e-10f);
+            assertJitToleranceQuery("SELECT id FROM ft WHERE :tiny > 0 AND id < 3", "id\n1\n2\n", "id\n");
+            bindVariableService.setFloat("tiny", Float.NaN);
+            assertJitToleranceQuery("SELECT id FROM ft WHERE :tiny <> 0 AND id < 3", "id\n1\n2\n");
+        });
+    }
+
+    @Test
     public void testNarrowIntColumnVsFloatingPointConstant() throws Exception {
         // An INT column compared against a floating-point constant promotes to DOUBLE in the Java
         // filter - IntFunction#getDouble feeds "<(DD)" - so both operands compare at f64. The JIT
@@ -5633,54 +5782,6 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             // fractional token. Both engines run the Java filter.
             assertJitMatchesJava("SELECT count() FROM zt WHERE b < 1.5e-10", false, "count\n500\n");
             assertJitMatchesJava("SELECT count() FROM zt WHERE s >= 1.5e-10", false, "count\n500\n");
-        });
-    }
-
-    @Test
-    public void testIntColumnVsFloatToleranceBoundConstantStillDivergesOnF32Width() throws Exception {
-        // The SURVIVING half of the tolerance asymmetry, which the inclusive comparators do NOT
-        // close: FLOAT_EPSILON is (float) DOUBLE_TOLERANCE (consts.h), i.e. 1.000000013351432e-10, a
-        // shade LARGER than the 1e-10 the Java filter uses. An INT leaf compared against a fractional
-        // bound falls through serializeNumber's I4 arm to a 32-bit float bound and runs the compiled
-        // filter's f32 arm, so the two filters carry two different tolerances and disagree wherever a
-        // value lands between them. That is pre-existing and independent of this change.
-        //
-        // What the inclusive comparators DID move is which single point falls in that gap. The strict
-        // f32 test disagreed with Java at |row - bound| == DOUBLE_TOLERANCE, the bound a query
-        // realistically spells ("col >= 1e-10"); the inclusive one agrees there - see
-        // testNarrowIntColumnVsExactToleranceBoundConstant - and disagrees instead at
-        // |row - bound| == FLOAT_EPSILON, reachable only by spelling out the float representation of
-        // the tolerance in full. The count of disagreeing points is unchanged; the one that remains
-        // is far harder to write by accident.
-        //
-        // This is also the test that covers the two f32 sites of the change (x86 float_cmp_epsilon,
-        // AVX2 cmp_eq_float). The fixture holds 1_000 rows so the AVX2 loop runs: a small table is
-        // handled entirely by the scalar tail and would leave jit/impl/avx2.h untested.
-        assertMemoryLeak(() -> {
-            execute("""
-                    CREATE TABLE ft AS (
-                      SELECT
-                        (case when x <= 500 then 0 else 5 end)::int i,
-                        timestamp_sequence(0, 1_000_000) k
-                      FROM long_sequence(1_000)
-                    ) TIMESTAMP(k)""");
-
-            // 1.000000013351432e-10 IS (float) 1e-10 exactly, so |0 - bound| at f32 width is exactly
-            // FLOAT_EPSILON and the inclusive f32 test calls the 500 zero rows EQUAL to the bound. At
-            // f64 width the same distance exceeds DOUBLE_TOLERANCE, so the Java filter calls them
-            // UNEQUAL. Both answers are pinned.
-            assertJitDivergesFromJavaAtF32ToleranceBound(
-                    "SELECT count() FROM ft WHERE i < 1.000000013351432e-10", "count\n500\n", "count\n0\n");
-            assertJitDivergesFromJavaAtF32ToleranceBound(
-                    "SELECT count() FROM ft WHERE i >= 1.000000013351432e-10", "count\n500\n", "count\n1000\n");
-            assertJitDivergesFromJavaAtF32ToleranceBound(
-                    "SELECT count() FROM ft WHERE i = 1.000000013351432e-10", "count\n0\n", "count\n500\n");
-            assertJitDivergesFromJavaAtF32ToleranceBound(
-                    "SELECT count() FROM ft WHERE i <> 1.000000013351432e-10", "count\n1000\n", "count\n500\n");
-            // "<=" and ">" cover the boundary rows through the plain comparison in the same direction
-            // as the epsilon test, so they agree at this bound as they do at 1e-10.
-            assertJitScalarAndVectorMatchJava("SELECT count() FROM ft WHERE i <= 1.000000013351432e-10", "count\n500\n");
-            assertJitScalarAndVectorMatchJava("SELECT count() FROM ft WHERE i > 1.000000013351432e-10", "count\n500\n");
         });
     }
 
@@ -5984,6 +6085,137 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 " rnd_int() i32" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
         assertQueryNotNull(query, ddl);
+    }
+
+    @Test
+    public void testLatestOnFiltersInAllModes() throws Exception {
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.changePageFrameSizes(8193, 8193);
+            try {
+                execute("""
+                        CREATE TABLE jit_latest AS (
+                          SELECT x id, (x / 3 * 1_000_000)::TIMESTAMP ts,
+                            rnd_symbol('A','B',NULL) s, rnd_symbol('X','Y') t, rnd_symbol('A','B','C') filter_sym,
+                            rnd_int(0,100,5) i, rnd_long(0,100,5) l, rnd_float(5) f, rnd_double(5) d,
+                            (CASE WHEN x % 7 = 0 THEN '' ELSE rnd_str(1,5,3) END) string_value,
+                            (CASE WHEN x % 7 = 0 THEN ''::VARCHAR ELSE rnd_varchar(1,5,3) END) varchar_value,
+                            (CASE WHEN x % 7 = 0 THEN from_base64('') ELSE rnd_bin(1,32,3) END) binary_value,
+                            rnd_uuid4() u, rnd_boolean() flag, rnd_byte() b, rnd_short() sh,
+                            (CASE WHEN x % 2 = 0 THEN 'A' ELSE NULL END)::CHAR ch,
+                            (x * 1000)::DATE dt, rnd_ipv4() ip, rnd_geohash(4) geo8, rnd_geohash(15) geo16,
+                            rnd_geohash(16) geo32, rnd_geohash(40) geo64,
+                            (x % 99)::DECIMAL(2,0) dec8, x::DECIMAL(4,0) dec16, x::DECIMAL(9,0) dec32,
+                            x::DECIMAL(18,0) dec64, x::DECIMAL(38,0) dec128, x::DECIMAL(76,0) dec256,
+                            ARRAY[x::DOUBLE, NULL] arr
+                          FROM long_sequence(8193)
+                        ) TIMESTAMP(ts) PARTITION BY DAY
+                        """);
+                // A single frame spans four full batches and a one-row prefix.
+                bindVariableService.setInt("min", 50);
+                bindVariableService.setStr("symbol", "B");
+                String[] predicates = {
+                        "i = NULL OR i < 50", "i > :min", "l > 50", "i < l", "f >= 0.5", "d > 0.25 AND d < 0.75",
+                        ":min - i > 0", "id < 129 AND i - :min > 0",
+                        "i IN (NULL,25,50,75) OR l > 50", "i NOT IN (NULL,25,50,75)",
+                        "filter_sym = 'A' OR filter_sym = 'B'", "filter_sym = :symbol",
+                        "id < 129 AND (i = NULL OR i < 50)", "id < 129 AND filter_sym = :symbol",
+                        "string_value = NULL", "string_value != NULL", "varchar_value = NULL", "varchar_value != NULL",
+                        "binary_value = NULL", "binary_value != NULL", "flag", "b > 0", "sh > 0", "ch = 'A'",
+                        "dt > '1970-01-01'", "ip != NULL", "geo8 != NULL", "geo16 != NULL", "geo32 != NULL", "geo64 != NULL",
+                        "u != '22222222-2222-2222-2222-222222222222'"
+                };
+                for (String keys : new String[]{"s", "s,t", "s,t,filter_sym", "i"}) {
+                    for (String predicate : predicates) {
+                        assertJitMatchesJavaInAllModes("SELECT * FROM jit_latest WHERE " + predicate
+                                + " LATEST ON ts PARTITION BY " + keys);
+                    }
+                    assertJitMatchesJava("SELECT id FROM jit_latest WHERE length(string_value) > 0"
+                            + " LATEST ON ts PARTITION BY " + keys, false);
+                    assertJitMatchesJavaInAllModesOnEmptyResult("SELECT id FROM jit_latest WHERE i < -1"
+                            + " LATEST ON ts PARTITION BY " + keys);
+                }
+            } finally {
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
+            }
+        });
+    }
+
+    @Test
+    public void testLatestOnFloatRuntimePairTolerance() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ft (f FLOAT, g FLOAT, s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO ft VALUES (1e-10, 0, 'a', 0), (5, 5, 'b', 1)");
+            // Pre-existing f32 tolerance divergence of the generic JIT, which LATEST ON now shares
+            // with plain WHERE; see testNumericColumnVsFloatToleranceBoundConstant.
+            assertJitToleranceQuery("SELECT s FROM ft WHERE f > g", "s\na\n", "s\n");
+            assertJitToleranceQuery("SELECT s FROM ft WHERE f > g LATEST ON ts PARTITION BY s", "s\na\n", "s\n");
+            assertJitToleranceQuery("SELECT s FROM ft WHERE f = g", "s\nb\n", "s\na\nb\n");
+            assertJitToleranceQuery("SELECT s FROM ft WHERE f = g LATEST ON ts PARTITION BY s", "s\nb\n", "s\na\nb\n");
+            // A column top runs the Java filter for plain WHERE; LATEST ON falls back only when a filter column has one.
+            execute("ALTER TABLE ft ADD COLUMN pad INT");
+            assertJitToleranceQuery("SELECT s, pad FROM ft WHERE f > g", "s\tpad\na\tnull\n", true);
+            assertJitToleranceQuery("SELECT s, pad FROM ft WHERE f > g LATEST ON ts PARTITION BY s", "s\tpad\na\tnull\n", "s\tpad\n");
+        });
+    }
+
+    @Test
+    public void testLatestOnFloatToleranceBoundConstant() throws Exception {
+        assertMemoryLeak(() -> {
+            // Both keys fit in the first two-row frame. LATEST applies the same tolerance as
+            // ordinary WHERE when this first frame runs through the compiled filter.
+            execute("CREATE TABLE ft (i INT, f FLOAT, s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO ft VALUES (0, 0, 'a', 0), (5, 5, 'b', 1)");
+            for (String operand : new String[]{"i", "f", "i + 0", "f + 0"}) {
+                assertJitToleranceQuery("SELECT i, s FROM ft WHERE " + operand
+                        + " < 1.000000013351432e-10 LATEST ON ts PARTITION BY s", "i\ts\n0\ta\n", "i\ts\n");
+                assertJitToleranceQuery("SELECT i, s FROM ft WHERE " + operand
+                        + " < 1.000000013351432e-10", "i\ts\n0\ta\n", "i\ts\n");
+                assertJitToleranceQuery("SELECT i, s FROM ft WHERE -(" + operand
+                        + ") > -1.000000013351432e-10 LATEST ON ts PARTITION BY s", "i\ts\n0\ta\n", "i\ts\n");
+            }
+        });
+    }
+
+    @Test
+    public void testLongDivisionPreservesDivisor() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE div_reuse (id INT, a LONG, b LONG)");
+            execute("""
+                    INSERT INTO div_reuse VALUES
+                      (0, 12, 3), (1, 12, -3), (2, -12, 3), (3, -12, -3),
+                      (4, 12, 0), (5, NULL, 3), (6, 12, NULL),
+                      (7, 9_223_372_036_854_775_807, -1), (8, 0, -3)
+                    """);
+            final ObjList<String> predicates = new ObjList<>();
+            predicates.add("a / b < 0 AND b <> 0");
+            predicates.add("a / b = NULL");
+            predicates.add("(a / b = -4 AND b = -3) OR (a / b = 4 AND b = 3)");
+            final ObjList<String> expected = new ObjList<>();
+            expected.add("id\n1\n2\n7\n");
+            expected.add("id\n4\n5\n6\n");
+            expected.add("id\n0\n1\n");
+            final int[] counts = {3, 3, 2};
+            final int callerJitMode = sqlExecutionContext.getJitMode();
+            try {
+                for (int jitMode : new int[]{SqlJitMode.JIT_MODE_DISABLED, SqlJitMode.JIT_MODE_FORCE_SCALAR, SqlJitMode.JIT_MODE_ENABLED}) {
+                    sqlExecutionContext.setJitMode(jitMode);
+                    for (int i = 0; i < predicates.size(); i++) {
+                        final String query = "SELECT id FROM div_reuse WHERE " + predicates.getQuick(i);
+                        try (RecordCursorFactory factory = select(query)) {
+                            Assert.assertEquals(query, jitMode != SqlJitMode.JIT_MODE_DISABLED, factory.usesCompiledFilter());
+                            assertFactory(factory).withContext(sqlExecutionContext).inferRandomAccess().sizeMayVary().returns(expected.getQuick(i));
+                        }
+                        final String countQuery = "SELECT count() FROM div_reuse WHERE " + predicates.getQuick(i);
+                        try (RecordCursorFactory factory = select(countQuery)) {
+                            Assert.assertEquals(countQuery, jitMode != SqlJitMode.JIT_MODE_DISABLED, factory.usesCompiledFilter());
+                            assertFactory(factory).withContext(sqlExecutionContext).noRandomAccess().expectSize().returns("count\n" + counts[i] + "\n");
+                        }
+                    }
+                }
+            } finally {
+                sqlExecutionContext.setJitMode(callerJitMode);
+            }
+        });
     }
 
     @Test
@@ -6558,6 +6790,92 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNumericColumnVsFloatToleranceBoundConstant() throws Exception {
+        assertMemoryLeak(() -> {
+            // 500 zeros, 250 positive values and 250 negative values fill vector loops and
+            // distinguish both sides of each bound. LONG/DOUBLE already compare at F8.
+            execute("CREATE TABLE ft (b BYTE, sh SHORT, i INT, l LONG, f FLOAT, d DOUBLE, k TIMESTAMP) TIMESTAMP(k)");
+            execute("""
+                    INSERT INTO ft
+                      SELECT
+                        CASE WHEN x <= 500 THEN 0 WHEN x <= 750 THEN 5 ELSE -5 END,
+                        CASE WHEN x <= 500 THEN 0 WHEN x <= 750 THEN 5 ELSE -5 END,
+                        CASE WHEN x <= 500 THEN 0 WHEN x <= 750 THEN 5 ELSE -5 END,
+                        CASE WHEN x <= 500 THEN 0 WHEN x <= 750 THEN 5 ELSE -5 END,
+                        CASE WHEN x <= 500 THEN 0 WHEN x <= 750 THEN 5 ELSE -5 END,
+                        CASE WHEN x <= 500 THEN 0 WHEN x <= 750 THEN 5 ELSE -5 END,
+                        timestamp_sequence(0, 1_000_000)
+                      FROM long_sequence(1_000)
+                    """);
+            final String[] operators = {"<", "<=", ">", ">=", "=", "<>"};
+            final String[] reversed = {">", ">=", "<", "<=", "=", "<>"};
+            final int[] positiveCounts = {750, 750, 250, 250, 0, 1000};
+            final int[] negativeCounts = {250, 250, 750, 750, 0, 1000};
+            final int[] jitFloatCounts = {250, 750, 250, 750, 500, 500};
+            for (String operand : new String[]{"b", "sh", "i", "l", "f", "d"}) {
+                // BYTE/SHORT fractional literals retain their existing Java fallback.
+                final boolean hasCompiledFilter = !operand.equals("b") && !operand.equals("sh");
+                for (int op = 0; op < operators.length; op++) {
+                    final String positive = "count\n" + positiveCounts[op] + "\n";
+                    final String negative = "count\n" + negativeCounts[op] + "\n";
+                    final boolean isFloatComparison = operand.equals("i") || operand.equals("f");
+                    final String jitPositive = isFloatComparison ? "count\n" + jitFloatCounts[op] + "\n" : positive;
+                    final String jitNegative = isFloatComparison ? "count\n" + jitFloatCounts[op] + "\n" : negative;
+                    assertJitToleranceQuery("SELECT count() FROM ft WHERE " + operand + " " + operators[op]
+                            + " 1.000000013351432e-10", positive, jitPositive, hasCompiledFilter);
+                    assertJitToleranceQuery("SELECT count() FROM ft WHERE 1.000000013351432e-10 "
+                            + reversed[op] + " " + operand, positive, jitPositive, hasCompiledFilter);
+                    assertJitToleranceQuery("SELECT count() FROM ft WHERE " + operand + " " + operators[op]
+                            + " -1.000000013351432e-10", negative, jitNegative, hasCompiledFilter);
+                    assertJitToleranceQuery("SELECT count() FROM ft WHERE -1.000000013351432e-10 "
+                            + reversed[op] + " " + operand, negative, jitNegative, hasCompiledFilter);
+                }
+            }
+            // FLOAT suffixes, narrow arithmetic and an F8 arithmetic control reach the same
+            // constant-width decision through different paths. Integer arithmetic still wraps.
+            for (String operand : new String[]{"b + 0", "sh + 0", "i + 0", "-i", "f + 0", "f + 0.0"}) {
+                assertJitToleranceQuery("SELECT count() FROM ft WHERE " + operand + " < 1e-10f", "count\n750\n",
+                        operand.equals("f + 0.0") ? "count\n750\n" : "count\n250\n",
+                        !operand.equals("b + 0") && !operand.equals("sh + 0"));
+            }
+            for (String operand : new String[]{"i", "f"}) {
+                // The previous float and exact Java tolerance include zero in equality.
+                for (String bound : new String[]{"9.999999439624929e-11", "1e-10"}) {
+                    assertJitToleranceQuery("SELECT count() FROM ft WHERE " + operand + " = " + bound, "count\n500\n");
+                    assertJitToleranceQuery("SELECT count() FROM ft WHERE " + operand + " < " + bound, "count\n250\n");
+                }
+                // The next double above each tolerance still rounds to FLOAT_EPSILON. The
+                // next FLOAT above it is a control whose F4 comparison already agrees.
+                for (String bound : new String[]{"1.0000000000000002e-10", "1.0000000133514321e-10", "1.000000082740371e-10"}) {
+                    final boolean isFloatBoundary = operand.equals("i") && !bound.equals("1.000000082740371e-10");
+                    assertJitToleranceQuery("SELECT count() FROM ft WHERE " + operand + " < " + bound,
+                            "count\n750\n", isFloatBoundary ? "count\n250\n" : "count\n750\n");
+                    assertJitToleranceQuery("SELECT count() FROM ft WHERE " + operand + " >= " + bound,
+                            "count\n250\n", isFloatBoundary ? "count\n750\n" : "count\n250\n");
+                    assertJitToleranceQuery("SELECT count() FROM ft WHERE " + operand + " = " + bound,
+                            "count\n0\n", isFloatBoundary ? "count\n500\n" : "count\n0\n");
+                    assertJitToleranceQuery("SELECT count() FROM ft WHERE " + operand + " > -" + bound,
+                            "count\n750\n", isFloatBoundary ? "count\n250\n" : "count\n750\n");
+                }
+            }
+            bindVariableService.setInt("zero", 0);
+            assertJitToleranceQuery("SELECT count() FROM ft WHERE :zero < 1e-10f AND i > 0", "count\n250\n", "count\n0\n");
+            execute("INSERT INTO ft VALUES (NULL, NULL, NULL, NULL, NULL, NULL, 1_000_000_001)");
+            for (String operand : new String[]{"b", "sh", "i", "l", "f", "d"}) {
+                assertJitToleranceQuery("SELECT count() FROM ft WHERE " + operand + " <> 1e-10f", "count\n1001\n",
+                        operand.equals("i") || operand.equals("f") ? "count\n501\n" : "count\n1001\n",
+                        !operand.equals("b") && !operand.equals("sh"));
+            }
+            // BYTE/SHORT store NULL as zero and decline explicit comparisons to NULL in JIT.
+            for (String operand : new String[]{"i", "l", "f", "d"}) {
+                assertJitToleranceQuery("SELECT count() FROM ft WHERE " + operand + " = NULL OR "
+                                + operand + " < 1e-10f", "count\n751\n",
+                        operand.equals("i") || operand.equals("f") ? "count\n251\n" : "count\n751\n");
+            }
+        });
+    }
+
+    @Test
     public void testOrderByAsc() throws Exception {
         testOrderBy("order by ts asc");
     }
@@ -6988,6 +7306,171 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             assertJitScalarAndVectorMatchJava("select i from n where -i < 2147483649 or b", rows);
             // the IN spelling already agreed; kept so the pair cannot drift apart again
             assertJitScalarAndVectorMatchJavaOnEmptyResult("select i from n where -i in (2147483649)", "i\n");
+        });
+    }
+
+    @Test
+    public void testUnaryMinusNarrowMinValueWrapsLikeJava() throws Exception {
+        // The Java filter negates a BYTE or a SHORT within its own type: NegByteFunctionFactory
+        // returns (byte) -b and NegShortFunctionFactory returns (short) -s, so -(-128) is -128 and
+        // -(-32768) is -32768. The scalar backends negated the sign-extended 32-bit register and
+        // kept the narrow tag, so every consumer read +128 / +32768 instead. The vectorized loop
+        // negates in byte / word lanes and wraps as Java does, but it hands the rows past its last
+        // full vector to scalar_tail, and a filter that also reads a wider column observes mixed
+        // sizes and runs the scalar loop on every row. Rows 1 and 300 sit in the vectorized body;
+        // row 514 sits in the scalar tail of the 515-row frame.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE neg_min AS (
+                        SELECT
+                            x::INT id,
+                            (CASE x WHEN 1 THEN -128 WHEN 2 THEN -1 WHEN 3 THEN 1 WHEN 4 THEN 127
+                                WHEN 300 THEN -128 WHEN 513 THEN -5 WHEN 514 THEN -128 ELSE 0 END)::BYTE b,
+                            (CASE x WHEN 1 THEN -32_768 WHEN 2 THEN -1 WHEN 3 THEN 1 WHEN 4 THEN 32_767
+                                WHEN 300 THEN -32_768 WHEN 513 THEN -5 WHEN 514 THEN -32_768 ELSE 0 END)::SHORT s,
+                            (CASE x WHEN 1 THEN 0 WHEN 300 THEN 0 WHEN 514 THEN 0 ELSE 1 END)::SHORT s2,
+                            1::INT i,
+                            1L l,
+                            1.0 d,
+                            timestamp_sequence(0, 1_000_000) k
+                        FROM long_sequence(515)
+                    ) TIMESTAMP(k)
+                    """);
+
+            final String negativeRows = """
+                    id
+                    2
+                    513
+                    """;
+            final String nonPositiveRows = """
+                    id
+                    1
+                    3
+                    4
+                    300
+                    514
+                    """;
+            final String minRows = """
+                    id
+                    1
+                    300
+                    514
+                    """;
+            final String negativeValueRows = """
+                    id
+                    1
+                    2
+                    300
+                    513
+                    514
+                    """;
+            final String[][] cases = {
+                    {"-s > 0", negativeRows},
+                    {"-s < 0", nonPositiveRows},
+                    {"NOT (-s > 0) AND s <> 0", nonPositiveRows},
+                    {"-s >= s2", negativeRows},
+                    {"-s = s AND s < 0", minRows},
+                    {"-b > 0", negativeRows},
+                    {"-b < 0", nonPositiveRows},
+                    {"-b = b AND b < 0", minRows},
+                    // A narrow arithmetic operand forces the scalar loop; Java adds and multiplies
+                    // the wrapped SHORT at INT width.
+                    {"(-s) + 1 > 1", negativeRows},
+                    {"(-s) * 2 < 0", nonPositiveRows},
+                    {"(-b) + 1 > 1", negativeRows},
+                    // Controls that agree with Java without the narrowing, and must keep agreeing:
+                    // a double negation lands on the original value, and the negation of an INT
+                    // arithmetic result must not wrap at the operand's width.
+                    {"-(-s) > 0", """
+                            id
+                            3
+                            4
+                            """},
+                    {"-(s - 1) > 1", negativeValueRows},
+            };
+            // The empty suffix keeps an all-narrow filter on the byte / word vectorized loop. Each
+            // other suffix adds a wider column, so the filter observes mixed sizes and runs the
+            // scalar loop throughout.
+            final String[] widerColumnSuffixes = {"", " AND i > 0", " AND l > 0", " AND d > 0"};
+            for (String[] c : cases) {
+                for (String suffix : widerColumnSuffixes) {
+                    assertJitScalarAndVectorMatchJava("SELECT id FROM neg_min WHERE " + c[0] + suffix, c[1]);
+                }
+            }
+
+            // A negated literal is an INT in the Java filter, whatever width the serializer gives the
+            // immediate: -(-32768) is 32768 and -(-128) is 128, so every SHORT and every BYTE lies
+            // below it. The scalar loop must keep the 32-bit negation of an immediate. Only the
+            // suffixes that put the filter on the scalar loop appear here: the vectorized loop
+            // negates the immediate in word / byte lanes, a separate defect this test does not pin.
+            for (int i = 1; i < widerColumnSuffixes.length; i++) {
+                assertJitScalarAndVectorMatchJava(
+                        "SELECT id FROM neg_min WHERE s < -(-32_768) AND s < 0" + widerColumnSuffixes[i],
+                        negativeValueRows
+                );
+                assertJitScalarAndVectorMatchJava(
+                        "SELECT id FROM neg_min WHERE -(-128) > b AND b < 0" + widerColumnSuffixes[i],
+                        negativeValueRows
+                );
+            }
+
+            // Without null checks the backends take their unchecked arms, which SQL reaches only
+            // through SqlCompiler.setEnableJitNullChecks(). Narrow arithmetic is a Java INT there
+            // too, so the negation of `s - 1` must not wrap at the operand's width: -(-32769) is
+            // 32769, which wraps to -32767 as a SHORT. The table holds no NULL, so the Java rows
+            // stay the oracle.
+            final String[] uncheckedQueries = {
+                    "SELECT id FROM neg_min WHERE -(s - 1) > 1 AND i > 0",
+                    "SELECT id FROM neg_min WHERE -(b - 1) > 1 AND l > 0"
+            };
+            for (String query : uncheckedQueries) {
+                TestUtils.assertEquals(negativeValueRows, runJavaToString(query));
+            }
+            final int callerJitMode = sqlExecutionContext.getJitMode();
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                compiler.setEnableJitNullChecks(false);
+                try {
+                    for (int jitMode : new int[]{SqlJitMode.JIT_MODE_FORCE_SCALAR, SqlJitMode.JIT_MODE_ENABLED}) {
+                        sqlExecutionContext.setJitMode(jitMode);
+                        for (String query : uncheckedQueries) {
+                            final StringSink sink = new StringSink();
+                            try (RecordCursorFactory factory = select(compiler, query, sqlExecutionContext)) {
+                                Assert.assertTrue("JIT was not enabled for query: " + query, factory.usesCompiledFilter());
+                                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                    CursorPrinter.println(cursor, factory.getMetadata(), sink);
+                                }
+                            }
+                            TestUtils.assertEquals("unchecked JIT [mode=" + jitMode + "] for query: " + query, negativeValueRows, sink);
+                        }
+                    }
+                } finally {
+                    compiler.setEnableJitNullChecks(true);
+                    sqlExecutionContext.setJitMode(callerJitMode);
+                }
+            }
+
+            // The count-only function compiles the same IR through its own entry point.
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM neg_min WHERE -s > 0", "count\n2\n");
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM neg_min WHERE -s > 0 AND i > 0", "count\n2\n");
+            assertJitScalarAndVectorMatchJava("SELECT count() FROM neg_min WHERE -b < 0 AND l > 0", "count\n5\n");
+
+            // A negated bind variable reaches the backends as a VAR operand rather than a column.
+            bindVariableService.setShort("sv", (short) -32_768);
+            bindVariableService.setByte("bv", (byte) -128);
+            assertJitScalarAndVectorMatchJava("SELECT id FROM neg_min WHERE -:sv = s", minRows);
+            assertJitScalarAndVectorMatchJava("SELECT id FROM neg_min WHERE -:sv = s AND i > 0", minRows);
+            assertJitScalarAndVectorMatchJava("SELECT id FROM neg_min WHERE -:bv = b", minRows);
+            assertJitScalarAndVectorMatchJava("SELECT id FROM neg_min WHERE -:bv = b AND l > 0", minRows);
+
+            // Parity cannot see which loop ran. The narrowing lives in the scalar backends only,
+            // so pin that an all-narrow negation stays on the vectorized loop and that a wider
+            // column takes the filter to the scalar one.
+            assertExecHint("neg_min", "-s > 0", EXEC_HINT_SINGLE_SIZE_TYPE);
+            assertExecHint("neg_min", "-b > 0", EXEC_HINT_SINGLE_SIZE_TYPE);
+            assertExecHint("neg_min", "-s >= s2", EXEC_HINT_SINGLE_SIZE_TYPE);
+            assertExecHint("neg_min", "-s > 0 and i > 0", EXEC_HINT_MIXED_SIZE_TYPE);
+            assertExecHint("neg_min", "-b > 0 and l > 0", EXEC_HINT_MIXED_SIZE_TYPE);
+            assertExecHint("neg_min", "-s > 0 and d > 0", EXEC_HINT_MIXED_SIZE_TYPE);
         });
     }
 
@@ -8882,7 +9365,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 if (i > 0) {
                     sink.putAscii(',');
                 }
-                sink.put(Unsafe.getUnsafe().getLong(rowsAddress + i * Long.BYTES));
+                sink.put(Unsafe.getLong(rowsAddress + i * Long.BYTES));
             }
             return sink.toString();
         } finally {
@@ -8908,11 +9391,11 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     // one-entry column address array pointing at it, and empty aux and bind variable blocks.
     private static void writeProbeColumn(long columnAddress, long dataAddress, long auxAddress, long varsAddress) {
         for (int i = 0; i < IR_PROBE_COLUMN.length; i++) {
-            Unsafe.getUnsafe().putLong(columnAddress + (long) i * Long.BYTES, IR_PROBE_COLUMN[i]);
+            Unsafe.putLong(columnAddress + (long) i * Long.BYTES, IR_PROBE_COLUMN[i]);
         }
-        Unsafe.getUnsafe().putLong(dataAddress, columnAddress);
-        Unsafe.getUnsafe().putLong(auxAddress, 0L);
-        Unsafe.getUnsafe().putLong(varsAddress, 0L);
+        Unsafe.putLong(dataAddress, columnAddress);
+        Unsafe.putLong(auxAddress, 0L);
+        Unsafe.putLong(varsAddress, 0L);
     }
 
     // The self-comparison WhereClauseParser.nodesEqual() recognises, spelled the same way it is:
@@ -9165,6 +9648,20 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                             timestamp_sequence(0, 1)
                         FROM long_sequence(""" + N_SIMD_WITH_SCALAR_TAIL + ")"
         );
+    }
+
+    private void assertBindVariableFilter(String predicate, LongPredicate isMatch) throws SqlException {
+        final StringSink expected = new StringSink();
+        expected.put("id\n");
+        long count = 0;
+        for (long id = 1; id <= N_SIMD_WITH_SCALAR_TAIL; id++) {
+            if (isMatch.test(id)) {
+                expected.put(id).put('\n');
+                count++;
+            }
+        }
+        assertJitScalarAndVectorMatchJava("SELECT id FROM bv WHERE " + predicate, expected);
+        assertJitCountQuery("SELECT count() FROM bv WHERE " + predicate, count);
     }
 
     /**
@@ -9604,6 +10101,40 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         assertJitScalarAndVectorMatchJava(query, expected, true);
     }
 
+    private void assertJitToleranceQuery(CharSequence query, @NotNull CharSequence expected) throws Exception {
+        assertJitToleranceQuery(query, expected, true);
+    }
+
+    private void assertJitToleranceQuery(CharSequence query, @NotNull CharSequence expected, boolean hasCompiledFilter) throws Exception {
+        assertJitToleranceQuery(query, expected, expected, hasCompiledFilter);
+    }
+
+    private void assertJitToleranceQuery(CharSequence query, @NotNull CharSequence javaExpected, @NotNull CharSequence jitExpected) throws Exception {
+        assertJitToleranceQuery(query, javaExpected, jitExpected, true);
+    }
+
+    private void assertJitToleranceQuery(
+            CharSequence query,
+            @NotNull CharSequence javaExpected,
+            @NotNull CharSequence jitExpected,
+            boolean hasCompiledFilter
+    ) throws Exception {
+        final int callerJitMode = sqlExecutionContext.getJitMode();
+        try {
+            for (int jitMode : new int[]{SqlJitMode.JIT_MODE_DISABLED, SqlJitMode.JIT_MODE_FORCE_SCALAR, SqlJitMode.JIT_MODE_ENABLED}) {
+                sqlExecutionContext.setJitMode(jitMode);
+                try (RecordCursorFactory factory = select(query)) {
+                    Assert.assertEquals("unexpected compiled-filter usage for query: " + query,
+                            hasCompiledFilter && jitMode != SqlJitMode.JIT_MODE_DISABLED, factory.usesCompiledFilter());
+                    assertFactory(factory).withContext(sqlExecutionContext).inferRandomAccess().sizeMayVary()
+                            .returns(hasCompiledFilter && jitMode != SqlJitMode.JIT_MODE_DISABLED ? jitExpected : javaExpected);
+                }
+            }
+        } finally {
+            sqlExecutionContext.setJitMode(callerJitMode);
+        }
+    }
+
     /**
      * The walk both families share: the Java oracle, the absolute-result and row-count checks over
      * it, then the FORCE_SCALAR and vectorized runs compared against that oracle, with the
@@ -9654,71 +10185,6 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 TestUtils.assertEquals(
                         "JIT vs Java result mismatch [scalarMode=" + (i == 0) + "] for query: " + query,
                         javaSink,
-                        jit
-                );
-            }
-        } finally {
-            sqlExecutionContext.setJitMode(callerJitMode);
-        }
-    }
-
-    /**
-     * Pins a query whose Java and compiled filters DISAGREE because they compare at DIFFERENT
-     * TOLERANCES, not because they read the same tolerance differently. {@code FLOAT_EPSILON} is
-     * {@code (float) DOUBLE_TOLERANCE} (consts.h), a shade larger than the {@code 1e-10} the Java
-     * filter uses, so a shape that runs the compiled filter's f32 arm - an INT leaf against a
-     * fractional bound, via {@code serializeNumber}'s I4 arm - answers differently for any value
-     * that lands between the two. Both answers are recorded, so the divergence is visible rather
-     * than merely absent from the suite.
-     * <p>
-     * This is separate from, and untouched by, the inclusive-vs-strict question: the native
-     * comparators now read their epsilon inclusively and agree with {@code Numbers.equals} wherever
-     * the two tolerances coincide (see
-     * {@link #testNarrowIntColumnVsExactToleranceBoundConstant}).
-     * <p>
-     * The method also insists the two answers really differ, so the pin cannot outlive the
-     * limitation: narrowing {@code FLOAT_EPSILON} to the f64 tolerance, or declining JIT compilation
-     * for the shape, reddens every site here and forces the expectations to be revisited instead of
-     * leaving a stale record of a divergence that no longer exists.
-     * <p>
-     * FORCE_SCALAR and the vectorized mode are asserted separately, since the two backends carry
-     * their own copy of the comparator ({@code jit/impl/x86.h} and {@code jit/impl/avx2.h}) and a
-     * divergence could in principle live in one and not the other.
-     */
-    private void assertJitDivergesFromJavaAtF32ToleranceBound(
-            CharSequence query,
-            CharSequence javaExpected,
-            CharSequence jitExpected
-    ) throws SqlException {
-        Assert.assertFalse(
-                "site claims a divergence but pins the same rows for both filters: " + query,
-                Chars.equals(javaExpected, jitExpected)
-        );
-        final int callerJitMode = sqlExecutionContext.getJitMode();
-        try {
-            final StringSink javaSink = new StringSink();
-            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-            try (RecordCursorFactory factory = select(query)) {
-                Assert.assertFalse("JIT was enabled for query: " + query, factory.usesCompiledFilter());
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    CursorPrinter.println(cursor, factory.getMetadata(), javaSink);
-                }
-            }
-            TestUtils.assertEquals("Java filter result mismatch for query: " + query, javaExpected, javaSink);
-
-            final int[] jitModes = {SqlJitMode.JIT_MODE_FORCE_SCALAR, SqlJitMode.JIT_MODE_ENABLED};
-            for (int i = 0; i < jitModes.length; i++) {
-                final StringSink jit = new StringSink();
-                sqlExecutionContext.setJitMode(jitModes[i]);
-                try (RecordCursorFactory factory = select(query)) {
-                    Assert.assertTrue("JIT was not enabled for query: " + query, factory.usesCompiledFilter());
-                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                        CursorPrinter.println(cursor, factory.getMetadata(), jit);
-                    }
-                }
-                TestUtils.assertEquals(
-                        "compiled filter result mismatch [scalarMode=" + (i == 0) + "] for query: " + query,
-                        jitExpected,
                         jit
                 );
             }

@@ -25,6 +25,7 @@
 package io.questdb.test;
 
 import io.questdb.Bootstrap;
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.DefaultCairoConfiguration;
@@ -44,6 +45,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -83,6 +85,22 @@ public class BootstrapTest extends AbstractBootstrapTest {
         Assert.assertNotNull(bootstrap.getConfiguration().getMetrics());
         bootstrap.extractSite();
         Assert.assertTrue(Files.exists(auxPath.trimTo(pathLen).concat("conf").concat(LogFactory.DEFAULT_CONFIG_NAME).$()));
+    }
+
+    @Test
+    public void testPersistOnlyMetricsDoesNotLogDisabledAdvisory() throws Exception {
+        createDummyConfiguration(PropertyKey.METRICS_PERSIST_ENABLED + "=true");
+        final LogCapture capture = new LogCapture();
+        capture.start();
+        try {
+            final Bootstrap bootstrap = new Bootstrap(getServerMainArgs());
+            Assert.assertFalse(bootstrap.getConfiguration().getMetricsConfiguration().isEnabled());
+            Assert.assertTrue(bootstrap.getConfiguration().getMetrics().isEnabled());
+            capture.drain();
+            capture.assertNotLogged("Metrics are disabled, health check endpoint will not consider unhandled errors");
+        } finally {
+            capture.stop();
+        }
     }
 
     @Test

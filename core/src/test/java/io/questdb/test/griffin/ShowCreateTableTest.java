@@ -636,6 +636,29 @@ public class ShowCreateTableTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testShowCreateTableInParallelFilterSubQuery() throws Exception {
+        // The compiler's SqlParserCallback creates the cursor of SHOW CREATE TABLE. A filter that is not
+        // thread-safe compiles again for each worker of the shared query pool, and so does the SHOW
+        // statement in its sub-query, through the same callback. The query does not return the DDL,
+        // so that a compiler whose DDL differs, such as Enterprise's, runs the test unchanged. Like
+        // the other tests here, it skips the leak check of the query: after that check clears the
+        // engine, the first Enterprise SHOW CREATE TABLE compiles the engine's storage policy queries
+        // again, and the engine keeps them.
+        assertMemoryLeak(() -> {
+            execute("create table foo ( ts timestamp, s symbol ) timestamp(ts)");
+            execute("create table ddls (id int, ddl symbol)");
+            execute("insert into ddls select 1, ddl from (show create table foo)");
+            execute("insert into ddls values (2, 'CREATE TABLE bar')");
+            assertQuery("select id from ddls where ddl in (select ddl from (show create table foo))")
+                    .noLeakCheck()
+                    .returns("""
+                            id
+                            1
+                            """);
+        });
+    }
+
+    @Test
     public void testShowCreateTableUnion() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t1 ( ts timestamp, s symbol ) timestamp(ts)");

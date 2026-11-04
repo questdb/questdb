@@ -37,4 +37,12 @@ public class ViewCompilerExecutionContext extends SqlExecutionContextImpl {
         super(engine, sharedQueryWorkerCount);
         securityContext = ReadOnlySecurityContext.INSTANCE;
     }
+
+    // Compiling a view's body opens the cursor of each PIVOT ... IN (SELECT ...) sub-query in it,
+    // for the names of the columns the view produces. Nobody reads those rows: the compiler opens
+    // the cursor under a security context that names no user, so the context reports a job's read.
+    @Override
+    public boolean isBackgroundJob() {
+        return true;
+    }
 }

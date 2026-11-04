@@ -1,0 +1,207 @@
+# name: test/sql/test_quantile_disc_list.test
+# description: Test QUANTILE_DISC with an array of quantiles
+# group: [aggregates]
+#
+# Ported from DuckDB test/sql/aggregate/aggregates/test_quantile_disc_list.test.
+# Differences from DuckDB:
+# - QuestDB takes the quantiles as a DOUBLE[] and returns a DOUBLE[], so the
+#   results read as doubles
+# - QuestDB has no quantile_disc over LIST, STRUCT, VARCHAR, DECIMAL, DATE,
+#   TIME or INTERVAL values, so those cases are left out; TIMESTAMP goes
+#   through a LONG cast
+# - DuckDB reads a negative quantile as a quantile in descending order;
+#   QuestDB rejects negative quantiles, as the SQL standard does
+
+statement ok
+CREATE TABLE quantiles AS (
+    SELECT * FROM (
+        SELECT x - 1 r, rnd_double() q FROM long_sequence(10_000)
+        UNION ALL
+        SELECT NULL, 0.1
+        UNION ALL
+        SELECT NULL, 0.5
+        UNION ALL
+        SELECT NULL, 0.9
+    )
+    ORDER BY 2
+);
+
+# single GROUP
+query I
+SELECT quantile_disc(r, ARRAY[0.1, 0.5, 0.9]) FROM quantiles
+----
+{999.000000,4999.000000,8999.000000}
+
+query I
+SELECT percentile_disc(r, ARRAY[0.1, 0.5, 0.9]) FROM quantiles
+----
+{999.000000,4999.000000,8999.000000}
+
+# the scalar and the array variants agree
+query III
+SELECT quantile_disc(r, 0.1), quantile_disc(r, 0.5), quantile_disc(r, 0.9) FROM quantiles
+----
+999 4999 8999
+
+# Negative quantiles
+# DuckDB reads them as quantiles in descending order. QuestDB rejects them;
+# negating the values gives the descending order and DuckDB's
+# [3100, 2900, 2600].
+statement error
+SELECT quantile_disc(col, ARRAY[-0.25, -0.5, -0.75])
+FROM (
+    SELECT 11000 col UNION ALL
+    SELECT 3100 UNION ALL
+    SELECT 2900 UNION ALL
+    SELECT 2800 UNION ALL
+    SELECT 2600 UNION ALL
+    SELECT 2500
+)
+
+query I
+SELECT quantile_disc(-col, ARRAY[0.25, 0.5, 0.75]) * -1
+FROM (
+    SELECT 11000 col UNION ALL
+    SELECT 3100 UNION ALL
+    SELECT 2900 UNION ALL
+    SELECT 2800 UNION ALL
+    SELECT 2600 UNION ALL
+    SELECT 2500
+)
+----
+{3100.000000,2900.000000,2600.000000}
+
+# multiple groups
+query II
+SELECT r % 10 g, quantile_disc(r, ARRAY[0.1, 0.5, 0.9]) FROM quantiles GROUP BY 1 ORDER BY 1
+----
+NULL NULL
+0 {990.000000,4990.000000,8990.000000}
+1 {991.000000,4991.000000,8991.000000}
+2 {992.000000,4992.000000,8992.000000}
+3 {993.000000,4993.000000,8993.000000}
+4 {994.000000,4994.000000,8994.000000}
+5 {995.000000,4995.000000,8995.000000}
+6 {996.000000,4996.000000,8996.000000}
+7 {997.000000,4997.000000,8997.000000}
+8 {998.000000,4998.000000,8998.000000}
+9 {999.000000,4999.000000,8999.000000}
+
+# constant input
+query I
+SELECT quantile_disc(1, ARRAY[0.1, 0.5, 0.9]) FROM quantiles
+----
+{1.000000,1.000000,1.000000}
+
+# empty input
+query I
+SELECT quantile_disc(r, ARRAY[0.1, 0.5, 0.9]) FROM quantiles WHERE 1 = 0
+----
+NULL
+
+# empty list
+query I
+SELECT quantile_disc(r, ARRAY[]) FROM quantiles
+----
+{}
+
+# temporal types
+query III
+SELECT a[1]::long::timestamp, a[2]::long::timestamp, a[3]::long::timestamp
+FROM (
+    SELECT quantile_disc(dateadd('h', r::int, '2021-01-01'::timestamp)::long, ARRAY[0.1, 0.5, 0.9]) a
+    FROM quantiles
+)
+----
+2021-02-11 15:00:00 2021-07-28 07:00:00 2022-01-10 23:00:00
+
+# parallel execution - QuestDB skips the pragma, the queries repeat the above
+statement ok
+pragma threads=4
+
+statement ok
+PRAGMA verify_parallelism
+
+# single GROUP
+query I
+SELECT quantile_disc(r, ARRAY[0.1, 0.5, 0.9]) FROM quantiles
+----
+{999.000000,4999.000000,8999.000000}
+
+# multiple groups
+query II
+SELECT r % 10 g, quantile_disc(r, ARRAY[0.1, 0.5, 0.9]) FROM quantiles GROUP BY 1 ORDER BY 1
+----
+NULL NULL
+0 {990.000000,4990.000000,8990.000000}
+1 {991.000000,4991.000000,8991.000000}
+2 {992.000000,4992.000000,8992.000000}
+3 {993.000000,4993.000000,8993.000000}
+4 {994.000000,4994.000000,8994.000000}
+5 {995.000000,4995.000000,8995.000000}
+6 {996.000000,4996.000000,8996.000000}
+7 {997.000000,4997.000000,8997.000000}
+8 {998.000000,4998.000000,8998.000000}
+9 {999.000000,4999.000000,8999.000000}
+
+# constant input
+query I
+SELECT quantile_disc(1, ARRAY[0.1, 0.5, 0.9]) FROM quantiles
+----
+{1.000000,1.000000,1.000000}
+
+# empty input
+query I
+SELECT quantile_disc(r, ARRAY[0.1, 0.5, 0.9]) FROM quantiles WHERE 1 = 0
+----
+NULL
+
+# empty list
+query I
+SELECT quantile_disc(r, ARRAY[]) FROM quantiles
+----
+{}
+
+# Oracle boundaries
+query I
+SELECT quantile_disc(col, ARRAY[0.1, 0.32, 0.33, 0.34, 0.49, 0.5, 0.51, 0.75, 0.9, 0.999, 1])
+FROM (SELECT 0 col UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 10)
+----
+{0.000000,1.000000,1.000000,1.000000,1.000000,1.000000,2.000000,2.000000,10.000000,10.000000,10.000000}
+
+# 0.07 * 100 evaluates to 7.000000000000001, yet the 7th of 100 values has the
+# cumulative distribution 7 / 100 = 0.07 (DuckDB returns [7, 14, 28, 55, 56])
+query I
+SELECT quantile_disc(x, ARRAY[0.07, 0.14, 0.28, 0.55, 0.56]) FROM long_sequence(100)
+----
+{7.000000,14.000000,28.000000,55.000000,56.000000}
+
+query I
+SELECT quantile_disc(x, ARRAY[0.07, 0.14, 0.28, 0.55, 0.56]) OVER () FROM long_sequence(100) LIMIT 1
+----
+{7.000000,14.000000,28.000000,55.000000,56.000000}
+
+query I
+SELECT quantile_disc(42::byte, 0.5)
+----
+42
+
+# Array arguments: the result keeps the order of the quantiles
+query I
+SELECT quantile_disc(col, ARRAY[0.5, 0.4, 0.1]) AS percentile
+FROM (SELECT 0 col UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 10)
+----
+{1.000000,1.000000,0.000000}
+
+# Invalid use
+statement error
+SELECT quantile_disc(r, ARRAY[-0.1, 0.5, 0.9]) FROM quantiles
+
+statement error
+SELECT quantile_disc(r, ARRAY[0.1, 0.5, 1.1]) FROM quantiles
+
+statement error
+SELECT quantile_disc(r, ARRAY[0.1, 0.5, NULL]) FROM quantiles
+
+statement error
+SELECT quantile_disc(r, ARRAY[0.1, 0.5, 0.9], 50) FROM quantiles

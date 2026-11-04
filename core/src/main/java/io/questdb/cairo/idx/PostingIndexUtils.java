@@ -430,6 +430,15 @@ public final class PostingIndexUtils {
         return path.$();
     }
 
+    /**
+     * The posting column name txn {@link #scanSealedFiles} reports for a cover data file of the given name txn. The
+     * file name writes no name txn as 0, so name txn 0 reads back as no name txn: compare a scanned cover data file
+     * against this, not against the column's name txn.
+     */
+    public static long coverFilePostingColumnNameTxn(long postingColumnNameTxn) {
+        return postingColumnNameTxn == 0 ? COLUMN_NAME_TXN_NONE : postingColumnNameTxn;
+    }
+
     public static LPSZ coverInfoFileName(Path path, CharSequence name, long postingColumnNameTxn) {
         path.concat(name).put(".pci");
         if (postingColumnNameTxn > COLUMN_NAME_TXN_NONE) {
@@ -1677,6 +1686,7 @@ public final class PostingIndexUtils {
             long postingColumnNameTxn
     ) {
         final boolean[] anyFailed = {false};
+        final long coverFilePostingColumnNameTxn = coverFilePostingColumnNameTxn(postingColumnNameTxn);
         LPSZ pciFile = coverInfoFileName(path.trimTo(pathTrimTo), columnName, postingColumnNameTxn);
         if (ff.exists(pciFile) && !ff.removeQuiet(pciFile) && ff.exists(pciFile)) {
             anyFailed[0] = true;
@@ -1685,7 +1695,7 @@ public final class PostingIndexUtils {
         scanSealedFiles(ff, path, pathTrimTo, columnName, new SealedFileVisitor() {
             @Override
             public void onCoverDataFile(int includeIdx, long filePostingColumnNameTxn, long coveredColumnNameTxn, long sealTxn) {
-                if (filePostingColumnNameTxn != postingColumnNameTxn) {
+                if (filePostingColumnNameTxn != coverFilePostingColumnNameTxn) {
                     return;
                 }
                 LPSZ p = coverDataFileName(path.trimTo(pathTrimTo), columnName, includeIdx, filePostingColumnNameTxn, coveredColumnNameTxn, sealTxn);
@@ -1729,6 +1739,24 @@ public final class PostingIndexUtils {
             parseSealedFileName(fileName, columnName, visitor);
         });
         path.trimTo(pathTrimTo);
+    }
+
+    /**
+     * Returns the preferred FLAT width, or zero for DELTA. FLAT uses int-sized
+     * counts and buffers; DELTA has long stride offsets and can exceed that limit.
+     */
+    public static int selectFlatBitWidth(long valueCount, int naturalBitWidth, int alignedBitWidth, int flatHeaderSize, long deltaSize) {
+        if (valueCount > Integer.MAX_VALUE) {
+            return 0;
+        }
+        // Prefer aligned FLAT when it fits and beats DELTA, even if natural
+        // FLAT is smaller. Include the header before checking the int limit.
+        long alignedFlatSize = flatHeaderSize + (valueCount * alignedBitWidth + 7) / 8;
+        if (alignedFlatSize <= Integer.MAX_VALUE && alignedFlatSize < deltaSize) {
+            return alignedBitWidth;
+        }
+        long naturalFlatSize = flatHeaderSize + (valueCount * naturalBitWidth + 7) / 8;
+        return naturalFlatSize <= Integer.MAX_VALUE && naturalFlatSize < deltaSize ? naturalBitWidth : 0;
     }
 
     /**
@@ -1903,7 +1931,7 @@ public final class PostingIndexUtils {
      * Files that do not match (different column, .pk, .pci, partition data, etc.)
      * are silently ignored.
      */
-    private static void parseSealedFileName(CharSequence fileName, CharSequence columnName, SealedFileVisitor visitor) {
+    public static void parseSealedFileName(CharSequence fileName, CharSequence columnName, SealedFileVisitor visitor) {
         int nameLen = columnName.length();
         int fileLen = fileName.length();
         if (fileLen < nameLen + 4) {

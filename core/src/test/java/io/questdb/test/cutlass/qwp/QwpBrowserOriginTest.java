@@ -24,10 +24,15 @@
 
 package io.questdb.test.cutlass.qwp;
 
+import io.questdb.cutlass.qwp.server.QwpBrowserAllowedOrigins;
+import io.questdb.cutlass.qwp.server.QwpBrowserAuthorization;
 import io.questdb.cutlass.qwp.server.QwpIngressHttpProcessor;
+import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Utf8String;
 import org.junit.Assert;
 import org.junit.Test;
+
+import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 public class QwpBrowserOriginTest {
 
@@ -55,6 +60,126 @@ public class QwpBrowserOriginTest {
                 new Utf8String("[::1]:9000"),
                 false
         ));
+    }
+
+    @Test
+    public void testAllowedOriginsConfigurationAcceptsBrowserSerializedOrigins() {
+        // Each value is exactly what a browser sends in the Origin header, so it
+        // must load and then match that header byte for byte.
+        for (String value : new String[]{
+                "https://app.example.com", "http://localhost:3000", "https://app.example.com:8443",
+                "http://my_app:3000", "https://my_app.example.com", "https://_app.example.com",
+                "https://xn--bcher-kva.example", "https://app.example.com.", "http://127.0.0.1:3000",
+                "http://10.0.0.255", "https://[::1]:8443", "https://[2001:db8::1]", "http://[::ffff:7f00:1]:3000",
+                "http://[2001:db8:0:1:1:1:1:1]", "http://[2001:db8::1:0:0:1]", "http://[1::]"
+        }) {
+            QwpBrowserAllowedOrigins allowed = QwpBrowserAllowedOrigins.parse(value);
+            Assert.assertTrue(value, allowed.isAllowed(new Utf8String(value)));
+        }
+    }
+
+    @Test
+    public void testAllowedOriginsConfigurationNamesCanonicalForm() {
+        assertRejectedWith("https://App.Example.com", "browsers send https://app.example.com");
+        assertRejectedWith("https://app.example.com:443", "browsers send https://app.example.com");
+        assertRejectedWith("http://localhost:80", "browsers send http://localhost");
+        assertRejectedWith("http://[0:0:0:0:0:0:0:1]:3000", "browsers send [::1]");
+        assertRejectedWith("https://[2001:DB8::1]", "browsers send [2001:db8::1]");
+        assertRejectedWith("http://127.000.000.001:3000", "not in canonical dotted-decimal form");
+        assertRejectedWith("https://app.example.com,", "empty entry, check for a stray comma");
+        assertRejectedWith("https://a.example.com, ,https://b.example.com", "empty entry, check for a stray comma");
+    }
+
+    @Test
+    public void testAllowedOriginsConfigurationRejectsNonOrigins() {
+        for (String value : new String[]{
+                ",", "https://app.example.com,", ",https://app.example.com",
+                "https://*.example.com", "*", "null", "file://app.example.com",
+                "https://", "https://user@app.example.com", "https://app.example.com/",
+                "https://app.example.com/path", "https://app.example.com?x=1",
+                "https://app.example.com#frag", "https://app.example.com:0",
+                "https://app.example.com:65536", "https://app.example.com:",
+                "https://app.example.com:0443", "https://app.example.com:bad",
+                "https://app.example.com evil", "https://app.example.com\r\n",
+                // written differently from what a browser sends, so it could never match
+                "https://App.Example.com", "https://XN--bcher-kva.example", "HTTPS://app.example.com",
+                "https://app.example.com:443", "http://localhost:80", "http://[::1]:80",
+                "http://[0:0:0:0:0:0:0:1]:3000", "http://[::0:1]:3000", "http://[0::1]:3000",
+                "https://[2001:DB8::1]", "https://[2001:0db8::1]", "https://[2001:db8:0:0:1:0:0:1]",
+                "http://[1:0::]", "http://[::ffff:127.0.0.1]:3000", "http://[fe80::1%25en0]:3000",
+                "http://127.000.000.001:3000", "http://2130706433:3000", "http://0177.0.0.1:3000",
+                "http://127.1:3000", "http://0x7f.0.0.1:3000", "http://127.0.0.1.:3000", "http://256.0.0.1",
+                "https://app..example.com", "https://.app.example.com", "https://[::1", "https://[::1]x"
+        }) {
+            try {
+                QwpBrowserAllowedOrigins.parse(value);
+                Assert.fail("accepted invalid browser origin config: " + value);
+            } catch (IllegalArgumentException expected) {
+                // A bad entry must fail the entire configuration, not silently widen the policy.
+            }
+        }
+        Assert.assertSame(QwpBrowserAllowedOrigins.EMPTY, QwpBrowserAllowedOrigins.parse(""));
+        Assert.assertSame(QwpBrowserAllowedOrigins.EMPTY, QwpBrowserAllowedOrigins.parse("  "));
+    }
+
+    @Test
+    public void testAuthorizationSubprotocolDecoding() throws Exception {
+        assertMemoryLeak(() -> {
+            String value = "Bearer abc123";
+            String credential = QwpWireTestFixtures.browserCredentialProtocol(value);
+            try (DirectUtf8Sink out = new DirectUtf8Sink(64)) {
+                Assert.assertTrue(QwpBrowserAuthorization.decode(new Utf8String("questdb.qwp.v1, " + credential), out));
+                Assert.assertEquals(value, out.toString());
+                for (String offer : new String[]{
+                        credential + ", " + credential, "questdb.qwp.authorization.",
+                        "questdb.qwp.authorization.!", credential + "=",
+                        QwpWireTestFixtures.browserCredentialProtocol("Basic abc\r\nX: 1")
+                }) {
+                    out.clear();
+                    Assert.assertTrue(QwpBrowserAuthorization.hasCredential(new Utf8String(offer)));
+                    Assert.assertFalse(offer, QwpBrowserAuthorization.decode(new Utf8String(offer), out));
+                }
+                Assert.assertFalse(QwpBrowserAuthorization.hasCredential(new Utf8String("questdb.qwp.v1")));
+            }
+        });
+    }
+
+    @Test
+    public void testAuthorizationSubprotocolTokenBoundaries() throws Exception {
+        // hasCredential, decode and containsWebSocketProtocol split the offer the
+        // same way: tokens end at commas, spaces and tabs around a token are
+        // ignored, and empty or blank tokens are skipped.
+        assertMemoryLeak(() -> {
+            String value = "Basic YWRtaW46cXVlc3Q=";
+            String credential = QwpWireTestFixtures.browserCredentialProtocol(value);
+            Utf8String qwpV1 = QwpIngressHttpProcessor.WEBSOCKET_PROTOCOL_QWP_V1;
+            try (DirectUtf8Sink out = new DirectUtf8Sink(64)) {
+                Utf8String padded = new Utf8String(",, \t," + credential + " \t, ,\tquestdb.qwp.v1 ,");
+                Assert.assertTrue(QwpBrowserAuthorization.hasCredential(padded));
+                Assert.assertTrue(QwpBrowserAuthorization.decode(padded, out));
+                Assert.assertEquals(value, out.toString());
+                Assert.assertTrue(QwpIngressHttpProcessor.containsWebSocketProtocol(padded, qwpV1));
+
+                out.clear();
+                Utf8String duplicate = new Utf8String(credential + ", ,\t," + credential);
+                Assert.assertTrue(QwpBrowserAuthorization.hasCredential(duplicate));
+                Assert.assertFalse(QwpBrowserAuthorization.decode(duplicate, out));
+
+                for (String offer : new String[]{
+                        "", " , \t,", "questdb.qwp.authorization", "x-" + credential,
+                        "questdb.qwp.v1 " + credential, "questdb.qwp.v1;" + credential
+                }) {
+                    out.clear();
+                    Utf8String protocols = new Utf8String(offer);
+                    Assert.assertFalse(offer, QwpBrowserAuthorization.hasCredential(protocols));
+                    Assert.assertFalse(offer, QwpBrowserAuthorization.decode(protocols, out));
+                    Assert.assertFalse(offer, QwpIngressHttpProcessor.containsWebSocketProtocol(protocols, qwpV1));
+                }
+                for (String offer : new String[]{"questdb.qwp.v1", "\tquestdb.qwp.v1\t,", ",questdb.qwp.v1", "a, ,questdb.qwp.v1"}) {
+                    Assert.assertTrue(offer, QwpIngressHttpProcessor.containsWebSocketProtocol(new Utf8String(offer), qwpV1));
+                }
+            }
+        });
     }
 
     @Test
@@ -161,5 +286,14 @@ public class QwpBrowserOriginTest {
                 new Utf8String("questdb.example.com"),
                 true
         ));
+    }
+
+    private static void assertRejectedWith(String value, String expectedReason) {
+        try {
+            QwpBrowserAllowedOrigins.parse(value);
+            Assert.fail("accepted invalid browser origin config: " + value);
+        } catch (IllegalArgumentException e) {
+            Assert.assertTrue(e.getMessage(), e.getMessage().contains(expectedReason));
+        }
     }
 }

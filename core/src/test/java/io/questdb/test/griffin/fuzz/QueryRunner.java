@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.fuzz;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
@@ -45,6 +46,7 @@ import io.questdb.griffin.engine.groupby.GroupByNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncHashJoinGroupByRecordCursorFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.MemoryTag;
@@ -53,6 +55,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.cairo.Overrides;
 import io.questdb.test.cairo.fuzz.FailureFileFacade;
 import io.questdb.test.griffin.fuzz.FuzzTableFactory.ParquetMode;
 
@@ -96,6 +99,26 @@ import java.util.regex.Pattern;
  *       and compares the two materializations at JIT-off. Catches
  *       silent storage divergences across native/parquet partitions and
  *       across indexed/non-indexed symbol columns.</li>
+ *   <li>{@code diffFused} runs a {@link QueryShape#HASH_JOIN_GROUP_BY} query
+ *       on the primary at JIT-off a second time with the fused hash join
+ *       GROUP BY disabled and compares it with the pivot, which may use the
+ *       fused plan. Catches a fused planner that accepts a query it cannot
+ *       answer, or a fused operator that answers it wrong: either returns the
+ *       same wrong rows on every other axis, because every other axis runs
+ *       the fused plan on both sides.</li>
+ *   <li>the map page axis, on when the runner gets the engine's
+ *       {@link Overrides}, runs every query on the primary at JIT-off once
+ *       more, and an equi-join GROUP BY query several more times, with
+ *       {@code cairo.sql.small.map.page.size} cut to a few hundred bytes at
+ *       most, and compares each run with the pivot. When the pivot
+ *       used the fused hash join GROUP BY, it also reruns the fused axis's
+ *       ordinary run with the small page and compares the two ordinary runs.
+ *       The fuzz tables hold at most 150 rows, so with the default page no
+ *       map ever grows; with a small one the maps grow while operators hold
+ *       cursors and flyweights into them. Catches an operator that keeps an
+ *       address into a map across a call that can grow it, such as the RIGHT
+ *       and FULL hash joins that iterated a stale map cursor over their
+ *       unmatched build rows after the probe grew the key map.</li>
  * </ul>
  * The two modes share a pivot: {@code primary @ JIT-off}. With both
  * enabled, three runs per query are required (primary @ JIT-on,
@@ -156,6 +179,23 @@ public final class QueryRunner {
     private static final int FAULT_MAX_FILE_OPS = 48;
     private static final int FAULT_MAX_FN_CALLS = 40;
     private static final long FAULT_MEM_LEAK_SLACK = 256 * 1024;
+    // The map page axis draws its page size from [MAP_PAGE_SIZE_MIN, MAP_PAGE_SIZE_MIN +
+    // MAP_PAGE_SIZE_RANGE). A map whose heap grows by doubling ends a build exactly full at one
+    // entry count per doubling, and the page size decides which counts those are, so a spread of
+    // page sizes, most of them not a power of two, varies the counts across queries. A page that
+    // is not a multiple of 8 also leaves OrderedMap's 8-byte aligned append position past the end
+    // of a small heap, so the next lookup grows the map whatever the entry count.
+    private static final int MAP_PAGE_SIZE_MIN = 8;
+    private static final int MAP_PAGE_SIZE_RANGE = 505;
+    // Page sizes the map page axis tries on an equi-join GROUP BY query, against one on any other
+    // query. A RIGHT or FULL hash join grows its key map on the probe only when the build left the
+    // heap all but full, which happens at one build key count per doubling of the heap, so a page
+    // size catches it on roughly one build of N keys in N. Each page size moves those counts.
+    private static final int MAP_PAGE_VARIANTS_HASH_JOIN = 12;
+    // A map page that cannot hold one entry fails the query with a configuration error. The axis
+    // doubles the page up to this many times, so it runs with a page just above the entry size.
+    private static final int MAP_PAGE_MAX_DOUBLINGS = 10;
+    private final boolean diffFused;
     private final boolean diffJit;
     private final boolean diffShadow;
     private final CairoEngine engine;
@@ -171,9 +211,23 @@ public final class QueryRunner {
     // the armed-vs-fired ratio measures how often each fault kind actually bites.
     private final int[] faultsArmedByType = new int[FaultType.values().length];
     // Count of injected faults that actually fired (vs armed but not reached).
+    // Successful runs, on any axis, whose plan picks the build of an INNER fused hash join GROUP BY
+    // per execution. It shows that the generator's interval conjuncts reach that plan.
+    private int buildChoiceRuns;
     private int faultsFired;
     // Per-type count of faults that actually fired, indexed by FaultType.ordinal().
     private final int[] faultsFiredByType = new int[FaultType.values().length];
+    // Null disables the map page axis.
+    private final Overrides mapPageOverrides;
+    // Comparisons the map page axis ran: one per page size it tried on a differential query, and
+    // as many again on a query whose pivot used the fused hash join GROUP BY.
+    private int mapPageAxisRuns;
+    // Queries on which the fused axis compared two runs, those among them whose pivot compiled
+    // and ran, and those whose pivot used the fused hash join GROUP BY. Only the last compare two
+    // different plans, so they are what keeps the axis from going vacuous.
+    private int fusedAxisCompletedRuns;
+    private int fusedAxisRuns;
+    private int fusedAxisSelected;
     private final TextPlanSink planSink = new TextPlanSink();
     private final boolean primaryHasAnyParquet;
     private final Pattern[] primaryPatterns;
@@ -184,6 +238,8 @@ public final class QueryRunner {
     private final StringSink rowsB = new StringSink();
     private final StringSink rowsC = new StringSink();
     private final StringSink rowsD = new StringSink();
+    private final StringSink rowsE = new StringSink();
+    private final StringSink rowsF = new StringSink();
     // Scratch sink for the toTop() re-iteration pass; compared against the
     // first pass to confirm the cursor reproduces its result set on rewind.
     private final StringSink rowsToTop = new StringSink();
@@ -196,12 +252,16 @@ public final class QueryRunner {
             SqlExecutionContext executionContext,
             boolean diffJit,
             boolean diffShadow,
+            boolean diffFused,
+            Overrides mapPageOverrides,
             boolean verifyCursor,
             ObjList<FuzzTable> tables,
             String queryWorkerNamePrefix
     ) {
         this.engine = engine;
         this.executionContext = executionContext;
+        this.diffFused = diffFused;
+        this.mapPageOverrides = mapPageOverrides;
         this.diffJit = diffJit;
         this.diffShadow = diffShadow;
         this.verifyCursor = verifyCursor;
@@ -257,6 +317,44 @@ public final class QueryRunner {
 
     public int getFaultsFired(FaultType type) {
         return faultsFiredByType[type.ordinal()];
+    }
+
+    public int getBuildChoiceRuns() {
+        return buildChoiceRuns;
+    }
+
+    /**
+     * Queries on which the fused axis ran and the pivot, the run with the fused hash join GROUP BY
+     * enabled, returned rows rather than an error. A generated query that fails to compile fails
+     * in both plans alike, so it says nothing about whether the planner still selects the fused
+     * plan; a fused plan that fails where the ordinary one does not is a divergence instead.
+     */
+    public int getFusedAxisCompletedRuns() {
+        return fusedAxisCompletedRuns;
+    }
+
+    /**
+     * Queries on which the fused axis ran: a {@link QueryShape#HASH_JOIN_GROUP_BY} query, with
+     * the axis enabled and the fused hash join GROUP BY available to the pivot.
+     */
+    public int getFusedAxisRuns() {
+        return fusedAxisRuns;
+    }
+
+    /**
+     * Queries on which the fused axis compared the fused plan against the ordinary plan: the
+     * pivot compiled to the fused hash join GROUP BY and the second run to the ordinary plan.
+     */
+    public int getFusedAxisSelected() {
+        return fusedAxisSelected;
+    }
+
+    /**
+     * Comparisons the map page axis ran, against the pivot and, for a query whose pivot used the
+     * fused hash join GROUP BY, against the fused axis's ordinary run.
+     */
+    public int getMapPageAxisRuns() {
+        return mapPageAxisRuns;
     }
 
     /**
@@ -777,17 +875,40 @@ public final class QueryRunner {
     }
 
     /**
+     * Appends one materialized cell with its own tabs, newlines, carriage returns and backslashes
+     * escaped. The comparisons split rows on newlines and cells on tabs, so a CHAR of code 9 or 10,
+     * or a string holding one, would otherwise shift every cell after it, and the floating-point
+     * tolerance would compare a DOUBLE cell against an integer column's exact rule. Both sides of a
+     * comparison escape alike, so exact comparisons do not change.
+     */
+    static void appendCell(StringSink rows, CharSequence cell) {
+        for (int i = 0, n = cell.length(); i < n; i++) {
+            final char c = cell.charAt(i);
+            switch (c) {
+                case '\t' -> rows.put("\\t");
+                case '\n' -> rows.put("\\n");
+                case '\r' -> rows.put("\\r");
+                case '\\' -> rows.put("\\\\");
+                default -> rows.put(c);
+            }
+        }
+    }
+
+    /**
      * Iterates {@code cursor} to exhaustion, appending one tab-separated line per
      * row to {@code rows} via {@link CursorPrinter#printColumn}, and returns the
      * row count. Shared by the first pass and the {@link #checkToTop} re-iteration
-     * so both materialize identically.
+     * so both materialize identically. Each cell goes through {@link #appendCell}.
      */
     private static int materialize(RecordCursor cursor, RecordMetadata metadata, int columnCount, StringSink rows) {
         Record record = cursor.getRecord();
+        final StringSink cell = new StringSink();
         int rowsRead = 0;
         while (cursor.hasNext()) {
             for (int i = 0; i < columnCount; i++) {
-                CursorPrinter.printColumn(record, metadata, i, rows, false);
+                cell.clear();
+                CursorPrinter.printColumn(record, metadata, i, cell, false);
+                appendCell(rows, cell);
                 rows.put('\t');
             }
             rows.put('\n');
@@ -801,7 +922,7 @@ public final class QueryRunner {
      * Markers come from the {@code sink.type(...)} calls in QuestDB's
      * cursor factories: "Index forward scan" / "Index backward scan",
      * "Async index backward scan", "AsOf Join Indexed Scan",
-     * "SortedSymbolIndex", "LatestByAllIndexed" for the bitmap index, plus
+     * "LatestByAllIndexed" for the bitmap index, plus
      * "PostingIndex" (distinct-key enumeration) and "CoveringIndex"
      * (covering reads) for the posting index. These are the operators
      * that probe an index instead of scanning every page frame
@@ -813,10 +934,38 @@ public final class QueryRunner {
         int n = plan.length();
         return Chars.indexOf(plan, 0, n, "Index ") >= 0
                 || Chars.indexOf(plan, 0, n, "Indexed") >= 0
-                || Chars.indexOf(plan, 0, n, "SortedSymbolIndex") >= 0
                 || Chars.indexOf(plan, 0, n, "Async index") >= 0
                 || Chars.indexOf(plan, 0, n, "PostingIndex") >= 0
                 || Chars.indexOf(plan, 0, n, "CoveringIndex") >= 0;
+    }
+
+    /**
+     * Detects whether a rendered plan uses the fused hash join GROUP BY. The substring matches
+     * both type names the operator prints: {@code Async Hash Join Group By}, and
+     * {@code Async JIT Hash Join Group By} for a compiled probe filter.
+     */
+    static boolean isFusedHashJoinPlan(CharSequence plan) {
+        return Chars.indexOf(plan, 0, plan.length(), "Hash Join Group By") >= 0;
+    }
+
+    // The SplitMix64 finalizer over the SQL text's hash and the salt, so that neighbouring salts
+    // land on unrelated page sizes.
+    private static long mapPageSize(String sql, int salt) {
+        long h = sql.hashCode() * 0x9E3779B97F4A7C15L + salt;
+        h = (h ^ (h >>> 30)) * 0xBF58476D1CE4E5B9L;
+        h = (h ^ (h >>> 27)) * 0x94D049BB133111EBL;
+        h ^= h >>> 31;
+        return MAP_PAGE_SIZE_MIN + Math.floorMod(h, MAP_PAGE_SIZE_RANGE);
+    }
+
+    // OrderedMap rejects a page that cannot hold a single entry when the operator builds it.
+    private static boolean isMapPageTooSmall(Outcome outcome) {
+        return outcome.failure != null && outcome.exceptionMessage.contains("page size is too small to fit a single key");
+    }
+
+    // HashJoinGroupByClause spells the join out in upper case.
+    private static boolean isFullJoin(GeneratedQuery query) {
+        return query.shape() == QueryShape.HASH_JOIN_GROUP_BY && query.sql().contains(" FULL JOIN ");
     }
 
     /**
@@ -842,7 +991,8 @@ public final class QueryRunner {
     /**
      * Detects whether the consumption spine of {@code factory} (the root and its
      * base-factory chain) contains a blocking aggregation -- a {@code count(*)},
-     * keyed or non-keyed {@code GROUP BY} (serial or async) -- that drains every
+     * keyed or non-keyed {@code GROUP BY} (serial or async, the fused hash join
+     * GROUP BY included) -- that drains every
      * base row before, or while, producing its output. A downstream {@code LIMIT}
      * over such an operator does not stop the scan: the aggregate must consume the
      * whole input before the {@code LIMIT} can apply, so a fault that fires on any
@@ -869,6 +1019,7 @@ public final class QueryRunner {
             } else if (factory instanceof CountRecordCursorFactory
                     || factory instanceof AsyncGroupByNotKeyedRecordCursorFactory
                     || factory instanceof AsyncGroupByRecordCursorFactory
+                    || factory instanceof AsyncHashJoinGroupByRecordCursorFactory
                     || factory instanceof GroupByRecordCursorFactory) {
                 return true;
             }
@@ -1333,6 +1484,118 @@ public final class QueryRunner {
     }
 
     /**
+     * The fused axis applies to the equi-join GROUP BY shape only, and only when the fused hash
+     * join GROUP BY is available to the pivot. The serial control arm disables parallel GROUP BY
+     * and with it the fused plan, so both runs would compile to the same ordinary plan there,
+     * and the axis skips it. {@link SqlExecutionContext#isParallelHashJoinGroupByEnabled()} also
+     * requires parallel GROUP BY and query workers, so its true value implies that the context's
+     * own flag is set, which is the value {@link #runFusedVariant} restores.
+     */
+    private boolean isFusedAxisApplicable(GeneratedQuery query) {
+        return diffFused
+                && query.shape() == QueryShape.HASH_JOIN_GROUP_BY
+                && executionContext.isParallelHashJoinGroupByEnabled();
+    }
+
+    /**
+     * Reconciles {@code bF}, the run with the fused hash join GROUP BY disabled (see
+     * {@link #runFusedOff}), against the pivot {@code bJ}, which ran with it enabled. The run with
+     * the fused plan disabled must not render the fused operator, or the axis compares a plan with
+     * itself and proves nothing; that is a harness failure, reported as such.
+     */
+    private Result runFusedVariant(GeneratedQuery query, Outcome bJ, Outcome bF) {
+        fusedAxisRuns++;
+        if (bF.hasFusedHashJoin) {
+            return Result.failed(query.sql(), new AssertionError(
+                    "the fused hash join GROUP BY is disabled but the plan still uses it: " + query.sql()));
+        }
+        if (isFullJoin(query)) {
+            // The fused planner accepts INNER, LEFT and RIGHT joins only, so both runs of a FULL
+            // join take the ordinary plan. Leaving it out of the counts keeps the selected share
+            // that QueryFuzzTest guards about the joins the planner can fuse.
+            if (bJ.hasFusedHashJoin) {
+                return Result.failed(query.sql(), new AssertionError(
+                        "the fused hash join GROUP BY ran a FULL join, which it does not support: " + query.sql()));
+            }
+        } else if (bJ.failure == null) {
+            fusedAxisCompletedRuns++;
+            if (bJ.hasFusedHashJoin) {
+                fusedAxisSelected++;
+            }
+        }
+        return reconcilePair(
+                query.sql(),
+                bJ,
+                bF,
+                rowsB,
+                rowsE,
+                query.deterministic(),
+                "fused hash join GROUP BY divergence",
+                "fused on ",
+                "fused off"
+        );
+    }
+
+    /**
+     * Runs the query on the primary at JIT-off with the fused hash join GROUP BY disabled into
+     * {@code rowsE}: the second run of the fused axis.
+     */
+    private Outcome runFusedOff(GeneratedQuery query) {
+        executionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+        executionContext.setParallelHashJoinGroupByEnabled(false);
+        try {
+            return runOnce(query.sql(), rowsE, primaryHasAnyParquet, query.deterministic());
+        } finally {
+            executionContext.setParallelHashJoinGroupByEnabled(true);
+        }
+    }
+
+    /**
+     * Runs the query on the primary at JIT-off with a small map page and reconciles it against
+     * {@code reference}, the same run with the default page. With {@code isFusedOff} the run also
+     * disables the fused hash join GROUP BY and the reference is the fused axis's ordinary run;
+     * that is the only way the ordinary hash join of a query that fuses gets a small page. The
+     * page size derives from the SQL text and {@code salt}, so a replayed seed reruns every query
+     * with the same pages, and each run of one query gets its own.
+     */
+    private Result runMapPageVariant(GeneratedQuery query, Outcome reference, StringSink referenceRows, boolean isFusedOff, int salt) {
+        final String sql = query.sql();
+        long pageSize = mapPageSize(sql, salt);
+        executionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+        if (isFusedOff) {
+            executionContext.setParallelHashJoinGroupByEnabled(false);
+        }
+        Outcome small;
+        try {
+            for (int i = 0; ; i++) {
+                mapPageOverrides.setProperty(PropertyKey.CAIRO_SQL_SMALL_MAP_PAGE_SIZE, pageSize);
+                small = runOnce(sql, rowsF, primaryHasAnyParquet, query.deterministic());
+                if (i == MAP_PAGE_MAX_DOUBLINGS || !isMapPageTooSmall(small)) {
+                    break;
+                }
+                pageSize *= 2;
+            }
+        } finally {
+            mapPageOverrides.setProperty(PropertyKey.CAIRO_SQL_SMALL_MAP_PAGE_SIZE, (String) null);
+            if (isFusedOff) {
+                executionContext.setParallelHashJoinGroupByEnabled(true);
+            }
+        }
+        mapPageAxisRuns++;
+        return reconcilePair(
+                sql,
+                reference,
+                small,
+                referenceRows,
+                rowsF,
+                query.deterministic(),
+                isFusedOff ? "map page divergence (fused off)" : "map page divergence",
+                "default page",
+                "page of " + pageSize + "B"
+        );
+    }
+
+    /**
      * Runs the bind-variable form of the query and reconciles it against the
      * literal form's pivots. Bind variables are set via {@code setStr} keyed
      * by name (the {@code :bN} placeholders generated by
@@ -1434,7 +1697,11 @@ public final class QueryRunner {
             // hasPushedLimit / hasEarlyExitGroupBy only feed the fault oracle's
             // swallow check (runFault), which runs runRaw / runRawMallocFault, not
             // this differential path.
-            return Outcome.ok(rowsRead, planUsesIndex(planSink.getSink()), false, false, false, usesParquet, fpColumnMask);
+            final CharSequence plan = planSink.getSink();
+            if (Chars.indexOf(plan, 0, plan.length(), "Hash Join Group By Build Choice") >= 0) {
+                buildChoiceRuns++;
+            }
+            return Outcome.ok(rowsRead, planUsesIndex(plan), usesParquet, isFusedHashJoinPlan(plan), fpColumnMask);
         } catch (CursorCheckException e) {
             throw e;
         } catch (SqlException e) {
@@ -1456,16 +1723,16 @@ public final class QueryRunner {
 
     private Result runQuery(GeneratedQuery query) {
         String sql = query.sql();
-        if (!diffJit && !diffShadow && !query.hasBind()) {
+        if (!diffJit && !diffShadow && !isFusedAxisApplicable(query) && mapPageOverrides == null && !query.hasBind()) {
             Outcome outcome = runOnce(sql, rowsA, primaryHasAnyParquet, query.deterministic());
             return toResult(sql, outcome);
         }
         int prevJitMode = executionContext.getJitMode();
         try {
             // Pivot: primary at JIT-off. The pivot is the right-hand side of
-            // the JIT comparison and the left-hand side of the storage and
-            // bind-variable comparisons, so it runs whenever any of the three
-            // diffs is on.
+            // the JIT comparison and the left-hand side of the storage,
+            // fused, map page and bind-variable comparisons, so it runs whenever
+            // any of the five diffs is on.
             executionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
             Outcome bJ = runOnce(sql, rowsB, primaryHasAnyParquet, query.deterministic());
 
@@ -1498,6 +1765,32 @@ public final class QueryRunner {
                 );
                 if (storageResult.isFailed()) {
                     return storageResult;
+                }
+            }
+
+            Outcome bF = null;
+            if (isFusedAxisApplicable(query)) {
+                bF = runFusedOff(query);
+                Result fusedResult = runFusedVariant(query, bJ, bF);
+                if (fusedResult.isFailed()) {
+                    return fusedResult;
+                }
+            }
+
+            if (mapPageOverrides != null) {
+                final int variants = query.shape() == QueryShape.HASH_JOIN_GROUP_BY ? MAP_PAGE_VARIANTS_HASH_JOIN : 1;
+                for (int i = 0; i < variants; i++) {
+                    Result pageResult = runMapPageVariant(query, bJ, rowsB, false, i);
+                    if (pageResult.isFailed()) {
+                        return pageResult;
+                    }
+                    // A pivot that took the ordinary plan already ran it with the small page.
+                    if (bF != null && bJ.hasFusedHashJoin) {
+                        pageResult = runMapPageVariant(query, bF, rowsE, true, variants + i);
+                        if (pageResult.isFailed()) {
+                            return pageResult;
+                        }
+                    }
                 }
             }
 
@@ -1628,6 +1921,7 @@ public final class QueryRunner {
             boolean hasEarlyExitGroupBy,
             boolean hasBlockingAggregation,
             boolean usesParquet,
+            boolean hasFusedHashJoin,
             boolean[] fpColumnMask,
             Throwable failure,
             String exceptionClass,
@@ -1635,15 +1929,15 @@ public final class QueryRunner {
     ) {
 
         static Outcome error(Throwable t, String message, boolean usesParquet) {
-            return new Outcome(0, false, false, false, false, usesParquet, EMPTY_FP_MASK, t, t.getClass().getSimpleName(), message);
+            return new Outcome(0, false, false, false, false, usesParquet, false, EMPTY_FP_MASK, t, t.getClass().getSimpleName(), message);
         }
 
         static Outcome ok(int rowsRead, boolean hasIndex, boolean hasPushedLimit, boolean hasEarlyExitGroupBy, boolean hasBlockingAggregation, boolean usesParquet) {
-            return ok(rowsRead, hasIndex, hasPushedLimit, hasEarlyExitGroupBy, hasBlockingAggregation, usesParquet, EMPTY_FP_MASK);
+            return new Outcome(rowsRead, hasIndex, hasPushedLimit, hasEarlyExitGroupBy, hasBlockingAggregation, usesParquet, false, EMPTY_FP_MASK, null, null, null);
         }
 
-        static Outcome ok(int rowsRead, boolean hasIndex, boolean hasPushedLimit, boolean hasEarlyExitGroupBy, boolean hasBlockingAggregation, boolean usesParquet, boolean[] fpColumnMask) {
-            return new Outcome(rowsRead, hasIndex, hasPushedLimit, hasEarlyExitGroupBy, hasBlockingAggregation, usesParquet, fpColumnMask, null, null, null);
+        static Outcome ok(int rowsRead, boolean hasIndex, boolean usesParquet, boolean hasFusedHashJoin, boolean[] fpColumnMask) {
+            return new Outcome(rowsRead, hasIndex, false, false, false, usesParquet, hasFusedHashJoin, fpColumnMask, null, null, null);
         }
     }
 

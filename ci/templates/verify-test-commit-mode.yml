@@ -1,0 +1,43 @@
+# Proves which commit mode the tests of this job ran under, after they ran, pass or fail.
+# Keep this file identical in questdb and questdb-enterprise.
+#
+# Surefire writes the system properties of the test JVM into every TEST-*.xml report, and the
+# suite's mode is exactly the questdb.test.commit.mode property (Overrides.TEST_COMMIT_MODE). The
+# step fails the job if any test class ran under a mode other than the one
+# select-test-commit-mode.yml chose, so the mode in the log is a fact, not an intent.
+steps:
+  - bash: |
+      set -euo pipefail
+      case "$EXPECTED" in
+        adaptive | nosync) ;;
+        *)
+          echo "##vso[task.logissue type=error]select-test-commit-mode.yml did not run in this job"
+          exit 1
+          ;;
+      esac
+      reports=0
+      matched=0
+      mismatches=""
+      while IFS= read -r -d '' report; do
+        reports=$((reports + 1))
+        actual=$(grep -o '<property name="questdb.test.commit.mode" value="[^"]*"' "$report" | head -n 1 | sed 's/.*value="//; s/"$//' || true)
+        if [ "$actual" = "$EXPECTED" ]; then
+          matched=$((matched + 1))
+        else
+          mismatches="$mismatches  $(basename "$report"): ${actual:-property unset, suite default}"$'\n'
+        fi
+      done < <(find . -path '*/target/surefire-reports/TEST-*.xml' -print0)
+      if [ "$reports" -eq 0 ]; then
+        echo "No surefire reports: no test ran in this job."
+        exit 0
+      fi
+      if [ "$matched" -ne "$reports" ]; then
+        echo "##vso[task.logissue type=error]$((reports - matched)) of $reports test classes did not run with commit mode $EXPECTED"
+        printf '%s' "$mismatches" | head -n 50
+        exit 1
+      fi
+      echo "Verified: all $reports test classes ran with commit mode $EXPECTED."
+    displayName: "Verify test commit mode"
+    condition: succeededOrFailed()
+    env:
+      EXPECTED: $(TEST_COMMIT_MODE)

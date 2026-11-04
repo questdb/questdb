@@ -32,6 +32,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.RecordSinkTemplate;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameAddressCache;
@@ -105,8 +106,8 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             @NotNull ObjList<GroupByFunction> groupByFunctions,
             int valueCount,
             @Nullable ColumnTypes asOfJoinKeyTypes,
-            @Nullable Class<RecordSink> masterAsOfJoinMapSinkClass,
-            @Nullable Class<RecordSink> slaveAsOfJoinMapSinkClass,
+            @Nullable RecordSinkTemplate masterAsOfJoinMapSinkTemplate,
+            @Nullable RecordSinkTemplate slaveAsOfJoinMapSinkTemplate,
             int masterColumnCount,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
@@ -144,8 +145,8 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
                     offsets,
                     valueCount,
                     asOfJoinKeyTypes,
-                    masterAsOfJoinMapSinkClass,
-                    slaveAsOfJoinMapSinkClass,
+                    masterAsOfJoinMapSinkTemplate,
+                    slaveAsOfJoinMapSinkTemplate,
                     masterColumnCount,
                     masterSymbolKeyColumnIndices,
                     slaveSymbolKeyColumnIndices,
@@ -194,7 +195,7 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
         } catch (Throwable th) {
             // On a mid-reopen breach, close() drains the partially reopened atom and resets isOpen
             // so the cached factory stays reusable.
-            cursor.close();
+            Misc.free(cursor, th);
             throw th;
         }
     }
@@ -218,6 +219,10 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
         sink.optAttr("values", frameSequence.getAtom().getOwnerGroupByFunctions());
         sink.setMetadata(null);
         sink.child(masterFactory);
+        final Function slaveFilter = frameSequence.getAtom().getSlaveFilter();
+        if (slaveFilter != null) {
+            sink.attr("slave filter").val(slaveFilter, slaveFactory);
+        }
         sink.child(slaveFactory);
     }
 
@@ -396,7 +401,7 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             GroupByFunctionsUpdater functionUpdater,
             SqlExecutionCircuitBreaker circuitBreaker
     ) {
-        final boolean keyedAsOfJoin = asOfJoinMap != null && masterAsOfJoinMapSink != null && slaveAsOfJoinMapSink != null;
+        final boolean keyedAsOfJoin = asOfJoinMap != null;
         final SymbolTranslatingRecord symbolTranslatingRecord =
                 masterKeyRecord instanceof SymbolTranslatingRecord rec ? rec : null;
 
@@ -418,7 +423,7 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             final long masterRowId = baseRowId + masterRowIdx;
 
             final long scaledHorizonTs = scaleTimestamp(horizonTs, masterTsScale);
-            long asOfRowId = slaveTimeFrameHelper.findAsOfRow(scaledHorizonTs);
+            long asOfRowId = slaveTimeFrameHelper.findAsOfRow(scaledHorizonTs, circuitBreaker);
 
             long matchRowId;
             if (keyedAsOfJoin) {
@@ -428,10 +433,11 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
                         masterAsOfJoinMapSink,
                         slaveAsOfJoinMapSink,
                         asOfJoinMap,
-                        symbolTranslatingRecord
+                        symbolTranslatingRecord,
+                        circuitBreaker
                 );
             } else {
-                matchRowId = asOfRowId;
+                matchRowId = slaveTimeFrameHelper.findNotKeyedAsOfMatch(asOfRowId, circuitBreaker);
             }
 
             Record matchedSlaveRecord = null;

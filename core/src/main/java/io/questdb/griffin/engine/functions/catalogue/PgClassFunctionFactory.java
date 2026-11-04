@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -44,6 +45,7 @@ import io.questdb.cutlass.pgwire.PGOids;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionRequirements;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
@@ -106,6 +108,12 @@ public class PgClassFunctionFactory implements FunctionFactory {
     };
 
     @Override
+    public int getExecutionRequirements() {
+        // lists only the objects the caller may see, see SqlExecutionRequirements
+        return SqlExecutionRequirements.DISCLOSES_OBJECTS;
+    }
+
+    @Override
     public String getSignature() {
         return "pg_class()";
     }
@@ -149,7 +157,7 @@ public class PgClassFunctionFactory implements FunctionFactory {
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
-            cursor.of(executionContext.getCairoEngine(), executionContext.getCircuitBreaker());
+            cursor.of(executionContext.getCairoEngine(), executionContext.getSecurityContext(), executionContext.getCircuitBreaker());
             cursor.toTop();
             return cursor;
         }
@@ -193,6 +201,7 @@ public class PgClassFunctionFactory implements FunctionFactory {
         private SqlExecutionCircuitBreaker circuitBreaker;
         private CairoEngine engine;
         private int fixedRelPos = -1;
+        private SecurityContext securityContext;
         private int tableIndex = -1;
         private String tableName;
         private TableToken tableToken;
@@ -245,17 +254,21 @@ public class PgClassFunctionFactory implements FunctionFactory {
                 tableIndex = 0;
             }
 
-            if (tableIndex == tableBucket.size()) {
-                return false;
+            while (tableIndex < tableBucket.size()) {
+                final TableToken token = tableBucket.get(tableIndex++);
+                if (securityContext.isTableVisible(token)) {
+                    tableToken = token;
+                    tableName = token.getTableName();
+                    intValues[INDEX_OID] = token.getTableId();
+                    return true;
+                }
             }
-            tableToken = tableBucket.get(tableIndex++);
-            tableName = tableToken.getTableName();
-            intValues[INDEX_OID] = tableToken.getTableId();
-            return true;
+            return false;
         }
 
-        public void of(CairoEngine engine, SqlExecutionCircuitBreaker circuitBreaker) {
+        public void of(CairoEngine engine, SecurityContext securityContext, SqlExecutionCircuitBreaker circuitBreaker) {
             this.engine = engine;
+            this.securityContext = securityContext;
             this.circuitBreaker = circuitBreaker;
         }
 

@@ -97,7 +97,7 @@ public class DeferredSymbolIndexFilteredRowCursorFactory implements FunctionBase
 
     @Override
     public void prepareCursor(PageFrameCursor pageFrameCursor) {
-        symbolKey = pageFrameCursor.getSymbolTable(columnIndex).keyOf(symbolFunction.getStrA(null));
+        symbolKey = pageFrameCursor.getSymbolTable(columnIndex).keyOf(symbolFunction.getStrA(null), symbolKey);
         if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
             cursor.of(symbolKey);
             cursor.prepare(pageFrameCursor);

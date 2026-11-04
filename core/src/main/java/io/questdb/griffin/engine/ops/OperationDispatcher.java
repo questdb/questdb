@@ -101,7 +101,10 @@ public abstract class OperationDispatcher<T extends AbstractOperation> {
         // writer thread will call `apply()` when thread is ready to do so
         // `apply()` will use context stored in the operation
         operation.withContext(sqlExecutionContext);
-        boolean isDone = false;
+        // With closeOnDone the caller hands the operation over, so this method closes it on every
+        // exit, a failed apply included, unless a future took it. A caller that sees an exception
+        // compiles the statement again, and nothing else would close the plan the operation holds.
+        boolean isHandedToFuture = false;
         final TableToken tableToken = operation.getTableToken();
         // When a table is hard-suspended with write-denial on, it rejects WAL writes. Route eligible
         // non-structural changes through the force/WAL-bypass path (direct TableWriter) so maintenance
@@ -120,7 +123,6 @@ public abstract class OperationDispatcher<T extends AbstractOperation> {
             // the existing fenced path (the post-fence preApplyObserver still fires).
             engine.fireRoleSwitchMintObserver();
             final long result = applyFenced(operation, writer, forceWalBypass);
-            isDone = true;
             return doneFuture.of(result);
         } catch (EntryUnavailableException busyException) {
             // For non-WAL tables, when another thread holds the writer, this code enqueues the operation
@@ -165,6 +167,12 @@ public abstract class OperationDispatcher<T extends AbstractOperation> {
                     throw CairoException.readOnlyAccess();
                 }
                 OperationFutureImpl future = futurePool.pop();
+                // The future is responsible for closing the operation from here on, so this method
+                // must not close it too: of() calls close() from its catch block, the caller closes
+                // through the future otherwise. One gap is left for a dedicated fix: on a full writer
+                // command queue, publishAsyncWriterCommand() calls startAsync() before the publish
+                // fails, so close() leaves an UPDATE's plan to a writer that never gets the command.
+                isHandedToFuture = true;
                 future.of(
                         operation,
                         sqlExecutionContext,
@@ -177,7 +185,7 @@ public abstract class OperationDispatcher<T extends AbstractOperation> {
                 lock.unlock();
             }
         } finally {
-            if (closeOnDone && isDone) {
+            if (closeOnDone && !isHandedToFuture) {
                 operation.close();
             }
         }

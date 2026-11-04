@@ -552,6 +552,8 @@ impl ParquetUpdater {
         partition: &Partition,
         row_group_id: i32,
     ) -> ParquetResult<()> {
+        let aligned = self.align_columns_to_schema(partition)?;
+        let partition = aligned.as_ref().unwrap_or(partition);
         self.track_ascii(partition);
         self.ensure_schema_matches_columns(partition)?;
         self.track_new_data_ascii(partition);
@@ -621,6 +623,8 @@ impl ParquetUpdater {
     }
 
     pub fn insert_row_group(&mut self, partition: &Partition, position: i32) -> ParquetResult<()> {
+        let aligned = self.align_columns_to_schema(partition)?;
+        let partition = aligned.as_ref().unwrap_or(partition);
         self.track_ascii(partition);
         self.ensure_schema_matches_columns(partition)?;
         self.track_new_data_ascii(partition);
@@ -1602,6 +1606,61 @@ impl ParquetUpdater {
             )?;
         }
         Ok(())
+    }
+
+    /// Returns the partition with its columns reordered to the output schema,
+    /// or `None` when the order already matches.
+    ///
+    /// Row groups are encoded positionally against the output schema, but the
+    /// caller supplies columns in table writer order. The two can differ even
+    /// when the column sets match: e.g. a storage-compatible ALTER COLUMN TYPE
+    /// round trip (VARCHAR -> STRING -> VARCHAR) leaves the parquet file
+    /// untouched while the writer moves the column to the end. Columns are
+    /// therefore matched by parquet field id (== `Column::id`). A schema without
+    /// field ids keeps the positional match.
+    fn align_columns_to_schema(&self, partition: &Partition) -> ParquetResult<Option<Partition>> {
+        let fields = self.parquet_file.schema().fields();
+        if partition.columns.len() != fields.len()
+            || partition
+                .columns
+                .iter()
+                .zip(fields)
+                .all(|(col, field)| field.get_field_info().id.is_none_or(|id| id == col.id))
+        {
+            return Ok(None);
+        }
+        let col_id_to_idx: RapidHashMap<i32, usize> = partition
+            .columns
+            .iter()
+            .enumerate()
+            .map(|(i, col)| (col.id, i))
+            .collect();
+        if col_id_to_idx.len() != partition.columns.len() {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "duplicate column id in partition [table={}]",
+                partition.table
+            ));
+        }
+        let columns = fields
+            .iter()
+            .map(|field| {
+                let field_info = field.get_field_info();
+                field_info
+                    .id
+                    .and_then(|id| col_id_to_idx.get(&id))
+                    .map(|&i| partition.columns[i])
+                    .ok_or_else(|| {
+                        fmt_err!(
+                            InvalidLayout,
+                            "no column matches parquet field [name={}, id={:?}]",
+                            field_info.name,
+                            field_info.id
+                        )
+                    })
+            })
+            .collect::<ParquetResult<Vec<Column>>>()?;
+        Ok(Some(Partition { table: partition.table.clone(), columns }))
     }
 
     /// Updates the file-level schema when any column's not_null_hint flag disagrees
@@ -3326,6 +3385,181 @@ mod tests {
                 "leaf column {i} must declare TypeDefinedOrder, got {order:?}"
             );
         }
+        Ok(())
+    }
+
+    /// Three-column partition (designated TIMESTAMP id 0, INT `a` id 1, INT `b` id 2)
+    /// with the columns in the given id order.
+    fn ts_a_b_partition(order: [i32; 3], ts: &[i64], a: &[i32], b: &[i32]) -> Partition {
+        let int = ColumnTypeTag::Int.into_type();
+        Partition {
+            table: "t".to_string(),
+            columns: order
+                .iter()
+                .map(|&id| match id {
+                    0 => make_designated_ts_with_id(0, "ts", ts),
+                    1 => make_column_with_id(1, "a", int, a),
+                    _ => make_column_with_id(2, "b", int, b),
+                })
+                .collect(),
+        }
+    }
+
+    fn read_int_column_by_name(bytes: &[u8], name: &str) -> Vec<Option<i32>> {
+        let reader = ParquetRecordBatchReaderBuilder::try_new(Bytes::from(bytes.to_vec()))
+            .unwrap()
+            .build()
+            .unwrap();
+        let mut out = Vec::new();
+        for batch in reader {
+            let batch = batch.unwrap();
+            out.extend(
+                batch
+                    .column_by_name(name)
+                    .unwrap()
+                    .as_any()
+                    .downcast_ref::<arrow::array::Int32Array>()
+                    .unwrap()
+                    .iter(),
+            );
+        }
+        out
+    }
+
+    /// The O3 in-place update supplies columns in table writer order, which can
+    /// differ from the file's column order (e.g. after a VARCHAR -> STRING ->
+    /// VARCHAR round trip moves a column to the end of the writer metadata).
+    /// `replace_row_group` and `insert_row_group` must match columns to the file
+    /// schema by parquet field id, not by position.
+    #[test]
+    fn update_aligns_permuted_columns_by_field_id() -> Result<(), Box<dyn Error>> {
+        use crate::allocator::TestAllocatorState;
+        use std::io::Read as _;
+
+        let src = NamedTempFile::new()?;
+        ParquetWriter::new(src.reopen()?).finish(ts_a_b_partition(
+            [0, 1, 2],
+            &[1, 2, 3, 4],
+            &[10, 20, 30, 40],
+            &[100, 200, 300, 400],
+        ))?;
+        let src_len = src.as_file().metadata()?.len();
+
+        let alloc = TestAllocatorState::new();
+        let mut updater = super::ParquetUpdater::new(
+            alloc.allocator(),
+            src.reopen()?,
+            src_len,
+            src.reopen()?,
+            src_len, // write_file_size: update (in-place) mode
+            None,
+            true,
+            false,
+            CompressionOptions::Uncompressed,
+            None,
+            None,
+            DEFAULT_BLOOM_FILTER_FPP,
+            0.0,
+            None,
+            0,
+            0,
+            -1,
+            SeqTxn::UNSET,
+        )?;
+
+        let (ts, a, b) = ([1i64, 2, 3], [11i32, 21, 31], [101i32, 201, 301]);
+        let replaced = ts_a_b_partition([2, 0, 1], &ts, &a, &b);
+        assert!(updater.align_columns_to_schema(&replaced)?.is_some());
+        updater.replace_row_group(&replaced, 0)?;
+
+        let (ts, a, b) = ([5i64, 6], [50i32, 60], [500i32, 600]);
+        updater.insert_row_group(&ts_a_b_partition([1, 2, 0], &ts, &a, &b), 1)?;
+        updater.end(None)?;
+
+        let mut bytes = Vec::new();
+        src.reopen()?.read_to_end(&mut bytes)?;
+        assert_eq!(
+            read_int_column_by_name(&bytes, "a"),
+            vec![Some(11), Some(21), Some(31), Some(50), Some(60)]
+        );
+        assert_eq!(
+            read_int_column_by_name(&bytes, "b"),
+            vec![Some(101), Some(201), Some(301), Some(500), Some(600)]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn align_columns_to_schema_rejects_unmatched_and_duplicate_ids() -> Result<(), Box<dyn Error>> {
+        use crate::allocator::TestAllocatorState;
+
+        let src = NamedTempFile::new()?;
+        ParquetWriter::new(src.reopen()?).finish(ts_a_b_partition(
+            [0, 1, 2],
+            &[1, 2],
+            &[10, 20],
+            &[100, 200],
+        ))?;
+        let src_len = src.as_file().metadata()?.len();
+        let alloc = TestAllocatorState::new();
+        let updater = super::ParquetUpdater::new(
+            alloc.allocator(),
+            src.reopen()?,
+            src_len,
+            src.reopen()?,
+            src_len,
+            None,
+            true,
+            false,
+            CompressionOptions::Uncompressed,
+            None,
+            None,
+            DEFAULT_BLOOM_FILTER_FPP,
+            0.0,
+            None,
+            0,
+            0,
+            -1,
+            SeqTxn::UNSET,
+        )?;
+
+        let (ts, v) = ([1i64, 2], [1i32, 2]);
+        let int = ColumnTypeTag::Int.into_type();
+        assert!(updater
+            .align_columns_to_schema(&ts_a_b_partition([0, 1, 2], &ts, &v, &v))?
+            .is_none());
+
+        let unmatched = Partition {
+            table: "t".to_string(),
+            columns: vec![
+                make_designated_ts_with_id(0, "ts", &ts),
+                make_column_with_id(1, "a", int, &v),
+                make_column_with_id(7, "b", int, &v),
+            ],
+        };
+        let Err(err) = updater.align_columns_to_schema(&unmatched) else {
+            panic!("expected an error");
+        };
+        assert!(
+            err.to_string().contains("no column matches parquet field"),
+            "unexpected error: {err}"
+        );
+
+        let duplicate = Partition {
+            table: "t".to_string(),
+            columns: vec![
+                make_designated_ts_with_id(0, "ts", &ts),
+                make_column_with_id(2, "a", int, &v),
+                make_column_with_id(2, "b", int, &v),
+            ],
+        };
+        let Err(err) = updater.align_columns_to_schema(&duplicate) else {
+            panic!("expected an error");
+        };
+        assert!(
+            err.to_string().contains("duplicate column id"),
+            "unexpected error: {err}"
+        );
         Ok(())
     }
 

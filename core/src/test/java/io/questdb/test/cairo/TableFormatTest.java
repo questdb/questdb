@@ -928,6 +928,40 @@ public class TableFormatTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTruncateThenBlockApplyBelowOldLastPartitionDoesNotSuspend() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (ts TIMESTAMP, n LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO tango VALUES ('2024-01-02T00:00:00.000000Z', 1)");
+            drainWalQueue();
+            final TableToken tt = engine.verifyTableName("tango");
+
+            // Everything below is applied by one drain, so by one writer instance.
+            execute("ALTER TABLE tango SET FORMAT PARQUET");
+            execute("TRUNCATE TABLE tango");
+            // Two inserts into a day below the truncated last partition, applied as one block:
+            // the partition is born parquet.
+            execute("INSERT INTO tango VALUES ('2024-01-01T01:00:00.000000Z', 2)");
+            execute("INSERT INTO tango VALUES ('2024-01-01T02:00:00.000000Z', 3)");
+            // A structural change ends the block, so the next insert is a single-txn commit.
+            execute("ALTER TABLE tango ADD COLUMN k INT");
+            execute("INSERT INTO tango VALUES ('2024-01-01T03:00:00.000000Z', 4, 5)");
+            drainWalQueue();
+
+            Assert.assertFalse("table is suspended", engine.getTableSequencerAPI().isSuspended(tt));
+            assertQuery("tango")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tn\tk
+                            2024-01-01T01:00:00.000000Z\t2\tnull
+                            2024-01-01T02:00:00.000000Z\t3\tnull
+                            2024-01-01T03:00:00.000000Z\t4\t5
+                            """);
+        });
+    }
+
+    @Test
     public void testTruncateThenFormatChangeProducesParquetPartition() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (ts TIMESTAMP, n LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");

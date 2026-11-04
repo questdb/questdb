@@ -975,7 +975,8 @@ public class CopyImportTask {
                     publicTableName,
                     targetTableStructure,
                     0,
-                    AllowAllSecurityContext.INSTANCE
+                    AllowAllSecurityContext.INSTANCE,
+                    configuration.getCommitMode()
             );
 
             try (

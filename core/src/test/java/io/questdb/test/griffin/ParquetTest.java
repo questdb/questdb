@@ -1385,15 +1385,13 @@ public class ParquetTest extends AbstractCairoTest {
 
             // Pin the plan so a silently-degraded full scan cannot mask a
             // broken index by returning the right answer for the wrong
-            // reason. The "id=0" filter is the NULL key for an indexed
-            // SYMBOL column (toIndexKey(SymbolTable.VALUE_IS_NULL) == 0).
-            // The bug manifests when this index path returns no rows.
+            // reason. The bug manifests when this index path returns no rows.
             assertQuery("x where id = null")
                     .noLeakCheck()
                     .withPlan("""
                             DeferredSingleSymbolFilterPageFrame
-                                Index forward scan on: id
-                                  filter: id=0
+                                Index forward scan on: id deferred: true
+                                  filter: id=null
                                 Frame forward scan on: x
                             """)
                     .timestamp("ts")
@@ -1445,14 +1443,13 @@ public class ParquetTest extends AbstractCairoTest {
 
             // Pin the plan so a silently-degraded full scan cannot mask a
             // broken index by returning the right answer for the wrong
-            // reason. The "id=0" filter is the NULL key for an indexed
-            // SYMBOL column (toIndexKey(SymbolTable.VALUE_IS_NULL) == 0).
+            // reason.
             assertQuery("x where id = null")
                     .noLeakCheck()
                     .withPlan("""
                             DeferredSingleSymbolFilterPageFrame
-                                Index forward scan on: id
-                                  filter: id=0
+                                Index forward scan on: id deferred: true
+                                  filter: id=null
                                 Frame forward scan on: x
                             """)
                     .timestamp("ts")
@@ -2129,10 +2126,10 @@ public class ParquetTest extends AbstractCairoTest {
 
     @Test
     public void testLimitOverParquetIndexedSymbolOrderBy() throws Exception {
-        // Regression: the decode-window clamp must not apply to a symbol-index scan.
-        // SortedSymbolIndexRowCursorFactory yields rows in symbol order, scattered across the
-        // frame, so clamping the parquet decode to the leading rows would read undecoded memory
-        // for the high row indexes. 'aa' sorts first but lives at rows 5-7, past a 3-row window.
+        // Regression: the decode-window clamp must not apply to a symbol-index scan. An index row
+        // cursor yields the rows of one symbol only, scattered across the frame, so clamping the
+        // parquet decode to the leading rows would read undecoded memory for the high row indexes.
+        // 'aa' lives at rows 5-7, past the 3-row window LIMIT 3 would otherwise clamp to.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (s SYMBOL, i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
@@ -2149,7 +2146,7 @@ public class ParquetTest extends AbstractCairoTest {
             // 2024-01-01 stays historic so ADD INDEX routes it through indexParquetPartition.
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts in '2024-01-01'");
             execute("ALTER TABLE x ALTER COLUMN s ADD INDEX");
-            assertQuery("SELECT s, i FROM x WHERE ts in '2024-01-01' ORDER BY s LIMIT 3")
+            assertQuery("SELECT s, i FROM x WHERE ts in '2024-01-01' AND s = 'aa' LIMIT 3")
                     .noLeakCheck()
                     .withPlanContaining("Index forward scan on: s")
                     .returns("""

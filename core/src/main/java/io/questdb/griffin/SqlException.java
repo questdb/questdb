@@ -40,6 +40,7 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
     private static final int EXCEPTION_VIEW_DOES_NOT_EXIST = EXCEPTION_TABLE_DOES_NOT_EXIST - 1;
     private static final int EXCEPTION_MAT_VIEW_DOES_NOT_EXIST = EXCEPTION_VIEW_DOES_NOT_EXIST - 1;
     private static final int EXCEPTION_WAL_RECOVERABLE = EXCEPTION_MAT_VIEW_DOES_NOT_EXIST - 1;
+    private static final int EXCEPTION_FUNCTION_NOT_ALLOWED = EXCEPTION_WAL_RECOVERABLE - 1;
     private static final FiberLocal<SqlException> tlException = new FiberLocal<>(SqlException::new);
     private final StringSink message = new StringSink();
     private final StringSink tableName = new StringSink();
@@ -73,6 +74,14 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
 
     public static SqlException emptyWindowContext(int position) {
         return SqlException.$(position, "window function called in non-window context, make sure to add OVER clause");
+    }
+
+    /**
+     * The function exists, but the compile may not use it where it stands, e.g. in a materialized
+     * view, see {@link SqlExecutionRequirements#checkStoredView}.
+     */
+    public static SqlException functionNotAllowed(int position) {
+        return position(position).errorCode(EXCEPTION_FUNCTION_NOT_ALLOWED);
     }
 
     public static SqlException inconvertibleTypes(
@@ -223,6 +232,10 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
         // sink, so an exception that names no table must not be able to hand back the name the
         // previous one left there.
         return isTableDoesNotExist() ? tableName : "";
+    }
+
+    public boolean isFunctionNotAllowed() {
+        return error == EXCEPTION_FUNCTION_NOT_ALLOWED;
     }
 
     /**

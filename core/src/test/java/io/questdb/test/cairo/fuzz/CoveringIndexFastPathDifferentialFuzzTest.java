@@ -195,6 +195,10 @@ public class CoveringIndexFastPathDifferentialFuzzTest extends AbstractFuzzTest 
         setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 10_000_000);
         setProperty(PropertyKey.CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT, 2000);
         setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 600_000);
+        // The two replays differ only in the WAL fast-lag block-apply, which a merge-append table
+        // refuses - every one of its commits is a merge-append, and the two replays would be the same
+        // run. Tests default to merge-append; ask for master's behaviour.
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         // assertTablesIdentical() sorts the whole table (ORDER BY ts, sym, value) through
         // EncodedSort, which charges 32 bytes per row against these two caps combined. The
         // corpus can retain up to 79 rounds x 8 txns x 4049 rows = ~2.56M rows when truncates

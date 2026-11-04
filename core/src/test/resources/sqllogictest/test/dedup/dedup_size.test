@@ -18,13 +18,17 @@ statement ok
 select wait_wal_table('size_control');
 
 # check dedup data
-query TIT
-select name, numRows, diskSize
+query TI
+select name, numRows
 from table_partitions('size_control');
 ----
-2022-02-24T00   3600    153693
-2022-02-24T01   3600    154800
-2022-02-24T02   1800    67108864
+2022-02-24T00   3600
+2022-02-24T01   3600
+2022-02-24T02   1800
+
+# remember partition sizes; exact sizes depend on the platform's allocation alignment
+statement ok
+create table size_before as (select name, numRows, diskSize from table_partitions('size_control'));
 
 # Insert same data
 statement ok
@@ -37,12 +41,21 @@ statement ok
 select wait_wal_table('size_control');
 
 # check dedup data
-query TIT
-select name, numRows, diskSize
+query TI
+select name, numRows
 from table_partitions('size_control');
 ----
-2022-02-24T00   3600    153693
-2022-02-24T01   3600    154800
-2022-02-24T02   1800    67108864
+2022-02-24T00   3600
+2022-02-24T01   3600
+2022-02-24T02   1800
+
+# full duplicates must not change partition sizes
+query I
+select count()
+from table_partitions('size_control') a
+join size_before b on (name)
+where a.numRows = b.numRows and a.diskSize = b.diskSize;
+----
+3
 
 

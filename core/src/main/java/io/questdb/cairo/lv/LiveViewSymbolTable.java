@@ -97,6 +97,15 @@ public class LiveViewSymbolTable implements StaticSymbolTable, QuietCloseable {
         return cache.newSymbolKeyOf(column, value, base.getSymbolCount(), maxNewIdExclusive);
     }
 
+    @Override
+    public int keyOf(CharSequence value, int cachedKey) {
+        final int k = base.keyOf(value, cachedKey);
+        if (k != SymbolTable.VALUE_NOT_FOUND) {
+            return k;
+        }
+        return cache.newSymbolKeyOf(column, value, base.getSymbolCount(), maxNewIdExclusive);
+    }
+
     /**
      * Binds this overlay to a disk symbol table for {@code column}.
      * {@code maxNewIdExclusive} is the pinned slot's symbol horizon

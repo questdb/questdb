@@ -79,6 +79,39 @@ public class GCMetrics implements Target, Mutable {
     public void clear() {
     }
 
+    @Override
+    public void snapshot(MetricSnapshotVisitor visitor) {
+        long majorCount = 0;
+        long majorTime = 0;
+        long minorCount = 0;
+        long minorTime = 0;
+        long unknownCount = 0;
+        long unknownTime = 0;
+
+        for (GarbageCollectorMXBean gc : ManagementFactory.getGarbageCollectorMXBeans()) {
+            long count = gc.getCollectionCount();
+            if (count > -1) {
+                if (majorGCNames.contains(gc.getName())) {
+                    majorCount += count;
+                    majorTime += gc.getCollectionTime();
+                } else if (minorGCNames.contains(gc.getName())) {
+                    minorCount += count;
+                    minorTime += gc.getCollectionTime();
+                } else {
+                    unknownCount += count;
+                    unknownTime += gc.getCollectionTime();
+                }
+            }
+        }
+
+        visitor.visitLong("jvm_major_gc_count", MetricType.COUNTER, majorCount);
+        visitor.visitLong("jvm_major_gc_time", MetricType.COUNTER, majorTime);
+        visitor.visitLong("jvm_minor_gc_count", MetricType.COUNTER, minorCount);
+        visitor.visitLong("jvm_minor_gc_time", MetricType.COUNTER, minorTime);
+        visitor.visitLong("jvm_unknown_gc_count", MetricType.COUNTER, unknownCount);
+        visitor.visitLong("jvm_unknown_gc_time", MetricType.COUNTER, unknownTime);
+    }
+
     private void appendCounter(CharSink<?> sink, long value, String name) {
         PrometheusFormatUtils.appendCounterType(name, sink);
         PrometheusFormatUtils.appendCounterNamePrefix(name, sink);

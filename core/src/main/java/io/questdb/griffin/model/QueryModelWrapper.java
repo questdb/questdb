@@ -343,6 +343,11 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public ExpressionNode getFillBucketKey() {
+        return delegate.getFillBucketKey();
+    }
+
+    @Override
     public ExpressionNode getFillFrom() {
         return delegate.getFillFrom();
     }
@@ -548,6 +553,11 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public LowerCaseCharSequenceHashSet getAuditedDecls() {
+        return delegate.getAuditedDecls();
+    }
+
+    @Override
     public LowerCaseCharSequenceHashSet getOverridableDecls() {
         return delegate.getOverridableDecls();
     }
@@ -585,6 +595,11 @@ public class QueryModelWrapper implements IQueryModel {
     @Override
     public ObjList<ViewDefinition> getReferencedViews() {
         return delegate.getReferencedViews();
+    }
+
+    @Override
+    public ObjList<ViewAuditModel> getViewAudits() {
+        return delegate.getViewAudits();
     }
 
     @Override
@@ -999,6 +1014,11 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public void recordViewAudits(ObjList<ViewAuditModel> viewAudits) {
+        delegate.recordViewAudits(viewAudits);
+    }
+
+    @Override
     public void recordViews(LowerCaseCharSequenceObjHashMap<ViewDefinition> viewDefinitions) {
         throw new UnsupportedOperationException();
     }
@@ -1084,6 +1104,11 @@ public class QueryModelWrapper implements IQueryModel {
 
     @Override
     public void setExplicitTimestamp(boolean explicitTimestamp) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void setFillBucketKey(ExpressionNode fillBucketKey) {
         throw new UnsupportedOperationException();
     }
 

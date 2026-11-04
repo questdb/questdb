@@ -634,8 +634,203 @@ Java_io_questdb_std_Vect_oooMergeCopyArrayColumn(JNIEnv *env, jclass cl,
     });
 }
 
-// 1 oooMergeCopyStrColumnWithTop removed and now executed as Merge Copy without Top
-// 2 oooMergeCopyBinColumnWithTop removed and now executed as Merge Copy without Top
+// Column-top aware merge family. `src_data_top` is the data-side column top in ROWS: a data-side
+// merge row below it has no entry in the column file and is emitted as the type's NULL, so the
+// caller no longer has to materialize a nulls+data image into scratch space first. `src_data_fix`
+// / `src_data_var` are UNBIASED (the file's first stored row is logical row `src_data_top`).
+// Deliberately scalar - see ooo_dispatch.h.
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_oooMergeCopyStrColumnWithTop(JNIEnv *env, jclass cl,
+                                                      jlong merge_index,
+                                                      jlong merge_index_size,
+                                                      jlong src_data_top,
+                                                      jlong src_data_fix,
+                                                      jlong src_data_var,
+                                                      jlong src_ooo_fix,
+                                                      jlong src_ooo_var,
+                                                      jlong dst_fix,
+                                                      jlong dst_var,
+                                                      jlong dst_var_offset) {
+    merge_copy_var_column_top_vanilla<int32_t>(
+            reinterpret_cast<index_t *>(merge_index),
+            __JLONG_REINTERPRET_CAST__(int64_t, merge_index_size),
+            reinterpret_cast<int64_t *>(src_data_fix),
+            reinterpret_cast<char *>(src_data_var),
+            reinterpret_cast<int64_t *>(src_ooo_fix),
+            reinterpret_cast<char *>(src_ooo_var),
+            reinterpret_cast<int64_t *>(dst_fix),
+            reinterpret_cast<char *>(dst_var),
+            __JLONG_REINTERPRET_CAST__(int64_t, dst_var_offset),
+            2,
+            __JLONG_REINTERPRET_CAST__(int64_t, src_data_top)
+    );
+}
+
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_oooMergeCopyBinColumnWithTop(JNIEnv *env, jclass cl,
+                                                      jlong merge_index,
+                                                      jlong merge_index_size,
+                                                      jlong src_data_top,
+                                                      jlong src_data_fix,
+                                                      jlong src_data_var,
+                                                      jlong src_ooo_fix,
+                                                      jlong src_ooo_var,
+                                                      jlong dst_fix,
+                                                      jlong dst_var,
+                                                      jlong dst_var_offset) {
+    merge_copy_var_column_top_vanilla<int64_t>(
+            reinterpret_cast<index_t *>(merge_index),
+            __JLONG_REINTERPRET_CAST__(int64_t, merge_index_size),
+            reinterpret_cast<int64_t *>(src_data_fix),
+            reinterpret_cast<char *>(src_data_var),
+            reinterpret_cast<int64_t *>(src_ooo_fix),
+            reinterpret_cast<char *>(src_ooo_var),
+            reinterpret_cast<int64_t *>(dst_fix),
+            reinterpret_cast<char *>(dst_var),
+            __JLONG_REINTERPRET_CAST__(int64_t, dst_var_offset),
+            1,
+            __JLONG_REINTERPRET_CAST__(int64_t, src_data_top)
+    );
+}
+
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_oooMergeCopyVarcharColumnWithTop(JNIEnv *env, jclass cl,
+                                                          jlong merge_index,
+                                                          jlong merge_index_size,
+                                                          jlong src_data_top,
+                                                          jlong src_data_fix,
+                                                          jlong src_data_var,
+                                                          jlong src_ooo_fix,
+                                                          jlong src_ooo_var,
+                                                          jlong dst_fix,
+                                                          jlong dst_var,
+                                                          jlong dst_var_offset) {
+    merge_copy_varchar_column_top_vanilla(
+            reinterpret_cast<index_t *>(merge_index),
+            __JLONG_REINTERPRET_CAST__(int64_t, merge_index_size),
+            reinterpret_cast<int64_t *>(src_data_fix),
+            reinterpret_cast<char *>(src_data_var),
+            reinterpret_cast<int64_t *>(src_ooo_fix),
+            reinterpret_cast<char *>(src_ooo_var),
+            reinterpret_cast<int64_t *>(dst_fix),
+            reinterpret_cast<char *>(dst_var),
+            __JLONG_REINTERPRET_CAST__(int64_t, dst_var_offset),
+            __JLONG_REINTERPRET_CAST__(int64_t, src_data_top)
+    );
+}
+
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_oooMergeCopyArrayColumnWithTop(JNIEnv *env, jclass cl,
+                                                        jlong merge_index,
+                                                        jlong merge_index_size,
+                                                        jlong src_data_top,
+                                                        jlong src_data_fix,
+                                                        jlong src_data_var,
+                                                        jlong src_ooo_fix,
+                                                        jlong src_ooo_var,
+                                                        jlong dst_fix,
+                                                        jlong dst_var,
+                                                        jlong dst_var_offset) {
+    merge_copy_array_column_top_vanilla(
+            reinterpret_cast<index_t *>(merge_index),
+            __JLONG_REINTERPRET_CAST__(int64_t, merge_index_size),
+            reinterpret_cast<int64_t *>(src_data_fix),
+            reinterpret_cast<char *>(src_data_var),
+            reinterpret_cast<int64_t *>(src_ooo_fix),
+            reinterpret_cast<char *>(src_ooo_var),
+            reinterpret_cast<int64_t *>(dst_fix),
+            reinterpret_cast<char *>(dst_var),
+            __JLONG_REINTERPRET_CAST__(int64_t, dst_var_offset),
+            __JLONG_REINTERPRET_CAST__(int64_t, src_data_top)
+    );
+}
+
+// Fixed-width column-top aware merges. `null_value` points at one element of the column's width
+// holding that type's NULL bit pattern, so one template covers every fixed type.
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_mergeShuffle8BitWithTop(JNIEnv *env, jclass cl, jlong src1, jlong src2, jlong dest,
+                                                 jlong index, jlong count, jlong srcDataTop, jlong pNullValue) {
+    merge_shuffle_top_vanilla<int8_t>(
+            reinterpret_cast<int8_t *>(src1),
+            reinterpret_cast<int8_t *>(src2),
+            reinterpret_cast<int8_t *>(dest),
+            reinterpret_cast<index_t *>(index),
+            __JLONG_REINTERPRET_CAST__(int64_t, count),
+            __JLONG_REINTERPRET_CAST__(int64_t, srcDataTop),
+            reinterpret_cast<int8_t *>(pNullValue)
+    );
+}
+
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_mergeShuffle16BitWithTop(JNIEnv *env, jclass cl, jlong src1, jlong src2, jlong dest,
+                                                  jlong index, jlong count, jlong srcDataTop, jlong pNullValue) {
+    merge_shuffle_top_vanilla<int16_t>(
+            reinterpret_cast<int16_t *>(src1),
+            reinterpret_cast<int16_t *>(src2),
+            reinterpret_cast<int16_t *>(dest),
+            reinterpret_cast<index_t *>(index),
+            __JLONG_REINTERPRET_CAST__(int64_t, count),
+            __JLONG_REINTERPRET_CAST__(int64_t, srcDataTop),
+            reinterpret_cast<int16_t *>(pNullValue)
+    );
+}
+
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_mergeShuffle32BitWithTop(JNIEnv *env, jclass cl, jlong src1, jlong src2, jlong dest,
+                                                  jlong index, jlong count, jlong srcDataTop, jlong pNullValue) {
+    merge_shuffle_top_vanilla<int32_t>(
+            reinterpret_cast<int32_t *>(src1),
+            reinterpret_cast<int32_t *>(src2),
+            reinterpret_cast<int32_t *>(dest),
+            reinterpret_cast<index_t *>(index),
+            __JLONG_REINTERPRET_CAST__(int64_t, count),
+            __JLONG_REINTERPRET_CAST__(int64_t, srcDataTop),
+            reinterpret_cast<int32_t *>(pNullValue)
+    );
+}
+
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_mergeShuffle64BitWithTop(JNIEnv *env, jclass cl, jlong src1, jlong src2, jlong dest,
+                                                  jlong index, jlong count, jlong srcDataTop, jlong pNullValue) {
+    merge_shuffle_top_vanilla<int64_t>(
+            reinterpret_cast<int64_t *>(src1),
+            reinterpret_cast<int64_t *>(src2),
+            reinterpret_cast<int64_t *>(dest),
+            reinterpret_cast<index_t *>(index),
+            __JLONG_REINTERPRET_CAST__(int64_t, count),
+            __JLONG_REINTERPRET_CAST__(int64_t, srcDataTop),
+            reinterpret_cast<int64_t *>(pNullValue)
+    );
+}
+
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_mergeShuffle128BitWithTop(JNIEnv *env, jclass cl, jlong src1, jlong src2, jlong dest,
+                                                   jlong index, jlong count, jlong srcDataTop, jlong pNullValue) {
+    merge_shuffle_top_vanilla<__int128>(
+            reinterpret_cast<__int128 *>(src1),
+            reinterpret_cast<__int128 *>(src2),
+            reinterpret_cast<__int128 *>(dest),
+            reinterpret_cast<index_t *>(index),
+            __JLONG_REINTERPRET_CAST__(int64_t, count),
+            __JLONG_REINTERPRET_CAST__(int64_t, srcDataTop),
+            reinterpret_cast<__int128 *>(pNullValue)
+    );
+}
+
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_mergeShuffle256BitWithTop(JNIEnv *env, jclass cl, jlong src1, jlong src2, jlong dest,
+                                                   jlong index, jlong count, jlong srcDataTop, jlong pNullValue) {
+    merge_shuffle_top_vanilla<long_256bit>(
+            reinterpret_cast<long_256bit *>(src1),
+            reinterpret_cast<long_256bit *>(src2),
+            reinterpret_cast<long_256bit *>(dest),
+            reinterpret_cast<index_t *>(index),
+            __JLONG_REINTERPRET_CAST__(int64_t, count),
+            __JLONG_REINTERPRET_CAST__(int64_t, srcDataTop),
+            reinterpret_cast<long_256bit *>(pNullValue)
+    );
+}
+
 
 DECLARE_DISPATCHER(merge_copy_var_column_int64);
 JNIEXPORT void JNICALL
@@ -2035,7 +2230,6 @@ Java_io_questdb_std_Vect_mergeShuffle256Bit(JNIEnv *env, jclass cl, jlong src1, 
     });
 }
 
-// Methods 13-16 were mergeShuffleWithTop(s) and replaced with calls to simple mergeShuffle(s)
 
 DECLARE_DISPATCHER(flatten_index);
 JNIEXPORT void JNICALL

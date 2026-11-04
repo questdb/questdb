@@ -66,8 +66,8 @@ public class IndexReloadTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             DeferredSingleSymbolFilterPageFrame
-                                Index forward scan on: code
-                                  filter: code=53
+                                Index forward scan on: code deferred: true
+                                  filter: code='MLLEOYPHR'
                                 Interval forward scan on: test_table
                                   intervals: [("2023-01-01T01:00:00.000000Z","2023-01-01T01:59:59.999999Z")]
                             """);
@@ -211,8 +211,8 @@ public class IndexReloadTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             DeferredSingleSymbolFilterPageFrame
-                                Index forward scan on: code
-                                  filter: code=53
+                                Index forward scan on: code deferred: true
+                                  filter: code='MLLEOYPHR'
                                 Interval forward scan on: test_table
                                   intervals: [("2023-01-01T01:00:00.000000Z","2023-01-01T01:59:59.999999Z")]
                             """);

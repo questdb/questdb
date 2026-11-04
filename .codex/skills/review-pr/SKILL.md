@@ -133,6 +133,7 @@ Check against CLAUDE.md conventions:
 - Description repeats the verb and explains user impact
 - If fixing an issue, `Fixes #NNN` is at the top of the body
 - Tone is level-headed and analytical, with no superlatives or bold emphasis on numbers
+- Body is short: one short paragraph per fix (symptom, cause, change), breaking changes stated plainly. Flag a test plan section, investigation output (probe results, "fails without the fix" evidence, lists of covered shapes or configs, "Not changed" lists) and boilerplate Trade-offs sections. Never ask the author to add such material to the body
 - Labels match the PR scope (SQL, Performance, Core, etc.)
 - Bundled related fixes are allowed; do not demand a split
 

@@ -51,6 +51,39 @@ public class HttpMinTest extends AbstractBootstrapTest {
 
 
     @Test
+    public void testMetricsEnabledExposesPrometheusEndpoint() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_ENABLED.getEnvVarName(), "false",
+                    PropertyKey.METRICS_ENABLED.getEnvVarName(), "true"
+            )) {
+                serverMain.start();
+                final int httpMinPort = serverMain.getConfiguration().getHttpMinServerConfiguration().getBindPort();
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    checkResponse(httpClient, "/metrics", "# TYPE questdb_json_queries_connections gauge", httpMinPort);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testMetricsPersistenceDoesNotExposePrometheusEndpoint() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_ENABLED.getEnvVarName(), "false",
+                    PropertyKey.METRICS_ENABLED.getEnvVarName(), "false",
+                    PropertyKey.METRICS_PERSIST_ENABLED.getEnvVarName(), "true"
+            )) {
+                serverMain.start();
+                final int httpMinPort = serverMain.getConfiguration().getHttpMinServerConfiguration().getBindPort();
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    checkResponse(httpClient, "/metrics", "Status: Healthy", httpMinPort);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testResponsiveOnMemoryPressure() throws Exception {
         // TODO: fix on Windows
         Assume.assumeFalse(Os.isWindows());

@@ -34,6 +34,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
@@ -78,7 +79,8 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
                 sampleFromFunc,
                 sampleFromFuncPos,
                 sampleToFunc,
-                sampleToFuncPos
+                sampleToFuncPos,
+                false
         );
         this.map = map;
         this.keyMapSink = keyMapSink;
@@ -100,6 +102,7 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
 
     @Override
     public boolean hasNext() {
+        // on the first call, initTimestamps() may leave the NULL bucket in the map, see aggregateNullTimestampRows()
         initTimestamps();
 
         if (mapCursor.hasNext()) {
@@ -123,6 +126,10 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
         // Bind+reopen the map as super.of() does the allocator; reopen() is idempotent.
         map.setMemoryTracker(executionContext.getMemoryTracker());
         map.reopen();
+        // hasNext() consults the map cursor before it builds the first bucket, so drop
+        // the rows that the previous execution left unread in it.
+        map.clear();
+        map.getCursor();
         rowId = 0;
         isMapBuildPending = true;
     }
@@ -130,8 +137,22 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
     @Override
     public void toTop() {
         super.toTop();
+        // drop the rows left unread in the map cursor, as of() does
+        map.clear();
+        map.getCursor();
         rowId = 0;
         isMapBuildPending = true;
+    }
+
+    private void aggregateBaseRecord() {
+        final MapKey key = map.withKey();
+        keyMapSink.copy(baseRecord, key);
+        final MapValue value = key.createValue();
+        if (value.isNew()) {
+            groupByFunctionsUpdater.updateNew(value, baseRecord, rowId++);
+        } else {
+            groupByFunctionsUpdater.updateExisting(value, baseRecord, rowId++);
+        }
     }
 
     private void buildMap() {
@@ -141,21 +162,16 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
             isMapBuildPending = false;
         }
 
-        final long next = timestampSampler.nextTimestamp(localEpoch);
+        final long next = timestampSampler.nextTimestamp(getGridLocalEpoch());
+        // the row that starts the bucket falls inside it, so the first iteration consumes it
+        assert getBaseRecordTimestamp() < next;
         do {
             long timestamp = getBaseRecordTimestamp();
             if (timestamp < next) {
                 circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
 
                 adjustDstInFlight(timestamp - tzOffset);
-                final MapKey key = map.withKey();
-                keyMapSink.copy(baseRecord, key);
-                MapValue value = key.createValue();
-                if (value.isNew()) {
-                    groupByFunctionsUpdater.updateNew(value, baseRecord, rowId++);
-                } else {
-                    groupByFunctionsUpdater.updateExisting(value, baseRecord, rowId++);
-                }
+                aggregateBaseRecord();
             } else {
                 // map value is conditional and only required when clock goes back
                 // we override base method for when this happens
@@ -180,9 +196,24 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
     }
 
     @Override
+    protected boolean aggregateNullTimestampRows() {
+        // of() and toTop() left the map empty, so it holds the NULL bucket alone, one entry per key. hasNext() streams
+        // the entries before it builds the first bucket of the grid, and isMapBuildPending makes buildMap() clear them.
+        boolean hasNext;
+        do {
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+            aggregateBaseRecord();
+            hasNext = baseCursor.hasNext();
+        } while (hasNext && baseRecord.getTimestamp(timestampIndex) == Numbers.LONG_NULL);
+        // reset map iterator
+        map.getCursor();
+        return hasNext;
+    }
+
+    @Override
     protected void updateValueWhenClockMovesBack(MapValue value) {
-        final MapKey key = map.withKey();
-        keyMapSink.copy(baseRecord, key);
-        super.updateValueWhenClockMovesBack(key.createValue());
+        // The row joins the bucket in progress. The map starts every bucket empty, so the key may have
+        // no entry yet, and an entry it creates must go through updateNew().
+        aggregateBaseRecord();
     }
 }

@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -47,18 +46,17 @@ public class LatestByValuesIndexedFilteredRecordCursorFactory extends AbstractDe
             @NotNull PartitionFrameCursorFactory partitionFrameCursorFactory,
             int columnIndex,
             @Transient ObjList<Function> keyValueFuncs,
-            @Transient SymbolMapReader symbolMapReader,
             @Nullable Function filter,
             @NotNull IntList columnIndexes,
             @NotNull IntList columnSizeShifts
     ) {
-        super(configuration, metadata, partitionFrameCursorFactory, columnIndex, keyValueFuncs, symbolMapReader, columnIndexes, columnSizeShifts);
+        super(configuration, metadata, partitionFrameCursorFactory, columnIndex, keyValueFuncs, columnIndexes, columnSizeShifts);
 
         try {
             if (filter != null) {
-                cursor = new LatestByValuesIndexedFilteredRecordCursor(configuration, metadata, columnIndex, rows, symbolKeys, deferredSymbolKeys, filter);
+                cursor = new LatestByValuesIndexedFilteredRecordCursor(configuration, metadata, columnIndex, rows, symbolKeys, filter);
             } else {
-                cursor = new LatestByValuesIndexedRecordCursor(configuration, metadata, columnIndex, symbolKeys, deferredSymbolKeys, rows);
+                cursor = new LatestByValuesIndexedRecordCursor(configuration, metadata, columnIndex, symbolKeys, rows);
             }
             this.filter = filter;
         } catch (Throwable th) {
@@ -76,16 +74,7 @@ public class LatestByValuesIndexedFilteredRecordCursorFactory extends AbstractDe
     public void toPlan(PlanSink sink) {
         sink.type("Index backward scan").meta("on").putColumnName(columnIndex);
         sink.optAttr("filter", filter);
-        sink.attr("symbolFilter").putColumnName(columnIndex).val(" in ");
-        if (symbolKeys.size() > 0) {
-            sink.val(symbolKeys);
-        }
-        if (deferredSymbolFuncs != null && deferredSymbolFuncs.size() > 0) {
-            if (symbolKeys.size() > 0) {
-                sink.val(" or ").putColumnName(columnIndex).val(" in ");
-            }
-            sink.val(deferredSymbolFuncs);
-        }
+        sink.attr("symbolFilter").putColumnName(columnIndex).val(" in ").val(symbolFuncs);
         sink.child(partitionFrameCursorFactory);
     }
 
@@ -106,8 +95,8 @@ public class LatestByValuesIndexedFilteredRecordCursorFactory extends AbstractDe
         } catch (Throwable th) {
             failure = th;
         }
-        failure = Misc.freeBestEffort(failure, filter);
         failure = Misc.freeBestEffort(failure, cursor);
+        failure = Misc.freeBestEffort(failure, filter);
         CairoException.rethrowCleanupFailure(failure);
     }
 }

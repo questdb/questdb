@@ -570,14 +570,28 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                     drainWalAndMatViewQueues(refreshJob, main1.getEngine());
                 }
 
-                // apply WAL and remove WAL files
+                // apply WAL and remove WAL files. Under ADAPTIVE two things keep the WAL: the purge floor is
+                // held back to the last durable epoch, and the mat-view's WAL writer keeps its active segment
+                // locked. Do what production does when a table goes idle: close the writers (the graceful-close
+                // epoch advances durableEpochSeqTxn to the committed frontier) and release the WAL and view-WAL
+                // writers, which unlocks the segment. Do not call engine.clear() here: it resets the in-memory
+                // tracker's durableEpochSeqTxn to 0, which would hold the purge floor at 0.
                 drainWalQueue(main1.getEngine());
-                main1.getEngine().clear();
+                main1.getEngine().releaseAllWriters();
+                main1.getEngine().releaseAllWalWriters();
+                main1.getEngine().releaseAllViewWalWriters();
+                TableToken token = main1.getEngine().getTableTokenIfExists("price_1h");
+                if (main1.getEngine().getConfiguration().getCommitMode() == CommitMode.ADAPTIVE) {
+                    // The purge floor is the older of the two save points, which recovery falls back to; one more
+                    // save point at the applied cut moves the older one past the WAL.
+                    try (TableWriter writer = main1.getEngine().getWriter(token, "test")) {
+                        writer.advanceDurableEpoch(main1.getEngine().getConfiguration().getMicrosecondClock().getTicks() / 1000L);
+                    }
+                }
                 try (WalPurgeJob purgeJob = new WalPurgeJob(main1.getEngine())) {
                     purgeJob.drain(0);
                 }
                 // assert that WAL files are removed
-                TableToken token = main1.getEngine().getTableTokenIfExists("price_1h");
                 try (Path path = new Path()) {
                     CairoConfiguration configuration = main1.getEngine().getConfiguration();
                     path.of(configuration.getDbRoot()).concat(token).concat(WAL_NAME_BASE).put(1);

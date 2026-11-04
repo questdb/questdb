@@ -40,8 +40,8 @@ import io.questdb.std.datetime.Clock;
  * LOG.info().$("Hello world: ").$(123).$();
  * </code>
  * <p>
- * Logger appends messages to native memory buffer and dispatches buffer to writer thread queue with {@link LogRecord#$()} call.
- * When writer queue is full all logger method calls between level and $() become no-ops. In this case queue size
+ * Logger formats messages into a per-carrier staging buffer and dispatches them to the writer thread queue with
+ * {@link LogRecord#$()} call. When writer queue is full, $() drops the message. In this case queue size
  * have to be increased or choice of log storage has to be reviewed. Depending on complexity of log message
  * structure it should be possible to log between 1,000,000 and 10,000,000 messages per second to SSD device.
  * </p>
@@ -103,14 +103,6 @@ public final class Logger extends AbstractLogRecord implements Log {
     }
 
     private LogRecord next(Sequence seq, RingQueue<LogRecordUtf8Sink> ring, int level) {
-        if (seq == null) {
-            return NullLogRecord.INSTANCE;
-        }
-
-        final long cursor = seq.next();
-        if (cursor < 0) {
-            return NullLogRecord.INSTANCE;
-        }
-        return prepareLogRecord(seq, ring, level, cursor);
+        return begin(seq, ring, level, false);
     }
 }

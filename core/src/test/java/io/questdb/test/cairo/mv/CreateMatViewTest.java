@@ -27,6 +27,7 @@ package io.questdb.test.cairo.mv;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.O3PartitionJob;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.file.AppendableBlock;
@@ -43,6 +44,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionRequirements;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.std.Chars;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
@@ -118,6 +120,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                     errorCounter.incrementAndGet();
                 } finally {
                     Path.clearThreadLocals();
+                    Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
                 }
             });
             creator.start();
@@ -141,6 +144,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                     errorCounter.incrementAndGet();
                 } finally {
                     Path.clearThreadLocals();
+                    Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
                 }
             });
             dropper.start();
@@ -340,6 +344,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                         errorCounter.incrementAndGet();
                     } finally {
                         Path.clearThreadLocals();
+                        Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
                     }
                 });
                 threads[t].start();
@@ -524,6 +529,41 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 for (int i = 0, n = factories.size(); i < n; i++) {
                     assertEquals(1, factories.getQuick(i).getCloseCount());
                 }
+            } finally {
+                TableFunctionTestUtils.unregister(engine, functionName);
+            }
+        });
+    }
+
+    @Test
+    public void testCreateMatViewCursorFunctionFromViewClosedOnPostOptimiseRejection() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            final ObjList<CloseCountingRecordCursorFactory> factories = new ObjList<>();
+            final String functionName = "disclosing_cursor";
+            TableFunctionTestUtils.register(engine, functionName, SqlExecutionRequirements.DISCLOSES_OBJECTS, factories);
+            try {
+                execute("create view v as (select * from " + functionName + "())");
+                drainWalAndViewQueues();
+                final int viewFactoryCount = factories.size();
+
+                // A materialized view may use a function that discloses objects only where a SYSTEM ADMIN writes
+                // it, never through a regular view. The optimiser instantiates the function in the view's FROM
+                // clause, so the post-optimise backstop rejects it, and has to close it exactly once.
+                final String sql = "create materialized view test as (select t1.ts, count() from " + TABLE1 +
+                        " t1 cross join v sample by 30s) partition by day";
+                assertQuery(sql)
+                        .noLeakCheck()
+                        .fails(
+                                sql.indexOf("v sample"),
+                                "catalogue function from view v cannot be used in materialized view: " + functionName
+                        );
+                assertEquals(viewFactoryCount + 1, factories.size());
+                for (int i = 0, n = factories.size(); i < n; i++) {
+                    assertEquals(1, factories.getQuick(i).getCloseCount());
+                }
+                assertNull(getMatViewDefinition("test"));
             } finally {
                 TableFunctionTestUtils.unregister(engine, functionName);
             }
@@ -1693,6 +1733,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                     errorCounter.incrementAndGet();
                 } finally {
                     Path.clearThreadLocals();
+                    Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
                 }
             });
             creator.start();
@@ -1711,6 +1752,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                         errorCounter.incrementAndGet();
                     } finally {
                         Path.clearThreadLocals();
+                        Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
                     }
                 }
             });

@@ -34,6 +34,7 @@ import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
+import io.questdb.cairo.RecordSinkSPI;
 import io.questdb.cairo.SingleColumnType;
 import io.questdb.cairo.SymbolAsIntTypes;
 import io.questdb.cairo.SymbolAsStrTypes;
@@ -65,6 +66,7 @@ import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
@@ -81,7 +83,15 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 
 public class OrderedMapTest extends AbstractCairoTest {
 
@@ -2079,6 +2089,484 @@ public class OrderedMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testProbeViewBillsTheTrackerForItsStagingBuffer() throws Exception {
+        // The staging buffer is the view's own native memory, so the tracker that charged it has
+        // to be the one credited for its release. Changing the tracker therefore releases the
+        // buffer up front rather than leaving it to bill a tracker that never paid for it.
+        assertMemoryLeak(() -> {
+            try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(64 * 1024)) {
+                // The map stays off the tracker, so every byte it reports belongs to the view.
+                try (OrderedMap map = new OrderedMap(1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), 64, 0.5, 1024)) {
+                    fillVarSizeKeys(map, 16);
+                    try (OrderedMap.ProbeView view = new OrderedMap.ProbeView()) {
+                        view.setMemoryTracker(tracker);
+                        view.of(map);
+                        final long initialCapacity = view.getSizeInBytes();
+                        Assert.assertTrue(initialCapacity > 0);
+                        Assert.assertEquals(initialCapacity, tracker.getUsed());
+
+                        // A key well past the initial capacity grows the buffer under the tracker.
+                        view.withKey().putStr(varSizeKeyOfLength(512));
+                        Assert.assertNull(view.findValue());
+                        Assert.assertTrue(view.getSizeInBytes() > initialCapacity);
+                        Assert.assertEquals(view.getSizeInBytes(), tracker.getUsed());
+
+                        // The tracker change hands the view back whole, at its initial capacity,
+                        // under the new tracker - here none, so the old tracker returns to zero.
+                        view.setMemoryTracker(null);
+                        Assert.assertEquals("the tracker that charged the buffer has to be credited for it", 0, tracker.getUsed());
+                        Assert.assertEquals(initialCapacity, view.getSizeInBytes());
+                        view.withKey().putStr(varSizeKeyOfLength(3));
+                        Assert.assertEquals(3, view.findValue().getLong(0));
+                        Assert.assertEquals(0, tracker.getUsed());
+                    }
+                }
+                Assert.assertEquals(0, tracker.getUsed());
+            }
+        });
+    }
+
+    @Test
+    public void testProbeViewBreachedStagingGrowthLeavesTheBufferItOwns() throws Exception {
+        // Unsafe.realloc checks the limit before it reallocates, so a breach leaves the view
+        // pointing at the block it still owns. Nothing may be lost or double-freed: the view has
+        // to keep probing with the buffer it has, and close() has to return every charged byte.
+        assertMemoryLeak(() -> {
+            try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(1024)) {
+                // The map stays off the tracker, so every byte it reports belongs to the view.
+                try (OrderedMap map = new OrderedMap(1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), 64, 0.5, 1024)) {
+                    fillVarSizeKeys(map, 16);
+                    try (OrderedMap.ProbeView view = new OrderedMap.ProbeView()) {
+                        view.setMemoryTracker(tracker);
+                        view.of(map);
+                        final long initialCapacity = view.getSizeInBytes();
+                        Assert.assertEquals(initialCapacity, tracker.getUsed());
+
+                        try {
+                            view.withKey().putStr(varSizeKeyOfLength(512));
+                            Assert.fail();
+                        } catch (CairoException e) {
+                            TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                        }
+                        Assert.assertEquals("the breach must not lose the block the view owns", initialCapacity, view.getSizeInBytes());
+                        Assert.assertEquals(initialCapacity, tracker.getUsed());
+
+                        // The view still works off the buffer it kept.
+                        view.withKey().putStr(varSizeKeyOfLength(3));
+                        Assert.assertEquals(3, view.findValue().getLong(0));
+
+                        // And it grows once the limit allows it.
+                        tracker.setLimit(64 * 1024);
+                        view.withKey().putStr(varSizeKeyOfLength(512));
+                        Assert.assertNull(view.findValue());
+                        Assert.assertTrue(view.getSizeInBytes() > initialCapacity);
+                        Assert.assertEquals(view.getSizeInBytes(), tracker.getUsed());
+                    }
+                }
+                Assert.assertEquals("close() must return every tracker-charged byte", 0, tracker.getUsed());
+            }
+        });
+    }
+
+    @Test
+    public void testProbeViewCompositeKeyThroughRecordSink() throws Exception {
+        // The view's real driver is a generated RecordSink, which reaches it through RecordSinkSPI
+        // and not through MapKey. Populate a wide var-size key through one sink, then read every
+        // row back through the same sink and the view.
+        assertMemoryLeak(() -> {
+            final int N = 5000;
+            final Rnd rnd = new Rnd();
+            TestRecord.ArrayBinarySequence binarySequence = new TestRecord.ArrayBinarySequence();
+
+            createTestTable(N, rnd, binarySequence);
+
+            BytecodeAssembler asm = new BytecodeAssembler();
+
+            try (
+                    TableReader reader = newOffPoolReader(configuration, "x");
+                    TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+            ) {
+                EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
+                entityColumnFilter.of(reader.getMetadata().getColumnCount());
+
+                try (
+                        OrderedMap map = new OrderedMap(
+                                Numbers.SIZE_1MB,
+                                new SymbolAsStrTypes(reader.getMetadata()),
+                                new ArrayColumnTypes()
+                                        .add(ColumnType.LONG)
+                                        .add(ColumnType.INT)
+                                        .add(ColumnType.SHORT)
+                                        .add(ColumnType.BYTE)
+                                        .add(ColumnType.FLOAT)
+                                        .add(ColumnType.DOUBLE)
+                                        .add(ColumnType.DATE)
+                                        .add(ColumnType.TIMESTAMP)
+                                        .add(ColumnType.BOOLEAN)
+                                        .add(ColumnType.UUID),
+                                N,
+                                0.9f,
+                                1
+                        )
+                ) {
+                    BitSet writeSymbolAsString = new BitSet();
+                    for (int i = 0, n = reader.getMetadata().getColumnCount(); i < n; i++) {
+                        if (reader.getMetadata().getColumnType(i) == ColumnType.SYMBOL) {
+                            writeSymbolAsString.set(i);
+                        }
+                    }
+                    RecordSink sink = RecordSinkFactory.getInstance(configuration, asm, reader.getMetadata(), entityColumnFilter, writeSymbolAsString);
+
+                    populateMap(map, new Rnd(), cursor, sink);
+
+                    try (OrderedMap.ProbeView view = new OrderedMap.ProbeView().of(map)) {
+                        cursor.toTop();
+                        final Record record = cursor.getRecord();
+                        long counter = 0;
+                        while (cursor.hasNext()) {
+                            sink.copy(record, view.withKey());
+                            MapValue value = view.findValue();
+                            Assert.assertNotNull(value);
+                            Assert.assertEquals(++counter, value.getLong(0));
+                        }
+                        Assert.assertEquals(N, counter);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testProbeViewConcurrentProbes() throws Exception {
+        // The point of the view: many threads read one frozen map at once. The map's own MapKey
+        // cannot serve this, since it stages the searched key inside the map's heap and hands
+        // every caller the same value flyweight.
+        assertMemoryLeak(() -> {
+            final int keyCount = 10_000;
+            final int workerCount = 4;
+            try (OrderedMap map = new OrderedMap(1024, new SingleColumnType(ColumnType.LONG), new SingleColumnType(ColumnType.LONG), 64, 0.5, 1024)) {
+                fillLongKeys(map, keyCount);
+
+                final ExecutorService executor = Executors.newFixedThreadPool(workerCount);
+                final CountDownLatch start = new CountDownLatch(1);
+                final List<Future<?>> futures = new ArrayList<>();
+                try {
+                    for (int worker = 0; worker < workerCount; worker++) {
+                        final int shift = worker;
+                        // The owner allocates every view before publication.
+                        final OrderedMap.ProbeView a = new OrderedMap.ProbeView().of(map);
+                        final OrderedMap.ProbeView b = new OrderedMap.ProbeView().of(map);
+                        futures.add(executor.submit(() -> {
+                            try {
+                                // Task submission and the latch publish the filled map.
+                                start.await();
+                                for (int i = 0; i < keyCount; i++) {
+                                    final int key = (i + shift * 997) % keyCount;
+                                    final int otherKey = (key + 1) % keyCount;
+                                    a.withKey().putLong(key);
+                                    b.withKey().putLong(otherKey);
+                                    MapValue hit = a.findValue();
+                                    Assert.assertNotNull(hit);
+                                    Assert.assertEquals(otherKey, b.findValue().getLong(0));
+                                    // Another view's flyweight does not overwrite this one.
+                                    Assert.assertEquals(key, hit.getLong(0));
+                                    b.withKey().putLong(keyCount + key);
+                                    Assert.assertNull(b.findValue());
+                                    Assert.assertEquals(key, hit.getLong(0));
+                                }
+                            } finally {
+                                a.close();
+                                b.close();
+                            }
+                            return null;
+                        }));
+                    }
+                    start.countDown();
+                    for (Future<?> future : futures) {
+                        future.get(60, TimeUnit.SECONDS);
+                    }
+                } finally {
+                    start.countDown();
+                    executor.shutdownNow();
+                    // Do not release native backing until readers have stopped even on failure.
+                    Assert.assertTrue(executor.awaitTermination(60, TimeUnit.SECONDS));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testProbeViewFixedSizeKey() throws Exception {
+        assertMemoryLeak(() -> {
+            final int N = 10_000;
+            try (OrderedMap map = new OrderedMap(1024, new SingleColumnType(ColumnType.LONG), new SingleColumnType(ColumnType.LONG), 64, 0.5, 1024)) {
+                fillLongKeys(map, N);
+                try (OrderedMap.ProbeView view = new OrderedMap.ProbeView().of(map)) {
+                    final long capacity = view.getSizeInBytes();
+                    Assert.assertTrue(capacity >= Long.BYTES);
+                    for (int i = 0; i < N; i++) {
+                        view.withKey().putLong(i);
+                        MapValue value = view.findValue();
+                        Assert.assertNotNull(value);
+                        Assert.assertEquals(i, value.getLong(0));
+                    }
+                    for (int i = N; i < N + 100; i++) {
+                        view.withKey().putLong(i);
+                        Assert.assertNull(view.findValue());
+                    }
+                    Assert.assertEquals("a fixed-size key never grows the staging buffer", capacity, view.getSizeInBytes());
+                }
+                // Probing staged nothing in the map's own heap, so it still appends where it left off.
+                MapKey key = map.withKey();
+                key.putLong(N);
+                MapValue value = key.createValue();
+                Assert.assertTrue(value.isNew());
+                value.putLong(0, N);
+                Assert.assertEquals(N + 1, map.size());
+            }
+        });
+    }
+
+    @Test
+    public void testProbeViewRejectsAClosedMap() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    OrderedMap map = new OrderedMap(1024, new SingleColumnType(ColumnType.LONG), new SingleColumnType(ColumnType.LONG), 64, 0.5, 1024, false);
+                    OrderedMap.ProbeView view = new OrderedMap.ProbeView()
+            ) {
+                try {
+                    view.of(map);
+                    Assert.fail();
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "map probe view needs an open map");
+                }
+                map.reopen();
+                fillLongKeys(map, 8);
+                view.of(map).withKey().putLong(3);
+                Assert.assertEquals(3, view.findValue().getLong(0));
+            }
+        });
+    }
+
+    @Test
+    public void testProbeViewRejectsAnIncompatibleLayout() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    OrderedMap longKeys = new OrderedMap(1024, new SingleColumnType(ColumnType.LONG), new SingleColumnType(ColumnType.LONG), 64, 0.5, 1024);
+                    OrderedMap strKeys = new OrderedMap(1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), 64, 0.5, 1024);
+                    OrderedMap wideValues = new OrderedMap(1024, new SingleColumnType(ColumnType.LONG), new ArrayColumnTypes().add(ColumnType.LONG).add(ColumnType.INT), 64, 0.5, 1024);
+                    OrderedMap.ProbeView view = new OrderedMap.ProbeView().of(longKeys)
+            ) {
+                try {
+                    view.of(strKeys);
+                    Assert.fail();
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "map probe view is bound to a different key or value layout");
+                }
+                try {
+                    view.of(wideValues);
+                    Assert.fail();
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "map probe view is bound to a different key or value layout");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testProbeViewRejectsVarSizePutsOnAFixedSizeKey() throws Exception {
+        // One view class serves both key layouts, so it cannot lean on FixedSizeKey's missing
+        // put methods. A var-size column on a fixed-size layout would stage a key that matches
+        // nothing, so the view rejects it outright rather than return an empty result.
+        assertMemoryLeak(() -> {
+            try (
+                    OrderedMap map = new OrderedMap(1024, new SingleColumnType(ColumnType.LONG), new SingleColumnType(ColumnType.LONG), 64, 0.5, 1024);
+                    OrderedMap.ProbeView view = new OrderedMap.ProbeView().of(map)
+            ) {
+                final ObjList<Consumer<? super OrderedMap.ProbeView>> puts = new ObjList<>();
+                puts.add(v -> v.putArray(null));
+                puts.add(v -> v.putBin(null));
+                puts.add(v -> v.putStr(null));
+                puts.add(v -> v.putStr(null, 0, 0));
+                puts.add(v -> v.putStrLowerCase(null));
+                puts.add(v -> v.putStrLowerCase(null, 0, 0));
+                puts.add(v -> v.putVarchar((Utf8Sequence) null));
+                for (int i = 0, n = puts.size(); i < n; i++) {
+                    final int index = i;
+                    UnsupportedOperationException e = Assert.assertThrows(
+                            "put " + index + " must be rejected on a fixed-size key",
+                            UnsupportedOperationException.class,
+                            () -> puts.getQuick(index).accept(view.withKey())
+                    );
+                    TestUtils.assertContains(e.getMessage(), "var-size put on a fixed-size key layout");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testProbeViewRetargetsToAnotherMap() throws Exception {
+        // Stage and hash once, then probe every map with the same layout. A partitioned build
+        // needs exactly this: one key, one hash, a lookup per partition.
+        assertMemoryLeak(() -> {
+            final int N = 1000;
+            try (
+                    OrderedMap a = new OrderedMap(1024, new SingleColumnType(ColumnType.LONG), new SingleColumnType(ColumnType.LONG), 64, 0.5, 1024);
+                    OrderedMap b = new OrderedMap(1024, new SingleColumnType(ColumnType.LONG), new SingleColumnType(ColumnType.LONG), 64, 0.5, 1024)
+            ) {
+                fillLongKeys(a, N);
+                for (int i = 0; i < N; i++) {
+                    MapKey key = b.withKey();
+                    key.putLong(i);
+                    key.createValue().putLong(0, i + 1_000_000);
+                }
+                try (OrderedMap.ProbeView view = new OrderedMap.ProbeView().of(a)) {
+                    for (int i = 0; i < N; i++) {
+                        view.withKey().putLong(i);
+                        Assert.assertEquals(i, view.of(a).findValue().getLong(0));
+                        // Rebinding leaves the staged key and its hash code in place.
+                        Assert.assertEquals(i + 1_000_000, view.of(b).findValue().getLong(0));
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testProbeViewReuseAcrossReopen() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    OrderedMap map = new OrderedMap(1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), 64, 0.5, 1024, false);
+                    OrderedMap.ProbeView view = new OrderedMap.ProbeView()
+            ) {
+                map.reopen();
+                fillVarSizeKeys(map, 100);
+                view.of(map);
+                view.withKey().putStr(varSizeKeyOfLength(99));
+                Assert.assertEquals(99, view.findValue().getLong(0));
+                final long capacity = view.getSizeInBytes();
+                Assert.assertTrue("the 99-char key must have grown the staging buffer", capacity > 64);
+
+                map.close();
+                map.reopen();
+                fillVarSizeKeys(map, 50);
+                view.of(map);
+                view.withKey().putStr(varSizeKeyOfLength(49));
+                Assert.assertEquals(49, view.findValue().getLong(0));
+                view.withKey().putStr(varSizeKeyOfLength(99));
+                Assert.assertNull("the view reads the reopened map, not the closed one", view.findValue());
+                Assert.assertEquals("the staging buffer keeps its capacity across executions", capacity, view.getSizeInBytes());
+            }
+        });
+    }
+
+    @Test
+    public void testProbeViewStagesAndSplitsKeysOverSeveralMaps() throws Exception {
+        // A partitioned hash join build stages each key once through a view bound to the key
+        // layout alone, inserts the raw key into the map that the top bits of its hash select, and
+        // probes with a view that picks the map the same way.
+        assertMemoryLeak(() -> {
+            final int n = 1_000;
+            final int mapCount = 4;
+            final long rawCapacity = 256;
+            for (boolean isVarSize : new boolean[]{false, true}) {
+                // A twelve-byte fixed-size key, and a var-size one with NULL and empty strings.
+                final ColumnTypes keyTypes = new ArrayColumnTypes().add(ColumnType.INT).add(isVarSize ? ColumnType.STRING : ColumnType.LONG);
+                final ObjList<OrderedMap> maps = new ObjList<>();
+                final long raw = Unsafe.malloc(rawCapacity, MemoryTag.NATIVE_DEFAULT);
+                try (OrderedMap.ProbeView stager = new OrderedMap.ProbeView(); OrderedMap.ProbeView view = new OrderedMap.ProbeView()) {
+                    for (int m = 0; m < mapCount; m++) {
+                        maps.add(new OrderedMap(1024, keyTypes, new SingleColumnType(ColumnType.LONG), 16, 0.5, Integer.MAX_VALUE, false));
+                    }
+                    // The layout binds a map that has not opened.
+                    stager.ofLayout(maps.getQuick(0));
+                    for (int m = 0; m < mapCount; m++) {
+                        maps.getQuick(m).reopen();
+                    }
+                    for (int i = 0; i < n; i++) {
+                        stageSplitKey(stager.withKey(), i, isVarSize);
+                        final long size = stager.copyStagedKey(raw);
+                        Assert.assertEquals(size, stager.getStagedKeySize());
+                        Assert.assertTrue(size <= rawCapacity);
+                        final OrderedMap target = maps.getQuick((int) (stager.hash() >>> 62));
+                        final MapKey key = target.withRawKey(raw, size);
+                        key.commit();
+                        // The map hashes the raw key as the view hashed the staged one.
+                        Assert.assertEquals(stager.hash(), key.hash());
+                        final MapValue value = key.createValue();
+                        Assert.assertTrue(value.isNew());
+                        value.putLong(0, i);
+                    }
+                    long keyCount = 0;
+                    for (int m = 0; m < mapCount; m++) {
+                        final OrderedMap map = maps.getQuick(m);
+                        keyCount += map.size();
+                        Assert.assertTrue("map " + m + " holds " + map.size(), map.size() > n / (2 * mapCount));
+                        view.of(map);
+                    }
+                    Assert.assertEquals(n, keyCount);
+                    for (int i = 0; i < n + 100; i++) {
+                        stageSplitKey(view.withKey(), i, isVarSize);
+                        final int selected = (int) (view.hash() >>> 62);
+                        for (int m = 0; m < mapCount; m++) {
+                            final MapValue value = view.findValueIn(maps.getQuick(m));
+                            if (m == selected && i < n) {
+                                Assert.assertNotNull("key " + i, value);
+                                Assert.assertEquals(i, value.getLong(0));
+                            } else {
+                                Assert.assertNull("key " + i + " in map " + m, value);
+                            }
+                        }
+                        // The map's own key, staged through its put methods, lands on the raw key's entry.
+                        if (i < n) {
+                            final MapKey key = maps.getQuick(selected).withKey();
+                            stageSplitKey(key, i, isVarSize);
+                            Assert.assertEquals(i, key.findValue().getLong(0));
+                        }
+                    }
+                } finally {
+                    Unsafe.free(raw, rawCapacity, MemoryTag.NATIVE_DEFAULT);
+                    Misc.freeObjList(maps);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testProbeViewVarSizeKeyOutgrowsStagingBuffer() throws Exception {
+        assertMemoryLeak(() -> {
+            final int N = 200;
+            try (OrderedMap map = new OrderedMap(1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), 64, 0.5, 1024)) {
+                fillVarSizeKeys(map, N);
+                MapKey nullKey = map.withKey();
+                nullKey.putStr(null);
+                MapValue nullValue = nullKey.createValue();
+                Assert.assertTrue(nullValue.isNew());
+                nullValue.putLong(0, -1);
+
+                try (OrderedMap.ProbeView view = new OrderedMap.ProbeView().of(map)) {
+                    final long initialCapacity = view.getSizeInBytes();
+                    for (int i = 0; i < N; i++) {
+                        view.withKey().putStr(varSizeKeyOfLength(i));
+                        MapValue value = view.findValue();
+                        Assert.assertNotNull("key of length " + i, value);
+                        Assert.assertEquals(i, value.getLong(0));
+                    }
+                    Assert.assertTrue("the longest key must have grown the staging buffer", view.getSizeInBytes() > initialCapacity);
+
+                    // A miss on a key longer than anything the map holds.
+                    view.withKey().putStr(varSizeKeyOfLength(N + 1));
+                    Assert.assertNull(view.findValue());
+
+                    // NULL is an ordinary var-size key and matches the NULL the map holds.
+                    view.withKey().putStr(null);
+                    Assert.assertEquals(-1, view.findValue().getLong(0));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testRecordAsKey() throws Exception {
         assertMemoryLeak(() -> {
             final int N = 5000;
@@ -2995,6 +3483,16 @@ public class OrderedMapTest extends AbstractCairoTest {
         }
     }
 
+    private static void fillVarSizeKeys(OrderedMap map, int count) {
+        for (int i = 0; i < count; i++) {
+            MapKey key = map.withKey();
+            key.putStr(varSizeKeyOfLength(i));
+            MapValue value = key.createValue();
+            Assert.assertTrue(value.isNew());
+            value.putLong(0, i);
+        }
+    }
+
     private static int firstEmptySlot(OrderedMap map) {
         for (int i = 0, n = map.getKeyCapacity(); i < n; i++) {
             if (!isSlotOccupied(map, i)) {
@@ -3060,6 +3558,29 @@ public class OrderedMapTest extends AbstractCairoTest {
                 + (char) ('a' + i / 676 % 26)
                 + (char) ('a' + i / 26 % 26)
                 + (char) ('a' + i % 26);
+    }
+
+    /**
+     * A distinct STRING key of exactly {@code len} characters, so that a test can drive the probe
+     * view's staging buffer past its initial capacity. Every length yields a different key, since
+     * each one is a prefix of the next.
+     */
+    // Unique per i: the INT column tells apart the NULL and empty strings of the var-size key.
+    private static void stageSplitKey(RecordSinkSPI key, int i, boolean isVarSize) {
+        key.putInt(i);
+        if (isVarSize) {
+            key.putStr(i % 97 == 0 ? null : i % 89 == 0 ? "" : "key" + i);
+        } else {
+            key.putLong(i * 31L);
+        }
+    }
+
+    private static String varSizeKeyOfLength(int len) {
+        StringBuilder sink = new StringBuilder(len);
+        for (int i = 0; i < len; i++) {
+            sink.append((char) ('a' + i % 26));
+        }
+        return sink.toString();
     }
 
     private void assertCursor2(Rnd rnd, TestRecord.ArrayBinarySequence binarySequence, int keyColumnOffset, Rnd rnd2, RecordCursor mapCursor) {

@@ -121,8 +121,18 @@ public class MatViewRefreshSqlExecutionContext extends SqlExecutionContextImpl {
     }
 
     @Override
+    public boolean isBackgroundJob() {
+        return true;
+    }
+
+    @Override
     public boolean isCoveringIndexEnabled() {
         return coveringIndexEnabled;
+    }
+
+    @Override
+    public boolean isMatViewRefresh() {
+        return true;
     }
 
     @Override

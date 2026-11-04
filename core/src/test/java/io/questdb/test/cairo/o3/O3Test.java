@@ -30,9 +30,13 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.TxReader;
 import io.questdb.cairo.TxnScoreboard;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.InsertOperation;
@@ -585,6 +589,36 @@ public class O3Test extends AbstractO3Test {
     @Test
     public void testO3EdgeBugContended() throws Exception {
         executeWithPool(0, O3Test::testO3EdgeBug);
+    }
+
+    @Test
+    public void testO3MergeAllocatesColumnFilesToPage() throws Exception {
+        // on Linux, growing a file that does not end on a page boundary can make XFS write back
+        // synchronously, so O3 must leave column files aligned
+        executeVanilla((engine, compiler, context) -> {
+            engine.execute("create table x (v long, ts " + timestampType.getTypeName() + ") timestamp(ts) partition by DAY", context);
+            engine.execute("insert into x values (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T02:00:00.000000Z'), (3, '2024-01-02T00:00:00.000000Z')", context);
+            // O3 into the non-last partition rewrites it; nothing appends to it afterwards
+            engine.execute("insert into x values (4, '2024-01-01T01:00:00.000000Z')", context);
+
+            TableToken tableToken = engine.verifyTableName("x");
+            try (TableReader reader = engine.getReader(tableToken); Path path = new Path()) {
+                TxReader txFile = reader.getTxFile();
+                Assert.assertEquals(4, reader.size());
+                Assert.assertTrue(txFile.getPartitionNameTxn(0) > -1);
+                path.of(engine.getConfiguration().getDbRoot()).concat(tableToken);
+                TableUtils.setPathForNativePartition(
+                        path,
+                        timestampType.getTimestampType(),
+                        PartitionBy.DAY,
+                        txFile.getPartitionTimestampByIndex(0),
+                        txFile.getPartitionNameTxn(0)
+                );
+                long length = TestFilesFacadeImpl.INSTANCE.length(path.concat("v.d").$());
+                // 3 rows; independent of TableUtils.alignedSize() so a regression there fails
+                Assert.assertEquals(Os.isLinux() ? Files.PAGE_SIZE : 3L * Long.BYTES, length);
+            }
+        });
     }
 
     @Test

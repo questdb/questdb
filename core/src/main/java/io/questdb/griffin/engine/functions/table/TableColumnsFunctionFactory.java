@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionRequirements;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
 import io.questdb.std.IntList;
@@ -38,17 +39,31 @@ import io.questdb.std.ObjList;
 public class TableColumnsFunctionFactory implements FunctionFactory {
 
     @Override
+    public int getExecutionRequirements() {
+        // resolves the table against the caller or its enclosing view, see SqlExecutionRequirements
+        return SqlExecutionRequirements.DISCLOSES_OBJECTS;
+    }
+
+    @Override
     public String getSignature() {
         return "table_columns(s)";
     }
 
     @Override
+    public boolean isTableNameFunction() {
+        return true;
+    }
+
+    @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         final CharSequence tableName = args.getQuick(0).getStrA(null);
+        final SqlExecutionContext.TableFunctionView view = sqlExecutionContext.getTableFunctionView();
         final TableToken token = sqlExecutionContext.getCairoEngine().getTableTokenIfExists(tableName);
-        if (token == null) {
+        // Outside a view, or when the view's definition does not name the table, an invisible table
+        // fails like a missing one.
+        if (token == null || !sqlExecutionContext.isTableFunctionVisibleAtCompile(token, view)) {
             throw SqlException.$(argPositions.getQuick(0), "table does not exist [table=").put(tableName).put(']');
         }
-        return new CursorFunction(new ShowColumnsRecordCursorFactory(token, argPositions.get(0)));
+        return new CursorFunction(new ShowColumnsRecordCursorFactory(token, argPositions.get(0), view));
     }
 }
