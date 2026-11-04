@@ -40,7 +40,6 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.std.Misc;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.mp.TestWorkerPool;
-import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Test;
@@ -56,7 +55,8 @@ import static org.junit.Assert.assertTrue;
  * PERMISSION, not the mode an execution chose, so every arm here is forced through
  * {@link CoveringIndexRecordCursorFactory#setMinRowsPerKeyPartitionForTesting(int)} -- 1 admits
  * any non-empty density, {@link Integer#MAX_VALUE} admits none -- and then CONFIRMED twice:
- * once against the per-execution {@code covering scan frame mode [...]} log record (which also
+ * once against the per-execution {@code covering scan frame mode [...]} record (read through
+ * {@link CoveringIndexRecordCursorFactory#getLastFrameModeForTesting()}, the text of the debug log record; it also
  * pins the estimated {@code rowsPerPair}, so a fixture that did not build the density it claims
  * fails loudly), and once per timed block against the {@code @TestOnly} mode counters, so a
  * single iteration taking the other mode cannot hide inside a best-of-N.
@@ -257,27 +257,26 @@ public class CoveringIndexPerKeyCrossoverPerfTest extends AbstractCoveringIndexQ
     }
 
     /**
-     * Runs the query ONCE with the gate forced, and asserts the per-execution log record names the
-     * mode we forced, with the rowsPerPair the fixture was built to hold and the crossover we set.
-     * This is the check that the arm is what it says it is; it is deliberately separate from the
-     * timed blocks so log capture never sits inside a timing loop.
+     * Runs the query ONCE with the gate forced, and asserts the per-execution record names the
+     * mode we forced, with the rowsPerPair the fixture was built to hold and the crossover we set,
+     * and that no open took the other mode. This is the check that the arm is what it says it is;
+     * it is deliberately separate from the timed blocks.
      */
     private void confirmModeLog(PerfNode node, String query, int override, String mode, int keys, int rowsPerPair) throws Exception {
         CoveringIndexRecordCursorFactory.setMinRowsPerKeyPartitionForTesting(override);
-        final LogCapture capture = new LogCapture();
-        capture.start();
-        try {
-            TestUtils.printSql(node.compiler, node.ctx, query, new StringSink());
-            capture.drain();
-            capture.assertLoggedRE(
-                    "covering scan frame mode \\[table=t, mode=" + mode + ", reason=density, keys=" + keys
-                            + ", partitionsUpper=\\d+, framesUpper=\\d+, frameCeiling=\\d+, rowsPerPair="
-                            + rowsPerPair + ", crossover=" + override + "]"
-            );
-            capture.assertNotLogged("mode=" + ("per-key".equals(mode) ? "merged" : "per-key"));
-        } finally {
-            capture.stop();
-        }
+        CoveringIndexRecordCursorFactory.resetModeSelectionsForTesting();
+        TestUtils.printSql(node.compiler, node.ctx, query, new StringSink());
+        final String record = CoveringIndexRecordCursorFactory.getLastFrameModeForTesting();
+        assertTrue("the query wrote no frame mode record", record != null);
+        assertTrue(record, record.matches(
+                "covering scan frame mode \\[table=t, mode=" + mode + ", reason=density, keys=" + keys
+                        + ", partitionsUpper=\\d+, framesUpper=\\d+, frameCeiling=\\d+, rowsPerPair="
+                        + rowsPerPair + ", crossover=" + override + "]"
+        ));
+        // no open took the other mode
+        assertEquals(0, "per-key".equals(mode)
+                ? CoveringIndexRecordCursorFactory.getMergedModeOpensForTesting()
+                : CoveringIndexRecordCursorFactory.getPerKeyModeOpensForTesting());
     }
 
     private void measureShape(int keys, int partitions, int rowsPerPair, int workers, int warmup, int iters, Shape shape) throws Exception {

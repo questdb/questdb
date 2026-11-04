@@ -70,8 +70,12 @@ import java.util.concurrent.TimeUnit;
  * <ul>
  *   <li>shape {@code eq}: {@code count(), sum(a) ... = 'k7'}; {@code keyed}: the same grouped by the
  *   key; {@code in2}: {@code count(), sum(a) ... IN} two keys; {@code rows}: no GROUP BY,
- *   {@code ts, a ... = 'k2'}, the single-symbol scan and its per-open estimate;</li>
- *   <li>key {@code 1}: a 1% key of {@code psym} ({@code 'k' || x % 100}); {@code 20}: a 20% key of
+ *   {@code ts, a ... = 'k2'}, the single-symbol scan and its per-open estimate; {@code covrows}:
+ *   the same over {@code csym}, a covering index, whose open estimates the selection past 262,144
+ *   scanned rows; {@code covperkey}: {@code csym, count(), max(a) ... IN} two keys over
+ *   {@code csym}, whose open estimates the rows per (key, partition) pair;</li>
+ *   <li>key {@code 1}: a 1% key of {@code psym} ({@code 'k' || x % 100}), or of {@code csym}, the
+ *   same values under a POSTING index that INCLUDEs {@code a}; {@code 20}: a 20% key of
  *   {@code p5} ({@code 'k' || x % 5});</li>
  *   <li>1M rows in 100, 1000 or 4000 hourly partitions;</li>
  *   <li>switches {@code on}: the defaults; {@code bothOff}: Index Or Scan and the parallel index
@@ -103,6 +107,8 @@ public class IndexGroupByChoiceBenchmark {
             "keyed-20-100-on", "keyed-20-1000-on", "keyed-20-4000-on",
             "in2-20-100-on", "in2-20-1000-on", "in2-20-4000-on",
             "rows-1-100-on", "rows-1-1000-on", "rows-1-4000-on", "rows-1-1000-allOff",
+            "covrows-1-100-on", "covrows-1-1000-on", "covrows-1-4000-on",
+            "covperkey-1-100-on", "covperkey-1-1000-on", "covperkey-1-4000-on",
             "inK50-100-on", "inK500-100-on", "inK5000-100-on", "inK20000-100-on", "inK20000-1-on",
     })
     public String cell;
@@ -211,16 +217,17 @@ public class IndexGroupByChoiceBenchmark {
             sql = "SELECT count(), sum(a) FROM t WHERE psym IN (" + in + ")";
         } else {
             final int partitions = Integer.parseInt(parts[2]);
-            engine.execute("CREATE TABLE t (ts TIMESTAMP, psym SYMBOL INDEX TYPE POSTING, p5 SYMBOL INDEX TYPE POSTING, a DOUBLE) "
-                    + "TIMESTAMP(ts) PARTITION BY HOUR BYPASS WAL", context);
+            engine.execute("CREATE TABLE t (ts TIMESTAMP, psym SYMBOL INDEX TYPE POSTING, p5 SYMBOL INDEX TYPE POSTING, a DOUBLE, "
+                    + "csym SYMBOL INDEX TYPE POSTING INCLUDE (a)) TIMESTAMP(ts) PARTITION BY HOUR BYPASS WAL", context);
             engine.execute("INSERT INTO t SELECT ((x - 1) * " + (partitions * 3_600_000_000L / ROWS) + "L)::TIMESTAMP, "
-                    + "'k' || (x % 100), 'k' || (x % 5), (x % 1000) / 8.0 FROM long_sequence(" + ROWS + ")", context);
-            final String column = "1".equals(parts[1]) ? "psym" : "p5";
+                    + "'k' || (x % 100), 'k' || (x % 5), (x % 1000) / 8.0, 'k' || (x % 100) FROM long_sequence(" + ROWS + ")", context);
+            final String column = parts[0].startsWith("cov") ? "csym" : "1".equals(parts[1]) ? "psym" : "p5";
             sql = switch (parts[0]) {
                 case "eq" -> "SELECT count(), sum(a) FROM t WHERE " + column + " = 'k2'";
                 case "keyed" -> "SELECT " + column + ", count(), sum(a) FROM t WHERE " + column + " = 'k2'";
                 case "in2" -> "SELECT count(), sum(a) FROM t WHERE " + column + " IN ('k2', 'k3')";
-                case "rows" -> "SELECT ts, a FROM t WHERE " + column + " = 'k2'";
+                case "rows", "covrows" -> "SELECT ts, a FROM t WHERE " + column + " = 'k2'";
+                case "covperkey" -> "SELECT " + column + ", count() c, max(a) m FROM t WHERE " + column + " IN ('k2', 'k3')";
                 default -> throw new IllegalArgumentException(cell);
             };
         }
@@ -233,6 +240,9 @@ public class IndexGroupByChoiceBenchmark {
         }
         if (!isOn && (plan.contains("Index Or Scan") || plan.contains("Async Index Group By"))) {
             throw new IllegalStateException("switches not off for " + cell + ":\n" + plan);
+        }
+        if (parts[0].startsWith("cov") && !plan.contains("CoveringIndex")) {
+            throw new IllegalStateException("no covering scan for " + cell + ":\n" + plan);
         }
         drain(factory, context);
     }

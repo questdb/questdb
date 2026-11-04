@@ -66,28 +66,18 @@ import org.jetbrains.annotations.TestOnly;
  */
 public class IndexGatherRecordCursorFactory extends AbstractRecordCursorFactory {
     // the (partition, key) counts one estimate reads at most, see estimateSelection()
-    static final int ESTIMATE_MAX_COUNTS = 4_096;
+    static final int ESTIMATE_MAX_COUNTS = PostingEstimateSample.MAX_COUNTS;
     // the distinct partitions one estimate probes at most, see estimateSelection()
-    static final int ESTIMATE_SAMPLE_PARTITIONS = 64;
-    // the budget the estimate reads: the constants above, which only tests change
-    private static int estimateMaxCounts = ESTIMATE_MAX_COUNTS;
-    private static int estimateSamplePartitions = ESTIMATE_SAMPLE_PARTITIONS;
+    static final int ESTIMATE_SAMPLE_PARTITIONS = PostingEstimateSample.SAMPLE_PARTITIONS;
     private final IntList estimateKeys = new IntList();
-    // the keys the estimate counts in each probed frame, a sample of estimateKeys
-    private final IntList estimateSampledKeys = new IntList();
+    private final PostingEstimateSample estimateSample = new PostingEstimateSample();
     private final int frameRows;
     private final ObjList<Function> keyFunctions = new ObjList<>();
-    // tests: the partitions the last estimate probed, in walk order
-    private final IntList lastEstimatePartitions = new IntList();
     private final long taskRows;
     private final int workerCount;
     private FilterOnValuesRecordCursorFactory delegate;
     // the rest of the filter, only valid while the query compiles
     private ExpressionNode filterExpr;
-    // tests: the partitions the last estimate opened
-    private int lastEstimateOpenedPartitions;
-    // tests: the (partition, key) counts the last estimate read
-    private long lastEstimateProbes;
     private IndexGatherPageFrameCursor pageFrameCursor;
     // see setSplitKeysByRowRange()
     private boolean splitKeysByRowRange = true;
@@ -160,87 +150,33 @@ public class IndexGatherRecordCursorFactory extends AbstractRecordCursorFactory 
      * @param sink receives {selected, scanned}
      */
     public void estimateSelection(SqlExecutionContext executionContext, long[] sink) throws SqlException {
-        long scanned = 0;
+        final PostingEstimateSample sample = estimateSample;
         long sampledScanned = 0;
         long sampledSelected = 0;
-        lastEstimateProbes = 0;
-        lastEstimatePartitions.clear();
         try (PartitionFrameCursor frameCursor = delegate.partitionFrameCursorFactory.getCursor(
                 executionContext,
                 delegate.columnIndexes,
                 PartitionFrameCursorFactory.ORDER_ASC
         )) {
             final TableReader reader = frameCursor.getTableReader();
-            final int openedPartitions = reader.getOpenPartitionCount();
             final int keyColumnIndex = getKeyColumnIndex();
             final int readerKeyColumnIndex = delegate.columnIndexes.getQuick(keyColumnIndex);
             for (int i = 0, n = keyFunctions.size(); i < n; i++) {
                 keyFunctions.getQuick(i).init(frameCursor, executionContext);
             }
             IndexGatherPageFrameCursor.resolveKeys(keyFunctions, reader.getSymbolTable(readerKeyColumnIndex), estimateKeys);
-            final int keyCount = estimateKeys.size();
 
-            // first walk, from partition metadata: the rows scanned, and the partitions with rows.
-            // A forward walk yields a partition's frames one after another, and no empty frame
-            PartitionFrame frame;
-            int groupCount = 0;
-            int lastPartition = -1;
-            while ((frame = frameCursor.next(Long.MAX_VALUE)) != null) {
-                scanned += frame.getRowHi() - frame.getRowLo();
-                if (frame.getPartitionIndex() != lastPartition) {
-                    lastPartition = frame.getPartitionIndex();
-                    groupCount++;
-                }
-            }
-
-            if (keyCount > 0 && groupCount > 0) {
-                final int sampleCount = Math.min(groupCount, estimateSamplePartitions);
+            // first walk, from partition metadata: the rows scanned, and the partitions with rows
+            sample.walkMetadata(frameCursor);
+            if (sample.plan(estimateKeys)) {
                 // resolveKeys() sorts the keys: NULL, key 0, comes first
-                final boolean hasNull = estimateKeys.getQuick(0) == 0;
-                final int nullCount = hasNull ? 1 : 0;
-                final int keySampleCount = Math.min(keyCount, Math.max(nullCount + 1, estimateMaxCounts / sampleCount));
-                final int maxProbedFrames = Math.max(1, estimateMaxCounts / (sampleCount * keySampleCount));
-                final int nonNullKeyCount = keyCount - nullCount;
-                final int nonNullSampleCount = keySampleCount - nullCount;
-                estimateSampledKeys.clear();
-                for (int i = 0; i < nonNullSampleCount; i++) {
-                    estimateSampledKeys.add(estimateKeys.getQuick(nullCount + (int) ((long) i * nonNullKeyCount / nonNullSampleCount)));
-                }
-
-                // second walk: the j-th target is the floor(j * G / m)-th partition with rows
+                final boolean hasNull = sample.hasNull();
+                final int sampledKeyCount = sample.getSampledKeyCount();
+                final int countsPerFrame = sampledKeyCount + (hasNull ? 1 : 0);
+                // second walk, over the target partitions' frames
                 frameCursor.toTop();
-                int group = -1;
-                int target = 0;
-                int targetGroup = 0;
-                int probedFrames = 0;
-                boolean isTarget = false;
-                lastPartition = -1;
-                while (true) {
-                    // the frames of target partitions are opened; the first one may be the next
-                    frame = frameCursor.next(target < sampleCount && group + 1 == targetGroup ? 0 : Long.MAX_VALUE);
-                    if (frame == null) {
-                        break;
-                    }
-                    final int partitionIndex = frame.getPartitionIndex();
-                    if (partitionIndex != lastPartition) {
-                        lastPartition = partitionIndex;
-                        group++;
-                        if (target < sampleCount && group == targetGroup) {
-                            isTarget = true;
-                            probedFrames = 0;
-                            lastEstimatePartitions.add(partitionIndex);
-                            target++;
-                            targetGroup = (int) ((long) target * groupCount / sampleCount);
-                        } else if (target == sampleCount) {
-                            break;
-                        } else {
-                            isTarget = false;
-                        }
-                    }
-                    if (!isTarget || probedFrames == maxProbedFrames) {
-                        continue;
-                    }
-                    probedFrames++;
+                PartitionFrame frame;
+                while ((frame = sample.nextProbeFrame(frameCursor)) != null) {
                     final long rowLo = frame.getRowLo();
                     final long rowHi = frame.getRowHi();
                     final long rows = rowHi - rowLo;
@@ -249,21 +185,18 @@ public class IndexGatherRecordCursorFactory extends AbstractRecordCursorFactory 
                         sampledSelected += rows;
                         continue;
                     }
-                    final IndexReader indexReader = reader.getIndexReader(partitionIndex, readerKeyColumnIndex, IndexReader.DIR_FORWARD);
+                    final IndexReader indexReader = reader.getIndexReader(frame.getPartitionIndex(), readerKeyColumnIndex, IndexReader.DIR_FORWARD);
                     if (indexReader instanceof AbstractPostingIndexReader posting) {
                         final long callerHiInclusive = rowHi - 1;
                         final long entryMax = posting.getEntryMaxValue();
                         final long clampedMax = entryMax >= 0 ? Math.min(callerHiInclusive, entryMax) : callerHiInclusive;
-                        lastEstimateProbes += keySampleCount;
+                        sample.addCounts(countsPerFrame);
                         final long nullSelected = hasNull ? count(posting, 0, rows, rowLo, callerHiInclusive, clampedMax) : 0;
                         long selected = 0;
-                        for (int k = 0; k < nonNullSampleCount; k++) {
-                            selected += count(posting, estimateSampledKeys.getQuick(k), rows, rowLo, callerHiInclusive, clampedMax);
+                        for (int k = 0; k < sampledKeyCount; k++) {
+                            selected += count(posting, sample.getSampledKey(k), rows, rowLo, callerHiInclusive, clampedMax);
                         }
-                        if (keySampleCount < keyCount) {
-                            selected = (long) ((double) selected * nonNullKeyCount / nonNullSampleCount);
-                        }
-                        sampledSelected += Math.min(nullSelected + selected, rows);
+                        sampledSelected += Math.min(nullSelected + sample.scaleNonNull(selected), rows);
                     } else {
                         // the gather only serves a POSTING column, whose reader is a posting
                         // reader, or the stand-in of a partition that predates the column, where
@@ -275,8 +208,9 @@ public class IndexGatherRecordCursorFactory extends AbstractRecordCursorFactory 
                     }
                 }
             }
-            lastEstimateOpenedPartitions = reader.getOpenPartitionCount() - openedPartitions;
+            sample.finish();
         }
+        final long scanned = sample.getScanned();
         sink[0] = sampledScanned > 0 ? (long) ((double) sampledSelected * scanned / sampledScanned) : 0;
         sink[1] = scanned;
     }
@@ -310,29 +244,29 @@ public class IndexGatherRecordCursorFactory extends AbstractRecordCursorFactory 
     }
 
     /**
-     * Sets the estimate's budget, see {@link #estimateSelection}: the partitions it probes and the
-     * counts it reads, at most. Tests that change it restore {@value #ESTIMATE_SAMPLE_PARTITIONS}
-     * and {@value #ESTIMATE_MAX_COUNTS}.
+     * Sets the estimates' budget, see {@link #estimateSelection}: the partitions they probe and the
+     * counts they read, at most. It also bounds the covering index's estimates
+     * ({@link CoveringIndexRecordCursorFactory#estimateSelection}). Tests that change it restore
+     * {@value #ESTIMATE_SAMPLE_PARTITIONS} and {@value #ESTIMATE_MAX_COUNTS}.
      */
     @TestOnly
     public static void setEstimateBudgetForTesting(int samplePartitions, int maxCounts) {
-        estimateSamplePartitions = samplePartitions;
-        estimateMaxCounts = maxCounts;
+        PostingEstimateSample.setBudgetForTesting(samplePartitions, maxCounts);
     }
 
     @TestOnly
     public int getLastEstimateOpenedPartitions() {
-        return lastEstimateOpenedPartitions;
+        return estimateSample.getOpenedPartitions();
     }
 
     @TestOnly
     public IntList getLastEstimatePartitions() {
-        return lastEstimatePartitions;
+        return estimateSample.getProbedPartitions();
     }
 
     @TestOnly
     public long getLastEstimateProbes() {
-        return lastEstimateProbes;
+        return estimateSample.getCounts();
     }
 
     @TestOnly

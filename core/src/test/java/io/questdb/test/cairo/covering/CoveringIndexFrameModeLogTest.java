@@ -27,20 +27,23 @@ package io.questdb.test.cairo.covering;
 import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
 import io.questdb.test.tools.LogCapture;
 import org.junit.After;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
 /**
- * The per-execution frame mode must be observable WITHOUT a {@code @TestOnly} hook.
+ * The per-execution frame mode is written to the DEBUG log, one record per execution, and never
+ * at INFO.
  * <p>
  * {@code EXPLAIN} prints {@code frames: per-key (unordered)} from the plan-stable PERMISSION and
  * keeps doing so deliberately -- a plan that changed with the data would be worse than one that
- * is blind to it -- so it cannot answer "which mode did my execution actually take, and why".
- * Until this log record existed the only answers were
- * {@code CoveringIndexRecordCursorFactory.getPerKeyModeOpensForTesting()} and its merged twin,
- * both {@code @TestOnly} statics: a user watching a query quietly take the slower path had
- * nothing to look at, and a test asserting the plan string passed under three mutations that
- * broke per-key mode outright.
+ * is blind to it -- so it cannot answer "which mode did my execution actually take, and why". A
+ * user answers it from the debug record. Tests do not see debug records (debug is on only with
+ * {@code -Debug} or {@code QDB_DEBUG}), so they read the same text from
+ * {@code CoveringIndexRecordCursorFactory.getLastFrameModeForTesting()}, which formats the last
+ * decision through the formatter the record uses. Each arm resets that snapshot before its query
+ * and asserts the query wrote it, so a decision left by an earlier test cannot satisfy the arm,
+ * and asserts that no INFO record was written.
  * <p>
  * Both arms assert the record, and both assert the NUMBERS in it, not just the mode word. The
  * numbers are the whole point: {@code rowsPerPair} against {@code crossover} is why the density
@@ -90,9 +93,7 @@ public class CoveringIndexFrameModeLogTest extends AbstractCoveringIndexQueryTes
             createTelemetryTable();
             // 40 partitions x 4 keys x 1000 rows per pair, against a crossover of base x 2.
             insertUniformBlock(40, 1000);
-            printSql(QUERY, sink);
-            capture.drain();
-            capture.assertLoggedRE(
+            assertFrameModeRecord(
                     "covering scan frame mode \\[table=telemetry, mode=per-key, reason=density, keys=4, "
                             + "partitionsUpper=40, framesUpper=\\d+, frameCeiling=\\d+, rowsPerPair=1000, crossover="
                             + CROSSOVER + "]"
@@ -106,14 +107,24 @@ public class CoveringIndexFrameModeLogTest extends AbstractCoveringIndexQueryTes
             createTelemetryTable();
             // 40 partitions x 4 keys x 5 rows per pair: well under the crossover.
             insertUniformBlock(40, 5);
-            printSql(QUERY, sink);
-            capture.drain();
-            capture.assertLoggedRE(
+            assertFrameModeRecord(
                     "covering scan frame mode \\[table=telemetry, mode=merged, reason=density, keys=4, "
                             + "partitionsUpper=40, framesUpper=\\d+, frameCeiling=\\d+, rowsPerPair=5, crossover="
                             + CROSSOVER + "]"
             );
         });
+    }
+
+    // runs QUERY on a reset snapshot: it must write the record, matching regex, and log nothing at INFO
+    private void assertFrameModeRecord(String regex) throws Exception {
+        CoveringIndexRecordCursorFactory.resetModeSelectionsForTesting();
+        Assert.assertNull(CoveringIndexRecordCursorFactory.getLastFrameModeForTesting());
+        printSql(QUERY, sink);
+        final String record = CoveringIndexRecordCursorFactory.getLastFrameModeForTesting();
+        Assert.assertNotNull("the query wrote no frame mode record", record);
+        Assert.assertTrue(record, record.matches(regex));
+        capture.drain();
+        capture.assertNotLogged("covering scan frame mode");
     }
 
     private void createTelemetryTable() throws Exception {
