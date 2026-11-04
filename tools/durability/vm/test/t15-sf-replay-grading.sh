@@ -89,7 +89,17 @@ printf '#!/usr/bin/env bash\necho "[[1]]"\nexit 0\n' > "$TMP/bin/curl"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/bin/sleep"
 chmod +x "$TMP/bin/"*
 export PATH="$TMP/bin:$PATH"
-check "verify.sh finds the pkill stand-in" "$(command -v pkill)" "$TMP/bin/pkill"
+# Bash skips a stand-in it cannot execute, a noexec TMPDIR for one, and verify.sh then runs the
+# real command. Recording that as one failed check is not enough: stop before the first case.
+for stub in "$TMP"/bin/*; do
+    found=$(command -v "${stub##*/}" || true)
+    if [ "$found" != "$stub" ]; then
+        echo "t15 FAILED: ${stub##*/} resolves to '$found', not the stand-in $stub"
+        echo "(a noexec TMPDIR?); stopped before verify.sh could run the real one"
+        exit 1
+    fi
+done
+ok "every stand-in is the command verify.sh finds"
 
 # Compare mode is the default for both arms; pinned so an exported value cannot change the test.
 export QDB_SF_REPLAY=compare
@@ -138,6 +148,12 @@ for arm in qwp-sf product; do
         "$(grade "$arm" 244000 245000 246 247000 1000)" "DURABILITY_FAILURE -"
     check "$arm, replay restored nothing -> DURABILITY_FAILURE" \
         "$(grade "$arm" 244000 244000 246 247000 1000)" "DURABILITY_FAILURE -"
+    # Frame 246 holds rows up to 247000, so a replay that stops one frame or one row short of it
+    # left recovered rows missing.
+    check "$arm, replay left the last recovered frame missing -> DURABILITY_FAILURE" \
+        "$(grade "$arm" 244000 246000 246 247000 1000)" "DURABILITY_FAILURE -"
+    check "$arm, replay left the last recovered row missing -> DURABILITY_FAILURE" \
+        "$(grade "$arm" 244000 246999 246 247000 1000)" "DURABILITY_FAILURE -"
     check "$arm, no sent= and replay restored 1000 of 3000 -> DURABILITY_FAILURE" \
         "$(grade "$arm" 244000 245000 246 none 1000)" "DURABILITY_FAILURE -"
     # A complete replay must not hide pass B's own failure. Only the verdict is checked here.
