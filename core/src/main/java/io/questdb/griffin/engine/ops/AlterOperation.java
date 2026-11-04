@@ -333,6 +333,19 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     }
 
     @Override
+    public String liveViewInvalidationReason() {
+        // Only DROP, RENAME and CHANGE COLUMN TYPE can remove or retype a column that a live view reads.
+        // The partition operations, which matViewInvalidationReason() reports, commit as non-structural
+        // SQL transactions, and the WAL apply job invalidates no live view for those.
+        return switch (command) {
+            case DROP_COLUMN -> "drop column operation";
+            case RENAME_COLUMN -> "rename column operation";
+            case CHANGE_COLUMN_TYPE -> "change column type operation";
+            default -> null;
+        };
+    }
+
+    @Override
     public String matViewInvalidationReason() {
         // Don't invalidate mat views in case when the operation was "harmless".
         if (keepMatViewsValid) {
