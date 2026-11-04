@@ -295,8 +295,9 @@ case "$ARM" in
                 # sent. sf_durability=periodic syncs the buffer only every sf_sync_interval, while
                 # the workload fsyncs `sent` after every batch, so a cut between the two leaves
                 # `sent` counting rows that died with the client's disk. The replay client reports
-                # the highest frame its startup recovery found; one frame is one batch, an
-                # equivalence the workload asserts while it runs.
+                # the highest frame its startup recovery found. One frame is one batch: the
+                # workload turns off the client's own auto-flush, so only its flush() starts a
+                # frame, and it stops the recording if a flush ever publishes a different count.
                 batch=$(grep -oE '^batch=[0-9]+' "$DB/_qwp_progress" 2>/dev/null | head -1 | cut -d= -f2)
                 rfsn=$(grep -oE 'sfRecoveredFsn=-?[0-9]+' /mnt/qdb/replay-client.log 2>/dev/null | head -1 | cut -d= -f2)
                 if [ "$sent" -lt 0 ] 2>/dev/null; then

@@ -70,7 +70,9 @@ public class QwpCrashIngestClient {
 
     static final long BASE_TS = CrashIngestWriter.BASE_TS;
     /**
-     * Rows per flush. A flush is the unit the server acks, so this is the ack granularity.
+     * Rows per flush. A flush is the unit the server acks, so this is the ack granularity. It is
+     * also exactly one store-and-forward frame: the conf leaves {@code flush()} as the only thing
+     * that starts a frame, and the run stops if a flush ever publishes a different count.
      */
     static final int BATCH = Integer.getInteger("qwp.batch", 1_000);
     static final long MAX_ROWS = Long.getLong("max.rows", 50_000_000L);
@@ -121,6 +123,14 @@ public class QwpCrashIngestClient {
                 + ("off".equals(ackTier) ? "" : "request_durable_ack=" + ackTier + ";")
                 + (sfDir.isEmpty() ? "" : "sf_dir=" + sfDir + ";sf_durability=" + sfDurability
                                           + ";sf_sync_interval_millis=" + sfSyncMs + ";")
+                // ONE FLUSH, ONE FRAME. By default the WebSocket client also starts a frame every
+                // 1000 rows and whenever its oldest unsent row is 100 ms old, so a batch above 1000
+                // rows, or a pause inside a batch, becomes several frames. verify.sh turns the
+                // replay client's highest recovered frame into rows as (frame + 1) * batch, so only
+                // flush() may start one. auto_flush=off is refused for WebSocket, so each trigger
+                // is turned off on its own, and the interval, which cannot be off, is set beyond
+                // any batch.
+                + "auto_flush_rows=off;auto_flush_bytes=off;auto_flush_interval=600000;"
                 // The client runs on a DIFFERENT MACHINE: the power cut kills the server, not this
                 // process. So what carries the un-acked window across the outage is the RECONNECT
                 // POLICY, not client-side disk durability -- sf_durability matters only when the
@@ -209,9 +219,10 @@ public class QwpCrashIngestClient {
                 // sent or the client's ack bookkeeping claims. Two earlier attempts were unsound:
                 //   * `id` (rows SENT) -- flush() != ack, so it over-claimed by ~2x and the oracle
                 //     correctly reported "acknowledged committed rows were lost".
-                //   * awaitAckedFsn(flushAndGetSequence()) -- flushAndGetSequence() returns -1 here
-                //     (publishedFsn is -1 in this configuration even while ackedFsn advances), so
-                //     awaiting -1 succeeded instantly and the await was VACUOUS.
+                //   * awaitAckedFsn(flushAndGetSequence()) -- flushAndGetSequence() returned -1 here
+                //     (it reports only frames the call itself published, and the client's 1000-row
+                //     auto-flush had already published the batch), so awaiting -1 succeeded
+                //     instantly and the await was VACUOUS.
                 //
                 // Asking the server removes the guesswork: count() is rows it has COMMITTED AND
                 // APPLIED. Under commitMode=SYNC a commit fsyncs, so those rows are durable. It is
@@ -219,6 +230,24 @@ public class QwpCrashIngestClient {
                 // under-claiming is the safe direction for a no-loss bar: the recovered table must
                 // hold at least what the server already told us it had.
                 sender.flush();
+                // CHECK ONE BATCH IS ONE FRAME, after every flush. Too many frames makes verify.sh
+                // report rows lost at every boundary; too few lets it pass a replay that lost rows.
+                // The conf pins the mapping; this stops the run if a client change ever breaks it,
+                // rather than recording a run that every boundary would misjudge.
+                // publishedFsn is current once flush() returns and is the number the replay client
+                // reports; ackedFsn lags and would hide the drift.
+                final var engine = sender.getCursorEngineForTesting();
+                if (engine != null) {
+                    final long publishedFsn = engine.publishedFsn();
+                    if ((publishedFsn + 1) * BATCH != id) {
+                        System.out.println("LOUD_FAILURE qwp: " + id + " rows sent in batches of " + BATCH
+                                + ", but the client published frames 0.." + publishedFsn
+                                + ". One batch must be one frame, or verify.sh misjudges every boundary."
+                                + " Refusing to continue.");
+                        System.out.flush();
+                        System.exit(64);
+                    }
+                }
                 // Wm, straight from the server: wal_tables() exposes localDurableSeqTxn, the
                 // highest seqTxn whose WAL commit was fdatasync'd -- the SAME frontier the
                 // reference arm reads from SeqTxnTracker in-process. Asking the server avoids the
@@ -267,21 +296,6 @@ public class QwpCrashIngestClient {
                     if (loop != null) {
                         localAcks = loop.getTotalLocalDurableAcks();
                         trimAdvances = loop.getTotalDurableTrimAdvances();
-                    }
-                }
-
-                // ASSERT THE FSN->ROW MAPPING rather than assume it. Every batch is one flush is
-                // one frame, so rows should be exactly (ackedFsn + 1) * BATCH. Measured at 1000.0
-                // with no drift over 40 batches -- but an assumed ratio is a proxy, and this
-                // harness has been bitten three times by proxies standing in for the real
-                // property. Report a violation loudly instead of quietly computing from it.
-                if (localTier && ackedFsn >= 0) {
-                    final long impliedRows = (ackedFsn + 1) * BATCH;
-                    if (impliedRows > id) {
-                        System.out.println("qwp-sf WARN: ackedFsn implies " + impliedRows
-                                + " rows but only " + id + " were sent -- one flush is not one frame,"
-                                + " so any FSN->row mapping in the oracle is unsound");
-                        System.out.flush();
                     }
                 }
 
