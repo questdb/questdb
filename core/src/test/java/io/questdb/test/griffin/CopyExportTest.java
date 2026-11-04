@@ -359,6 +359,38 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyFactoryRunsAgainAfterSourceTablePartitioningChanged() throws Exception {
+        // Every run of one compiled COPY picks its route from the source table of that run, as a new compile of the
+        // same COPY does: a PARTITION_BY other than the table's exports through a select of the table, the table's own
+        // PARTITION_BY reads the table.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY MONTH BYPASS WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            try (RecordCursorFactory factory = select("COPY t TO 'again' WITH FORMAT PARQUET PARTITION_BY DAY")) {
+                final String firstId = assertCopyFactoryExports(factory, """
+                        x\tts
+                        1\t2024-01-01T00:00:00.000000Z
+                        2\t2024-01-01T01:00:00.000000Z
+                        """);
+                assertExportLogTableName(firstId, "copy." + firstId);
+
+                execute("DROP TABLE t");
+                execute("CREATE TABLE t (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+                execute("INSERT INTO t VALUES (10, '2024-01-01T00:00:00.000000Z')");
+                final String secondId = assertCopyFactoryExports(factory, """
+                        x\tts
+                        10\t2024-01-01T00:00:00.000000Z
+                        """);
+                assertExportLogTableName(secondId, "t");
+            }
+        });
+    }
+
+    @Test
     public void testCopyFactoryRunsAgainOnCompositeTable() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
@@ -5129,12 +5161,7 @@ public class CopyExportTest extends AbstractCairoTest {
                     3\t2024-01-01T02:00:00.000000Z
                     """);
             Assert.assertNotEquals(firstId, secondId);
-            // An export through a select logs the temp table named after the export, an export that reads the table
-            // logs the table.
-            assertQuery("SELECT DISTINCT table_name FROM \"" + configuration.getSystemTableNamePrefix() + "copy_export_log\" WHERE id = '" + secondId + "'")
-                    .noLeakCheck()
-                    .expectSize()
-                    .returns("table_name\n" + (isExportedThroughSelect ? "copy." + secondId : "t") + '\n');
+            assertExportLogTableName(secondId, isExportedThroughSelect ? "copy." + secondId : "t");
         }
         execute("DROP TABLE t");
     }
@@ -5244,6 +5271,15 @@ public class CopyExportTest extends AbstractCairoTest {
                 .noLeakCheck()
                 .expectSize()
                 .returns("status\nfinished\n");
+    }
+
+    // An export through a select logs the temp table named after the export, an export that reads the table logs the
+    // table.
+    private void assertExportLogTableName(String exportId, String expectedTableName) throws Exception {
+        assertQuery("SELECT DISTINCT table_name FROM \"" + configuration.getSystemTableNamePrefix() + "copy_export_log\" WHERE id = '" + exportId + "'")
+                .noLeakCheck()
+                .expectSize()
+                .returns("table_name\n" + expectedTableName + '\n');
     }
 
     private void assertExportMode(String query, ParquetExportMode expectedMode) throws Exception {
