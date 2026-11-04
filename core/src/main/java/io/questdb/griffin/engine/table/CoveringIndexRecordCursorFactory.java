@@ -144,11 +144,13 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     // top index as a slot sentinel (LiveViewPageFrameCursor.SLOT_PARTITION_INDEX,
     // LiveViewRecordCursor.SLOT_FRAME_INDEX), leaving 0 .. MAX_SAFE_PARTITION_INDEX - 1 usable.
     //
-    // Merged mode reaches the same ceiling in principle, but only through the partition count (one
-    // frame per partition-chunk), whereas per-key multiplies it by the key count -- which is what
-    // brings ordinary shapes into range: 30 symbols over two years of hourly partitions is 525,600
-    // (key, partition) pairs. This is a correctness invariant derived from the row-id encoding, NOT
-    // a tuned constant, so it carries no test override.
+    // Merged mode reaches the same ceiling in principle, but only through the partition frames
+    // (one per partition, per `ts IN` window intersecting a partition, and per composite-partition
+    // piece, each split by the row cap), whereas per-key multiplies them by the key count -- which
+    // is what brings ordinary shapes into range: 30 symbols over two years of hourly partitions is
+    // 525,600 (key, partition) pairs, and 1,024 symbols over 520 daily windows is 532,480. This is
+    // a correctness invariant derived from the row-id encoding, NOT a tuned constant, so it
+    // carries no test override; nextImplPerKey() asserts it.
     static final int MAX_PER_KEY_PAGE_FRAMES = Rows.MAX_SAFE_PARTITION_INDEX;
     // The density below which per-key mode is a pessimisation, in rows per
     // (key, partition-frame) pair, PER PASS THE CONSUMER MAKES OVER EACH FRAME.
@@ -1338,8 +1340,8 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
      * <p>
      * The ceiling below is a CORRECTNESS invariant, not a tuning knob. Per-key mode emits one
      * frame per non-empty (key, partition-frame) pair, so its frame count is the key count
-     * MULTIPLIED by the partition count -- and the frame index is packed into the top 20 bits
-     * of every row id the async GROUP BY compares. See {@link #MAX_PER_KEY_PAGE_FRAMES}.
+     * MULTIPLIED by the partition-frame count -- and the frame index is packed into the top 20
+     * bits of every row id the async GROUP BY compares. See {@link #MAX_PER_KEY_PAGE_FRAMES}.
      * <p>
      * The bound is
      * <pre>frames &lt;= K * P_upper + rowsUpper / maxRowsPerFrame</pre>
@@ -1349,12 +1351,13 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
      * <ul>
      *     <li>{@code K} is exact -- the caller has just resolved, deduped and dropped
      *     VALUE_NOT_FOUND.</li>
-     *     <li>{@code P_upper} is {@code getFrameCountUpperBound()} when the cursor offers one
-     *     (the interval cursors, which bound their frames from their culled ranges and are
-     *     contractually forbidden from under-counting), else the reader's partition count -- a
-     *     full cursor emits at most one frame per NON-EMPTY partition, so the partition count
-     *     bounds it. Same case split, and the same justification, as
-     *     {@code AdaptiveSymbolPatternRecordCursorFactory.estimate()}.</li>
+     *     <li>{@code P_upper} is the frame cursor's {@code getFrameCountUpperBound()}, which
+     *     never under-counts: the composite-aware wrapper adds a frame per composite piece
+     *     boundary to its delegate's bound, an interval delegate counts its (interval,
+     *     partition) pairs, and a full delegate its partitions. The partition count alone does
+     *     NOT bound an interval or a composite walk -- 520 daily windows in one YEAR partition
+     *     are 520 frames. Every cursor this factory opens answers; an unknown (-1) bound takes
+     *     the merge.</li>
      *     <li>{@code rowsUpper} is {@code frameCursor.size()} when known; an interval cursor
      *     answers -1 rather than counting rows it has not walked, so it falls back to the
      *     reader's total row count, which bounds any interval subset of it. This closes the
@@ -1445,8 +1448,16 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             logFrameMode(false, "no-keys", 0, -1, -1, -1, -1);
             return false;
         }
-        final long boundFromMetadata = frameCursor.getFrameCountUpperBound();
-        final long partitionUpperBound = boundFromMetadata >= 0 ? boundFromMetadata : reader.getPartitionCount();
+        final long partitionUpperBound = frameCursor.getFrameCountUpperBound();
+        // The wrapper answers whenever its delegate does, and both delegates dfcFactory opens,
+        // the full and the interval cursors, answer once opened. The merge is the release-build
+        // answer to an unknown bound, because the partition count does not bound frames that
+        // windows or composite pieces split.
+        assert partitionUpperBound >= 0 : "frame cursor offers no frame-count upper bound";
+        if (partitionUpperBound < 0) {
+            logFrameMode(false, "frame-bound-unknown", keyCount, -1, -1, -1, -1);
+            return false;
+        }
         final long scanRows = frameCursor.size();
         final long rowsUpperBound = scanRows >= 0 ? scanRows : reader.size();
         final int maxRowsPerFrame = CoveringPageFrameCursor.effectiveMaxRowsPerFrame(configMaxRows);
@@ -4098,6 +4109,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         private int perKeyPartitionIndex = -1;
         private long perKeyRowHi;
         private long perKeyRowLo;
+        // Frames nextImplPerKey() emitted since the last open or toTop(), checked against the
+        // ceiling admitsPerKeyMode() bounds them by.
+        private int perKeyFramesEmitted;
         // The MODE this execution runs in, as distinct from the factory's plan-stable
         // PERMISSION (CoveringIndexRecordCursorFactory.unorderedFramesPermitted). Set on
         // every open by getPageFrameCursor(); merged (true) is the default and the answer
@@ -4162,6 +4176,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             closeMergeCursors();
             perKeyPartitionIndex = -1;
             perKeyIdx = 0;
+            perKeyFramesEmitted = 0;
         }
 
         /**
@@ -4202,6 +4217,11 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                             perKeyIdx++;
                         }
                         if (result != null) {
+                            // admitsPerKeyMode() admitted this execution only under a frame bound
+                            // below the ceiling, which the walk cannot exceed.
+                            perKeyFramesEmitted++;
+                            assert perKeyFramesEmitted < MAX_PER_KEY_PAGE_FRAMES
+                                    : "per-key scan emitted " + perKeyFramesEmitted + " frames, at the row-id ceiling";
                             return result;
                         }
                     }

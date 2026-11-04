@@ -58,6 +58,45 @@ public class CompositeAwarePartitionFrameCursor implements PartitionFrameCursor 
         clearPending();
     }
 
+    /**
+     * The delegate's bound plus one frame per internal piece boundary of every composite
+     * partition, or -1 when the delegate offers no bound. Within a partition the delegate's
+     * frames are disjoint row ranges, and {@link #next(long)} cuts a range only at a piece
+     * boundary strictly inside it: a partition of c pieces has c - 1 such boundaries, each inside
+     * at most one range, so each adds at most one frame. Parquet partitions are never composite.
+     * Counting the composite partitions the delegate never visits over-counts, which is the
+     * direction the {@link PartitionFrameCursor#getFrameCountUpperBound()} contract allows.
+     * <p>
+     * Cost: one {@link PartitionGeometry#getPieceCount(int)} per composite partition of the
+     * table, which reads that partition's geometry file on the reader's first visit, even when an
+     * interval delegate reaches only some of them. Tables without composite partitions (the
+     * default) pay one scan of the transaction file's partition flags.
+     */
+    @Override
+    public long getFrameCountUpperBound() {
+        final long delegateBound = delegate.getFrameCountUpperBound();
+        if (delegateBound < 0) {
+            return -1;
+        }
+        final TableReader reader = getTableReader();
+        final TxReader txFile = reader.getTxFile();
+        if (!txFile.hasCompositePartitions()) {
+            return delegateBound;
+        }
+        final PartitionGeometry geometry = reader.getGeometry();
+        long pieceSplits = 0;
+        for (int partitionIndex = 0, n = reader.getPartitionCount(); partitionIndex < n; partitionIndex++) {
+            if (txFile.isPartitionComposite(partitionIndex)) {
+                pieceSplits += geometry.getPieceCount(partitionIndex) - 1;
+            }
+        }
+        // No overflow: the delegate bounds its frames by intervals x partitions, and the splits
+        // sum at most Integer.MAX_VALUE per partition.
+        final long bound = delegateBound + pieceSplits;
+        assert bound >= delegateBound;
+        return bound;
+    }
+
     @Override
     public TableReader getTableReader() {
         return delegate.getTableReader();
