@@ -30,6 +30,7 @@ import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Test;
 
+import java.io.InputStream;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -44,6 +45,28 @@ public class OsTest {
     @Test
     public void rustSmokeTest() {
         Assert.assertEquals(42, Os.smokeTest(0, 42));
+    }
+
+    @Test
+    public void testLoadLibWithDotInDirectoryName() throws Exception {
+        // A dot in a directory name must not leak path separators into the
+        // createTempFile suffix, which rejects them (#8187).
+        final String outputLibExt;
+        if (Os.type == Os.LINUX || Os.type == Os.FREEBSD) {
+            outputLibExt = ".so";
+        } else if (Os.type == Os.DARWIN) {
+            outputLibExt = ".dylib";
+        } else if (Os.type == Os.WINDOWS) {
+            outputLibExt = ".dll";
+        } else {
+            throw new Error("Unsupported OS: " + Os.name);
+        }
+        final String libName = (Os.type == Os.WINDOWS ? "qdbsqllogictest" : "libqdbsqllogictest") + outputLibExt;
+        final String resource = "/io/questdb/bin/" + Os.name + '-' + Os.archName + '/' + libName;
+        try (InputStream is = OsTest.class.getResourceAsStream(resource)) {
+            Assume.assumeNotNull("no bundled test library for this platform", is);
+            Os.loadLib("/tmp/checkout.with.dots/core/target/test-classes" + resource, is);
+        }
     }
 
     @Test
