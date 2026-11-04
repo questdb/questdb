@@ -883,8 +883,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         }
 
         boolean wasAwaitingCloseEcho = state.isAwaitingCloseEcho();
-        // An ack larger than the send buffer goes out in pieces. Its continuation below
-        // finishes only the piece the send buffer holds, so send the rest first.
+        // The continuations below finish only what the send buffer holds.
         finishStagedFrame(context, state);
         switch (state.getSendState()) {
             case QwpIngressProcessorState.SEND_STATE_READY -> {
@@ -1026,9 +1025,9 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
     }
 
     /**
-     * Finishes a frame whose send blocked before all of it reached the send buffer: first
-     * the part the send buffer holds, then the staged rest (see {@link #sendStagedFrame}).
-     * Must run before anything else goes out, so that nothing interleaves with the frame.
+     * Finishes a staged frame whose send blocked: first the part the send buffer holds, then
+     * the staged rest. Must run before anything else goes out, so that nothing interleaves
+     * with the frame.
      */
     private static void finishStagedFrame(HttpConnectionContext context, QwpIngressProcessorState state)
             throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -1039,13 +1038,11 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
     }
 
     /**
-     * Where to write a server frame of {@code frameSize} bytes before {@link #sendFrame}
-     * sends it: the send buffer, or the connection's staging memory when the frame does
-     * not fit the buffer. An ack names every table it covers, so it can outgrow a send
-     * buffer that {@code http.send.buffer.size} lowered. Dropping the connection instead
-     * would make the client replay rows the server had already committed.
+     * Returns the address to write a server frame of {@code frameSize} bytes to: the send
+     * buffer, or, when the frame does not fit it, the connection's staging memory. An ack
+     * names every table it covers, so it can outgrow a lowered {@code http.send.buffer.size}.
      */
-    private static long getFrameAddress(HttpConnectionContext context, QwpIngressProcessorState state, int frameSize)
+    private static long reserveFrame(HttpConnectionContext context, QwpIngressProcessorState state, int frameSize)
             throws PeerDisconnectedException {
         final HttpRawSocket rawSocket = context.getRawResponseSocket();
         if (frameSize <= rawSocket.getBufferSize()) {
@@ -1161,7 +1158,8 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
     }
 
     /**
-     * Sends the frame of {@code frameSize} bytes written to {@link #getFrameAddress}.
+     * Sends the frame of {@code frameSize} bytes written to the address {@link #reserveFrame}
+     * returned: whole from the send buffer, or in pieces when reserveFrame staged it.
      */
     private static void sendFrame(HttpConnectionContext context, QwpIngressProcessorState state, int frameSize)
             throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -1174,7 +1172,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
 
     /**
      * Copies the staged frame to the send buffer and sends it, one buffer at a time. When a
-     * send blocks, the send buffer keeps the unsent part of its copy, the rest stays staged,
+     * send blocks, the send buffer keeps the unsent part of its piece, the rest stays staged,
      * and the caller parks the send state; {@link #finishStagedFrame} resumes from there.
      */
     private static void sendStagedFrame(HttpConnectionContext context, QwpIngressProcessorState state)
@@ -1349,7 +1347,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
 
     private void drainPendingResponse(HttpConnectionContext context, QwpIngressProcessorState state)
             throws PeerDisconnectedException, PeerIsSlowToReadException {
-        // The branches below finish only the piece of a parked ack that the send buffer holds.
+        // The branches below finish only what the send buffer holds.
         finishStagedFrame(context, state);
         switch (state.getSendState()) {
             case QwpIngressProcessorState.SEND_STATE_READY -> {
@@ -3080,7 +3078,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
 
         int payloadLen = state.computeAckPayloadSize();
         int frameSize = WebSocketFrameWriter.headerSize(payloadLen, false) + payloadLen;
-        long frameAddr = getFrameAddress(context, state, frameSize);
+        long frameAddr = reserveFrame(context, state, frameSize);
 
         long sequence = state.getHighestProcessedSequence();
         int headerLen = WebSocketFrameWriter.writeBinaryFrameHeader(frameAddr, payloadLen);
@@ -3150,7 +3148,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             int payloadLen
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         int frameSize = WebSocketFrameWriter.headerSize(payloadLen, false) + payloadLen;
-        long frameAddr = getFrameAddress(context, state, frameSize);
+        long frameAddr = reserveFrame(context, state, frameSize);
 
         int headerLen = WebSocketFrameWriter.writeBinaryFrameHeader(frameAddr, payloadLen);
         long writeAddr = frameAddr + headerLen;

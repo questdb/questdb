@@ -356,8 +356,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     private QwpMessageCursor preparedMessageCursor;
     private QwpTableBlockCursor preparedTableBlock;
     private int sendState = SEND_STATE_READY;
-    // A server frame larger than the send buffer, which leaves through the send buffer one
-    // buffer at a time (see stageFrame). Allocated on first use, freed when the connection ends.
+    // Memory for a server frame larger than the send buffer, see stageFrame.
     private long stagedFrameAddress;
     private int stagedFrameCapacity;
     // Bytes of the staged frame already copied to the send buffer.
@@ -1565,7 +1564,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         isDurableProgressSnapshotFullyUploaded = false;
         isSendingLocalDurableAck = false;
         releaseIncarnations();
-        // A staged frame dies with the connection, and a pooled context must not keep its memory.
+        // A pooled context must not keep the staging memory.
         freeStagedFrame();
 
         // Log cache stats before clearing (only if there were any lookups)
@@ -1958,17 +1957,17 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     /**
      * Stages a server frame of {@code size} bytes, larger than the send buffer, and returns the
      * address to write it to. The upgrade processor copies it to the send buffer one buffer at a
-     * time, and the send state stays parked until the last copy is sent, so no other frame can
-     * interleave with it. The memory stays allocated until the connection ends.
+     * time, and no other frame may go out until its last byte is there. The memory grows to the
+     * largest frame and stays allocated until the connection ends.
      */
     public long stageFrame(int size) {
-        assert size > 0 && !hasStagedFrame() : "a staged frame is still in flight";
+        assert size > 0;
+        assert !hasStagedFrame() : "a staged frame is still in flight";
         if (size > stagedFrameCapacity) {
             freeStagedFrame();
             stagedFrameAddress = Unsafe.malloc(size, MemoryTag.NATIVE_HTTP_CONN);
             stagedFrameCapacity = size;
         }
-        stagedFrameCopied = 0;
         stagedFrameSize = size;
         return stagedFrameAddress;
     }

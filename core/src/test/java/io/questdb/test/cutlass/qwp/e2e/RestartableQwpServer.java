@@ -64,10 +64,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * {@link #awaitStableLiveConnection(long, long)} lets a test land a stop on one deliberately.
  */
 public final class RestartableQwpServer implements AutoCloseable {
-    // Tells the server to keep http.send.buffer.size at its default.
-    public static final int DEFAULT_SEND_BUFFER_SIZE = -1;
     static final int PORT_PICK_ATTEMPTS = 5;
     private static final Log LOG = LogFactory.getLog(RestartableQwpServer.class);
+    // sendBufferSize that keeps the configuration's http.send.buffer.size.
+    private static final int NO_SEND_BUFFER_SIZE = -1;
     private final CairoConfiguration cairoConfiguration;
     private final CairoEngine engine;
     private final int forceRecvFragmentationChunkSize;
@@ -101,12 +101,11 @@ public final class RestartableQwpServer implements AutoCloseable {
             int forceRecvFragmentationChunkSize,
             int forceSendFragmentationChunkSize
     ) {
-        this(engine, cairoConfiguration, port, forceRecvFragmentationChunkSize, forceSendFragmentationChunkSize, DEFAULT_SEND_BUFFER_SIZE);
+        this(engine, cairoConfiguration, port, forceRecvFragmentationChunkSize, forceSendFragmentationChunkSize, NO_SEND_BUFFER_SIZE);
     }
 
     /**
-     * Overload that also sets {@code http.send.buffer.size}, or keeps its default for
-     * {@link #DEFAULT_SEND_BUFFER_SIZE}.
+     * Overload that also sets {@code http.send.buffer.size}.
      */
     public RestartableQwpServer(
             CairoEngine engine,
@@ -262,7 +261,7 @@ public final class RestartableQwpServer implements AutoCloseable {
 
             @Override
             public int getSendBufferSize() {
-                return sendBufferSize == DEFAULT_SEND_BUFFER_SIZE ? super.getSendBufferSize() : sendBufferSize;
+                return sendBufferSize == NO_SEND_BUFFER_SIZE ? super.getSendBufferSize() : sendBufferSize;
             }
         };
 

@@ -275,9 +275,8 @@ public class QwpIngressUpgradeProcessorResumeRecvTest extends AbstractCairoTest 
     }
 
     /**
-     * An ack larger than the send buffer leaves in buffer-sized pieces instead of dropping
-     * the connection, which would make the client replay the rows the ack covers. Even a
-     * buffer smaller than the ack's fixed fields carries it.
+     * An ack larger than the send buffer leaves in buffer-sized pieces, even when the buffer
+     * is smaller than the ack's fixed fields.
      */
     @Test
     public void testAckLargerThanSendBufferLeavesInPieces() throws Exception {

@@ -39,12 +39,11 @@ import org.junit.Test;
 import java.time.temporal.ChronoUnit;
 
 /**
- * Acknowledgements larger than {@code http.send.buffer.size}, with the real pinned
+ * Acks larger than {@code http.send.buffer.size}, with the real pinned
  * {@code java-questdb-client} against a live server. An OK ack names every table its frames
  * committed, and a durable ack every table whose durable frontier moved, so either can outgrow
- * a lowered send buffer. The server sends such a frame one buffer at a time. Were it to drop the
- * connection instead, the client would replay rows the server had already committed, and every
- * replay would add another copy of them.
+ * a lowered send buffer. A server that dropped the connection on such an ack made the client
+ * replay rows it had already committed, adding a copy on every replay.
  */
 public class QwpIngressOversizeAckTest extends AbstractQwpBootstrapTest {
     private static final long ACK_TIMEOUT_MILLIS = 30_000;
@@ -198,7 +197,7 @@ public class QwpIngressOversizeAckTest extends AbstractQwpBootstrapTest {
         final int count = entries / entrySize;
         int remainder = entries - count * entrySize;
         final int maxExtra = MAX_TABLE_NAME_LENGTH - nameLength;
-        assert count * maxExtra >= remainder;
+        Assert.assertTrue("test setup: names too short for the remainder", count * maxExtra >= remainder);
         final ObjList<String> tables = new ObjList<>();
         for (int i = 0; i < count; i++) {
             final int extra = Math.min(maxExtra, remainder);

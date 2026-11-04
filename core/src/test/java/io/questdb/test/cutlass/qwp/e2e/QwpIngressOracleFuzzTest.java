@@ -118,7 +118,7 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
             "🎉",   // U+1F389 (4-byte, surrogate pair in Java)
     };
     // Server defaults from DefaultIODispatcherConfiguration. RestartableQwpServer
-    // does not override these, so the actual buffers are this size.
+    // keeps them unless a test passes its own send buffer size.
     private static final int RECV_BUFFER_SIZE = 131_072;
     private static final int SEND_BUFFER_SIZE = 131_072;
     private static final String TABLE_NAME = "qwp_oracle_fuzz";
@@ -451,8 +451,7 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
      * <p>
      * Half the runs lower {@code http.send.buffer.size} below what an ack naming many of
      * the tables takes, so such acks leave in pieces, under the same fragmentation and
-     * bounces. A server that dropped the connection on them instead would never get the
-     * client's backlog acked.
+     * bounces.
      */
     @Test
     public void testOracleMultiTableTortureUnderServerBounces() throws Exception {
@@ -467,7 +466,7 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
                 tableNames[t] = TABLE_NAME + '_' + (char) ('a' + t) + "_with_a_name_this_long";
             }
             // An ack takes 15 bytes and 49 per table it names: 1_289 for all 26.
-            final int sendBufferSize = master.nextBoolean() ? RestartableQwpServer.DEFAULT_SEND_BUFFER_SIZE : 512 + master.nextInt(512);
+            final int sendBufferSize = master.nextBoolean() ? SEND_BUFFER_SIZE : 512 + master.nextInt(512);
             LOG.info().$("multi-table test tables=").$(tableNames.length).$(", sendBufferSize=").$(sendBufferSize).$();
             final QwpTable[] oracles = new QwpTable[tableNames.length];
             for (int t = 0; t < tableNames.length; t++) {

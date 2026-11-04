@@ -55,12 +55,10 @@ import java.util.Map;
 import static io.questdb.test.cutlass.websocket.QwpIngressWireHarness.*;
 
 /**
- * Server frames larger than the send buffer: an ack names every table it covers, so it can
- * outgrow a lowered {@code http.send.buffer.size}. The server writes such a frame to staging
- * memory and sends it one buffer at a time, and while any of it is still on its way nothing
- * else may go out. The recording raw socket stands in for the network: a send it blocks keeps
- * its bytes, as the real send buffer does until the peer reads them. The real client's
- * acceptance of these frames is covered end to end by {@link QwpIngressOversizeAckTest}.
+ * Server frames larger than the send buffer, which the server stages and sends one buffer
+ * at a time. The recording raw socket stands in for the network: a send it blocks keeps its
+ * bytes, as the real send buffer does until the peer reads them. The real client's
+ * acceptance of these frames is covered by {@link QwpIngressOversizeAckTest}.
  */
 public class QwpIngressStagedAckFrameTest extends AbstractCairoTest {
     private static final int BIG_RECV_BUFFER_SIZE = 8192;
@@ -88,8 +86,8 @@ public class QwpIngressStagedAckFrameTest extends AbstractCairoTest {
                 tables.add(table);
                 frames.add(createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(table, i, 1_000_000L)));
             }
-            try (Connection connection = new Connection(engine, SMALL_SEND_BUFFER_SIZE, false)) {
-                connection.receiveInOnePass(frames);
+            try (Connection connection = new Connection(engine, SMALL_SEND_BUFFER_SIZE, false, frames)) {
+                connection.receiveInOnePass();
 
                 final int frameSize = 4 + OK_ACK_FIXED_SIZE + 20 * (TABLE_ENTRY_OVERHEAD + 60);
                 Assert.assertEquals("the ack goes out in buffer-sized pieces",
@@ -131,12 +129,12 @@ public class QwpIngressStagedAckFrameTest extends AbstractCairoTest {
                     frames.add(createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(table, i, 1_000_000L)));
                 }
                 try (CairoEngine durableEngine = newEngineWithEverythingDurable()) {
-                    try (Connection connection = new Connection(durableEngine, SMALL_SEND_BUFFER_SIZE, true)) {
+                    try (Connection connection = new Connection(durableEngine, SMALL_SEND_BUFFER_SIZE, true, frames)) {
                         if (blockedSend > 0) {
                             // The OK ack takes sends 1 to 3, the local durable ack 4 to 6.
                             connection.rawSocket.blockedSends.add(blockedSend);
                         }
-                        connection.receiveInOnePass(frames);
+                        connection.receiveInOnePass();
                         if (blockedSend > 0) {
                             Assert.assertTrue("the blocked local ack parks the send state", connection.state.isSending());
                             Assert.assertTrue("the local ack's last piece is still staged", connection.state.hasStagedFrame());
@@ -204,15 +202,19 @@ public class QwpIngressStagedAckFrameTest extends AbstractCairoTest {
             final int b = SMALL_SEND_BUFFER_SIZE;
             final int[] frameSizes = {b - 1, b, b + 1, 2 * b, 2 * b + 1, 5 * b + 7, 70_000, b + 100, 3 * b};
             try (Connection connection = new Connection(engine, b, false)) {
+                int largestStaged = 0;
                 for (int frameSize : frameSizes) {
                     final int sendsBefore = connection.rawSocket.sentFrames.size();
                     final int bytesBefore = connection.sentBytes().length;
                     final Map<String, Long> tables = stageAck(connection, frameSize);
                     final long mallocsBefore = Unsafe.getMallocCount();
                     connection.processor.resumeSend(connection.context);
-                    if (frameSize == b + 100 || frameSize == 3 * b) {
-                        Assert.assertEquals("staging memory sized for a larger frame serves this one",
+                    if (frameSize <= largestStaged) {
+                        Assert.assertEquals("frame size " + frameSize + " reuses the staging memory",
                                 mallocsBefore, Unsafe.getMallocCount());
+                    }
+                    if (frameSize > b) {
+                        largestStaged = Math.max(largestStaged, frameSize);
                     }
 
                     final int[] sends = connection.sendSizes();
@@ -235,8 +237,7 @@ public class QwpIngressStagedAckFrameTest extends AbstractCairoTest {
     }
 
     /**
-     * Table names in an ack are UTF-8: a staged ack sizes and copies them by their bytes,
-     * not their characters.
+     * Table names of 2-, 3- and 4-byte UTF-8 characters arrive intact in a staged ack.
      */
     @Test
     public void testStagedAckCarriesMultiByteTableNames() throws Exception {
@@ -318,8 +319,7 @@ public class QwpIngressStagedAckFrameTest extends AbstractCairoTest {
 
     /**
      * Staging memory the server cannot allocate drops the connection before any of the ack
-     * goes out, as the server did for every ack larger than the send buffer before it could
-     * stage one. A teardown that tries the ack again fails the same way and stays quiet.
+     * goes out. A teardown that tries the ack again fails the same way and stays quiet.
      */
     @Test
     public void testStagingFailureDropsConnectionBeforeSendingAnything() throws Exception {
@@ -494,7 +494,7 @@ public class QwpIngressStagedAckFrameTest extends AbstractCairoTest {
                 for (int i = 0; i < 8; i++) {
                     length64 = (length64 << 8) | (bytes[pos + 2 + i] & 0xFF);
                 }
-                Assert.assertTrue("test frames carry less than 2 GiB", length64 > 65_535 && length64 < Integer.MAX_VALUE);
+                Assert.assertTrue("minimal 8-byte length below 2 GiB", length64 > 65_535 && length64 < Integer.MAX_VALUE);
                 length = (int) length64;
                 headerSize = 10;
             }
@@ -541,15 +541,12 @@ public class QwpIngressStagedAckFrameTest extends AbstractCairoTest {
         final Map<String, Long> tables = new HashMap<>();
         int index = 0;
         while (remaining > 0) {
-            // Names of 100 characters, and the last two shorter to fill the frame exactly;
-            // the last at least MIN_NAME_LENGTH, to stay unique.
-            int nameLength = remaining - TABLE_ENTRY_OVERHEAD;
-            if (nameLength > 100) {
-                final int rest = remaining - TABLE_ENTRY_OVERHEAD - 100;
-                nameLength = rest < TABLE_ENTRY_OVERHEAD + MIN_NAME_LENGTH ? 100 - (TABLE_ENTRY_OVERHEAD + MIN_NAME_LENGTH - rest) : 100;
-            }
+            // Names of up to 100 characters. The last one takes what remains, so the one before
+            // it leaves room for a name of at least MIN_NAME_LENGTH, which stays unique.
+            final int nameLength = remaining - TABLE_ENTRY_OVERHEAD <= 100
+                    ? remaining - TABLE_ENTRY_OVERHEAD
+                    : Math.min(100, remaining - 2 * TABLE_ENTRY_OVERHEAD - MIN_NAME_LENGTH);
             final String table = name("staged" + connection.ackSequence, index, nameLength);
-            Assert.assertEquals(nameLength, table.length());
             state.getPendingAckSeqTxns().put(table, index + 1);
             tables.put(table, (long) index + 1);
             remaining -= TABLE_ENTRY_OVERHEAD + nameLength;
@@ -565,7 +562,6 @@ public class QwpIngressStagedAckFrameTest extends AbstractCairoTest {
      */
     private static class Connection implements AutoCloseable {
         final TestableContext context;
-        final HttpFullFatServerConfiguration httpConfig;
         final PhasedNetworkFacade nf;
         final QwpIngressUpgradeProcessor processor;
         final RecordingRawSocket rawSocket;
@@ -573,25 +569,26 @@ public class QwpIngressStagedAckFrameTest extends AbstractCairoTest {
         final long sendBuffer;
         final int sendBufferSize;
         final QwpIngressProcessorState state;
+        final int wireLength;
         // Sequence of the ack the last stageAck set up.
         long ackSequence = -1;
-        private byte[] wire = new byte[0];
 
         Connection(CairoEngine engine, int sendBufferSize, boolean isDurableAckEnabled) throws Exception {
+            this(engine, sendBufferSize, isDurableAckEnabled, new ObjList<>());
+        }
+
+        // The client will send `frames`, which receiveInOnePass delivers.
+        Connection(CairoEngine engine, int sendBufferSize, boolean isDurableAckEnabled, ObjList<byte[]> frames) throws Exception {
+            final ByteArrayOutputStream wire = new ByteArrayOutputStream();
+            for (int i = 0, n = frames.size(); i < n; i++) {
+                wire.writeBytes(frames.getQuick(i));
+            }
+            this.wireLength = wire.size();
+            Assert.assertTrue("test setup: the frames must fit one receive", wireLength <= BIG_RECV_BUFFER_SIZE);
             this.sendBufferSize = sendBufferSize;
-            this.httpConfig = new DefaultHttpServerConfiguration(configuration);
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
             this.processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
-            this.nf = new PhasedNetworkFacade(new byte[0]) {
-                @Override
-                public int recvRaw(long fd, long buffer, int bufferLen) {
-                    final int n = Math.min(bufferLen, wire.length);
-                    for (int i = 0; i < n; i++) {
-                        Unsafe.putByte(buffer + i, wire[i]);
-                    }
-                    wire = Arrays.copyOfRange(wire, n, wire.length);
-                    return n;
-                }
-            };
+            this.nf = new PhasedNetworkFacade(wire.toByteArray());
             this.recvBuffer = Unsafe.malloc(BIG_RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
             long send = 0;
             TestableContext ctx = null;
@@ -633,19 +630,12 @@ public class QwpIngressStagedAckFrameTest extends AbstractCairoTest {
         }
 
         // Delivers every frame in one receive pass, as from a client with many in flight.
-        void receiveInOnePass(ObjList<byte[]> frames) throws Exception {
-            final ByteArrayOutputStream out = new ByteArrayOutputStream();
-            for (int i = 0, n = frames.size(); i < n; i++) {
-                out.writeBytes(frames.getQuick(i));
-            }
-            wire = out.toByteArray();
-            Assert.assertTrue("test setup: the frames must fit one receive", wire.length <= BIG_RECV_BUFFER_SIZE);
+        void receiveInOnePass() throws Exception {
             try {
-                drive(processor, context, nf, 0);
+                drive(processor, context, nf, wireLength);
             } catch (PeerIsSlowToReadException e) {
                 // a blocked send parked the connection; the test resumes it
             }
-            Assert.assertEquals("every frame was received", 0, wire.length);
         }
 
         byte[] sentBytes() {

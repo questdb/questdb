@@ -476,8 +476,7 @@ final class QwpIngressWireHarness {
 
         @Override
         public void send(int size) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            if (sendCount + 1 >= disconnectedSend) {
-                sendCount++;
+            if (++sendCount >= disconnectedSend) {
                 throw PeerDisconnectedException.INSTANCE;
             }
             byte[] copy = new byte[size];
@@ -485,7 +484,7 @@ final class QwpIngressWireHarness {
                 copy[i] = Unsafe.getByte(bufferAddress + i);
             }
             sentFrames.add(copy);
-            if (blockedSends.contains(++sendCount)) {
+            if (blockedSends.contains(sendCount)) {
                 throw PeerIsSlowToReadException.INSTANCE;
             }
         }
