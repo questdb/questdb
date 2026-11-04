@@ -49,6 +49,8 @@ public interface LineHttpProcessorConfiguration {
 
     long getQwpMaxUncommittedRows();
 
+    long getQwpMinIdleMsBeforeWriterRelease();
+
     CharSequence getInfluxPingVersion();
 
     long getMaxRecvBufferSize();
