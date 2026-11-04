@@ -2324,6 +2324,11 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     @TestOnly
+    public int getBusyWalWriterCount() {
+        return walWriterPool.getBusyCount();
+    }
+
+    @TestOnly
     public int getBusyWriterCount() {
         return writerPool.getBusyCount();
     }
