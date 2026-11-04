@@ -87,7 +87,7 @@ public class StaleParquetColumnTopTest extends AbstractCairoTest {
     private static final String ROW_A = "ts\tx\tv\ts\n2024-01-01T05:05:00.000000Z\t-1\t42\ta\n";
     private static final String STALE_INDEX_ERROR = "index does not cover parquet partition data, rebuild it with ALTER TABLE ";
 
-    static void loadFixture(String tableDirName) throws Exception {
+    public static void loadFixture(String tableDirName) throws Exception {
         final byte[] buffer = new byte[1024 * 1024];
         final File root = new File(configuration.getDbRoot().toString());
         try (InputStream is = StaleParquetColumnTopTest.class.getResourceAsStream("/parquet-stale-cv-top/" + tableDirName + ".zip")) {
