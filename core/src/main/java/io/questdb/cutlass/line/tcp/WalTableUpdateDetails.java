@@ -107,14 +107,18 @@ public class WalTableUpdateDetails extends TableUpdateDetails {
     }
 
     /**
-     * Drops the QWP caches with the writer: a closed entry can stay reachable, for
-     * example from a map that does not clear its values, and must not keep them.
+     * Drops the QWP caches with the writer, also when closing the writer throws: a closed
+     * entry can stay reachable, for example from a map that does not clear its values, and
+     * must not keep them.
      */
     @Override
     public void close() {
-        super.close();
-        qwpColumnMapping = null;
-        qwpSchemaCacheEntry = null;
+        try {
+            super.close();
+        } finally {
+            qwpColumnMapping = null;
+            qwpSchemaCacheEntry = null;
+        }
     }
 
     public long getLastReportedSeqTxn() {

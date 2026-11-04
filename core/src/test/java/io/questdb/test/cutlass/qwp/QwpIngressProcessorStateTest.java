@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.qwp;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
@@ -86,6 +87,7 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Proxy;
 import java.util.HashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
 public class QwpIngressProcessorStateTest extends AbstractCairoTest {
@@ -658,6 +660,154 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
             } finally {
                 state.onDisconnected();
                 state.close();
+            }
+        });
+    }
+
+    /**
+     * Every path that frees a table's entry drops the entry's QWP caches, its column
+     * mapping and its schema slot with the parse, also when closing the entry's writer
+     * throws, as closing the writer of a dropped or distressed table can on I/O. The path
+     * still reports the close failure as before, and the cache goes on serving the table.
+     */
+    @Test
+    public void testEntryFreedByFailingWriterCloseKeepsNoQwpCache() throws Exception {
+        // Closing a WAL writer msyncs its column files only when the commit mode is not NOSYNC,
+        // and the suite runs either mode, so pin one whose msync failure does not stop the engine.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "async");
+        final AtomicBoolean isMsyncFailing = new AtomicBoolean();
+        final AtomicInteger failedMsyncCount = new AtomicInteger();
+        final AtomicBoolean isChangeLogOpenFailing = new AtomicBoolean();
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public void msync(long addr, long len, boolean async) {
+                if (isMsyncFailing.get()) {
+                    failedMsyncCount.incrementAndGet();
+                    throw CairoException.critical(5).put("could not msync");
+                }
+                super.msync(addr, len, async);
+            }
+
+            @Override
+            public long openRO(LPSZ name) {
+                if (Utf8s.endsWithAscii(name, "_txnlog.meta.d") && isChangeLogOpenFailing.compareAndSet(true, false)) {
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+        };
+        assertMemoryLeak(() -> {
+            final DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration));
+            final QwpTudCache.CommittedTxnConsumer consumer = (tableName, tableDirName, seqTxn) -> {
+            };
+            final Utf8String gone = new Utf8String("gone");
+            final String[] removals = {
+                    "reset", "distressed clear", "releaseIdleWriters", "stale lookup", "failed lookup",
+                    "commitAll", "commitIfMaxUncommittedRowsReached", "commitAllBestEffort", "commitWalTables"
+            };
+            for (String removal : removals) {
+                execute("CREATE TABLE gone (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                // The cache creates no tables, so a lookup of the dropped table opens no writer. A max
+                // of one uncommitted row: the appender commits the row of its block.
+                try (
+                        QwpTudCache cache = new QwpTudCache(engine, true, false, defaultColumnTypes, PartitionBy.DAY, -1, 1);
+                        QwpWalAppender appender = new QwpWalAppender(true, 127, 50);
+                        QwpStreamingDecoder decoder = new QwpStreamingDecoder()
+                ) {
+                    decoder.setSchemaCache(cache);
+                    final WalTableUpdateDetails tud = cache.getTableUpdateDetails(AllowAllSecurityContext.INSTANCE, gone, null, null, 10);
+                    final ObjList<QwpColumnDef> schema = appendOneRow(decoder, appender, tud, "gone", null, true);
+                    Assert.assertTrue(removal + ": the entry keeps the column mapping", appender.isSchemaSettled(schema, tud));
+                    Assert.assertSame(removal + ": the entry keeps the parse", schema, tud.getQwpSchemaCacheEntry().getColumns());
+                    if (removal.equals("commitAll") || removal.equals("commitIfMaxUncommittedRowsReached")) {
+                        // A buffered row at the cap makes the commit find the table dropped.
+                        appendRow(tud);
+                    }
+                    if (removal.equals("failed lookup")) {
+                        // A structure change makes the lookup replay the change log, which fails to
+                        // open; the lookup then frees the entry and closes its distressed writer.
+                        execute("ALTER TABLE gone ADD COLUMN w LONG");
+                        drainWalQueue();
+                        isChangeLogOpenFailing.set(true);
+                    } else {
+                        // A dropped table's writer cannot go back to the pool: the free closes it.
+                        execute("DROP TABLE gone");
+                    }
+                    failedMsyncCount.set(0);
+                    isMsyncFailing.set(true);
+                    WalTableUpdateDetails found = null;
+                    Throwable failure = null;
+                    try {
+                        switch (removal) {
+                            case "reset" -> cache.reset();
+                            case "distressed clear" -> {
+                                cache.setDistressed();
+                                cache.clear();
+                            }
+                            case "releaseIdleWriters" -> cache.releaseIdleWriters();
+                            case "stale lookup", "failed lookup" ->
+                                    found = cache.getTableUpdateDetails(AllowAllSecurityContext.INSTANCE, gone, null, null, 10);
+                            case "commitAll" -> cache.commitAll(consumer);
+                            case "commitIfMaxUncommittedRowsReached" -> cache.commitIfMaxUncommittedRowsReached(consumer);
+                            case "commitAllBestEffort" -> cache.commitAllBestEffort();
+                            case "commitWalTables" -> cache.commitWalTables(0);
+                            default -> throw new AssertionError(removal);
+                        }
+                    } catch (Throwable th) {
+                        failure = th;
+                    } finally {
+                        isMsyncFailing.set(false);
+                        isChangeLogOpenFailing.set(false);
+                    }
+                    Assert.assertTrue(removal + ": the writer close must fail", failedMsyncCount.get() > 0);
+                    switch (removal) {
+                        // The commit paths let the close failure propagate.
+                        case "commitAll", "commitIfMaxUncommittedRowsReached" -> assertMsyncFailure(removal, failure);
+                        // The lookup throws its own failure, which carries the close failure.
+                        case "failed lookup" -> {
+                            if (!(failure instanceof CairoException lookupFailure)) {
+                                throw new AssertionError(removal + ": the lookup must fail", failure);
+                            }
+                            TestUtils.assertContains(lookupFailure.getFlyweightMessage(), "could not open");
+                            TestUtils.assertContains(lookupFailure.getFlyweightMessage(), "_txnlog.meta.d");
+                            Assert.assertEquals(removal, 1, lookupFailure.getSuppressed().length);
+                            assertMsyncFailure(removal, lookupFailure.getSuppressed()[0]);
+                        }
+                        // The other paths log the close failure and go on.
+                        default -> {
+                            if (failure != null) {
+                                throw new AssertionError(removal + ": the free must not throw", failure);
+                            }
+                        }
+                    }
+                    Assert.assertNull(removal + ": the stale lookup must not create the dropped table", found);
+                    Assert.assertEquals(removal, 0, cache.size());
+                    Assert.assertNull(removal, cache.getCachedTableUpdateDetails(gone));
+                    Assert.assertFalse(removal + ": a freed entry keeps no cache", tud.hasQwpCaches());
+
+                    // The cache goes on serving the table, re-created where it was dropped.
+                    if (!removal.equals("failed lookup")) {
+                        execute("CREATE TABLE gone (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                    }
+                    final WalTableUpdateDetails fresh = cache.getTableUpdateDetails(AllowAllSecurityContext.INSTANCE, gone, null, null, 10);
+                    Assert.assertNotNull(removal, fresh);
+                    Assert.assertNotSame(removal, tud, fresh);
+                    final ObjList<QwpColumnDef> freshSchema = appendOneRow(decoder, appender, fresh, "gone", null, true);
+                    Assert.assertSame(removal + ": the new entry keeps the parse", freshSchema, fresh.getQwpSchemaCacheEntry().getColumns());
+                    try {
+                        cache.commitAll(consumer);
+                    } catch (Throwable th) {
+                        throw new AssertionError(removal + ": the commit through the new entry must succeed", th);
+                    }
+                }
+                drainWalQueue();
+                // The row written after the failure; the altered table also kept the row that the
+                // appender committed before it.
+                assertQuery("SELECT count() FROM gone").noLeakCheck().noRandomAccess().expectSize()
+                        .returns(removal.equals("failed lookup") ? "count\n2\n" : "count\n1\n");
+                execute("DROP TABLE gone");
+                drainWalQueue();
             }
         });
     }
@@ -6913,6 +7063,15 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
             }
         }
         return seq;
+    }
+
+    // Asserts that th is the failure that the test's files facade throws from msync.
+    private static void assertMsyncFailure(String what, Throwable th) {
+        if (!(th instanceof CairoException msyncFailure)) {
+            throw new AssertionError(what + ": the msync failure must reach the caller", th);
+        }
+        Assert.assertEquals(what, 5, msyncFailure.getErrno());
+        TestUtils.assertEquals("could not msync", msyncFailure.getFlyweightMessage());
     }
 
     // Buffers one row, v = 1, in the table's writer.
