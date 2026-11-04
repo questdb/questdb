@@ -243,6 +243,8 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
             return;
         }
 
+        detachContextIfOwnerCannotPark();
+
         // Initialize the circuit breaker for work stealing and local reduces.
         workStealCircuitBreaker.init(sqlExecutionContext.getCircuitBreaker());
 
@@ -257,7 +259,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
         boolean hasPublication = dispatcher == null || dispatcher.tryAcquirePublication();
         try {
             if (!hasPublication) {
-                if (dispatcher.isCurrentFiberOwned()) {
+                if (dispatcher.isLocalReduceRequired()) {
                     for (int i = 0; i < taskCount && isActive(); i++) {
                         reduceLocally(i);
                         localCount++;
@@ -275,7 +277,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
                         if (dispatcher != null && !hasPublication) {
                             hasPublication = dispatcher.tryAcquirePublication();
                             if (!hasPublication) {
-                                if (dispatcher.isCurrentFiberOwned()) {
+                                if (dispatcher.isLocalReduceRequired()) {
                                     reduceLocally(i);
                                     localCount++;
                                     break;

@@ -45,4 +45,12 @@ public interface FiberDispatchContext {
     default long getQueryRegistryOwnerId() {
         return -1;
     }
+
+    /**
+     * Returns whether query-parallel child work shares a limited number of CPU grants with its
+     * owner. An owner that cannot park cannot give its grant up, so it does such work itself.
+     */
+    default boolean isParallelWorkLimited() {
+        return false;
+    }
 }

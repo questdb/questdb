@@ -658,6 +658,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
      * @return true if at least one task was dispatched or reduced; false otherwise
      */
     private boolean dispatch(int dispatchLimit, boolean countOnly) {
+        detachContextIfOwnerCannotPark();
         // the sequence used to steal worker jobs
         final MCSequence reduceSubSeq = messageBus.getPageFrameReduceSubSeq(shard);
         final MPSequence reducePubSeq = messageBus.getPageFrameReducePubSeq(shard);
@@ -679,7 +680,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
 
         try {
             if (!hasPublication) {
-                if (!dispatcher.isCurrentFiberOwned()) {
+                if (!dispatcher.isLocalReduceRequired()) {
                     cancel(SqlExecutionCircuitBreaker.STATE_CANCELLED);
                 }
                 return false;
@@ -733,7 +734,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                             if (dispatcher != null) {
                                 hasPublication = dispatcher.tryAcquirePublication();
                                 if (!hasPublication) {
-                                    if (!dispatcher.isCurrentFiberOwned()) {
+                                    if (!dispatcher.isLocalReduceRequired()) {
                                         cancel(SqlExecutionCircuitBreaker.STATE_CANCELLED);
                                     }
                                     return dispatched;

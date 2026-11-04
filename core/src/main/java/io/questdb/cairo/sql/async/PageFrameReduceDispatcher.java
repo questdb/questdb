@@ -409,8 +409,8 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
         return taskPool.getMaxRetainedCount();
     }
 
-    public boolean isCurrentFiberOwned() {
-        return runtime.isCurrentFiberOwned();
+    public boolean isLocalReduceRequired() {
+        return runtime.isCurrentFiberOwned() || Fiber.isHoldingLimitedGrant();
     }
 
     @Override
@@ -478,7 +478,7 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
     }
 
     public boolean tryAcquirePublication() {
-        if (runtime.isCurrentFiberOwned()) {
+        if (isLocalReduceRequired()) {
             return false;
         }
         while (true) {
