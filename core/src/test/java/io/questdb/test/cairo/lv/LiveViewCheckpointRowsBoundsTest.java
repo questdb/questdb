@@ -24,21 +24,32 @@
 
 package io.questdb.test.cairo.lv;
 
+import com.sun.management.ThreadMXBean;
 import io.questdb.PropertyKey;
+import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.lv.LiveViewCheckpointContracts.HighBoundTag;
 import io.questdb.cairo.lv.LiveViewCheckpointOutputKeyDomain;
 import io.questdb.cairo.lv.LiveViewCheckpointRowsBounds;
 import io.questdb.cairo.lv.LiveViewCheckpointRowsBounds.ScanBudgetStatus;
 import io.questdb.cairo.lv.LiveViewCheckpointRowsPlan;
+import io.questdb.cairo.lv.LiveViewSnapshotKeyCodec;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -46,6 +57,7 @@ import org.junit.Test;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.util.Arrays;
 
 /**
  * The {@code H -> Q -> L} discovery a bounded ROWS live view plans its localized
@@ -70,9 +82,14 @@ import java.nio.ByteOrder;
  * rows the table holds.
  */
 public class LiveViewCheckpointRowsBoundsTest extends AbstractCairoTest {
+    // A bound on the measured collections together that does not grow with the key count:
+    // one allocation per key of a WIDE_OUTPUT_KEYS domain does not fit in it.
+    private static final long COLLECT_ALLOCATION_LIMIT_BYTES = 16 * 1024;
+    private static final int COLLECT_ROUNDS = 4;
     private static final int GROUPS = 40;
     // Seconds between adjacent timestamp groups of the main fixture.
     private static final int GROUP_SECONDS = 10;
+    private static final int WIDE_OUTPUT_KEYS = 4_096;
 
     @Test
     public void testAffectedKeyShortOfFollowingRowsPinsEofButStillBoundsBelow() throws Exception {
@@ -469,38 +486,98 @@ public class LiveViewCheckpointRowsBoundsTest extends AbstractCairoTest {
             // resolved string. The scans themselves keep the reader's table-local
             // integer, which is why the plan carries two projectors rather than one.
             try (View view = view(partitionedView(3));
-                 LiveViewCheckpointRowsBounds bounds = new LiveViewCheckpointRowsBounds(configuration)) {
+                 LiveViewCheckpointRowsBounds bounds = new LiveViewCheckpointRowsBounds(configuration);
+                 LiveViewCheckpointOutputKeyDomain domain = new LiveViewCheckpointOutputKeyDomain()) {
                 final Bounds counted = view.discover(bounds, groupTs(20), groupTs(20), groupTs(20));
                 Assert.assertTrue(bounds.isOutputKeyDomainComplete());
                 Assert.assertEquals(2, counted.outputKeyCount);
 
-                final LiveViewCheckpointOutputKeyDomain domain = new LiveViewCheckpointOutputKeyDomain();
                 bounds.collectOutputKeys(domain);
                 Assert.assertEquals(counted.outputKeyCount, domain.size());
-                Assert.assertTrue("key 'a' must encode as its resolved string", domain.contains(stringKey("a")));
-                Assert.assertTrue("key 'b' must encode as its resolved string", domain.contains(stringKey("b")));
-                Assert.assertFalse(domain.contains(stringKey("c")));
+                Assert.assertTrue("key 'a' must encode as its resolved string", LiveViewCheckpointTestKeys.contains(domain, stringKey("a")));
+                Assert.assertTrue("key 'b' must encode as its resolved string", LiveViewCheckpointTestKeys.contains(domain, stringKey("b")));
+                Assert.assertFalse(LiveViewCheckpointTestKeys.contains(domain, stringKey("c")));
                 // The four-byte symbol id the scans key by, which is what a partition map
                 // never holds for a live view: it must not be what the domain carries.
-                Assert.assertFalse(domain.contains(new byte[]{0, 0, 0, 0}));
-                Assert.assertFalse(domain.contains(new byte[]{1, 0, 0, 0}));
+                Assert.assertFalse(LiveViewCheckpointTestKeys.contains(domain, new byte[]{0, 0, 0, 0}));
+                Assert.assertFalse(LiveViewCheckpointTestKeys.contains(domain, new byte[]{1, 0, 0, 0}));
+                // Byte for byte what the codec writes off a record carrying the same values,
+                // which is what a seal encodes the probing key with.
+                final ArrayColumnTypes stringKeyTypes = new ArrayColumnTypes();
+                stringKeyTypes.add(ColumnType.STRING);
+                assertDomainKeys(domain, codecKey(stringKeyTypes, "a", 0), codecKey(stringKeyTypes, "b", 0));
             }
 
             // A non-SYMBOL key column encodes identically on both sides, and the plan
             // reuses one projector for both. The domain still has to come back keyed.
             try (View view = view(longKeyedView(2));
-                 LiveViewCheckpointRowsBounds bounds = new LiveViewCheckpointRowsBounds(configuration)) {
+                 LiveViewCheckpointRowsBounds bounds = new LiveViewCheckpointRowsBounds(configuration);
+                 LiveViewCheckpointOutputKeyDomain domain = new LiveViewCheckpointOutputKeyDomain()) {
                 final Bounds counted = view.discover(bounds, groupTs(20), groupTs(20), groupTs(20));
                 Assert.assertTrue(bounds.isOutputKeyDomainComplete());
 
-                final LiveViewCheckpointOutputKeyDomain domain = new LiveViewCheckpointOutputKeyDomain();
                 bounds.collectOutputKeys(domain);
                 Assert.assertEquals(counted.outputKeyCount, domain.size());
                 // The fixture writes x = group for key 'a' and x = group + 100 for 'b',
                 // so group 20's own two values are the domain's lowest members.
-                Assert.assertTrue(domain.contains(longKey(20)));
-                Assert.assertTrue(domain.contains(longKey(120)));
-                Assert.assertFalse(domain.contains(longKey(19)));
+                Assert.assertTrue(LiveViewCheckpointTestKeys.contains(domain, longKey(20)));
+                Assert.assertTrue(LiveViewCheckpointTestKeys.contains(domain, longKey(120)));
+                Assert.assertFalse(LiveViewCheckpointTestKeys.contains(domain, longKey(19)));
+            }
+        });
+    }
+
+    @Test
+    public void testCollectingAWideOutputKeyDomainAllocatesNoHeapPerKey() throws Exception {
+        // Collecting Q runs once per ROWS repair plan, over every key the discovery
+        // reached, up to the scan key budget. An encoded array per key would charge every
+        // such plan heap in proportion to the domain, so the measured collections must come
+        // out the same size whatever the key count.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE wide (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO wide SELECT '" + secondLiteral(GROUP_SECONDS) + "'::TIMESTAMP, 'a', x FROM long_sequence("
+                    + WIDE_OUTPUT_KEYS + ")");
+            drainWalQueue();
+            try (
+                    TestUtils.ThreadMetricsScope<ThreadMXBean> scope = TestUtils.threadAllocationScope();
+                    View view = view("SELECT ts, sym, sum(x) OVER (PARTITION BY x ORDER BY ts " + rowsFrame(2)
+                            + ") AS s FROM wide");
+                    LiveViewCheckpointRowsBounds bounds = new LiveViewCheckpointRowsBounds(configuration);
+                    LiveViewCheckpointOutputKeyDomain domain = new LiveViewCheckpointOutputKeyDomain()
+            ) {
+                final ThreadMXBean threadMXBean = scope.getBean();
+                final Bounds counted = view.discover(bounds, groupTs(1), groupTs(1), groupTs(1));
+                Assert.assertTrue(bounds.isOutputKeyDomainComplete());
+                Assert.assertEquals(WIDE_OUTPUT_KEYS, counted.outputKeyCount);
+
+                // Warm-up: the domain reaches the width of this key set, and the cursor and
+                // codec paths are resolved before the measured window.
+                bounds.collectOutputKeys(domain);
+                bounds.collectOutputKeys(domain);
+
+                final long threadId = Thread.currentThread().threadId();
+                final long before = threadMXBean.getThreadAllocatedBytes(threadId);
+                for (int round = 0; round < COLLECT_ROUNDS; round++) {
+                    bounds.collectOutputKeys(domain);
+                }
+                final long allocated = threadMXBean.getThreadAllocatedBytes(threadId) - before;
+
+                Assert.assertEquals(WIDE_OUTPUT_KEYS, domain.size());
+                Assert.assertTrue(LiveViewCheckpointTestKeys.contains(domain, longKey(1)));
+                Assert.assertTrue(LiveViewCheckpointTestKeys.contains(domain, longKey(WIDE_OUTPUT_KEYS)));
+                Assert.assertFalse(LiveViewCheckpointTestKeys.contains(domain, longKey(WIDE_OUTPUT_KEYS + 1)));
+                final ArrayColumnTypes longKeyTypes = new ArrayColumnTypes();
+                longKeyTypes.add(ColumnType.LONG);
+                final byte[][] expected = new byte[WIDE_OUTPUT_KEYS][];
+                for (int i = 0; i < WIDE_OUTPUT_KEYS; i++) {
+                    expected[i] = codecKey(longKeyTypes, null, i + 1);
+                }
+                assertDomainKeys(domain, expected);
+                Assert.assertTrue(
+                        COLLECT_ROUNDS + " collections of a " + WIDE_OUTPUT_KEYS + "-key domain allocated "
+                                + allocated + " heap bytes; collecting Q must not allocate per key",
+                        allocated < COLLECT_ALLOCATION_LIMIT_BYTES
+                );
             }
         });
     }
@@ -519,8 +596,8 @@ public class LiveViewCheckpointRowsBoundsTest extends AbstractCairoTest {
                 view.discover(bounds, groupTs(20), groupTs(20), groupTs(20));
                 Assert.assertEquals(ScanBudgetStatus.KEYS_EXCEEDED, bounds.getScanBudgetStatus());
                 Assert.assertFalse(bounds.isOutputKeyDomainComplete());
-                try {
-                    bounds.collectOutputKeys(new LiveViewCheckpointOutputKeyDomain());
+                try (LiveViewCheckpointOutputKeyDomain domain = new LiveViewCheckpointOutputKeyDomain()) {
+                    bounds.collectOutputKeys(domain);
                     Assert.fail("an incomplete key domain must not be readable");
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "output key domain is not available");
@@ -675,6 +752,56 @@ public class LiveViewCheckpointRowsBoundsTest extends AbstractCairoTest {
                 Assert.assertEquals(4, result.backwardScanRows);
             }
         });
+    }
+
+    /**
+     * Asserts the domain holds exactly {@code expected}, byte for byte, in any order.
+     */
+    private static void assertDomainKeys(LiveViewCheckpointOutputKeyDomain domain, byte[]... expected) {
+        final ObjList<String> actualKeys = new ObjList<>();
+        for (int slot = 0, n = domain.getSlotCount(); slot < n; slot++) {
+            if (domain.isSlotUsed(slot)) {
+                final long address = domain.getKeyAddress(slot);
+                final byte[] key = new byte[domain.getKeyLength(slot)];
+                for (int i = 0; i < key.length; i++) {
+                    key[i] = Unsafe.getByte(address + i);
+                }
+                actualKeys.add(Arrays.toString(key));
+            }
+        }
+        final ObjList<String> expectedKeys = new ObjList<>();
+        for (byte[] key : expected) {
+            expectedKeys.add(Arrays.toString(key));
+        }
+        actualKeys.sort(CharSequence::compare);
+        expectedKeys.sort(CharSequence::compare);
+        Assert.assertEquals(expectedKeys.toString(), actualKeys.toString());
+    }
+
+    /**
+     * The key {@link LiveViewSnapshotKeyCodec#writeKey} encodes off a record whose one key
+     * column holds {@code stringValue} for a STRING key or {@code longValue} for a LONG one.
+     */
+    private static byte[] codecKey(ColumnTypes keyTypes, CharSequence stringValue, long longValue) {
+        final Record record = new Record() {
+            @Override
+            public long getLong(int col) {
+                return longValue;
+            }
+
+            @Override
+            public CharSequence getStrA(int col) {
+                return stringValue;
+            }
+        };
+        try (MemoryCARW sink = Vm.getCARWInstance(256, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+            LiveViewSnapshotKeyCodec.writeKey(sink, record, keyTypes, 0);
+            final byte[] key = new byte[(int) sink.getAppendOffset()];
+            for (int i = 0; i < key.length; i++) {
+                key[i] = sink.getByte(i);
+            }
+            return key;
+        }
     }
 
     /**

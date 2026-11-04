@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.table;
 
+import com.sun.management.ThreadMXBean;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.FullPartitionFrameCursorFactory;
@@ -84,6 +85,7 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
  * hold is data, as {@link #testHighestTimestampIsDataNotInfinity} pins down.
  */
 public class PageFrameTimestampRangeCursorTest extends AbstractCairoTest {
+    private static final int ALLOCATION_ROUNDS = 4;
     private static final long HOUR = 3_600_000_000L;
     // Table-local symbol keys of the keyed fixture, assigned in first-insert order.
     private static final int KEY_A = 0;
@@ -98,6 +100,7 @@ public class PageFrameTimestampRangeCursorTest extends AbstractCairoTest {
     private static final int SYM_COLUMN = 2;
     private static final int TOTAL_ROWS = 20;
     private static final int UNINDEXED_SYM_COLUMN = 3;
+    private static final int WIDE_KEY_COUNT = 10_000;
 
     @Test
     public void testBackwardCursorIsReusedAcrossBounds() throws Exception {
@@ -503,6 +506,72 @@ public class PageFrameTimestampRangeCursorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testForwardIndexedIsReusedAcrossKeysAndBounds() throws Exception {
+        assertMemoryLeak(() -> {
+            createKeyedTable("k");
+            // One factory serves every keyed replay of one view, and it keeps its per-key row
+            // cursor factories across calls. Each call must re-point every slot it uses,
+            // including one a narrower call trimmed off and a wider call takes back: a slot
+            // left on its old key would yield that key's rows and drop the new key's.
+            try (PageFrameRecordCursorFactory factory = newFullScanFactory("k")) {
+                assertForwardIndexedRowIds(factory, symbolKeys(KEY_A, KEY_B), ts(0), ts(19),
+                        0, 1, 3, 4, 6, 7, 9, 10, 12, 13, 15, 16, 18, 19);
+                assertForwardIndexedRowIds(factory, symbolKeys(KEY_NULL), ts(0), ts(19),
+                        2, 5, 8, 11, 14, 17);
+                // The second slot comes back from the first call still bound to KEY_B.
+                assertForwardIndexedRowIds(factory, symbolKeys(KEY_A, KEY_NULL), ts(3), ts(14),
+                        3, 5, 6, 8, 9, 11, 12, 14);
+                // An empty range does not poison the next call.
+                assertForwardIndexedRowIds(factory, symbolKeys(KEY_B), ts(9), ts(8));
+                assertForwardIndexedRowIds(factory, symbolKeys(KEY_NULL, KEY_B, KEY_A), ts(17), ts(19),
+                        17, 18, 19);
+            }
+        });
+    }
+
+    @Test
+    public void testForwardIndexedWideCallAfterANarrowOneBuildsNoFactory() throws Exception {
+        // A narrower call trims the per-key factory list to its own key count, and the
+        // trimmed factories stay in the list's buffer. A wider call that follows has to take
+        // them back rather than build a fresh one per key: a keyed repair names up to
+        // cairo.live.view.checkpoint.repair.scan.max.keys keys, 100_000 by default.
+        assertMemoryLeak(() -> {
+            createKeyedTable("k");
+            // Past the fixture's two values the keys have no postings, which an open that
+            // reads no row never reaches.
+            final IntList wideKeys = new IntList();
+            for (int key = 0; key < WIDE_KEY_COUNT; key++) {
+                wideKeys.add(key);
+            }
+            final IntList narrowKeys = symbolKeys(KEY_A);
+            try (
+                    TestUtils.ThreadMetricsScope<ThreadMXBean> scope = TestUtils.threadAllocationScope();
+                    PageFrameRecordCursorFactory factory = newFullScanFactory("k")
+            ) {
+                final ThreadMXBean threadMXBean = scope.getBean();
+                // The first wide call builds a factory per key, and the second resolves the
+                // call path before the measured window.
+                openForwardIndexed(factory, wideKeys).close();
+                openForwardIndexed(factory, wideKeys).close();
+                long minAllocated = Long.MAX_VALUE;
+                for (int round = 0; round < ALLOCATION_ROUNDS; round++) {
+                    openForwardIndexed(factory, narrowKeys).close();
+                    final long before = threadMXBean.getCurrentThreadAllocatedBytes();
+                    openForwardIndexed(factory, wideKeys).close();
+                    minAllocated = Math.min(minAllocated, threadMXBean.getCurrentThreadAllocatedBytes() - before);
+                }
+                // Not zero: ThreadMXBean samples the thread's TLAB accounting rather than the
+                // call's own allocations. A factory per key costs about 320_000 bytes here.
+                Assert.assertTrue(
+                        "a " + WIDE_KEY_COUNT + "-key call after a 1-key one allocated " + minAllocated
+                                + " heap bytes; it must reuse the factories the narrower call trimmed",
+                        minAllocated < 16_384
+                );
+            }
+        });
+    }
+
+    @Test
     public void testHighBoundCullsPartitionsAboveIt() throws Exception {
         assertMemoryLeak(() -> {
             createSteppedTable("x", "DAY");
@@ -791,6 +860,14 @@ public class PageFrameTimestampRangeCursorTest extends AbstractCairoTest {
                 .getOpenPartitionCount();
     }
 
+    private static IntList symbolKeys(int... keys) {
+        final IntList symbolKeys = new IntList();
+        for (int key : keys) {
+            symbolKeys.add(key);
+        }
+        return symbolKeys;
+    }
+
     private static LongList timestamps(long... values) {
         final LongList timestamps = new LongList();
         for (long value : values) {
@@ -889,6 +966,29 @@ public class PageFrameTimestampRangeCursorTest extends AbstractCairoTest {
         );
     }
 
+    private void assertForwardIndexedRowIds(
+            PageFrameRecordCursorFactory factory,
+            IntList symbolKeys,
+            long timestampLo,
+            long timestampHi,
+            int... expectedRowIds
+    ) throws SqlException {
+        final LongList expected = new LongList();
+        for (int rowId : expectedRowIds) {
+            expected.add(rowId);
+        }
+        Assert.assertEquals(
+                expected,
+                drainRowIds(factory.getCursorInTimestampRangeForwardIndexed(
+                        sqlExecutionContext,
+                        timestampLo,
+                        timestampHi,
+                        SYM_COLUMN,
+                        symbolKeys
+                ))
+        );
+    }
+
     /**
      * Drives the partition-frame cursor directly - one level below the record cursor -
      * so the assertions can see which partitions the scan touched at all, not merely
@@ -960,6 +1060,16 @@ public class PageFrameTimestampRangeCursorTest extends AbstractCairoTest {
         Assert.assertEquals(
                 timestamps(expectedTimestamps),
                 drain(factory.getCursorInTimestampRange(sqlExecutionContext, timestampLo, timestampHi))
+        );
+    }
+
+    private RecordCursor openForwardIndexed(PageFrameRecordCursorFactory factory, IntList symbolKeys) throws SqlException {
+        return factory.getCursorInTimestampRangeForwardIndexed(
+                sqlExecutionContext,
+                Long.MIN_VALUE,
+                Long.MAX_VALUE,
+                SYM_COLUMN,
+                symbolKeys
         );
     }
 }

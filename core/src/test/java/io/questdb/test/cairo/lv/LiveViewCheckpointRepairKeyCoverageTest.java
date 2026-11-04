@@ -32,10 +32,15 @@ import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
 import io.questdb.cairo.lv.LiveViewCheckpointPageRef;
 import io.questdb.cairo.lv.LiveViewCheckpointPartitionMapReader;
+import io.questdb.cairo.lv.LiveViewCheckpointRangeRingStateReader;
 import io.questdb.cairo.lv.LiveViewCheckpointRoot;
+import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectoryReader;
+import io.questdb.cairo.lv.LiveViewCheckpointStatePageRef;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineReader;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.griffin.engine.window.WindowFunction;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
@@ -43,10 +48,15 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
+import java.util.TreeSet;
 
 /**
  * Coverage for which keys a re-versioned logical boundary describes.
@@ -77,6 +87,19 @@ import java.util.Set;
  */
 public class LiveViewCheckpointRepairKeyCoverageTest extends AbstractLiveViewTest {
 
+    // The crossed-key view's partition keys, the letters 'a' onwards. A row pairs sym
+    // 'a' + k with sym2 'a' + CROSSED_KEYS - 1 - k, so the view's two functions freeze
+    // the key bytes of the same letters for different rows.
+    private static final int CROSSED_KEYS = 4;
+    // first_value by sym over a RANGE frame, whose ring a repair capture carries from one
+    // boundary to the next by reference, beside sum by sym2 over a ROWS frame. The RANGE
+    // frame holds about 200 rows per key, past the 128 a ring needs before the next
+    // boundary shares its chunk (LiveViewCheckpointRingSeal.chunkCap). The leading sym2
+    // and the missing last alias fit the "SELECT ts, sym, <window> AS s" layout that
+    // assertViewMatchesRecompute recomputes.
+    private static final String CROSSED_KEY_WINDOWS = "sym2, first_value(x) OVER (PARTITION BY sym ORDER BY ts "
+            + "RANGE BETWEEN '200' SECOND PRECEDING AND CURRENT ROW) AS f, sum(x) OVER (PARTITION BY sym2 "
+            + "ORDER BY ts ROWS BETWEEN 199 PRECEDING AND CURRENT ROW)";
     // The one key the trickle feeds. Every other key is written once, far below the
     // corrections, and left cold - which is what puts its whole history under L.
     private static final String HOT_KEY = "k00";
@@ -238,6 +261,104 @@ public class LiveViewCheckpointRepairKeyCoverageTest extends AbstractLiveViewTes
         });
     }
 
+    @Test
+    public void testASpliceKeepsEveryRingOnItsOwnKeyWhenFunctionsPartitionApart() throws Exception {
+        // A non-chained capture freezes each boundary against the one it froze just below,
+        // and a ring-shaped function carries that boundary's chunk pages forward by
+        // reference. The freeze finds them by key in the capture's frozen partition index,
+        // which one scratch shares across every function and keeps apart by a
+        // per-function namespace. Two functions partitioned by one column freeze the same
+        // keys at the same positions, so they cannot tell a shared namespace from separate
+        // ones. These two can: a lookup that ignored the function would hand first_value's
+        // 'a' the position sum froze its own 'a' at, which here is first_value's 'd', and
+        // the boundary above would carry 'd''s ring rows under 'a'.
+        assertMemoryLeak(() -> {
+            createCrossedKeyView();
+            final int firstCorrection = 1_050;
+            final int secondCorrection = 1_250;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Fifteen commits of 100 seconds seal one boundary each, at seconds 99,
+                // 199, ..., 1499. commitCrossedKeys holds back every key's row at either
+                // correction second.
+                for (int second = 0; second < 1_500; second += 100) {
+                    commitCrossedKeys(job, second, second + 100, firstCorrection, secondCorrection);
+                }
+                driveRefreshToQuiescence(job);
+                final LiveViewInstance instance = viewInstance();
+                final TreeMap<Long, String> rootsBefore = rootRefs(instance);
+                final long versionedBefore = instance.getCheckpointRepairRootsVersioned();
+
+                // Deep enough that the localized rebuild beats the resume on price. Its
+                // splice re-versions the boundaries in [C, H), so the capture freezes the
+                // upper of them against the lower one: the sharing this case is about.
+                commitCrossedKeys(job, firstCorrection, firstCorrection + 1);
+                driveRefreshToQuiescence(job);
+                assertRepairOutcome("range+rows", "localized rebuild", null);
+                final TreeMap<Long, String> rootsAfter = rootRefs(instance);
+                final List<Long> reVersioned = new ArrayList<>();
+                for (Map.Entry<Long, String> root : rootsAfter.entrySet()) {
+                    final String before = rootsBefore.get(root.getKey());
+                    if (before != null && !before.equals(root.getValue())) {
+                        reVersioned.add(root.getKey());
+                    }
+                }
+                Assert.assertEquals(
+                        "the splice must count exactly the boundaries whose root version moved",
+                        reVersioned.size(),
+                        instance.getCheckpointRepairRootsVersioned() - versionedBefore
+                );
+                // One re-versioned boundary shares against nothing: the capture's first
+                // freeze has no captured boundary below it. A planner change that stops
+                // splicing two or more would leave the checks below proving nothing.
+                Assert.assertTrue(
+                        "the splice must re-version at least two boundaries, re-versioned=" + reVersioned,
+                        reVersioned.size() > 1
+                );
+
+                // Every ring row names the key it was written under, so a ring that
+                // decodes to any other key carries rows another partition froze.
+                final TreeMap<Long, String> expected = new TreeMap<>();
+                for (long boundary : rootsAfter.keySet()) {
+                    expected.put(boundary, "{a=[a], b=[b], c=[c], d=[d]}");
+                }
+                final TreeMap<Long, TreeMap<String, TreeSet<String>>> statePages = new TreeMap<>();
+                Assert.assertEquals(expected.toString(), ringKeys(instance, statePages).toString());
+
+                // Every ring key runs the lookup the check above pins, but only a ring that
+                // shares builds on the entry it returns. Each re-versioned boundary above
+                // the first freezes against the one below it, and a sharing ring references
+                // that boundary's chunk pages. A share threshold that stopped this frame
+                // from sharing would re-image every ring and leave the check above passing
+                // whatever the index did.
+                for (int i = 1, n = reVersioned.size(); i < n; i++) {
+                    final TreeMap<String, TreeSet<String>> below = statePages.get(reVersioned.get(i - 1));
+                    for (Map.Entry<String, TreeSet<String>> ring : statePages.get(reVersioned.get(i)).entrySet()) {
+                        final TreeSet<String> shared = new TreeSet<>(ring.getValue());
+                        shared.retainAll(below.get(ring.getKey()));
+                        Assert.assertFalse(
+                                "boundary " + reVersioned.get(i) + " must share key " + ring.getKey()
+                                        + "'s chunk pages with boundary " + reVersioned.get(i - 1),
+                                shared.isEmpty()
+                        );
+                    }
+                }
+
+                // The end-to-end symptom. The resume restores the newest root below the
+                // correction, which the splice above re-versioned, so a ring carrying
+                // another key's rows would surface as that key's first_value in every row
+                // it re-emits.
+                Assert.assertTrue(
+                        "the resume must restore a root the splice re-versioned",
+                        reVersioned.contains(rootsAfter.lowerKey((long) secondCorrection))
+                );
+                commitCrossedKeys(job, secondCorrection, secondCorrection + 1);
+                driveRefreshToQuiescence(job);
+                assertRepairOutcome("range+rows", "resume from anchor", "resume cheaper");
+                assertViewMatchesRecompute(CROSSED_KEY_WINDOWS);
+            }
+        });
+    }
+
     private static Path checkpointsDir(LiveViewInstance instance) {
         return new Path().of(configuration.getDbRoot())
                 .concat(instance.getLiveViewToken())
@@ -256,6 +377,19 @@ public class LiveViewCheckpointRepairKeyCoverageTest extends AbstractLiveViewTes
 
     private static String key(int index) {
         return String.format("k%02d", index);
+    }
+
+    // A SYMBOL partition key is frozen as its resolved STRING: an int length, then the
+    // UTF-16 chars, little-endian.
+    private static String symbolKey(byte[] key) {
+        final ByteBuffer buffer = ByteBuffer.wrap(key).order(ByteOrder.LITTLE_ENDIAN);
+        final int length = buffer.getInt(0);
+        Assert.assertEquals("a STRING key is its length prefix and its chars", Integer.BYTES + length * Character.BYTES, key.length);
+        final StringBuilder sb = new StringBuilder(length);
+        for (int i = 0; i < length; i++) {
+            sb.append(buffer.getChar(Integer.BYTES + i * Character.BYTES));
+        }
+        return sb.toString();
     }
 
     private static String timestamp(int secondOfDay) {
@@ -322,7 +456,7 @@ public class LiveViewCheckpointRepairKeyCoverageTest extends AbstractLiveViewTes
                     functions.getRootRef(0, functionRootRef);
                     functionRoot.of(dir, functionRootRef);
                     functionRoot.getPartitionMapRootRef(partitionMapRoot);
-                    partitions.iterateAll(partitionMapRoot, partition -> keys.add(hex(partition.getKey())));
+                    partitions.iterateAll(partitionMapRoot, partition -> keys.add(hex(partition.copyKeyForTest())));
                     out.add((entry.maxTimestamp - epoch) / 1_000_000L + "=" + keys.size());
                 });
             }
@@ -375,6 +509,37 @@ public class LiveViewCheckpointRepairKeyCoverageTest extends AbstractLiveViewTes
         driveRefreshToQuiescence(job);
     }
 
+    // One row per crossed key for every second in [fromSecond, toSecond) except the held
+    // back ones, plus a refresh turn. x names the row's sym key: second + 0.5 + 1000 * k
+    // for sym 'a' + k, so every ring row decodes to the key it was written under.
+    private void commitCrossedKeys(LiveViewRefreshJob job, int fromSecond, int toSecond, int... heldBack) throws Exception {
+        setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+        final StringBuilder sql = new StringBuilder("INSERT INTO base (ts, sym, sym2, x) VALUES ");
+        boolean isFirstRow = true;
+        nextSecond:
+        for (int second = fromSecond; second < toSecond; second++) {
+            for (int held : heldBack) {
+                if (second == held) {
+                    continue nextSecond;
+                }
+            }
+            for (int k = 0; k < CROSSED_KEYS; k++) {
+                if (!isFirstRow) {
+                    sql.append(", ");
+                }
+                isFirstRow = false;
+                sql.append("('").append(timestamp(second))
+                        .append("', '").append((char) ('a' + k))
+                        .append("', '").append((char) ('a' + CROSSED_KEYS - 1 - k))
+                        .append("', ").append(second + 0.5 + 1000 * k).append(')');
+            }
+        }
+        execute(sql.toString());
+        drainWalQueue();
+        drainJob(job);
+        drainWalQueue();
+    }
+
     // One row for every key, at one designated timestamp, plus a refresh turn.
     private void commitEveryKey(LiveViewRefreshJob job, int second) throws Exception {
         setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
@@ -406,6 +571,12 @@ public class LiveViewCheckpointRepairKeyCoverageTest extends AbstractLiveViewTes
         drainWalQueue();
     }
 
+    private void createCrossedKeyView() throws Exception {
+        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, sym2 SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS "
+                + "SELECT ts, sym, " + CROSSED_KEY_WINDOWS + " AS s FROM base");
+    }
+
     private void createView(String window) throws Exception {
         execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
         execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS "
@@ -420,6 +591,120 @@ public class LiveViewCheckpointRepairKeyCoverageTest extends AbstractLiveViewTes
             }
         }
         return narrowed;
+    }
+
+    /**
+     * One entry per logical boundary, keyed by its second of day, rendered as
+     * {@code {<partition key>=[<keys its ring rows decode to>], ...}} for the view's one
+     * ring-shaped function.
+     *
+     * @param statePages receives, per boundary and partition key, the
+     *                   {@code <segment id>/<offset>} of every state page the ring references
+     */
+    private TreeMap<Long, String> ringKeys(
+            LiveViewInstance instance,
+            TreeMap<Long, TreeMap<String, TreeSet<String>>> statePages
+    ) {
+        byte[] ringIdentity = null;
+        final ObjList<WindowFunction> windowFunctions = instance.getCompiledPlan().getWindowFactory().getWindowFunctions();
+        for (int i = 0, n = windowFunctions.size(); i < n; i++) {
+            final WindowFunction function = windowFunctions.getQuick(i);
+            if (function.supportsCheckpointRingState()) {
+                Assert.assertNull("the view declares exactly one ring-shaped function", ringIdentity);
+                ringIdentity = function.checkpointFunctionIdentity().getEncoded();
+            }
+        }
+        Assert.assertNotNull("the view declares exactly one ring-shaped function", ringIdentity);
+        final byte[] identity = ringIdentity;
+        final TreeMap<Long, String> out = new TreeMap<>();
+        final long epoch = ts("2026-01-01T00:00:00.000000Z");
+        try (
+                Path dir = checkpointsDir(instance);
+                LiveViewCheckpointMetaStore metaStore = new LiveViewCheckpointMetaStore(configuration)
+        ) {
+            metaStore.of(dir);
+            try (
+                    LiveViewCheckpointGenerationPin pin = metaStore.pin();
+                    LiveViewCheckpointTimelineReader timeline = new LiveViewCheckpointTimelineReader(configuration);
+                    LiveViewCheckpointRoot root = new LiveViewCheckpointRoot(configuration);
+                    LiveViewCheckpointFunctionDirectory functions = new LiveViewCheckpointFunctionDirectory(configuration);
+                    LiveViewCheckpointFunctionRoot functionRoot = new LiveViewCheckpointFunctionRoot(configuration);
+                    LiveViewCheckpointPartitionMapReader partitions = new LiveViewCheckpointPartitionMapReader(configuration);
+                    LiveViewCheckpointSegmentDirectoryReader segments = new LiveViewCheckpointSegmentDirectoryReader(configuration);
+                    LiveViewCheckpointRangeRingStateReader ring = new LiveViewCheckpointRangeRingStateReader(configuration)
+            ) {
+                timeline.of(dir);
+                partitions.of(dir);
+                segments.of(dir, pin.getSegmentDirectoryRootRef());
+                final LiveViewCheckpointPageRef functionDirectoryRef = new LiveViewCheckpointPageRef();
+                final LiveViewCheckpointPageRef functionRootRef = new LiveViewCheckpointPageRef();
+                final LiveViewCheckpointPageRef partitionMapRoot = new LiveViewCheckpointPageRef();
+                final LiveViewCheckpointStatePageRef statePage = new LiveViewCheckpointStatePageRef();
+                timeline.iterateAll(pin.getTimelineRootRef(), entry -> {
+                    final long boundary = (entry.maxTimestamp - epoch) / 1_000_000L;
+                    final TreeMap<String, TreeSet<String>> keys = new TreeMap<>();
+                    final TreeMap<String, TreeSet<String>> pagesByKey = new TreeMap<>();
+                    root.of(dir, entry.rootRef);
+                    root.getFunctionDirectoryRef(functionDirectoryRef);
+                    functions.of(dir, functionDirectoryRef);
+                    Assert.assertTrue(
+                            "boundary " + boundary + " must hold the ring-shaped function's root",
+                            functions.find(identity, functionRootRef)
+                    );
+                    functionRoot.of(dir, functionRootRef);
+                    functionRoot.getPartitionMapRootRef(partitionMapRoot);
+                    partitions.iterateAll(partitionMapRoot, partition -> {
+                        final TreeSet<String> encoded = new TreeSet<>();
+                        ring.of(dir, segments, partition);
+                        Assert.assertEquals(LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DOUBLE, ring.getValueKind());
+                        ring.forEachRow((timestamp, valueBits) -> {
+                            final double value = Double.longBitsToDouble(valueBits);
+                            final double k = (value - 0.5 - (timestamp - epoch) / 1_000_000L) / 1000;
+                            encoded.add(k >= 0 && k < CROSSED_KEYS && k == Math.rint(k)
+                                    ? String.valueOf((char) ('a' + (int) k))
+                                    : "undecodable " + value);
+                        });
+                        final TreeSet<String> pages = new TreeSet<>();
+                        for (int p = 0, n = ring.getStatePageCount(); p < n; p++) {
+                            ring.getStatePageRef(p, statePage);
+                            pages.add(statePage.getSegmentId() + "/" + statePage.getOffset());
+                        }
+                        final String key = symbolKey(partition.copyKeyForTest());
+                        keys.put(key, encoded);
+                        pagesByKey.put(key, pages);
+                    });
+                    out.put(boundary, keys.toString());
+                    statePages.put(boundary, pagesByKey);
+                });
+            }
+        }
+        return out;
+    }
+
+    /**
+     * One entry per logical boundary, keyed by its second of day, rendered as the
+     * {@code <segment id>/<offset>} of the root version the timeline names for it.
+     */
+    private TreeMap<Long, String> rootRefs(LiveViewInstance instance) {
+        final TreeMap<Long, String> out = new TreeMap<>();
+        final long epoch = ts("2026-01-01T00:00:00.000000Z");
+        try (
+                Path dir = checkpointsDir(instance);
+                LiveViewCheckpointMetaStore metaStore = new LiveViewCheckpointMetaStore(configuration)
+        ) {
+            metaStore.of(dir);
+            try (
+                    LiveViewCheckpointGenerationPin pin = metaStore.pin();
+                    LiveViewCheckpointTimelineReader timeline = new LiveViewCheckpointTimelineReader(configuration)
+            ) {
+                timeline.of(dir);
+                timeline.iterateAll(pin.getTimelineRootRef(), entry -> out.put(
+                        (entry.maxTimestamp - epoch) / 1_000_000L,
+                        entry.rootRef.getSegmentId() + "/" + entry.rootRef.getOffset()
+                ));
+            }
+        }
+        return out;
     }
 
     private LiveViewInstance viewInstance() {

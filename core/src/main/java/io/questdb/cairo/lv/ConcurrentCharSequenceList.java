@@ -27,41 +27,18 @@ package io.questdb.cairo.lv;
 import io.questdb.std.Mutable;
 
 /**
- * Single-writer, multi-reader, append-only sparse {@link CharSequence} store that
- * safely publishes its backing arrays. {@link LiveViewSymbolCache} keeps its
- * per-column {@code id -> string} lead mappings here: the refresh worker writes
- * ({@link #extendAndSet}, {@link #size}), cursors read ({@link #valueOf}).
+ * Single-writer, multi-reader sparse symbol store, indexed by absolute LV symbol id.
+ * Only {@link #truncate} removes assigned ids, and callers must prove no reader can
+ * reach that band. Pages allocate lazily relative to the first assigned id, avoiding
+ * storage for the committed dictionary below the provisional band.
  * <p>
- * The index is an ABSOLUTE LV-table symbol id, and the ids this store holds are only
- * the lead's provisional ones - a band that starts at the committed symbol count and
- * can start again far higher after an O3 replay or an externally replicated flush
- * re-anchors it. A flat array indexed by that id would materialize a slot per
- * committed symbol the store never holds: a single lead value past a 4M-symbol
- * dictionary would cost 16MB of nulls, retained until the view closes. So the store
- * is two-level and re-based: a page index holds {@value #PAGE_SIZE}-entry pages,
- * {@code pages[0]} covers the page of the first id ever assigned, and a page stays
- * unallocated until an id lands in it. An unheld id band therefore costs one
- * reference per {@value #PAGE_SIZE} ids of gap, not one per id, and no gap at all
- * below the first assignment.
+ * An immutable {@link PageIndex} publishes the array and its origin together through
+ * a volatile reference. A reader must use one snapshot for both; mixing origins and
+ * arrays returns the wrong symbol. The release also publishes copied page references.
  * <p>
- * Unlike a plain {@link io.questdb.std.ObjList}, a page-index growth stores the
- * reallocated array with a release ({@code volatile} field) and every read loads it
- * with an acquire, so a reader that observes a new page index also observes the page
- * references copied into it - an in-bounds id never reads a stale {@code null}. A
- * plain {@code ObjList} stores the new array with no fence, so on a weak-memory host
- * (ARM) a reader could see the new reference before the copies and read the default
- * {@code null} at an in-bounds id (a transient spurious miss).
- * <p>
- * The page array and its origin travel together in an immutable {@link PageIndex},
- * published through a single volatile reference. Reading them as a pair is what keeps
- * a re-base honest: a reader that combined one snapshot's array with another's origin
- * would index the wrong page and return the wrong string rather than merely miss.
- * <p>
- * Index safety is the caller's job: it bounds every read to a slot horizon published
- * via the slot-pin CAS (see the {@link LiveViewSymbolCache} note). Element stores and
- * page-reference stores stay plain - an id is assigned, and its page allocated, before
- * the slot carrying that id publishes, so the CAS (or a later growth's release)
- * publishes both. {@link #size} is writer-only.
+ * Callers bound reads by a slot horizon published through the slot-pin CAS. Element
+ * and page stores are plain: they precede publication of the slot containing their
+ * ids. {@link #size} is writer-only.
  */
 final class ConcurrentCharSequenceList implements Mutable {
     private static final PageIndex EMPTY = new PageIndex(0, new CharSequence[0][]);
@@ -129,6 +106,44 @@ final class ConcurrentCharSequenceList implements Mutable {
      */
     int size() {
         return size;
+    }
+
+    /**
+     * Writer-only. Takes back every id at or above {@code newSize}: {@link #valueOf}
+     * answers {@code null} for them again, {@link #size} becomes {@code newSize}, and
+     * {@link #extendAndSet} may assign from {@code newSize} up. A no-op when the store
+     * holds nothing at or above it.
+     * <p>
+     * This is the store's one exception to append-only, so the {@link #extendAndSet}
+     * assertion stays meaningful: an id is only ever re-assigned after the store has
+     * forgotten it. The caller must prove that no reader can resolve an id at or above
+     * {@code newSize}, because the next assignment re-binds it.
+     * {@link LiveViewInMemoryTier#tryRewindSymbolCache} does that by holding the writer
+     * sentinel on every slot whose horizon exceeds {@code newSize}, and re-stamps those
+     * horizons at or below {@code newSize} before such a slot can be pinned again. A slot a
+     * reader pins through the truncation already stops its horizon at or below
+     * {@code newSize}, so its readers resolve no id this takes back. A truncation below the
+     * store's origin drops every page, so the next assignment fixes a new origin, as after
+     * {@link #clear()}.
+     */
+    void truncate(int newSize) {
+        if (newSize >= size) {
+            return;
+        }
+        final PageIndex snap = pageIndex;
+        if (snap.pages.length == 0 || newSize <= snap.basePage << PAGE_BITS) {
+            pageIndex = EMPTY; // release
+        } else {
+            // Every id below size sits in an allocated index slot: extendAndSet grew the
+            // index to cover the highest one.
+            for (int id = newSize, n = size; id < n; id++) {
+                final CharSequence[] values = snap.pages[(id >>> PAGE_BITS) - snap.basePage];
+                if (values != null) {
+                    values[id & PAGE_MASK] = null;
+                }
+            }
+        }
+        size = Math.max(newSize, 0);
     }
 
     /**

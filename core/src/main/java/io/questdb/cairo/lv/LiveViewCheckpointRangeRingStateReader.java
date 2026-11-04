@@ -129,6 +129,7 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
      * degrades to the single-segment behaviour for the ids that collide.
      */
     private static final int DATA_SEGMENT_CACHE_SIZE = Numbers.ceilPow2(LiveViewCheckpointRingSeal.MAX_LIVE_CHUNKS);
+    private static final LiveViewCheckpointStatePageRef[] EMPTY_REFS = new LiveViewCheckpointStatePageRef[0];
     private static final int FLAGS = 0;
     private static final int SCALAR_FIXED_WORDS = 4;
     private final Path checkpointsDir = new Path();
@@ -150,7 +151,12 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
     private long scalarWord3;
     private int scalarWords = 1;
     private LiveViewCheckpointSegmentDirectoryReader segmentDirectory;
-    private LiveViewCheckpointStatePageRef[] statePageRefs = new LiveViewCheckpointStatePageRef[0];
+    private int statePageRefCount;
+    // The references of the entry the reader last opened, copied into objects the reader
+    // reuses for every entry after it, so opening a partition allocates nothing once the
+    // array has grown to the widest entry. Slots past statePageRefCount keep their objects
+    // for reuse; the format's reference limit bounds how many.
+    private LiveViewCheckpointStatePageRef[] statePageRefs = EMPTY_REFS;
     private int valueKind = VALUE_KIND_DOUBLE;
 
     public LiveViewCheckpointRangeRingStateReader(@NotNull CairoConfiguration configuration) {
@@ -224,7 +230,8 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
         initialized = false;
         openReader = null;
         segmentDirectory = null;
-        statePageRefs = new LiveViewCheckpointStatePageRef[0];
+        statePageRefCount = 0;
+        statePageRefs = EMPTY_REFS;
     }
 
     /**
@@ -324,11 +331,18 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
 
     public int getStatePageCount() {
         ensureInitialized();
-        return statePageRefs.length;
+        return statePageRefCount;
     }
 
     public void getStatePageRef(int index, @NotNull LiveViewCheckpointStatePageRef out) {
         ensureInitialized();
+        // The array keeps objects past the count for reuse, so the count, not the array,
+        // bounds the index.
+        if (index < 0 || index >= statePageRefCount) {
+            throw CairoException.critical(0)
+                    .put("live view checkpoint RANGE ring state page reference out of bounds")
+                    .put(" [index=").put(index).put(", count=").put(statePageRefCount).put(']');
+        }
         copyRef(statePageRefs[index], out);
     }
 
@@ -375,12 +389,17 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
         initialized = false;
         openReader = null;
         this.segmentDirectory = null;
-        final byte[] scalar = entry.getScalarState();
-        if (scalar.length < scalarStateBytes(1)) {
+        statePageRefCount = 0;
+        final int scalarLength = entry.getScalarLength();
+        if (scalarLength < scalarStateBytes(1)) {
             throw invalid("RANGE ring scalar state size mismatch")
-                    .put(" [minimum=").put(scalarStateBytes(1)).put(", actual=").put(scalar.length).put(']');
+                    .put(" [minimum=").put(scalarStateBytes(1)).put(", actual=").put(scalarLength).put(']');
         }
-        final long header = getLong(scalar, 0);
+        // Every read below is inside the length the check above and the one after the
+        // header proved. The scalar is read in native byte order, which is the
+        // little-endian order encodeScalar writes on every platform QuestDB supports.
+        final long scalar = entry.getScalarAddress();
+        final long header = Unsafe.getLong(scalar);
         final int version = (int) (header & 0xffffL);
         valueKind = (int) ((header >>> 16) & 0xffL);
         scalarWords = (int) ((header >>> 24) & 0xffL);
@@ -393,25 +412,25 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
             throw invalid("RANGE ring value kind or scalar width invalid")
                     .put(" [valueKind=").put(valueKind).put(", scalarWords=").put(scalarWords).put(']');
         }
-        if (scalar.length != scalarStateBytes(scalarWords)) {
+        if (scalarLength != scalarStateBytes(scalarWords)) {
             throw invalid("RANGE ring scalar state size mismatch")
                     .put(" [expected=").put(scalarStateBytes(scalarWords))
-                    .put(", actual=").put(scalar.length).put(']');
+                    .put(", actual=").put(scalarLength).put(']');
         }
-        rowCount = getLong(scalar, Long.BYTES);
-        scalarWord0 = getLong(scalar, 2 * Long.BYTES);
-        scalarWord1 = scalarWords > 1 ? getLong(scalar, 3 * Long.BYTES) : 0;
-        scalarWord2 = scalarWords > 2 ? getLong(scalar, 4 * Long.BYTES) : 0;
-        scalarWord3 = scalarWords > 3 ? getLong(scalar, 5 * Long.BYTES) : 0;
-        frameSize = getLong(scalar, (2 + scalarWords) * Long.BYTES);
-        lastTimestamp = getLong(scalar, (3 + scalarWords) * Long.BYTES);
+        rowCount = Unsafe.getLong(scalar + Long.BYTES);
+        scalarWord0 = Unsafe.getLong(scalar + 2 * Long.BYTES);
+        scalarWord1 = scalarWords > 1 ? Unsafe.getLong(scalar + 3 * Long.BYTES) : 0;
+        scalarWord2 = scalarWords > 2 ? Unsafe.getLong(scalar + 4 * Long.BYTES) : 0;
+        scalarWord3 = scalarWords > 3 ? Unsafe.getLong(scalar + 5 * Long.BYTES) : 0;
+        frameSize = Unsafe.getLong(scalar + (long) (2 + scalarWords) * Long.BYTES);
+        lastTimestamp = Unsafe.getLong(scalar + (long) (3 + scalarWords) * Long.BYTES);
 
         final int refCount = entry.getStatePageCount();
         final int pagesPerChunk = pagesPerChunk(valueKind);
         if (refCount % pagesPerChunk != 0 || refCount > LiveViewCheckpointMetadata.MAX_STATE_PAGE_REFS) {
             throw invalid("RANGE ring state page reference count invalid, count=").put(refCount);
         }
-        statePageRefs = new LiveViewCheckpointStatePageRef[refCount];
+        ensureStatePageRefCapacity(refCount);
         long physicalRows = 0;
         for (int i = 0; i < refCount; i += pagesPerChunk) {
             final LiveViewCheckpointStatePageRef timestampRef = entry.getStatePageRef(i);
@@ -424,13 +443,13 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
                             .put(" [timestamps=").put(timestampRef.getRowCount())
                             .put(", values=").put(valueRef.getRowCount()).put(']');
                 }
-                statePageRefs[i + 1] = LiveViewCheckpointPartitionMapEntry.copyRef(valueRef);
+                copyRef(valueRef, pooledStatePageRef(i + 1));
             }
             if (physicalRows > Long.MAX_VALUE - timestampRef.getRowCount()) {
                 throw invalid("RANGE ring physical row count overflow");
             }
             physicalRows += timestampRef.getRowCount();
-            statePageRefs[i] = LiveViewCheckpointPartitionMapEntry.copyRef(timestampRef);
+            copyRef(timestampRef, pooledStatePageRef(i));
         }
         // frameSize is the function's own aggregate cardinality, not a ring index:
         // a frame whose low bound is unbounded folds rows into the aggregate and
@@ -452,6 +471,7 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
                     .put(", headOffset=").put(headOffset)
                     .put(", rowCount=").put(rowCount).put(']');
         }
+        statePageRefCount = refCount;
         initialized = true;
     }
 
@@ -460,7 +480,16 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
                 from.getPageKind(), from.getCodec(), from.getRowCount(), from.getFlags());
     }
 
-    static byte[] encodeScalar(
+    /**
+     * Writes the scalar continuation state to the native memory at {@code address}, exactly
+     * {@link #scalarStateBytes scalarStateBytes(scalarWords)} bytes of it: the format header
+     * word, the row count, the scalar words, the frame size and the last timestamp. It writes
+     * every one of those bytes, so the destination needs no zero-fill. The words go in native
+     * byte order, which is the format's little-endian order on every platform QuestDB
+     * supports.
+     */
+    static void encodeScalar(
+            long address,
             int valueKind,
             int scalarWords,
             int headOffset,
@@ -473,23 +502,21 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
             long lastTimestamp
     ) {
         validateScalarWords(scalarWords);
-        final byte[] scalar = new byte[scalarStateBytes(scalarWords)];
-        putLong(scalar, 0, ((long) headOffset << 32)
+        Unsafe.putLong(address, ((long) headOffset << 32)
                 | ((long) (scalarWords & 0xff) << 24)
                 | ((long) (valueKind & 0xff) << 16)
                 | (FORMAT_VERSION & 0xffffL));
-        putLong(scalar, Long.BYTES, rowCount);
-        putLong(scalar, 2 * Long.BYTES, scalarWord0);
+        Unsafe.putLong(address + Long.BYTES, rowCount);
+        Unsafe.putLong(address + 2 * Long.BYTES, scalarWord0);
         if (scalarWords > 1) {
-            putLong(scalar, 3 * Long.BYTES, scalarWord1);
+            Unsafe.putLong(address + 3 * Long.BYTES, scalarWord1);
         }
         if (scalarWords > 2) {
-            putLong(scalar, 4 * Long.BYTES, scalarWord2);
-            putLong(scalar, 5 * Long.BYTES, scalarWord3);
+            Unsafe.putLong(address + 4 * Long.BYTES, scalarWord2);
+            Unsafe.putLong(address + 5 * Long.BYTES, scalarWord3);
         }
-        putLong(scalar, (2 + scalarWords) * Long.BYTES, frameSize);
-        putLong(scalar, (3 + scalarWords) * Long.BYTES, lastTimestamp);
-        return scalar;
+        Unsafe.putLong(address + (2L + scalarWords) * Long.BYTES, frameSize);
+        Unsafe.putLong(address + (3L + scalarWords) * Long.BYTES, lastTimestamp);
     }
 
     /**
@@ -540,14 +567,6 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
         }
     }
 
-    private static long getLong(byte[] bytes, int offset) {
-        long value = 0;
-        for (int i = 0; i < Long.BYTES; i++) {
-            value |= (long) (bytes[offset + i] & 0xff) << (i * 8);
-        }
-        return value;
-    }
-
     private static CairoException invalid(CharSequence reason) {
         return LiveViewCheckpointMetadata.invalid(reason);
     }
@@ -559,12 +578,6 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
     private static boolean isValueKindValid(int valueKind) {
         return (valueKind >= VALUE_KIND_DOUBLE && valueKind <= VALUE_KIND_DEQUE_DECIMAL256)
                 || valueKind == VALUE_KIND_NONE;
-    }
-
-    private static void putLong(byte[] bytes, int offset, long value) {
-        for (int i = 0; i < Long.BYTES; i++) {
-            bytes[offset + i] = (byte) (value >>> (i * 8));
-        }
     }
 
     private static void validateCommonRef(LiveViewCheckpointStatePageRef ref, int valueKind, int wordsPerRow) {
@@ -610,14 +623,6 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
                     .put(", codec=").put(ref.getCodec()).put(']');
         }
         validateCommonRef(ref, valueKind, valueWords(valueKind));
-    }
-
-    LiveViewCheckpointStatePageRef[] copyStatePageRefs() {
-        final LiveViewCheckpointStatePageRef[] copy = new LiveViewCheckpointStatePageRef[statePageRefs.length];
-        for (int i = 0; i < statePageRefs.length; i++) {
-            copy[i] = LiveViewCheckpointPartitionMapEntry.copyRef(statePageRefs[i]);
-        }
-        return copy;
     }
 
     int decodeChunk(int chunkIndex, long timestampAddress, long valueAddress) {
@@ -697,6 +702,18 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
         }
     }
 
+    private void ensureStatePageRefCapacity(int capacity) {
+        if (capacity > statePageRefs.length) {
+            // Doubling keeps a reader that meets wider and wider entries from growing the
+            // array once per entry; the format's reference limit caps it, and the caller has
+            // already rejected a count past that limit.
+            statePageRefs = Arrays.copyOf(
+                    statePageRefs,
+                    Math.min(Math.max(capacity, statePageRefs.length * 2), LiveViewCheckpointMetadata.MAX_STATE_PAGE_REFS)
+            );
+        }
+    }
+
     private void openPage(LiveViewCheckpointStatePageRef ref, int pageKind) {
         final long fileLength;
         try {
@@ -713,6 +730,18 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
                 LiveViewCheckpointStateCodec.CHUNK_ROWS,
                 LiveViewCheckpointStateCodec.CHUNK_ROWS * Long.BYTES
         );
+    }
+
+    /**
+     * @return the reference object at {@code index}, created the first time the slot is
+     * used and reused by every entry opened after that
+     */
+    private LiveViewCheckpointStatePageRef pooledStatePageRef(int index) {
+        LiveViewCheckpointStatePageRef ref = statePageRefs[index];
+        if (ref == null) {
+            ref = statePageRefs[index] = new LiveViewCheckpointStatePageRef();
+        }
+        return ref;
     }
 
     /**
@@ -743,7 +772,7 @@ public class LiveViewCheckpointRangeRingStateReader implements Closeable, LiveVi
         // them out of a local rather than re-entering the scratch accessor per row.
         final long timestampsAddress = scratch.timestampsAddress();
         final long valuesAddress = scratch.valuesAddress();
-        for (int chunk = 0, n = statePageRefs.length / pagesPerChunk(valueKind); chunk < n; chunk++) {
+        for (int chunk = 0, n = statePageRefCount / pagesPerChunk(valueKind); chunk < n; chunk++) {
             final int physicalRows = decodeChunk(chunk, timestampsAddress, valuesAddress);
             final int lo = chunk == 0 ? headOffset : 0;
             for (int i = 0; i < physicalRows; i++) {

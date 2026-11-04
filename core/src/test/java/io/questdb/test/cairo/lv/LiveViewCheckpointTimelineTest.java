@@ -30,6 +30,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointTimelineEntry;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineReader;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineWriter;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
@@ -191,6 +192,89 @@ public class LiveViewCheckpointTimelineTest extends AbstractCairoTest {
                     final long[] e = h.oracle.get(i);
                     h.assertFindExact(e[0], e[1]);
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testReplaceLastAgainstOracle() throws Exception {
+        assertMemoryLeak(() -> {
+            final Rnd rnd = new Rnd(0x7E91ACEL, 0x1A57L);
+            try (Harness h = new Harness(3, 3)) {
+                // Appends grow the tree a level at a time; each replacement swaps the
+                // newest entry for a higher key, as a seal over a grown head does, and
+                // must leave the size, the order and every other entry as they were.
+                long ts = 0;
+                long id = 0;
+                h.append(ts, id++);
+                for (int op = 0; op < 300; op++) {
+                    ts += 1 + rnd.nextLong(5);
+                    if (rnd.nextInt(3) == 0) {
+                        final long sizeBefore = h.reader.size(h.root);
+                        h.replaceLast(ts, id++);
+                        Assert.assertEquals(sizeBefore, h.reader.size(h.root));
+                    } else {
+                        h.append(ts, id++);
+                    }
+                    if (op % 25 == 0) {
+                        h.assertIterateAll();
+                    }
+                }
+                h.assertIterateAll();
+                for (int i = 0; i < h.oracle.size(); i++) {
+                    final long[] e = h.oracle.get(i);
+                    h.assertFindExact(e[0], e[1]);
+                }
+                for (int q = 0; q < 100; q++) {
+                    final long c = rnd.nextLong(ts + 10);
+                    h.assertPredecessor(c);
+                    h.assertSuccessor(c);
+                    h.assertFloor(c);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testReplaceLastInALoneRightmostLeafMovesItsSeparator() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Harness h = new Harness(3, 3)) {
+                for (int i = 0; i < 12; i++) {
+                    h.append(i * 10L, i);
+                }
+                // Leaves split two-and-two, so a truncate that keeps 0..60 leaves the
+                // entry at 60 alone in the rightmost leaf. Replacing it changes that
+                // leaf's minimum key, which the parent's separator has to follow, or a
+                // lookup between 60 and the new key would descend to the wrong child.
+                Assert.assertTrue(h.truncate(70));
+                h.replaceLast(95, 100);
+                Assert.assertEquals(7, h.reader.size(h.root));
+                h.assertIterateAll();
+                h.assertFindExact(95, 100);
+                h.assertFindExactMissing(60, 6);
+                for (long c = 45; c <= 100; c += 5) {
+                    h.assertPredecessor(c);
+                    h.assertSuccessor(c);
+                    h.assertFloor(c);
+                }
+                h.append(110, 101);
+                h.assertIterateAll();
+            }
+        });
+    }
+
+    @Test
+    public void testReplaceLastOfASingleEntry() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Harness h = new Harness(4, 4)) {
+                h.append(42, 7);
+                h.replaceLast(50, 8);
+                Assert.assertEquals(1, h.reader.size(h.root));
+                h.assertFindExact(50, 8);
+                h.assertFindExactMissing(42, 7);
+                h.assertPredecessor(51);
+                Assert.assertFalse(h.reader.predecessor(h.root, 50, h.out));
+                h.assertIterateAll();
             }
         });
     }
@@ -614,6 +698,14 @@ public class LiveViewCheckpointTimelineTest extends AbstractCairoTest {
             dir.close();
         }
 
+        void replaceLast(long ts, long id) {
+            fill(in, ts, id, false);
+            writer.replaceLast(root, in, nextSegmentId++, tmpRoot);
+            root.of(tmpRoot.getSegmentId(), tmpRoot.getOffset(), tmpRoot.getLength());
+            oracle.remove(oracle.size() - 1);
+            oracleInsert(ts, id, false);
+        }
+
         void splice(long lo, long hi) {
             final List<long[]> affected = new ArrayList<>();
             for (int i = 0; i < oracle.size(); i++) {
@@ -622,16 +714,16 @@ public class LiveViewCheckpointTimelineTest extends AbstractCairoTest {
                     affected.add(e);
                 }
             }
-            final LiveViewCheckpointTimelineEntry[] reps = new LiveViewCheckpointTimelineEntry[affected.size()];
+            final ObjList<LiveViewCheckpointTimelineEntry> reps = new ObjList<>();
             for (int i = 0; i < affected.size(); i++) {
                 final long[] e = affected.get(i);
                 final LiveViewCheckpointTimelineEntry rep = new LiveViewCheckpointTimelineEntry();
                 fill(rep, e[0], e[1], true); // rewrite payload to the "spliced" function
-                reps[i] = rep;
+                reps.add(rep);
                 // Mirror the rewrite in the oracle.
                 oracleInsert(e[0], e[1], true);
             }
-            writer.splice(root, reps, reps.length, nextSegmentId++, tmpRoot);
+            writer.splice(root, reps, reps.size(), nextSegmentId++, tmpRoot);
             root.of(tmpRoot.getSegmentId(), tmpRoot.getOffset(), tmpRoot.getLength());
         }
 

@@ -31,29 +31,13 @@ import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.NotNull;
 
 /**
- * In-memory owner of live {@link LiveViewCheckpointGenerationPin}s and the
- * current published timeline generation.
+ * Owns generation snapshots and pooled reader pins. Publication advances monotonically;
+ * existing pins retain their captured roots. An object retired at generation r is
+ * eligible for deletion only when minPinnedGeneration() > r and neither superblock
+ * slot references it. {@link #isGenerationPinned(long)} checks exact-generation pins.
  * <p>
- * A publication records the new current generation and its three superblock
- * root references with {@link #setCurrentGeneration}; a reader then takes a pin
- * on the current generation with {@link #pin()}. The tracker is the
- * garbage-collection authority the future purge job consults: it reports
- * {@link #minPinnedGeneration()} - the oldest generation any reader still pins
- * - so a physical object retired at generation {@code r} is deletable only when
- * {@code minPinnedGeneration() > r} (in addition to being unreachable from both
- * live superblock slots). {@link #isGenerationPinned(long)} answers the exact
- * "is any reader still on this specific generation" question the after-reader-
- * release lifecycle steps need.
- * <p>
- * The current-generation snapshot advances under publication while old pins
- * keep their own captured snapshot, so a reader that pinned {@code G} is
- * unaffected by a later {@code G + 1} publication. Generations advance
- * monotonically; {@link #setCurrentGeneration} rejects a backwards move.
- * <p>
- * All mutating and reading methods synchronize on this instance, so pins, releases,
- * publications, and purge-floor reads from different threads (a refresh reader, a
- * publishing writer, a purge job) are serialized. Pins are pooled and reused to stay
- * allocation-free on the read path.
+ * All reads and mutations synchronize on this tracker, serializing publication, pin
+ * acquisition, release and purge-floor checks.
  */
 public class LiveViewCheckpointGenerationTracker implements QuietCloseable {
 

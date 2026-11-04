@@ -371,9 +371,18 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
         @Override
         public void accumulateWindowState(Record record, MapValue value) {
-            final double d = arg.getDouble(record);
-            if (Numbers.isFinite(d)) {
-                value.putDouble(windowStateSumSlot, value.getDouble(windowStateSumSlot) + d);
+            accumulateWindowState(record, value, arg.getDouble(record));
+        }
+
+        /**
+         * Absorbs an argument the caller already read: the group's pass-1 skip evaluates this same
+         * {@code arg}, so taking its value avoids a second read; see
+         * {@link io.questdb.griffin.engine.window.WindowMapState#computeNext(Record)}.
+         */
+        @Override
+        public void accumulateWindowState(Record record, MapValue value, double argument) {
+            if (Numbers.isFinite(argument)) {
+                value.putDouble(windowStateSumSlot, value.getDouble(windowStateSumSlot) + argument);
                 value.putLong(windowStateNonNullCountSlot, value.getLong(windowStateNonNullCountSlot) + 1);
             }
         }
@@ -1029,7 +1038,9 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         @Override
-        public void markPartitionAlive(Record record) {
+        public void markPartitionAlive(Record record, boolean isFirstCadenceTouch) {
+            // The flag goes unread: this override keeps no checkpoint dirty set, so every seal
+            // full-scans it.
             if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
                 return;
             }
@@ -1647,7 +1658,9 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         @Override
-        public void markPartitionAlive(Record record) {
+        public void markPartitionAlive(Record record, boolean isFirstCadenceTouch) {
+            // The flag goes unread: this override keeps no checkpoint dirty set, so every seal
+            // full-scans it.
             if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
                 return;
             }
@@ -2436,6 +2449,14 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         @Override
         public int windowAccumulatorProjection() {
             return WindowAccumulatorProjection.PROJECTION_AVG;
+        }
+
+        /**
+         * The image is {@code (sum, nonNullCount)}; an unbounded frame start retains no rows.
+         */
+        @Override
+        public int checkpointStateFixedLength() {
+            return Double.BYTES + Long.BYTES;
         }
 
         @Override

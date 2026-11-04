@@ -547,26 +547,10 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
 
         @Override
         public int getSymbolCount() {
-            // Must be the real, finite count: a residual symbol filter enumerates
-            // 0..getSymbolCount()-1 at every filter init to pre-resolve its matching
-            // keys (LIKE/ILIKE/~ on a SYMBOL column - see
-            // AbstractLikeSymbolFunctionFactory and MatchSymbolFunctionFactory). An
-            // Integer.MAX_VALUE upper-bound sentinel used to send those loops past the
-            // real keys, where valueOf returns null: the contains/regex variants NPE'd
-            // and bricked the view, while the null-safe startsWith/endsWith variants
-            // spun 2^31 iterations per commit and pinned the refresh worker.
-            //
-            // The reader's key space is dense from 0 (clean dictionary keys, then each
-            // txn's diff keys), and the per-txn overlay re-keys that same band, so the
-            // reader's count already covers the overlay. Take the max regardless: the
-            // count must never cut the current txn's band short, or a filter would drop
-            // rows whose symbol key sits past it.
-            //
-            // This deliberately OVER-covers: the cumulative count also spans sibling txns' dirty
-            // bands, which no row of this txn carries. An enumerating filter just resolves a few
-            // keys that match nothing here - wasted work, never a wrong answer (resolve() is
-            // overlay-first). Do NOT tighten to the exact band without re-checking keyOf: the
-            // over-count is harmless, an under-count drops rows.
+            // Symbol filters enumerate [0, count), so the count must be finite and cover the
+            // current transaction's overlay. The reader's dense cumulative band can include
+            // sibling transactions' keys; that over-count is harmless, but an under-count
+            // silently drops matching rows.
             int count = reader.getSymbolCount(walColumnIndex);
             if (txnDiff != null) {
                 count = Math.max(count, cleanSymbolCount + txnDiff.size());

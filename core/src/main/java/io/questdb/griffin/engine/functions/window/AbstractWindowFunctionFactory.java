@@ -144,6 +144,13 @@ public abstract class AbstractWindowFunctionFactory implements FunctionFactory {
         }
     }
 
+    // The checkpoint image width of an unbounded-start DECIMAL sum or average: the accumulator, as
+    // wide as the DECIMAL type it sums into rather than the argument, then a trailerBytes-wide field -
+    // a sum's null flag or an average's non-null count. No live rows sit behind the accumulator.
+    static int decimalAccumulatorStateLength(short accumulatorTag, int trailerBytes) {
+        return ColumnType.sizeOfTag(accumulatorTag) + trailerBytes;
+    }
+
     static long validateStride(long stride, int position) throws SqlException {
         if (stride == Numbers.LONG_NULL) {
             throw SqlException.$(position, "stride must be set");

@@ -47,8 +47,10 @@ import org.jetbrains.annotations.Nullable;
  * <p>
  * Everything here is a runtime fact - which rows contribute, how many map value slots the
  * state occupies, which slot holds which field, whether one family's state contains
- * another's. There is one family, contribution and containment table and it is this one:
- * two would drift.
+ * another's. The durable side of the same component - a codec version, a byte image, a
+ * persisted manifest offset - lives in {@code LiveViewAccumulatorDescriptor}, which wraps
+ * one of these. There is one family, contribution and containment table and it is this
+ * one: two would drift.
  *
  * <h2>Two components are the same only when everything about their state is</h2>
  * The identity below is the whole of the sharing proof, and it deliberately carries more
@@ -118,13 +120,13 @@ import org.jetbrains.annotations.Nullable;
  * What they add to the model is the flag. An accumulating family reads its own emptiness off its
  * state - a zero total, a NaN extremum - and the two respect-nulls families cannot, because the
  * value they capture may be the argument's own NULL and every later row has to leave it alone.
- * The unfused implementations answer that with {@code MapValue.isNew()}, which reports on the
- * entry as a whole - and the group creates that entry and puts it to identity before any
- * contributor runs. A fused group answers it with {@link #FIELD_CAPTURED} instead, a slot of the
- * component's own slice, the way {@link #RING_STATE_UNALLOCATED} carries "this partition has no
- * ring yet" for the bounded families. The two IGNORE NULLS {@code first_value} families need no
- * such flag and do not have one: they only ever write a value their own predicate admits, so
- * their empty state is the argument type's own NULL and is unambiguous.
+ * The unfused implementations answer that with {@code MapValue.isNew()}, which a group cannot:
+ * the entry is created and put to identity before any contributor runs, and a live view's entry
+ * may have been created by its anchor. So {@link #FIELD_CAPTURED} carries it in the slice, the
+ * way {@link #RING_STATE_UNALLOCATED} carries "this partition has no ring yet" for the bounded
+ * families. The two IGNORE NULLS {@code first_value} families need no such flag and do not have
+ * one: they only ever write a value their own predicate admits, so their empty state is the
+ * argument type's own NULL and is unambiguous.
  *
  * <h2>A slot is not always a 64-bit word</h2>
  * {@link #FAMILY_DECIMAL_MAX} is the first family whose layout is a function of its
@@ -459,7 +461,7 @@ public final class WindowAccumulatorDescriptor {
      * and one afterwards. Present only in the three respect-the-first-row families
      * ({@link #FAMILY_DOUBLE_FIRST_VALUE}, {@link #FAMILY_LONG_FIRST_VALUE} and the two
      * {@code last_value} ones), and read and written by their contributor alone: it says what
-     * a private map reads {@code MapValue.isNew()} for.
+     * a private map answers with {@code MapValue.isNew()} and a group's value cannot.
      * <p>
      * The two IGNORE NULLS {@code first_value} families deliberately do not carry it. Their
      * value slot is only ever written with a value their predicate admits, so its NULL is the
@@ -785,9 +787,10 @@ public final class WindowAccumulatorDescriptor {
      * never in SELECT-list order, so reordering the outputs of one query cannot move a
      * component's slot base.
      * <p>
-     * The field order and the unsigned comparison are chosen so that a plan ordered here
-     * and the same components ordered by their encoded identity bytes agree, which is what
-     * lets a durable owner sort by either.
+     * The field order and the unsigned comparison are the ones the live-view durable
+     * encoding sorts by, so a plan ordered here and a manifest ordered by encoded bytes
+     * agree. The codec version the durable side also carries is
+     * {@code LiveViewAccumulatorDescriptor}'s to compare.
      */
     public int compareIdentity(@NotNull WindowAccumulatorDescriptor other) {
         if (family != other.family) {
@@ -812,10 +815,10 @@ public final class WindowAccumulatorDescriptor {
      * ownership is moving - a window adopting a plan, or handing the state back -
      * carries the accumulator across without going through any durable encoding.
      * <p>
-     * No owner moves a component this way today, and the guards below are what one would meet:
-     * neither a slot wider than a word nor a state that continues outside the map value can
-     * move, and the throw says so rather than copying the first word of one and leaving the
-     * rest of the state behind.
+     * Only a live view moves a component this way, and only a component it can persist. A
+     * family with no codec is never in one of its plans, so neither a slot wider than a word nor
+     * a state that continues outside the map value can reach this - and the throw says so rather
+     * than copying the first word of one and leaving the rest of the state behind.
      */
     public void copyState(@NotNull MapValue src, int srcSlotBase, @NotNull MapValue dst, int dstSlotBase) {
         if (isRingBacked()) {
@@ -1175,6 +1178,39 @@ public final class WindowAccumulatorDescriptor {
     }
 
     /**
+     * Whether a row this component's contribution predicate refuses leaves its state exactly as
+     * it was, so {@link WindowMapState#computeNext} may leave the row's key out of the map when
+     * every component of the group refuses it.
+     * <p>
+     * Narrower than "the predicate refuses the row": {@link #CONTRIBUTION_EVERY_ROW} has no
+     * refused row, a {@code last_value ignore nulls} capture writes its slot on a partition's
+     * first row whatever it holds, and a {@link #isRingBacked() ring-backed} frame advances its
+     * ring on refused rows too. Only {@link #CONTRIBUTION_FINITE_DOUBLE} answers true, because
+     * the group evaluates the predicate itself and {@code Numbers.isFinite(arg.getDouble(record))}
+     * is the whole of this one; other kinds may be admitted once a caller can evaluate them.
+     * <p>
+     * Of the seven admitted families only {@link #FAMILY_DOUBLE_SUM_COUNT} and
+     * {@link #FAMILY_NON_NULL_COUNT} reach a skipping group today: the skip needs a two-pass
+     * group ({@link WindowMapState#isPass1SkipEnabled()}), and every function declaring one of
+     * the other five reports {@link WindowFunction#ZERO_PASS}.
+     */
+    public boolean isRefusedRowInert() {
+        if (contributionKind != CONTRIBUTION_FINITE_DOUBLE) {
+            return false;
+        }
+        return switch (family) {
+            case FAMILY_DOUBLE_FIRST_NOT_NULL_VALUE,
+                 FAMILY_DOUBLE_KAHAN_SUM_COUNT,
+                 FAMILY_DOUBLE_MAX,
+                 FAMILY_DOUBLE_MIN,
+                 FAMILY_DOUBLE_SUM_COUNT,
+                 FAMILY_DOUBLE_WELFORD,
+                 FAMILY_NON_NULL_COUNT -> true;
+            default -> false;
+        };
+    }
+
+    /**
      * Whether this component's state continues outside the group's map value, in a ring of the
      * frame's own values that its <b>contributor</b> owns and the ring slots address.
      * <p>
@@ -1215,8 +1251,9 @@ public final class WindowAccumulatorDescriptor {
     }
 
     /**
-     * Puts this component's slots back to the identity a new partition needs: no map
-     * implementation zero-fills a value's slots in {@code createValue()}.
+     * Puts this component's slots back to the identity a new partition needs, and that a
+     * live view's anchor crossing also leaves behind: a map value's slots are not
+     * zero-filled by {@code createValue()} on any implementation.
      * <p>
      * The identity is the family's rather than the slot type's - see
      * {@link #getSlotIdentityBits} - because an extremum's empty state is not zero.

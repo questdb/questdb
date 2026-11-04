@@ -1643,6 +1643,15 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
             return offset;
         }
 
+        /**
+         * The image is the compensated total, its compensation term and the counter - the family's
+         * whole state, in the slot order the fused window state carries.
+         */
+        @Override
+        public int checkpointStateFixedLength() {
+            return 2 * Double.BYTES + Long.BYTES;
+        }
+
         @Override
         public int checkpointStateFormatVersion() {
             return 1;

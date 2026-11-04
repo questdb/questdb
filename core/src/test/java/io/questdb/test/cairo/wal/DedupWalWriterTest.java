@@ -24,12 +24,69 @@
 
 package io.questdb.test.cairo.wal;
 
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.wal.WalUtils;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class DedupWalWriterTest extends AbstractCairoTest {
+    @Test
+    public void testANoDedupCommitKeepsTheRowsTheTableWouldCollapse() throws Exception {
+        // WAL_DEDUP_MODE_NO_DEDUP is a producer saying "these rows are not to be
+        // deduplicated against this table's keys", and the apply is what has to honour it.
+        // Left unread it applies as the default, and the default on a dedup-keyed table
+        // collapses every repeated key into the last row carrying it - which is row loss
+        // the producer explicitly asked against, and which nothing downstream detects. The
+        // control arm below is the same commit at the default mode.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test (ts TIMESTAMP, x INT, v LONG) TIMESTAMP(ts)"
+                    + " PARTITION BY DAY WAL DEDUP UPSERT KEYS (ts, x)");
+            execute("INSERT INTO test VALUES ('2022-02-24T00:00:00.000000Z', 1, 10)");
+            drainWalQueue();
+
+            final TableToken token = engine.verifyTableName("test");
+            try (WalWriter walWriter = engine.getWalWriter(token)) {
+                appendRow(walWriter, "2022-02-24T00:00:00.000000Z", 1, 20);
+                appendRow(walWriter, "2022-02-24T00:00:00.000000Z", 1, 30);
+                walWriter.commitWithParams(0, 0, WalUtils.WAL_DEDUP_MODE_NO_DEDUP);
+            }
+            drainWalQueue();
+
+            assertQuery("test")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("ts\tx\tv\n"
+                            + "2022-02-24T00:00:00.000000Z\t1\t10\n"
+                            + "2022-02-24T00:00:00.000000Z\t1\t20\n"
+                            + "2022-02-24T00:00:00.000000Z\t1\t30\n");
+
+            // The control: the same two rows at the default mode are one row by the time
+            // they land - the pair collapses to the last value written - and that row then
+            // overwrites every stored row carrying the pair. Three distinct values in,
+            // one value out.
+            try (WalWriter walWriter = engine.getWalWriter(token)) {
+                appendRow(walWriter, "2022-02-24T00:00:00.000000Z", 1, 40);
+                appendRow(walWriter, "2022-02-24T00:00:00.000000Z", 1, 50);
+                walWriter.commitWithParams(0, 0, WalUtils.WAL_DEDUP_MODE_DEFAULT);
+            }
+            drainWalQueue();
+
+            assertQuery("test")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("ts\tx\tv\n"
+                            + "2022-02-24T00:00:00.000000Z\t1\t50\n"
+                            + "2022-02-24T00:00:00.000000Z\t1\t50\n"
+                            + "2022-02-24T00:00:00.000000Z\t1\t50\n");
+        });
+    }
+
     @Test
     public void testDedupNoPartitionRewriteArray() throws Exception {
         assertMemoryLeak(() -> testSameAndShuffledInserts("double[]", "null", "ARRAY[1.0,1.0]", "ARRAY[2.0,2.0]", "ARRAY[3.0,3.0]"));
@@ -87,6 +144,13 @@ public class DedupWalWriterTest extends AbstractCairoTest {
     @Test
     public void testDedupNoPartitionRewriteVarchar() throws Exception {
         assertMemoryLeak(() -> testSameAndShuffledInserts("varchar", "", "'123'", "'2345567'", "'22'"));
+    }
+
+    private static void appendRow(WalWriter walWriter, String ts, int x, long v) {
+        final TableWriter.Row row = walWriter.newRow(MicrosTimestampDriver.floor(ts));
+        row.putInt(1, x);
+        row.putLong(2, v);
+        row.append();
     }
 
     private void testSameAndShuffledInserts(String columnType, String nullValue, String value1, String value2, String nullValueUpdated) throws Exception {

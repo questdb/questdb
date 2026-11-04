@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypeDriver;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.StringTypeDriver;
+import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
@@ -38,7 +39,10 @@ import io.questdb.cairo.lv.LiveViewInMemoryTier;
 import io.questdb.cairo.lv.LiveViewSymbolCache;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -51,6 +55,7 @@ import io.questdb.std.MemoryTrackerWorkload;
 import io.questdb.std.Misc;
 import io.questdb.std.PerQueryMemoryTrackerProvider;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8SplitString;
@@ -694,6 +699,320 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
                             symbolCache.newSymbolMaxIdExclusive(col),
                             slot.newSymbolMaxId(col)
                     );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSymbolAnchorOnAFreshCacheStartsTheInStepCheckAtTheCommittedCount() throws Exception {
+        // After a restart the cache is empty while the view's table already holds three
+        // committed symbols. The first drain's anchor raises the next id to three, and it has
+        // to record three as the id the in-step check compares from as well: the cache holds
+        // no string below it, so a check that started at id 0 would report out of step at
+        // every flush, and the view would read disk-only until the next restart.
+        assertMemoryLeak(() -> {
+            final int col = 1;
+            final int committedCount = 3;
+            IntList types = new IntList(2);
+            types.add(ColumnType.TIMESTAMP);
+            types.add(ColumnType.SYMBOL);
+            try (LiveViewSymbolCache cache = new LiveViewSymbolCache(types)) {
+                cache.anchor(col, committedCount);
+                Assert.assertEquals(committedCount, cache.intern(col, "acct-4", new UncommittedValuesReader(committedCount)));
+                // The flush's apply commits the new value at the id the drain assigned it.
+                Assert.assertTrue(cache.isInStepWith(col, new CommittedValuesReader("acct-1", "acct-2", "acct-3", "acct-4")));
+            }
+        });
+    }
+
+    @Test
+    public void testSymbolRewindWaitsForEveryPinThenRebindsTheBandInANewOrder() throws Exception {
+        // A recovery discarded a pass that interned acct-3 and acct-4 past the two committed
+        // symbols, so the cache would hand the next new value an id the flush's apply gives to
+        // another one. The rewind takes the band back, but only once no reader can resolve it:
+        // a pin on either slot defers it with nothing changed. After it, the values the drain
+        // meets next - here in a different order from the discarded pass - take the committed
+        // ids, and no stale reverse-index node can match a filter on a discarded value.
+        assertMemoryLeak(() -> {
+            final int col = 1;
+            final int committedCount = 2;
+            final SymbolMapReader empty = new UncommittedValuesReader(0);
+            final SymbolMapReader committed = new UncommittedValuesReader(committedCount);
+            final IntList committedCounts = new IntList();
+            committedCounts.extendAndSet(col, committedCount);
+            IntList types = new IntList(2);
+            types.add(ColumnType.TIMESTAMP);
+            types.add(ColumnType.SYMBOL);
+            try (LiveViewInMemoryTier tier = new LiveViewInMemoryTier(types, 0, PAGE_SIZE)) {
+                final LiveViewSymbolCache cache = tier.getSymbolCache();
+                // Two values a flush then committed, so the committed band holds strings too.
+                Assert.assertEquals(0, cache.intern(col, "acct-1", empty));
+                Assert.assertEquals(1, cache.intern(col, "acct-2", empty));
+                // The pass the recovery discards: it publishes acct-3 as a lead row first.
+                cache.onFlush();
+                cache.anchor(col, committedCount);
+                Assert.assertEquals(2, cache.intern(col, "acct-3", committed));
+                final int discardedIdx = 1 - tier.getPublishedIdx();
+                LiveViewInMemoryBuffer discarded = tier.tryAcquireWrite(discardedIdx);
+                Assert.assertNotNull(discarded);
+                discarded.putLong(0, 0, 1L);
+                discarded.putInt(0, col, 2);
+                discarded.setRowCount(1);
+                discarded.setLeadRowCount(1);
+                tier.publishSwap(discardedIdx);
+                final int pin = tier.acquireRead();
+                Assert.assertEquals(discardedIdx, pin);
+                Assert.assertEquals(3, tier.getSlot(pin).newSymbolMaxId(col));
+                Assert.assertEquals(3, cache.intern(col, "acct-4", committed));
+
+                // The recovery restages the other slot from disk and publishes it; the reader
+                // keeps the discarded slot pinned.
+                cache.onO3();
+                final int restagedIdx = 1 - discardedIdx;
+                Assert.assertNotNull(tier.tryAcquireWrite(restagedIdx));
+                tier.publishSwap(restagedIdx);
+                Assert.assertEquals(4, tier.getSlot(restagedIdx).newSymbolMaxId(col));
+
+                Assert.assertTrue(cache.hasStrandedIds(col, committedCount));
+                Assert.assertFalse("a pin on the old slot must defer the rewind", tier.tryRewindSymbolCache(committedCounts));
+                // Nothing changed for the pinned reader, and both sentinels dropped: the
+                // published slot is acquirable again and kept its horizon.
+                Assert.assertEquals("acct-3", cache.newSymbolValueOf(col, 2).toString());
+                Assert.assertEquals(2, cache.newSymbolKeyOf(col, "acct-3", committedCount, 3));
+                Assert.assertEquals(4, cache.newSymbolMaxIdExclusive(col));
+                Assert.assertTrue(cache.hasStrandedIds(col, committedCount));
+                Assert.assertEquals(4, tier.getSlot(restagedIdx).newSymbolMaxId(col));
+                Assert.assertNotNull(tier.tryAcquireWrite(restagedIdx));
+                tier.releaseWriteWithoutPublish(restagedIdx);
+
+                // A reader of the published slot defers it just the same.
+                final int publishedPin = tier.acquireRead();
+                Assert.assertEquals(restagedIdx, publishedPin);
+                tier.releaseRead(pin);
+                Assert.assertFalse("a pin on the published slot must defer the rewind", tier.tryRewindSymbolCache(committedCounts));
+                Assert.assertEquals("acct-4", cache.newSymbolValueOf(col, 3).toString());
+                tier.releaseRead(publishedPin);
+
+                Assert.assertTrue(tier.tryRewindSymbolCache(committedCounts));
+                Assert.assertFalse(cache.hasStrandedIds(col, committedCount));
+                Assert.assertTrue(cache.isInStepWith(col, committed));
+                // The band is forgotten and both horizons stop below it; the committed band
+                // keeps its strings for a reader whose disk table predates their commit.
+                Assert.assertNull(cache.newSymbolValueOf(col, 2));
+                Assert.assertNull(cache.newSymbolValueOf(col, 3));
+                Assert.assertEquals("acct-1", cache.newSymbolValueOf(col, 0).toString());
+                Assert.assertEquals("acct-2", cache.newSymbolValueOf(col, 1).toString());
+                Assert.assertEquals(committedCount, cache.newSymbolMaxIdExclusive(col));
+                Assert.assertEquals(committedCount, tier.getSlot(0).newSymbolMaxId(col));
+                Assert.assertEquals(committedCount, tier.getSlot(1).newSymbolMaxId(col));
+                Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, cache.newSymbolKeyOf(col, "acct-3", committedCount, 4));
+                Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, cache.newSymbolKeyOf(col, "acct-4", committedCount, 4));
+                Assert.assertEquals(1, cache.newSymbolKeyOf(col, "acct-2", 0, committedCount));
+
+                // The drain after the rewind meets acct-5 before acct-4. Each takes the id the
+                // flush's apply gives it, and the store accepts the re-assignment without
+                // tripping its increasing-order assertion (core tests run with -ea).
+                Assert.assertEquals(2, cache.intern(col, "acct-5", committed, true));
+                Assert.assertEquals(3, cache.intern(col, "acct-4", committed, true));
+                Assert.assertEquals(3, cache.intern(col, "acct-4", committed, true));
+                Assert.assertEquals("acct-5", cache.newSymbolValueOf(col, 2).toString());
+                Assert.assertEquals("acct-4", cache.newSymbolValueOf(col, 3).toString());
+                Assert.assertEquals(4, cache.newSymbolMaxIdExclusive(col));
+                Assert.assertEquals(2, cache.newSymbolKeyOf(col, "acct-5", committedCount, 4));
+                Assert.assertEquals(3, cache.newSymbolKeyOf(col, "acct-4", committedCount, 4));
+                // acct-3 is not in the new band: a WHERE on it cannot match acct-5's rows.
+                Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, cache.newSymbolKeyOf(col, "acct-3", committedCount, 4));
+                // The flush that commits both, in the order the drain met them, leaves the cache
+                // in step with the table. The check compares only the ids assigned since the
+                // rewind, so it holds whatever the table committed below them.
+                Assert.assertTrue(cache.isInStepWith(col, new CommittedValuesReader("acct-1", "acct-2", "acct-5", "acct-4")));
+                Assert.assertTrue(cache.isInStepWith(col, new CommittedValuesReader("acct-0", "acct-9", "acct-5", "acct-4")));
+                // A commit that assigned them the other way round has the same count, and the
+                // check still refuses it: a WAL writer that kept acct-4 from the discarded pass
+                // through its rollback commits it ahead of acct-5.
+                Assert.assertFalse(cache.isInStepWith(col, new CommittedValuesReader("acct-1", "acct-2", "acct-4", "acct-5")));
+                // The same count with a value the drain never interned, at the last id it
+                // assigned, falls to the value comparison too.
+                Assert.assertFalse(cache.isInStepWith(col, new CommittedValuesReader("acct-1", "acct-2", "acct-5", "acct-3")));
+                // A writer that kept acct-3 commits it ahead of the drain's two values, so the
+                // table holds one symbol more than the cache assigned: the count comparison
+                // refuses that commit before it reads a value.
+                Assert.assertFalse(cache.isInStepWith(col, new CommittedValuesReader("acct-1", "acct-2", "acct-3", "acct-5", "acct-4")));
+                // A second rewind with nothing stranded changes nothing.
+                committedCounts.setQuick(col, committedCount + 2);
+                Assert.assertTrue(tier.tryRewindSymbolCache(committedCounts));
+                Assert.assertEquals("acct-5", cache.newSymbolValueOf(col, 2).toString());
+                Assert.assertEquals(4, cache.newSymbolMaxIdExclusive(col));
+            }
+        });
+    }
+
+    @Test
+    public void testSymbolRewindAcrossAPageBoundaryKeepsTheIdsBelowIt() throws Exception {
+        // The id -> string store pages ids 256 at a time. A band that starts inside one page
+        // and runs into the next must be forgotten on both pages, while the ids of the first
+        // page below the committed count keep their strings.
+        assertMemoryLeak(() -> {
+            final int col = 1;
+            final int committedCount = 255;
+            final SymbolMapReader committed = new UncommittedValuesReader(committedCount);
+            final IntList committedCounts = new IntList();
+            committedCounts.extendAndSet(col, committedCount);
+            IntList types = new IntList(2);
+            types.add(ColumnType.TIMESTAMP);
+            types.add(ColumnType.SYMBOL);
+            try (LiveViewInMemoryTier tier = new LiveViewInMemoryTier(types, 0, PAGE_SIZE)) {
+                final LiveViewSymbolCache cache = tier.getSymbolCache();
+                cache.anchor(col, committedCount - 1);
+                Assert.assertEquals(committedCount - 1, cache.intern(col, "committed", committed));
+                Assert.assertEquals(committedCount, cache.intern(col, "discarded-0", committed));
+                Assert.assertEquals(committedCount + 1, cache.intern(col, "discarded-1", committed));
+                Assert.assertEquals(committedCount + 2, cache.intern(col, "discarded-2", committed));
+                cache.onO3();
+
+                Assert.assertTrue(tier.tryRewindSymbolCache(committedCounts));
+                Assert.assertEquals("committed", cache.newSymbolValueOf(col, committedCount - 1).toString());
+                for (int id = committedCount; id < committedCount + 3; id++) {
+                    Assert.assertNull("id " + id + " must be forgotten", cache.newSymbolValueOf(col, id));
+                }
+                Assert.assertEquals(committedCount, cache.newSymbolMaxIdExclusive(col));
+
+                Assert.assertEquals(committedCount, cache.intern(col, "discarded-2", committed, true));
+                Assert.assertEquals(committedCount + 1, cache.intern(col, "next", committed, true));
+                Assert.assertEquals("discarded-2", cache.newSymbolValueOf(col, committedCount).toString());
+                Assert.assertEquals("next", cache.newSymbolValueOf(col, committedCount + 1).toString());
+                Assert.assertNull(cache.newSymbolValueOf(col, committedCount + 2));
+                Assert.assertEquals(committedCount, cache.newSymbolKeyOf(col, "discarded-2", committedCount, committedCount + 2));
+                Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, cache.newSymbolKeyOf(col, "discarded-0", committedCount, committedCount + 2));
+            }
+        });
+    }
+
+    @Test
+    public void testSymbolRewindToTheStoreOriginTakesBackEveryIdTheStoreHolds() throws Exception {
+        // The first id a column ever assigns fixes the id -> string store's origin page. A
+        // discarded pass that was the column's first, over a committed count on a page
+        // boundary, is rewound to exactly that origin, which takes back every id the store
+        // holds: none of them resolves any more, and the next value takes the first of them.
+        // The store drops every page there and lets the next assignment fix the origin again,
+        // as after close. Nothing here tells that from pages emptied in place: the next id
+        // lands on the origin page either way.
+        assertMemoryLeak(() -> {
+            final int col = 1;
+            final int committedCount = 256;
+            final SymbolMapReader committed = new UncommittedValuesReader(committedCount);
+            final IntList committedCounts = new IntList();
+            committedCounts.extendAndSet(col, committedCount);
+            IntList types = new IntList(2);
+            types.add(ColumnType.TIMESTAMP);
+            types.add(ColumnType.SYMBOL);
+            try (LiveViewInMemoryTier tier = new LiveViewInMemoryTier(types, 0, PAGE_SIZE)) {
+                final LiveViewSymbolCache cache = tier.getSymbolCache();
+                cache.anchor(col, committedCount);
+                Assert.assertEquals(committedCount, cache.intern(col, "discarded-0", committed));
+                Assert.assertEquals(committedCount + 1, cache.intern(col, "discarded-1", committed));
+                cache.onO3();
+
+                Assert.assertTrue(tier.tryRewindSymbolCache(committedCounts));
+                Assert.assertEquals(committedCount, cache.newSymbolMaxIdExclusive(col));
+                Assert.assertNull(cache.newSymbolValueOf(col, committedCount));
+                Assert.assertNull(cache.newSymbolValueOf(col, committedCount + 1));
+                Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, cache.newSymbolKeyOf(col, "discarded-0", committedCount, committedCount + 2));
+
+                Assert.assertEquals(committedCount, cache.intern(col, "kept", committed, true));
+                Assert.assertEquals("kept", cache.newSymbolValueOf(col, committedCount).toString());
+                Assert.assertNull(cache.newSymbolValueOf(col, committedCount + 1));
+                Assert.assertEquals(committedCount + 1, cache.newSymbolMaxIdExclusive(col));
+                Assert.assertEquals(committedCount, cache.newSymbolKeyOf(col, "kept", committedCount, committedCount + 1));
+            }
+        });
+    }
+
+    @Test
+    public void testSymbolRewindThatThrowsPartWayStillReleasesBothWriterSentinels() throws Exception {
+        // tryRewindSymbolCache holds the writer sentinel on both slots while it rewinds the
+        // columns. Nothing in production throws in there short of a JVM error, so a list of
+        // committed counts that stops short of the second SYMBOL column stands in for one:
+        // IntList.getQuick trips its bounds assertion on it (core tests run with -ea), after
+        // the first column rewound. Both sentinels have to drop all the same, or every reader
+        // of the view spins on them forever.
+        assertMemoryLeak(() -> {
+            final int firstCol = 1;
+            final IntList committedCounts = new IntList();
+            committedCounts.extendAndSet(firstCol, 0);
+            IntList types = new IntList(3);
+            types.add(ColumnType.TIMESTAMP);
+            types.add(ColumnType.SYMBOL);
+            types.add(ColumnType.SYMBOL);
+            try (LiveViewInMemoryTier tier = new LiveViewInMemoryTier(types, 0, PAGE_SIZE)) {
+                final LiveViewSymbolCache cache = tier.getSymbolCache();
+                Assert.assertEquals("the schema must carry both symbol columns", 2, cache.symbolColumnCount());
+                // A discarded pass left the first column an id to take back.
+                Assert.assertEquals(0, cache.intern(firstCol, "discarded", new UncommittedValuesReader(0)));
+
+                AssertionError thrown = null;
+                try {
+                    tier.tryRewindSymbolCache(committedCounts);
+                } catch (AssertionError e) {
+                    thrown = e;
+                }
+                Assert.assertNotNull("the second column's count read must trip the bounds assertion", thrown);
+                TestUtils.assertContains(thrown.getMessage(), "out of bounds for list size");
+                Assert.assertFalse("the first column must have rewound before the throw", cache.hasStrandedIds(firstCol, 0));
+
+                // Re-acquirable means the sentinel is gone. Asserting it this way rather than
+                // through acquireRead keeps a regression a failure instead of a hang.
+                for (int slotIdx = 0; slotIdx < 2; slotIdx++) {
+                    Assert.assertNotNull(
+                            "slot " + slotIdx + " must drop its sentinel even when the rewind throws",
+                            tier.tryAcquireWrite(slotIdx)
+                    );
+                    tier.releaseWriteWithoutPublish(slotIdx);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSymbolRewindWhoseFirstSentinelReleaseThrowsStillReleasesTheSecond() throws Exception {
+        // tryRewindSymbolCache drops its two writer sentinels one after the other, the
+        // non-published slot's first, and each release prunes the reverse index on its way,
+        // which can throw. The case above throws inside the rewind, so both of its releases
+        // run clean and it cannot tell whether the second depends on the first. Here the
+        // rewind completes and the first release is what throws: the published slot's
+        // sentinel has to drop all the same, or every reader of the view spins on it forever.
+        assertMemoryLeak(() -> {
+            final int col = 1;
+            final int committedCount = 0;
+            final IntList committedCounts = new IntList();
+            committedCounts.extendAndSet(col, committedCount);
+            IntList types = new IntList(2);
+            types.add(ColumnType.TIMESTAMP);
+            types.add(ColumnType.SYMBOL);
+            try (LiveViewInMemoryTier tier = new LiveViewInMemoryTier(types, 0, PAGE_SIZE)) {
+                final LiveViewSymbolCache cache = tier.getSymbolCache();
+                // A discarded pass left the column an id to take back.
+                Assert.assertEquals(0, cache.intern(col, "discarded", new UncommittedValuesReader(committedCount)));
+
+                final RuntimeException injected = new RuntimeException("reverse-index prune failed");
+                tier.setFailNextSymbolHorizonStamp(injected);
+                try {
+                    tier.tryRewindSymbolCache(committedCounts);
+                    Assert.fail("expected the first release's stamp failure to propagate");
+                } catch (RuntimeException e) {
+                    Assert.assertSame(injected, e);
+                }
+                Assert.assertFalse("the rewind must have completed ahead of the releases", cache.hasStrandedIds(col, committedCount));
+
+                // Re-acquirable means the sentinel is gone. Asserting it this way rather than
+                // through acquireRead keeps a regression a failure instead of a hang.
+                for (int slotIdx = 0; slotIdx < 2; slotIdx++) {
+                    Assert.assertNotNull(
+                            "slot " + slotIdx + " must drop its sentinel even when the other slot's release throws",
+                            tier.tryAcquireWrite(slotIdx)
+                    );
+                    tier.releaseWriteWithoutPublish(slotIdx);
                 }
             }
         });
@@ -1988,6 +2307,26 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
         }
     }
 
+    // The committed symbol table an apply leaves behind, its values by id, so the in-step
+    // check can compare the ids a drain assigned against the ones the apply committed. That
+    // check reads only the count and valueOf, so keyOf stays the base class's and finds no
+    // value: do not hand this reader to intern.
+    private static final class CommittedValuesReader extends UncommittedValuesReader {
+        private final ObjList<String> values = new ObjList<>();
+
+        private CommittedValuesReader(String... values) {
+            super(values.length);
+            for (String value : values) {
+                this.values.add(value);
+            }
+        }
+
+        @Override
+        public CharSequence valueOf(int key) {
+            return key >= 0 && key < values.size() ? values.getQuick(key) : null;
+        }
+    }
+
     // Minimal single-row Record stub feeding copyRowFromRecord a TIMESTAMP (index 0)
     // and one column of each DECIMAL width (indexes 1..6): DECIMAL8, DECIMAL16,
     // DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256. The wide 128/256 values are stored
@@ -2113,6 +2452,76 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
             this.geoShort = geoShort;
             this.geoInt = geoInt;
             this.geoLong = geoLong;
+        }
+    }
+
+    // A committed symbol table of a fixed count that holds none of the values a test interns,
+    // so every intern sees a value new to the lead. intern reads only keyOf and the count.
+    private static class UncommittedValuesReader implements SymbolMapReader {
+        private final int symbolCount;
+
+        private UncommittedValuesReader(int symbolCount) {
+            this.symbolCount = symbolCount;
+        }
+
+        @Override
+        public boolean containsNullValue() {
+            return false;
+        }
+
+        @Override
+        public int getSymbolCapacity() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public int getSymbolCount() {
+            return symbolCount;
+        }
+
+        @Override
+        public MemoryR getSymbolOffsetsColumn() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public MemoryR getSymbolValuesColumn() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public boolean isCached() {
+            return false;
+        }
+
+        @Override
+        public boolean isDeleted() {
+            return false;
+        }
+
+        @Override
+        public int keyOf(CharSequence value) {
+            return SymbolTable.VALUE_NOT_FOUND;
+        }
+
+        @Override
+        public StaticSymbolTable newSymbolTableView() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void updateSymbolCount(int count) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public CharSequence valueBOf(int key) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public CharSequence valueOf(int key) {
+            throw new UnsupportedOperationException();
         }
     }
 

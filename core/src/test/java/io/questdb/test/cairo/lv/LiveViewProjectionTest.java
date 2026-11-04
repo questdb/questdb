@@ -60,22 +60,23 @@ public class LiveViewProjectionTest extends AbstractLiveViewTest {
 
     private static final String FRAME = "PARTITION BY sym ORDER BY ts ROWS 10 PRECEDING";
 
-    @Before
-    public void pinClockBelowTestData() {
-        setCurrentMicros(0L);
-    }
-
     /**
      * Compiles every test in this suite with function memoization on, which is what a server does
      * and what {@code AbstractTest.setUp()} turns off for the corpus at large. The subject matter
      * here IS the projection, so the plan shape production runs is the one worth covering: a
      * memoized output column is what turned a driven-cursor mistake on the O3 replay path into
      * wrong stored values rather than a slower recompute.
+     * <p>
+     * The clock is pinned below the suite's test data here rather than in a second {@code @Before},
+     * because JUnit 4 does not order two {@code @Before} methods declared on one class and
+     * {@link AbstractLiveViewTest#setUp()} moves {@code currentMicros} itself - so which of the two
+     * ran last decided where the clock ended up.
      */
     @Before
     @Override
     public void setUp() {
         super.setUp();
+        setCurrentMicros(0L);
         allowFunctionMemoization();
     }
 
@@ -329,6 +330,10 @@ public class LiveViewProjectionTest extends AbstractLiveViewTest {
                         "('2026-08-07T12:00:3" + i + ".000000Z',NULL," + (30 + i) + ".0)");
                 refresh();
                 assertMatchesRecompute(viewSql);
+                // Per commit, because a rebind that goes wrong on commit i and faults from then
+                // on converges the view back onto this oracle - see assertNoRefreshFaults. The
+                // wrong rebind this test exists to catch is exactly that shape.
+                assertNoRefreshFaults("lv");
             }
         });
     }
@@ -966,6 +971,10 @@ public class LiveViewProjectionTest extends AbstractLiveViewTest {
                 assertMatchesRecompute(
                         "SELECT ts, sym, px - avg(px) OVER (" + FRAME + ") AS dev FROM base"
                 );
+                // A tier shaped off the window factory rather than the view would fault on the
+                // publish and recompute its way back onto the oracle above, so the recompute
+                // alone does not separate a served tier read from a repaired one.
+                assertNoRefreshFaults("lv");
             }
         });
     }

@@ -37,23 +37,21 @@ import org.jetbrains.annotations.Nullable;
 
 /**
  * The predicates that decide whether a live-view read may serve the in-memory
- * tier, shared by the two read paths: {@link LiveViewRecordCursor} (the
- * record-cursor seam split) and {@link LiveViewRecordCursorFactory}'s
- * page-frame path (which binds a {@link LiveViewPageFrameCursor}). Both paths
- * must agree row-for-row on what they serve, so they must agree on when they
- * serve it - a fence that drifts between them is a wrong-results bug, not a
- * staleness one.
+ * tier, shared by both read paths: {@link LiveViewRecordCursor} (record-cursor
+ * seam split) and {@link LiveViewRecordCursorFactory}'s page-frame path (which
+ * binds a {@link LiveViewPageFrameCursor}). Both must agree row-for-row on what
+ * they serve, so they must agree on when - a fence that drifts between them is a
+ * wrong-results bug, not a staleness one.
  * <p>
- * The routing decision has three parts, and the two paths differ only in how
- * they reach the disk-side scan:
+ * The decision has three parts; the two paths differ only in how they reach the
+ * disk-side scan:
  * <ul>
  *   <li>the projection resolves against the tier's columns
  *   ({@link #buildTierColumnMapping});</li>
- *   <li>the disk scan is a table scan that exposes an LV-table seqTxn and either applies no
- *   filter of its own or applies one the read can reproduce over the slot
- *   ({@link #diskReaderSeqTxn}, {@link #diskIntervals});</li>
- *   <li>the slot holds rows and is stamped with that same seqTxn
- *   ({@link #isFenced}).</li>
+ *   <li>the disk scan exposes an LV-table seqTxn and either applies no filter or
+ *   one the read can reproduce over the slot ({@link #diskReaderSeqTxn},
+ *   {@link #diskIntervals});</li>
+ *   <li>the slot holds rows stamped with that same seqTxn ({@link #isFenced}).</li>
  * </ul>
  */
 final class LiveViewRouting {
@@ -69,11 +67,10 @@ final class LiveViewRouting {
      * The scan's {@link ColumnMapping} already carries that resolution: it maps output
      * column {@code i} to the LV-table storage column the scan reads, and the tier stores
      * the LV table's columns in declared order, so {@code mapping.getColumnIndex(i)} IS
-     * the tier column. The type comparison guards the premise that the two column spaces
-     * agree - a mismatch means the tier was shaped from a different schema than the read
-     * sees, so fail safe to disk-only rather than serve another column's bytes.
-     * <p>
-     * Leaves {@code tierColumnsOut} empty on false.
+     * the tier column. The type comparison guards that the two column spaces agree - a
+     * mismatch means the tier was shaped from a different schema than the read sees, so
+     * fail safe to disk-only rather than serve another column's bytes. Leaves
+     * {@code tierColumnsOut} empty on false.
      */
     static boolean buildTierColumnMapping(
             @Nullable PageFrameCursor frameCursor,

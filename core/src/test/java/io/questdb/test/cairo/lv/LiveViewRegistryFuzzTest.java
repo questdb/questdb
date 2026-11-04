@@ -122,6 +122,10 @@ public class LiveViewRegistryFuzzTest extends AbstractTest {
                                     Assert.assertEquals("owner must appear in its base fan-out exactly once",
                                             1, countByIdentity(registry, base, inst, sink));
                                 }
+                                if (threadRnd.nextInt(8) == 0) {
+                                    Assert.assertEquals("owner must appear in the whole-registry snapshot exactly once",
+                                            1, countInSnapshot(registry, inst, sink));
+                                }
                                 if (threadRnd.nextInt(16) == 0) {
                                     Os.pause();
                                 }
@@ -133,6 +137,10 @@ public class LiveViewRegistryFuzzTest extends AbstractTest {
                                         inst, registry.getViewInstance(name));
                                 Assert.assertEquals("removed instance must leave no fan-out entry behind",
                                         0, countByIdentity(registry, base, inst, sink));
+                                // republishViews is ordered on the registry monitor and reads the
+                                // map inside it, so no rebuild after this remove can observe inst.
+                                Assert.assertEquals("removed instance must leave the whole-registry snapshot",
+                                        0, countInSnapshot(registry, inst, sink));
                             } else {
                                 // Refused: the loser is in neither map and cannot touch the owner.
                                 Assert.assertNotSame(inst, owner);
@@ -222,33 +230,40 @@ public class LiveViewRegistryFuzzTest extends AbstractTest {
             Assert.assertSame(genA, registry.getViewInstance("lv"));
             Assert.assertEquals(1, countByIdentity(registry, "base", genA, sink));
             Assert.assertEquals(0, countByIdentity(registry, "base", genB, sink));
+            assertSnapshotHoldsOnly(registry, genA, sink);
 
             // Expected-value removal: the loser cannot take the owner out; the owner can,
             // exactly once, and the fan-out entry goes with it.
             Assert.assertFalse(registry.removeView("lv", genB));
             Assert.assertSame(genA, registry.getViewInstance("lv"));
+            assertSnapshotHoldsOnly(registry, genA, sink);
             Assert.assertTrue(registry.removeView("lv", genA));
             Assert.assertNull(registry.getViewInstance("lv"));
             Assert.assertEquals(0, countByIdentity(registry, "base", genA, sink));
+            assertSnapshotHoldsOnly(registry, null, sink);
             Assert.assertFalse(registry.removeView("lv", genA));
 
             // The freed name accepts the next generation.
             Assert.assertNull(registry.registerViewIfAbsent(genB));
             Assert.assertSame(genB, registry.getViewInstance("lv"));
+            assertSnapshotHoldsOnly(registry, genB, sink);
             Assert.assertTrue(registry.removeView("lv", genB));
+            assertSnapshotHoldsOnly(registry, null, sink);
             Misc.free(genA);
             Misc.free(genB);
 
             // Definition-less stubs live in the name map only; the conditional remove must
             // key on identity there too, without touching any fan-out list.
             final TableToken stubToken = liveViewToken("lv", 3);
-            final LiveViewInstance stub = new LiveViewInstance(stubToken, LiveViewLifecycleState.STATE_UNREADABLE);
-            final LiveViewInstance otherStub = new LiveViewInstance(stubToken, LiveViewLifecycleState.STATE_UNREADABLE);
+            final LiveViewInstance stub = new LiveViewInstance(stubToken, LiveViewLifecycleState.STATE_UNREADABLE, 3);
+            final LiveViewInstance otherStub = new LiveViewInstance(stubToken, LiveViewLifecycleState.STATE_UNREADABLE, 4);
             registry.registerStubView(stub);
             Assert.assertFalse(registry.removeView("lv", otherStub));
             Assert.assertSame(stub, registry.getViewInstance("lv"));
+            assertSnapshotHoldsOnly(registry, stub, sink);
             Assert.assertTrue(registry.removeView("lv", stub));
             Assert.assertNull(registry.getViewInstance("lv"));
+            assertSnapshotHoldsOnly(registry, null, sink);
             Misc.free(stub);
             Misc.free(otherStub);
 
@@ -256,8 +271,64 @@ public class LiveViewRegistryFuzzTest extends AbstractTest {
         });
     }
 
+    @Test
+    public void testStubDisplacedByConditionalPublicationSurfacesInSnapshot() throws Exception {
+        // The replica recovery shape: boot files a definition-less stub, the recovery removes
+        // exactly that stub, then CAS-publishes the refreshable instance. Every whole-registry
+        // reader - live_views(), the refresh pool's sharded scan, teardown's free loop - walks
+        // the snapshot rather than the name map, so the snapshot must follow both steps, not
+        // just the name map.
+        TestUtils.assertMemoryLeak(() -> {
+            final LiveViewRegistry registry = new LiveViewRegistry();
+            final ObjList<LiveViewInstance> sink = new ObjList<>();
+
+            final LiveViewInstance stub = new LiveViewInstance(liveViewToken("lv", 1), LiveViewLifecycleState.STATE_UNREADABLE, 1);
+            registry.registerStubView(stub);
+            assertSnapshotHoldsOnly(registry, stub, sink);
+
+            Assert.assertTrue(registry.removeView("lv", stub));
+            assertSnapshotHoldsOnly(registry, null, sink);
+            Misc.free(stub);
+
+            final LiveViewInstance recovered = newInstance("lv", "base", 2);
+            Assert.assertNull(registry.registerViewIfAbsent(recovered));
+            assertSnapshotHoldsOnly(registry, recovered, sink);
+
+            // Teardown frees through the snapshot: a published instance missing from it would
+            // leak here and fail assertMemoryLeak.
+            registry.close();
+        });
+    }
+
+    private static void assertSnapshotHoldsOnly(LiveViewRegistry registry, LiveViewInstance expected, ObjList<LiveViewInstance> sink) {
+        registry.getViews(sink);
+        assertSinkHoldsOnly("getViews", expected, sink);
+        registry.getShardedViews(sink, 0, 1);
+        assertSinkHoldsOnly("getShardedViews", expected, sink);
+    }
+
+    private static void assertSinkHoldsOnly(String reader, LiveViewInstance expected, ObjList<LiveViewInstance> sink) {
+        if (expected == null) {
+            Assert.assertEquals(reader + " must be empty", 0, sink.size());
+        } else {
+            Assert.assertEquals(reader + " must hold exactly the registered instance", 1, sink.size());
+            Assert.assertSame(reader + " must hold the registered instance, not a stale one", expected, sink.getQuick(0));
+        }
+    }
+
     private static int countByIdentity(LiveViewRegistry registry, String base, LiveViewInstance needle, ObjList<LiveViewInstance> sink) {
         registry.getViewsForBaseTable(base, sink);
+        int count = 0;
+        for (int i = 0, size = sink.size(); i < size; i++) {
+            if (sink.getQuick(i) == needle) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private static int countInSnapshot(LiveViewRegistry registry, LiveViewInstance needle, ObjList<LiveViewInstance> sink) {
+        registry.getViews(sink);
         int count = 0;
         for (int i = 0, size = sink.size(); i < size; i++) {
             if (sink.getQuick(i) == needle) {
@@ -290,6 +361,6 @@ public class LiveViewRegistryFuzzTest extends AbstractTest {
                 new IntList(),
                 null
         );
-        return new LiveViewInstance(definition, liveViewToken(name, id));
+        return new LiveViewInstance(definition, liveViewToken(name, id), id, false, -1);
     }
 }

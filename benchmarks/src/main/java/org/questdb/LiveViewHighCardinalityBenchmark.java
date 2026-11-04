@@ -153,7 +153,7 @@ public class LiveViewHighCardinalityBenchmark {
     }
 
     private static String insertSql(long firstRow, long rows) {
-        return "insert into mm_transaction_live_created_at "
+        return "insert into payments "
                 + "select (" + START_TS + " + (x + " + (firstRow - 1) + ") * " + TS_STEP_MICROS + ")::timestamp, "
                 + "'acct-' || (x + " + (firstRow - 1) + ")::string, "
                 + "((x + " + (firstRow - 1) + ") % 2001 - 1000) * 0.01 "
@@ -199,10 +199,10 @@ public class LiveViewHighCardinalityBenchmark {
                     ? " capacity " + symbolCapacity(cardinality + options.batchRows)
                     : "";
             engine.execute(
-                    "create table mm_transaction_live_created_at ("
+                    "create table payments ("
                             + "created_at timestamp, "
-                            + "cod_acct_no symbol" + capacity + " nocache index capacity 4, "
-                            + "amt_txn double"
+                            + "account_id symbol" + capacity + " nocache index capacity 4, "
+                            + "amount double"
                             + ") timestamp(created_at) partition by hour wal",
                     sqlCtx
             );
@@ -210,17 +210,17 @@ public class LiveViewHighCardinalityBenchmark {
             drainWal(engine);
 
             engine.execute(
-                    "create live view mm_transaction_live_created_at_view "
+                    "create live view payments_view "
                             + "flush every 5s start from beginning as "
-                            + "select created_at, cod_acct_no, "
-                            + "sum(amt_txn) over w as cumulative_sum, "
-                            + "count(cod_acct_no) over w as cumulative_count "
-                            + "from mm_transaction_live_created_at "
-                            + "window w as (partition by cod_acct_no order by created_at anchor daily '12:00')",
+                            + "select created_at, account_id, "
+                            + "sum(amount) over w as cumulative_sum, "
+                            + "count(account_id) over w as cumulative_count "
+                            + "from payments "
+                            + "window w as (partition by account_id order by created_at anchor daily '12:00')",
                     sqlCtx
             );
             final LiveViewInstance instance = engine.getLiveViewRegistry()
-                    .getViewInstance("mm_transaction_live_created_at_view");
+                    .getViewInstance("payments_view");
 
             final long seedStart = System.nanoTime();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -253,7 +253,7 @@ public class LiveViewHighCardinalityBenchmark {
                 final double refreshSeconds = refreshNanos / 1_000_000_000.0;
                 final double rowsPerSecond = options.batchRows / refreshSeconds;
                 final long baseSeqTxn = engine.getTableSequencerAPI()
-                        .getTxnTracker(engine.getTableTokenIfExists("mm_transaction_live_created_at"))
+                        .getTxnTracker(engine.getTableTokenIfExists("payments"))
                         .getWriterTxn();
                 final long lagSeqTxn = baseSeqTxn - instance.getLastProcessedSeqTxn();
 

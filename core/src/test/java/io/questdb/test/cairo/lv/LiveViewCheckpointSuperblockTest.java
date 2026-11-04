@@ -67,6 +67,91 @@ public class LiveViewCheckpointSuperblockTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testADamagedFormatFieldBesideASelectableSlotIsNotAForeignFormat() throws Exception {
+        // Each of the two fields that carry a slot's format, rewritten alone in the newest
+        // slot and checksummed, so the damage is not left for the CRC to catch. Neither names
+        // a version twice, so neither is another build's generation, and the slot beside it
+        // is one this build selects: no block, no reset, and selection steps over the damage.
+        assertMemoryLeak(() -> {
+            publish(1); // slot 0
+            publish(2); // slot 1
+            final long base = LiveViewCheckpointSuperblock.SLOT_SIZE;
+
+            try (Path path = new Path(); MemoryCMARW mem = Vm.getCMARWInstance()) {
+                mem.smallFile(configuration.getFilesFacade(), timelinePath(path).$(), MemoryTag.MMAP_DEFAULT);
+                mem.putInt(
+                        base + LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION_OFFSET,
+                        LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION + 1
+                );
+                fixSlotCrc(mem, 1);
+            }
+            assertNotClassified("a version field the magic does not repeat");
+            assertSelects("a version field the magic does not repeat", 0, 1);
+
+            try (Path path = new Path(); MemoryCMARW mem = Vm.getCMARWInstance()) {
+                mem.smallFile(configuration.getFilesFacade(), timelinePath(path).$(), MemoryTag.MMAP_DEFAULT);
+                mem.putInt(
+                        base + LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION_OFFSET,
+                        LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION
+                );
+                mem.putLong(
+                        base + LiveViewCheckpointSuperblock.SLOT_MAGIC_OFFSET,
+                        LiveViewCheckpointSuperblock.SLOT_MAGIC + 1
+                );
+                fixSlotCrc(mem, 1);
+            }
+            assertNotClassified("a magic nibble the version field does not repeat");
+            assertSelects("a magic nibble the version field does not repeat", 0, 1);
+        });
+    }
+
+    @Test
+    public void testADamagedFormatFieldWithNoSelectableSlotStillResets() throws Exception {
+        // Damage declares nothing, so it never blocks. What an intact slot decides is only the
+        // reset: without one there is no generation left to fall back to, and an unreadable
+        // directory of derived state is removed and rebuilt, as it always was.
+        assertMemoryLeak(() -> {
+            final FilesFacade ff = configuration.getFilesFacade();
+            publish(1); // slot 0; slot 1 is never written
+
+            // Bit 0 of the version's low byte turns this build's 2 into 3, which read alone
+            // names the next format version.
+            flipBit(LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION_OFFSET, 0);
+            try (Path path = new Path()) {
+                Assert.assertEquals(
+                        "damage declares no version to block on",
+                        LiveViewCheckpointSuperblock.NO_FOREIGN_FORMAT,
+                        LiveViewCheckpointSuperblock.foreignFormatVersion(ff, timelinePath(path).$())
+                );
+                Assert.assertTrue(
+                        "a lone damaged slot leaves nothing to fall back to",
+                        LiveViewCheckpointSuperblock.isForeignFormat(ff, timelinePath(path).$())
+                );
+            }
+            flipBit(LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION_OFFSET, 0);
+
+            // Two generations, neither selectable: one slot damaged in its magic nibble, the
+            // other torn - this build's own pair over a stale checksum.
+            publish(2); // slot 1
+            flipBit(LiveViewCheckpointSuperblock.SLOT_MAGIC_OFFSET, 0);
+            try (Path path = new Path(); MemoryCMARW mem = Vm.getCMARWInstance()) {
+                mem.smallFile(ff, timelinePath(path).$(), MemoryTag.MMAP_DEFAULT);
+                corruptGenerationNoCrcFix(mem, 1);
+            }
+            try (Path path = new Path()) {
+                Assert.assertEquals(
+                        LiveViewCheckpointSuperblock.NO_FOREIGN_FORMAT,
+                        LiveViewCheckpointSuperblock.foreignFormatVersion(ff, timelinePath(path).$())
+                );
+                Assert.assertTrue(
+                        "a torn slot is no fallback for a damaged one",
+                        LiveViewCheckpointSuperblock.isForeignFormat(ff, timelinePath(path).$())
+                );
+            }
+        });
+    }
+
+    @Test
     public void testAlternatingSlotsAcrossManyPublications() throws Exception {
         assertMemoryLeak(() -> {
             try (LiveViewCheckpointSuperblock sb = new LiveViewCheckpointSuperblock(configuration)) {
@@ -393,6 +478,105 @@ public class LiveViewCheckpointSuperblockTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testForeignFormatVersionReadsOnlyADeclaredVersion() throws Exception {
+        assertMemoryLeak(() -> {
+            final FilesFacade ff = configuration.getFilesFacade();
+            try (Path path = new Path()) {
+                Assert.assertEquals(
+                        "a _timeline no build has written yet declares nothing",
+                        LiveViewCheckpointSuperblock.NO_FOREIGN_FORMAT,
+                        LiveViewCheckpointSuperblock.foreignFormatVersion(ff, timelinePath(path).$())
+                );
+            }
+
+            publish(1); // slot 0
+            publish(2); // slot 1
+            try (Path path = new Path()) {
+                Assert.assertEquals(
+                        LiveViewCheckpointSuperblock.NO_FOREIGN_FORMAT,
+                        LiveViewCheckpointSuperblock.foreignFormatVersion(ff, timelinePath(path).$())
+                );
+            }
+
+            // The version field alone, under this build's own nibble. No build writes that
+            // pair - it is what one flipped field looks like - so it declares nothing, even
+            // under a checksum that agrees with it.
+            try (Path path = new Path(); MemoryCMARW mem = Vm.getCMARWInstance()) {
+                mem.smallFile(ff, timelinePath(path).$(), MemoryTag.MMAP_DEFAULT);
+                final long base = LiveViewCheckpointSuperblock.SLOT_SIZE;
+                mem.putInt(
+                        base + LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION_OFFSET,
+                        LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION + 3
+                );
+                fixSlotCrc(mem, 1);
+            }
+            try (Path path = new Path()) {
+                Assert.assertEquals(
+                        "a version field the magic does not repeat declares nothing",
+                        LiveViewCheckpointSuperblock.NO_FOREIGN_FORMAT,
+                        LiveViewCheckpointSuperblock.foreignFormatVersion(ff, timelinePath(path).$())
+                );
+            }
+
+            // The format boundary: a slot naming a version this build does not implement
+            // in both fields that carry one, the way every build stamps its own. The
+            // version itself is the answer - it is the whole of what this build knows
+            // about the directory.
+            try (Path path = new Path(); MemoryCMARW mem = Vm.getCMARWInstance()) {
+                mem.smallFile(ff, timelinePath(path).$(), MemoryTag.MMAP_DEFAULT);
+                declareFormatVersion(mem, 1, LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION + 3);
+            }
+            try (Path path = new Path()) {
+                Assert.assertEquals(
+                        "one declaring slot answers for the file, even beside a native one",
+                        LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION + 3,
+                        LiveViewCheckpointSuperblock.foreignFormatVersion(ff, timelinePath(path).$())
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testForeignFormatVersionSeparatesADeclaredVersionFromEveryOtherForeignShape() throws Exception {
+        assertMemoryLeak(() -> {
+            final FilesFacade ff = configuration.getFilesFacade();
+            publish(1); // slot 0
+
+            // A magic whose trailing nibble this build does not write, over a
+            // version field that still reads native. isForeignFormat condemns it,
+            // because the two disagree about which format wrote the slot; the
+            // version probe declines it, because the field that declares the
+            // format names this build's own. The two answers are the difference
+            // between resetting derived state and blocking a view over another
+            // build's generation.
+            try (Path path = new Path(); MemoryCMARW mem = Vm.getCMARWInstance()) {
+                mem.smallFile(ff, timelinePath(path).$(), MemoryTag.MMAP_DEFAULT);
+                mem.putLong(LiveViewCheckpointSuperblock.SLOT_MAGIC_OFFSET, LiveViewCheckpointSuperblock.SLOT_MAGIC + 1);
+                fixSlotCrc(mem, 0);
+            }
+            try (Path path = new Path()) {
+                Assert.assertTrue(LiveViewCheckpointSuperblock.isForeignFormat(ff, timelinePath(path).$()));
+                Assert.assertEquals(
+                        LiveViewCheckpointSuperblock.NO_FOREIGN_FORMAT,
+                        LiveViewCheckpointSuperblock.foreignFormatVersion(ff, timelinePath(path).$())
+                );
+            }
+
+            // A zeroed pair is outside the family altogether, and declares nothing.
+            try (Path path = new Path(); MemoryCMARW mem = Vm.getCMARWInstance()) {
+                mem.smallFile(ff, timelinePath(path).$(), MemoryTag.MMAP_DEFAULT);
+                mem.zero();
+            }
+            try (Path path = new Path()) {
+                Assert.assertEquals(
+                        LiveViewCheckpointSuperblock.NO_FOREIGN_FORMAT,
+                        LiveViewCheckpointSuperblock.foreignFormatVersion(ff, timelinePath(path).$())
+                );
+            }
+        });
+    }
+
+    @Test
     public void testForeignFormatProbeDetectsMagicVersionSkew() throws Exception {
         assertMemoryLeak(() -> {
             publish(1); // slot 0
@@ -418,16 +602,11 @@ public class LiveViewCheckpointSuperblockTest extends AbstractCairoTest {
             publish(2); // slot 1
             try (Path path = new Path(); MemoryCMARW mem = Vm.getCMARWInstance()) {
                 mem.smallFile(configuration.getFilesFacade(), timelinePath(path).$(), MemoryTag.MMAP_DEFAULT);
-                final long base = LiveViewCheckpointSuperblock.SLOT_SIZE;
-                mem.putInt(
-                        base + LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION_OFFSET,
-                        LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION + 1
-                );
-                fixSlotCrc(mem, 1);
+                declareFormatVersion(mem, 1, LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION + 1);
             }
             try (Path path = new Path()) {
                 Assert.assertTrue(
-                        "one foreign slot condemns the file, even beside a readable one",
+                        "one declaring slot condemns the file, even beside a readable one",
                         LiveViewCheckpointSuperblock.isForeignFormat(
                                 configuration.getFilesFacade(),
                                 timelinePath(path).$()
@@ -444,12 +623,12 @@ public class LiveViewCheckpointSuperblockTest extends AbstractCairoTest {
             publish(2); // slot 1
             try (Path path = new Path(); MemoryCMARW mem = Vm.getCMARWInstance()) {
                 mem.smallFile(configuration.getFilesFacade(), timelinePath(path).$(), MemoryTag.MMAP_DEFAULT);
-                // A newer format version with an otherwise valid checksum: the
-                // slot is a real, but unreadable, future generation - ignore it
-                // and use the readable older slot rather than misparsing it.
-                // A primary never gets this far, because lifecycle reconciliation
-                // classifies the directory as foreign and resets it first; this is
-                // the disposition for a reader that does not reconcile.
+                // A slot selection cannot read, however it came to be: a real future
+                // generation or a flipped version field. Ignore it and use the readable
+                // older slot rather than misparsing it. A primary meets the declared
+                // shape at lifecycle reconciliation first, which blocks the view; this
+                // is the disposition for a reader that does not reconcile, and the
+                // one a primary reaches for the damaged shape.
                 final long base = LiveViewCheckpointSuperblock.SLOT_SIZE;
                 mem.putInt(base + LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION_OFFSET, LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION + 1);
                 fixSlotCrc(mem, 1);
@@ -492,6 +671,31 @@ public class LiveViewCheckpointSuperblockTest extends AbstractCairoTest {
                 }
                 Assert.assertEquals(1, sb.getSelectedSlot());
                 assertFields(sb, 20);
+            }
+        });
+    }
+
+    @Test
+    public void testNoSingleBitFlipInOneSlotBlocksOrResetsWhileTheOtherIsIntact() throws Exception {
+        // One flipped bit is one slot's damage wherever it lands - in the magic's nibble or the
+        // version field as much as in a generation or a checksum. It must never read as another
+        // build's generation, never condemn the directory, and always leave selection on the
+        // intact slot. Both slots take the flip in turn, since either can be the one a disk
+        // rots.
+        assertMemoryLeak(() -> {
+            publish(1); // slot 0
+            publish(2); // slot 1
+            for (int slot = 0; slot < 2; slot++) {
+                for (int byteOffset = 0; byteOffset < LiveViewCheckpointSuperblock.SLOT_SIZE; byteOffset++) {
+                    for (int bit = 0; bit < 8; bit++) {
+                        final long offset = (long) slot * LiveViewCheckpointSuperblock.SLOT_SIZE + byteOffset;
+                        final String detail = "slot " + slot + ", byte " + byteOffset + ", bit " + bit;
+                        flipBit(offset, bit);
+                        assertNotClassified(detail);
+                        assertSelects(detail, 1 - slot, 2 - slot);
+                        flipBit(offset, bit);
+                    }
+                }
             }
         });
     }
@@ -771,6 +975,20 @@ public class LiveViewCheckpointSuperblockTest extends AbstractCairoTest {
         mem.putLong(base + LiveViewCheckpointSuperblock.SLOT_GENERATION_OFFSET, current ^ 0x5A5A_5A5AL);
     }
 
+    /**
+     * Stamps {@code formatVersion} into a slot the way a build of that version writes one: into
+     * the version field and the magic's trailing nibble both, checksum and all.
+     */
+    private static void declareFormatVersion(MemoryCMARW mem, int slot, int formatVersion) {
+        final long base = (long) slot * LiveViewCheckpointSuperblock.SLOT_SIZE;
+        mem.putLong(
+                base + LiveViewCheckpointSuperblock.SLOT_MAGIC_OFFSET,
+                LiveViewCheckpointSuperblock.SLOT_MAGIC_FAMILY | formatVersion
+        );
+        mem.putInt(base + LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION_OFFSET, formatVersion);
+        fixSlotCrc(mem, slot);
+    }
+
     private static void fixSlotCrc(MemoryCMARW mem, int slot) {
         final long base = (long) slot * LiveViewCheckpointSuperblock.SLOT_SIZE;
         final int crc = Zip.crc32(0, mem.addressOf(base), LiveViewCheckpointSuperblock.SLOT_CRC_COVERAGE);
@@ -813,6 +1031,42 @@ public class LiveViewCheckpointSuperblockTest extends AbstractCairoTest {
     private static Path timelinePath(Path path) {
         try (Path dir = new Path()) {
             return LiveViewCheckpointLayout.timelinePath(path, checkpointsDir(dir));
+        }
+    }
+
+    /**
+     * Asserts neither directory-wide disposition claims the timeline: no declared version to
+     * block on, nothing foreign to reset.
+     */
+    private void assertNotClassified(String detail) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        try (Path path = new Path()) {
+            Assert.assertEquals(
+                    detail,
+                    LiveViewCheckpointSuperblock.NO_FOREIGN_FORMAT,
+                    LiveViewCheckpointSuperblock.foreignFormatVersion(ff, timelinePath(path).$())
+            );
+            Assert.assertFalse(detail, LiveViewCheckpointSuperblock.isForeignFormat(ff, timelinePath(path).$()));
+        }
+    }
+
+    /**
+     * Asserts a fresh open selects {@code slot} and reads generation {@code gen} back from it.
+     */
+    private void assertSelects(String detail, int slot, long gen) {
+        try (LiveViewCheckpointSuperblock sb = new LiveViewCheckpointSuperblock(configuration)) {
+            try (Path dir = new Path()) {
+                sb.of(checkpointsDir(dir));
+            }
+            Assert.assertEquals(detail, slot, sb.getSelectedSlot());
+            assertFields(sb, gen);
+        }
+    }
+
+    private void flipBit(long offset, int bit) {
+        try (Path path = new Path(); MemoryCMARW mem = Vm.getCMARWInstance()) {
+            mem.smallFile(configuration.getFilesFacade(), timelinePath(path).$(), MemoryTag.MMAP_DEFAULT);
+            mem.putByte(offset, (byte) (mem.getByte(offset) ^ (1 << bit)));
         }
     }
 

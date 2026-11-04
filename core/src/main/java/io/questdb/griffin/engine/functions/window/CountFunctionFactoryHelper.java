@@ -378,6 +378,21 @@ public class CountFunctionFactoryHelper {
             }
         }
 
+        /**
+         * Absorbs an argument the caller already read: the group's pass-1 skip evaluates this
+         * same {@code arg}; see
+         * {@link io.questdb.griffin.engine.window.WindowMapState#computeNext(Record)}. The test
+         * is {@code Numbers.isFinite} rather than {@link #isNotNullFunc} because only a
+         * {@link WindowAccumulatorDescriptor#CONTRIBUTION_FINITE_DOUBLE} count, i.e.
+         * {@code count(D)}, is offered this form, and that is its predicate.
+         */
+        @Override
+        public void accumulateWindowState(Record record, MapValue value, double argument) {
+            if (isWindowStatePartitionKeyGuarded || Numbers.isFinite(argument)) {
+                value.putLong(windowStateNonNullCountSlot, value.getLong(windowStateNonNullCountSlot) + 1);
+            }
+        }
+
         @Override
         public void bindWindowStateSlots(@Nullable WindowAccumulatorProjection projection) {
             super.bindWindowStateSlots(projection);
@@ -2182,6 +2197,14 @@ public class CountFunctionFactoryHelper {
         @Override
         public int windowAccumulatorProjection() {
             return WindowAccumulatorProjection.PROJECTION_COUNT;
+        }
+
+        /**
+         * The image is the one counter; an unbounded frame start retains no rows.
+         */
+        @Override
+        public int checkpointStateFixedLength() {
+            return Long.BYTES;
         }
 
         @Override
