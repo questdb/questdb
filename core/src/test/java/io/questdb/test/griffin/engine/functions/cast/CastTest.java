@@ -1135,6 +1135,10 @@ public class CastTest extends AbstractCairoTest {
         assertQuery("SELECT c::LONG256 l FROM u")
                 .ddl("CREATE TABLE u AS (SELECT 'm'::CHAR c FROM long_sequence(1))")
                 .fails(0, "inconvertible value: m [CHAR -> LONG]");
+        // nor has a NULL CHAR, as in the casts to the other numbers
+        assertQuery("SELECT c::LONG256 l FROM v")
+                .ddl("CREATE TABLE v AS (SELECT CAST(NULL AS CHAR) c FROM long_sequence(1))")
+                .fails(0, "inconvertible value: \0 [CHAR -> LONG]");
     }
 
     @Test
