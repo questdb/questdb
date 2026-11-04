@@ -44,6 +44,7 @@ import io.questdb.std.Unsafe;
 
 import java.lang.reflect.Field;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 
 /**
  * Drives a {@link QwpIngressUpgradeProcessor} over in-memory sockets: builds client
@@ -118,6 +119,39 @@ final class QwpIngressWireHarness {
         byte[] copy = message.clone();
         copy[5] |= QwpConstants.FLAG_DEFER_COMMIT;
         return copy;
+    }
+
+    /**
+     * The highest seqTxn that any durable-ack frame (primary or local stream) sent
+     * to the client names for {@code table}, or -1 when none names it. After
+     * [status] a durable ack carries [count u16 LE], then per table
+     * [name length u16 LE][name UTF-8][seqTxn i64 LE].
+     */
+    static long durableAckSeqTxn(ObjList<byte[]> frames, String table) {
+        final byte[] name = table.getBytes(StandardCharsets.UTF_8);
+        long highest = -1;
+        for (int i = 0, n = frames.size(); i < n; i++) {
+            byte[] f = frames.getQuick(i);
+            // A durable ack with no entries is shorter than isBinaryFrame() admits.
+            if (f.length < 5
+                    || (f[0] & 0x0F) != WebSocketOpcode.BINARY
+                    || (f[1] & 0x7F) >= 126
+                    || (f[2] != QwpConstants.STATUS_DURABLE_ACK && f[2] != QwpConstants.STATUS_LOCAL_DURABLE_ACK)) {
+                continue;
+            }
+            int pos = 5;
+            for (int entry = 0, count = readLeShort(f, 3); entry < count; entry++) {
+                int nameLen = readLeShort(f, pos);
+                pos += 2;
+                boolean isMatch = Arrays.equals(f, pos, pos + nameLen, name, 0, name.length);
+                pos += nameLen;
+                if (isMatch) {
+                    highest = Math.max(highest, readLeLong(f, pos));
+                }
+                pos += 8;
+            }
+        }
+        return highest;
     }
 
     static void drive(
@@ -202,6 +236,34 @@ final class QwpIngressWireHarness {
     }
 
     /**
+     * The seqTxn that the cumulative OK-ACK for {@code seq} names for
+     * {@code table}, or -1 when there is no such ack or it has no entry for the
+     * table. After [status][seq LE] an OK-ACK carries [count u16 LE], then per
+     * table [name length u16 LE][name UTF-8][seqTxn i64 LE].
+     */
+    static long okAckSeqTxn(ObjList<byte[]> frames, long seq, String table) {
+        final byte[] name = table.getBytes(StandardCharsets.UTF_8);
+        for (int i = 0, n = frames.size(); i < n; i++) {
+            byte[] f = frames.getQuick(i);
+            if (!isBinaryFrame(f) || f[2] != QwpConstants.STATUS_OK || readLeLong(f, 3) != seq) {
+                continue;
+            }
+            int pos = 13;
+            for (int entry = 0, count = readLeShort(f, 11); entry < count; entry++) {
+                int nameLen = readLeShort(f, pos);
+                pos += 2;
+                boolean isMatch = Arrays.equals(f, pos, pos + nameLen, name, 0, name.length);
+                pos += nameLen;
+                if (isMatch) {
+                    return readLeLong(f, pos);
+                }
+                pos += 8;
+            }
+        }
+        return -1;
+    }
+
+    /**
      * QWP v1 message: table "tab", one row, schema
      * [{@code v} LONG, {@code ""} TIMESTAMP (designated)].
      */
@@ -258,6 +320,10 @@ final class QwpIngressWireHarness {
             v = (v << 8) | (buf[offset + i] & 0xFFL);
         }
         return v;
+    }
+
+    static int readLeShort(byte[] buf, int offset) {
+        return (buf[offset] & 0xFF) | (buf[offset + 1] & 0xFF) << 8;
     }
 
     /// A frame carrying no table blocks at all, with FLAG_DEFER_COMMIT. The
@@ -440,14 +506,14 @@ final class QwpIngressWireHarness {
      * access points with the test doubles.
      */
     static class TestableContext extends HttpConnectionContext {
-        private final RecordingRawSocket rawSocket;
+        private final HttpRawSocket rawSocket;
         private final long testRecvBuffer;
         private final int testRecvBufferSize;
 
         TestableContext(
                 HttpServerConfiguration config,
                 PhasedNetworkFacade nf,
-                RecordingRawSocket rawSocket,
+                HttpRawSocket rawSocket,
                 long recvBuffer,
                 int recvBufferSize
         ) {

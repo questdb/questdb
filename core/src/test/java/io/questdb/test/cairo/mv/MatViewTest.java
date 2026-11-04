@@ -58,6 +58,7 @@ import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.wal.WalEventReader;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.griffin.RecordToRowCopierUtils;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -96,6 +97,7 @@ import org.junit.Test;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.cairo.TableUtils.DETACHED_DIR_MARKER;
 import static io.questdb.cairo.wal.WalUtils.*;
@@ -3423,6 +3425,160 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFullRefreshAfterBaseColumnTypeChange() throws Exception {
+        assertFullRefreshAfterBaseColumnTypeChange("VARCHAR", "'2024-09-10T12:25:06.654321Z'", false);
+    }
+
+    @Test
+    public void testFullRefreshAfterBaseColumnTypeChangeRehydrated() throws Exception {
+        assertFullRefreshAfterBaseColumnTypeChange("VARCHAR", "'2024-09-10T12:25:06.654321Z'", true);
+    }
+
+    @Test
+    public void testFullRefreshAfterBaseColumnTypeChangeToDouble() throws Exception {
+        assertFullRefreshAfterBaseColumnTypeChange("DOUBLE", "1725971106654321.0", false);
+    }
+
+    @Test
+    public void testFullRefreshAfterBaseColumnTypeChangeToDoubleRehydrated() throws Exception {
+        assertFullRefreshAfterBaseColumnTypeChange("DOUBLE", "1725971106654321.0", true);
+    }
+
+    @Test
+    public void testFullRefreshAfterBaseColumnTypeChangeToSymbol() throws Exception {
+        assertFullRefreshAfterBaseColumnTypeChange("SYMBOL", "'2024-09-10T12:25:06.654321Z'", false);
+    }
+
+    @Test
+    public void testFullRefreshAfterBaseColumnTypeChangeToSymbolRehydrated() throws Exception {
+        assertFullRefreshAfterBaseColumnTypeChange("SYMBOL", "'2024-09-10T12:25:06.654321Z'", true);
+    }
+
+    @Test
+    public void testFullRefreshAfterBooleanBaseColumnTypeChangeToByte() throws Exception {
+        assertMemoryLeak(() -> {
+            // The record copiers store a BYTE into a BOOLEAN column as the raw byte, so any value
+            // other than 0 or 1 would read back as false. Refresh must keep rejecting the pair.
+            execute("CREATE TABLE base_price (sym VARCHAR, at BOOLEAN, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            createMatView("SELECT sym, last(at) AS at, ts FROM base_price SAMPLE BY 1h");
+            execute("INSERT INTO base_price VALUES ('gbpusd', true, '2024-09-10T12:01')");
+            drainQueues();
+            execute("ALTER TABLE base_price ALTER COLUMN at TYPE BYTE");
+            drainQueues();
+            execute("INSERT INTO base_price VALUES ('gbpusd', 5, '2024-09-10T13:01')");
+            drainQueues();
+            execute("REFRESH MATERIALIZED VIEW price_1h FULL");
+            drainQueues();
+            assertQuery("SELECT view_status, invalidation_reason FROM materialized_views")
+                    .noRandomAccess().noLeakCheck().returns("""
+                            view_status\tinvalidation_reason
+                            invalid\t[-1]: inconvertible types: BYTE -> BOOLEAN [from=at, to=at]
+                            """);
+        });
+    }
+
+    @Test
+    public void testFullRefreshAfterCharBaseColumnTypeChangeToLong() throws Exception {
+        assertMemoryLeak(() -> {
+            // CHAR -> VARCHAR -> LONG leaves the view column CHAR while the query returns CHAR, then VARCHAR, then LONG.
+            // Refresh copies the CHAR and VARCHAR results into the CHAR column. ColumnType.isConvertibleFrom()
+            // admits LONG -> CHAR, but the record copiers write nothing for it, so refresh must reject it.
+            execute("CREATE TABLE base_price (sym VARCHAR, c CHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            createMatView("SELECT sym, last(c) AS c, ts FROM base_price SAMPLE BY 1h");
+            execute("INSERT INTO base_price VALUES ('gbpusd', '7', '2024-09-10T12:01')");
+            drainQueues();
+            assertQuery("SELECT view_status, invalidation_reason FROM materialized_views")
+                    .noRandomAccess().noLeakCheck().returns("""
+                            view_status\tinvalidation_reason
+                            valid\t
+                            """);
+            assertQuery("price_1h ORDER BY ts, sym").timestamp("ts").expectSize().noLeakCheck().returns("""
+                    sym\tc\tts
+                    gbpusd\t7\t2024-09-10T12:00:00.000000Z
+                    """);
+            execute("ALTER TABLE base_price ALTER COLUMN c TYPE VARCHAR");
+            drainQueues();
+            execute("REFRESH MATERIALIZED VIEW price_1h FULL");
+            drainQueues();
+            assertQuery("SELECT view_status, invalidation_reason FROM materialized_views")
+                    .noRandomAccess().noLeakCheck().returns("""
+                            view_status\tinvalidation_reason
+                            valid\t
+                            """);
+            assertQuery("price_1h ORDER BY ts, sym").timestamp("ts").expectSize().noLeakCheck().returns("""
+                    sym\tc\tts
+                    gbpusd\t7\t2024-09-10T12:00:00.000000Z
+                    """);
+            execute("ALTER TABLE base_price ALTER COLUMN c TYPE LONG");
+            drainQueues();
+            execute("REFRESH MATERIALIZED VIEW price_1h FULL");
+            drainQueues();
+            assertQuery("SELECT view_status, invalidation_reason FROM materialized_views")
+                    .noRandomAccess().noLeakCheck().returns("""
+                            view_status\tinvalidation_reason
+                            invalid\t[-1]: inconvertible types: LONG -> CHAR [from=c, to=c]
+                            """);
+        });
+    }
+
+    @Test
+    public void testFullRefreshAfterDateBaseColumnTypeChangeToDouble() throws Exception {
+        assertMemoryLeak(() -> assertFullRefreshAfterTemporalBaseColumnTypeChangeToDouble("DATE", "2024-09-10T12:01:02.123Z"));
+    }
+
+    @Test
+    public void testFullRefreshAfterIncompatibleBaseColumnTypeChange() throws Exception {
+        assertFullRefreshAfterIncompatibleBaseColumnTypeChange(false);
+    }
+
+    @Test
+    public void testFullRefreshAfterIncompatibleBaseColumnTypeChangeRehydrated() throws Exception {
+        assertFullRefreshAfterIncompatibleBaseColumnTypeChange(true);
+    }
+
+    @Test
+    public void testFullRefreshAfterLongBaseColumnTypeChangeToSymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            Assert.assertFalse(RecordToRowCopierUtils.isCopierConvertible(ColumnType.SYMBOL, ColumnType.LONG));
+            execute("CREATE TABLE base_price (sym VARCHAR, at LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            createMatView("SELECT sym, last(at) AS at, ts FROM base_price SAMPLE BY 1h");
+            execute("INSERT INTO base_price VALUES ('gbpusd', 42, '2024-09-10T12:01')");
+            drainQueues();
+            execute("ALTER TABLE base_price ALTER COLUMN at TYPE SYMBOL");
+            drainQueues();
+            execute("REFRESH MATERIALIZED VIEW price_1h FULL");
+            drainQueues();
+            assertQuery("SELECT view_status, invalidation_reason FROM materialized_views")
+                    .noRandomAccess().noLeakCheck().returns("""
+                            view_status\tinvalidation_reason
+                            invalid\t[-1]: inconvertible types: SYMBOL -> LONG [from=at, to=at]
+                            """);
+        });
+    }
+
+    @Test
+    public void testFullRefreshAfterTimestampNsBaseColumnTypeChangeToDouble() throws Exception {
+        assertMemoryLeak(() -> {
+            // The nanosecond values are multiples of 256, so the DOUBLE column holds them exactly.
+            assertFullRefreshAfterTemporalBaseColumnTypeChangeToDouble("TIMESTAMP_NS", "2024-09-10T12:01:02.123456768Z");
+
+            // Incremental refresh converts a newly inserted DOUBLE as well.
+            execute("INSERT INTO base_price VALUES ('gbpusd', 1725971106654321152.0, '2024-09-10T12:30')");
+            drainQueues();
+            assertQuery("SELECT view_status, invalidation_reason FROM materialized_views")
+                    .noRandomAccess().noLeakCheck().returns("""
+                            view_status\tinvalidation_reason
+                            valid\t
+                            """);
+            assertQuery("price_1h ORDER BY ts, sym").timestamp("ts").expectSize().noLeakCheck().returns("""
+                    sym\tat\tts
+                    gbpusd\t2024-09-10T12:25:06.654321152Z\t2024-09-10T12:00:00.000000Z
+                    null\t\t2024-09-10T12:00:00.000000Z
+                    """);
+        });
+    }
+
+    @Test
     public void testFullRefreshDroppedBaseColumn() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
@@ -3972,6 +4128,222 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIncrementalRefreshMonthAndYearStrideWithPositiveOffset() throws Exception {
+        // Regression test for #7769 and #7772. A positive offset moves bucket starts past the start of their
+        // month or year. The refresh interval iterator used to round the lower bound of the new rows up to the
+        // bucket start in their month, skipping rows that come before it, so the incremental refresh missed them.
+        // Such a refresh could also find no intervals to query, leaking the view's query factory and leaving the
+        // view 'refreshing'. Each insert below lands right before a bucket start of one of the views.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (price double, ts #TIMESTAMP) timestamp(ts) partition by DAY WAL"
+            );
+            final String[] strides = {"1M", "3M", "1y"};
+            for (String stride : strides) {
+                execute(
+                        "create materialized view price_" + stride + " as (" +
+                                "select ts, count() c, sum(price) s from base_price sample by " + stride +
+                                " align to calendar with offset '10:00'" +
+                                ") partition by year"
+                );
+            }
+            execute("insert into base_price(price, ts) values (1.0, '2024-01-15T08:00')");
+            drainQueues();
+            execute("insert into base_price(price, ts) values (2.0, '2024-02-01T06:00')");
+            drainQueues();
+            execute("insert into base_price(price, ts) values (4.0, '2024-04-01T06:00')");
+            drainQueues();
+            execute("insert into base_price(price, ts) values (8.0, '2025-01-01T06:00')");
+            drainQueues();
+
+            final String[] expected = {
+                    """
+                            ts\tc\ts
+                            2024-01-01T10:00:00.000000Z\t2\t3.0
+                            2024-03-01T10:00:00.000000Z\t1\t4.0
+                            2024-12-01T10:00:00.000000Z\t1\t8.0
+                            """,
+                    """
+                            ts\tc\ts
+                            2024-01-01T10:00:00.000000Z\t3\t7.0
+                            2024-10-01T10:00:00.000000Z\t1\t8.0
+                            """,
+                    """
+                            ts\tc\ts
+                            2024-01-01T10:00:00.000000Z\t4\t15.0
+                            """
+            };
+            for (int i = 0; i < strides.length; i++) {
+                assertQuery("price_" + strides[i])
+                        .timestamp("ts")
+                        .expectSize()
+                        .noLeakCheck()
+                        .returns(replaceExpectedTimestamp(expected[i]));
+                // the view must match its query run over the base table
+                assertQuery("select ts, count() c, sum(price) s from base_price sample by " + strides[i] + " align to calendar with offset '10:00'")
+                        .timestamp("ts")
+                        .inferRandomAccess()
+                        .sizeMayVary()
+                        .noLeakCheck()
+                        .returns(replaceExpectedTimestamp(expected[i]));
+            }
+            assertQuery("select view_name, view_status, " + txnColumns() + " from materialized_views order by view_name")
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_status\trefresh_base_table_txn\tbase_table_txn
+                            price_1M\tvalid\t4\t4
+                            price_1y\tvalid\t4\t4
+                            price_3M\tvalid\t4\t4
+                            """);
+        });
+    }
+
+    @Test
+    public void testIncrementalRefreshMonthAndYearStrideWithTimeZoneAndOffset() throws Exception {
+        // Regression test for #7769 and #7798 on views with a time zone that has no fixed offset, which
+        // refresh through TimeZoneIntervalIterator rather than FixedOffsetIntervalIterator. The Kolkata views
+        // start their buckets at 10:00 local time; most of their rows land on the 1st of a month before 10:00,
+        // so they belong to the bucket that covers the end of the previous month, which the incremental refresh
+        // must rewrite. The Berlin view starts its buckets at 23:00 local time on the last day of the previous
+        // month, on both sides of the DST switch. Each row commits and refreshes on its own. Each row that lands
+        // before the bucket start in its month comes after every row of its bucket that lands after the bucket
+        // start in its month. Otherwise, the refresh of such a later row would recompute the bucket and hide a
+        // row that an earlier refresh missed.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE base_price (price DOUBLE, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL"
+            );
+            final String[] viewNames = {"kolkata_1M", "kolkata_3M", "kolkata_1y", "berlin_1M"};
+            final String[] viewQueries = {
+                    "SELECT ts, count() c, sum(price) s FROM base_price SAMPLE BY 1M ALIGN TO CALENDAR TIME ZONE 'Asia/Kolkata' WITH OFFSET '10:00'",
+                    "SELECT ts, count() c, sum(price) s FROM base_price SAMPLE BY 3M ALIGN TO CALENDAR TIME ZONE 'Asia/Kolkata' WITH OFFSET '10:00'",
+                    "SELECT ts, count() c, sum(price) s FROM base_price SAMPLE BY 1y ALIGN TO CALENDAR TIME ZONE 'Asia/Kolkata' WITH OFFSET '10:00'",
+                    "SELECT ts, count() c, sum(price) s FROM base_price SAMPLE BY 1M ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' WITH OFFSET '-01:00'"
+            };
+            for (int i = 0; i < viewNames.length; i++) {
+                execute("CREATE MATERIALIZED VIEW " + viewNames[i] + " AS (" + viewQueries[i] + ") PARTITION BY YEAR");
+            }
+            // Comments give the local time in Kolkata, then in Berlin.
+            final String[] rows = {
+                    "(1.0, '2024-03-10T12:00')", // 03-10T17:30, 03-10T13:00 CET
+                    "(2.0, '2024-04-30T21:45')", // 05-01T03:15, 04-30T23:45 CEST
+                    "(4.0, '2024-04-30T20:00')", // 05-01T01:30, 04-30T22:00 CEST
+                    "(8.0, '2024-01-15T08:00')", // 01-15T13:30, 01-15T09:00 CET
+                    "(16.0, '2024-02-01T01:00')", // 02-01T06:30, 02-01T02:00 CET
+                    "(32.0, '2024-04-01T01:00')", // 04-01T06:30, 04-01T03:00 CEST
+                    "(64.0, '2025-01-01T01:00')" // 2025-01-01T06:30, 2025-01-01T02:00 CET
+            };
+            for (String row : rows) {
+                execute("INSERT INTO base_price(price, ts) VALUES " + row);
+                drainQueues();
+            }
+
+            // Kolkata is at +05:30 all year, so its bucket starts at 10:00 local time fall at 04:30 UTC.
+            // Berlin is at +01:00 until 2024-03-31T01:00 UTC and at +02:00 from then until October.
+            final String[] expected = {
+                    """
+                            ts\tc\ts
+                            2024-01-01T04:30:00.000000Z\t2\t24.0
+                            2024-03-01T04:30:00.000000Z\t2\t33.0
+                            2024-04-01T04:30:00.000000Z\t2\t6.0
+                            2024-12-01T04:30:00.000000Z\t1\t64.0
+                            """,
+                    """
+                            ts\tc\ts
+                            2024-01-01T04:30:00.000000Z\t4\t57.0
+                            2024-04-01T04:30:00.000000Z\t2\t6.0
+                            2024-10-01T04:30:00.000000Z\t1\t64.0
+                            """,
+                    """
+                            ts\tc\ts
+                            2024-01-01T04:30:00.000000Z\t7\t127.0
+                            """,
+                    """
+                            ts\tc\ts
+                            2023-12-31T22:00:00.000000Z\t1\t8.0
+                            2024-01-31T22:00:00.000000Z\t1\t16.0
+                            2024-02-29T22:00:00.000000Z\t1\t1.0
+                            2024-03-31T21:00:00.000000Z\t2\t36.0
+                            2024-04-30T21:00:00.000000Z\t1\t2.0
+                            2024-12-31T22:00:00.000000Z\t1\t64.0
+                            """
+            };
+            for (int i = 0; i < viewNames.length; i++) {
+                assertQuery(viewNames[i])
+                        .timestamp("ts")
+                        .expectSize()
+                        .noLeakCheck()
+                        .returns(replaceExpectedTimestamp(expected[i]));
+                // the view must match its query run over the base table
+                assertQuery(viewQueries[i])
+                        .timestamp("ts")
+                        .inferRandomAccess()
+                        .sizeMayVary()
+                        .noLeakCheck()
+                        .returns(replaceExpectedTimestamp(expected[i]));
+            }
+            assertQuery("SELECT view_name, view_status, " + txnColumns() + " FROM materialized_views ORDER BY view_name")
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_status\trefresh_base_table_txn\tbase_table_txn
+                            berlin_1M\tvalid\t7\t7
+                            kolkata_1M\tvalid\t7\t7
+                            kolkata_1y\tvalid\t7\t7
+                            kolkata_3M\tvalid\t7\t7
+                            """);
+        });
+    }
+
+    @Test
+    public void testIncrementalRefreshMonthStrideWithNegativeOffset() throws Exception {
+        // Regression test for #7798. With a negative offset, the view's query used to put a row at the end of a
+        // month shorter than 31 days, after the bucket start on its last day, into the previous bucket. Since the
+        // incremental refresh queries only the buckets of the new rows, the row fell outside of them, so the refresh
+        // failed with "timestamp out of replace range" and invalidated the view.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (price double, ts #TIMESTAMP) timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "create materialized view price_1M as (" +
+                            "select ts, count() c, sum(price) s from base_price sample by 1M align to calendar with offset '-01:00'" +
+                            ") partition by year"
+            );
+            execute("insert into base_price(price, ts) values (1.0, '2024-03-10T12:00')");
+            drainQueues();
+            execute("insert into base_price(price, ts) values (2.0, '2024-04-30T23:45')");
+            drainQueues();
+            execute("insert into base_price(price, ts) values (4.0, '2024-04-30T22:00')");
+            drainQueues();
+
+            final String expected = replaceExpectedTimestamp("""
+                    ts\tc\ts
+                    2024-02-29T23:00:00.000000Z\t1\t1.0
+                    2024-03-31T23:00:00.000000Z\t1\t4.0
+                    2024-04-30T23:00:00.000000Z\t1\t2.0
+                    """);
+            assertQuery("price_1M")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("select ts, count() c, sum(price) s from base_price sample by 1M align to calendar with offset '-01:00'")
+                    .timestamp("ts")
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("select view_name, view_status, " + txnColumns() + " from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_status\trefresh_base_table_txn\tbase_table_txn
+                            price_1M\tvalid\t3\t3
+                            """);
+        });
+    }
+
+    @Test
     public void testIncrementalRefreshOnExistingTable() throws Exception {
         // The base table is renamed, dropped, swapped or has its WAL purged here, so the
         // transaction the composite randomiser commits against it cannot be subtracted back
@@ -4025,6 +4397,59 @@ public class MatViewTest extends AbstractCairoTest {
                                     jpyusd\t103.21\t2024-09-10T12:00:00.000000Z
                                     jpyusd\t103.21\t2024-09-10T14:00:00.000000Z
                                     """));
+        });
+    }
+
+    @Test
+    public void testIncrementalRefreshPeriodAndRefreshLimitLeaveNoIntervals() throws Exception {
+        // Regression test for #7772. The period cuts off the txn interval of the row in the incomplete period, and
+        // the refresh limit cuts off the txn interval of the older row, so the refresh interval iterator yields no
+        // intervals even though the refresh range is not empty. The refresh used to leak the view's query factory
+        // and never advance the watermark, leaving the view 'refreshing'.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (price double, ts #TIMESTAMP) timestamp(ts) partition by DAY WAL"
+            );
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T11:30:00.000000Z");
+            execute(
+                    "create materialized view price_1h refresh immediate period (length 1h) as " +
+                            "select ts, last(price) as price from base_price sample by 1h"
+            );
+            execute("alter materialized view price_1h set refresh limit 2h");
+            execute("insert into base_price(price, ts) values (1.0, '2024-09-10T10:01')");
+            final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            final String expected = replaceExpectedTimestamp("""
+                    ts\tprice
+                    2024-09-10T10:00:00.000000Z\t1.0
+                    """);
+            assertQuery("price_1h")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
+
+            // a row older than the refresh limit and a row in the incomplete period, in two transactions
+            execute("insert into base_price(price, ts) values (2.0, '2024-09-10T08:01')");
+            execute("insert into base_price(price, ts) values (3.0, '2024-09-10T11:10')");
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T11:40:00.000000Z");
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            assertQuery("price_1h")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("select view_name, view_status, last_refresh_start_timestamp, last_refresh_finish_timestamp, " + txnColumns() + " from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_status\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\trefresh_base_table_txn\tbase_table_txn
+                            price_1h\tvalid\t2024-09-10T11:40:00.000000Z\t2024-09-10T11:40:00.000000Z\t3\t3
+                            """);
         });
     }
 
@@ -7996,6 +8421,30 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRefreshAcrossSplitParentAppend() throws Exception {
+        // The refresh pins its base reader before an O3 split. An O3 row at the parent's max timestamp
+        // must not be appended in place over the parent's tail, which the pinned reader still reads.
+        assertRefreshAcrossSplitParentAppend("CREATE TABLE base (s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL", false);
+    }
+
+    @Test
+    public void testRefreshAcrossSplitParentAppendDedup() throws Exception {
+        // Refresh across a base-table split with a nonduplicate dedup key: the O3 row's s differs.
+        assertRefreshAcrossSplitParentAppend("CREATE TABLE base (s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, s)", false);
+    }
+
+    @Test
+    public void testRefreshAcrossSplitParentAppendDedupMergeAppend() throws Exception {
+        assertRefreshAcrossSplitParentAppend("CREATE TABLE base (s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, s)", true);
+    }
+
+    @Test
+    public void testRefreshAcrossSplitParentAppendMergeAppend() throws Exception {
+        // merge-append appends past the end of the column files, so there is no split layout to assert
+        assertRefreshAcrossSplitParentAppend("CREATE TABLE base (s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL", true);
+    }
+
+    @Test
     public void testResumeSuspendMatView() throws Exception {
         // The base table is renamed, dropped, swapped or has its WAL purged here, so the
         // transaction the composite randomiser commits against it cannot be subtracted back
@@ -10545,6 +10994,107 @@ public class MatViewTest extends AbstractCairoTest {
         }
     }
 
+    private void assertFullRefreshAfterBaseColumnTypeChange(String type, String newAt, boolean isRehydrated) throws Exception {
+        assertMemoryLeak(() -> {
+            createTimestampMatViewForTypeChange();
+            final MatViewState state = engine.getMatViewStateStore().getViewState(engine.verifyTableName("price_1h"));
+            final var copier = state.getRecordToRowCopier();
+            Assert.assertNotNull(copier);
+            execute("REFRESH MATERIALIZED VIEW price_1h INCREMENTAL");
+            drainQueues();
+            Assert.assertSame(copier, state.getRecordToRowCopier());
+            assertTimestampMatViewAfterTypeChange();
+
+            execute("ALTER TABLE base_price ALTER COLUMN at TYPE " + type);
+            drainQueues();
+            assertQuery("SELECT view_status FROM materialized_views")
+                    .noRandomAccess().noLeakCheck().returns("view_status\ninvalid\n");
+            if (isRehydrated) {
+                rehydrateTimestampMatViewForTypeChange();
+            }
+            for (int i = 0; i < 2; i++) {
+                execute("REFRESH MATERIALIZED VIEW price_1h FULL");
+                drainQueues();
+                assertTimestampMatViewAfterTypeChange();
+            }
+            if (!isRehydrated) {
+                Assert.assertNotSame(copier, state.getRecordToRowCopier());
+            }
+            // The rebuilt copier also handles ordinary incremental refreshes and NULLs.
+            final MatViewState refreshedState = engine.getMatViewStateStore().getViewState(engine.verifyTableName("price_1h"));
+            final var refreshedCopier = refreshedState.getRecordToRowCopier();
+            execute("INSERT INTO base_price VALUES ('gbpusd', " + newAt + ", '2024-09-10T12:30')");
+            drainQueues();
+            Assert.assertSame(refreshedCopier, refreshedState.getRecordToRowCopier());
+            assertQuery("SELECT view_status FROM materialized_views")
+                    .noRandomAccess().noLeakCheck().returns("view_status\nvalid\n");
+            assertQuery("price_1h ORDER BY ts, sym").timestamp("ts").expectSize().noLeakCheck().returns("""
+                    sym\tat\tts
+                    gbpusd\t2024-09-10T12:25:06.654321Z\t2024-09-10T12:00:00.000000Z
+                    null\t\t2024-09-10T12:00:00.000000Z
+                    """);
+        });
+    }
+
+    private void assertFullRefreshAfterIncompatibleBaseColumnTypeChange(boolean isRehydrated) throws Exception {
+        assertMemoryLeak(() -> {
+            createTimestampMatViewForTypeChange();
+            execute("ALTER TABLE base_price ALTER COLUMN at TYPE BOOLEAN");
+            drainQueues();
+            if (isRehydrated) {
+                rehydrateTimestampMatViewForTypeChange();
+            }
+            for (int i = 0; i < 2; i++) {
+                execute("REFRESH MATERIALIZED VIEW price_1h FULL");
+                drainQueues();
+                assertQuery("SELECT view_status, invalidation_reason FROM materialized_views")
+                        .noRandomAccess().noLeakCheck().returns("""
+                                view_status\tinvalidation_reason
+                                invalid\t[-1]: inconvertible types: BOOLEAN -> TIMESTAMP [from=at, to=at]
+                                """);
+            }
+            // Reload the on-disk failure state, then recover using the original result type.
+            rehydrateTimestampMatViewForTypeChange();
+            assertQuery("SELECT view_status FROM materialized_views")
+                    .noRandomAccess().noLeakCheck().returns("view_status\ninvalid\n");
+            execute("ALTER TABLE base_price ALTER COLUMN at TYPE TIMESTAMP");
+            drainQueues();
+            execute("UPDATE base_price SET at = '2024-09-10T12:01:02.123456Z'::TIMESTAMP WHERE sym = 'gbpusd'");
+            execute("UPDATE base_price SET at = NULL WHERE sym = 'null'");
+            drainQueues();
+            execute("REFRESH MATERIALIZED VIEW price_1h FULL");
+            drainQueues();
+            assertTimestampMatViewAfterTypeChange();
+        });
+    }
+
+    // The view column keeps the original atType after the base column changes to DOUBLE, so at is both the
+    // inserted literal and the expected rendering of the refreshed view column.
+    private void assertFullRefreshAfterTemporalBaseColumnTypeChangeToDouble(String atType, String at) throws Exception {
+        execute("CREATE TABLE base_price (sym VARCHAR, at " + atType + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        createMatView("SELECT sym, last(at) AS at, ts FROM base_price SAMPLE BY 1h");
+        execute("""
+                INSERT INTO base_price VALUES
+                ('gbpusd', '%s', '2024-09-10T12:01'),
+                ('null', NULL, '2024-09-10T12:02')
+                """.formatted(at));
+        drainQueues();
+        execute("ALTER TABLE base_price ALTER COLUMN at TYPE DOUBLE");
+        drainQueues();
+        execute("REFRESH MATERIALIZED VIEW price_1h FULL");
+        drainQueues();
+        assertQuery("SELECT view_status, invalidation_reason FROM materialized_views")
+                .noRandomAccess().noLeakCheck().returns("""
+                        view_status\tinvalidation_reason
+                        valid\t
+                        """);
+        assertQuery("price_1h ORDER BY ts, sym").timestamp("ts").expectSize().noLeakCheck().returns("""
+                sym\tat\tts
+                gbpusd\t%s\t2024-09-10T12:00:00.000000Z
+                null\t\t2024-09-10T12:00:00.000000Z
+                """.formatted(at));
+    }
+
     /**
      * Asserts that a materialized view produces the same result as the standalone
      * SAMPLE BY query after incremental data insertion. Checks both row-level equality
@@ -10577,6 +11127,95 @@ public class MatViewTest extends AbstractCairoTest {
                 .returns(expected);
     }
 
+    private void assertRefreshAcrossSplitParentAppend(String baseTableDdl, boolean isMergeAppend) throws Exception {
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, String.valueOf(isMergeAppend));
+        assertMemoryLeak(() -> {
+            execute(baseTableDdl);
+            execute(
+                    """
+                            CREATE MATERIALIZED VIEW base_1h AS
+                            SELECT count() c, sum(CASE WHEN s LIKE 'value%' THEN 1 ELSE 0 END) matched, ts
+                            FROM base SAMPLE BY 1h
+                            """
+            );
+            execute("INSERT INTO base SELECT 'value-' || x, timestamp_sequence('2020-02-03', 60_000_000L) FROM long_sequence(100)");
+            drainQueues();
+
+            final AtomicBoolean hasMutatedBase = new AtomicBoolean();
+            final AtomicReference<Throwable> hookFailure = new AtomicReference<>();
+            try (MatViewRefreshJob job = new MatViewRefreshJob(engine, 1)) {
+                job.setOnBaseReaderSnapshotForTesting(() -> {
+                    try {
+                        Assert.assertFalse(hasMutatedBase.getAndSet(true));
+                        final long parentNameTxn;
+                        try (TableReader reader = getReader("base")) {
+                            parentNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+                        }
+                        // split the partition after 01:19 (row 80 of 100)
+                        execute("INSERT INTO base VALUES ('split', '2020-02-03T01:19:30')");
+                        drainWalQueue();
+                        // O3 row at exactly the parent's max lands in the parent; its string is
+                        // shorter than the one it would overwrite
+                        execute("INSERT INTO base VALUES ('X', '2020-02-03T01:19')");
+                        drainWalQueue();
+                        try (TableReader reader = getReader("base")) {
+                            if (isMergeAppend) {
+                                // merge-append writes both rows at the tail of the parent's own files, so the
+                                // partition stays single and composite; the pinned reader keeps its geometry record
+                                Assert.assertEquals(1, reader.getPartitionCount());
+                                Assert.assertTrue(reader.getTxFile().isPartitionComposite(0));
+                                Assert.assertEquals(102, reader.getPartitionRowCountFromMetadata(0));
+                            } else {
+                                // the parent's last row and the new row share the second split
+                                Assert.assertEquals(3, reader.getPartitionCount());
+                                Assert.assertEquals(79, reader.getPartitionRowCountFromMetadata(0));
+                                Assert.assertEquals(2, reader.getPartitionRowCountFromMetadata(1));
+                            }
+                            Assert.assertEquals(parentNameTxn, reader.getTxFile().getPartitionNameTxn(0));
+                        }
+                    } catch (Throwable th) {
+                        hookFailure.set(th);
+                    }
+                });
+                engine.getMatViewStateStore().enqueueFullRefresh(engine.verifyTableName("base_1h"));
+                drainMatViewQueue(job);
+            }
+            if (hookFailure.get() != null) {
+                throw new AssertionError("test hook failure", hookFailure.get());
+            }
+            Assert.assertTrue(hasMutatedBase.get());
+            drainQueues();
+
+            assertQuery("SELECT view_name, view_status, invalidation_reason FROM materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_status\tinvalidation_reason
+                            base_1h\tvalid\t
+                            """);
+            assertQuery("base_1h")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            c\tmatched\tts
+                            60\t60\t2020-02-03T00:00:00.000000Z
+                            42\t40\t2020-02-03T01:00:00.000000Z
+                            """);
+        });
+    }
+
+    private void assertTimestampMatViewAfterTypeChange() throws Exception {
+        assertQuery("SELECT view_status FROM materialized_views")
+                .noRandomAccess().noLeakCheck().returns("view_status\nvalid\n");
+        assertQuery("price_1h ORDER BY ts, sym").timestamp("ts").expectSize().noLeakCheck().returns("""
+                sym\tat\tts
+                gbpusd\t2024-09-10T12:01:02.123456Z\t2024-09-10T12:00:00.000000Z
+                null\t\t2024-09-10T12:00:00.000000Z
+                """);
+    }
+
     private String copySql(int from, int count) {
         return "select * from tmp where n >= " + from + " and n < " + (from + count);
     }
@@ -10586,6 +11225,18 @@ public class MatViewTest extends AbstractCairoTest {
         return "create table " + tableName + " as (" + generateSelectSql(columns, startTs, step, 0, count) + ")" +
                 indexStr +
                 " timestamp(k) partition by DAY WAL";
+    }
+
+    private void createTimestampMatViewForTypeChange() throws Exception {
+        execute("CREATE TABLE base_price (sym VARCHAR, at TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        createMatView("SELECT sym, last(at) AS at, ts FROM base_price SAMPLE BY 1h");
+        execute("""
+                INSERT INTO base_price VALUES
+                ('gbpusd', '2024-09-10T12:01:02.123456Z', '2024-09-10T12:01'),
+                ('null', NULL, '2024-09-10T12:02')
+                """);
+        drainQueues();
+        assertTimestampMatViewAfterTypeChange();
     }
 
     private void drainQueues() {
@@ -10627,6 +11278,14 @@ public class MatViewTest extends AbstractCairoTest {
 
     private String outSelect(String out, String in) {
         return out + " from (" + in + ")";
+    }
+
+    private void rehydrateTimestampMatViewForTypeChange() {
+        // Reopen persisted view state with empty factory/copier caches, as on restart.
+        engine.getMatViewStateStore().clear();
+        engine.hydrateMatViewStateStore();
+        final MatViewState state = engine.getMatViewStateStore().getViewState(engine.verifyTableName("price_1h"));
+        Assert.assertNull(state.getRecordToRowCopier());
     }
 
     private String replaceExpectedTimestamp(String expected) {
