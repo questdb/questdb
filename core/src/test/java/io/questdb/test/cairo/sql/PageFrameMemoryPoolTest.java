@@ -157,6 +157,50 @@ public class PageFrameMemoryPoolTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReusedBuffersKeepTheirMemoryBetweenFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable();
+            try (RecordCursorFactory factory = select("t");
+                 PageFrameCursor frameCursor = factory.getPageFrameCursor(sqlExecutionContext, PartitionFrameCursorFactory.ORDER_ASC);
+                 PageFrameAddressCache addressCache = new PageFrameAddressCache();
+                 PageFrameMemoryPool pool = new PageFrameMemoryPool(configuration, 0L);
+                 PageFrameMemoryRecord record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER)) {
+                final int frameCount = loadFrames(factory, frameCursor, addressCache);
+                pool.of(addressCache, ParquetDecodeHint.MONOTONIC, null);
+                record.of(frameCursor);
+                final long before = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                long firstFrameBytes = 0;
+                long x = 0;
+                for (int frameIndex = 0; frameIndex < frameCount; frameIndex++) {
+                    pool.navigateTo(frameIndex, record);
+                    final long frameRows = addressCache.getFrameSize(frameIndex);
+                    for (long row = 0; row < frameRows; row++) {
+                        x++;
+                        record.setRowIndex(row);
+                        Assert.assertEquals(x, record.getInt(A));
+                        TestUtils.assertEquals(Long.toString(x), record.getVarcharA(MSG).toString().substring(0, Long.toString(x).length()));
+                    }
+                    if (addressCache.getFrameFormat(frameIndex) == PartitionFormat.PARQUET) {
+                        final long bytes = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER) - before;
+                        if (firstFrameBytes == 0) {
+                            Assert.assertTrue(bytes > 0);
+                            firstFrameBytes = bytes;
+                        } else {
+                            Assert.assertTrue(bytes + " after " + firstFrameBytes, bytes < 3 * firstFrameBytes / 2);
+                        }
+                        pool.reuseParquetBuffers();
+                        Assert.assertEquals(bytes, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER) - before);
+                    }
+                }
+                Assert.assertEquals(3 * ROWS_PER_DAY, x);
+                Assert.assertTrue(firstFrameBytes > 0);
+                pool.releaseParquetBuffers();
+                Assert.assertEquals(before, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER));
+            }
+        });
+    }
+
+    @Test
     public void testProjectionDropsAtQueryBoundaries() throws Exception {
         assertMemoryLeak(() -> {
             createTable();

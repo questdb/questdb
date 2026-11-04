@@ -6536,7 +6536,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Hash Left Outer Join
+                                Hash Left Outer Join Light
                                   condition: b.sym=a.sym
                                   symbolKeyJoin: true
                                     SelectedRecord
@@ -6549,15 +6549,16 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                                                 Row forward scan
                                                 Frame forward scan on: x
                                     Hash
-                                        SelectedRecord
-                                            Async Stream Group By workers: 1
-                                              segmentKey: timestamp_floor_utc('1m',ts1)
-                                              keys: [sym,ts1]
-                                              keyFunctions: [timestamp_floor_utc('1m',ts1)]
-                                              values: [first(val),avg(val),last(val),max(val)]
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: x
+                                        Materialize
+                                            SelectedRecord
+                                                Async Stream Group By workers: 1
+                                                  segmentKey: timestamp_floor_utc('1m',ts1)
+                                                  keys: [sym,ts1]
+                                                  keyFunctions: [timestamp_floor_utc('1m',ts1)]
+                                                  values: [first(val),avg(val),last(val),max(val)]
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: x
                             """);
         });
     }

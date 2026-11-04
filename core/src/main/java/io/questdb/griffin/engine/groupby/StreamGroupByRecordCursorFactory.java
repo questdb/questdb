@@ -201,7 +201,7 @@ public class StreamGroupByRecordCursorFactory extends AbstractRecordCursorFactor
             memory = new DirectLongList((value.getSizeInBytes() + 7) / 8, MemoryTag.NATIVE_FAST_MAP, true);
             segmentMap = keyTypes.getColumnCount() > 1
                     ? new StreamGroupByMap(configuration, asm, base.getMetadata(), columnFilter, keyTypes, valueTypes,
-                    streamKeyIndex, keyFunctions, groupByFunctions, updater)
+                    streamKeyIndex, keyFunctions, groupByFunctions, updater, null)
                     : null;
             record.of(segmentMap != null ? segmentMap.getRecord() : value);
         }

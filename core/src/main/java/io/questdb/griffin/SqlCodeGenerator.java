@@ -2021,10 +2021,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return false;
     }
 
-    private static boolean hasFill(RecordCursorFactory factory) {
+    // Over a hash GROUP BY, only these factories pass random access through to a light join.
+    private static boolean isLightHashJoinLostToStream(RecordCursorFactory factory) {
         for (RecordCursorFactory f = factory; f != null; f = f.getBaseFactory()) {
-            if (f instanceof SampleByFillRecordCursorFactory || f instanceof SampleByInterpolateRecordCursorFactory) {
+            if (f instanceof StreamGroupByRecordCursorFactory || f instanceof AsyncStreamGroupByRecordCursorFactory) {
                 return true;
+            }
+            if (!(f instanceof SelectedRecordCursorFactory || f instanceof VirtualRecordCursorFactory
+                    || f instanceof FilteredRecordCursorFactory || f instanceof LimitRecordCursorFactory)) {
+                return false;
             }
         }
         return false;
@@ -8104,9 +8109,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     validateOuterJoinExpressions(slaveModel, "INNER");
                                 }
 
-                                // The light join reads rows faster than the full-fat chain does, so it reads a copy of a stream.
-                                // A fill never offered random access, so it stays full-fat, which knows the size of its result.
-                                if (!fullFatJoins && isRandomAccessLostToStream(slaveToFree) && !hasFill(slaveToFree)) {
+                                if (!fullFatJoins && isLightHashJoinLostToStream(slaveToFree)) {
                                     final RecordCursorFactory slaveToMaterialize = slaveToFree;
                                     slaveToFree = null;
                                     slaveToFree = materialize(slaveToMaterialize, true);
@@ -8338,8 +8341,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 throw SqlException.$(model.getModelPosition(), "latest by query does not provide dedicated TIMESTAMP column");
             }
 
-            // The copy reads a stream GROUP BY once. It does not make the output random access: the light factory
-            // would drop the designated timestamp of a base that keeps its rows in timestamp order.
+            // The light factory would drop the designated timestamp.
             final boolean hasRandomAccess = factory.recordCursorSupportsRandomAccess();
             if (isRandomAccessLostToStream(factory)) {
                 final RecordCursorFactory factoryToMaterialize = factory;

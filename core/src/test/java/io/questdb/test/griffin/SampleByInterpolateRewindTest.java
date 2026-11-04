@@ -113,8 +113,7 @@ public class SampleByInterpolateRewindTest extends AbstractCairoTest {
             execute("CREATE TABLE gaps (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("INSERT INTO gaps VALUES (1, '2025-01-01'), (2, '2025-01-01T00:10')");
             final String sql = "SELECT ts, avg(v) v FROM gaps SAMPLE BY 1T FILL(LINEAR) ALIGN TO FIRST OBSERVATION";
-            final StackWalker stackWalker = StackWalker.getInstance();
-            final AtomicLong buildChecks = new AtomicLong();
+            final AtomicLong checks = new AtomicLong();
             try (
                     NetworkSqlExecutionCircuitBreaker network = new NetworkSqlExecutionCircuitBreaker(engine,
                             new DefaultSqlExecutionCircuitBreakerConfiguration() {
@@ -128,14 +127,8 @@ public class SampleByInterpolateRewindTest extends AbstractCairoTest {
                                 @Override
                                 public void statefulThrowExceptionIfTripped() {
                                     super.statefulThrowExceptionIfTripped();
-                                    final boolean isBuildCheck = stackWalker.walk(frames -> frames
-                                            .filter(frame -> !frame.getClassName().startsWith("io.questdb.test.")
-                                                    && !frame.getClassName().endsWith("CircuitBreaker"))
-                                            .findFirst()
-                                            .map(frame -> frame.getMethodName().equals("aggregate")
-                                                    && frame.getClassName().endsWith("SampleByInterpolateRecordCursor"))
-                                            .orElse(false));
-                                    if (isBuildCheck && buildChecks.incrementAndGet() == 2) {
+                                    // The two rows take far fewer checks than the 600k buckets of the gap.
+                                    if (checks.incrementAndGet() == 100) {
                                         network.cancel();
                                     }
                                 }
@@ -441,7 +434,7 @@ public class SampleByInterpolateRewindTest extends AbstractCairoTest {
             execute("INSERT INTO wide_gap SELECT 0::TIMESTAMP, 'k' || x, x FROM long_sequence(64)");
             execute("INSERT INTO wide_gap VALUES ('1970-01-02', 'k1', 1)");
             final String sql = "SELECT ts, k, avg(v) v FROM wide_gap SAMPLE BY 1T FILL(LINEAR) ALIGN TO FIRST OBSERVATION";
-            final StackWalker stackWalker = StackWalker.getInstance();
+            final AtomicLong checks = new AtomicLong();
             try (
                     NetworkSqlExecutionCircuitBreaker network = new NetworkSqlExecutionCircuitBreaker(engine,
                             new DefaultSqlExecutionCircuitBreakerConfiguration() {
@@ -455,8 +448,8 @@ public class SampleByInterpolateRewindTest extends AbstractCairoTest {
                                 @Override
                                 public void statefulThrowExceptionIfTripped() {
                                     super.statefulThrowExceptionIfTripped();
-                                    if (stackWalker.walk(frames -> frames.anyMatch(frame -> frame.getMethodName().equals("aggregate")
-                                            && frame.getClassName().endsWith("SampleByInterpolateRecordCursor")))) {
+                                    // The 65 rows take far fewer checks than the 86.4M buckets of the gap.
+                                    if (checks.incrementAndGet() == 1_000) {
                                         network.cancel();
                                     }
                                 }

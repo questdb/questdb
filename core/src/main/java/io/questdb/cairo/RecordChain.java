@@ -53,6 +53,7 @@ import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
@@ -169,6 +170,15 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
     @Override
     public long getAddress(long recordOffset, int columnIndex) {
         return addressOf(getOffsetOfColumn(recordOffset, columnIndex));
+    }
+
+    public long getAppendOffset() {
+        return mem.getAppendOffset();
+    }
+
+    @TestOnly
+    public long getReservedBytes() {
+        return mem.size();
     }
 
     public long getOffsetOfColumn(long recordOffset, int columnIndex) {
@@ -403,6 +413,10 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
      */
     public void setMemoryTracker(@Nullable MemoryTracker tracker) {
         mem.setMemoryTracker(tracker);
+    }
+
+    public void reserve(long bytes) {
+        mem.extend(bytes);
     }
 
     public void setSymbolTableResolver(SymbolTableSource resolver) {

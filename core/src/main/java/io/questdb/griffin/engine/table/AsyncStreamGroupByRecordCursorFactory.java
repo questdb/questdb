@@ -68,6 +68,8 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 
 public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorFactory {
+    private static final long CHAIN_SAMPLE_BYTES = 128 * 1024;
+    private static final int GROUP_SAMPLE_SIZE = 4096;
     private final SCSequence collectSubSeq = new SCSequence();
     private final int order;
     private final int workerCount;
@@ -116,7 +118,7 @@ public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorF
                     new AsyncStreamGroupByAtom(configuration, asm, base.getMetadata(), columnFilter, keyTypes, valueTypes, streamKeyIndex,
                             keyFunction, keyFunctions, perWorkerKeys, groupByFunctions, perWorkerFunctions,
                             compiledFilter, bindVarMemory, bindVarFunctions, filter, filterUsedColumnIndexes, perWorkerFilters, workerCount,
-                            isDescending, Math.max(1, configuration.getSqlParallelFilterDispatchLimit()),
+                            isDescending, Math.max(1, configuration.getSqlParallelFilterDispatchLimit()) + 1,
                             messageBus.getPageFrameReduceQueue(0).getCycle()),
                     AsyncStreamGroupByRecordCursorFactory::aggregate,
                     reduceTaskFactory,
@@ -243,6 +245,8 @@ public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorF
                 final RecordChain results = atom.getResultRecords(task);
                 long previous = -1;
                 long segmentCount = 0;
+                long chainRows = 0;
+                boolean isChainReserved = false;
                 for (long lo = 0, hi = rowCount; lo < hi; segmentCount++) {
                     circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                     final long key = getKey(record, rows, keyFunction, isDescending ? hi - 1 : lo);
@@ -255,8 +259,7 @@ public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorF
                     }
                     final boolean isFirst = segmentCount == 0;
                     final boolean isLast = isDescending ? start == 0 : end == rowCount;
-                    // The owner merges chain rows one by one. A large end of the frame takes a span map instead, as the
-                    // whole frame does, so that the workers merge it shard by shard once the bucket closes.
+                    // Span maps merge shard by shard on the workers, while the owner merges chain rows one by one.
                     final boolean isSpan = (isFirst && isLast) || ((isFirst || isLast) && end - start > atom.getSpanRowThreshold());
                     if (isFirst) {
                         task.setGroupByFirstKey(key);
@@ -271,6 +274,11 @@ public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorF
                         map.clear(key);
                         map.aggregate(record, rows, start, end, baseRowId, isBatch, circuitBreaker);
                         previous = map.appendTo(results, previous, circuitBreaker);
+                        chainRows += end - start;
+                        if (!isChainReserved && results.getAppendOffset() >= CHAIN_SAMPLE_BYTES) {
+                            isChainReserved = true;
+                            reserveChain(results, results.getAppendOffset() * (chainRows + hi - lo) / chainRows);
+                        }
                     }
                     task.setGroupByLastKey(key);
                 }
@@ -287,6 +295,10 @@ public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorF
             final DirectLongList results = atom.getResultValues(task);
             for (long lo = 0, hi = rowCount, groups = 0; lo < hi; groups++) {
                 circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+                if (groups == GROUP_SAMPLE_SIZE) {
+                    final long rowsLeft = hi - lo;
+                    reserveGroups(results, (groups * rowsLeft / (rowCount - rowsLeft) + 1) * stride);
+                }
                 final long key = getKey(record, rows, keyFunction, isDescending ? hi - 1 : lo);
                 final long start = isDescending ? findGroupStart(record, rows, keyFunction, key, lo, hi) : lo;
                 final long end = isDescending ? hi : findGroupEnd(record, rows, keyFunction, key, lo, hi);
@@ -337,7 +349,7 @@ public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorF
                 if (filterContext == null) {
                     task.releaseFrameMemory();
                 } else {
-                    filterContext.getMemoryPool(slot).releaseParquetBuffers();
+                    filterContext.getMemoryPool(slot).reuseParquetBuffers();
                 }
             } finally {
                 atom.release(slot);
@@ -345,7 +357,7 @@ public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorF
         }
     }
 
-    // Rewrites the filtered rows of a bucket in place as a keyed batch of one key: no other bucket reads them.
+    // No other bucket reads these rows.
     private static void encodeBatch(DirectLongList rows, long start, long end) {
         for (long r = start; r < end; r++) {
             rows.set(r, Map.encodeBatchEntry(rows.get(r), 0, r == start));
@@ -417,5 +429,27 @@ public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorF
     private static long getKey(PageFrameMemoryRecord record, DirectLongList rows, Function keyFunction, long row) {
         record.setFilteredRowIndex(rows == null ? row : rows.get(row), row);
         return keyFunction.getLong(record);
+    }
+
+    // The sampled rows predict the frame's total, which skips the costly large reallocations. Doubling takes over
+    // when the prediction exceeds the memory limit, so a wrong prediction cannot fail a query that fits the limit.
+    private static void reserveChain(RecordChain results, long bytes) {
+        try {
+            results.reserve(bytes);
+        } catch (CairoException e) {
+            if (!e.isOutOfMemory()) {
+                throw e;
+            }
+        }
+    }
+
+    private static void reserveGroups(DirectLongList results, long required) {
+        try {
+            results.ensureCapacity(required);
+        } catch (CairoException e) {
+            if (!e.isOutOfMemory()) {
+                throw e;
+            }
+        }
     }
 }

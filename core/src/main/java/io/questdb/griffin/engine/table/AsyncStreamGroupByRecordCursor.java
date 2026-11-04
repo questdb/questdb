@@ -454,7 +454,7 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
         isChainLastKeyInSpan = task.isGroupByLastKeyInSpan();
         isChainPending = true;
         if (task.isGroupByFirstKeyInSpan()) {
-            // A previous bucket closed above may still have to emit its rows, so this one closes after them.
+            // The bucket closed above may still have rows to emit.
             chainFirstKey = first;
             isFirstKeyInSpanPending = true;
             return true;

@@ -639,7 +639,6 @@ public class StreamSampleByInterpolateTest extends AbstractCairoTest {
                 third = cursor.getRecord().getDouble(0) / 3;
             }
             Assert.assertTrue(third > 0);
-            // The buckets after 03:00 extrapolate from the filled 02:00 cell, on the line through the two data points.
             assertDistances(context, "a", third, third, third, 0, third, third);
         });
     }

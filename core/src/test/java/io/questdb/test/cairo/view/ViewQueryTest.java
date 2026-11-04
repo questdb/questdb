@@ -2303,26 +2303,27 @@ public class ViewQueryTest extends AbstractViewTest {
                     "select t1.ts, v_max from " + TABLE1 + " t1 join (" + VIEW1 + " where v_max > 6) t2 on t1.v = t2.v_max",
                     "ts",
                     false,
-                    true,
+                    false,
                     """
                             QUERY PLAN
                             SelectedRecord
-                                Hash Join
+                                Hash Join Light
                                   condition: t2.v_max=t1.v
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: table1
                                     Hash
-                                        SelectedRecord
-                                            Filter filter: 6<v_max
-                                                Async Stream Group By workers: 1
-                                                  segmentKey: ts
-                                                  keys: [ts,k]
-                                                  values: [max(v)]
-                                                  filter: 4<v
-                                                    PageFrame
-                                                        Row forward scan
-                                                        Frame forward scan on: table1
+                                        Materialize
+                                            SelectedRecord
+                                                Filter filter: 6<v_max
+                                                    Async Stream Group By workers: 1
+                                                      segmentKey: ts
+                                                      keys: [ts,k]
+                                                      values: [max(v)]
+                                                      filter: 4<v
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: table1
                             """,
                     VIEW1
             );
@@ -2335,26 +2336,27 @@ public class ViewQueryTest extends AbstractViewTest {
                             """,
                     "with t2 as (" + VIEW1 + " where v_max > 6) select t1.ts, v_max from " + TABLE1 + " t1 join t2 on t1.v = t2.v_max", "ts",
                     false,
-                    true,
+                    false,
                     """
                             QUERY PLAN
                             SelectedRecord
-                                Hash Join
+                                Hash Join Light
                                   condition: t2.v_max=t1.v
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: table1
                                     Hash
-                                        SelectedRecord
-                                            Filter filter: 6<v_max
-                                                Async Stream Group By workers: 1
-                                                  segmentKey: ts
-                                                  keys: [ts,k]
-                                                  values: [max(v)]
-                                                  filter: 4<v
-                                                    PageFrame
-                                                        Row forward scan
-                                                        Frame forward scan on: table1
+                                        Materialize
+                                            SelectedRecord
+                                                Filter filter: 6<v_max
+                                                    Async Stream Group By workers: 1
+                                                      segmentKey: ts
+                                                      keys: [ts,k]
+                                                      values: [max(v)]
+                                                      filter: 4<v
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: table1
                             """,
                     VIEW1
             );
@@ -2372,7 +2374,7 @@ public class ViewQueryTest extends AbstractViewTest {
                     """
                             QUERY PLAN
                             SelectedRecord
-                                Hash Join
+                                Hash Join Light
                                   condition: v12.v_max=v11.v_max
                                     Async Stream Group By workers: 1
                                       segmentKey: ts
@@ -2383,15 +2385,16 @@ public class ViewQueryTest extends AbstractViewTest {
                                             Row forward scan
                                             Frame forward scan on: table1
                                     Hash
-                                        Filter filter: v_max<7
-                                            Async Stream Group By workers: 1
-                                              segmentKey: ts
-                                              keys: [ts,k]
-                                              values: [max(v)]
-                                              filter: 4<v
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: table1
+                                        Materialize
+                                            Filter filter: v_max<7
+                                                Async Stream Group By workers: 1
+                                                  segmentKey: ts
+                                                  keys: [ts,k]
+                                                  values: [max(v)]
+                                                  filter: 4<v
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: table1
                             """,
                     VIEW1
             );
@@ -2416,7 +2419,7 @@ public class ViewQueryTest extends AbstractViewTest {
                                         Frame forward scan on: table1
                                     Hash
                                         SelectedRecord
-                                            Hash Join
+                                            Hash Join Light
                                               condition: v12.v_max=v11.v_max
                                                 Async Stream Group By workers: 1
                                                   segmentKey: ts
@@ -2427,15 +2430,16 @@ public class ViewQueryTest extends AbstractViewTest {
                                                         Row forward scan
                                                         Frame forward scan on: table1
                                                 Hash
-                                                    Filter filter: 6<v_max
-                                                        Async Stream Group By workers: 1
-                                                          segmentKey: ts
-                                                          keys: [ts,k]
-                                                          values: [max(v)]
-                                                          filter: 4<v
-                                                            PageFrame
-                                                                Row forward scan
-                                                                Frame forward scan on: table1
+                                                    Materialize
+                                                        Filter filter: 6<v_max
+                                                            Async Stream Group By workers: 1
+                                                              segmentKey: ts
+                                                              keys: [ts,k]
+                                                              values: [max(v)]
+                                                              filter: 4<v
+                                                                PageFrame
+                                                                    Row forward scan
+                                                                    Frame forward scan on: table1
                             """,
                     VIEW1
             );

@@ -722,20 +722,28 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         if (hadCachedBuffers) {
             byFrameIndex.clear();
         }
-        boundForRecordA = null;
-        boundForRecordB = null;
-        boundForFrameMemory = null;
-        bindGeneration++;
         cachedBytes = 0;
-        if (frameMemory != null) {
-            frameMemory.clear();
-        }
+        unbindParquetBuffers();
         // NOTE: covered (CoveringBuffers) buffers are deliberately NOT freed here.
         // The async reduce paths call this per frame, but a covered frame's native
         // buffers must outlive a single frame -- zero-copy first()/last() over a
         // covered NATIVE varchar/string stores a raw pointer into them for the
         // merge phase. They are freed only at a query boundary by
         // releaseCoveringBuffers() (of / clear / close).
+    }
+
+    /**
+     * Like {@link #releaseParquetBuffers()}, but keeps the native memory for the next decode until the query ends.
+     */
+    public void reuseParquetBuffers() {
+        for (ParquetBuffers b = lruHead; b != null; b = b.next) {
+            b.usageFlags = 0;
+            b.frameIndex = -1;
+        }
+        if (lruHead != null) {
+            byFrameIndex.clear();
+        }
+        unbindParquetBuffers();
     }
 
     /**
@@ -911,6 +919,16 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         byFrameIndex.put(frameIndex, buffers);
         setBound(usageBit, buffers);
         return buffers;
+    }
+
+    private void unbindParquetBuffers() {
+        boundForRecordA = null;
+        boundForRecordB = null;
+        boundForFrameMemory = null;
+        bindGeneration++;
+        if (frameMemory != null) {
+            frameMemory.clear();
+        }
     }
 
     private void activateDecoder(int frameIndex) {

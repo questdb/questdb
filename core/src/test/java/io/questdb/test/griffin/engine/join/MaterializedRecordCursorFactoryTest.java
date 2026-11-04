@@ -207,7 +207,6 @@ public class MaterializedRecordCursorFactoryTest extends AbstractCairoTest {
     public void testHashJoinSizeDoesNotRewindStreamMaster() throws Exception {
         run((engine, compiler, context) -> {
             createTables(engine, context);
-            // A union has no random access and reads no stream, so the join stays full-fat over the stream master.
             final String sql = "SELECT a.ts, a.sym, a.c, b.s FROM (" + SUBQUERIES[1][0] + ") a JOIN "
                     + "(SELECT ts, v s FROM t UNION ALL SELECT ts, v s FROM t) b ON (ts)";
             assertQuery(sql).withEngine(engine).withContext(context).noLeakCheck().assertsPlanContaining("Hash Join\n");
@@ -244,12 +243,28 @@ public class MaterializedRecordCursorFactoryTest extends AbstractCairoTest {
                         .noLeakCheck()
                         .assertsPlanContaining(join[1]);
             }
-            // A fill never offered random access, so the join stays full-fat over it.
-            assertQuery("SELECT h.x, s.* FROM h JOIN (SELECT ts, count() c FROM t SAMPLE BY 1h FILL(PREV)) s ON h.ts = s.ts")
-                    .withEngine(engine)
-                    .withContext(context)
-                    .noLeakCheck()
-                    .assertsPlanContaining("Hash Join\n");
+            for (String right : new String[]{
+                    "SELECT ts, c + 1 c FROM (SELECT ts, count() c FROM t SAMPLE BY 1h)",
+                    "SELECT * FROM (SELECT ts, count() c FROM t SAMPLE BY 1h) WHERE c > 1",
+                    "SELECT ts, count() c FROM t SAMPLE BY 1h LIMIT 3"
+            }) {
+                assertQuery("SELECT h.x, s.* FROM h JOIN (" + right + ") s ON h.ts = s.ts")
+                        .withEngine(engine)
+                        .withContext(context)
+                        .noLeakCheck()
+                        .assertsPlanContaining("Hash Join Light", "Materialize", "Stream Group By");
+            }
+            for (String right : new String[]{
+                    "SELECT ts, count() c FROM t SAMPLE BY 1h FILL(PREV)",
+                    "SELECT ts, count() c FROM t SAMPLE BY 1h UNION ALL SELECT ts, count() c FROM t SAMPLE BY 1d",
+                    "SELECT ts, c, row_number() OVER () n FROM (SELECT ts, count() c FROM t SAMPLE BY 1h)"
+            }) {
+                assertQuery("SELECT h.x, s.* FROM h JOIN (" + right + ") s ON h.ts = s.ts")
+                        .withEngine(engine)
+                        .withContext(context)
+                        .noLeakCheck()
+                        .assertsPlanContaining("Hash Join\n");
+            }
         });
     }
 
@@ -537,7 +552,6 @@ public class MaterializedRecordCursorFactoryTest extends AbstractCairoTest {
         });
     }
 
-    // Var-size rows use the offsets page, a sixteenth of the row page, which rounds down to nothing at these sizes.
     private void assertCopiesVarSizeRows() throws Exception {
         run((engine, compiler, context) -> {
             createTables(engine, context);

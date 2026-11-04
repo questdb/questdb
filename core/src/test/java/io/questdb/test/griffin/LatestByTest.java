@@ -2044,8 +2044,6 @@ public class LatestByTest extends AbstractCairoTest {
                         .expectSize()
                         .withPlanContaining("LatestBy light order_by_timestamp: false")
                         .returns(expected);
-                // A serial plan sorts. A parallel plan streams backward through a copy, and the factory that replays
-                // its rows in scan order keeps the designated timestamp.
                 final String[] plan = parallel
                         ? new String[]{"LatestBy\n", "Materialize", "Stream Group By", "backward scan"}
                         : new String[]{"LatestBy light order_by_timestamp: false"};

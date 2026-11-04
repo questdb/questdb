@@ -157,16 +157,16 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner,
             }
             if (keyTypes.getColumnCount() > 1) {
                 ownerMap = new StreamGroupByMap(configuration, asm, baseMetadata, columnFilter, keyTypes, valueTypes,
-                        streamKeyIndex, keyFunctions, groupByFunctions, updater);
+                        streamKeyIndex, keyFunctions, groupByFunctions, updater, null);
                 collectorMap = new StreamGroupByMap(configuration, asm, baseMetadata, columnFilter, keyTypes, valueTypes,
-                        streamKeyIndex, keyFunctions, groupByFunctions, updater);
+                        streamKeyIndex, keyFunctions, groupByFunctions, updater, ownerMap);
                 perWorkerMaps = new ObjList<>(workerCount);
                 spanMaps = new ObjList<>(workerCount + 1);
                 spanMaps.add(new SpanMaps(ownerMap));
                 for (int i = 0; i < workerCount; i++) {
                     final StreamGroupByMap map = new StreamGroupByMap(configuration, asm, baseMetadata, columnFilter, keyTypes,
                             valueTypes, streamKeyIndex, perWorkerKeys == null ? keyFunctions : perWorkerKeys.getQuick(i),
-                            getFunctions(i), getUpdater(i));
+                            getFunctions(i), getUpdater(i), ownerMap);
                     perWorkerMaps.add(map);
                     spanMaps.add(new SpanMaps(map));
                 }
@@ -235,8 +235,7 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner,
         return filterContext;
     }
 
-    // Frames collect in order, so a window of one frame per worker leaves the workers idle behind the oldest frame.
-    // A LIMIT that the first frame satisfies keeps the small window, so the workers do not reduce frames it never reads.
+    // A LIMIT that the first frame satisfies keeps the small window, which holds a frame for each worker and the owner.
     public int getDispatchLimit(int collectedFrameCount) {
         return collectedFrameCount == 0 ? Math.min(initialDispatchLimit, frameRecords.size()) : frameRecords.size();
     }
@@ -276,6 +275,11 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner,
         return capacity;
     }
 
+    @TestOnly
+    public RecordChain getResultRecords(int frameIndex) {
+        return frameRecords.getQuick(frameIndex % frameRecords.size());
+    }
+
     public RecordChain getResultRecords(PageFrameReduceTask task) {
         final int slot = task.getFrameIndex() % frameRecords.size();
         RecordChain records = frameRecords.getQuick(slot);
@@ -285,6 +289,11 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner,
         }
         records.setMemoryTracker(task.getMemoryTracker());
         return records;
+    }
+
+    @TestOnly
+    public DirectLongList getResultValues(int frameIndex) {
+        return frameValues.getQuick(frameIndex % frameValues.size());
     }
 
     public DirectLongList getResultValues(PageFrameReduceTask task) {

@@ -56,6 +56,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.griffin.engine.table.GroupByMapFragment.NUM_SHARDS;
@@ -63,6 +64,7 @@ import static io.questdb.griffin.engine.table.GroupByMapFragment.NUM_SHARDS_SHR;
 
 public final class StreamGroupByMap implements QuietCloseable {
     // clear() shrinks the map once its capacity exceeds this many slots per key the finished segment needed.
+    private static final int SHARDED_BREAKER_CHECK_MASK = 4095;
     private static final int SHRINK_RATIO = 8;
     private final DirectLongList batchRows;
     private final int batchSize;
@@ -70,6 +72,7 @@ public final class StreamGroupByMap implements QuietCloseable {
     private final CairoConfiguration configuration;
     private final ObjList<GroupByFunction> functions;
     private final RecordSink inputSink;
+    private final Class<RecordSink> inputSinkClass;
     // Span maps shard once they pass the sharding threshold, so that their owner merges them in parallel.
     private final boolean isShardable;
     private final Map map;
@@ -77,6 +80,7 @@ public final class StreamGroupByMap implements QuietCloseable {
     private final ArrayColumnTypes mapValueTypes;
     private final DirectLongList mergeMemory;
     private final RecordSink mergeSink;
+    private final Class<RecordSink> mergeSinkClass;
     // The most keys a map presizes for, 0 when presizing is off.
     private final long presizeMaxKeys;
     private final SegmentRecord record;
@@ -85,6 +89,7 @@ public final class StreamGroupByMap implements QuietCloseable {
     private final ObjList<Map> shards = new ObjList<>();
     private final int shardingThreshold;
     private final RecordSink stateSink;
+    private final Class<RecordSink> stateSinkClass;
     private final ArrayColumnTypes stateTypes;
     private final GroupByFunctionsUpdater updater;
     private final FlyweightPackedMapValue value;
@@ -112,7 +117,8 @@ public final class StreamGroupByMap implements QuietCloseable {
             int streamKeyIndex,
             ObjList<Function> keyFunctions,
             ObjList<GroupByFunction> functions,
-            GroupByFunctionsUpdater updater
+            GroupByFunctionsUpdater updater,
+            @Nullable StreamGroupByMap sinkSource
     ) {
         this.configuration = configuration;
         this.functions = functions;
@@ -158,10 +164,21 @@ public final class StreamGroupByMap implements QuietCloseable {
                     mergeColumns.add(i + 1);
                 }
             }
-            inputSink = RecordSinkFactory.getInstance(configuration, asm, baseTypes, inputColumns, inputFunctions, null);
-            mergeSink = RecordSinkFactory.getInstance(configuration, asm, stateTypes, mergeColumns);
-            stateSink = RecordSinkFactory.getInstance(configuration, asm, rowTypes, rowColumns);
-            valueSink = RecordValueSinkFactory.getInstance(asm, stateTypes, valueColumns);
+            // A shared class keeps the call sites monomorphic. A record sink has decimal scratch state, so instances stay per worker.
+            if (sinkSource == null) {
+                inputSinkClass = RecordSinkFactory.getInstanceClass(configuration, asm, baseTypes, inputColumns, inputFunctions, null, null, null, null);
+                mergeSinkClass = RecordSinkFactory.getInstanceClass(configuration, asm, stateTypes, mergeColumns, null, null, null, null, null);
+                stateSinkClass = RecordSinkFactory.getInstanceClass(configuration, asm, rowTypes, rowColumns, null, null, null, null, null);
+                valueSink = RecordValueSinkFactory.getInstance(asm, stateTypes, valueColumns);
+            } else {
+                inputSinkClass = sinkSource.inputSinkClass;
+                mergeSinkClass = sinkSource.mergeSinkClass;
+                stateSinkClass = sinkSource.stateSinkClass;
+                valueSink = sinkSource.valueSink;
+            }
+            inputSink = RecordSinkFactory.getInstance(inputSinkClass, baseTypes, inputColumns, inputFunctions, null, null, null, null);
+            mergeSink = RecordSinkFactory.getInstance(mergeSinkClass, stateTypes, mergeColumns, null, null, null, null, null);
+            stateSink = RecordSinkFactory.getInstance(stateSinkClass, rowTypes, rowColumns, null, null, null, null, null);
             value = new FlyweightPackedMapValue(mapValueTypes);
             record = new SegmentRecord(columnCrossIndex, segmentIndex + streamKeyIndex);
             map = MapFactory.createUnorderedMap(configuration, mapKeyTypes, mapValueTypes, 1, configuration.getSqlSmallMapPageSize(), true, false);
@@ -188,6 +205,9 @@ public final class StreamGroupByMap implements QuietCloseable {
         mapValueTypes = prototype.mapValueTypes;
         stateTypes = prototype.stateTypes;
         inputSink = prototype.inputSink;
+        inputSinkClass = prototype.inputSinkClass;
+        mergeSinkClass = prototype.mergeSinkClass;
+        stateSinkClass = prototype.stateSinkClass;
         mergeSink = prototype.mergeSink;
         stateSink = prototype.stateSink;
         valueSink = prototype.valueSink;
@@ -284,6 +304,14 @@ public final class StreamGroupByMap implements QuietCloseable {
         final MapRecordCursor cursor = map.getCursor();
         record.of(cursor.getRecord(), segmentKey);
         return cursor;
+    }
+
+    @TestOnly
+    public boolean hasSinkClassesOf(StreamGroupByMap other) {
+        return inputSink.getClass() == other.inputSink.getClass() && inputSink != other.inputSink
+                && mergeSink.getClass() == other.mergeSink.getClass() && mergeSink != other.mergeSink
+                && stateSink.getClass() == other.stateSink.getClass() && stateSink != other.stateSink
+                && valueSink == other.valueSink;
     }
 
     @TestOnly
@@ -463,7 +491,10 @@ public final class StreamGroupByMap implements QuietCloseable {
         // The first shard stages the key to hash it.
         final Map lookupShard = shards.getQuick(0);
         for (long row = lo; row < hi; row++) {
-            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+            // A per-row check costs high-cardinality buckets up to 16%, since it does not inline here.
+            if (((row - lo) & SHARDED_BREAKER_CHECK_MASK) == SHARDED_BREAKER_CHECK_MASK) {
+                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+            }
             final long rowIndex = rows == null ? row : rows.get(row);
             record.setFilteredRowIndex(rowIndex, row);
             final MapKey lookupKey = lookupShard.withKey();

@@ -53,11 +53,6 @@ import java.nio.file.Path;
 import java.util.Comparator;
 import java.util.concurrent.TimeUnit;
 
-/**
- * A union has no designated timestamp to read in order, so the top-K copies its rows. A shape names how the input
- * relates to the descending order the query asks for: "sorted" rows arrive best first and lose every comparison after
- * the first batch, "reverse" rows each beat all the rows before them, which is the case that pays for the copy.
- */
 @State(Scope.Benchmark)
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.MILLISECONDS)
