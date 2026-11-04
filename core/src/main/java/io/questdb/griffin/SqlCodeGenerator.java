@@ -2012,6 +2012,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 && directionMatchesScan(getOrderByDirectionOrDefault(model, 0), scanDirection);
     }
 
+    // whether the statement sets an OVERRIDABLE variable of the view a scan reads through, see SqlParser
+    private static boolean isViewReadOverridden(ExpressionNode viewExpr) {
+        if (viewExpr == null) {
+            return false;
+        }
+        // SqlParser.compileViewQuery() stamps the name of every view it expands, and only it names a view of a model
+        assert viewExpr.tableFunctionView != null;
+        return viewExpr.tableFunctionView.isReadOverridden();
+    }
+
     private static long tolerance(IQueryModel slaveModel, int leftTimestamp, int rightTimestampType) throws SqlException {
         ExpressionNode tolerance = slaveModel.getAsOfJoinTolerance();
         long toleranceInterval = Numbers.LONG_NULL;
@@ -8269,6 +8279,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     ORDER_DESC,
                     getViewName(viewExpr),
                     getViewPosition(viewExpr),
+                    isViewReadOverridden(viewExpr),
                     model.isUpdate()
             );
         } else {
@@ -8279,6 +8290,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     ORDER_DESC,
                     getViewName(viewExpr),
                     getViewPosition(viewExpr),
+                    isViewReadOverridden(viewExpr),
                     model.isUpdate()
             );
         }
@@ -11019,6 +11031,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 ORDER_ASC,
                                                 getViewName(viewExpr),
                                                 getViewPosition(viewExpr),
+                                                isViewReadOverridden(viewExpr),
                                                 tableModel.isUpdate()
                                         );
                                     } else {
@@ -11029,6 +11042,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 ORDER_ASC,
                                                 getViewName(viewExpr),
                                                 getViewPosition(viewExpr),
+                                                isViewReadOverridden(viewExpr),
                                                 tableModel.isUpdate()
                                         );
                                     }
@@ -13298,6 +13312,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         order,
                         getViewName(viewExpr),
                         getViewPosition(viewExpr),
+                        isViewReadOverridden(viewExpr),
                         model.isUpdate()
                 );
                 intervalHitsOnlyOnePartition = intervalModel.allIntervalsHitOnePartition();
@@ -13309,6 +13324,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         order,
                         getViewName(viewExpr),
                         getViewPosition(viewExpr),
+                        isViewReadOverridden(viewExpr),
                         model.isUpdate()
                 );
                 intervalHitsOnlyOnePartition = reader.getPartitionedBy() == PartitionBy.NONE;
@@ -13806,6 +13822,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     order,
                     getViewName(viewExpr),
                     getViewPosition(viewExpr),
+                    isViewReadOverridden(viewExpr),
                     model.isUpdate()
             );
             RowCursorFactory rowCursorFactory = new PageFrameRowCursorFactory(order);
@@ -13844,6 +13861,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 ORDER_DESC,
                                 getViewName(viewExpr),
                                 getViewPosition(viewExpr),
+                                isViewReadOverridden(viewExpr),
                                 model.isUpdate()
                         ),
                         listColumnFilterA.getColumnIndexFactored(0),
@@ -13865,6 +13883,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 ORDER_DESC,
                                 getViewName(viewExpr),
                                 getViewPosition(viewExpr),
+                                isViewReadOverridden(viewExpr),
                                 model.isUpdate()
                         ),
                         latestByColumnIndex,
@@ -13894,6 +13913,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             ORDER_DESC,
                             getViewName(viewExpr),
                             getViewPosition(viewExpr),
+                            isViewReadOverridden(viewExpr),
                             model.isUpdate()
                     ),
                     partitionByColumnIndexes,
@@ -13914,6 +13934,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         ORDER_DESC,
                         getViewName(viewExpr),
                         getViewPosition(viewExpr),
+                        isViewReadOverridden(viewExpr),
                         model.isUpdate()
                 ),
                 RecordSinkFactory.getInstance(configuration, asm, queryMeta, listColumnFilterA),

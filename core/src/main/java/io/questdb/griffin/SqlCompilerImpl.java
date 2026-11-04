@@ -204,6 +204,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final int maxRecompileAttempts;
     private final MemoryMARW mem = Vm.getCMARWInstance();
     private final MessageBus messageBus;
+    // the columns the other reads of a view scan, see collectOtherReadDependencies()
+    private final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> otherReadDependencies = new LowerCaseCharSequenceObjHashMap<>();
     private final SqlParser parser;
     private final TimestampValueRecord partitionFunctionRec = new TimestampValueRecord();
     private final QueryBuilder queryBuilder;
@@ -421,9 +423,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             // model of the read around it is built here.
             lexer.of(viewSql);
             final ExecutionModel model = parser.parse(lexer, executionContext, this);
-            // the caller compiled the same SELECT before
+            // the caller compiled the same SELECT before, and collected the objects and the wildcards it names
             assert model.getModelType() == ExecutionModel.QUERY;
-            SqlUtil.collectTableAndColumnReferences(engine, (IQueryModel) model, dependencies, viewWildcardSources);
+            SqlUtil.collectTableAndColumnReferences(engine, (IQueryModel) model, otherReadDependencies, viewWildcardSources);
             final IQueryModel queryModel;
             optimiser.setSubQueryKeptWhole(true);
             optimiser.setPivotInValueSource(compileRecord);
@@ -438,9 +440,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             // walk below reads the expressions of the model, not its functions.
             CairoException.rethrowCleanupFailure(optimiser.freeUnclaimedTableFactories(null));
             // a table the caller's plan scans has to be the one this compile scans
-            SqlUtil.collectTableColumnReads(engine, queryModel, dependencies, viewWildcardSources, compileRecord, false);
+            SqlUtil.collectTableColumnReads(engine, queryModel, otherReadDependencies, viewWildcardSources, compileRecord, false);
+            // the view lends these columns only to a read that sets none of its OVERRIDABLE variables
+            SqlUtil.addOtherReadDependencies(dependencies, otherReadDependencies);
         } finally {
             viewWildcardSources.clear();
+            otherReadDependencies.clear();
         }
     }
 

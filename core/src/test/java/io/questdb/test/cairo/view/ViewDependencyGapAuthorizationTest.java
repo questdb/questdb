@@ -30,11 +30,13 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 /**
@@ -51,6 +53,30 @@ import static org.junit.Assert.fail;
  * the missing entry by removing it from the live dependency map after the view is created.
  */
 public class ViewDependencyGapAuthorizationTest extends AbstractViewTest {
+
+    @Test
+    public void testMissingDependencyColumnRequiresExplicitBaseTableSelect() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            // A read that names n alone keeps the sub-query whole, and scans k and v: the view lends k only to the
+            // reads that set none of its variables.
+            createView(VIEW1, "SELECT count() n, max(v) mx FROM (SELECT k, v FROM " + TABLE1 + ")", TABLE1);
+            final LowerCaseCharSequenceHashSet columns = getViewDefinition(VIEW1).getDependencies().get(TABLE1);
+            assertEquals(2, columns.size());
+            assertTrue(columns.contains(ViewDefinition.OTHER_READ_COLUMN_PREFIX + "k"));
+            // simulate the gap: the entry no longer lists v
+            assertTrue(columns.remove("v") > -1);
+
+            // The view lends the column it marks, and not the one it lists neither plainly nor marked, which the
+            // read then needs SELECT on the base table for.
+            try (SqlExecutionContext denyContext = denyBaseTableSelectContext()) {
+                assertQuery("SELECT n FROM " + VIEW1)
+                        .withContext(denyContext)
+                        .noLeakCheck()
+                        .failsWith("permission denied [table=" + TABLE1 + ", columns=v]");
+            }
+        });
+    }
 
     @Test
     public void testMissingDependencyEntryDoesNotThrowUnderAllowAll() throws Exception {

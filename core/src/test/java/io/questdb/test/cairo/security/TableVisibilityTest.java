@@ -696,7 +696,7 @@ public class TableVisibilityTest extends AbstractCairoTest {
             try (
                     RecordCursorFactory oldFunction = new ShowPartitionsRecordCursorFactory(
                             engine.verifyTableName("secret_t"), ColumnType.TIMESTAMP_MICRO, 0,
-                            new SqlExecutionContext.TableFunctionView(engine.getViewGraph().getViewDefinition(oldView))
+                            new SqlExecutionContext.TableFunctionView(engine.getViewGraph().getViewDefinition(oldView), false)
                     );
                     SqlExecutionContext hidingContext = newHidingContext()
             ) {

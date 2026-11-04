@@ -186,6 +186,10 @@ public class SqlOptimiser implements Mutable {
     private static final CharSequenceIntHashMap notOps = new CharSequenceIntHashMap();
     private static final CharSequenceHashSet nullConstants = new CharSequenceHashSet();
     private final static LowerCaseAsciiCharSequenceHashSet orderedGroupByFunctions;
+    // Test-only observability for the propagation of the columns of a query in kept-whole mode: the outputs it adds to
+    // the sets of outputs of the columns, see recordKeptWholeOrigins(). Tests read it on the thread that ran the
+    // compile and assert on deltas.
+    private static long keptWholeOriginAddCount;
     protected final ObjList<CharSequence> literalCollectorANames = new ObjList<>();
     private final CharacterStore characterStore;
     private final IntList clausesToSteal = new IntList();
@@ -219,13 +223,19 @@ public class SqlOptimiser implements Mutable {
     private final ObjList<IntHashSet> keptWholeColumnOrigins = new ObjList<>();
     // the outputs of the view whose columns need a join model, see collectWithholdingOutputs()
     private final IntHashSet keptWholeNeededBy = new IntHashSet();
+    // the sets of outputs collectWithholdingOutputs() has added to keptWholeNeededBy
+    private final ObjHashSet<IntHashSet> keptWholeNeededOrigins = new ObjHashSet<>();
     private final ObjectPool<LowerCaseCharSequenceObjHashMap<IntHashSet>> keptWholeOriginMapPool = new ObjectPool<>(LowerCaseCharSequenceObjHashMap::new, 16);
     // per model, the outputs of the view each top-down column serves, see recordKeptWholeOrigins()
     private final ObjObjHashMap<IQueryModel, LowerCaseCharSequenceObjHashMap<IntHashSet>> keptWholeOrigins = new ObjObjHashMap<>();
+    // the sets of outputs recordKeptWholeOrigins() makes for a column of its own, see KeptWholeOrigins
+    private final ObjectPool<KeptWholeOrigins> keptWholeOriginsPool = new ObjectPool<>(KeptWholeOrigins::new, 16);
     // the models whose columns are the outputs of the view: its SELECT and the branches of its set operation
     private final ObjHashSet<IQueryModel> keptWholeOutputLayers = new ObjHashSet<>();
     // the outputs of the view the columns of a projection serve, see collectWithholdingOutputs()
     private final IntHashSet keptWholeServedBy = new IntHashSet();
+    // the sets of outputs collectWithholdingOutputs() has added to keptWholeServedBy
+    private final ObjHashSet<IntHashSet> keptWholeServedOrigins = new ObjHashSet<>();
     // the join models of projectionJoinHolder that addTopDownColumn() gives no column of the projection
     private final IntHashSet keptWholeWithheldJoins = new IntHashSet();
     private final LowerCaseCharSequenceIntHashMap lateralCountCarrierRefCounts = new LowerCaseCharSequenceIntHashMap(8, 0.4, 0);
@@ -409,6 +419,18 @@ public class SqlOptimiser implements Mutable {
         return appearsInArgs;
     }
 
+    /**
+     * Returns the number of outputs the propagation of the columns of a query in kept-whole mode has added to the sets
+     * of outputs of the columns since class load, see {@link #setSubQueryKeptWhole(boolean)}. Capture it before a
+     * compile and assert on the delta afterwards.
+     *
+     * @return count of outputs added to the sets of outputs of the columns
+     */
+    @TestOnly
+    public static long getKeptWholeOriginAddCountForTesting() {
+        return keptWholeOriginAddCount;
+    }
+
     public static boolean hasGroupByFunc(ArrayDeque<ExpressionNode> sqlNodeStack, FunctionFactoryCache functionFactoryCache, ExpressionNode node) {
         sqlNodeStack.clear();
 
@@ -465,6 +487,7 @@ public class SqlOptimiser implements Mutable {
         isNullingExecOrderValid = false;
         endKeptWholePropagation();
         keptWholeOriginMapPool.clear();
+        keptWholeOriginsPool.clear();
         pivotInValueRecorder = null;
         pivotInValueSource = null;
         nullingAnchorByExecPos.clear();
@@ -3050,7 +3073,9 @@ public class SqlOptimiser implements Mutable {
     // model no column, or one every read needs, leaves it to the other columns of the plan.
     private void collectWithholdingOutputs(int joinIndex, int columnCount, IntHashSet outputs) {
         keptWholeNeededBy.clear();
+        keptWholeNeededOrigins.clear();
         keptWholeServedBy.clear();
+        keptWholeServedOrigins.clear();
         boolean hasColumnEveryReadNeeds = false;
         boolean isReached = false;
         for (int i = 0; i < columnCount; i++) {
@@ -3062,9 +3087,17 @@ public class SqlOptimiser implements Mutable {
                 }
                 hasColumnEveryReadNeeds = true;
             } else {
-                keptWholeServedBy.addAll(origins);
+                // The columns of a projection share the sets of outputs they serve, see recordKeptWholeOrigins(), so
+                // each set is added once, which keeps the work in proportion to the columns plus the outputs.
+                if (keptWholeServedOrigins.add(origins)) {
+                    keptWholeOriginAddCount += origins.size();
+                    keptWholeServedBy.addAll(origins);
+                }
                 if (isReaching) {
-                    keptWholeNeededBy.addAll(origins);
+                    if (keptWholeNeededOrigins.add(origins)) {
+                        keptWholeOriginAddCount += origins.size();
+                        keptWholeNeededBy.addAll(origins);
+                    }
                     isReached = true;
                 }
             }
@@ -4831,9 +4864,11 @@ public class SqlOptimiser implements Mutable {
         keptWholeColumnJoins.clear();
         keptWholeColumnOrigins.clear();
         keptWholeEmittedOrigins = null;
+        keptWholeNeededOrigins.clear();
         keptWholeOrigins.clear();
         keptWholeOutputCount = 0;
         keptWholeOutputLayers.clear();
+        keptWholeServedOrigins.clear();
         keptWholeWithheldJoins.clear();
         projectionJoinHolder = null;
     }
@@ -8990,7 +9025,12 @@ public class SqlOptimiser implements Mutable {
             return null;
         }
         final LowerCaseCharSequenceObjHashMap<IntHashSet> columnOrigins = keptWholeOrigins.get(model);
-        return columnOrigins != null ? columnOrigins.get(alias) : null;
+        final IntHashSet origins = columnOrigins != null ? columnOrigins.get(alias) : null;
+        if (origins instanceof KeptWholeOrigins columnSet) {
+            // whoever takes the set shares it, so the column copies it before it adds to it, see recordKeptWholeOrigins()
+            columnSet.isOwned = false;
+        }
+        return origins;
     }
 
     // Records that the outputs of the view in origins, or every output when it is null, need the top-down
@@ -9013,21 +9053,30 @@ public class SqlOptimiser implements Mutable {
         }
         final int index = columnOrigins.keyIndex(alias);
         if (index > -1) {
-            IntHashSet copy = null;
-            if (origins != null) {
-                copy = intHashSetPool.next();
-                copy.addAll(origins);
-            }
-            columnOrigins.putAt(index, alias, copy);
+            // Shared rather than copied: a projection gives every column of a model it withholds the same outputs, and
+            // a copy for each column would take time in proportion to the columns times the outputs.
+            columnOrigins.putAt(index, alias, origins);
+            return;
+        }
+        final IntHashSet recorded = columnOrigins.valueAtQuick(index);
+        if (recorded == null) {
+            return;
+        }
+        if (origins == null) {
+            columnOrigins.putAt(index, alias, null);
+        } else if (recorded instanceof KeptWholeOrigins columnSet && columnSet.isOwned) {
+            // the column made the set for itself, and no other column shares it yet
+            keptWholeOriginAddCount += origins.size();
+            columnSet.addAll(origins);
         } else {
-            final IntHashSet recorded = columnOrigins.valueAtQuick(index);
-            if (recorded != null) {
-                if (origins == null) {
-                    columnOrigins.putAt(index, alias, null);
-                } else {
-                    recorded.addAll(origins);
-                }
-            }
+            // The set may serve other columns too: a projection shares the set of its column with the columns the
+            // column reads. So the column takes a copy of its own.
+            final KeptWholeOrigins union = keptWholeOriginsPool.next();
+            union.isOwned = true;
+            keptWholeOriginAddCount += recorded.size() + origins.size();
+            union.addAll(recorded);
+            union.addAll(origins);
+            columnOrigins.putAt(index, alias, union);
         }
     }
 
@@ -16250,6 +16299,14 @@ public class SqlOptimiser implements Mutable {
             }
             throw SqlException.position(updateQueryModel.getModelPosition()).put(e);
         }
+    }
+
+    // A set of the outputs of the view a column serves, made for that column by recordKeptWholeOrigins(), which adds
+    // to it in place.
+    private static final class KeptWholeOrigins extends IntHashSet {
+        // Whether the set serves only the column it was made for. Whoever takes the set from the column shares it, see
+        // recordedKeptWholeOrigins().
+        private boolean isOwned;
     }
 
     private static class LiteralCheckingVisitor implements PostOrderTreeTraversalAlgo.Visitor {

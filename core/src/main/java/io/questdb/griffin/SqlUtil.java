@@ -43,6 +43,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.griffin.engine.functions.constants.Long256Constant;
 import io.questdb.griffin.engine.functions.constants.Long256NullConstant;
 import io.questdb.griffin.engine.functions.date.TimestampFloorFromOffsetUtcFunctionFactory;
@@ -179,6 +180,43 @@ public class SqlUtil {
         node.token = "in";
         node.lhs = null;
         node.rhs = null;
+    }
+
+    /**
+     * Adds to the dependency map of a view the columns that the other reads of the view scan, those whose plans
+     * differ from the plan of the view's own SELECT, see {@link SqlCompiler#collectOtherReadDependencies}. Each
+     * column gets {@link ViewDefinition#OTHER_READ_COLUMN_PREFIX}, so the view lends it only to a read that sets none
+     * of its OVERRIDABLE variables: an override can make the view read any column its variable sees, and only the
+     * columns the plan of the view's own SELECT reads are columns the view reads with every value of its variables.
+     * A column the map lists already, or a table whose columns include {@code *}, takes no mark, and a table whose
+     * every column the other reads scan gets {@link ViewDefinition#OTHER_READ_WILDCARD} in place of marked columns.
+     *
+     * @param depMap     the dependency map of the view, with the columns the plan of its own SELECT reads
+     * @param otherReads the columns the other reads scan, as {@link #collectTableColumnReads} collects them
+     */
+    public static void addOtherReadDependencies(
+            @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> depMap,
+            @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> otherReads
+    ) {
+        final ObjList<CharSequence> tableNames = otherReads.keys();
+        for (int i = 0, n = tableNames.size(); i < n; i++) {
+            final CharSequence tableName = tableNames.getQuick(i);
+            final LowerCaseCharSequenceHashSet otherReadColumns = otherReads.get(tableName);
+            final LowerCaseCharSequenceHashSet columns = addTableDependency(depMap, tableName);
+            if (columns.contains("*")) {
+                continue;
+            }
+            if (otherReadColumns.contains("*")) {
+                columns.add(ViewDefinition.OTHER_READ_WILDCARD);
+                continue;
+            }
+            for (int j = 0, m = otherReadColumns.getKeyCount(); j < m; j++) {
+                final CharSequence column = otherReadColumns.getKey(j);
+                if (column != null && columns.excludes(column)) {
+                    columns.add(ViewDefinition.OTHER_READ_COLUMN_PREFIX + column.toString());
+                }
+            }
+        }
     }
 
     public static void addSelectStar(

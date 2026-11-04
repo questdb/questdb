@@ -56,7 +56,9 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
      * took its timestamp from it takes the timestamp of the source of the sub-query instead. This compiles the
      * SELECT again, as a sub-query of a read that counts its rows, with every sub-query some read leaves without
      * columns kept whole, and collects what that plan reads, including a {@code *} for each wildcard it keeps
-     * whole. Call it on a compiler of its own after the SELECT of the view is optimised and before its plan is
+     * whole. It adds those columns marked, see {@link SqlUtil#addOtherReadDependencies}: the view lends them only to
+     * a read that sets none of its OVERRIDABLE variables, which could otherwise read any of them through the view.
+     * Call it on a compiler of its own after the SELECT of the view is optimised and before its plan is
      * generated, with what that compile recorded: this takes the values of the PIVOT IN sub-queries from it
      * rather than running them again, and finds a table out of date when it scans one of another id than that
      * compile.

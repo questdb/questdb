@@ -1531,7 +1531,8 @@ public final class TableUtils {
         if (viewDefinition == null) {
             throw SqlException.viewDoesNotExist(viewNameExpr.position, viewNameExpr.token);
         }
-        return new SqlExecutionContext.TableFunctionView(viewDefinition);
+        // no scan reads through a view name the parser did not stamp, see SqlCodeGenerator.isViewReadOverridden()
+        return new SqlExecutionContext.TableFunctionView(viewDefinition, false);
     }
 
     public static int getTableIdFromTableDir(CharSequence dirName) throws NumericException {

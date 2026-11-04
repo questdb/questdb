@@ -56,9 +56,10 @@ public class FullPartitionFrameCursorFactory extends AbstractPartitionFrameCurso
             int order,
             String viewName,
             int viewPosition,
+            boolean isViewReadOverridden,
             boolean updateQuery
     ) {
-        super(tableToken, metadataVersion, metadata, viewName, viewPosition, updateQuery);
+        super(tableToken, metadataVersion, metadata, viewName, viewPosition, isViewReadOverridden, updateQuery);
         this.baseOrder = order;
         this.closeObserver = TEST_CLOSE_OBSERVER.get();
     }

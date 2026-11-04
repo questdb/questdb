@@ -267,6 +267,9 @@ public class SqlParser {
     // it, see MAX_DECLARED_VARIABLE_NODES.
     private int declaredVariableNodeCount;
     private int digit;
+    // Whether viewReaderDecls set an OVERRIDABLE variable of a view the parser has expanded since it started on the
+    // outermost view it is expanding, see SqlExecutionContext.TableFunctionView.isReadOverridden().
+    private boolean isViewReadOverridden;
     private boolean pivotMode = false;
     // the principal of the statement being parsed, see isExpandableView()
     private SecurityContext securityContext;
@@ -275,6 +278,9 @@ public class SqlParser {
     private boolean subQueryMode = false;
     // Number of view bodies compileViewQuery() is expanding at the current parse position.
     private int viewExpansionDepth;
+    // The declarations of the statement where it reads the outermost view compileViewQuery() is expanding: a value
+    // they give a variable that view, or a view it reads, declares OVERRIDABLE replaces the value of the definition.
+    private LowerCaseCharSequenceObjHashMap<ExpressionNode> viewReaderDecls;
     // Where the statement's text reads the outermost view compileViewQuery() is expanding.
     private int viewReferencePosition;
     // The body parseViewSql() last parsed, for a caller that inspects it before the statement runs.
@@ -583,6 +589,23 @@ public class SqlParser {
 
     private static SqlException errUnexpected(GenericLexer lexer, CharSequence token, @NotNull CharSequence extraMessage) {
         return SqlException.unexpectedToken(lexer.lastTokenPosition(), token, extraMessage);
+    }
+
+    // whether the declarations give a value to one of the variables
+    private static boolean isAnyDeclared(
+            @NotNull LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
+            @NotNull LowerCaseCharSequenceHashSet variableNames
+    ) {
+        if (variableNames.size() == 0) {
+            return false;
+        }
+        final ObjList<CharSequence> declaredNames = decls.keys();
+        for (int i = 0, n = declaredNames.size(); i < n; i++) {
+            if (variableNames.contains(declaredNames.getQuick(i))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static boolean isJsonUnnestSupportedType(int type) {
@@ -954,7 +977,9 @@ public class SqlParser {
         viewsBeingCompiled.clear();
         parkedViewsBeingCompiled.clear();
         auditedViewDepth = 0;
+        isViewReadOverridden = false;
         viewExpansionDepth = 0;
+        viewReaderDecls = null;
         viewReferencePosition = 0;
         viewTextLength = 0;
     }
@@ -1052,6 +1077,8 @@ public class SqlParser {
         viewsBeingCompiled.add(viewName);
         if (viewExpansionDepth++ == 0) {
             viewReferencePosition = viewPosition;
+            viewReaderDecls = model.getDecls();
+            isViewReadOverridden = false;
         }
         try {
             final IQueryModel viewModel = viewDefinition.isAudited()
@@ -1066,7 +1093,9 @@ public class SqlParser {
         } finally {
             // the body's parse moved the digit from 1 to where it is now
             digit = readDigit + digit - 1;
-            viewExpansionDepth--;
+            if (--viewExpansionDepth == 0) {
+                viewReaderDecls = null;
+            }
             viewsBeingCompiled.popLast();
         }
     }
@@ -1083,10 +1112,15 @@ public class SqlParser {
         } finally {
             idleViewLexers.add(viewLexer);
         }
+        // The views the body reads were expanded with it, so the outermost view knows whether the statement sets a
+        // variable of any of them. The scans of the body read through the outermost view, see setViewNameExpr().
+        if (!isViewReadOverridden && isAnyDeclared(viewReaderDecls, viewModel.getOverridableDecls())) {
+            isViewReadOverridden = true;
+        }
         final ExpressionNode viewExpr = literal(viewDefinition.getViewToken().getTableName(), viewPosition);
         // the definition the model is expanded from, whose dependencies the view's authority covers,
         // see TableUtils.getTableFunctionView()
-        viewExpr.tableFunctionView = new SqlExecutionContext.TableFunctionView(viewDefinition);
+        viewExpr.tableFunctionView = new SqlExecutionContext.TableFunctionView(viewDefinition, isViewReadOverridden);
         viewModel.setOriginatingViewNameExpr(viewExpr);
         viewModel.setViewNameExpr(viewExpr);
         return viewModel;
