@@ -30,6 +30,7 @@ import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
 import io.questdb.cutlass.qwp.server.QwpBrowserAllowedOrigins;
+import io.questdb.metrics.ConnectionSteeringMetrics;
 import io.questdb.metrics.Counter;
 import io.questdb.metrics.LongGauge;
 import io.questdb.mp.DynamicFiberWorkerPoolConfiguration;
@@ -40,6 +41,7 @@ import io.questdb.network.KqueueFacade;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.SelectFacade;
 import io.questdb.std.ConcurrentCacheConfiguration;
+import io.questdb.std.CpuTopology;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
@@ -79,6 +81,16 @@ public class HttpServerConfigurationWrapper implements DynamicFiberWorkerPoolCon
     @Override
     public LongGauge getConnectionCountGauge() {
         return metrics.httpMetrics().connectionCountGauge();
+    }
+
+    @Override
+    public ConnectionSteeringMetrics getConnectionSteeringMetrics() {
+        return getDelegate().getConnectionSteeringMetrics();
+    }
+
+    @Override
+    public CpuTopology getConnectionSteeringTopology() {
+        return getDelegate().getConnectionSteeringTopology();
     }
 
     @Override
@@ -359,6 +371,11 @@ public class HttpServerConfigurationWrapper implements DynamicFiberWorkerPoolCon
     @Override
     public boolean isDaemonPool() {
         return getDelegate().isDaemonPool();
+    }
+
+    @Override
+    public boolean isConnectionSteeringEnabled() {
+        return getDelegate().isConnectionSteeringEnabled();
     }
 
     @Override

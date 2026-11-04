@@ -28,6 +28,7 @@ import io.questdb.KqueueAccessor;
 import io.questdb.std.Files;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
+import org.jetbrains.annotations.Nullable;
 
 public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatcher<C> {
     private final IntHashSet alreadyHandledFds = new IntHashSet();
@@ -38,9 +39,11 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
     public IODispatcherOsx(
             IODispatcherConfiguration configuration,
             IOContextFactory<C> ioContextFactory,
-            boolean reusePort
+            boolean reusePort,
+            @Nullable ConnectionSteering steering,
+            int group
     ) {
-        super(configuration, ioContextFactory, reusePort);
+        super(configuration, ioContextFactory, reusePort, steering, group);
         this.capacity = configuration.getEventCapacity();
         // bind socket
         try {

@@ -347,6 +347,13 @@ public class WorkerPool implements Closeable {
         return groupCount;
     }
 
+    /**
+     * The CPU set of group {@code group}, sorted, or null when the pool's groups have no CPU sets.
+     */
+    public @Nullable int[] getGroupCpus(int group) {
+        return groupCpus != null ? groupCpus[group] : null;
+    }
+
     public String getPoolName() {
         return poolName;
     }

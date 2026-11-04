@@ -26,6 +26,7 @@ package io.questdb.network;
 
 import io.questdb.std.LongIntHashMap;
 import io.questdb.std.Misc;
+import org.jetbrains.annotations.Nullable;
 
 public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispatcher<C> {
     private final LongIntHashMap fds = new LongIntHashMap();
@@ -37,9 +38,11 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
     public IODispatcherWindows(
             IODispatcherConfiguration configuration,
             IOContextFactory<C> ioContextFactory,
-            boolean reusePort
+            boolean reusePort,
+            @Nullable ConnectionSteering steering,
+            int group
     ) {
-        super(configuration, ioContextFactory, reusePort);
+        super(configuration, ioContextFactory, reusePort, steering, group);
         this.sf = configuration.getSelectFacade();
         this.readFdSet = new FDSet(configuration.getEventCapacity());
         this.writeFdSet = new FDSet(configuration.getEventCapacity());

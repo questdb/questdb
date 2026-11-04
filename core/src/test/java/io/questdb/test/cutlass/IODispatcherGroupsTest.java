@@ -26,6 +26,7 @@ package io.questdb.test.cutlass;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.network.ConnectionSteering;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IOContext;
 import io.questdb.network.IODispatcher;
@@ -38,21 +39,25 @@ import io.questdb.network.NetworkError;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.network.PlainSocketFactory;
+import io.questdb.std.CpuTopology;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
+import io.questdb.test.network.SysfsFixture;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
 import org.junit.rules.Timeout;
 
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
@@ -65,6 +70,8 @@ public class IODispatcherGroupsTest {
     private static final Log LOG = LogFactory.getLog(IODispatcherGroupsTest.class);
     // with this many connections, all of them land on one of two listeners with probability 2^-39
     private static final int SPREAD_CONNECTIONS = 40;
+    @Rule
+    public TemporaryFolder temp = new TemporaryFolder();
     @Rule
     public Timeout timeout = Timeout.builder()
             .withTimeout(2, TimeUnit.MINUTES)
@@ -197,6 +204,92 @@ public class IODispatcherGroupsTest {
     }
 
     @Test
+    public void testFailedReopenRetries() throws Exception {
+        assertMemoryLeak(() -> {
+            final int port = pickFreePort();
+            final AtomicBoolean isBindFailing = new AtomicBoolean();
+            final AtomicInteger failedBinds = new AtomicInteger();
+            final NetworkFacade nf = new NetworkFacadeImpl() {
+                @Override
+                public boolean bindTcp(long fd, int address, int port) {
+                    if (isBindFailing.get()) {
+                        failedBinds.incrementAndGet();
+                        return false;
+                    }
+                    return super.bindTcp(fd, address, port);
+                }
+            };
+            final IODispatcherConfiguration configuration = new DefaultIODispatcherConfiguration() {
+                @Override
+                public int getBindPort() {
+                    return port;
+                }
+
+                @Override
+                public int getLimit() {
+                    return 1;
+                }
+
+                @Override
+                public NetworkFacade getNetworkFacade() {
+                    return nf;
+                }
+
+                @Override
+                public long getQueueTimeout() {
+                    return 1;
+                }
+            };
+            final ObjList<IODispatcher<TestContext>> dispatchers = new ObjList<>();
+            IODispatchers.createGroups(configuration, TestContext::new, 1, dispatchers);
+            try {
+                final IODispatcher<TestContext> dispatcher = dispatchers.getQuick(0);
+                // one connection reaches the limit, and the listener closes after the queue timeout
+                long[] fds = connect(port, 1);
+                final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
+                while (dispatcher.getConnectionCount() < 1 || dispatcher.isListening()) {
+                    Assert.assertTrue("the listener did not close", System.nanoTime() < deadline);
+                    runOnce(dispatchers);
+                    Os.sleep(2);
+                    runOnce(dispatchers);
+                }
+
+                // the connection drops and the reopen fails, without an exception escaping
+                isBindFailing.set(true);
+                close(fds);
+                while (dispatcher.getConnectionCount() > 0 || failedBinds.get() == 0) {
+                    Assert.assertTrue("the reopen did not fail", System.nanoTime() < deadline);
+                    runOnce(dispatchers);
+                }
+                Assert.assertFalse(dispatcher.isListening());
+
+                // the dispatcher loop retries without another disconnect
+                isBindFailing.set(false);
+                while (!dispatcher.isListening()) {
+                    Assert.assertTrue("the listener did not reopen", System.nanoTime() < deadline);
+                    runOnce(dispatchers);
+                    Os.sleep(10);
+                }
+                fds = connect(port, 1);
+                try {
+                    while (dispatcher.getConnectionCount() < 1) {
+                        Assert.assertTrue("the reopened listener did not accept", System.nanoTime() < deadline);
+                        runOnce(dispatchers);
+                    }
+                } finally {
+                    close(fds);
+                }
+                while (dispatcher.getConnectionCount() > 0) {
+                    Assert.assertTrue("the connection did not drop", System.nanoTime() < deadline);
+                    runOnce(dispatchers);
+                }
+            } finally {
+                free(dispatchers);
+            }
+        });
+    }
+
+    @Test
     public void testOneGroupDoesNotReusePort() throws Exception {
         // Windows calls setReusePort() on every listener, to release the port sooner
         Assume.assumeFalse(Os.isWindows());
@@ -280,8 +373,86 @@ public class IODispatcherGroupsTest {
         });
     }
 
+    @Test
+    public void testSteeringRedirectsFromAGroupAtItsLimit() throws Exception {
+        assumeSteeringWorks();
+        assertMemoryLeak(() -> {
+            final int port = pickFreePort();
+            final ObjList<IODispatcher<TestContext>> dispatchers = new ObjList<>();
+            IODispatchers.createGroups(steeringConfiguration(port, 1), TestContext::new, 2, new int[][]{{0}, {1}}, dispatchers);
+            final ObjList<long[]> clients = new ObjList<>();
+            try {
+                // CPU 0's first connection fills group 0
+                clients.add(connectFromCpu(port, 0, 1));
+                awaitConnectionCounts(dispatchers, 1, 0);
+                // once group 0 has stayed at its limit for the redirect delay, CPU 0's next
+                // connection goes to group 1
+                final long redirectAt = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(1_200);
+                while (System.nanoTime() < redirectAt) {
+                    runOnce(dispatchers);
+                    Os.sleep(10);
+                }
+                clients.add(connectFromCpu(port, 0, 1));
+                awaitConnectionCounts(dispatchers, 1, 1);
+            } finally {
+                for (int i = 0, n = clients.size(); i < n; i++) {
+                    close(clients.getQuick(i));
+                }
+                free(dispatchers);
+            }
+        });
+    }
+
+    @Test
+    public void testSteeringSendsEachCpuToItsGroup() throws Exception {
+        assumeSteeringWorks();
+        assertMemoryLeak(() -> {
+            final int port = pickFreePort();
+            final ObjList<IODispatcher<TestContext>> dispatchers = new ObjList<>();
+            IODispatchers.createGroups(steeringConfiguration(port, 1000), TestContext::new, 2, new int[][]{{0}, {1}}, dispatchers);
+            try {
+                // with the kernel's hash, 20 connections all land on one listener with probability 2^-19
+                final long[] fromCpu0 = connectFromCpu(port, 0, 20);
+                try {
+                    awaitConnectionCounts(dispatchers, 20, 0);
+                    final long[] fromCpu1 = connectFromCpu(port, 1, 20);
+                    try {
+                        awaitConnectionCounts(dispatchers, 20, 20);
+                    } finally {
+                        close(fromCpu1);
+                    }
+                } finally {
+                    close(fromCpu0);
+                }
+                awaitConnectionCounts(dispatchers, 0, 0);
+            } finally {
+                free(dispatchers);
+            }
+        });
+    }
+
     private static void assertPortFree(int port) {
         IODispatchers.checkPortFree(NetworkFacadeImpl.INSTANCE, 0, port, "test");
+    }
+
+    private static void assumeSteeringWorks() {
+        Assume.assumeTrue("connection steering runs on Linux only", Os.isLinux());
+        Assume.assumeTrue("connection steering needs Linux 4.6", ConnectionSteering.isKernelAtLeast(System.getProperty("os.version"), 4, 6));
+        final int[] pinned = new int[2];
+        final Thread[] threads = new Thread[2];
+        for (int cpu = 0; cpu < 2; cpu++) {
+            final int c = cpu;
+            threads[cpu] = new Thread(() -> pinned[c] = Os.setCurrentThreadCpus(new int[]{c}));
+            threads[cpu].start();
+        }
+        for (Thread thread : threads) {
+            try {
+                thread.join();
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
+            }
+        }
+        Assume.assumeTrue("the test pins clients to CPUs 0 and 1", pinned[0] == 0 && pinned[1] == 0);
     }
 
     private static void awaitConnectionCounts(ObjList<IODispatcher<TestContext>> dispatchers, int first, int second) {
@@ -336,6 +507,30 @@ public class IODispatcherGroupsTest {
         return fds;
     }
 
+    // connects count clients from a thread pinned to cpu, whose SYNs loopback processes on that CPU
+    private static long[] connectFromCpu(int port, int cpu, int count) {
+        final long[][] result = new long[1][];
+        final Throwable[] failure = new Throwable[1];
+        final Thread thread = new Thread(() -> {
+            try {
+                Assert.assertEquals(0, Os.setCurrentThreadCpus(new int[]{cpu}));
+                result[0] = connect(port, count);
+            } catch (Throwable th) {
+                failure[0] = th;
+            }
+        });
+        thread.start();
+        try {
+            thread.join();
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
+        }
+        if (failure[0] != null) {
+            throw new AssertionError(failure[0]);
+        }
+        return result[0];
+    }
+
     private static void free(ObjList<IODispatcher<TestContext>> dispatchers) {
         for (int i = 0, n = dispatchers.size(); i < n; i++) {
             Misc.free(dispatchers.getQuick(i));
@@ -355,6 +550,36 @@ public class IODispatcherGroupsTest {
             dispatcher.run();
             dispatcher.processIOQueue(TestContext.PROCESSOR);
         }
+    }
+
+    // steering with groups on CPUs 0 and 1, over a fake receive layout whose interface interrupts
+    // both CPUs once, which passes the layout check
+    private IODispatcherConfiguration steeringConfiguration(int port, int limit) {
+        final SysfsFixture fixture = new SysfsFixture(temp.getRoot().toPath());
+        fixture.cpus(new int[]{0, 0}, 2);
+        fixture.nic("eth0", 2).irq("eth0", 100, "0").irq("eth0", 101, "1");
+        final CpuTopology topology = new CpuTopology(fixture.getProcRoot(), fixture.getSysRoot());
+        return new DefaultIODispatcherConfiguration() {
+            @Override
+            public int getBindPort() {
+                return port;
+            }
+
+            @Override
+            public CpuTopology getConnectionSteeringTopology() {
+                return topology;
+            }
+
+            @Override
+            public int getLimit() {
+                return limit;
+            }
+
+            @Override
+            public boolean isConnectionSteeringEnabled() {
+                return true;
+            }
+        };
     }
 
     private static class TestContext extends IOContext<TestContext> {

@@ -25,6 +25,7 @@
 package io.questdb.network;
 
 import io.questdb.log.Log;
+import io.questdb.std.LongList;
 import io.questdb.std.str.LPSZ;
 
 public interface NetworkFacade {
@@ -32,6 +33,15 @@ public interface NetworkFacade {
     void abortAccept(long fd);
 
     long accept(long serverFd);
+
+    /**
+     * Attaches a classic BPF program, given as packed {@code struct sock_filter} instructions, that
+     * picks the listener of the {@code SO_REUSEPORT} group {@code fd} belongs to. It replaces the
+     * group's previous program. Linux only.
+     *
+     * @return 0, or the errno of the failure
+     */
+    int attachReuseportProgram(long fd, LongList program);
 
     boolean bindTcp(long fd, int address, int port);
 
@@ -57,6 +67,14 @@ public interface NetworkFacade {
 
     int connectAddrInfo(long fd, long pAddrInfo);
 
+    /**
+     * Detaches the program of the {@code SO_REUSEPORT} group {@code fd} belongs to. Linux 5.3 or
+     * later.
+     *
+     * @return 0, or the errno of the failure
+     */
+    int detachReuseportProgram(long fd);
+
     int errno();
 
     void freeAddrInfo(long pAddrInfo);
@@ -81,7 +99,13 @@ public interface NetworkFacade {
 
     boolean join(long fd, int bindIPv4, int groupIPv4);
 
-    void listen(long serverFd, int backlog);
+    /**
+     * Starts listening on a bound socket.
+     *
+     * @return 0, or the errno of the failure. On Windows the call can't report a failure and
+     * returns 0.
+     */
+    int listen(long serverFd, int backlog);
 
     long msgHeaders(int msgBufferSize, int msgCount);
 

@@ -141,6 +141,20 @@ public final class CpuTopology {
     }
 
     /**
+     * The root of the {@code /proc} tree this topology reads.
+     */
+    public Path getProcRoot() {
+        return procRoot;
+    }
+
+    /**
+     * The root of the {@code /sys} tree this topology reads.
+     */
+    public Path getSysRoot() {
+        return sysRoot;
+    }
+
+    /**
      * Reads the topology and runs the layout checks for a network pool of {@code workerCount}
      * workers, returning the per-socket CPU lists or the reason for refusing them.
      */
@@ -156,7 +170,7 @@ public final class CpuTopology {
         }
         final int[] online;
         try {
-            online = readOnlineCpus();
+            online = readOnlineCpuList();
         } catch (IOException | IllegalArgumentException e) {
             return Layout.refused("could not read the online CPUs: " + e.getMessage(), true, null);
         }
@@ -178,6 +192,37 @@ public final class CpuTopology {
             nodes[i] = readNode(dir);
         }
         return checkLayout(cpus, sockets, nodes, workerCount);
+    }
+
+    /**
+     * Reads every online CPU and its socket, whether this process may use it or not, and the number
+     * of possible CPU numbers. Connection steering maps the CPUs that process a socket's interrupts,
+     * which can lie outside the process's allowed CPUs.
+     *
+     * @throws IOException if a list or a socket id can't be read
+     */
+    public OnlineCpus readOnlineCpus() throws IOException {
+        final int[] online;
+        final int[] possible;
+        try {
+            online = parseCpuList(java.nio.file.Files.readString(sysRoot.resolve("devices/system/cpu/online")));
+            possible = parseCpuList(java.nio.file.Files.readString(sysRoot.resolve("devices/system/cpu/possible")));
+        } catch (IllegalArgumentException e) {
+            throw new IOException(e.getMessage());
+        }
+        final Path cpuDir = sysRoot.resolve("devices/system/cpu");
+        final int[] sockets = new int[online.length];
+        for (int i = 0; i < online.length; i++) {
+            sockets[i] = readSocket(cpuDir.resolve("cpu" + online[i]));
+            if (sockets[i] < 0) {
+                throw new IOException("CPU " + online[i] + " has no valid socket id");
+            }
+        }
+        int possibleCount = possible.length > 0 ? possible[possible.length - 1] + 1 : 0;
+        if (online.length > 0) {
+            possibleCount = Math.max(possibleCount, online[online.length - 1] + 1);
+        }
+        return new OnlineCpus(online, sockets, possibleCount);
     }
 
     // sockets[i] and nodes[i] are the socket and the NUMA node of allowed CPU allowed[i], with
@@ -369,7 +414,7 @@ public final class CpuTopology {
         throw new IOException("no " + ALLOWED_LIST_PREFIX + " line in " + status);
     }
 
-    private int[] readOnlineCpus() throws IOException {
+    private int[] readOnlineCpuList() throws IOException {
         return parseCpuList(java.nio.file.Files.readString(sysRoot.resolve("devices/system/cpu/online")));
     }
 
@@ -441,6 +486,46 @@ public final class CpuTopology {
 
         private static Layout refused(String refusal, boolean isWarning, @Nullable String description) {
             return new Layout(null, null, refusal, isWarning, description);
+        }
+    }
+
+    /**
+     * The online CPUs in ascending order with the socket of each, and the number of possible CPU
+     * numbers, which covers every CPU that can come online.
+     */
+    public static final class OnlineCpus {
+        private final int[] cpus;
+        private final int possibleCount;
+        private final int[] sockets;
+
+        public OnlineCpus(int[] cpus, int[] sockets, int possibleCount) {
+            this.cpus = cpus;
+            this.sockets = sockets;
+            this.possibleCount = possibleCount;
+        }
+
+        public int[] getCpus() {
+            return cpus;
+        }
+
+        public int getPossibleCount() {
+            return possibleCount;
+        }
+
+        /**
+         * The socket of each CPU of {@link #getCpus()}, at the same index.
+         */
+        public int[] getSockets() {
+            return sockets;
+        }
+
+        /**
+         * True when both name the same CPUs on the same sockets.
+         */
+        public boolean isSameAs(OnlineCpus other) {
+            return possibleCount == other.possibleCount
+                    && Arrays.equals(cpus, other.cpus)
+                    && Arrays.equals(sockets, other.sockets);
         }
     }
 }
