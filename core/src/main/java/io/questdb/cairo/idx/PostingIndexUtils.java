@@ -431,6 +431,15 @@ public final class PostingIndexUtils {
         return path.$();
     }
 
+    /**
+     * The posting column name txn {@link #scanSealedFiles} reports for a cover data file of the given name txn. The
+     * file name writes no name txn as 0, so name txn 0 reads back as no name txn: compare a scanned cover data file
+     * against this, not against the column's name txn.
+     */
+    public static long coverFilePostingColumnNameTxn(long postingColumnNameTxn) {
+        return postingColumnNameTxn == 0 ? COLUMN_NAME_TXN_NONE : postingColumnNameTxn;
+    }
+
     public static LPSZ coverInfoFileName(Path path, CharSequence name, long postingColumnNameTxn) {
         path.concat(name).put(".pci");
         if (postingColumnNameTxn > COLUMN_NAME_TXN_NONE) {
@@ -2224,6 +2233,8 @@ public final class PostingIndexUtils {
     public static final class SealedFileRemover implements SealedFileVisitor {
         private final FindVisitor dirEntryVisitor = this::onDirEntry;
         private CharSequence columnName;
+        // The posting column name txn as the scan reports it for a cover data file.
+        private long coverFilePostingColumnNameTxn;
         private FilesFacade ff;
         private StringSink fileName;
         private boolean isAnyFailed;
@@ -2233,7 +2244,7 @@ public final class PostingIndexUtils {
 
         @Override
         public void onCoverDataFile(int includeIdx, long filePostingColumnNameTxn, long coveredColumnNameTxn, long sealTxn) {
-            if (filePostingColumnNameTxn != postingColumnNameTxn) {
+            if (filePostingColumnNameTxn != coverFilePostingColumnNameTxn) {
                 return;
             }
             LPSZ p = coverDataFileName(path.trimTo(pathTrimTo), columnName, includeIdx, filePostingColumnNameTxn, coveredColumnNameTxn, sealTxn);
@@ -2270,6 +2281,7 @@ public final class PostingIndexUtils {
             this.pathTrimTo = pathTrimTo;
             this.columnName = columnName;
             this.postingColumnNameTxn = postingColumnNameTxn;
+            this.coverFilePostingColumnNameTxn = coverFilePostingColumnNameTxn(postingColumnNameTxn);
             this.isAnyFailed = false;
             try {
                 LPSZ pciFile = coverInfoFileName(path.trimTo(pathTrimTo), columnName, postingColumnNameTxn);
