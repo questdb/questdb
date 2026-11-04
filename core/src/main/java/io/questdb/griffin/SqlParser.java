@@ -8752,6 +8752,20 @@ public class SqlParser {
             SqlUtil.collectAllTableNames(m, tableNames, null);
             final boolean baseTableQueried = tableNames.contains(baseTableName);
             final int queriedTableCount = tableNames.size();
+            if (m.hasGroupingSets()) {
+                // A SAMPLE BY grouping sets clause has no GROUP keyword, so the error points at
+                // its first key instead, or at the SAMPLE BY interval when the only set is ().
+                final int position;
+                if (m.getGroupByPosition() > 0) {
+                    position = m.getGroupByPosition();
+                } else if (m.getGroupBy().size() > 0) {
+                    position = m.getGroupBy().getQuick(0).position;
+                } else {
+                    position = m.getSampleBy().position;
+                }
+                throw SqlException.position(position)
+                        .put("ROLLUP, CUBE and GROUPING SETS are not supported for materialized views");
+            }
             if (baseTableQueried) {
                 if (m.getSampleBy() != null && m.getSampleByOffset() == null) {
                     throw SqlException.position(m.getSampleBy().position + m.getSampleBy().token.length() + 1)

@@ -1840,32 +1840,6 @@ public final class QueryRunner {
      * fault oracle sees exactly one clean execution attempt. Errors (OOME, etc.)
      * propagate as elsewhere.
      */
-    /**
-     * Runs the query's reference rewrite on the primary at JIT-off into {@code rowsG} and
-     * reconciles it against the pivot {@code bJ}. Returns null when either side failed: the
-     * rewrite can reject a query that grouping sets accept, or the other way round, and neither
-     * says anything about the rows.
-     */
-    private Result runReferenceVariant(GeneratedQuery query, Outcome bJ) {
-        executionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-        Outcome reference = runOnce(query.referenceSql(), rowsG, primaryHasAnyParquet, query.deterministic());
-        if (bJ.failure != null || reference.failure != null) {
-            return null;
-        }
-        referenceAxisRuns++;
-        return reconcilePair(
-                query.sql(),
-                bJ,
-                reference,
-                rowsB,
-                rowsG,
-                query.deterministic(),
-                "grouping sets reference divergence",
-                "grouping sets",
-                "union all    "
-        );
-    }
-
     private Outcome runRaw(String sql, StringSink rows) {
         rows.clear();
         try (RecordCursorFactory factory = engine.select(sql, executionContext)) {
@@ -1938,6 +1912,32 @@ public final class QueryRunner {
         }
     }
 
+    /**
+     * Runs the query's reference rewrite on the primary at JIT-off into {@code rowsG} and
+     * reconciles it against the pivot {@code bJ}. Returns null when either side failed: the
+     * rewrite can reject a query that grouping sets accept, or the other way round, and neither
+     * says anything about the rows.
+     */
+    private Result runReferenceVariant(GeneratedQuery query, Outcome bJ) {
+        executionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+        Outcome reference = runOnce(query.referenceSql(), rowsG, primaryHasAnyParquet, query.deterministic());
+        if (bJ.failure != null || reference.failure != null) {
+            return null;
+        }
+        referenceAxisRuns++;
+        return reconcilePair(
+                query.sql(),
+                bJ,
+                reference,
+                rowsB,
+                rowsG,
+                query.deterministic(),
+                "grouping sets reference divergence",
+                "grouping sets",
+                "union all    "
+        );
+    }
+
     private static final class CursorCheckException extends RuntimeException {
         // True when a cursor re-pass (toTop re-iteration / calculateSize recompute)
         // surfaced a per-row cast error (see isPerRowRuntimeError)
@@ -1980,15 +1980,17 @@ public final class QueryRunner {
             String exceptionMessage
     ) {
 
-        static Outcome error(Throwable t, String message, boolean usesParquet) {
+        static Outcome error (Throwable t, String message,boolean usesParquet){
             return new Outcome(0, false, false, false, false, usesParquet, false, EMPTY_FP_MASK, t, t.getClass().getSimpleName(), message);
         }
 
-        static Outcome ok(int rowsRead, boolean hasIndex, boolean hasPushedLimit, boolean hasEarlyExitGroupBy, boolean hasBlockingAggregation, boolean usesParquet) {
+        static Outcome ok ( int rowsRead, boolean hasIndex, boolean hasPushedLimit, boolean hasEarlyExitGroupBy,
+        boolean hasBlockingAggregation, boolean usesParquet){
             return new Outcome(rowsRead, hasIndex, hasPushedLimit, hasEarlyExitGroupBy, hasBlockingAggregation, usesParquet, false, EMPTY_FP_MASK, null, null, null);
         }
 
-        static Outcome ok(int rowsRead, boolean hasIndex, boolean usesParquet, boolean hasFusedHashJoin, boolean[] fpColumnMask) {
+        static Outcome ok ( int rowsRead, boolean hasIndex, boolean usesParquet, boolean hasFusedHashJoin,
+        boolean[] fpColumnMask){
             return new Outcome(rowsRead, hasIndex, false, false, false, usesParquet, hasFusedHashJoin, fpColumnMask, null, null, null);
         }
     }

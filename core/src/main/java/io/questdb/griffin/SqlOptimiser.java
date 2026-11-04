@@ -13408,6 +13408,11 @@ public class SqlOptimiser implements Mutable {
                         : baseModel.getGroupByPosition();
                 throw SqlException.$(groupByPosition, "GROUP BY cannot be used with WINDOW JOIN");
             }
+            if (isHorizonJoin && baseModel.hasGroupingSets()) {
+                // The HORIZON JOIN factories aggregate by the plain GROUP BY keys and have no
+                // per-set maps, so they would silently drop every rolled-up row.
+                throw SqlException.$(baseModel.getGroupByPosition(), "ROLLUP, CUBE and GROUPING SETS are not supported with HORIZON JOIN");
+            }
             groupByModel.moveGroupByFrom(baseModel);
             // group by should be implemented even if there are no aggregate functions
             // HORIZON JOIN handles GROUP BY internally, so explicit GROUP BY is validation-only
@@ -14653,13 +14658,16 @@ public class SqlOptimiser implements Mutable {
         }
 
         // First we want to see if this is an appropriate model to make this transformation.
+        // Grouping sets reference their keys by GROUP BY node, so lifting a key out of the
+        // GROUP BY would leave the sets pointing at a key the factory no longer has.
         final IQueryModel nestedModel = model.getNestedModel();
         if (nestedModel != null
                 && model.getSelectModelType() == IQueryModel.SELECT_MODEL_VIRTUAL
                 && nestedModel.getSelectModelType() == IQueryModel.SELECT_MODEL_GROUP_BY
                 && nestedModel.getJoinModels().size() == 1
                 && nestedModel.getUnionModel() == null
-                && nestedModel.getSampleBy() == null) {
+                && nestedModel.getSampleBy() == null
+                && !nestedModel.hasGroupingSets()) {
             trivialExpressions.clear();
             trivialExpressionCandidates.clear();
 

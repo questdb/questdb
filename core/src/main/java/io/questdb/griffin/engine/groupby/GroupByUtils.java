@@ -231,7 +231,10 @@ public class GroupByUtils {
                 if (!hasNoneMixed) {
                     int aggregateCount = 0;
                     for (int i = 0, n = outerProjectionFunctions.size(); i < n; i++) {
-                        if (outerProjectionFunctions.getQuick(i) instanceof GroupByFunction) {
+                        // GROUPING() columns are fill keys, so SqlCodeGenerator.generateFill
+                        // assigns them no fill value.
+                        final Function function = outerProjectionFunctions.getQuick(i);
+                        if (function instanceof GroupByFunction && !(function instanceof GroupingFunction)) {
                             aggregateCount++;
                         }
                     }
@@ -280,7 +283,8 @@ public class GroupByUtils {
                         } else if (groupByFunc instanceof SparklineGroupByFunction sparklineFunc) {
                             sparklineFunc.validateScanDirection(isBaseTimestampAscending, node.position);
                         }
-                        if (fillCount > 0) {
+                        // GROUPING() columns are fill keys and take no fill value.
+                        if (fillCount > 0 && !(groupByFunc instanceof GroupingFunction)) {
                             // 0-based index of the just-added aggregate. The Math.min clamp
                             // below covers only the single-fill broadcast case (FILL(NULL)
                             // applied to N aggregates -- every iteration lands on fill[0]).
@@ -472,7 +476,9 @@ public class GroupByUtils {
             // expressions, so every key matches a column of the group-by model.
             assert isFound : "grouping key does not match a key expression: " + key.token;
         }
-        for (int i = 0, n = innerProjectionFunctions.size(); i < n; i++) {
+        // Only the model's own columns: SqlCodeGenerator.addGroupingSetFillKey appends a hidden
+        // GROUPING_ID() whose key positions it has already set.
+        for (int i = 0, n = model.getColumns().size(); i < n; i++) {
             Function function = innerProjectionFunctions.getQuick(i);
             if (function instanceof GroupingFunction groupingFunction) {
                 IntList argColumnIndices = groupingFunction.getArgColumnIndices();

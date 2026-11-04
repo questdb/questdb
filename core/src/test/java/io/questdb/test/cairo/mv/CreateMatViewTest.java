@@ -746,6 +746,34 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewGroupingSetsRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            final String message = "ROLLUP, CUBE and GROUPING SETS are not supported for materialized views";
+            final String[] queries = {
+                    "select ts, k, sum(v) s from " + TABLE1 + " sample by 1d rollup(k)",
+                    "select ts, k, sum(v) s from " + TABLE1 + " sample by 1d grouping sets ((k), ())",
+                    "select ts, sum(v) s from " + TABLE1 + " sample by 1d grouping sets (())",
+                    "select timestamp_floor('1d', ts) ts, k, sum(v) s from " + TABLE1 + " group by timestamp_floor('1d', ts), rollup(k)",
+                    "select ts, k, s from (select ts, k, sum(v) s from " + TABLE1 + " sample by 1d cube(k))",
+                    "with t as (select ts, k, sum(v) s from " + TABLE1 + " sample by 1d rollup(k)) select ts, k, s from t",
+            };
+            final String[] errorTokens = {"k)", "(k)", "1d", "group by", "k))", "k))"};
+            for (int i = 0; i < queries.length; i++) {
+                final String sql = "create materialized view test as (" + queries[i] + ") partition by day";
+                int position = sql.indexOf(errorTokens[i]);
+                if (errorTokens[i].startsWith("(")) {
+                    position++;
+                }
+                assertQuery(sql)
+                        .noLeakCheck()
+                        .fails(position, message);
+                assertNull(getMatViewDefinition("test"));
+            }
+        });
+    }
+
+    @Test
     public void testCreateMatViewInvalidColumn() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);

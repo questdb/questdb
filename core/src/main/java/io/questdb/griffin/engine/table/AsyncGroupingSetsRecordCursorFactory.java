@@ -108,7 +108,6 @@ public class AsyncGroupingSetsRecordCursorFactory extends AbstractRecordCursorFa
             this.recordFunctions = recordFunctions;
             this.workerCount = workerCount;
             this.keyColumnCount = keyColumnIndices.size();
-            initGroupingFunctions(groupByFunctions, perWorkerGroupByFunctions, groupingSets, keyColumnIndices);
             final AsyncGroupingSetsAtom atom = new AsyncGroupingSetsAtom(
                     asm,
                     configuration,
@@ -138,6 +137,9 @@ public class AsyncGroupingSetsRecordCursorFactory extends AbstractRecordCursorFa
                     base.getMetadata().getColumnCount(),
                     keyColumnCount
             );
+            // Validates GROUPING() arguments, so it runs only after the atom owns the key and
+            // per-worker functions: close() then frees them when the validation throws.
+            initGroupingFunctions(groupByFunctions, perWorkerGroupByFunctions, groupingSets, keyColumnIndices);
         } catch (Throwable th) {
             Misc.free(this, th);
             throw th;
