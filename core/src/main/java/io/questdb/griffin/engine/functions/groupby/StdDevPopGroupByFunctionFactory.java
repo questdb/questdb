@@ -55,7 +55,7 @@ public class StdDevPopGroupByFunctionFactory implements FunctionFactory {
         return new StdDevPopGroupByFunction(args.getQuick(0));
     }
 
-    private static class StdDevPopGroupByFunction extends AbstractStdDevGroupByFunction {
+    static class StdDevPopGroupByFunction extends AbstractStdDevGroupByFunction {
 
         public StdDevPopGroupByFunction(@NotNull Function arg) {
             super(arg);

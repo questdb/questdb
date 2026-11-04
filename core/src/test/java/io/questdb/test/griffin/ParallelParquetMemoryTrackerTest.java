@@ -211,24 +211,7 @@ public class ParallelParquetMemoryTrackerTest extends AbstractCairoTest {
         // until the circuit breaker trips. Re-executing the same cached factory after a breach is
         // what makes the leak observable; a single execution hides it, because the first error
         // cancels the frame sequence.
-        //
-        // The owner defers to a worker on the reducer's slot-acquire latch only from the
-        // latch-gated steal branch, which it reaches only once a reduce queue is full. A parquet
-        // scan cuts on row-group boundaries, so the 50k-row partition at a 10k row group yields
-        // exactly five frames - far under the 32-deep ordered default and the 4096-deep unordered
-        // one. Both queues would then swallow every frame, the owner would drain them itself
-        // through the ungated gang-steal loop, and reducing the breaching frame on the owner path
-        // takes no per-worker slot, so the acquire-count precondition below would ride on a race.
-        // Cap both queues under the frame count. Every query below except the plain filter reduces
-        // on UnorderedPageFrameSequence, which carries a queue of its own; the plain filter reduces
-        // on the ordered one - hence both caps. On the ordered path the cap is a guarantee: the
-        // owner cannot publish every frame unless a worker has consumed, and so acquired a slot
-        // for, at least one. The unordered path frees the ring slot before its reducer acquires,
-        // so there the cap forces the gate in practice rather than by construction.
-        // CAIRO_SQL_PAGE_FRAME_MAX_ROWS does not help: it does not subdivide row groups.
         setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 1024 * 1024L);
-        setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 4);
-        setProperty(PropertyKey.CAIRO_UNORDERED_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 4);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
@@ -305,15 +288,7 @@ public class ParallelParquetMemoryTrackerTest extends AbstractCairoTest {
         // ParallelWindowJoinMemoryTrackerTest covers the window join's own sixteen reducers by name,
         // over both masters, for the same reason. The window-join row below overlaps its
         // FILTER_AND_AGGREGATE_PREVAILING row and is kept as the horizon joins' next-door neighbour.
-        //
-        // Both reduce queues are capped under the parquet master's frame count for the reason
-        // spelled out in testParallelGroupByOverParquetReleasesWorkerSlotsOnBreach: without it the
-        // owner never reaches the latch-gated steal branch and the acquire-count precondition
-        // rides on a race. The horizon joins reduce on UnorderedPageFrameSequence, the window join
-        // on the ordered one, so both caps are load-bearing here.
         setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 1024 * 1024L);
-        setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 4);
-        setProperty(PropertyKey.CAIRO_UNORDERED_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 4);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(

@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.qwp.udp;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.client.cutlass.qwp.client.QwpUdpSender;
@@ -664,6 +665,8 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
         // and keep ingesting the same data in a loop. So if some datagrams are dropped by the OS,
         // we can still assert that the data are eventually ingested correctly since the Sender will keep resending the same rows until the test finishes.
 
+        // The shipped row cap: the test default of 1,000 rows makes a durable commit every 18 datagrams
+        setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 500_000);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t_stress100k (tag SYMBOL, id LONG, val DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY WAL DEDUP UPSERT KEYS (timestamp, id)");
 
@@ -715,18 +718,12 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
                 } finally {
                     stop.set(true);
                     senderThread.join(10_000);
-                    drainThread.join(10_000);
+                    // runSerially() on this thread is outside the receiver's lock, so the receiver
+                    // must not close before the thread ends; it ends once the socket is drained
+                    drainThread.join();
 
                     if (senderThread.isAlive()) {
                         AssertionError leak = new AssertionError("sender thread did not stop");
-                        if (failure != null) {
-                            failure.addSuppressed(leak);
-                        } else {
-                            throw leak;
-                        }
-                    }
-                    if (drainThread.isAlive()) {
-                        AssertionError leak = new AssertionError("drain thread did not stop");
                         if (failure != null) {
                             failure.addSuppressed(leak);
                         } else {

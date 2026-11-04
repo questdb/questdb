@@ -710,11 +710,21 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
             execute("CREATE TABLE m AS (SELECT x::SYMBOL k FROM long_sequence(20))");
             execute("CREATE TABLE s AS (SELECT x::SYMBOL k, x AS v FROM long_sequence(20))");
             drainWalQueue();
-            assertQuery("SELECT count(*) FROM (SELECT m.k, s.v FROM m LEFT JOIN s ON k)")
-                    .noLeakCheck()
-                    .noRandomAccess()
-                    .expectSize()
-                    .returns("count\n20\n");
+            // The fused hash join GROUP BY factory takes this aggregate when it is enabled, so the
+            // test switches it off to keep the light hash outer join that it targets.
+            final boolean isHashJoinGroupByEnabled = sqlExecutionContext.isParallelHashJoinGroupByEnabled();
+            sqlExecutionContext.setParallelHashJoinGroupByEnabled(false);
+            try {
+                final String sql = "SELECT count(*) FROM (SELECT m.k, s.v FROM m LEFT JOIN s ON k)";
+                assertUsesFactory(sql, HashOuterJoinLightRecordCursorFactory.class);
+                assertQuery(sql)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("count\n20\n");
+            } finally {
+                sqlExecutionContext.setParallelHashJoinGroupByEnabled(isHashJoinGroupByEnabled);
+            }
         });
     }
 

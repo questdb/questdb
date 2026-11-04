@@ -71,7 +71,7 @@ public class CountDecimalGroupByFunctionFactory implements FunctionFactory {
         };
     }
 
-    private static class Decimal128Func extends AbstractCountGroupByFunction {
+    static class Decimal128Func extends AbstractCountGroupByFunction {
         private final Decimal128 decimal128 = new Decimal128();
 
         public Decimal128Func(@NotNull Function arg) {
@@ -102,7 +102,7 @@ public class CountDecimalGroupByFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class Decimal16Func extends AbstractCountGroupByFunction {
+    static class Decimal16Func extends AbstractCountGroupByFunction {
 
         public Decimal16Func(@NotNull Function arg) {
             super(arg);
@@ -127,7 +127,7 @@ public class CountDecimalGroupByFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class Decimal256Func extends AbstractCountGroupByFunction {
+    static class Decimal256Func extends AbstractCountGroupByFunction {
         private final Decimal256 decimal256 = new Decimal256();
 
         public Decimal256Func(@NotNull Function arg) {
@@ -158,7 +158,7 @@ public class CountDecimalGroupByFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class Decimal32Func extends AbstractCountGroupByFunction {
+    static class Decimal32Func extends AbstractCountGroupByFunction {
 
         public Decimal32Func(@NotNull Function arg) {
             super(arg);
@@ -183,7 +183,7 @@ public class CountDecimalGroupByFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class Decimal64Func extends AbstractCountGroupByFunction {
+    static class Decimal64Func extends AbstractCountGroupByFunction {
 
         public Decimal64Func(@NotNull Function arg) {
             super(arg);
@@ -208,7 +208,7 @@ public class CountDecimalGroupByFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class Decimal8Func extends AbstractCountGroupByFunction {
+    static class Decimal8Func extends AbstractCountGroupByFunction {
 
         public Decimal8Func(@NotNull Function arg) {
             super(arg);

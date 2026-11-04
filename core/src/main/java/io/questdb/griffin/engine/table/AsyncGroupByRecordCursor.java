@@ -257,7 +257,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
         int ownCount = 0;
         int reclaimed = 0;
         int total = 0;
-        int processedCount = 0; // used for work stealing decisions
+        int processedCount = 0; // positive completed-task count; the latch counts down from zero
 
         try {
             for (int shardIndex = 0; shardIndex < NUM_SHARDS; shardIndex++) {
@@ -285,13 +285,13 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                             shard.getCursor().longTopK(ownerList, longFunc);
                             ownCount++;
                             total++;
-                            processedCount = postAggregationDoneLatch.getCount();
+                            processedCount = -postAggregationDoneLatch.getCount();
                             break;
                         }
                         if (!ownerLoop.awaitProgress()) {
                             Os.pause();
                         }
-                        processedCount = postAggregationDoneLatch.getCount();
+                        processedCount = -postAggregationDoneLatch.getCount();
                     } else {
                         queue.get(cursor).of(
                                 postAggregationCircuitBreaker,
@@ -344,7 +344,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                     } else if (!ownerLoop.awaitProgressWhileDraining(isOwnerTripped)) {
                         Os.pause();
                     }
-                    processedCount = postAggregationDoneLatch.getCount();
+                    processedCount = -postAggregationDoneLatch.getCount();
                 }
             }
         }

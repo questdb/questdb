@@ -27,12 +27,14 @@ package io.questdb.test.cairo.mv;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.O3PartitionJob;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewTimerJob;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
@@ -53,7 +55,16 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class MatViewFuzzTest extends AbstractFuzzTest {
     private static final long SPIN_LOCK_TIMEOUT = 100_000_000;
+    // Month starts that follow the end of a year, of February in a common and a leap year, and of a 30-day month.
+    private static final ObjList<String> monthStarts = new ObjList<>(
+            "2022-01-01T00:00:00.000000Z",
+            "2022-03-01T00:00:00.000000Z",
+            "2024-03-01T00:00:00.000000Z",
+            "2022-05-01T00:00:00.000000Z"
+    );
     private static final String[] timestampTypes = new String[]{"timestamp", "timestamp_ns"};
+    // None of these time zones changes its UTC offset within two weeks of the monthStarts.
+    private static final ObjList<String> timeZones = new ObjList<>("Europe/Berlin", "Asia/Kolkata", "America/Sao_Paulo");
 
     @Override
     public void setUp() {
@@ -323,8 +334,12 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         final char[] units = {'y', 'M', 'w', 'd', 'h', 'm'};
         final char unit = units[rnd.nextInt(units.length)];
         final int interval = 1 + rnd.nextInt(3);
-        final String viewSql = "select min(c3), max(c3), ts from " + tableName + " sample by " + interval + unit;
-        testMvFuzz(rnd, tableName, mvName, viewSql);
+        final String viewSql = "select min(c3), max(c3), ts from " + tableName + " sample by " + interval + unit + randomAlignment(rnd);
+        // The first batch of rows crosses monthStart, and later batches start near it, where the offset or
+        // the time zone moves the start of a month or year bucket away from midnight on the 1st.
+        final long monthStart = MicrosFormatUtils.parseUTCTimestamp(monthStarts.getQuick(rnd.nextInt(monthStarts.size())));
+        final long start = monthStart - 4 * Micros.DAY_MICROS - 7 * Micros.HOUR_MICROS;
+        testMvFuzz(rnd, tableName, start, monthStart, mvName, viewSql);
     }
 
     @Test
@@ -370,6 +385,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                     errorCounter.incrementAndGet();
                 } finally {
                     Path.clearThreadLocals();
+                    Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
                     writesFinished.set(true);
                 }
             });
@@ -501,6 +517,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                     errorCounter.incrementAndGet();
                 } finally {
                     Path.clearThreadLocals();
+                    Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
                     writesFinished.set(true);
                 }
             });
@@ -518,6 +535,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                     errorCounter.incrementAndGet();
                 } finally {
                     Path.clearThreadLocals();
+                    Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
                 }
             });
             refresher.start();
@@ -555,6 +573,28 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         sink.clear();
         MicrosFormatUtils.appendDateTimeUSec(sink, start);
         execute("create materialized view " + mvName + " refresh every " + interval + intervalUnit + " " + (deferred ? "deferred" : "") + " start '" + sink + "' as (" + viewSql + ") partition by DAY");
+    }
+
+    // Returns an empty string, i.e. the default calendar alignment, or ALIGN TO CALENDAR with an optional
+    // time zone and an optional offset. With a month or year stride, a positive offset moves the bucket
+    // start past midnight on the 1st, and a negative offset moves it to the last day of the previous month,
+    // which is shorter than 31 days at the end of February or of a 30-day month.
+    private static String randomAlignment(Rnd rnd) {
+        if (rnd.nextInt(4) == 0) {
+            return "";
+        }
+        final StringBuilder sb = new StringBuilder(" align to calendar");
+        if (rnd.nextInt(3) == 0) {
+            sb.append(" time zone '").append(timeZones.getQuick(rnd.nextInt(timeZones.size()))).append('\'');
+        }
+        if (rnd.nextInt(4) > 0) {
+            final int hours = rnd.nextInt(24);
+            final int minutes = rnd.nextInt(60);
+            sb.append(" with offset '").append(rnd.nextBoolean() ? "-" : "")
+                    .append(hours < 10 ? "0" : "").append(hours).append(':')
+                    .append(minutes < 10 ? "0" : "").append(minutes).append('\'');
+        }
+        return sb.toString();
     }
 
     private ObjList<FuzzTransaction> createTransactionsAndMv(
@@ -910,6 +950,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                         LOG.error().$("Refresh job failed: ").$(throwable).$();
                     } finally {
                         Path.clearThreadLocals();
+                        Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
                         LOG.info().$("Refresh job stopped").$();
                     }
                 }, "refresh-job" + workerId
@@ -958,6 +999,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                         LOG.error().$("Refresh job failed: ").$(throwable).$();
                     } finally {
                         Path.clearThreadLocals();
+                        Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
                         LOG.info().$("Refresh job stopped").$();
                     }
                 }, "refresh-interval-job" + workerId
@@ -972,10 +1014,17 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     }
 
     private void testMvFuzz(Rnd rnd, String baseTableName, long start, String... mvNamesAndSqls) throws Exception {
+        testMvFuzz(rnd, baseTableName, start, start, mvNamesAndSqls);
+    }
+
+    // The first batch of transactions writes rows over 5 to 14 days from start. Later batches write rows
+    // over up to 2 days starting within a day of hotTs, so their incremental refreshes start at various
+    // points around hotTs and revisit buckets that an earlier refresh has already written.
+    private void testMvFuzz(Rnd rnd, String baseTableName, long start, long hotTs, String... mvNamesAndSqls) throws Exception {
         assertMemoryLeak(() -> {
             fuzzer.createInitialTableWal(baseTableName, timestampTypes[rnd.nextInt(10) % 2]);
 
-            for (int i = 0, n = mvNamesAndSqls.length / 2; i < n; i += 2) {
+            for (int i = 0, n = mvNamesAndSqls.length; i < n; i += 2) {
                 final String mvName = mvNamesAndSqls[i];
                 final String mvSql = mvNamesAndSqls[i + 1];
                 final boolean deferred = rnd.nextBoolean();
@@ -990,16 +1039,28 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
 
                 setFuzzParams(rnd, 0, 0);
 
-                ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(baseTableName, rnd, start);
-                ObjList<ObjList<FuzzTransaction>> fuzzTransactions = new ObjList<>();
-                fuzzTransactions.add(transactions);
-                fuzzer.applyManyWalParallel(
-                        fuzzTransactions,
-                        rnd,
-                        baseTableName,
-                        false,
-                        true
-                );
+                final int batchCount = 2 + rnd.nextInt(4);
+                for (int b = 0; b < batchCount; b++) {
+                    final ObjList<FuzzTransaction> transactions;
+                    if (b == 0) {
+                        transactions = fuzzer.generateTransactions(baseTableName, rnd, start);
+                    } else {
+                        // Let the refresh job catch up, so that the next batch gets refreshes of its own.
+                        drainWalAndMatViewQueues();
+                        final long lo = hotTs - Micros.DAY_MICROS + rnd.nextLong(2 * Micros.DAY_MICROS);
+                        final long hi = lo + Micros.HOUR_MICROS + rnd.nextLong(2 * Micros.DAY_MICROS);
+                        transactions = fuzzer.generateTransactions(baseTableName, rnd, lo, hi);
+                    }
+                    ObjList<ObjList<FuzzTransaction>> fuzzTransactions = new ObjList<>();
+                    fuzzTransactions.add(transactions);
+                    fuzzer.applyManyWalParallel(
+                            fuzzTransactions,
+                            rnd,
+                            baseTableName,
+                            false,
+                            true
+                    );
+                }
             } finally {
                 stopAndJoinJobs(stop, refreshJobs);
             }
@@ -1007,9 +1068,15 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             drainWalQueue();
 
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                for (int i = 0, n = mvNamesAndSqls.length / 2; i < n; i += 2) {
+                for (int i = 0, n = mvNamesAndSqls.length; i < n; i += 2) {
                     final String mvName = mvNamesAndSqls[i];
                     final String mvSql = mvNamesAndSqls[i + 1];
+                    LOG.info().$("asserting view ").$(mvName).$(" against ").$(mvSql).$();
+                    // A failed incremental refresh invalidates the view, e.g. on a row outside the replace range.
+                    assertQuery("select view_name, invalidation_reason from materialized_views where view_name = '" + mvName + "' and view_status = 'invalid';")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .returns("view_name\tinvalidation_reason\n");
                     TestUtils.assertSqlCursors(
                             compiler,
                             sqlExecutionContext,

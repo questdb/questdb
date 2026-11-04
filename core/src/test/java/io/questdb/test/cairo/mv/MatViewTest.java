@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.SecurityContext;
@@ -57,6 +58,7 @@ import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.wal.WalEventReader;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.griffin.RecordToRowCopierUtils;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -80,6 +82,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.CompositePartitionRandomiser;
 import io.questdb.test.TestTimestampType;
 import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
@@ -94,6 +97,7 @@ import org.junit.Test;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.cairo.TableUtils.DETACHED_DIR_MARKER;
 import static io.questdb.cairo.wal.WalUtils.*;
@@ -102,6 +106,7 @@ import static io.questdb.test.tools.TestUtils.generateRandom;
 
 
 public class MatViewTest extends AbstractCairoTest {
+    private static final String BASE_TABLE_NAME = "base_price";
     private final int rowsPerQuery;
     private final TestTimestampType timestampType;
 
@@ -127,6 +132,7 @@ public class MatViewTest extends AbstractCairoTest {
             setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, rowsPerQuery);
         }
         setProperty(PropertyKey.CAIRO_INACTIVE_READER_MAX_OPEN_PARTITIONS, 1);
+        enableCompositePartitionRandomisation(generateRandom(LOG));
     }
 
     @Test
@@ -619,7 +625,7 @@ public class MatViewTest extends AbstractCairoTest {
 
             // expect new limit
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                    "view_status, refresh_base_table_txn, base_table_txn, " +
+                    "view_status, " + txnColumns() + ", " +
                     "refresh_limit, refresh_limit_unit " +
                     "from materialized_views")
                     .noRandomAccess()
@@ -738,7 +744,7 @@ public class MatViewTest extends AbstractCairoTest {
 
             // expect no limit
             final String matViewsSql = "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                    "view_status, refresh_base_table_txn, base_table_txn, " +
+                    "view_status, " + txnColumns() + ", " +
                     "refresh_limit, refresh_limit_unit " +
                     "from materialized_views";
             assertQuery(matViewsSql)
@@ -855,7 +861,7 @@ public class MatViewTest extends AbstractCairoTest {
 
             // expect no refresh
             final String matViewsSql = "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                    "view_status, refresh_base_table_txn, base_table_txn, " +
+                    "view_status, " + txnColumns() + ", " +
                     "refresh_limit, refresh_limit_unit " +
                     "from materialized_views";
             assertQuery(matViewsSql)
@@ -925,7 +931,7 @@ public class MatViewTest extends AbstractCairoTest {
             );
 
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                    "view_status, refresh_base_table_txn, base_table_txn, " +
+                    "view_status, " + txnColumns() + ", " +
                     "refresh_limit, refresh_limit_unit " +
                     "from materialized_views")
                     .noRandomAccess()
@@ -965,7 +971,7 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                    "view_status, refresh_period_hi, refresh_base_table_txn, base_table_txn, " +
+                    "view_status, refresh_period_hi, " + txnColumns() + ", " +
                     "period_length, period_length_unit, refresh_limit, refresh_limit_unit " +
                     "from materialized_views")
                     .noRandomAccess()
@@ -991,6 +997,13 @@ public class MatViewTest extends AbstractCairoTest {
         // it the view never caches its refresh intervals, so WalPurgeJob keeps every base table WAL
         // segment from the view's last refreshed txn onwards -- unbounded disk growth on the base
         // table, not on the view.
+        //
+        // The assertions below count the base table's transactions and name its WAL segment
+        // directory, neither of which survives the extra transaction and WAL writer the composite
+        // randomiser commits against that table.
+        disableCompositePartitionRandomisation();
+        // Keep the adaptive WAL purge floor moving despite the frozen test clock.
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
                     "create table base_price (" +
@@ -1044,10 +1057,13 @@ public class MatViewTest extends AbstractCairoTest {
 
             // the refresh intervals update timer must have cached the newly inserted intervals.
             // Ordering matters: drainQueues() never runs MatViewTimerJob, so this drain consumes the
-            // task the post-ALTER tick enqueued, by which time the base table sits at txn 4. Draining
-            // right after that tick would consume it at txn 1 and nothing re-enqueues it, so the
-            // assertions below would describe the pre-insert state instead.
-            Assert.assertEquals(4, viewState.getRefreshIntervalsBaseTxn());
+            // task the post-ALTER tick enqueued, by which time the base table sits at txn 4 (plus the
+            // content-neutral transactions the composite randomiser injects, which are subtracted back
+            // out here the way txnColumns() does it for SQL-level assertions). Draining right after that
+            // tick would consume it at txn 1 and nothing re-enqueues it, so the assertions below would
+            // describe the pre-insert state instead.
+            final int injectedTxn = CompositePartitionRandomiser.injectedTxnCount(engine, BASE_TABLE_NAME);
+            Assert.assertEquals(4 + injectedTxn, viewState.getRefreshIntervalsBaseTxn());
             final LongList expectedIntervals = new LongList();
             expectedIntervals.add(timestampType.getDriver().parseFloorLiteral("2024-09-11T12:01"), timestampType.getDriver().parseFloorLiteral("2024-09-11T12:02"));
             expectedIntervals.add(timestampType.getDriver().parseFloorLiteral("2024-09-12T03:01"), timestampType.getDriver().parseFloorLiteral("2024-09-12T23:02"));
@@ -1058,8 +1074,15 @@ public class MatViewTest extends AbstractCairoTest {
             Assert.assertNotNull(baseTableToken);
             try (Path path = new Path()) {
                 path.of(configuration.getDbRoot()).concat(baseTableToken).concat(WalUtils.WAL_NAME_BASE).put(1);
-                Assert.assertTrue(Utf8s.toString(path), Files.exists(path.$()));
+                // The composite randomiser opens and closes its own WAL writer on the base table, which
+                // releases wal1 to WalPurgeJob earlier than this test does, so with the randomiser on the
+                // segment can already be gone here. With it off the test's own pooled writer still holds
+                // wal1 open, and it has to be present, otherwise the assertion after the purge is vacuous.
+                if (injectedTxn == 0) {
+                    Assert.assertTrue(Utf8s.toString(path), Files.exists(path.$()));
+                }
 
+                takeSavePointIfAdaptive(baseTableToken);
                 engine.releaseInactiveTableSequencers();
                 drainPurgeJob();
 
@@ -1251,7 +1274,7 @@ public class MatViewTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("sym\tprice\tts\n");
             final String matViewsSql = "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                    "view_status, refresh_base_table_txn, base_table_txn, " +
+                    "view_status, " + txnColumns() + ", " +
                     "timer_time_zone, timer_start, timer_interval, timer_interval_unit " +
                     "from materialized_views";
             assertQuery(matViewsSql)
@@ -1321,7 +1344,7 @@ public class MatViewTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("sym\tprice\tts\n");
             final String matViewsSql = "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                    "view_status, refresh_base_table_txn, base_table_txn, " +
+                    "view_status, " + txnColumns() + ", " +
                     "timer_time_zone, timer_start, timer_interval, timer_interval_unit " +
                     "from materialized_views";
             assertQuery(matViewsSql)
@@ -1641,7 +1664,7 @@ public class MatViewTest extends AbstractCairoTest {
             );
 
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                    "view_status, refresh_base_table_txn, base_table_txn, " +
+                    "view_status, " + txnColumns() + ", " +
                     "timer_time_zone, timer_start, timer_interval, timer_interval_unit " +
                     "from materialized_views " +
                     "order by view_name")
@@ -1691,7 +1714,7 @@ public class MatViewTest extends AbstractCairoTest {
                     .returns("column\tsymbolCapacity\nsym\t1024\n");
 
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                    "view_status, refresh_base_table_txn, base_table_txn " +
+                    "view_status, " + txnColumns() + " " +
                     "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
@@ -1800,7 +1823,7 @@ public class MatViewTest extends AbstractCairoTest {
             );
 
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                    "view_status, refresh_base_table_txn, base_table_txn " +
+                    "view_status, " + txnColumns() + " " +
                     "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
@@ -1883,7 +1906,7 @@ public class MatViewTest extends AbstractCairoTest {
             );
 
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                    "view_status, refresh_base_table_txn, base_table_txn " +
+                    "view_status, " + txnColumns() + " " +
                     "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
@@ -2144,7 +2167,7 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                    "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
+                    "view_sql, view_status, " + txnColumns() + " " +
                     "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
@@ -2223,6 +2246,10 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testBaseTableRename1() throws Exception {
+        // The base table is renamed, dropped, swapped or has its WAL purged here, so the
+        // transaction the composite randomiser commits against it cannot be subtracted back
+        // out by a single per-table offset the way txnColumns() does.
+        disableCompositePartitionRandomisation();
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
                     "create table base_price (" +
@@ -2243,7 +2270,7 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                    "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
+                    "view_sql, view_status, " + txnColumns() + " " +
                     "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
@@ -2258,7 +2285,7 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                    "view_sql, view_status, invalidation_reason, refresh_base_table_txn, base_table_txn " +
+                    "view_sql, view_status, invalidation_reason, " + txnColumns() + " " +
                     "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
@@ -2279,7 +2306,7 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                    "view_sql, view_status, invalidation_reason, refresh_base_table_txn, base_table_txn " +
+                    "view_sql, view_status, invalidation_reason, " + txnColumns() + " " +
                     "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
@@ -2292,6 +2319,10 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testBaseTableRename2() throws Exception {
+        // The base table is renamed, dropped, swapped or has its WAL purged here, so the
+        // transaction the composite randomiser commits against it cannot be subtracted back
+        // out by a single per-table offset the way txnColumns() does.
+        disableCompositePartitionRandomisation();
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
                     "create table base_price (" +
@@ -2312,7 +2343,7 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                    "view_sql, view_status, invalidation_reason, refresh_base_table_txn, base_table_txn " +
+                    "view_sql, view_status, invalidation_reason, " + txnColumns() + " " +
                     "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
@@ -2325,7 +2356,7 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                    "view_sql, view_status, invalidation_reason, refresh_base_table_txn, base_table_txn " +
+                    "view_sql, view_status, invalidation_reason, " + txnColumns() + " " +
                     "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
@@ -2360,7 +2391,7 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                    "view_sql, view_status, invalidation_reason, refresh_base_table_txn, base_table_txn " +
+                    "view_sql, view_status, invalidation_reason, " + txnColumns() + " " +
                     "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
@@ -2373,6 +2404,10 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testBaseTableSwappedWithRename() throws Exception {
+        // The base table is renamed, dropped, swapped or has its WAL purged here, so the
+        // transaction the composite randomiser commits against it cannot be subtracted back
+        // out by a single per-table offset the way txnColumns() does.
+        disableCompositePartitionRandomisation();
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
                     "create table base_price (" +
@@ -2398,7 +2433,7 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                    "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
+                    "view_sql, view_status, " + txnColumns() + " " +
                     "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
@@ -2415,7 +2450,7 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                    "view_sql, view_status, invalidation_reason, refresh_base_table_txn, base_table_txn " +
+                    "view_sql, view_status, invalidation_reason, " + txnColumns() + " " +
                     "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
@@ -2521,6 +2556,10 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testBaseTableWalNotPurgedOnFullRefreshOfInvalidView() throws Exception {
+        // The base table is renamed, dropped, swapped or has its WAL purged here, so the
+        // transaction the composite randomiser commits against it cannot be subtracted back
+        // out by a single per-table offset the way txnColumns() does.
+        disableCompositePartitionRandomisation();
         setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 5);
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
@@ -2606,6 +2645,10 @@ public class MatViewTest extends AbstractCairoTest {
                             gbpusd\t1.323\t2024-09-10T12:00:00.000000Z
                             """));
 
+            // A full refresh reads base_price but does not write it, so close the writer and flush an
+            // adaptive save point over its applied tail before checking that the consumed WAL is reclaimed.
+            engine.releaseInactive();
+            takeSavePointIfAdaptive(baseTableToken);
             engine.releaseInactiveTableSequencers();
             drainPurgeJob();
 
@@ -2619,6 +2662,10 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testBaseTableWalNotPurgedOnInitialRefresh() throws Exception {
+        // The base table is renamed, dropped, swapped or has its WAL purged here, so the
+        // transaction the composite randomiser commits against it cannot be subtracted back
+        // out by a single per-table offset the way txnColumns() does.
+        disableCompositePartitionRandomisation();
         setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 5);
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
@@ -2688,6 +2735,10 @@ public class MatViewTest extends AbstractCairoTest {
                             gbpusd\t1.323\t2024-09-10T12:00:00.000000Z
                             """));
 
+            // A full refresh reads base_price but does not write it, so close the writer and flush an
+            // adaptive save point over its applied tail before checking that the consumed WAL is reclaimed.
+            engine.releaseInactive();
+            takeSavePointIfAdaptive(baseTableToken);
             engine.releaseInactiveTableSequencers();
             drainPurgeJob();
 
@@ -2701,6 +2752,10 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testBaseTableWalPurgedDespiteInvalidMatViewState() throws Exception {
+        // The base table is renamed, dropped, swapped or has its WAL purged here, so the
+        // transaction the composite randomiser commits against it cannot be subtracted back
+        // out by a single per-table offset the way txnColumns() does.
+        disableCompositePartitionRandomisation();
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
                     "create table base_price (" +
@@ -2747,6 +2802,9 @@ public class MatViewTest extends AbstractCairoTest {
                 path.of(configuration.getDbRoot()).concat(baseTableToken).concat(WalUtils.WAL_NAME_BASE).put(1);
                 Assert.assertTrue(Utf8s.toString(path), Files.exists(path.$()));
 
+                // With the frozen test clock, close the writer before the save point so its applied tail is covered.
+                engine.releaseInactive();
+                takeSavePointIfAdaptive(baseTableToken);
                 engine.releaseInactiveTableSequencers();
                 drainPurgeJob();
 
@@ -3022,7 +3080,7 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                    "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
+                    "view_sql, view_status, " + txnColumns() + " " +
                     "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
@@ -3070,7 +3128,7 @@ public class MatViewTest extends AbstractCairoTest {
                     .returns("sym\tprice\tts\n");
 
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                    "view_sql, view_status, invalidation_reason, refresh_base_table_txn, base_table_txn " +
+                    "view_sql, view_status, invalidation_reason, " + txnColumns() + " " +
                     "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
@@ -3317,7 +3375,7 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             final String matViewsSql = "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                    "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
+                    "view_sql, view_status, " + txnColumns() + " " +
                     "from materialized_views";
             assertQuery(matViewsSql)
                     .noRandomAccess()
@@ -3367,6 +3425,160 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFullRefreshAfterBaseColumnTypeChange() throws Exception {
+        assertFullRefreshAfterBaseColumnTypeChange("VARCHAR", "'2024-09-10T12:25:06.654321Z'", false);
+    }
+
+    @Test
+    public void testFullRefreshAfterBaseColumnTypeChangeRehydrated() throws Exception {
+        assertFullRefreshAfterBaseColumnTypeChange("VARCHAR", "'2024-09-10T12:25:06.654321Z'", true);
+    }
+
+    @Test
+    public void testFullRefreshAfterBaseColumnTypeChangeToDouble() throws Exception {
+        assertFullRefreshAfterBaseColumnTypeChange("DOUBLE", "1725971106654321.0", false);
+    }
+
+    @Test
+    public void testFullRefreshAfterBaseColumnTypeChangeToDoubleRehydrated() throws Exception {
+        assertFullRefreshAfterBaseColumnTypeChange("DOUBLE", "1725971106654321.0", true);
+    }
+
+    @Test
+    public void testFullRefreshAfterBaseColumnTypeChangeToSymbol() throws Exception {
+        assertFullRefreshAfterBaseColumnTypeChange("SYMBOL", "'2024-09-10T12:25:06.654321Z'", false);
+    }
+
+    @Test
+    public void testFullRefreshAfterBaseColumnTypeChangeToSymbolRehydrated() throws Exception {
+        assertFullRefreshAfterBaseColumnTypeChange("SYMBOL", "'2024-09-10T12:25:06.654321Z'", true);
+    }
+
+    @Test
+    public void testFullRefreshAfterBooleanBaseColumnTypeChangeToByte() throws Exception {
+        assertMemoryLeak(() -> {
+            // The record copiers store a BYTE into a BOOLEAN column as the raw byte, so any value
+            // other than 0 or 1 would read back as false. Refresh must keep rejecting the pair.
+            execute("CREATE TABLE base_price (sym VARCHAR, at BOOLEAN, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            createMatView("SELECT sym, last(at) AS at, ts FROM base_price SAMPLE BY 1h");
+            execute("INSERT INTO base_price VALUES ('gbpusd', true, '2024-09-10T12:01')");
+            drainQueues();
+            execute("ALTER TABLE base_price ALTER COLUMN at TYPE BYTE");
+            drainQueues();
+            execute("INSERT INTO base_price VALUES ('gbpusd', 5, '2024-09-10T13:01')");
+            drainQueues();
+            execute("REFRESH MATERIALIZED VIEW price_1h FULL");
+            drainQueues();
+            assertQuery("SELECT view_status, invalidation_reason FROM materialized_views")
+                    .noRandomAccess().noLeakCheck().returns("""
+                            view_status\tinvalidation_reason
+                            invalid\t[-1]: inconvertible types: BYTE -> BOOLEAN [from=at, to=at]
+                            """);
+        });
+    }
+
+    @Test
+    public void testFullRefreshAfterCharBaseColumnTypeChangeToLong() throws Exception {
+        assertMemoryLeak(() -> {
+            // CHAR -> VARCHAR -> LONG leaves the view column CHAR while the query returns CHAR, then VARCHAR, then LONG.
+            // Refresh copies the CHAR and VARCHAR results into the CHAR column. ColumnType.isConvertibleFrom()
+            // admits LONG -> CHAR, but the record copiers write nothing for it, so refresh must reject it.
+            execute("CREATE TABLE base_price (sym VARCHAR, c CHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            createMatView("SELECT sym, last(c) AS c, ts FROM base_price SAMPLE BY 1h");
+            execute("INSERT INTO base_price VALUES ('gbpusd', '7', '2024-09-10T12:01')");
+            drainQueues();
+            assertQuery("SELECT view_status, invalidation_reason FROM materialized_views")
+                    .noRandomAccess().noLeakCheck().returns("""
+                            view_status\tinvalidation_reason
+                            valid\t
+                            """);
+            assertQuery("price_1h ORDER BY ts, sym").timestamp("ts").expectSize().noLeakCheck().returns("""
+                    sym\tc\tts
+                    gbpusd\t7\t2024-09-10T12:00:00.000000Z
+                    """);
+            execute("ALTER TABLE base_price ALTER COLUMN c TYPE VARCHAR");
+            drainQueues();
+            execute("REFRESH MATERIALIZED VIEW price_1h FULL");
+            drainQueues();
+            assertQuery("SELECT view_status, invalidation_reason FROM materialized_views")
+                    .noRandomAccess().noLeakCheck().returns("""
+                            view_status\tinvalidation_reason
+                            valid\t
+                            """);
+            assertQuery("price_1h ORDER BY ts, sym").timestamp("ts").expectSize().noLeakCheck().returns("""
+                    sym\tc\tts
+                    gbpusd\t7\t2024-09-10T12:00:00.000000Z
+                    """);
+            execute("ALTER TABLE base_price ALTER COLUMN c TYPE LONG");
+            drainQueues();
+            execute("REFRESH MATERIALIZED VIEW price_1h FULL");
+            drainQueues();
+            assertQuery("SELECT view_status, invalidation_reason FROM materialized_views")
+                    .noRandomAccess().noLeakCheck().returns("""
+                            view_status\tinvalidation_reason
+                            invalid\t[-1]: inconvertible types: LONG -> CHAR [from=c, to=c]
+                            """);
+        });
+    }
+
+    @Test
+    public void testFullRefreshAfterDateBaseColumnTypeChangeToDouble() throws Exception {
+        assertMemoryLeak(() -> assertFullRefreshAfterTemporalBaseColumnTypeChangeToDouble("DATE", "2024-09-10T12:01:02.123Z"));
+    }
+
+    @Test
+    public void testFullRefreshAfterIncompatibleBaseColumnTypeChange() throws Exception {
+        assertFullRefreshAfterIncompatibleBaseColumnTypeChange(false);
+    }
+
+    @Test
+    public void testFullRefreshAfterIncompatibleBaseColumnTypeChangeRehydrated() throws Exception {
+        assertFullRefreshAfterIncompatibleBaseColumnTypeChange(true);
+    }
+
+    @Test
+    public void testFullRefreshAfterLongBaseColumnTypeChangeToSymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            Assert.assertFalse(RecordToRowCopierUtils.isCopierConvertible(ColumnType.SYMBOL, ColumnType.LONG));
+            execute("CREATE TABLE base_price (sym VARCHAR, at LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            createMatView("SELECT sym, last(at) AS at, ts FROM base_price SAMPLE BY 1h");
+            execute("INSERT INTO base_price VALUES ('gbpusd', 42, '2024-09-10T12:01')");
+            drainQueues();
+            execute("ALTER TABLE base_price ALTER COLUMN at TYPE SYMBOL");
+            drainQueues();
+            execute("REFRESH MATERIALIZED VIEW price_1h FULL");
+            drainQueues();
+            assertQuery("SELECT view_status, invalidation_reason FROM materialized_views")
+                    .noRandomAccess().noLeakCheck().returns("""
+                            view_status\tinvalidation_reason
+                            invalid\t[-1]: inconvertible types: SYMBOL -> LONG [from=at, to=at]
+                            """);
+        });
+    }
+
+    @Test
+    public void testFullRefreshAfterTimestampNsBaseColumnTypeChangeToDouble() throws Exception {
+        assertMemoryLeak(() -> {
+            // The nanosecond values are multiples of 256, so the DOUBLE column holds them exactly.
+            assertFullRefreshAfterTemporalBaseColumnTypeChangeToDouble("TIMESTAMP_NS", "2024-09-10T12:01:02.123456768Z");
+
+            // Incremental refresh converts a newly inserted DOUBLE as well.
+            execute("INSERT INTO base_price VALUES ('gbpusd', 1725971106654321152.0, '2024-09-10T12:30')");
+            drainQueues();
+            assertQuery("SELECT view_status, invalidation_reason FROM materialized_views")
+                    .noRandomAccess().noLeakCheck().returns("""
+                            view_status\tinvalidation_reason
+                            valid\t
+                            """);
+            assertQuery("price_1h ORDER BY ts, sym").timestamp("ts").expectSize().noLeakCheck().returns("""
+                    sym\tat\tts
+                    gbpusd\t2024-09-10T12:25:06.654321152Z\t2024-09-10T12:00:00.000000Z
+                    null\t\t2024-09-10T12:00:00.000000Z
+                    """);
+        });
+    }
+
+    @Test
     public void testFullRefreshDroppedBaseColumn() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
@@ -3388,7 +3600,7 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             final String matViewsSql = "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                    "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
+                    "view_sql, view_status, " + txnColumns() + " " +
                     "from materialized_views";
             assertQuery(matViewsSql)
                     .noRandomAccess()
@@ -3454,7 +3666,7 @@ public class MatViewTest extends AbstractCairoTest {
 
             // The view is expected to be invalid due to npe() in where clause.
             final String matViewsSql = "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                    "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
+                    "view_sql, view_status, " + txnColumns() + " " +
                     "from materialized_views";
             assertQuery(matViewsSql)
                     .noRandomAccess()
@@ -3493,7 +3705,7 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             final String matViewsSql = "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                    "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
+                    "view_sql, view_status, " + txnColumns() + " " +
                     "from materialized_views";
             assertQuery(matViewsSql)
                     .noRandomAccess()
@@ -3579,7 +3791,7 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                    "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
+                    "view_sql, view_status, " + txnColumns() + " " +
                     "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
@@ -3718,6 +3930,10 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testHydrateTruncateScanThrowStillSchedulesRefresh() throws Exception {
+        // The base table is renamed, dropped, swapped or has its WAL purged here, so the
+        // transaction the composite randomiser commits against it cannot be subtracted back
+        // out by a single per-table offset the way txnColumns() does.
+        disableCompositePartitionRandomisation();
         // Verify that a missing/purged WAL file encountered during the hydrate-path truncate scan
         // does not prevent the mat-view from being scheduled for incremental refresh. The scan
         // helper lets a CairoException escape, which the outer loadMatViewIntoStore catch swallows,
@@ -3878,7 +4094,7 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             // First refresh consumed base txn 1 and completed the 1999-12-31 period.
-            assertQuery("select refresh_base_table_txn from materialized_views where view_name = 'price_1h'")
+            assertQuery("select " + refreshTxnColumn() + " from materialized_views where view_name = 'price_1h'")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("refresh_base_table_txn\n1\n");
@@ -3901,7 +4117,7 @@ public class MatViewTest extends AbstractCairoTest {
                                     gbpusd\t1.32\t1999-12-31T00:00:00.000000Z
                                     """));
             // ...but the base txn watermark advanced to 2, committed via the no-rows path.
-            assertQuery("select view_status, refresh_base_table_txn from materialized_views where view_name = 'price_1h'")
+            assertQuery("select view_status, " + refreshTxnColumn() + " from materialized_views where view_name = 'price_1h'")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
@@ -3912,7 +4128,227 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIncrementalRefreshMonthAndYearStrideWithPositiveOffset() throws Exception {
+        // Regression test for #7769 and #7772. A positive offset moves bucket starts past the start of their
+        // month or year. The refresh interval iterator used to round the lower bound of the new rows up to the
+        // bucket start in their month, skipping rows that come before it, so the incremental refresh missed them.
+        // Such a refresh could also find no intervals to query, leaking the view's query factory and leaving the
+        // view 'refreshing'. Each insert below lands right before a bucket start of one of the views.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (price double, ts #TIMESTAMP) timestamp(ts) partition by DAY WAL"
+            );
+            final String[] strides = {"1M", "3M", "1y"};
+            for (String stride : strides) {
+                execute(
+                        "create materialized view price_" + stride + " as (" +
+                                "select ts, count() c, sum(price) s from base_price sample by " + stride +
+                                " align to calendar with offset '10:00'" +
+                                ") partition by year"
+                );
+            }
+            execute("insert into base_price(price, ts) values (1.0, '2024-01-15T08:00')");
+            drainQueues();
+            execute("insert into base_price(price, ts) values (2.0, '2024-02-01T06:00')");
+            drainQueues();
+            execute("insert into base_price(price, ts) values (4.0, '2024-04-01T06:00')");
+            drainQueues();
+            execute("insert into base_price(price, ts) values (8.0, '2025-01-01T06:00')");
+            drainQueues();
+
+            final String[] expected = {
+                    """
+                            ts\tc\ts
+                            2024-01-01T10:00:00.000000Z\t2\t3.0
+                            2024-03-01T10:00:00.000000Z\t1\t4.0
+                            2024-12-01T10:00:00.000000Z\t1\t8.0
+                            """,
+                    """
+                            ts\tc\ts
+                            2024-01-01T10:00:00.000000Z\t3\t7.0
+                            2024-10-01T10:00:00.000000Z\t1\t8.0
+                            """,
+                    """
+                            ts\tc\ts
+                            2024-01-01T10:00:00.000000Z\t4\t15.0
+                            """
+            };
+            for (int i = 0; i < strides.length; i++) {
+                assertQuery("price_" + strides[i])
+                        .timestamp("ts")
+                        .expectSize()
+                        .noLeakCheck()
+                        .returns(replaceExpectedTimestamp(expected[i]));
+                // the view must match its query run over the base table
+                assertQuery("select ts, count() c, sum(price) s from base_price sample by " + strides[i] + " align to calendar with offset '10:00'")
+                        .timestamp("ts")
+                        .inferRandomAccess()
+                        .sizeMayVary()
+                        .noLeakCheck()
+                        .returns(replaceExpectedTimestamp(expected[i]));
+            }
+            assertQuery("select view_name, view_status, " + txnColumns() + " from materialized_views order by view_name")
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_status\trefresh_base_table_txn\tbase_table_txn
+                            price_1M\tvalid\t4\t4
+                            price_1y\tvalid\t4\t4
+                            price_3M\tvalid\t4\t4
+                            """);
+        });
+    }
+
+    @Test
+    public void testIncrementalRefreshMonthAndYearStrideWithTimeZoneAndOffset() throws Exception {
+        // Regression test for #7769 and #7798 on views with a time zone that has no fixed offset, which
+        // refresh through TimeZoneIntervalIterator rather than FixedOffsetIntervalIterator. The Kolkata views
+        // start their buckets at 10:00 local time; most of their rows land on the 1st of a month before 10:00,
+        // so they belong to the bucket that covers the end of the previous month, which the incremental refresh
+        // must rewrite. The Berlin view starts its buckets at 23:00 local time on the last day of the previous
+        // month, on both sides of the DST switch. Each row commits and refreshes on its own. Each row that lands
+        // before the bucket start in its month comes after every row of its bucket that lands after the bucket
+        // start in its month. Otherwise, the refresh of such a later row would recompute the bucket and hide a
+        // row that an earlier refresh missed.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE base_price (price DOUBLE, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL"
+            );
+            final String[] viewNames = {"kolkata_1M", "kolkata_3M", "kolkata_1y", "berlin_1M"};
+            final String[] viewQueries = {
+                    "SELECT ts, count() c, sum(price) s FROM base_price SAMPLE BY 1M ALIGN TO CALENDAR TIME ZONE 'Asia/Kolkata' WITH OFFSET '10:00'",
+                    "SELECT ts, count() c, sum(price) s FROM base_price SAMPLE BY 3M ALIGN TO CALENDAR TIME ZONE 'Asia/Kolkata' WITH OFFSET '10:00'",
+                    "SELECT ts, count() c, sum(price) s FROM base_price SAMPLE BY 1y ALIGN TO CALENDAR TIME ZONE 'Asia/Kolkata' WITH OFFSET '10:00'",
+                    "SELECT ts, count() c, sum(price) s FROM base_price SAMPLE BY 1M ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' WITH OFFSET '-01:00'"
+            };
+            for (int i = 0; i < viewNames.length; i++) {
+                execute("CREATE MATERIALIZED VIEW " + viewNames[i] + " AS (" + viewQueries[i] + ") PARTITION BY YEAR");
+            }
+            // Comments give the local time in Kolkata, then in Berlin.
+            final String[] rows = {
+                    "(1.0, '2024-03-10T12:00')", // 03-10T17:30, 03-10T13:00 CET
+                    "(2.0, '2024-04-30T21:45')", // 05-01T03:15, 04-30T23:45 CEST
+                    "(4.0, '2024-04-30T20:00')", // 05-01T01:30, 04-30T22:00 CEST
+                    "(8.0, '2024-01-15T08:00')", // 01-15T13:30, 01-15T09:00 CET
+                    "(16.0, '2024-02-01T01:00')", // 02-01T06:30, 02-01T02:00 CET
+                    "(32.0, '2024-04-01T01:00')", // 04-01T06:30, 04-01T03:00 CEST
+                    "(64.0, '2025-01-01T01:00')" // 2025-01-01T06:30, 2025-01-01T02:00 CET
+            };
+            for (String row : rows) {
+                execute("INSERT INTO base_price(price, ts) VALUES " + row);
+                drainQueues();
+            }
+
+            // Kolkata is at +05:30 all year, so its bucket starts at 10:00 local time fall at 04:30 UTC.
+            // Berlin is at +01:00 until 2024-03-31T01:00 UTC and at +02:00 from then until October.
+            final String[] expected = {
+                    """
+                            ts\tc\ts
+                            2024-01-01T04:30:00.000000Z\t2\t24.0
+                            2024-03-01T04:30:00.000000Z\t2\t33.0
+                            2024-04-01T04:30:00.000000Z\t2\t6.0
+                            2024-12-01T04:30:00.000000Z\t1\t64.0
+                            """,
+                    """
+                            ts\tc\ts
+                            2024-01-01T04:30:00.000000Z\t4\t57.0
+                            2024-04-01T04:30:00.000000Z\t2\t6.0
+                            2024-10-01T04:30:00.000000Z\t1\t64.0
+                            """,
+                    """
+                            ts\tc\ts
+                            2024-01-01T04:30:00.000000Z\t7\t127.0
+                            """,
+                    """
+                            ts\tc\ts
+                            2023-12-31T22:00:00.000000Z\t1\t8.0
+                            2024-01-31T22:00:00.000000Z\t1\t16.0
+                            2024-02-29T22:00:00.000000Z\t1\t1.0
+                            2024-03-31T21:00:00.000000Z\t2\t36.0
+                            2024-04-30T21:00:00.000000Z\t1\t2.0
+                            2024-12-31T22:00:00.000000Z\t1\t64.0
+                            """
+            };
+            for (int i = 0; i < viewNames.length; i++) {
+                assertQuery(viewNames[i])
+                        .timestamp("ts")
+                        .expectSize()
+                        .noLeakCheck()
+                        .returns(replaceExpectedTimestamp(expected[i]));
+                // the view must match its query run over the base table
+                assertQuery(viewQueries[i])
+                        .timestamp("ts")
+                        .inferRandomAccess()
+                        .sizeMayVary()
+                        .noLeakCheck()
+                        .returns(replaceExpectedTimestamp(expected[i]));
+            }
+            assertQuery("SELECT view_name, view_status, " + txnColumns() + " FROM materialized_views ORDER BY view_name")
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_status\trefresh_base_table_txn\tbase_table_txn
+                            berlin_1M\tvalid\t7\t7
+                            kolkata_1M\tvalid\t7\t7
+                            kolkata_1y\tvalid\t7\t7
+                            kolkata_3M\tvalid\t7\t7
+                            """);
+        });
+    }
+
+    @Test
+    public void testIncrementalRefreshMonthStrideWithNegativeOffset() throws Exception {
+        // Regression test for #7798. With a negative offset, the view's query used to put a row at the end of a
+        // month shorter than 31 days, after the bucket start on its last day, into the previous bucket. Since the
+        // incremental refresh queries only the buckets of the new rows, the row fell outside of them, so the refresh
+        // failed with "timestamp out of replace range" and invalidated the view.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (price double, ts #TIMESTAMP) timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "create materialized view price_1M as (" +
+                            "select ts, count() c, sum(price) s from base_price sample by 1M align to calendar with offset '-01:00'" +
+                            ") partition by year"
+            );
+            execute("insert into base_price(price, ts) values (1.0, '2024-03-10T12:00')");
+            drainQueues();
+            execute("insert into base_price(price, ts) values (2.0, '2024-04-30T23:45')");
+            drainQueues();
+            execute("insert into base_price(price, ts) values (4.0, '2024-04-30T22:00')");
+            drainQueues();
+
+            final String expected = replaceExpectedTimestamp("""
+                    ts\tc\ts
+                    2024-02-29T23:00:00.000000Z\t1\t1.0
+                    2024-03-31T23:00:00.000000Z\t1\t4.0
+                    2024-04-30T23:00:00.000000Z\t1\t2.0
+                    """);
+            assertQuery("price_1M")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("select ts, count() c, sum(price) s from base_price sample by 1M align to calendar with offset '-01:00'")
+                    .timestamp("ts")
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("select view_name, view_status, " + txnColumns() + " from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_status\trefresh_base_table_txn\tbase_table_txn
+                            price_1M\tvalid\t3\t3
+                            """);
+        });
+    }
+
+    @Test
     public void testIncrementalRefreshOnExistingTable() throws Exception {
+        // The base table is renamed, dropped, swapped or has its WAL purged here, so the
+        // transaction the composite randomiser commits against it cannot be subtracted back
+        // out by a single per-table offset the way txnColumns() does.
+        disableCompositePartitionRandomisation();
         setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 10);
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
@@ -3941,7 +4377,7 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                    "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
+                    "view_sql, view_status, " + txnColumns() + " " +
                     "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
@@ -3965,7 +4401,64 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIncrementalRefreshPeriodAndRefreshLimitLeaveNoIntervals() throws Exception {
+        // Regression test for #7772. The period cuts off the txn interval of the row in the incomplete period, and
+        // the refresh limit cuts off the txn interval of the older row, so the refresh interval iterator yields no
+        // intervals even though the refresh range is not empty. The refresh used to leak the view's query factory
+        // and never advance the watermark, leaving the view 'refreshing'.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (price double, ts #TIMESTAMP) timestamp(ts) partition by DAY WAL"
+            );
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T11:30:00.000000Z");
+            execute(
+                    "create materialized view price_1h refresh immediate period (length 1h) as " +
+                            "select ts, last(price) as price from base_price sample by 1h"
+            );
+            execute("alter materialized view price_1h set refresh limit 2h");
+            execute("insert into base_price(price, ts) values (1.0, '2024-09-10T10:01')");
+            final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            final String expected = replaceExpectedTimestamp("""
+                    ts\tprice
+                    2024-09-10T10:00:00.000000Z\t1.0
+                    """);
+            assertQuery("price_1h")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
+
+            // a row older than the refresh limit and a row in the incomplete period, in two transactions
+            execute("insert into base_price(price, ts) values (2.0, '2024-09-10T08:01')");
+            execute("insert into base_price(price, ts) values (3.0, '2024-09-10T11:10')");
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T11:40:00.000000Z");
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            assertQuery("price_1h")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("select view_name, view_status, last_refresh_start_timestamp, last_refresh_finish_timestamp, " + txnColumns() + " from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_status\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\trefresh_base_table_txn\tbase_table_txn
+                            price_1h\tvalid\t2024-09-10T11:40:00.000000Z\t2024-09-10T11:40:00.000000Z\t3\t3
+                            """);
+        });
+    }
+
+    @Test
     public void testIncrementalRefreshRecoversWhenWalSegmentIsGone() throws Exception {
+        // The base table is renamed, dropped, swapped or has its WAL purged here, so the
+        // transaction the composite randomiser commits against it cannot be subtracted back
+        // out by a single per-table offset the way txnColumns() does.
+        disableCompositePartitionRandomisation();
         setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 10);
         setProperty(PropertyKey.DEBUG_MAT_VIEW_REFRESH_MISSING_WAL_FILES_FATAL, "false");
         assertMemoryLeak(() -> {
@@ -4010,7 +4503,7 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                    "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
+                    "view_sql, view_status, " + txnColumns() + " " +
                     "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
@@ -4057,7 +4550,7 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                    "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
+                    "view_sql, view_status, " + txnColumns() + " " +
                     "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
@@ -4111,7 +4604,7 @@ public class MatViewTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("sym\tprice\tts\n");
             final String matViewsSql = "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                    "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
+                    "view_sql, view_status, " + txnColumns() + " " +
                     "from materialized_views";
             assertQuery(matViewsSql)
                     .noRandomAccess()
@@ -4905,7 +5398,7 @@ public class MatViewTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("sym\tprice\tts\n");
             final String matViewsSql = "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                    "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
+                    "view_sql, view_status, " + txnColumns() + " " +
                     "from materialized_views";
             assertQuery(matViewsSql)
                     .noRandomAccess()
@@ -5004,7 +5497,7 @@ public class MatViewTest extends AbstractCairoTest {
                                     jpyusd\t103.21\t2024-09-10T12:00:00.000000Z
                                     """));
             final String matViewsSql = "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                    "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
+                    "view_sql, view_status, " + txnColumns() + " " +
                     "from materialized_views";
             assertQuery(matViewsSql)
                     .noRandomAccess()
@@ -5188,7 +5681,7 @@ public class MatViewTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("sym\tprice\tts\n");
             final String matViewsSql = "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                    "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
+                    "view_sql, view_status, " + txnColumns() + " " +
                     "from materialized_views";
             assertQuery(matViewsSql)
                     .noRandomAccess()
@@ -5369,7 +5862,7 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             final String matViewsSql = "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                    "view_sql, view_status, invalidation_reason, refresh_base_table_txn, base_table_txn " +
+                    "view_sql, view_status, invalidation_reason, " + txnColumns() + " " +
                     "from materialized_views";
             assertQuery(matViewsSql)
                     .noRandomAccess()
@@ -5463,7 +5956,7 @@ public class MatViewTest extends AbstractCairoTest {
             }
 
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                    "view_status, refresh_period_hi, refresh_base_table_txn, base_table_txn, " +
+                    "view_status, refresh_period_hi, " + txnColumns() + ", " +
                     "period_length, period_length_unit, refresh_limit, refresh_limit_unit " +
                     "from materialized_views")
                     .noRandomAccess()
@@ -5664,7 +6157,7 @@ public class MatViewTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("sym\tprice\tts\n");
             final String matViewsSql = "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                    "view_sql, view_status, refresh_base_table_txn, base_table_txn, refresh_period_hi, timer_time_zone, timer_start, " +
+                    "view_sql, view_status, " + txnColumns() + ", refresh_period_hi, timer_time_zone, timer_start, " +
                     "timer_interval, timer_interval_unit, period_length, period_length_unit, period_delay, period_delay_unit " +
                     "from materialized_views";
             assertQuery(matViewsSql)
@@ -5922,6 +6415,10 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testQueryTimestampMixedWithAggregates() throws Exception {
+        // The base table is renamed, dropped, swapped or has its WAL purged here, so the
+        // transaction the composite randomiser commits against it cannot be subtracted back
+        // out by a single per-table offset the way txnColumns() does.
+        disableCompositePartitionRandomisation();
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL;");
             execute("INSERT INTO x VALUES ('2010-01-01T01'),('2010-01-01T01'),('2020-01-01T01'),('2030-01-01T01');");
@@ -5940,7 +6437,7 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                    "view_status, refresh_period_hi, refresh_base_table_txn, base_table_txn, " +
+                    "view_status, refresh_period_hi, " + txnColumns() + ", " +
                     "period_length, period_length_unit, refresh_limit, refresh_limit_unit " +
                     "from materialized_views")
                     .noRandomAccess()
@@ -6057,6 +6554,10 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testRangeRefresh() throws Exception {
+        // The base table is renamed, dropped, swapped or has its WAL purged here, so the
+        // transaction the composite randomiser commits against it cannot be subtracted back
+        // out by a single per-table offset the way txnColumns() does.
+        disableCompositePartitionRandomisation();
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
                     "create table x ( " +
@@ -6085,7 +6586,7 @@ public class MatViewTest extends AbstractCairoTest {
                     .returns("sym\tprice\tts\n");
             assertQuery("select view_name, refresh_type, base_table_name, view_status, invalidation_reason, " +
                     "last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                    "refresh_base_table_txn, base_table_txn " +
+                    txnColumns() + " " +
                     "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
@@ -6109,7 +6610,7 @@ public class MatViewTest extends AbstractCairoTest {
                                     """));
             assertQuery("select view_name, refresh_type, base_table_name, view_status, invalidation_reason, " +
                     "last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                    "refresh_base_table_txn, base_table_txn " +
+                    txnColumns() + " " +
                     "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
@@ -6131,7 +6632,7 @@ public class MatViewTest extends AbstractCairoTest {
                     .returns(replaceExpectedTimestamp(expected));
             assertQuery("select view_name, refresh_type, base_table_name, view_status, invalidation_reason, " +
                     "last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                    "refresh_base_table_txn, base_table_txn " +
+                    txnColumns() + " " +
                     "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
@@ -6151,7 +6652,7 @@ public class MatViewTest extends AbstractCairoTest {
                     .returns(replaceExpectedTimestamp(expected));
             assertQuery("select view_name, refresh_type, base_table_name, view_status, invalidation_reason, " +
                     "last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                    "refresh_base_table_txn, base_table_txn " +
+                    txnColumns() + " " +
                     "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
@@ -6193,7 +6694,7 @@ public class MatViewTest extends AbstractCairoTest {
                     .returns(ogExpected);
             final String matViewsSql = "select view_name, refresh_type, base_table_name, view_status, invalidation_reason, " +
                     "last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                    "refresh_base_table_txn, base_table_txn " +
+                    txnColumns() + " " +
                     "from materialized_views";
             assertQuery(matViewsSql)
                     .noRandomAccess()
@@ -6278,7 +6779,7 @@ public class MatViewTest extends AbstractCairoTest {
                                     """));
             assertQuery("select view_name, refresh_type, base_table_name, view_status, invalidation_reason, " +
                     "last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                    "refresh_base_table_txn, base_table_txn " +
+                    txnColumns() + " " +
                     "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
@@ -6311,7 +6812,7 @@ public class MatViewTest extends AbstractCairoTest {
                                     "jpyusd\t214.32\t2024-09-12T01:00:00.000000Z\n"));
             assertQuery("select view_name, refresh_type, base_table_name, view_status, invalidation_reason, " +
                     "last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                    "refresh_base_table_txn, base_table_txn " +
+                    txnColumns() + " " +
                     "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
@@ -6338,7 +6839,7 @@ public class MatViewTest extends AbstractCairoTest {
                                     "jpyusd\t214.32\t2024-09-12T01:00:00.000000Z\n"));
             assertQuery("select view_name, refresh_type, base_table_name, view_status, invalidation_reason, " +
                     "last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                    "refresh_base_table_txn, base_table_txn " +
+                    txnColumns() + " " +
                     "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
@@ -6611,6 +7112,10 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testRefreshIntervalsCachingSmoke() throws Exception {
+        // The base table is renamed, dropped, swapped or has its WAL purged here, so the
+        // transaction the composite randomiser commits against it cannot be subtracted back
+        // out by a single per-table offset the way txnColumns() does.
+        disableCompositePartitionRandomisation();
         setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_PERIOD, "5s");
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
@@ -6678,7 +7183,7 @@ public class MatViewTest extends AbstractCairoTest {
                                     jpyusd\t103.21\t2024-09-10T12:00:00.000000Z
                                     """));
             final String matViewsSql = "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                    "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
+                    "view_sql, view_status, " + txnColumns() + " " +
                     "from materialized_views";
             assertQuery(matViewsSql)
                     .noRandomAccess()
@@ -6695,6 +7200,13 @@ public class MatViewTest extends AbstractCairoTest {
                 path.of(configuration.getDbRoot()).concat(baseTableToken).concat(WalUtils.WAL_NAME_BASE).put(1);
                 Assert.assertTrue(Utf8s.toString(path), Files.exists(path.$()));
 
+                // Under the default ADAPTIVE commit mode the base-table WAL purge floor is held back to
+                // the last durable epoch (crash recovery re-applies from there). With the test clock
+                // frozen no cadence epoch fires, so close the writer to flush a final durable epoch over
+                // the applied tail -- exactly as an idle writer's eviction does in production -- before
+                // asserting the now-superseded base WAL is reclaimed.
+                engine.releaseInactive();
+                takeSavePointIfAdaptive(baseTableToken);
                 engine.releaseInactiveTableSequencers();
                 drainPurgeJob();
 
@@ -6738,6 +7250,10 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testRefreshIntervalsCapacity() throws Exception {
+        // The base table is renamed, dropped, swapped or has its WAL purged here, so the
+        // transaction the composite randomiser commits against it cannot be subtracted back
+        // out by a single per-table offset the way txnColumns() does.
+        disableCompositePartitionRandomisation();
         final int capacity = 10;
         setProperty(PropertyKey.CAIRO_MAT_VIEW_MAX_REFRESH_INTERVALS, capacity);
         setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_PERIOD, "10s");
@@ -6797,7 +7313,7 @@ public class MatViewTest extends AbstractCairoTest {
                                     gbpusd\t1.32\t2024-09-10T12:00:00.000000Z
                                     """));
             final String matViewsSql = "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                    "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
+                    "view_sql, view_status, " + txnColumns() + " " +
                     "from materialized_views";
             assertQuery(matViewsSql)
                     .noRandomAccess()
@@ -6814,6 +7330,13 @@ public class MatViewTest extends AbstractCairoTest {
                 path.of(configuration.getDbRoot()).concat(baseTableToken).concat(WalUtils.WAL_NAME_BASE).put(1);
                 Assert.assertTrue(Utf8s.toString(path), Files.exists(path.$()));
 
+                // Under the default ADAPTIVE commit mode the base-table WAL purge floor is held back to
+                // the last durable epoch (crash recovery re-applies from there). With the test clock
+                // frozen no cadence epoch fires, so close the writer to flush a final durable epoch over
+                // the applied tail -- exactly as an idle writer's eviction does in production -- before
+                // asserting the now-superseded base WAL is reclaimed.
+                engine.releaseInactive();
+                takeSavePointIfAdaptive(baseTableToken);
                 engine.releaseInactiveTableSequencers();
                 drainPurgeJob();
 
@@ -6883,8 +7406,30 @@ public class MatViewTest extends AbstractCairoTest {
             final long counterAfterInitial = TestTimestampCounterFactory.COUNTER.get();
             Assert.assertEquals("Initial period refresh should emit 1 bucket", 1, counterAfterInitial);
 
+            // Seed the EMA so the cost model has a known threshold, as
+            // testRefreshIntervalsO3MergesNarrowGap does for the merge case.
+            // Otherwise the threshold is commit * range / sample taken from the
+            // warmup refresh, a wall-clock property of the machine: under the
+            // suite's ADAPTIVE commit mode every commit fsyncs, and on a slow
+            // machine avgCommitNanos can grow until the threshold exceeds the
+            // 30h gap below, merging the two intervals and sweeping the untouched
+            // 10:00 bucket back in (3 buckets, not 2). With sample = range = 1 the
+            // threshold equals the commit cost; 5s is far below the 30h gap, so
+            // the test stays in the split regime.
+            final TableToken viewToken = engine.getTableTokenIfExists("price_1h");
+            final MatViewState viewState = engine.getMatViewStateStore().getViewState(viewToken);
+            final long fiveSecondsInTsUnits = timestampType.getDriver().fromMicros(5_000_000L);
+            Assert.assertNotNull(viewState);
+            Assert.assertTrue(viewState.tryLock());
+            try {
+                viewState.setRefreshMetricsForTesting(fiveSecondsInTsUnits, 1L, 1L);
+            } finally {
+                viewState.unlock();
+            }
+
             // O3 write 24h back, plus a current write -- arrived as 2 separate
-            // WAL txns. With ~24h gap and warm EMA, clustering should split.
+            // WAL txns. With a 30h gap and the threshold pinned to 5s above,
+            // clustering splits them regardless of machine speed.
             execute("insert into base_price(price, ts) values (2.0, '2024-09-09T05:01')");
             execute("insert into base_price(price, ts) values (3.0, '2024-09-10T11:01')");
 
@@ -6919,6 +7464,10 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testRefreshIntervalsMaxClustersConfigCapsClusterCount() throws Exception {
+        // The base table is renamed, dropped, swapped or has its WAL purged here, so the
+        // transaction the composite randomiser commits against it cannot be subtracted back
+        // out by a single per-table offset the way txnColumns() does.
+        disableCompositePartitionRandomisation();
         // End-to-end test for cairo.mat.view.refresh.max.clusters: with 5
         // disjoint inserts and the cap forced down to 2, clustering must
         // collapse the 5 intervals into 2 clusters, producing exactly 2
@@ -7872,7 +8421,38 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRefreshAcrossSplitParentAppend() throws Exception {
+        // The refresh pins its base reader before an O3 split. An O3 row at the parent's max timestamp
+        // must not be appended in place over the parent's tail, which the pinned reader still reads.
+        assertRefreshAcrossSplitParentAppend("CREATE TABLE base (s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL", false);
+    }
+
+    @Test
+    public void testRefreshAcrossSplitParentAppendDedup() throws Exception {
+        // Refresh across a base-table split with a nonduplicate dedup key: the O3 row's s differs.
+        assertRefreshAcrossSplitParentAppend("CREATE TABLE base (s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, s)", false);
+    }
+
+    @Test
+    public void testRefreshAcrossSplitParentAppendDedupMergeAppend() throws Exception {
+        assertRefreshAcrossSplitParentAppend("CREATE TABLE base (s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, s)", true);
+    }
+
+    @Test
+    public void testRefreshAcrossSplitParentAppendMergeAppend() throws Exception {
+        // merge-append appends past the end of the column files, so there is no split layout to assert
+        assertRefreshAcrossSplitParentAppend("CREATE TABLE base (s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL", true);
+    }
+
+    @Test
     public void testResumeSuspendMatView() throws Exception {
+        // The base table is renamed, dropped, swapped or has its WAL purged here, so the
+        // transaction the composite randomiser commits against it cannot be subtracted back
+        // out by a single per-table offset the way txnColumns() does.
+        disableCompositePartitionRandomisation();
+        // wal_tables() includes an adaptive epoch timestamp; this mode-independent suspend/resume test
+        // needs deterministic output.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
                     "create table base_price (" +
@@ -7893,7 +8473,7 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                    "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
+                    "view_sql, view_status, " + txnColumns() + " " +
                     "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
@@ -7934,9 +8514,9 @@ public class MatViewTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                            name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure
-                            base_price\tfalse\t2\t0\t2\t\t\t0
-                            price_1h\ttrue\t1\t0\t3\t\t\t0
+                            name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs
+                            base_price\tfalse\t2\t0\t2\t\t\t0\t0\t0\t-1\t
+                            price_1h\ttrue\t1\t0\t3\t\t\t0\t0\t0\t-1\t
                             """);
 
             // resume mat view
@@ -7959,9 +8539,9 @@ public class MatViewTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                            name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure
-                            base_price\tfalse\t2\t0\t2\t\t\t0
-                            price_1h\tfalse\t3\t0\t3\t\t\t0
+                            name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs
+                            base_price\tfalse\t2\t0\t2\t\t\t0\t0\t0\t-1\t
+                            price_1h\tfalse\t3\t0\t3\t\t\t0\t0\t0\t-1\t
                             """);
 
             // suspend mat view again
@@ -7986,9 +8566,9 @@ public class MatViewTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                            name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure
-                            base_price\tfalse\t3\t0\t3\t\t\t0
-                            price_1h\ttrue\t3\t0\t5\t\t\t0
+                            name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs
+                            base_price\tfalse\t3\t0\t3\t\t\t0\t0\t0\t-1\t
+                            price_1h\ttrue\t3\t0\t5\t\t\t0\t0\t0\t-1\t
                             """);
 
             // resume mat view from txn
@@ -8011,9 +8591,9 @@ public class MatViewTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                            name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure
-                            base_price\tfalse\t3\t0\t3\t\t\t0
-                            price_1h\tfalse\t5\t0\t5\t\t\t0
+                            name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs
+                            base_price\tfalse\t3\t0\t3\t\t\t0\t0\t0\t-1\t
+                            price_1h\tfalse\t5\t0\t5\t\t\t0\t0\t0\t-1\t
                             """);
         });
     }
@@ -8078,7 +8658,7 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                    "view_sql, view_status, invalidation_reason, refresh_base_table_txn, base_table_txn " +
+                    "view_sql, view_status, invalidation_reason, " + txnColumns() + " " +
                     "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
@@ -9545,6 +10125,10 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampGetsRefreshedOnInvalidation() throws Exception {
+        // The base table is renamed, dropped, swapped or has its WAL purged here, so the
+        // transaction the composite randomiser commits against it cannot be subtracted back
+        // out by a single per-table offset the way txnColumns() does.
+        disableCompositePartitionRandomisation();
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
                     "create table base_price (" +
@@ -9584,7 +10168,7 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                    "view_sql, view_status, refresh_base_table_txn, base_table_txn " +
+                    "view_sql, view_status, " + txnColumns() + " " +
                     "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
@@ -9891,6 +10475,35 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWalTxnRangeLoaderSkipsRebaseSeeds() throws Exception {
+        // REBASE WAL seeds the table with two empty transactions. They hold no rows, so they add no refresh interval.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, val double, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("insert into base values ('a', 1.0, '2024-09-10T12:00')");
+            drainWalQueue();
+            execute("alter table base suspend wal");
+            execute("alter table base rebase wal");
+            execute("insert into base values ('a', 2.0, '2024-09-10T13:00')");
+            drainWalQueue();
+            final TableToken baseToken = engine.verifyTableName("base");
+            try (
+                    WalTxnRangeLoader loader = new WalTxnRangeLoader(engine.getConfiguration());
+                    Path path = new Path()
+            ) {
+                final LongList intervals = new LongList();
+                loader.load(engine, path, baseToken, intervals, 0, 3);
+                final long ts = parseFloorPartialTimestamp("2024-09-10T13:00:00.000000Z");
+                Assert.assertEquals(2, intervals.size());
+                Assert.assertEquals(ts, intervals.getQuick(0));
+                Assert.assertEquals(ts, intervals.getQuick(1));
+                Assert.assertEquals(ts, loader.getMinTimestamp());
+                Assert.assertEquals(ts, loader.getMaxTimestamp());
+            }
+        });
+    }
+
+    @Test
     public void testTtl() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
@@ -9926,6 +10539,10 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testViewInvalidatedOnRefreshAfterBaseTableRename() throws Exception {
+        // The base table is renamed, dropped, swapped or has its WAL purged here, so the
+        // transaction the composite randomiser commits against it cannot be subtracted back
+        // out by a single per-table offset the way txnColumns() does.
+        disableCompositePartitionRandomisation();
         assertMemoryLeak(() -> {
             execute(
                     "create table base_price (" +
@@ -9972,7 +10589,7 @@ public class MatViewTest extends AbstractCairoTest {
 
             // the view must be marked as invalid as the result of refresh attempt
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                    "view_sql, view_status, invalidation_reason, refresh_base_table_txn, base_table_txn " +
+                    "view_sql, view_status, invalidation_reason, " + txnColumns() + " " +
                     "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
@@ -9985,6 +10602,10 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testViewInvalidatedOnRefreshIntervalsUpdateAfterBaseTableRename() throws Exception {
+        // The base table is renamed, dropped, swapped or has its WAL purged here, so the
+        // transaction the composite randomiser commits against it cannot be subtracted back
+        // out by a single per-table offset the way txnColumns() does.
+        disableCompositePartitionRandomisation();
         setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_PERIOD, "5s");
         assertMemoryLeak(() -> {
             execute(
@@ -10030,7 +10651,7 @@ public class MatViewTest extends AbstractCairoTest {
 
             // the view must be marked as invalid since the base table was dropped
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                    "view_sql, view_status, invalidation_reason, refresh_base_table_txn, base_table_txn " +
+                    "view_sql, view_status, invalidation_reason, " + txnColumns() + " " +
                     "from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
@@ -10294,6 +10915,40 @@ public class MatViewTest extends AbstractCairoTest {
         }
     }
 
+    /**
+     * Projects the two transaction columns of {@code materialized_views()} relative to a baseline,
+     * so a test asserts on the transactions IT caused rather than on absolute numbers. The
+     * composite partition randomiser's round-trip is content-neutral in rows but commits its own
+     * transaction against the base table (see {@link CompositePartitionRandomiser}), which shifts
+     * both columns; subtracting that count puts them back where a plain run would leave them.
+     * Returns the columns untouched when nothing was injected, which is every run with the
+     * randomiser off. A never-refreshed view carries a non-positive refresh_base_table_txn
+     * sentinel, so that value is passed through rather than shifted.
+     */
+    private static String txnColumns() {
+        return txnColumns(BASE_TABLE_NAME);
+    }
+
+    private static String txnColumns(String baseTableName) {
+        final int injected = CompositePartitionRandomiser.injectedTxnCount(engine, baseTableName);
+        if (injected == 0) {
+            return "refresh_base_table_txn, base_table_txn";
+        }
+        return "CASE WHEN refresh_base_table_txn > 0 THEN refresh_base_table_txn - " + injected
+                + " ELSE refresh_base_table_txn END refresh_base_table_txn, "
+                + "CASE WHEN base_table_txn > 0 THEN base_table_txn - " + injected
+                + " ELSE base_table_txn END base_table_txn";
+    }
+
+    private static String refreshTxnColumn() {
+        final int injected = CompositePartitionRandomiser.injectedTxnCount(engine, BASE_TABLE_NAME);
+        if (injected == 0) {
+            return "refresh_base_table_txn";
+        }
+        return "CASE WHEN refresh_base_table_txn > 0 THEN refresh_base_table_txn - " + injected
+                + " ELSE refresh_base_table_txn END refresh_base_table_txn";
+    }
+
     private static void createMatView(String viewSql) throws SqlException {
         execute("create materialized view price_1h as (" + viewSql + ") partition by DAY");
     }
@@ -10329,6 +10984,117 @@ public class MatViewTest extends AbstractCairoTest {
         };
     }
 
+    // The WAL purge keeps the WAL above the older of the two save points, which recovery falls back to; one more
+    // save point at the applied cut moves the older one past the WAL the test expects purged.
+    private static void takeSavePointIfAdaptive(TableToken tableToken) {
+        if (engine.getConfiguration().getCommitMode() == CommitMode.ADAPTIVE) {
+            try (TableWriter writer = getWriter(tableToken)) {
+                writer.advanceDurableEpoch(engine.getConfiguration().getMicrosecondClock().getTicks() / 1000L);
+            }
+        }
+    }
+
+    private void assertFullRefreshAfterBaseColumnTypeChange(String type, String newAt, boolean isRehydrated) throws Exception {
+        assertMemoryLeak(() -> {
+            createTimestampMatViewForTypeChange();
+            final MatViewState state = engine.getMatViewStateStore().getViewState(engine.verifyTableName("price_1h"));
+            final var copier = state.getRecordToRowCopier();
+            Assert.assertNotNull(copier);
+            execute("REFRESH MATERIALIZED VIEW price_1h INCREMENTAL");
+            drainQueues();
+            Assert.assertSame(copier, state.getRecordToRowCopier());
+            assertTimestampMatViewAfterTypeChange();
+
+            execute("ALTER TABLE base_price ALTER COLUMN at TYPE " + type);
+            drainQueues();
+            assertQuery("SELECT view_status FROM materialized_views")
+                    .noRandomAccess().noLeakCheck().returns("view_status\ninvalid\n");
+            if (isRehydrated) {
+                rehydrateTimestampMatViewForTypeChange();
+            }
+            for (int i = 0; i < 2; i++) {
+                execute("REFRESH MATERIALIZED VIEW price_1h FULL");
+                drainQueues();
+                assertTimestampMatViewAfterTypeChange();
+            }
+            if (!isRehydrated) {
+                Assert.assertNotSame(copier, state.getRecordToRowCopier());
+            }
+            // The rebuilt copier also handles ordinary incremental refreshes and NULLs.
+            final MatViewState refreshedState = engine.getMatViewStateStore().getViewState(engine.verifyTableName("price_1h"));
+            final var refreshedCopier = refreshedState.getRecordToRowCopier();
+            execute("INSERT INTO base_price VALUES ('gbpusd', " + newAt + ", '2024-09-10T12:30')");
+            drainQueues();
+            Assert.assertSame(refreshedCopier, refreshedState.getRecordToRowCopier());
+            assertQuery("SELECT view_status FROM materialized_views")
+                    .noRandomAccess().noLeakCheck().returns("view_status\nvalid\n");
+            assertQuery("price_1h ORDER BY ts, sym").timestamp("ts").expectSize().noLeakCheck().returns("""
+                    sym\tat\tts
+                    gbpusd\t2024-09-10T12:25:06.654321Z\t2024-09-10T12:00:00.000000Z
+                    null\t\t2024-09-10T12:00:00.000000Z
+                    """);
+        });
+    }
+
+    private void assertFullRefreshAfterIncompatibleBaseColumnTypeChange(boolean isRehydrated) throws Exception {
+        assertMemoryLeak(() -> {
+            createTimestampMatViewForTypeChange();
+            execute("ALTER TABLE base_price ALTER COLUMN at TYPE BOOLEAN");
+            drainQueues();
+            if (isRehydrated) {
+                rehydrateTimestampMatViewForTypeChange();
+            }
+            for (int i = 0; i < 2; i++) {
+                execute("REFRESH MATERIALIZED VIEW price_1h FULL");
+                drainQueues();
+                assertQuery("SELECT view_status, invalidation_reason FROM materialized_views")
+                        .noRandomAccess().noLeakCheck().returns("""
+                                view_status\tinvalidation_reason
+                                invalid\t[-1]: inconvertible types: BOOLEAN -> TIMESTAMP [from=at, to=at]
+                                """);
+            }
+            // Reload the on-disk failure state, then recover using the original result type.
+            rehydrateTimestampMatViewForTypeChange();
+            assertQuery("SELECT view_status FROM materialized_views")
+                    .noRandomAccess().noLeakCheck().returns("view_status\ninvalid\n");
+            execute("ALTER TABLE base_price ALTER COLUMN at TYPE TIMESTAMP");
+            drainQueues();
+            execute("UPDATE base_price SET at = '2024-09-10T12:01:02.123456Z'::TIMESTAMP WHERE sym = 'gbpusd'");
+            execute("UPDATE base_price SET at = NULL WHERE sym = 'null'");
+            drainQueues();
+            execute("REFRESH MATERIALIZED VIEW price_1h FULL");
+            drainQueues();
+            assertTimestampMatViewAfterTypeChange();
+        });
+    }
+
+    // The view column keeps the original atType after the base column changes to DOUBLE, so at is both the
+    // inserted literal and the expected rendering of the refreshed view column.
+    private void assertFullRefreshAfterTemporalBaseColumnTypeChangeToDouble(String atType, String at) throws Exception {
+        execute("CREATE TABLE base_price (sym VARCHAR, at " + atType + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        createMatView("SELECT sym, last(at) AS at, ts FROM base_price SAMPLE BY 1h");
+        execute("""
+                INSERT INTO base_price VALUES
+                ('gbpusd', '%s', '2024-09-10T12:01'),
+                ('null', NULL, '2024-09-10T12:02')
+                """.formatted(at));
+        drainQueues();
+        execute("ALTER TABLE base_price ALTER COLUMN at TYPE DOUBLE");
+        drainQueues();
+        execute("REFRESH MATERIALIZED VIEW price_1h FULL");
+        drainQueues();
+        assertQuery("SELECT view_status, invalidation_reason FROM materialized_views")
+                .noRandomAccess().noLeakCheck().returns("""
+                        view_status\tinvalidation_reason
+                        valid\t
+                        """);
+        assertQuery("price_1h ORDER BY ts, sym").timestamp("ts").expectSize().noLeakCheck().returns("""
+                sym\tat\tts
+                gbpusd\t%s\t2024-09-10T12:00:00.000000Z
+                null\t\t2024-09-10T12:00:00.000000Z
+                """.formatted(at));
+    }
+
     /**
      * Asserts that a materialized view produces the same result as the standalone
      * SAMPLE BY query after incremental data insertion. Checks both row-level equality
@@ -10361,6 +11127,95 @@ public class MatViewTest extends AbstractCairoTest {
                 .returns(expected);
     }
 
+    private void assertRefreshAcrossSplitParentAppend(String baseTableDdl, boolean isMergeAppend) throws Exception {
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, String.valueOf(isMergeAppend));
+        assertMemoryLeak(() -> {
+            execute(baseTableDdl);
+            execute(
+                    """
+                            CREATE MATERIALIZED VIEW base_1h AS
+                            SELECT count() c, sum(CASE WHEN s LIKE 'value%' THEN 1 ELSE 0 END) matched, ts
+                            FROM base SAMPLE BY 1h
+                            """
+            );
+            execute("INSERT INTO base SELECT 'value-' || x, timestamp_sequence('2020-02-03', 60_000_000L) FROM long_sequence(100)");
+            drainQueues();
+
+            final AtomicBoolean hasMutatedBase = new AtomicBoolean();
+            final AtomicReference<Throwable> hookFailure = new AtomicReference<>();
+            try (MatViewRefreshJob job = new MatViewRefreshJob(engine, 1)) {
+                job.setOnBaseReaderSnapshotForTesting(() -> {
+                    try {
+                        Assert.assertFalse(hasMutatedBase.getAndSet(true));
+                        final long parentNameTxn;
+                        try (TableReader reader = getReader("base")) {
+                            parentNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+                        }
+                        // split the partition after 01:19 (row 80 of 100)
+                        execute("INSERT INTO base VALUES ('split', '2020-02-03T01:19:30')");
+                        drainWalQueue();
+                        // O3 row at exactly the parent's max lands in the parent; its string is
+                        // shorter than the one it would overwrite
+                        execute("INSERT INTO base VALUES ('X', '2020-02-03T01:19')");
+                        drainWalQueue();
+                        try (TableReader reader = getReader("base")) {
+                            if (isMergeAppend) {
+                                // merge-append writes both rows at the tail of the parent's own files, so the
+                                // partition stays single and composite; the pinned reader keeps its geometry record
+                                Assert.assertEquals(1, reader.getPartitionCount());
+                                Assert.assertTrue(reader.getTxFile().isPartitionComposite(0));
+                                Assert.assertEquals(102, reader.getPartitionRowCountFromMetadata(0));
+                            } else {
+                                // the parent's last row and the new row share the second split
+                                Assert.assertEquals(3, reader.getPartitionCount());
+                                Assert.assertEquals(79, reader.getPartitionRowCountFromMetadata(0));
+                                Assert.assertEquals(2, reader.getPartitionRowCountFromMetadata(1));
+                            }
+                            Assert.assertEquals(parentNameTxn, reader.getTxFile().getPartitionNameTxn(0));
+                        }
+                    } catch (Throwable th) {
+                        hookFailure.set(th);
+                    }
+                });
+                engine.getMatViewStateStore().enqueueFullRefresh(engine.verifyTableName("base_1h"));
+                drainMatViewQueue(job);
+            }
+            if (hookFailure.get() != null) {
+                throw new AssertionError("test hook failure", hookFailure.get());
+            }
+            Assert.assertTrue(hasMutatedBase.get());
+            drainQueues();
+
+            assertQuery("SELECT view_name, view_status, invalidation_reason FROM materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_status\tinvalidation_reason
+                            base_1h\tvalid\t
+                            """);
+            assertQuery("base_1h")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            c\tmatched\tts
+                            60\t60\t2020-02-03T00:00:00.000000Z
+                            42\t40\t2020-02-03T01:00:00.000000Z
+                            """);
+        });
+    }
+
+    private void assertTimestampMatViewAfterTypeChange() throws Exception {
+        assertQuery("SELECT view_status FROM materialized_views")
+                .noRandomAccess().noLeakCheck().returns("view_status\nvalid\n");
+        assertQuery("price_1h ORDER BY ts, sym").timestamp("ts").expectSize().noLeakCheck().returns("""
+                sym\tat\tts
+                gbpusd\t2024-09-10T12:01:02.123456Z\t2024-09-10T12:00:00.000000Z
+                null\t\t2024-09-10T12:00:00.000000Z
+                """);
+    }
+
     private String copySql(int from, int count) {
         return "select * from tmp where n >= " + from + " and n < " + (from + count);
     }
@@ -10370,6 +11225,18 @@ public class MatViewTest extends AbstractCairoTest {
         return "create table " + tableName + " as (" + generateSelectSql(columns, startTs, step, 0, count) + ")" +
                 indexStr +
                 " timestamp(k) partition by DAY WAL";
+    }
+
+    private void createTimestampMatViewForTypeChange() throws Exception {
+        execute("CREATE TABLE base_price (sym VARCHAR, at TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        createMatView("SELECT sym, last(at) AS at, ts FROM base_price SAMPLE BY 1h");
+        execute("""
+                INSERT INTO base_price VALUES
+                ('gbpusd', '2024-09-10T12:01:02.123456Z', '2024-09-10T12:01'),
+                ('null', NULL, '2024-09-10T12:02')
+                """);
+        drainQueues();
+        assertTimestampMatViewAfterTypeChange();
     }
 
     private void drainQueues() {
@@ -10411,6 +11278,14 @@ public class MatViewTest extends AbstractCairoTest {
 
     private String outSelect(String out, String in) {
         return out + " from (" + in + ")";
+    }
+
+    private void rehydrateTimestampMatViewForTypeChange() {
+        // Reopen persisted view state with empty factory/copier caches, as on restart.
+        engine.getMatViewStateStore().clear();
+        engine.hydrateMatViewStateStore();
+        final MatViewState state = engine.getMatViewStateStore().getViewState(engine.verifyTableName("price_1h"));
+        Assert.assertNull(state.getRecordToRowCopier());
     }
 
     private String replaceExpectedTimestamp(String expected) {
@@ -11024,7 +11899,7 @@ public class MatViewTest extends AbstractCairoTest {
             final StringSink tsSink = new StringSink();
             MicrosFormatUtils.appendDateTimeUSec(tsSink, currentMicros);
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                    "view_sql, view_status, refresh_base_table_txn, base_table_txn, " +
+                    "view_sql, view_status, " + txnColumns() + ", " +
                     "timer_time_zone, timer_start, timer_interval, timer_interval_unit " +
                     "from materialized_views")
                     .noRandomAccess()
@@ -11129,7 +12004,7 @@ public class MatViewTest extends AbstractCairoTest {
             final StringSink tsSink = new StringSink();
             MicrosTimestampDriver.INSTANCE.append(tsSink, currentMicros);
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
-                    "view_sql, view_status, refresh_base_table_txn, base_table_txn, " +
+                    "view_sql, view_status, " + txnColumns() + ", " +
                     "timer_time_zone, timer_start, timer_interval, timer_interval_unit " +
                     "from materialized_views")
                     .noRandomAccess()

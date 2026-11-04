@@ -77,7 +77,8 @@ public class BitmapIndexFuzzTest extends AbstractFuzzTest {
                 1L,        // splitPartitionThreshold - aggressive splits
                 10,        // o3PartitionSplitMaxCount
                 100000L,   // walMaxLagSize
-                10         // maxWalFdCache
+                10,        // maxWalFdCache
+                getRndWalApplyBlockMaxRows(rnd)
         );
 
         assertMemoryLeak(() -> {

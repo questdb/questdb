@@ -43,8 +43,12 @@ public interface WorkStealingStrategy {
     }
 
     /**
-     * Returns true if the query owner thread should spin instead of
-     * trying to pick up one of the published tasks.
+     * Returns true if the query owner thread should try to pick up one of
+     * the published tasks instead of spinning.
+     *
+     * @param finishedCount number of tasks that have finished so far; never negative.
+     *                      A caller that reads it from a {@code SOUnboundedCountDownLatch},
+     *                      which counts down from zero, has to negate the latch count.
      */
     boolean shouldSteal(int finishedCount);
 }
