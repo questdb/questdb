@@ -356,17 +356,6 @@ public final class LogicalPlans {
     public static boolean hasExternalDataSource(LogicalPlan plan) {
         return !plan.walkTopDown(EXTERNAL_SOURCES);
     }
-    /**
-     * True when the value of an aggregate function is defined by the table order of its input rows.
-     */
-    public static boolean hasTableOrderAggregate(ObjList<FunctionExpression> aggregates) {
-        for (int i = 0, n = aggregates.size(); i < n; i++) {
-            if (aggregates.getQuick(i).getOverload().getOrderDependence() == FunctionFactory.OrderDependence.TABLE_ORDER) {
-                return true;
-            }
-        }
-        return false;
-    }
 
     /**
      * True when the expression reads a column of an enclosing LATERAL's outer input.
@@ -413,6 +402,18 @@ public final class LogicalPlans {
      */
     public static boolean hasSubquery(BoundExpression expression) {
         return !expression.walk(CURSORS);
+    }
+
+    /**
+     * True when the value of an aggregate function is defined by the table order of its input rows.
+     */
+    public static boolean hasTableOrderAggregate(ObjList<FunctionExpression> aggregates) {
+        for (int i = 0, n = aggregates.size(); i < n; i++) {
+            if (aggregates.getQuick(i).getOverload().getOrderDependence() == FunctionFactory.OrderDependence.TABLE_ORDER) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -563,15 +564,6 @@ public final class LogicalPlans {
     }
 
     /**
-     * Whether a join can key the column {@code masterColumnId} of {@code master} on the column {@code slaveColumnId} of
-     * {@code slave}, see {@link #isJoinKeyTypeCompatible}.
-     */
-    public static boolean isJoinKeyable(OutputSchema master, int masterColumnId, OutputSchema slave, int slaveColumnId) {
-        return isJoinKeyTypeCompatible(master.getColumnType(master.getColumnIndexById(masterColumnId)),
-                slave.getColumnType(slave.getColumnIndexById(slaveColumnId)));
-    }
-
-    /**
      * Whether a join can key a master column of one type on a slave column of the other.
      */
     public static boolean isJoinKeyTypeCompatible(int masterType, int slaveType) {
@@ -581,22 +573,12 @@ public final class LogicalPlans {
     }
 
     /**
-     * Whether join keys on a column of {@code typeA} and a column of {@code typeB} match exactly the values that
-     * {@code =} between the two columns pairs, NULL with NULL: two text columns, SYMBOL, STRING or VARCHAR, by their
-     * text, and two columns of one fixed-size type whose key is its value. FLOAT and DOUBLE fail it, as
-     * {@code 0.0 = -0.0} holds while their keys differ.
+     * Whether a join can key the column {@code masterColumnId} of {@code master} on the column {@code slaveColumnId} of
+     * {@code slave}, see {@link #isJoinKeyTypeCompatible}.
      */
-    public static boolean isKeyMatchType(int typeA, int typeB) {
-        if (ColumnType.isSymbolOrStringOrVarchar(typeA)) {
-            return ColumnType.isSymbolOrStringOrVarchar(typeB);
-        }
-        return typeA == typeB && switch (ColumnType.tagOf(typeA)) {
-            case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.SHORT, ColumnType.CHAR, ColumnType.INT,
-                 ColumnType.IPv4, ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.GEOBYTE,
-                 ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG, ColumnType.UUID, ColumnType.LONG128 ->
-                    true;
-            default -> false;
-        };
+    public static boolean isJoinKeyable(OutputSchema master, int masterColumnId, OutputSchema slave, int slaveColumnId) {
+        return isJoinKeyTypeCompatible(master.getColumnType(master.getColumnIndexById(masterColumnId)),
+                slave.getColumnType(slave.getColumnIndexById(slaveColumnId)));
     }
 
     /**
@@ -616,6 +598,25 @@ public final class LogicalPlans {
             return isKeyEqualityOr(call.argumentAt(0), columnId) && isKeyEqualityOr(call.argumentAt(1), columnId);
         }
         return isKeyEquality(expression, columnId);
+    }
+
+    /**
+     * Whether join keys on a column of {@code typeA} and a column of {@code typeB} match exactly the values that
+     * {@code =} between the two columns pairs, NULL with NULL: two text columns, SYMBOL, STRING or VARCHAR, by their
+     * text, and two columns of one fixed-size type whose key is its value. FLOAT and DOUBLE fail it, as
+     * {@code 0.0 = -0.0} holds while their keys differ.
+     */
+    public static boolean isKeyMatchType(int typeA, int typeB) {
+        if (ColumnType.isSymbolOrStringOrVarchar(typeA)) {
+            return ColumnType.isSymbolOrStringOrVarchar(typeB);
+        }
+        return typeA == typeB && switch (ColumnType.tagOf(typeA)) {
+            case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.SHORT, ColumnType.CHAR, ColumnType.INT,
+                 ColumnType.IPv4, ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.GEOBYTE,
+                 ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG, ColumnType.UUID, ColumnType.LONG128 ->
+                    true;
+            default -> false;
+        };
     }
 
     /**
