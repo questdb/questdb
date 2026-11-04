@@ -526,35 +526,19 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         // operation. The .pc sidecar names of both carry the token 0, and VACUUM once purged them as
         // files of a stale column version. The fuzz plants no IO failure, see
         // runTxnZeroCoveredSymbolRandomFuzz().
-        Rnd rnd = generateRandom(LOG, 45L, 550L);
-        setTestParams(rnd);
+        runVacuumWithCoveringIndexesOnTxnZeroAndTxnNoneSymbols();
+    }
 
-        setFuzzProbabilities(
-                0.01,
-                0.01,
-                0.01,
-                0.1,
-                0.05,
-                0.05,
-                0.0,
-                0.0,
-                1.0,
-                0.01,
-                0.01,
-                0.5,
-                0.5,
-                0.0,
-                0.0,
-                0.8,
-                0.00,
-                0,
-                0.01,
-                0.1,
-                0.3, // addCoveringIndexProb
-                0.0
-        );
-        fuzzer.setFuzzCounts(true, 2_000, 60, 20, 10, 100, 100, 3, -1, 0);
-        runTxnZeroCoveredSymbolFuzz(rnd, "c2[-1, -1, -1] sym0[0, 0, 0]");
+    @Test
+    public void testVacuumWithCoveringIndexesOnTxnZeroAndTxnNoneSymbolsSetUpAgain() throws Exception {
+        // Runs the test above the way it runs after a test that left async munmap on: its seed draws
+        // async munmap off, so setTestParams() sets the test up a second time, and the seed must still
+        // build the same tables. The second setUp() once cleared the seeds that the initial tables draw
+        // their indexes from, and sym2 got a covering index that VACUUM then ran over as well.
+        ASYNC_MUNMAP = true;
+        runVacuumWithCoveringIndexesOnTxnZeroAndTxnNoneSymbols();
+        // setTestParams() changes the flag only when it sets the test up again
+        Assert.assertFalse("setTestParams() did not set the test up again", ASYNC_MUNMAP);
     }
 
     @Test
@@ -1486,6 +1470,40 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 assertNoPostingFilesOfDroppedColumnVersions(walTableName);
             }
         });
+    }
+
+    // the fuzz of testVacuumWithCoveringIndexesOnTxnZeroAndTxnNoneSymbols(), whose seed pins the covering
+    // indexes that VACUUM TABLE runs over
+    private void runVacuumWithCoveringIndexesOnTxnZeroAndTxnNoneSymbols() throws Exception {
+        Rnd rnd = generateRandom(LOG, 45L, 550L);
+        setTestParams(rnd);
+
+        setFuzzProbabilities(
+                0.01,
+                0.01,
+                0.01,
+                0.1,
+                0.05,
+                0.05,
+                0.0,
+                0.0,
+                1.0,
+                0.01,
+                0.01,
+                0.5,
+                0.5,
+                0.0,
+                0.0,
+                0.8,
+                0.00,
+                0,
+                0.01,
+                0.1,
+                0.3, // addCoveringIndexProb
+                0.0
+        );
+        fuzzer.setFuzzCounts(true, 2_000, 60, 20, 10, 100, 100, 3, -1, 0);
+        runTxnZeroCoveredSymbolFuzz(rnd, "c2[-1, -1, -1] sym0[0, 0, 0]");
     }
 
     /**
