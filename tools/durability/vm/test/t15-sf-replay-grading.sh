@@ -9,6 +9,8 @@
 # The bar is that every recovered row is in the table after the replay. Rows sent after the
 # buffer's last sync may be lost (sf_durability=periodic), and that loss is reported, not failed.
 # A replay client that reports nothing, or a progress file without the numbers, must never pass.
+# What the replay checks find never replaces a failure pass B (the verifier run after the replay)
+# reported itself, so a lost acked txn is not filed as a harness fault.
 #
 # The sweep counts a boundary as proof of the mechanism only when it prints
 # "DETAIL SF_REPLAY_PROVEN", and fails a sweep with none, so each case also checks that line: a
@@ -55,8 +57,10 @@ EOF
 # ---- stand-ins --------------------------------------------------------------------------------
 # `java` plays each JVM verify.sh starts, from the numbers of the current case in case.env:
 #   CrashVerifier pass A  -> distinctIds=$SFA, what the server alone kept
-#   CrashVerifier pass B  -> distinctIds=$SFB, and pass B's own verdict line $VERDICT_B
-#   QwpCrashIngestClient  -> the replay client: reports frame $RFSN, or dies first when "none"
+#   CrashVerifier pass B  -> distinctIds=$SFB, and pass B's own verdict line $VERDICT_B, or no
+#                            verdict line at all when "none"
+#   QwpCrashIngestClient  -> the replay client: reports frame $RFSN, or dies first when "none",
+#                            and also deletes its log when "nolog"
 #   ServerMain            -> the replay server: nothing to do
 cat > "$TMP/bin/java" <<EOF
 #!/usr/bin/env bash
@@ -68,10 +72,14 @@ case "\$*" in
         case "\$res" in
             *armA*) printf 'distinctIds=%s\nF=172\nC=170\n' "\$SFA" > "\$res" ;;
             *)      printf 'distinctIds=%s\nF=172\nC=170\n' "\$SFB" > "\$res"
-                    echo "\$VERDICT_B"
+                    [ "\$VERDICT_B" = none ] || echo "\$VERDICT_B"
                     case "\$VERDICT_B" in RPO_OK*) ;; *) exit 1 ;; esac ;;
         esac ;;
     *org.questdb.QwpCrashIngestClient*)
+        if [ "\$RFSN" = nolog ]; then
+            rm -f "$TMP/mnt/replay-client.log"
+            exit 1
+        fi
         if [ "\$RFSN" = none ]; then
             echo 'Exception in thread "main" java.io.IOException: exec failed rc=-1 sql=create table if not exists t'
             exit 1
@@ -166,6 +174,10 @@ for arm in qwp-sf product; do
         "$(grade "$arm" 246000 246000 none 247000 1000)" "NOT_EVALUATED -"
     check "$arm, the verifier's own output is still printed" \
         "$(grep -c '^DETAIL RPO_OK' "$TMP/last.out")" "1"
+    check "$arm, the end of the replay client's log is printed" \
+        "$(grep -c '^DETAIL SF_REPLAY_CLIENT Exception in thread' "$TMP/last.out")" "1"
+    check "$arm, replay client left no log -> NOT_EVALUATED" \
+        "$(grade "$arm" 246000 246000 nolog 247000 1000)" "NOT_EVALUATED -"
     check "$arm, replay client died before reporting, server held everything -> NOT_EVALUATED" \
         "$(grade "$arm" 247000 247000 none 247000 1000)" "NOT_EVALUATED -"
     check "$arm, no batch= in _qwp_progress -> NOT_EVALUATED" \
@@ -176,6 +188,27 @@ for arm in qwp-sf product; do
     echo "  $arm: no sent= in _qwp_progress, replay complete"
     check "$arm, no sent= -> RPO_OK, no proof" \
         "$(grade "$arm" 244000 247000 246 none 1000)" "RPO_OK -"
+
+    echo "  $arm: pass B's own failure is never replaced"
+    r=$(grade "$arm" 246000 246000 none 247000 1000 "DURABILITY_FAILURE F=160 < Wm=168")
+    check "$arm, pass B failed and the replay client died -> DURABILITY_FAILURE" \
+        "${r%% *}" DURABILITY_FAILURE
+    check "$arm, what the replay check found is still printed" \
+        "$(grep -c '^DETAIL SF_ALSO_FOUND NOT_EVALUATED' "$TMP/last.out")" "1"
+    r=$(grade "$arm" 247000 246000 246 247000 1000 "DURABILITY_FAILURE F=160 < Wm=168")
+    check "$arm, pass B failed and fewer rows after the replay than before -> DURABILITY_FAILURE" \
+        "${r%% *}" DURABILITY_FAILURE
+    r=$(grade "$arm" 244000 245000 246 247000 1000 "SILENT_CORRUPTION id=12 has the wrong value")
+    check "$arm, pass B found corruption and recovered rows are missing -> SILENT_CORRUPTION" \
+        "${r%% *}" SILENT_CORRUPTION
+
+    echo "  $arm: any other pass B verdict gives way to a replay failure"
+    check "$arm, pass B gave no verdict and recovered rows are missing -> DURABILITY_FAILURE" \
+        "$(grade "$arm" 244000 245000 246 247000 1000 none)" "DURABILITY_FAILURE -"
+    # Kept, this line would be renamed NO_COMMIT further down, which is a pass: nothing committed.
+    check "$arm, pass B found no table and recovered rows are missing -> DURABILITY_FAILURE" \
+        "$(grade "$arm" 0 0 0 1000 1000 "LOUD_FAILURE: table does not exist [table=t]")" \
+        "DURABILITY_FAILURE -"
 done
 
 # The classpath arm stops its replay server with pkill; seeing the call proves the stand-in took it.

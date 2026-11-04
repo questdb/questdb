@@ -230,7 +230,7 @@ silently stops checking.
 | **Builder parity** | `t11` | A setting reaches the verifier but not the workload, an invalid `QDB_WAL_TABLE` falls back to a default, or a defanged negative control still holds a live ack tier |
 | **Verdict vocabulary** | `t12` | A verdict line classifies to the wrong token, a token is added without a test row, or a pass/instrument-fault predicate changes meaning |
 | **Absent-table watermark** | `t13` | `guest/verify.sh` grades a missing table against a different watermark file than the arm's workload writes (`lib/arms.sh arm_progress_file`), so committed rows lost with their table read as `NO_COMMIT` |
-| **Replay grading** | `t15` | `guest/verify.sh` in compare mode passes a replay that left recovered rows missing, passes a replay client that reported nothing, or counts a boundary with nothing to replay as proof of the replay |
+| **Replay grading** | `t15` | `guest/verify.sh` in compare mode passes a replay that left recovered rows missing, passes a replay client that reported nothing, counts a boundary with nothing to replay as proof of the replay, or turns a failure the verifier found after the replay into a harness fault |
 | **Device reset** | every sweep, `replay_reset_assert()` | `blkdiscard` reports success and the device is not zeroed, including a partial zero |
 | **Informative sample** | every sweep | The workload never reached its first commit, or every boundary verified as `NO_COMMIT` |
 

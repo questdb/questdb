@@ -270,6 +270,18 @@ case "$ARM" in
             # owner for a JVM the agent killed.
             line="NOT_EVALUATED: verifier produced no verdict ($why)"
         fi
+        # The replay checks below may replace pass B's verdict, but not a product failure pass B
+        # found itself: a lost acked txn must not be filed as a harness fault because the replay
+        # client also died. Their finding is printed beside it instead. Naming the failures to
+        # keep, rather than the passes to replace, means a token missing here can relabel a
+        # failure but never pass it. LOUD_FAILURE is left out because its "table does not exist"
+        # form is renamed NO_COMMIT below, which is a pass.
+        sf_verdict() {  # LINE -> becomes the verdict unless pass B already reported a failure
+            case "$line" in
+                DURABILITY_FAILURE*|SILENT_CORRUPTION*) echo "DETAIL SF_ALSO_FOUND $1" ;;
+                *) line="$1" ;;
+            esac
+        }
         # The delta between the two passes is what the client put back.
         if [ "$SFREPLAY" = "compare" ] && [ "${sfa_distinct:--1}" -ge 0 ] 2>/dev/null; then
             sfb_distinct=$(read_result "$vbres" distinctIds)
@@ -280,7 +292,7 @@ case "$ARM" in
                 # finding about the harness rather than a durability verdict.
                 if [ "$delta" -lt 0 ]; then
                     echo "DETAIL SF_INDETERMINATE armA=$sfa_distinct armB=$sfb_distinct delta=$delta"
-                    line="NOT_EVALUATED qwp-sf: impossible negative replay delta ($delta) — the oracle's own numbers did not parse, so this boundary was not evaluated"
+                    sf_verdict "NOT_EVALUATED qwp-sf: impossible negative replay delta ($delta) — the oracle's own numbers did not parse, so this boundary was not evaluated"
                     sfb_distinct=-1
                 fi
             fi
@@ -307,7 +319,10 @@ case "$ARM" in
                     # Without both numbers the boundary cannot be judged. Never a pass: a replay
                     # client that died before reporting is exactly what this arm must not miss.
                     echo "DETAIL SF_INDETERMINATE sfRecoveredFsn='${rfsn}' batch='${batch:-}'"
-                    line="NOT_EVALUATED qwp-sf: the replay client reported no recovered frame or _qwp_progress has no batch=, so the replay could not be judged (see /mnt/qdb/replay-client.log)"
+                    # The next boundary resets the device and deletes this log, so its end is kept
+                    # here: it tells a replay server that never came up from a client that failed.
+                    tail -n 20 /mnt/qdb/replay-client.log 2>/dev/null | sed 's/^/DETAIL SF_REPLAY_CLIENT /' || true
+                    sf_verdict "NOT_EVALUATED qwp-sf: the replay client reported no recovered frame or _qwp_progress has no batch=, so the replay could not be judged (replay client log: DETAIL SF_REPLAY_CLIENT)"
                 else
                     recovered=$(( (rfsn + 1) * batch ))
                     echo "DETAIL SF_RECOVERED sfRecoveredFsn=$rfsn recoveredRows=$recovered sent=$sent serverAlone=$sfa_distinct afterReplay=$sfb_distinct"
@@ -315,7 +330,7 @@ case "$ARM" in
                         # The failure this arm exists to catch: the client's buffer held rows that
                         # are still missing after it replayed. Overrides pass B's verdict, which
                         # would otherwise read as a pass.
-                        line="DURABILITY_FAILURE qwp-sf: the client recovered rows up to $recovered from its buffer but only $sfb_distinct were present after its replay (sent=$sent serverAlone=$sfa_distinct replayed=$delta) — store-and-forward did not close the gap"
+                        sf_verdict "DURABILITY_FAILURE qwp-sf: the client recovered rows up to $recovered from its buffer but only $sfb_distinct were present after its replay (sent=$sent serverAlone=$sfa_distinct replayed=$delta) — store-and-forward did not close the gap"
                     elif [ "$sent" -lt 0 ] 2>/dev/null; then
                         # The replay restored every row it recovered, which is the bar. Without
                         # `sent` there is no telling whether the server had lost any rows, so the
