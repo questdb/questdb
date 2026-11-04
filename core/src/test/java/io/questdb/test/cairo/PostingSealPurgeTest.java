@@ -287,39 +287,18 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
 
     @Test
     public void testPurgeRemovesCoverFiles() throws Exception {
-        assertMemoryLeak(() -> {
-            if (configuration.disableColumnPurgeJob()) {
-                return;
-            }
-            TableToken tok = createPostingTable("ps_purge_cover");
-            FilesFacade ff = configuration.getFilesFacade();
+        assertPurgeRemovesCoverFiles(COLUMN_NAME_TXN_NONE);
+    }
 
-            try (Path partitionPath = partitionPathFor(tok);
-                 PostingSealPurgeJob job = new PostingSealPurgeJob(engine)) {
-                String col = "c_cover";
-                long sealTxn = writeCoveringAndSeal(partitionPath, col);
-                int pLen = partitionPath.size();
-                // Both valueFileName and coverDataFileName append onto the
-                // shared Path buffer, so each existence check must trim back
-                // to the partition root before re-resolving the file name.
-                assertTrue(".pv must exist after seal",
-                        ff.exists(PostingIndexUtils.valueFileName(
-                                partitionPath.trimTo(pLen), col, COLUMN_NAME_TXN_NONE, sealTxn)));
-                assertTrue(".pc0 must exist after seal with covering",
-                        ff.exists(PostingIndexUtils.coverDataFileName(
-                                partitionPath.trimTo(pLen), col, 0, COLUMN_NAME_TXN_NONE, COLUMN_NAME_TXN_NONE, sealTxn)));
+    @Test
+    public void testPurgeRemovesCoverFilesOfNameTxnPositive() throws Exception {
+        assertPurgeRemovesCoverFiles(7);
+    }
 
-                publishPurgeTask(tok, col, sealTxn, 1L);
-                runPurgeJob(job, 3);
-
-                assertFalse(".pv must be purged",
-                        ff.exists(PostingIndexUtils.valueFileName(
-                                partitionPath.trimTo(pLen), col, COLUMN_NAME_TXN_NONE, sealTxn)));
-                assertFalse(".pc0 must be purged together with .pv",
-                        ff.exists(PostingIndexUtils.coverDataFileName(
-                                partitionPath.trimTo(pLen), col, 0, COLUMN_NAME_TXN_NONE, COLUMN_NAME_TXN_NONE, sealTxn)));
-            }
-        });
+    @Test
+    public void testPurgeRemovesCoverFilesOfNameTxnZero() throws Exception {
+        // A cover file name writes name txn 0 like no name txn, so the scan reports it as no name txn.
+        assertPurgeRemovesCoverFiles(0);
     }
 
     @Test
@@ -939,6 +918,51 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
         }
     }
 
+    private void assertPurgeRemovesCoverFiles(long postingColumnNameTxn) throws Exception {
+        assertMemoryLeak(() -> {
+            if (configuration.disableColumnPurgeJob()) {
+                return;
+            }
+            TableToken tok = createPostingTable("ps_purge_cover");
+            FilesFacade ff = configuration.getFilesFacade();
+
+            try (Path partitionPath = partitionPathFor(tok);
+                 PostingSealPurgeJob job = new PostingSealPurgeJob(engine)) {
+                String col = "c_cover";
+                long sealTxn = writeCoveringAndSeal(partitionPath, col, postingColumnNameTxn);
+                int pLen = partitionPath.size();
+                long liveSealTxn = PostingIndexUtils.readSealTxnFromKeyFile(
+                        ff, PostingIndexUtils.keyFileName(partitionPath.trimTo(pLen), col, postingColumnNameTxn));
+                assertTrue("the second seal must supersede the first", liveSealTxn > sealTxn);
+                // Both valueFileName and coverDataFileName append onto the
+                // shared Path buffer, so each existence check must trim back
+                // to the partition root before re-resolving the file name.
+                assertTrue(".pv must exist after seal",
+                        ff.exists(PostingIndexUtils.valueFileName(
+                                partitionPath.trimTo(pLen), col, postingColumnNameTxn, sealTxn)));
+                assertTrue(".pc0 must exist after seal with covering",
+                        ff.exists(PostingIndexUtils.coverDataFileName(
+                                partitionPath.trimTo(pLen), col, 0, postingColumnNameTxn, COLUMN_NAME_TXN_NONE, sealTxn)));
+
+                publishPurgeTask(tok, col, postingColumnNameTxn, sealTxn, 1L);
+                runPurgeJob(job, 3);
+
+                assertFalse(".pv must be purged",
+                        ff.exists(PostingIndexUtils.valueFileName(
+                                partitionPath.trimTo(pLen), col, postingColumnNameTxn, sealTxn)));
+                assertFalse(".pc0 must be purged together with .pv",
+                        ff.exists(PostingIndexUtils.coverDataFileName(
+                                partitionPath.trimTo(pLen), col, 0, postingColumnNameTxn, COLUMN_NAME_TXN_NONE, sealTxn)));
+                assertTrue("the live .pv must stay",
+                        ff.exists(PostingIndexUtils.valueFileName(
+                                partitionPath.trimTo(pLen), col, postingColumnNameTxn, liveSealTxn)));
+                assertTrue("the live .pc0 must stay",
+                        ff.exists(PostingIndexUtils.coverDataFileName(
+                                partitionPath.trimTo(pLen), col, 0, postingColumnNameTxn, COLUMN_NAME_TXN_NONE, liveSealTxn)));
+            }
+        });
+    }
+
     private long countLogRows(String whereClause) throws Exception {
         try (SqlCompiler compiler = engine.getSqlCompiler();
              SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1)) {
@@ -1002,6 +1026,16 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
             long sealTxn,
             long toTableTxn
     ) {
+        publishPurgeTask(tok, colName, COLUMN_NAME_TXN_NONE, sealTxn, toTableTxn);
+    }
+
+    private void publishPurgeTask(
+            TableToken tok,
+            String colName,
+            long postingColumnNameTxn,
+            long sealTxn,
+            long toTableTxn
+    ) {
         MessageBus bus = engine.getMessageBus();
         MPSequence pubSeq = bus.getPostingSealPurgePubSeq();
         RingQueue<PostingSealPurgeTask> queue = bus.getPostingSealPurgeQueue();
@@ -1012,7 +1046,7 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
         assertTrue("purge queue must accept the task", cursor >= 0);
         try {
             queue.get(cursor).of(
-                    tok, colName, TableUtils.COLUMN_NAME_TXN_NONE, sealTxn,
+                    tok, colName, postingColumnNameTxn, sealTxn,
                     0L, -1L, PartitionBy.NONE, ColumnType.TIMESTAMP_MICRO,
                     0L, toTableTxn
             );
@@ -1236,6 +1270,48 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRemoveAllSealedFilesOfNameTxnZero() throws Exception {
+        // A cover file name writes name txn 0 like no name txn, so the scan reports it as no name txn. The files of
+        // another name txn of the same column must stay.
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final String name = "txn0_col";
+                final int plen = path.size();
+                final FilesFacade ff = configuration.getFilesFacade();
+                final String[] removed = {
+                        Utf8s.stringFromUtf8Bytes(PostingIndexUtils.coverInfoFileName(path.trimTo(plen), name, 0)),
+                        Utf8s.stringFromUtf8Bytes(PostingIndexUtils.valueFileName(path.trimTo(plen), name, 0, 3)),
+                        Utf8s.stringFromUtf8Bytes(PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, 0, 0, COLUMN_NAME_TXN_NONE, 3)),
+                        Utf8s.stringFromUtf8Bytes(PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, 1, 0, 5, 3)),
+                };
+                final String[] kept = {
+                        Utf8s.stringFromUtf8Bytes(PostingIndexUtils.coverInfoFileName(path.trimTo(plen), name, 9)),
+                        Utf8s.stringFromUtf8Bytes(PostingIndexUtils.valueFileName(path.trimTo(plen), name, 9, 4)),
+                        Utf8s.stringFromUtf8Bytes(PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, 0, 9, COLUMN_NAME_TXN_NONE, 4)),
+                };
+                try (Path scratch = new Path()) {
+                    for (String file : removed) {
+                        touchFile(ff, scratch.of(file).$());
+                    }
+                    for (String file : kept) {
+                        touchFile(ff, scratch.of(file).$());
+                    }
+
+                    assertFalse(PostingIndexUtils.removeAllSealedFiles(ff, path, plen, name, 0));
+
+                    for (String file : removed) {
+                        assertFalse("must be removed: " + file, ff.exists(scratch.of(file).$()));
+                    }
+                    for (String file : kept) {
+                        assertTrue("must stay: " + file, ff.exists(scratch.of(file).$()));
+                        ff.removeQuiet(scratch.of(file).$());
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testRemoveAllSealedFilesReportsFailure() throws Exception {
         // Regression test for #9: removeAllSealedFiles must report failure
         // (return true) when at least one sidecar (.pci, .pc<N>) cannot be
@@ -1338,6 +1414,10 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
      * test must target a superseded, not the live-head, sealTxn.
      */
     private long writeCoveringAndSeal(Path partitionPath, String colName) {
+        return writeCoveringAndSeal(partitionPath, colName, COLUMN_NAME_TXN_NONE);
+    }
+
+    private long writeCoveringAndSeal(Path partitionPath, String colName, long postingColumnNameTxn) {
         FilesFacade ff = configuration.getFilesFacade();
         int pLen = partitionPath.size();
         final long colRows = 16;
@@ -1346,7 +1426,7 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
         try {
             Unsafe.setMemory(colAddr, colRows * Integer.BYTES, (byte) 0);
             try (PostingIndexWriter writer = new PostingIndexWriter(
-                    configuration, partitionPath, colName, COLUMN_NAME_TXN_NONE)) {
+                    configuration, partitionPath, colName, postingColumnNameTxn)) {
                 writer.configureCovering(
                         new long[]{colAddr}, new long[]{0L},
                         new int[]{2}, new int[]{0},
@@ -1359,7 +1439,7 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
                 writer.commit();
                 writer.seal();
                 supersededSealTxn = PostingIndexUtils.readSealTxnFromKeyFile(
-                        ff, PostingIndexUtils.keyFileName(partitionPath.trimTo(pLen), colName, COLUMN_NAME_TXN_NONE));
+                        ff, PostingIndexUtils.keyFileName(partitionPath.trimTo(pLen), colName, postingColumnNameTxn));
                 partitionPath.trimTo(pLen);
                 // Second seal advances the chain head past supersededSealTxn.
                 for (int i = 8; i < 16; i++) {

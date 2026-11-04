@@ -7047,7 +7047,8 @@ public class PostingIndexWriter implements IndexWriter {
             @Override
             public void onCoverDataFile(int includeIdx, long filePostingColumnNameTxn, long coveredColumnNameTxn, long sealTxn) {
                 final int i;
-                if (filePostingColumnNameTxn != postingColumnNameTxn || (i = sealTxns.indexOf(sealTxn)) < 0) {
+                if (filePostingColumnNameTxn != PostingIndexUtils.coverFilePostingColumnNameTxn(postingColumnNameTxn)
+                        || (i = sealTxns.indexOf(sealTxn)) < 0) {
                     return;
                 }
                 if (!ff.removeQuiet(PostingIndexUtils.coverDataFileName(path.trimTo(plen), indexName, includeIdx, filePostingColumnNameTxn, coveredColumnNameTxn, sealTxn))) {
