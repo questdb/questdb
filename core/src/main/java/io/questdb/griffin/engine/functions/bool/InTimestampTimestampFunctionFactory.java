@@ -106,7 +106,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             if (intervalSearch) {
                 Function rightFn = args.getQuick(1);
                 CharSequence right = rightFn.getStrA(null);
-                if (right != null && containsDateVariable(right)) {
+                if (right != null && DateExpressionEvaluator.containsDateVariable(right, 0, right.length())) {
                     TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
                     CompiledTickExpression compiled = IntervalUtils.compileTickExpr(
                             driver, configuration, right, 0, right.length(), argPositions.getQuick(1));
@@ -131,21 +131,11 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         }
 
         if (intervalSearch) {
-            return new EqTimestampStrFunction(args.get(0), args.get(1), timestampType, configuration);
+            return new EqTimestampStrFunction(args.get(0), args.get(1), timestampType, argPositions.getQuick(1), configuration);
         }
 
         // have to copy, args is mutable
         return new InTimestampVarFunction(new ObjList<>(args), timestampType);
-    }
-
-    private static boolean containsDateVariable(CharSequence seq) {
-        int lim = seq.length();
-        for (int i = 0; i < lim - 1; i++) {
-            if (seq.charAt(i) == '$' && DateExpressionEvaluator.isDateVariable(seq, i, lim)) {
-                return true;
-            }
-        }
-        return false;
     }
 
     private static boolean isIntervalSearch(ObjList<Function> args) {
@@ -300,12 +290,14 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         private final LongList intervals = new LongList();
         private final Function left;
         private final Function right;
+        private final int rightPosition;
         private final TimestampDriver timestampDriver;
         private final StringSink sink = new StringSink();
 
-        public EqTimestampStrFunction(Function left, Function right, int timestampType, CairoConfiguration configuration) {
+        public EqTimestampStrFunction(Function left, Function right, int timestampType, int rightPosition, CairoConfiguration configuration) {
             this.left = left;
             this.right = right;
+            this.rightPosition = rightPosition;
             this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
             this.configuration = configuration;
         }
@@ -322,10 +314,11 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             }
             intervals.clear();
             try {
-                // we are ignoring exception contents here, so we do not need the exact position
-                IntervalUtils.parseTickExprAndIntersect(timestampDriver, configuration, timestampAsString, intervals, 0, sink, true);
+                IntervalUtils.parseTickExprAndIntersect(timestampDriver, configuration, timestampAsString, intervals, rightPosition, sink, true);
             } catch (SqlException e) {
-                return negated;
+                // A value that does not parse fails the query, the way a literal does. The parser can
+                // point into the value, which is not part of the SQL text.
+                throw CairoException.nonCritical().position(rightPosition).put(e.getFlyweightMessage());
             }
             return negated != isInIntervals(intervals, ts);
         }
@@ -491,7 +484,13 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             switch (intervalFunc.getType()) {
                 case ColumnType.STRING:
                 case ColumnType.VARCHAR:
-                    IntervalUtils.parseTickExprAndIntersect(driver, executionContext.getCairoEngine().getConfiguration(), intervalFunc.getStrA(null), intervals, 0, sink, true);
+                    try {
+                        IntervalUtils.parseTickExprAndIntersect(driver, executionContext.getCairoEngine().getConfiguration(), intervalFunc.getStrA(null), intervals, intervalFuncPos, sink, true);
+                    } catch (SqlException e) {
+                        // the parser can point into the value, which is not part of the SQL text
+                        e.setPosition(intervalFuncPos);
+                        throw e;
+                    }
                     break;
                 default:
                     throw SqlException

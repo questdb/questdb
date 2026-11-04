@@ -209,9 +209,34 @@ public class DateExpressionEvaluator {
     }
 
     /**
+     * Returns whether seq[lo..lim) holds a date variable anywhere. See {@link #indexOfDateVariable}.
+     */
+    public static boolean containsDateVariable(CharSequence seq, int lo, int lim) {
+        return indexOfDateVariable(seq, lo, lim) != -1;
+    }
+
+    /**
+     * Returns the index of the first date variable in seq[lo..lim), or -1 when it holds none.
+     * <p>
+     * A TICK expression with a date variable resolves against the time of each execution, so a
+     * plan must not fold it into constants when it compiles; it evaluates the expression on every
+     * execution, through {@link IntervalUtils#compileTickExpr}, instead. Consumers that choose
+     * between the two use this method, so that they agree on which expressions are which.
+     */
+    public static int indexOfDateVariable(CharSequence seq, int lo, int lim) {
+        for (int i = lo; i < lim - 1; i++) {
+            if (seq.charAt(i) == '$' && isDateVariable(seq, i, lim)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /**
      * Checks whether the characters at seq[lo..lim) start with a known date
      * variable ({@code $now}, {@code $today}, {@code $yesterday}, {@code $tomorrow})
-     * followed by a non-letter boundary. Case-insensitive, zero-allocation.
+     * followed by a non-letter boundary or by the time part of a bare expression, see
+     * {@link #isTimeSuffixStart}. Case-insensitive, zero-allocation.
      */
     public static boolean isDateVariable(CharSequence seq, int lo, int lim) {
         if (lo >= lim || seq.charAt(lo) != '$') {
@@ -252,11 +277,31 @@ public class DateExpressionEvaluator {
         return false;
     }
 
+    /**
+     * Returns whether the character at {@code index}, right after a 'T' that follows a date variable
+     * expression, starts the time part of the expression: a time of day, as in {@code $todayT09:30},
+     * or a bracket, as in {@code $todayT[09:00,14:30]} or {@code $todayT[09..17]:30}. A variable name
+     * has neither after a 'T', so a 'T' inside a name, as in {@code $TOMORROW}, does not end it.
+     * <p>
+     * {@link IntervalUtils} splits a bare date variable expression from its time part at such a 'T',
+     * both when it parses the expression and when it compiles it, and {@link #indexOfDateVariable}
+     * ends a variable name there. All of them use this method, so that the detector finds a date
+     * variable in every expression that the parser resolves one in.
+     */
+    static boolean isTimeSuffixStart(CharSequence seq, int index, int lim) {
+        if (index >= lim) {
+            return false;
+        }
+        final char c = seq.charAt(index);
+        return Chars.isAsciiDigit(c) || c == '[';
+    }
+
     private static boolean isVarBoundary(CharSequence seq, int pos, int lim) {
         char c = seq.charAt(pos);
         if (Chars.isAsciiLetter(c)) {
-            // 'T'/'t' followed by a digit is the ISO time-override suffix, not a name continuation
-            return (c == 'T' || c == 't') && pos + 1 < lim && Chars.isAsciiDigit(seq.charAt(pos + 1));
+            // a 'T' that starts the time part, as in $todayT09:30 or $todayT[09:00,14:30], ends the
+            // name rather than continuing it; a 't' there does too, although the parser rejects it
+            return (c == 'T' || c == 't') && isTimeSuffixStart(seq, pos + 1, lim);
         }
         return true;
     }
