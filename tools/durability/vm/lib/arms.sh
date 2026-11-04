@@ -152,7 +152,8 @@ harness_workload_env() {
 # are separate JVMs reading the same settings. An override that reaches only the verifier makes the
 # replay client look in a directory the workload never wrote to. It finds nothing to replay, so
 # every boundary passes with nothing replayed, and the sweep fails only at the end, as
-# NOT_EVALUATED, because no boundary proved a replay. test/t11 pins the pairing.
+# NOT_EVALUATED, because no boundary proved a replay. If the client cannot create that directory,
+# every boundary is NOT_EVALUATED instead. test/t11 pins the pairing.
 
 # harness_assert_config -> 0 if the environment this run was asked for is coherent, 64 if not.
 #

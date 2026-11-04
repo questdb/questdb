@@ -278,6 +278,9 @@ case "$ARM" in
         # form is renamed NO_COMMIT below, which is a pass.
         sf_verdict() {  # LINE -> becomes the verdict unless pass B already reported a failure
             case "$line" in
+                # Two lines, one from stdout and one from stderr: the caller reads the last, so
+                # keeping both could pass a failure. Replaced, as before.
+                *$'\n'*) line="$1" ;;
                 DURABILITY_FAILURE*|SILENT_CORRUPTION*) echo "DETAIL SF_ALSO_FOUND $1" ;;
                 *) line="$1" ;;
             esac
@@ -321,8 +324,11 @@ case "$ARM" in
                     echo "DETAIL SF_INDETERMINATE sfRecoveredFsn='${rfsn}' batch='${batch:-}'"
                     # The next boundary resets the device and deletes this log, so its end is kept
                     # here: it tells a replay server that never came up from a client that failed.
-                    tail -n 20 /mnt/qdb/replay-client.log 2>/dev/null | sed 's/^/DETAIL SF_REPLAY_CLIENT /' || true
-                    sf_verdict "NOT_EVALUATED qwp-sf: the replay client reported no recovered frame or _qwp_progress has no batch=, so the replay could not be judged (replay client log: DETAIL SF_REPLAY_CLIENT)"
+                    # `$a\` ends a last line the client was killed in the middle of, which would
+                    # otherwise swallow the verdict printed after it.
+                    tail -n 20 /mnt/qdb/replay-client.log 2>/dev/null \
+                        | sed -e 's/^/DETAIL SF_REPLAY_CLIENT /' -e '$a\' || true
+                    sf_verdict "NOT_EVALUATED qwp-sf: the replay client reported no recovered frame or _qwp_progress has no batch=, so the replay could not be judged (the end of the replay client's log, if any, is in the DETAIL SF_REPLAY_CLIENT lines)"
                 else
                     recovered=$(( (rfsn + 1) * batch ))
                     echo "DETAIL SF_RECOVERED sfRecoveredFsn=$rfsn recoveredRows=$recovered sent=$sent serverAlone=$sfa_distinct afterReplay=$sfb_distinct"

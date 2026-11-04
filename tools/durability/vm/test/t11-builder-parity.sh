@@ -7,8 +7,9 @@
 # harness_workload_env and harness_verify_cmd. A setting that reaches only one of them does not
 # fail loudly: the replay client looks in a store-and-forward directory the workload never wrote
 # to and finds nothing to replay. Every boundary then passes with nothing replayed, and the sweep
-# fails only at the end, as NOT_EVALUATED, because no boundary proved a replay. The harness alone
-# causes that, so the pairing is pinned here.
+# fails only at the end, as NOT_EVALUATED, because no boundary proved a replay. If the client
+# cannot create that directory, every boundary is NOT_EVALUATED instead. The harness alone causes
+# either, so the pairing is pinned here.
 #
 # The refusals matter for the same reason. harness_wal_table's 64 and a defanged-but-armed
 # negative control are both swallowed by command substitution at the call site, and both end in a

@@ -58,9 +58,10 @@ EOF
 # `java` plays each JVM verify.sh starts, from the numbers of the current case in case.env:
 #   CrashVerifier pass A  -> distinctIds=$SFA, what the server alone kept
 #   CrashVerifier pass B  -> distinctIds=$SFB, and pass B's own verdict line $VERDICT_B, or no
-#                            verdict line at all when "none"
+#                            verdict line at all when "none"; $ERR_B, if set, on stderr
 #   QwpCrashIngestClient  -> the replay client: reports frame $RFSN, or dies first when "none",
-#                            and also deletes its log when "nolog"
+#                            also deletes its log when "nolog", or dies in the middle of a
+#                            line when "partial"
 #   ServerMain            -> the replay server: nothing to do
 cat > "$TMP/bin/java" <<EOF
 #!/usr/bin/env bash
@@ -73,9 +74,14 @@ case "\$*" in
             *armA*) printf 'distinctIds=%s\nF=172\nC=170\n' "\$SFA" > "\$res" ;;
             *)      printf 'distinctIds=%s\nF=172\nC=170\n' "\$SFB" > "\$res"
                     [ "\$VERDICT_B" = none ] || echo "\$VERDICT_B"
+                    [ -z "\$ERR_B" ] || echo "\$ERR_B" >&2
                     case "\$VERDICT_B" in RPO_OK*) ;; *) exit 1 ;; esac ;;
         esac ;;
     *org.questdb.QwpCrashIngestClient*)
+        if [ "\$RFSN" = partial ]; then
+            printf 'Exception in thread "main" java.io.IOException: exec fai'
+            exit 1
+        fi
         if [ "\$RFSN" = nolog ]; then
             rm -f "$TMP/mnt/replay-client.log"
             exit 1
@@ -115,12 +121,13 @@ export QDB_PRODUCT_RECOVERY_PASS=false
 
 RPO_OK_LINE="RPO_OK F=172 >= Wm=168 (every acked txn survived); at-risk txns lost=0 in (Wm=168, C=170] (RPO<=W=50000)"
 
-# grade ARM SFA SFB RFSN SENT BATCH [VERDICT_B] -> "<token> <proof>", where proof is "proof" when
+# grade ARM SFA SFB RFSN SENT BATCH [VERDICT_B [ERR_B]] -> "<token> <proof>", where proof is "proof" when
 # the boundary would count as a proven replay and "-" otherwise. SENT or BATCH "none" leaves that
 # line out of _qwp_progress. The full output of the last boundary is kept in $TMP/last.out.
 grade() {
     local arm="$1" cmd out proof=-
-    printf 'SFA=%s\nSFB=%s\nRFSN=%s\nVERDICT_B=%q\n' "$2" "$3" "$4" "${7:-$RPO_OK_LINE}" > "$TMP/case.env"
+    printf 'SFA=%s\nSFB=%s\nRFSN=%s\nVERDICT_B=%q\nERR_B=%q\n' "$2" "$3" "$4" "${7:-$RPO_OK_LINE}" "${8:-}" \
+        > "$TMP/case.env"
     rm -rf "$TMP/mnt/db" "$TMP/mnt/replay-client.log"
     mkdir -p "$TMP/mnt/db"
     {
@@ -178,6 +185,8 @@ for arm in qwp-sf product; do
         "$(grep -c '^DETAIL SF_REPLAY_CLIENT Exception in thread' "$TMP/last.out")" "1"
     check "$arm, replay client left no log -> NOT_EVALUATED" \
         "$(grade "$arm" 246000 246000 nolog 247000 1000)" "NOT_EVALUATED -"
+    check "$arm, replay client killed in the middle of a line, nothing else printed -> NOT_EVALUATED" \
+        "$(grade "$arm" 246000 246000 partial 247000 1000 none)" "NOT_EVALUATED -"
     check "$arm, replay client died before reporting, server held everything -> NOT_EVALUATED" \
         "$(grade "$arm" 247000 247000 none 247000 1000)" "NOT_EVALUATED -"
     check "$arm, no batch= in _qwp_progress -> NOT_EVALUATED" \
@@ -205,6 +214,10 @@ for arm in qwp-sf product; do
     echo "  $arm: any other pass B verdict gives way to a replay failure"
     check "$arm, pass B gave no verdict and recovered rows are missing -> DURABILITY_FAILURE" \
         "$(grade "$arm" 244000 245000 246 247000 1000 none)" "DURABILITY_FAILURE -"
+    # The caller reads the last of the two lines, so keeping them would pass this boundary.
+    check "$arm, pass B failed on stdout, RPO_OK on stderr, recovered rows missing -> DURABILITY_FAILURE" \
+        "$(grade "$arm" 244000 245000 246 247000 1000 "DURABILITY_FAILURE F=160 < Wm=168" \
+            "RPO_OK on stderr")" "DURABILITY_FAILURE -"
     # Kept, this line would be renamed NO_COMMIT further down, which is a pass: nothing committed.
     check "$arm, pass B found no table and recovered rows are missing -> DURABILITY_FAILURE" \
         "$(grade "$arm" 0 0 0 1000 1000 "LOUD_FAILURE: table does not exist [table=t]")" \
