@@ -47,6 +47,7 @@ import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.PeerIsSlowToWriteException;
 import io.questdb.network.PlainSocket;
 import io.questdb.network.ServerDisconnectException;
+import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
@@ -273,8 +274,13 @@ public class QwpIngressUpgradeProcessorResumeRecvTest extends AbstractCairoTest 
         });
     }
 
+    /**
+     * An ack larger than the send buffer leaves in buffer-sized pieces instead of dropping
+     * the connection, which would make the client replay the rows the ack covers. Even a
+     * buffer smaller than the ack's fixed fields carries it.
+     */
     @Test
-    public void testAckBufferTooSmall() throws Exception {
+    public void testAckLargerThanSendBufferLeavesInPieces() throws Exception {
         assertMemoryLeak(() -> {
             HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
             QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
@@ -283,7 +289,7 @@ public class QwpIngressUpgradeProcessorResumeRecvTest extends AbstractCairoTest 
             MockNetworkFacade mockNf = new MockNetworkFacade(pingFrame);
 
             long recvBuf = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
-            // ACK frame = 11 bytes (2 header + 9 payload). Use 10-byte buffer.
+            // ACK frame = 13 bytes (2 header + 11 payload: status, sequence, table count).
             int tinyBufSize = 10;
             long sendBuf = Unsafe.malloc(tinyBufSize, MemoryTag.NATIVE_DEFAULT);
             MockRawSocket mockRawSocket = new MockRawSocket(sendBuf, tinyBufSize);
@@ -293,13 +299,13 @@ public class QwpIngressUpgradeProcessorResumeRecvTest extends AbstractCairoTest 
                 QwpIngressProcessorState state = setupState(httpConfig, context);
                 state.setHighestProcessedSequence(5);
 
-                try {
-                    processor.resumeRecv(context);
-                    Assert.fail("Expected ServerDisconnectException");
-                } catch (ServerDisconnectException e) {
-                    // expected: buffer too small for ACK (PeerDisconnectedException
-                    // caught by resumeRecv's Throwable handler → ServerDisconnectException)
-                }
+                processor.resumeRecv(context);
+
+                // The PING flushes the ack before its pong: 10 and 3 bytes of ack, then the 2-byte pong.
+                Assert.assertEquals("[10,3,2]", mockRawSocket.sentSizes.toString());
+                Assert.assertEquals(5, state.getLastAckedSequence());
+                Assert.assertTrue(state.isSendReady());
+                Assert.assertFalse(state.hasStagedFrame());
             } finally {
                 Unsafe.free(recvBuf, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
                 Unsafe.free(sendBuf, tinyBufSize, MemoryTag.NATIVE_DEFAULT);
@@ -2291,6 +2297,8 @@ public class QwpIngressUpgradeProcessorResumeRecvTest extends AbstractCairoTest 
      * with configurable exception throwing.
      */
     private static class MockRawSocket implements HttpRawSocket {
+        // The size of each send that went through, in order.
+        final IntList sentSizes = new IntList();
         private final long bufferAddress;
         private final int bufferSize;
         int sendCallCount;
@@ -2323,11 +2331,13 @@ public class QwpIngressUpgradeProcessorResumeRecvTest extends AbstractCairoTest 
                 throw PeerDisconnectedException.INSTANCE;
             }
             sentSize = size;
+            sentSizes.add(size);
         }
 
         void reset() {
             sendCallCount = 0;
             sentSize = 0;
+            sentSizes.clear();
         }
     }
 

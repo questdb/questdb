@@ -25,6 +25,7 @@
 package io.questdb.cutlass.qwp.server;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.wal.DurabilityTier;
 import io.questdb.cairo.wal.DurableAckRegistry;
@@ -55,6 +56,7 @@ import io.questdb.std.LongList;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 
@@ -881,6 +883,9 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         }
 
         boolean wasAwaitingCloseEcho = state.isAwaitingCloseEcho();
+        // An ack larger than the send buffer goes out in pieces. Its continuation below
+        // finishes only the piece the send buffer holds, so send the rest first.
+        finishStagedFrame(context, state);
         switch (state.getSendState()) {
             case QwpIngressProcessorState.SEND_STATE_READY -> {
             }
@@ -1021,6 +1026,43 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
     }
 
     /**
+     * Finishes a frame whose send blocked before all of it reached the send buffer: first
+     * the part the send buffer holds, then the staged rest (see {@link #sendStagedFrame}).
+     * Must run before anything else goes out, so that nothing interleaves with the frame.
+     */
+    private static void finishStagedFrame(HttpConnectionContext context, QwpIngressProcessorState state)
+            throws PeerDisconnectedException, PeerIsSlowToReadException {
+        if (state.hasStagedFrame()) {
+            context.resumeResponseSend();
+            sendStagedFrame(context, state);
+        }
+    }
+
+    /**
+     * Where to write a server frame of {@code frameSize} bytes before {@link #sendFrame}
+     * sends it: the send buffer, or the connection's staging memory when the frame does
+     * not fit the buffer. An ack names every table it covers, so it can outgrow a send
+     * buffer that {@code http.send.buffer.size} lowered. Dropping the connection instead
+     * would make the client replay rows the server had already committed.
+     */
+    private static long getFrameAddress(HttpConnectionContext context, QwpIngressProcessorState state, int frameSize)
+            throws PeerDisconnectedException {
+        final HttpRawSocket rawSocket = context.getRawResponseSocket();
+        if (frameSize <= rawSocket.getBufferSize()) {
+            return rawSocket.getBufferAddress();
+        }
+        try {
+            return state.stageFrame(frameSize);
+        } catch (CairoException e) {
+            LOG.critical().$("cannot stage response frame larger than send buffer [fd=").$(context.getFd())
+                    .$(", frameSize=").$(frameSize)
+                    .$(", bufferSize=").$(rawSocket.getBufferSize())
+                    .$(", error=").$((Throwable) e).I$();
+            throw PeerDisconnectedException.INSTANCE;
+        }
+    }
+
+    /**
      * False for a frame that can never join a commit batch. See the commit batch
      * fields of {@link QwpIngressProcessorState} for how batching works.
      */
@@ -1116,6 +1158,34 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             return QwpIngressHttpProcessor.WEBSOCKET_PROTOCOL_QWP_V1;
         }
         return null;
+    }
+
+    /**
+     * Sends the frame of {@code frameSize} bytes written to {@link #getFrameAddress}.
+     */
+    private static void sendFrame(HttpConnectionContext context, QwpIngressProcessorState state, int frameSize)
+            throws PeerDisconnectedException, PeerIsSlowToReadException {
+        if (state.hasStagedFrame()) {
+            sendStagedFrame(context, state);
+        } else {
+            context.getRawResponseSocket().send(frameSize);
+        }
+    }
+
+    /**
+     * Copies the staged frame to the send buffer and sends it, one buffer at a time. When a
+     * send blocks, the send buffer keeps the unsent part of its copy, the rest stays staged,
+     * and the caller parks the send state; {@link #finishStagedFrame} resumes from there.
+     */
+    private static void sendStagedFrame(HttpConnectionContext context, QwpIngressProcessorState state)
+            throws PeerDisconnectedException, PeerIsSlowToReadException {
+        final HttpRawSocket rawSocket = context.getRawResponseSocket();
+        while (state.hasStagedFrame()) {
+            final int count = Math.min(rawSocket.getBufferSize(), state.getStagedFrameRemaining());
+            Vect.memcpy(rawSocket.getBufferAddress(), state.getStagedFrameCopyAddress(), count);
+            state.onStagedFrameCopied(count);
+            rawSocket.send(count);
+        }
     }
 
     private static void stageReject(HttpConnectionContext context, int bytesWritten) {
@@ -1279,6 +1349,8 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
 
     private void drainPendingResponse(HttpConnectionContext context, QwpIngressProcessorState state)
             throws PeerDisconnectedException, PeerIsSlowToReadException {
+        // The branches below finish only the piece of a parked ack that the send buffer holds.
+        finishStagedFrame(context, state);
         switch (state.getSendState()) {
             case QwpIngressProcessorState.SEND_STATE_READY -> {
             }
@@ -3006,30 +3078,19 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             throws PeerDisconnectedException, PeerIsSlowToReadException {
         assert state.isSendReady() : "trySendAck called in wrong state";
 
-        HttpRawSocket rawSocket = context.getRawResponseSocket();
-        long bufferAddr = rawSocket.getBufferAddress();
-        int bufferSize = rawSocket.getBufferSize();
-
         int payloadLen = state.computeAckPayloadSize();
         int frameSize = WebSocketFrameWriter.headerSize(payloadLen, false) + payloadLen;
-
-        if (frameSize > bufferSize) {
-            // Buffer capacity too small for even a single ACK frame
-            LOG.critical().$("Buffer too small for ACK response [fd=").$(context.getFd())
-                    .$(", required=").$(frameSize)
-                    .$(", bufferSize=").$(bufferSize).I$();
-            throw PeerDisconnectedException.INSTANCE;
-        }
+        long frameAddr = getFrameAddress(context, state, frameSize);
 
         long sequence = state.getHighestProcessedSequence();
-        int headerLen = WebSocketFrameWriter.writeBinaryFrameHeader(bufferAddr, payloadLen);
-        long writeAddr = bufferAddr + headerLen;
+        int headerLen = WebSocketFrameWriter.writeBinaryFrameHeader(frameAddr, payloadLen);
+        long writeAddr = frameAddr + headerLen;
         Unsafe.putByte(writeAddr, STATUS_OK);
         Unsafe.putLong(writeAddr + 1, sequence);
         QwpIngressProcessorState.writeTableSeqTxnEntries(writeAddr + 9, state.getPendingAckSeqTxns());
 
         try {
-            rawSocket.send(headerLen + payloadLen);
+            sendFrame(context, state, frameSize);
             state.onAckSent(sequence);
             LOG.debug().$("Sent cumulative ACK [fd=").$(context.getFd()).$(", upTo=").$(sequence).I$();
         } catch (PeerIsSlowToReadException e) {
@@ -3088,25 +3149,16 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             CharSequenceLongHashMap progress,
             int payloadLen
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        HttpRawSocket rawSocket = context.getRawResponseSocket();
-        long bufferAddr = rawSocket.getBufferAddress();
-        int bufferSize = rawSocket.getBufferSize();
-
         int frameSize = WebSocketFrameWriter.headerSize(payloadLen, false) + payloadLen;
-        if (frameSize > bufferSize) {
-            LOG.critical().$("Buffer too small for durable ACK response [fd=").$(context.getFd())
-                    .$(", required=").$(frameSize)
-                    .$(", bufferSize=").$(bufferSize).I$();
-            throw PeerDisconnectedException.INSTANCE;
-        }
+        long frameAddr = getFrameAddress(context, state, frameSize);
 
-        int headerLen = WebSocketFrameWriter.writeBinaryFrameHeader(bufferAddr, payloadLen);
-        long writeAddr = bufferAddr + headerLen;
+        int headerLen = WebSocketFrameWriter.writeBinaryFrameHeader(frameAddr, payloadLen);
+        long writeAddr = frameAddr + headerLen;
         Unsafe.putByte(writeAddr, status);
         QwpIngressProcessorState.writeTableSeqTxnEntries(writeAddr + 1, progress);
 
         try {
-            rawSocket.send(headerLen + payloadLen);
+            sendFrame(context, state, frameSize);
             state.onDurableAckSent();
             LOG.debug().$("Sent durable ACK [fd=").$(context.getFd())
                     .$(", status=").$(status)

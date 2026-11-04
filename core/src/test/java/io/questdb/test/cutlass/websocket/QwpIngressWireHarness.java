@@ -37,8 +37,11 @@ import io.questdb.cutlass.qwp.server.QwpIngressUpgradeProcessor;
 import io.questdb.cutlass.qwp.websocket.WebSocketOpcode;
 import io.questdb.log.Log;
 import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.network.PeerDisconnectedException;
+import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.PeerIsSlowToWriteException;
 import io.questdb.network.PlainSocket;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 
@@ -441,12 +444,20 @@ final class QwpIngressWireHarness {
     }
 
     /**
-     * Captures every frame the server sends, in order.
+     * Captures every frame the server sends, in order: the bytes of each send. A send
+     * listed in {@link #blockedSends} records its bytes and then throws
+     * {@link PeerIsSlowToReadException}, as a real send does when the peer has not read
+     * them yet: they are on their way, and the server must park until they leave. The
+     * send numbered {@link #disconnectedSend} and every later one find the peer gone.
      */
     static class RecordingRawSocket implements HttpRawSocket {
+        // Numbers of the sends that block, counted from 1.
+        final IntHashSet blockedSends = new IntHashSet();
         final ObjList<byte[]> sentFrames = new ObjList<>();
         private final long bufferAddress;
         private final int bufferSize;
+        int disconnectedSend = Integer.MAX_VALUE;
+        private int sendCount;
 
         RecordingRawSocket(long bufferAddress, int bufferSize) {
             this.bufferAddress = bufferAddress;
@@ -464,12 +475,19 @@ final class QwpIngressWireHarness {
         }
 
         @Override
-        public void send(int size) {
+        public void send(int size) throws PeerDisconnectedException, PeerIsSlowToReadException {
+            if (sendCount + 1 >= disconnectedSend) {
+                sendCount++;
+                throw PeerDisconnectedException.INSTANCE;
+            }
             byte[] copy = new byte[size];
             for (int i = 0; i < size; i++) {
                 copy[i] = Unsafe.getByte(bufferAddress + i);
             }
             sentFrames.add(copy);
+            if (blockedSends.contains(++sendCount)) {
+                throw PeerIsSlowToReadException.INSTANCE;
+            }
         }
     }
 

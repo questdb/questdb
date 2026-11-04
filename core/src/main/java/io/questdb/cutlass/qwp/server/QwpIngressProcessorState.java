@@ -356,6 +356,14 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     private QwpMessageCursor preparedMessageCursor;
     private QwpTableBlockCursor preparedTableBlock;
     private int sendState = SEND_STATE_READY;
+    // A server frame larger than the send buffer, which leaves through the send buffer one
+    // buffer at a time (see stageFrame). Allocated on first use, freed when the connection ends.
+    private long stagedFrameAddress;
+    private int stagedFrameCapacity;
+    // Bytes of the staged frame already copied to the send buffer.
+    private int stagedFrameCopied;
+    // Size of the staged frame while some of it has not reached the send buffer, otherwise 0.
+    private int stagedFrameSize;
     private QwpStreamingDecoder streamingDecoder;
     private QwpTudCache tudCache;
     private QwpWalAppender walAppender;
@@ -476,6 +484,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
             Unsafe.free(bufferAddress, bufferSize, MemoryTag.NATIVE_HTTP_CONN);
             bufferAddress = 0;
         }
+        freeStagedFrame();
         CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
@@ -901,6 +910,20 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         return sendState;
     }
 
+    /**
+     * Address of the first staged frame byte not yet copied to the send buffer.
+     */
+    public long getStagedFrameCopyAddress() {
+        return stagedFrameAddress + stagedFrameCopied;
+    }
+
+    /**
+     * Number of staged frame bytes not yet copied to the send buffer.
+     */
+    public int getStagedFrameRemaining() {
+        return stagedFrameSize - stagedFrameCopied;
+    }
+
     public Status getStatus() {
         return currentStatus;
     }
@@ -924,6 +947,13 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
      */
     public boolean hasPendingAck() {
         return sendState == SEND_STATE_READY && highestProcessedSequence > lastAckedSequence;
+    }
+
+    /**
+     * True while some of the staged frame has not reached the send buffer, see {@link #stageFrame}.
+     */
+    public boolean hasStagedFrame() {
+        return stagedFrameSize > 0;
     }
 
     /**
@@ -1347,6 +1377,19 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     }
 
     /**
+     * Records that the next {@code count} bytes of the staged frame were copied to the send
+     * buffer. The frame stops being staged once all its bytes were.
+     */
+    public void onStagedFrameCopied(int count) {
+        assert count > 0 && count <= getStagedFrameRemaining();
+        stagedFrameCopied += count;
+        if (stagedFrameCopied == stagedFrameSize) {
+            stagedFrameCopied = 0;
+            stagedFrameSize = 0;
+        }
+    }
+
+    /**
      * Records that the arming half-close of the close-echo wait was deferred
      * because the socket still held pending TLS write data. Every recv-driven
      * re-entry retries the half-close until the ciphertext drains, so the peer
@@ -1522,6 +1565,8 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         isDurableProgressSnapshotFullyUploaded = false;
         isSendingLocalDurableAck = false;
         releaseIncarnations();
+        // A staged frame dies with the connection, and a pooled context must not keep its memory.
+        freeStagedFrame();
 
         // Log cache stats before clearing (only if there were any lookups)
         long hits = symbolCache.getCacheHits();
@@ -1911,6 +1956,24 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     }
 
     /**
+     * Stages a server frame of {@code size} bytes, larger than the send buffer, and returns the
+     * address to write it to. The upgrade processor copies it to the send buffer one buffer at a
+     * time, and the send state stays parked until the last copy is sent, so no other frame can
+     * interleave with it. The memory stays allocated until the connection ends.
+     */
+    public long stageFrame(int size) {
+        assert size > 0 && !hasStagedFrame() : "a staged frame is still in flight";
+        if (size > stagedFrameCapacity) {
+            freeStagedFrame();
+            stagedFrameAddress = Unsafe.malloc(size, MemoryTag.NATIVE_HTTP_CONN);
+            stagedFrameCapacity = size;
+        }
+        stagedFrameCopied = 0;
+        stagedFrameSize = size;
+        return stagedFrameAddress;
+    }
+
+    /**
      * Returns true if the ACK batch threshold has been reached and the send
      * buffer is clear, meaning a cumulative ACK should be sent now.
      */
@@ -2157,6 +2220,16 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
             bufferAddress = Unsafe.realloc(bufferAddress, bufferSize, newSize, MemoryTag.NATIVE_HTTP_CONN);
             bufferSize = newSize;
         }
+    }
+
+    private void freeStagedFrame() {
+        if (stagedFrameAddress != 0) {
+            Unsafe.free(stagedFrameAddress, stagedFrameCapacity, MemoryTag.NATIVE_HTTP_CONN);
+            stagedFrameAddress = 0;
+        }
+        stagedFrameCapacity = 0;
+        stagedFrameCopied = 0;
+        stagedFrameSize = 0;
     }
 
     /**

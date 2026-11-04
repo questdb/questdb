@@ -441,13 +441,18 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
     }
 
     /**
-     * Each producer cycles its rows through three tables, so its flushes carry rows of
+     * Each producer cycles its rows through 3 to 26 tables, so its flushes carry rows of
      * several tables and its frames interleave them, and the server batches their
      * commits across tables. The server bounces mid-stream: the client replays from
      * its acked watermark, sending again rows the server committed before it could ack
      * them, which the tables' DEDUP keys absorb. Every table must end up holding
      * exactly its rows. A batch commit that fails on one table after others committed
      * is covered by QwpIngressCommitBatchTest: nothing here fails a commit.
+     * <p>
+     * Half the runs lower {@code http.send.buffer.size} below what an ack naming many of
+     * the tables takes, so such acks leave in pieces, under the same fragmentation and
+     * bounces. A server that dropped the connection on them instead would never get the
+     * client's backlog acked.
      */
     @Test
     public void testOracleMultiTableTortureUnderServerBounces() throws Exception {
@@ -457,7 +462,13 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             Assert.assertEquals("test setup: commits must not sync", CommitMode.NOSYNC, configuration.getCommitMode());
             Rnd master = TestUtils.generateRandom(LOG);
-            final String[] tableNames = {TABLE_NAME + "_a", TABLE_NAME + "_b", TABLE_NAME + "_c"};
+            final String[] tableNames = new String[3 + master.nextInt(24)];
+            for (int t = 0; t < tableNames.length; t++) {
+                tableNames[t] = TABLE_NAME + '_' + (char) ('a' + t) + "_with_a_name_this_long";
+            }
+            // An ack takes 15 bytes and 49 per table it names: 1_289 for all 26.
+            final int sendBufferSize = master.nextBoolean() ? RestartableQwpServer.DEFAULT_SEND_BUFFER_SIZE : 512 + master.nextInt(512);
+            LOG.info().$("multi-table test tables=").$(tableNames.length).$(", sendBufferSize=").$(sendBufferSize).$();
             final QwpTable[] oracles = new QwpTable[tableNames.length];
             for (int t = 0; t < tableNames.length; t++) {
                 createTargetTable(tableNames[t]);
@@ -471,7 +482,7 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
             long sfMaxSegmentBytes = pickSfMaxSegmentBytes(master);
             LOG.info().$("multi-table test sf_max_segment_bytes=").$(sfMaxSegmentBytes).$();
 
-            // Row r of every producer goes to table (r + producer) % 3, so the tables
+            // Row r of every producer goes to table (r + producer) % tableCount, so the tables
             // interleave within every flush. ids and timestamps are globally unique.
             long baseTsMicros = 1_700_000_000_000_000L;
             QwpRow[][] perProducerRows = new QwpRow[producerCount][rowsPerProducer];
@@ -498,7 +509,7 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
                 sfDirs[p] = freshSfDir("oracle-multi-table-p" + p);
             }
 
-            try (RestartableQwpServer server = new RestartableQwpServer(engine, configuration, port, recvChunk, sendChunk)) {
+            try (RestartableQwpServer server = new RestartableQwpServer(engine, configuration, port, recvChunk, sendChunk, sendBufferSize)) {
                 server.start();
 
                 AtomicReferenceArray<Throwable> producerErrors = new AtomicReferenceArray<>(producerCount);
