@@ -86,7 +86,7 @@ public class SampleByStreamBenchmark {
     public String timeZone;
     @Param({"0", "4"})
     public int workers;
-    @Param({"basic", "count", "double", "stats", "decimal", "first_last", "distinct_byte", "expression", "filtered", "filtered_desc", "hash_filtered", "keyed", "keyed_double", "keyed_filtered", "keyed_string", "keyed_multi", "keyed_distinct_byte", "keyed_unique"})
+    @Param({"basic", "count", "double", "stats", "decimal", "first_last", "distinct_byte", "expression", "filtered", "filtered_desc", "filtered_gaps", "hash_filtered", "keyed", "keyed_double", "keyed_filtered", "keyed_string", "keyed_multi", "keyed_distinct_byte", "keyed_unique"})
     public String workload;
     private int[] columnTypes;
     private SqlCompiler compiler;
@@ -160,6 +160,7 @@ public class SampleByStreamBenchmark {
             }
             final String select = switch (workload) {
                 case "basic", "filtered", "filtered_desc" -> "count(*), sum(v), avg(d)";
+                case "filtered_gaps" -> "count(*), sum(v), avg(d), min(d), max(d), sum(d), first(v), last(v)";
                 case "count" -> "count(*)";
                 case "double" -> "sum(d), avg(d), min(d), max(d)";
                 case "stats" -> "stddev_pop(d), corr(d, v), weighted_avg(d, v)";
@@ -178,7 +179,7 @@ public class SampleByStreamBenchmark {
             final boolean isHashControl = "hash_filtered".equals(workload);
             final boolean isFiltered = workload.contains("filtered");
             factory = compiler.compile("select " + (isHashControl ? "" : "ts, ") + select + " from trades "
-                    + (isFiltered ? "where v % " + filterModulo + " = 0 " : "")
+                    + (isFiltered ? "where v % " + filterModulo + ("filtered_gaps".equals(workload) ? " <> 0 " : " = 0 ") : "")
                     + (isHashControl ? "" : "sample by " + bucket + " fill(" + fill + ") align to calendar time zone '" + timeZone + "'")
                     + ("filtered_desc".equals(workload) ? " order by ts desc limit 10" : ""), context).getRecordCursorFactory();
             columnTypes = new int[factory.getMetadata().getColumnCount()];

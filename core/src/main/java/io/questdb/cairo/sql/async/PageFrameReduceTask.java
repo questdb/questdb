@@ -68,7 +68,9 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     private PageFrameSequence<?> frameSequence;
     private long frameSequenceId = -1;
     private long groupByFirstKey;
+    private boolean groupByFirstKeyInSpan;
     private long groupByLastKey;
+    private boolean groupByLastKeyInSpan;
     private long groupBySegmentCount;
     private int interruptionReason = SqlExecutionCircuitBreaker.STATE_OK;
     // Valid for TYPE_FILTER and TYPE_HORIZON_JOIN only. When set, the reducer sets filteredRowCount
@@ -217,6 +219,14 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         return groupBySegmentCount;
     }
 
+    public boolean isGroupByFirstKeyInSpan() {
+        return groupByFirstKeyInSpan;
+    }
+
+    public boolean isGroupByLastKeyInSpan() {
+        return groupByLastKeyInSpan;
+    }
+
     /**
      * Returns the per-query memory tracker captured by the owning frame sequence
      * at workload start, or {@code null} between workloads / when no per-query
@@ -345,8 +355,16 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         this.groupByFirstKey = groupByFirstKey;
     }
 
+    public void setGroupByFirstKeyInSpan(boolean groupByFirstKeyInSpan) {
+        this.groupByFirstKeyInSpan = groupByFirstKeyInSpan;
+    }
+
     public void setGroupByLastKey(long groupByLastKey) {
         this.groupByLastKey = groupByLastKey;
+    }
+
+    public void setGroupByLastKeyInSpan(boolean groupByLastKeyInSpan) {
+        this.groupByLastKeyInSpan = groupByLastKeyInSpan;
     }
 
     public void setGroupBySegmentCount(long groupBySegmentCount) {

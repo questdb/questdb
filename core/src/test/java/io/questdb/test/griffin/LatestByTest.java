@@ -2038,17 +2038,23 @@ public class LatestByTest extends AbstractCairoTest {
                     """, timestampType.getTypeName());
             for (boolean parallel : new boolean[]{true, false}) {
                 sqlExecutionContext.setParallelGroupByEnabled(parallel);
-                for (String base : new String[]{
-                        "SELECT * FROM t ORDER BY ts DESC",
-                        "SELECT ts, k, sum(v) v FROM t SAMPLE BY 1h ORDER BY ts DESC"
-                }) {
-                    assertQuery("SELECT * FROM (SELECT * FROM (" + base + ")) LATEST ON ts PARTITION BY k ORDER BY ts, k")
-                            .noLeakCheck()
-                            .timestamp("ts")
-                            .expectSize()
-                            .withPlanContaining("LatestBy light order_by_timestamp: false")
-                            .returns(expected);
-                }
+                assertQuery("SELECT * FROM (SELECT * FROM (SELECT * FROM t ORDER BY ts DESC)) LATEST ON ts PARTITION BY k ORDER BY ts, k")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .withPlanContaining("LatestBy light order_by_timestamp: false")
+                        .returns(expected);
+                // A serial plan sorts. A parallel plan streams backward through a copy, and the factory that replays
+                // its rows in scan order keeps the designated timestamp.
+                final String[] plan = parallel
+                        ? new String[]{"LatestBy\n", "Materialize", "Stream Group By", "backward scan"}
+                        : new String[]{"LatestBy light order_by_timestamp: false"};
+                assertQuery("SELECT * FROM (SELECT * FROM (SELECT ts, k, sum(v) v FROM t SAMPLE BY 1h ORDER BY ts DESC)) LATEST ON ts PARTITION BY k ORDER BY ts, k")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .withPlanContaining(plan)
+                        .returns(expected);
             }
             assertQuery("SELECT * FROM (SELECT * FROM (SELECT * FROM t ORDER BY ts)) LATEST ON ts PARTITION BY k ORDER BY ts, k")
                     .noLeakCheck()

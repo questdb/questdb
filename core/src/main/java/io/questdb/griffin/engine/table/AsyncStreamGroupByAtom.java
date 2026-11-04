@@ -76,6 +76,7 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner,
     private final ObjList<RecordChain> frameRecords;
     private final ObjList<DirectLongList> frameValues;
     private final ObjList<GroupByFunction> groupByFunctions;
+    private final int initialDispatchLimit;
     private final boolean isDescending;
     private final Function keyFunction;
     private final int keyFunctionIndex;
@@ -117,13 +118,15 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner,
             ObjList<Function> perWorkerFilters,
             int workerCount,
             boolean isDescending,
-            int dispatchLimit
+            int initialDispatchLimit,
+            int maxDispatchLimit
     ) {
         this.configuration = configuration;
-        this.frameRecords = new ObjList<>(dispatchLimit);
-        this.frameRecords.setPos(dispatchLimit);
-        this.frameValues = new ObjList<>(dispatchLimit);
-        this.frameValues.setPos(dispatchLimit);
+        this.initialDispatchLimit = initialDispatchLimit;
+        this.frameRecords = new ObjList<>(maxDispatchLimit);
+        this.frameRecords.setPos(maxDispatchLimit);
+        this.frameValues = new ObjList<>(maxDispatchLimit);
+        this.frameValues.setPos(maxDispatchLimit);
         this.keyFunction = keyFunction;
         this.isDescending = isDescending;
         this.keyFunctionIndex = streamKeyIndex - columnFilter.getColumnCount();
@@ -232,8 +235,10 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner,
         return filterContext;
     }
 
-    public int getDispatchLimit() {
-        return frameRecords.size();
+    // Frames collect in order, so a window of one frame per worker leaves the workers idle behind the oldest frame.
+    // A LIMIT that the first frame satisfies keeps the small window, so the workers do not reduce frames it never reads.
+    public int getDispatchLimit(int collectedFrameCount) {
+        return collectedFrameCount == 0 ? Math.min(initialDispatchLimit, frameRecords.size()) : frameRecords.size();
     }
 
     public ObjList<GroupByFunction> getFunctions(int slot) {
@@ -256,6 +261,10 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner,
     @Override
     public PerWorkerLocks getPerWorkerLocks() {
         return locks;
+    }
+
+    public int getSpanRowThreshold() {
+        return configuration.getGroupByShardingThreshold();
     }
 
     @TestOnly

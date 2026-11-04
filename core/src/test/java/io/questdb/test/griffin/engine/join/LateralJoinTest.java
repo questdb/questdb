@@ -11231,7 +11231,6 @@ public class LateralJoinTest extends AbstractCairoTest {
                     ORDER BY o.id, t.ts
                     """)
                     .noLeakCheck()
-                    .expectSize()
                     .returns("""
                             id\tts\ttotal
                             1\t2024-01-01T00:00:00.000000Z\t10.0
@@ -11786,7 +11785,6 @@ public class LateralJoinTest extends AbstractCairoTest {
                     ORDER BY o.id, t.ts
                     """)
                     .noLeakCheck()
-                    .expectSize()
                     .returns("""
                             id\tts\ttotal
                             1\t2024-01-01T00:00:00.000000Z\t10.0
@@ -11825,7 +11823,6 @@ public class LateralJoinTest extends AbstractCairoTest {
                     ORDER BY o.id, t.ts
                     """)
                     .noLeakCheck()
-                    .expectSize()
                     .returns(expected);
             assertQuery("""
                     SELECT o.id, t.*
@@ -11840,7 +11837,6 @@ public class LateralJoinTest extends AbstractCairoTest {
                     ORDER BY o.id, t.ts
                     """)
                     .noLeakCheck()
-                    .expectSize()
                     .returns(expected);
             assertQuery("""
                     SELECT o.id, t.ts, t.ts2, t.total
@@ -11855,7 +11851,6 @@ public class LateralJoinTest extends AbstractCairoTest {
                     ORDER BY o.id, t.ts
                     """)
                     .noLeakCheck()
-                    .expectSize()
                     .returns(expected);
             assertQuery("""
                     SELECT o.id, t.ts, t.ts2, t.total
@@ -11871,7 +11866,6 @@ public class LateralJoinTest extends AbstractCairoTest {
                     ORDER BY o.id, t.ts
                     """)
                     .noLeakCheck()
-                    .expectSize()
                     .returns(expected);
             // the bucket column is selected only under the two copy names
             assertQuery("""
@@ -11887,7 +11881,6 @@ public class LateralJoinTest extends AbstractCairoTest {
                     ORDER BY o.id, t.a
                     """)
                     .noLeakCheck()
-                    .expectSize()
                     .returns(expected);
             // two-sided LIMIT skips the first bucket of each order
             assertQuery("""
@@ -11903,7 +11896,6 @@ public class LateralJoinTest extends AbstractCairoTest {
                     ORDER BY o.id, t.ts
                     """)
                     .noLeakCheck()
-                    .expectSize()
                     .returns("""
                             id\tts\tts2\ttotal
                             1\t2024-01-01T00:30:00.000000Z\t2024-01-01T00:30:00.000000Z\t20.0

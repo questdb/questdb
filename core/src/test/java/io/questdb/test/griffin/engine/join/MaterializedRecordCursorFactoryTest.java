@@ -207,7 +207,9 @@ public class MaterializedRecordCursorFactoryTest extends AbstractCairoTest {
     public void testHashJoinSizeDoesNotRewindStreamMaster() throws Exception {
         run((engine, compiler, context) -> {
             createTables(engine, context);
-            final String sql = "SELECT a.ts, a.sym, a.c, b.s FROM (" + SUBQUERIES[1][0] + ") a JOIN (" + SUBQUERIES[0][0] + ") b ON (ts)";
+            // A union has no random access and reads no stream, so the join stays full-fat over the stream master.
+            final String sql = "SELECT a.ts, a.sym, a.c, b.s FROM (" + SUBQUERIES[1][0] + ") a JOIN "
+                    + "(SELECT ts, v s FROM t UNION ALL SELECT ts, v s FROM t) b ON (ts)";
             assertQuery(sql).withEngine(engine).withContext(context).noLeakCheck().assertsPlanContaining("Hash Join\n");
             try (
                     RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory();
@@ -220,6 +222,34 @@ public class MaterializedRecordCursorFactoryTest extends AbstractCairoTest {
                 Assert.assertEquals(-1, cursor.size());
                 Assert.assertEquals(topCount, TestMatchFunctionFactory.getTopCounter());
             }
+        });
+    }
+
+    @Test
+    public void testHashJoinReadsStreamThroughCopy() throws Exception {
+        run((engine, compiler, context) -> {
+            createTables(engine, context);
+            engine.execute("CREATE TABLE h AS (SELECT timestamp_sequence('2024-01-01', 3_600_000_000L) ts, x FROM long_sequence(5))", context);
+            for (String[] join : new String[][]{
+                    {"JOIN", "Hash Join Light"},
+                    {"LEFT JOIN", "Hash Left Outer Join Light"},
+                    {"RIGHT JOIN", "Hash Right Outer Join Light"},
+                    {"FULL JOIN", "Hash Full Outer Join Light"}
+            }) {
+                final String query = "SELECT h.x, s.* FROM h " + join[0] + " ($sub) s ON h.ts = s.ts ORDER BY x, $keys";
+                assertMaterialized(engine, context, query, null, true, false);
+                assertQuery(query.replace("$sub", SUBQUERIES[0][0]).replace("$keys", SUBQUERIES[0][2]))
+                        .withEngine(engine)
+                        .withContext(context)
+                        .noLeakCheck()
+                        .assertsPlanContaining(join[1]);
+            }
+            // A fill never offered random access, so the join stays full-fat over it.
+            assertQuery("SELECT h.x, s.* FROM h JOIN (SELECT ts, count() c FROM t SAMPLE BY 1h FILL(PREV)) s ON h.ts = s.ts")
+                    .withEngine(engine)
+                    .withContext(context)
+                    .noLeakCheck()
+                    .assertsPlanContaining("Hash Join\n");
         });
     }
 
@@ -444,6 +474,18 @@ public class MaterializedRecordCursorFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSmallestLightValuePage() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_HASH_JOIN_LIGHT_VALUE_PAGE_SIZE, 12);
+        assertCopiesVarSizeRows();
+    }
+
+    @Test
+    public void testSmallestValuePage() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_PAGE_SIZE, 8);
+        assertCopiesVarSizeRows();
+    }
+
+    @Test
     public void testRightJoin() throws Exception {
         run((engine, compiler, context) -> {
             createTables(engine, context);
@@ -492,6 +534,20 @@ public class MaterializedRecordCursorFactoryTest extends AbstractCairoTest {
                     Assert.assertEquals(query, 0, assertMaterialized(engine, context, query, withNegativeLimit(SUBQUERIES[i]), null, false, false));
                 }
             }
+        });
+    }
+
+    // Var-size rows use the offsets page, a sixteenth of the row page, which rounds down to nothing at these sizes.
+    private void assertCopiesVarSizeRows() throws Exception {
+        run((engine, compiler, context) -> {
+            createTables(engine, context);
+            final String[] subquery = {
+                    "SELECT ts, sym::VARCHAR vc, sym::STRING str, count() c FROM t WHERE test_match() SAMPLE BY 1h",
+                    "SELECT timestamp_floor('1h', ts) ts, sym::VARCHAR vc, sym::STRING str, count() c FROM t_hash ORDER BY ts, vc",
+                    "ts, vc"
+            };
+            assertMaterialized(engine, context, CROSS_JOIN, subquery, null, true, false);
+            assertMaterialized(engine, context, NEGATIVE_LIMIT, subquery, "ts", true, true);
         });
     }
 

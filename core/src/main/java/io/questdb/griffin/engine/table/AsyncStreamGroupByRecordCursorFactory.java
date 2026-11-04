@@ -33,6 +33,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordChain;
+import io.questdb.cairo.map.Map;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameFilteredMemoryRecord;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
@@ -115,8 +116,8 @@ public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorF
                     new AsyncStreamGroupByAtom(configuration, asm, base.getMetadata(), columnFilter, keyTypes, valueTypes, streamKeyIndex,
                             keyFunction, keyFunctions, perWorkerKeys, groupByFunctions, perWorkerFunctions,
                             compiledFilter, bindVarMemory, bindVarFunctions, filter, filterUsedColumnIndexes, perWorkerFilters, workerCount,
-                            isDescending, Math.min(Math.max(1, configuration.getSqlParallelFilterDispatchLimit()),
-                            messageBus.getPageFrameReduceQueue(0).getCycle())),
+                            isDescending, Math.max(1, configuration.getSqlParallelFilterDispatchLimit()),
+                            messageBus.getPageFrameReduceQueue(0).getCycle()),
                     AsyncStreamGroupByRecordCursorFactory::aggregate,
                     reduceTaskFactory,
                     workerCount,
@@ -140,6 +141,11 @@ public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorF
     @Override
     public RecordCursorFactory getBaseFactory() {
         return base;
+    }
+
+    @TestOnly
+    public int getDispatchedFrameCount() {
+        return frameSequence.getDispatchedFrameCount();
     }
 
     @Override
@@ -247,10 +253,19 @@ public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorF
                     } else {
                         lo = end;
                     }
-                    if (segmentCount == 0) {
+                    final boolean isFirst = segmentCount == 0;
+                    final boolean isLast = isDescending ? start == 0 : end == rowCount;
+                    // The owner merges chain rows one by one. A large end of the frame takes a span map instead, as the
+                    // whole frame does, so that the workers merge it shard by shard once the bucket closes.
+                    final boolean isSpan = (isFirst && isLast) || ((isFirst || isLast) && end - start > atom.getSpanRowThreshold());
+                    if (isFirst) {
                         task.setGroupByFirstKey(key);
+                        task.setGroupByFirstKeyInSpan(isSpan);
                     }
-                    if (start == 0 && end == rowCount) {
+                    if (isLast) {
+                        task.setGroupByLastKeyInSpan(isSpan);
+                    }
+                    if (isSpan) {
                         atom.acquireSpanMap(slot, key).aggregate(record, rows, start, end, baseRowId, isBatch, circuitBreaker);
                     } else {
                         map.clear(key);
@@ -283,9 +298,11 @@ public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorF
                 final long firstRow = rows == null ? start : rows.get(start);
                 final boolean isContiguous = rows == null || rows.get(end - 1) - firstRow == end - start - 1;
                 results.ensureCapacity(stride);
-                value.of(results.getAddress() + groups * stride * Long.BYTES);
+                final long valueAddress = results.getAddress() + groups * stride * Long.BYTES;
+                value.of(valueAddress);
                 updater.updateEmpty(value);
                 GroupByUtils.setStreamGroupByKey(value, keyIndex, keyFunction.getType(), key);
+                boolean isEncoded = false;
                 for (int i = 0, n = functions.size(); i < n; i++) {
                     final GroupByFunction function = functions.getQuick(i);
                     final int column = batchColumns[i];
@@ -295,6 +312,13 @@ public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorF
                         final long address = column < 0 ? 0 : pageAddress
                                                               + firstRow * ColumnType.sizeOf(function.getComputeBatchArgType());
                         function.computeBatch(value, address, (int) (end - start), baseRowId + firstRow);
+                    } else if (isBatch && rows != null) {
+                        circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+                        if (!isEncoded) {
+                            encodeBatch(rows, start, end);
+                            isEncoded = true;
+                        }
+                        function.computeKeyedBatch(record, value, valueAddress, rows.getAddress() + start * Long.BYTES, end - start, baseRowId);
                     } else {
                         record.setFilteredRowIndex(firstRow, start);
                         function.computeFirst(value, record, baseRowId + firstRow);
@@ -318,6 +342,13 @@ public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorF
             } finally {
                 atom.release(slot);
             }
+        }
+    }
+
+    // Rewrites the filtered rows of a bucket in place as a keyed batch of one key: no other bucket reads them.
+    private static void encodeBatch(DirectLongList rows, long start, long end) {
+        for (long r = start; r < end; r++) {
+            rows.set(r, Map.encodeBatchEntry(rows.get(r), 0, r == start));
         }
     }
 

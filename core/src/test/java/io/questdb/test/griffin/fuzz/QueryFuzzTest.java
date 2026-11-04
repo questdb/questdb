@@ -912,6 +912,14 @@ public class QueryFuzzTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, mergeAppendEnabled);
         LOG.info().$("merge-append coin [mergeAppendEnabled=").$(mergeAppendEnabled).I$();
 
+        // The tables hold too few rows to pass the default sharding threshold. A low one on half of the runs reaches
+        // sharded maps in GROUP BY, and the span maps that take the ends of a frame in a stream GROUP BY.
+        if (rnd.nextBoolean()) {
+            final int shardingThreshold = 1 + rnd.nextInt(8);
+            node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, shardingThreshold);
+            LOG.info().$("sharding threshold coin [threshold=").$(shardingThreshold).I$();
+        }
+
         LOG.info().$("fuzz config: tables=").$(config.getNumTables())
                 .$(", rows=").$(config.getRowsPerTable())
                 .$(", queries=").$(config.getNumQueries())

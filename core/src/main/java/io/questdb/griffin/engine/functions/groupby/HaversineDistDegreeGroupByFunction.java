@@ -167,6 +167,9 @@ public class HaversineDistDegreeGroupByFunction extends DoubleFunction implement
         double interpolatedGapDistance = (gapSize * distance) / (ts2 - ts1);
         // save
         saveDistance(result, interpolatedGapDistance);
+        // The extrapolation after a key's last data bucket reads the cell before that bucket, which may be this one.
+        saveFirstItem(result, getLastLatitude(value1), getLastLongitude(value1), ts1);
+        saveLastItem(result, getLastLatitude(value1), getLastLongitude(value1), ts1);
     }
 
     @Override

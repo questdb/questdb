@@ -73,7 +73,6 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
             int timestampIndex
     ) {
         super(base.getMetadata());
-        assert !base.recordCursorSupportsRandomAccess();
         this.base = base;
         this.recordSink = recordSink;
         Map latestByMap = null;
@@ -120,7 +119,7 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public boolean recordCursorSupportsRandomAccess() {
-        return base.recordCursorSupportsRandomAccess();
+        return false;
     }
 
     @Override

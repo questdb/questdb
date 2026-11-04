@@ -79,6 +79,7 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
     private final FlyweightPackedMapValue value;
     // The merge has a strategy of its own: the frame sequence keeps stealing reduce work while a bucket merges.
     private final WorkStealingStrategy workStealingStrategy;
+    private long chainFirstKey;
     private long chainLastKey;
     private SqlExecutionCircuitBreaker circuitBreaker;
     private long cursor = -1;
@@ -92,8 +93,10 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
     private PageFrameSequence<AsyncStreamGroupByAtom> frameSequence;
     private boolean hasOpenKey;
     private boolean hasOpenSpans;
+    private boolean isChainLastKeyInSpan;
     private boolean isChainPending;
     private boolean isChainRowPending;
+    private boolean isFirstKeyInSpanPending;
     private boolean isOpenCollected;
     private boolean isShardMerged;
     private long openKey;
@@ -365,6 +368,14 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
                 }
                 releaseSpanMaps();
             }
+            if (isFirstKeyInSpanPending) {
+                isFirstKeyInSpanPending = false;
+                hasOpenKey = true;
+                openKey = chainFirstKey;
+                hasOpenSpans = true;
+                closeOpenSegment();
+                continue;
+            }
             if (isChainPending) {
                 if (isChainRowPending || resultRecords.hasNext()) {
                     isChainRowPending = false;
@@ -385,6 +396,11 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
                     isOpenCollected = true;
                 }
                 isChainPending = false;
+                if (isChainLastKeyInSpan) {
+                    hasOpenKey = true;
+                    openKey = chainLastKey;
+                    hasOpenSpans = true;
+                }
             }
             if (done) {
                 return false;
@@ -435,7 +451,14 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
         }
         resultRecords = frameSequence.getAtom().getResultRecords(task);
         chainLastKey = task.getGroupByLastKey();
+        isChainLastKeyInSpan = task.isGroupByLastKeyInSpan();
         isChainPending = true;
+        if (task.isGroupByFirstKeyInSpan()) {
+            // A previous bucket closed above may still have to emit its rows, so this one closes after them.
+            chainFirstKey = first;
+            isFirstKeyInSpanPending = true;
+            return true;
+        }
         if (hasOpenKey) {
             if (!isOpenCollected) {
                 segmentMap.clear(first);
@@ -469,7 +492,7 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
         }
         while (frameIndex < frameLimit) {
             circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
-            cursor = frameSequence.next(frameSequence.getAtom().getDispatchLimit(), false);
+            cursor = frameSequence.next(frameSequence.getAtom().getDispatchLimit(frameIndex + 1), false);
             if (cursor >= 0) {
                 final PageFrameReduceTask task = frameSequence.getTask(cursor);
                 if (task.hasError()) {
@@ -524,7 +547,9 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
         hasOpenKey = false;
         hasOpenSpans = false;
         isOpenCollected = false;
+        isChainLastKeyInSpan = false;
         isChainPending = false;
         isChainRowPending = false;
+        isFirstKeyInSpanPending = false;
     }
 }

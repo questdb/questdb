@@ -55,6 +55,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -286,6 +287,11 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
     @Override
     public SqlExecutionCircuitBreaker getCircuitBreaker() {
         return sqlExecutionContext.getCircuitBreaker();
+    }
+
+    @TestOnly
+    public int getDispatchedFrameCount() {
+        return dispatchStartFrameIndex;
     }
 
     public int getFrameCount() {

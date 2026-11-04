@@ -203,7 +203,7 @@ public class MaterializedRecordCursorFactory extends AbstractRecordCursorFactory
 
     private static class CachedRecordArray extends RecordArray {
         private CachedRecordArray(ColumnTypes columnTypes, RecordSink recordSink, long pageSize, long maxBytes, boolean isStrict) {
-            this(columnTypes, recordSink, new CacheMemory(pageSize >> 4, maxBytes, isStrict, null), pageSize, maxBytes, isStrict);
+            this(columnTypes, recordSink, new CacheMemory(Math.max(pageSize >> 4, Long.BYTES), maxBytes, isStrict, null), pageSize, maxBytes, isStrict);
         }
 
         private CachedRecordArray(ColumnTypes columnTypes, RecordSink recordSink, CacheMemory offsets, long pageSize, long maxBytes, boolean isStrict) {

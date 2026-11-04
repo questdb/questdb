@@ -181,6 +181,58 @@ public class StreamGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGappedBucketsAggregateInBatches() throws Exception {
+        // Without workers the owner reduces every frame, so its breaker sees the rows a reducer visits one by one.
+        Assume.assumeTrue(parallel && workers == 0);
+        run((engine, compiler, context) -> {
+            final int rows = 20_000;
+            engine.execute("CREATE TABLE trades AS (SELECT timestamp_sequence('2024-01-01', 1_000L) ts, x v, x::DOUBLE d, "
+                    + "(x % 3)::SYMBOL sym FROM long_sequence(" + rows + ")) TIMESTAMP(ts) PARTITION BY DAY", context);
+            engine.execute("CREATE TABLE hash_input (ts TIMESTAMP, v LONG, d DOUBLE, sym SYMBOL)", context);
+            engine.execute("INSERT INTO hash_input SELECT * FROM trades", context);
+            final String sql = "SELECT timestamp_floor('$bucket', ts) bucket, count(*), count(d), sum(v), sum(d), avg(d), min(d), max(d), first(v), last(v), "
+                    + "first_not_null(d), last_not_null(d), avg(d * 2) FROM $table WHERE v % 2 = 0 ORDER BY bucket";
+            for (String bucket : new String[]{"1d", "1s", "7T"}) {
+                assertMatchesHash(compiler, context, sql.replace("$bucket", bucket));
+            }
+            final CountingSqlExecutionCircuitBreaker breaker = new CountingSqlExecutionCircuitBreaker(SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+            try (SqlExecutionContextImpl counted = new SqlExecutionContextImpl(engine, 1).with(context.getSecurityContext(), null, null, -1, breaker)) {
+                final String daySql = sql.replace("$bucket", "1d").replace("$table", "trades").replace(" ORDER BY bucket", "");
+                try (RecordCursorFactory factory = compiler.compile(daySql, counted).getRecordCursorFactory()) {
+                    assertStream(factory, true);
+                    final long before = breaker.getCheckCount();
+                    Assert.assertFalse(read(factory, counted).isEmpty());
+                    // Row by row, the 12 functions alone would make 120_000 checks over the 10_000 rows the filter keeps.
+                    final long checks = breaker.getCheckCount() - before;
+                    Assert.assertTrue(checks + " checks", checks < rows);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testHighCardinalityBucketsEndInsideFrames() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 100);
+        run((engine, compiler, context) -> {
+            createHighCardinalityTables(engine, context);
+            for (String bucket : new String[]{"7T", "128T", "200T", "300T"}) {
+                for (String filter : new String[]{"", " WHERE v % 7 <> 0"}) {
+                    for (String keys : new String[]{"k", "s"}) {
+                        for (String order : new String[]{"bucket", "bucket DESC"}) {
+                            assertMatchesHash(compiler, context, "SELECT timestamp_floor('" + bucket + "', ts) bucket, " + keys
+                                    + ", count(*), sum(v), first(v), last(v) FROM $table" + filter + " ORDER BY " + order + ", " + keys);
+                        }
+                    }
+                }
+            }
+            if (frameRows > 100) {
+                // No 200-row bucket holds a whole frame, so only a frame end of over 100 keys can reach the merge as a span map.
+                assertShardMerge(compiler, context, "SELECT timestamp_floor('200T', ts) bucket, k, count(*), sum(v) FROM $table ORDER BY bucket, k");
+            }
+        });
+    }
+
+    @Test
     public void testHighCardinalityBucketsPresizeShards() throws Exception {
         // Small maps start below the keys of a shard, so the merge and the next execution presize the shards.
         setProperty(PropertyKey.CAIRO_SQL_SMALL_MAP_KEY_CAPACITY, 4);
@@ -706,6 +758,42 @@ public class StreamGroupByTest extends AbstractCairoTest {
                     }
                 }
             }
+        });
+    }
+
+    @Test
+    public void testLatestOnKeepsDesignatedTimestamp() throws Exception {
+        run((engine, compiler, context) -> {
+            engine.execute("CREATE TABLE t (ts TIMESTAMP, sym SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY", context);
+            engine.execute("INSERT INTO t VALUES ('2024-01-01T00:00', 'a', 1), ('2024-01-01T00:40', 'b', 2), ('2024-01-01T01:10', 'a', 3)", context);
+            engine.execute("CREATE TABLE q (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY", context);
+            engine.execute("INSERT INTO q VALUES ('2024-01-01T00:50', 7)", context);
+            final String prev = "(SELECT * FROM (SELECT ts, sym, sum(v) s FROM t SAMPLE BY 30m FILL(PREV)) LATEST ON ts PARTITION BY sym)";
+            for (String sql : new String[]{
+                    prev,
+                    "SELECT * FROM (SELECT ts, sym, sum(v) s FROM t SAMPLE BY 30m FILL(NULL)) LATEST ON ts PARTITION BY sym",
+                    "SELECT * FROM (SELECT ts, sym, sum(v) s FROM t SAMPLE BY 30m) LATEST ON ts PARTITION BY sym",
+                    "SELECT * FROM (SELECT * FROM (SELECT ts, sym, sum(v) s FROM t SAMPLE BY 30m)) LATEST ON ts PARTITION BY sym"
+            }) {
+                try (RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory()) {
+                    assertStream(factory, true);
+                    Assert.assertEquals(sql, 0, factory.getMetadata().getTimestampIndex());
+                }
+            }
+            // Fill keeps both keys alive to the last bucket: a is 3 there, and b repeats its 2.
+            assertQuery("SELECT ts, sum(s) s FROM " + prev + " SAMPLE BY 1h")
+                    .withEngine(engine).withContext(context).noLeakCheck().timestamp("ts").noRandomAccess()
+                    .returns("ts\ts\n2024-01-01T01:00:00.000000Z\t5\n");
+            assertQuery("SELECT l.sym, l.s, r.x FROM " + prev + " l ASOF JOIN q r ORDER BY l.sym")
+                    .withEngine(engine).withContext(context).noLeakCheck().expectSize()
+                    .returns("sym\ts\tx\na\t3\t7\nb\t2\t7\n");
+            engine.execute("CREATE TABLE c AS " + prev + " PARTITION BY DAY", context);
+            assertQuery("SELECT designatedTimestamp, partitionBy FROM tables() WHERE table_name = 'c'")
+                    .withEngine(engine).withContext(context).noLeakCheck().noRandomAccess().sizeMayVary()
+                    .returns("designatedTimestamp\tpartitionBy\nts\tDAY\n");
+            assertQuery("SELECT sym, s FROM c ORDER BY sym")
+                    .withEngine(engine).withContext(context).noLeakCheck().expectSize()
+                    .returns("sym\ts\na\t3\nb\t2\n");
         });
     }
 
@@ -1490,6 +1578,45 @@ public class StreamGroupByTest extends AbstractCairoTest {
             for (String bucket : new String[]{"1d", "7s", "1U"}) {
                 assertMatchesHash(compiler, context, "SELECT timestamp_floor('" + bucket + "', ts) bucket, "
                         + "count(*), sum(v), first(v), last(v) FROM $table ORDER BY bucket");
+            }
+        });
+    }
+
+    @Test
+    public void testDispatchWindowOpensAfterFirstFrame() throws Exception {
+        Assume.assumeTrue(parallel);
+        final int initialLimit = 2;
+        final int queueCapacity = 8;
+        setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, queueCapacity);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, initialLimit);
+        run((engine, compiler, context) -> {
+            final int frames = 32;
+            engine.execute("CREATE TABLE w AS (SELECT (x * 1_000_000L)::TIMESTAMP ts, x v FROM long_sequence(" + frames * frameRows + ")) "
+                    + "TIMESTAMP(ts) PARTITION BY YEAR", context);
+            try (RecordCursorFactory factory = compiler.compile("SELECT ts, sum(v) s FROM w SAMPLE BY 1s", context).getRecordCursorFactory()) {
+                final AsyncStreamGroupByRecordCursorFactory stream = (AsyncStreamGroupByRecordCursorFactory) getGroupBy(factory);
+                Assert.assertEquals(initialLimit, stream.getAtom().getDispatchLimit(0));
+                Assert.assertEquals(queueCapacity, stream.getAtom().getDispatchLimit(1));
+                try (RecordCursor cursor = factory.getCursor(context)) {
+                    long row = 0;
+                    int maxInFlight = 0;
+                    while (cursor.hasNext()) {
+                        // Every row is a bucket, and a bucket ends at the first row of the next one, so the frames
+                        // collected follow from the rows read.
+                        final int collected = (int) (++row / frameRows);
+                        final int inFlight = stream.getDispatchedFrameCount() - collected;
+                        Assert.assertTrue(
+                                "collected " + collected + " in flight " + inFlight,
+                                inFlight <= (collected == 0 ? initialLimit : queueCapacity)
+                        );
+                        maxInFlight = Math.max(maxInFlight, inFlight);
+                    }
+                    Assert.assertEquals(frames * frameRows, row);
+                    if (workers == 0) {
+                        // The owner reduces every frame, so it fills the window before it takes one.
+                        Assert.assertEquals(queueCapacity, maxInFlight);
+                    }
+                }
             }
         });
     }

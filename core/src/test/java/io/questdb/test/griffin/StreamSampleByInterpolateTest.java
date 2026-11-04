@@ -624,6 +624,27 @@ public class StreamSampleByInterpolateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTwoPointFunctionExtrapolatesFromFilledCell() throws Exception {
+        run((engine, compiler, context) -> {
+            engine.execute("CREATE TABLE pos (ts " + timestampType + ", sym SYMBOL, lat DOUBLE, lon DOUBLE) "
+                    + "TIMESTAMP(ts) PARTITION BY DAY", context);
+            engine.execute("INSERT INTO pos VALUES ('2024-01-01T00:00', 'a', 0, 0), ('2024-01-01T00:00', 'b', 0, 0), "
+                    + "('2024-01-01T03:00', 'a', 0, 3), ('2024-01-01T05:00', 'b', 0, 5)", context);
+            final double third;
+            try (
+                    RecordCursorFactory factory = engine.select("SELECT haversine_dist_deg(lat, lon, ts) d FROM pos WHERE sym = 'a'", context);
+                    RecordCursor cursor = factory.getCursor(context)
+            ) {
+                Assert.assertTrue(cursor.hasNext());
+                third = cursor.getRecord().getDouble(0) / 3;
+            }
+            Assert.assertTrue(third > 0);
+            // The buckets after 03:00 extrapolate from the filled 02:00 cell, on the line through the two data points.
+            assertDistances(context, "a", third, third, third, 0, third, third);
+        });
+    }
+
+    @Test
     public void testTwoPointFunctionKeepsLegacy() throws Exception {
         run((engine, compiler, context) -> {
             createPrices(context);

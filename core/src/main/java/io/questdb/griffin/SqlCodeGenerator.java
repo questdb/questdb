@@ -2021,6 +2021,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return false;
     }
 
+    private static boolean hasFill(RecordCursorFactory factory) {
+        for (RecordCursorFactory f = factory; f != null; f = f.getBaseFactory()) {
+            if (f instanceof SampleByFillRecordCursorFactory || f instanceof SampleByInterpolateRecordCursorFactory) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static boolean isRandomAccessLostToStream(RecordCursorFactory factory) {
         for (RecordCursorFactory f = factory; f != null && !f.recordCursorSupportsRandomAccess(); f = f.getBaseFactory()) {
             if (f.isRewindRecomputing()) {
@@ -8095,6 +8104,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     validateOuterJoinExpressions(slaveModel, "INNER");
                                 }
 
+                                // The light join reads rows faster than the full-fat chain does, so it reads a copy of a stream.
+                                // A fill never offered random access, so it stays full-fat, which knows the size of its result.
+                                if (!fullFatJoins && isRandomAccessLostToStream(slaveToFree) && !hasFill(slaveToFree)) {
+                                    final RecordCursorFactory slaveToMaterialize = slaveToFree;
+                                    slaveToFree = null;
+                                    slaveToFree = materialize(slaveToMaterialize, true);
+                                }
+
                                 master = createHashJoin(
                                         joinMetadata,
                                         master,
@@ -8321,6 +8338,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 throw SqlException.$(model.getModelPosition(), "latest by query does not provide dedicated TIMESTAMP column");
             }
 
+            // The copy reads a stream GROUP BY once. It does not make the output random access: the light factory
+            // would drop the designated timestamp of a base that keeps its rows in timestamp order.
+            final boolean hasRandomAccess = factory.recordCursorSupportsRandomAccess();
             if (isRandomAccessLostToStream(factory)) {
                 final RecordCursorFactory factoryToMaterialize = factory;
                 factory = null;
@@ -8330,7 +8350,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final RecordMetadata metadata = factory.getMetadata();
             prepareLatestByColumnIndexes(latestBy, metadata);
 
-            if (!factory.recordCursorSupportsRandomAccess()) {
+            if (!hasRandomAccess) {
                 final RecordSink recordSink = RecordSinkFactory.getInstance(configuration, asm, metadata, listColumnFilterA);
                 // LatestByRecordCursorFactory's constructor frees the base factory on failure, so null
                 // our reference before handing it off to keep the catch below from double-freeing it.
