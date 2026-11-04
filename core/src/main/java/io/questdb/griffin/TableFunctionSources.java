@@ -88,21 +88,12 @@ public final class TableFunctionSources implements Closeable, Mutable {
     }
 
     public FunctionSourcePlan bind(ExpressionNode expression, SqlExecutionContext executionContext) throws SqlException {
-        assert expression.type == ExpressionNode.FUNCTION;
-        final FunctionSourcePlan plan = planNodes.functionSources.next().of(expression.position);
-        final int slot = resources.reserve();
-        prepared.add(plan);
-        expressions.add(expression);
-        views.add(executionContext.getTableFunctionView());
-        slots.add(slot);
+        final FunctionSourcePlan plan = reserveSource(expression, expression.position, executionContext);
+        final int slot = slots.getLast();
         try {
-            final Function function = parseSource(plan, expression, executionContext);
-            resources.own(slot, function);
-            if (!(function instanceof CursorFunction)) {
-                throw SqlException.$(expression.position, "function must return CURSOR");
-            }
-            describe(plan, function.getRecordCursorFactory());
-            plan.setProjectable(function.getRecordCursorFactory() instanceof ProjectableRecordCursorFactory);
+            final RecordCursorFactory factory = parseCursorSource(plan, expression, slot, executionContext);
+            describe(plan, factory);
+            plan.setProjectable(factory instanceof ProjectableRecordCursorFactory);
             return plan;
         } catch (Throwable th) {
             closeSlot(slot, th);
@@ -114,20 +105,10 @@ public final class TableFunctionSources implements Closeable, Mutable {
      * Binds a SELECT-list cursor call as one RECORD column that carries each row of the call.
      */
     public FunctionSourcePlan bindRecord(ExpressionNode expression, CharSequence name, SqlExecutionContext executionContext) throws SqlException {
-        assert expression.type == ExpressionNode.FUNCTION;
-        final FunctionSourcePlan plan = planNodes.functionSources.next().of(expression.position);
-        final int slot = resources.reserve();
-        prepared.add(plan);
-        expressions.add(expression);
-        views.add(executionContext.getTableFunctionView());
-        slots.add(slot);
+        final FunctionSourcePlan plan = reserveSource(expression, expression.position, executionContext);
+        final int slot = slots.getLast();
         try {
-            final Function function = parseSource(plan, expression, executionContext);
-            resources.own(slot, function);
-            if (!(function instanceof CursorFunction)) {
-                throw SqlException.$(expression.position, "function must return CURSOR");
-            }
-            final RecordCursorFactory factory = function.getRecordCursorFactory();
+            final RecordCursorFactory factory = parseCursorSource(plan, expression, slot, executionContext);
             final RecordMetadata metadata = factory.getMetadata();
             describeSource(plan, factory);
             final OutputSchema record = plan.getRecordSchema();
@@ -145,13 +126,9 @@ public final class TableFunctionSources implements Closeable, Mutable {
     }
 
     public FunctionSourcePlan bindShow(QueryModel model, SqlExecutionContext executionContext, SqlParserCallback callback) throws SqlException {
-        final FunctionSourcePlan plan = planNodes.functionSources.next().of(model.getModelPosition());
-        final int slot = resources.reserve();
-        prepared.add(plan);
-        expressions.add(null);
-        views.add(executionContext.getTableFunctionView());
+        final FunctionSourcePlan plan = reserveSource(null, model.getModelPosition(), executionContext);
+        final int slot = slots.getLast();
         showModels.extendAndSet(prepared.size() - 1, model);
-        slots.add(slot);
         this.callback = callback;
         try {
             final CharSequence statement = objectDisclosingStatement(model.getShowKind());
@@ -338,6 +315,20 @@ public final class TableFunctionSources implements Closeable, Mutable {
         describeSource(plan, factory);
     }
 
+    /**
+     * Parses the cursor call into the source's slot, which owns the function from then on, and returns its factory.
+     */
+    private RecordCursorFactory parseCursorSource(FunctionSourcePlan plan, ExpressionNode expression, int slot, SqlExecutionContext executionContext)
+            throws SqlException {
+        assert expression.type == ExpressionNode.FUNCTION;
+        final Function function = parseSource(plan, expression, executionContext);
+        resources.own(slot, function);
+        if (!(function instanceof CursorFunction)) {
+            throw SqlException.$(expression.position, "function must return CURSOR");
+        }
+        return function.getRecordCursorFactory();
+    }
+
     private Function parseSource(FunctionSourcePlan plan, ExpressionNode expression, SqlExecutionContext executionContext) throws SqlException {
         final FunctionResolver resolver = parser.getFunctionResolver();
         final SqlExecutionRequirements requirements = resolver.getExecutionRequirements();
@@ -356,6 +347,20 @@ public final class TableFunctionSources implements Closeable, Mutable {
             path = new Path(255, MemoryTag.NATIVE_SQL_COMPILER);
         }
         return path;
+    }
+
+    /**
+     * Reserves the slot of a prepared source and records what creates its function again, an expression, or null for a
+     * SHOW statement, which records its model.
+     */
+    private FunctionSourcePlan reserveSource(@Nullable ExpressionNode expression, int position, SqlExecutionContext executionContext) {
+        final FunctionSourcePlan plan = planNodes.functionSources.next().of(position);
+        final int slot = resources.reserve();
+        prepared.add(plan);
+        expressions.add(expression);
+        views.add(executionContext.getTableFunctionView());
+        slots.add(slot);
+        return plan;
     }
 
     private RecordCursorFactory takeSourceFactory(FunctionSourcePlan plan, SqlExecutionContext executionContext) throws SqlException {

@@ -479,17 +479,15 @@ final class OperatorPlanning implements Mutable {
     }
 
     /**
-     * True when the leading cross input is fixed and the unkeyed step can cache its slave rows: the loop rewinds it for every
-     * master row, as every nested loop but a RIGHT join's does, the slave is a join, whose rewind repeats the join, and
-     * every step of that join is {@link LogicalPlans#isStableJoinStep stable}, so every evaluation yields its rows.
+     * True when the step {@link PlanToFactoryRules#isSlaveMaterializable may cache its slave rows} and every step of the
+     * slave join is {@link LogicalPlans#isStableJoinStep stable}, so every evaluation yields its rows.
      */
     private boolean isSlaveMaterialized(JoinPlan join, JoinInput step) {
-        if (!join.isLeadingCrossJoinFixed() || step.getJoinType() == JoinKind.RIGHT_OUTER || step.getJoinType() == JoinKind.FULL_OUTER
-                || !(step.getInput() instanceof JoinPlan slave)) {
+        if (!PlanToFactoryRules.isSlaveMaterializable(join, step)) {
             return false;
         }
         final boolean isParallelGroupByEnabled = context.getExecutionContext().isParallelGroupByEnabled();
-        final ObjList<JoinInput> steps = slave.getOrderedInputs();
+        final ObjList<JoinInput> steps = ((JoinPlan) step.getInput()).getOrderedInputs();
         for (int i = 0, n = steps.size(); i < n; i++) {
             if (!LogicalPlans.isStableJoinStep(steps.getQuick(i), isParallelGroupByEnabled, null)) {
                 return false;

@@ -423,6 +423,15 @@ public final class PlanToFactoryRules {
     }
 
     /**
+     * True when the leading cross input is fixed and the unkeyed step may cache its slave rows: a nested loop other than
+     * a RIGHT or FULL join, which rewinds the slave for every master row, over a slave join, whose rewind repeats the join.
+     */
+    public static boolean isSlaveMaterializable(JoinPlan join, JoinInput step) {
+        return join.isLeadingCrossJoinFixed() && step.isSlaveRewound() && step.getJoinType() != JoinKind.FULL_OUTER
+                && step.getInput() instanceof JoinPlan;
+    }
+
+    /**
      * True when the light cached window under the filter selects the filtered rows itself: the filter reads, at its
      * first position, the BOOLEAN result of the window's sole function, a row-selecting window function SUBSAMPLE
      * binds as its keep flag, which the projection above the filter drops.
