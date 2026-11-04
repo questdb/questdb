@@ -139,21 +139,21 @@ public class MetricsRegistryTest {
         assertScrapable(gauge, """
                 # TYPE questdb_gauge gauge
                 questdb_gauge -9223372036854775807
-
+                
                 """);
 
         gauge.setValue(Long.MAX_VALUE);
         assertScrapable(gauge, """
                 # TYPE questdb_gauge gauge
                 questdb_gauge 9223372036854775807
-
+                
                 """);
 
         gauge.setValue(0);
         assertScrapable(gauge, """
                 # TYPE questdb_gauge gauge
                 questdb_gauge 0
-
+                
                 """);
     }
 
