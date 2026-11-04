@@ -40,9 +40,10 @@ import io.questdb.std.LongList;
 import io.questdb.std.Rnd;
 
 /**
- * Drops the index of a symbol column, after the WAL drained like {@link FuzzAddCoveringIndexOperation},
- * and indexes the column again with {@code newIndexTypeName} when it is not null, which changes the
- * index type. Each change queues the purge of the index files of the column instance it replaces.
+ * Drops the index of a symbol column once the WAL has applied the operations before it, such as
+ * {@link FuzzAddCoveringIndexOperation}, and indexes the column again with {@code newIndexTypeName}
+ * when it is not null, which changes the index type. Each change queues the purge of the index files
+ * of the column instance it replaces.
  */
 public class FuzzDropIndexOperation implements FuzzTransactionOperation {
     private static final Log LOG = LogFactory.getLog(FuzzDropIndexOperation.class);

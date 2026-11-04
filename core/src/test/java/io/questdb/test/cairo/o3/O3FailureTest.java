@@ -920,6 +920,28 @@ public class O3FailureTest extends AbstractO3Test {
     }
 
     @Test
+    public void testMergeColumnUnmapThrows() throws Exception {
+        // The merge succeeds, but unmapping a column's file of the old partition version throws. The column
+        // must still count down, and the commit must fail.
+        executeWithPool(
+                0,
+                O3FailureTest::testMergeReleaseFails0,
+                failToUnmap("1970-01-01" + Files.SEPARATOR + "a.d")
+        );
+    }
+
+    @Test
+    public void testMergeColumnUnmapThrowsInDrain() throws Exception {
+        // The writer runs the queued tasks itself. The merge succeeds, but unmapping a column's file of the
+        // old partition version throws. The drain only logs what a task throws, so the column's error
+        // handler must record the error, or the commit succeeds.
+        executeWithoutPool(
+                O3FailureTest::testMergeReleaseFails0,
+                failToUnmap("1970-01-01" + Files.SEPARATOR + "a.d")
+        );
+    }
+
+    @Test
     public void testMergeFixColumnFailsAndSourceCloseThrows() throws Exception {
         // A column fails to map its file in the new partition version, and its error handler then fails
         // to close its file in the old one. The column must still count down.
@@ -1865,6 +1887,41 @@ public class O3FailureTest extends AbstractO3Test {
             public long openRW(LPSZ name, int opts) {
                 final long fd = super.openRW(name, opts);
                 if (isO3FaultArmed.get() && isTableXFile(name, Files.SEPARATOR + fileName)) {
+                    targetFd.compareAndSet(NO_FD, fd);
+                }
+                return fd;
+            }
+        };
+    }
+
+    // Once the test arms the fault, makes unmapping the first mapping of the given file of table x throw the way
+    // a failed munmap does: the mapping of the first descriptor opened for it after arming, which belongs to the
+    // merge. The facade unmaps the memory before it throws, so nothing leaks.
+    private static FilesFacade failToUnmap(String partitionFile) {
+        final AtomicLong targetFd = new AtomicLong(NO_FD);
+        final AtomicLong targetAddr = new AtomicLong();
+        return new TestFilesFacadeImpl() {
+            @Override
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                final long addr = super.mmap(fd, len, offset, flags, memoryTag);
+                if (fd == targetFd.get()) {
+                    targetAddr.compareAndSet(0, addr);
+                }
+                return addr;
+            }
+
+            @Override
+            public void munmap(long address, long size, int memoryTag) {
+                super.munmap(address, size, memoryTag);
+                if (address == targetAddr.get() && isCloseFaultArmed.compareAndSet(true, false)) {
+                    throw CairoException.critical(0).put("could not munmap [address=").put(address).put(']');
+                }
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                final long fd = super.openRW(name, opts);
+                if (isCloseFaultArmed.get() && isTableXFile(name, partitionFile)) {
                     targetFd.compareAndSet(NO_FD, fd);
                 }
                 return fd;

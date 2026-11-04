@@ -121,7 +121,7 @@ public class FuzzRunnerTest extends AbstractCairoTest {
 
             assertQuery("SELECT count() FROM t").noLeakCheck().noRandomAccess().expectSize().returns("count\n400\n");
             // applyToWal() picks a WAL writer for each of the 2 transactions; the drain before the drop
-            // index op and the drains around executeIndexOps() must take nothing more
+            // index op and the drains around executeDropIndexOps() must take nothing more
             final Rnd expected = new Rnd(13, 17);
             expected.nextPositiveInt();
             expected.nextPositiveInt();
@@ -168,7 +168,7 @@ public class FuzzRunnerTest extends AbstractCairoTest {
 
             retryingFuzzer.applyWal(transactions, "drain", 1, new Rnd());
 
-            assertRetryRouting(retryingFuzzer, 4, 4, 0);
+            assertRetryRouting(retryingFuzzer, 2, 2, 0);
             Assert.assertEquals(2, retryingFuzzer.readTimeoutAttempts.get());
         });
     }

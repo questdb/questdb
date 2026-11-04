@@ -424,7 +424,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         // seeds convert partitions to parquet and back, rename sym0 twice, drop other columns and change
         // their types, all on that covering index. The fuzz plants no IO failure, see
         // runTxnZeroCoveredSymbolRandomFuzz().
-        Rnd rnd = generateRandom(LOG, 11L, 80L);
+        Rnd rnd = generateRandom(LOG, 319L, 856L);
         setTestParams(rnd);
 
         setFuzzProbabilities(
@@ -499,7 +499,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         // its files, and the check after VACUUM TABLE proves VACUUM removes them. The fuzz test drew the
         // default symbol index type from other seeds. The fuzz plants no IO failure: one that hit the purge
         // job would lose the purge log, and the check before VACUUM TABLE would skip.
-        runTxnZeroCoveredSymbolRandomFuzz(generateRandom(LOG, 882356240241250L, 1792176272157L), "POSTING DELTA", null, 0);
+        runTxnZeroCoveredSymbolRandomFuzz(generateRandom(LOG, 816863342044703L, 1854985519383L), "POSTING DELTA", null, 0);
         Assert.assertEquals(txnZeroRunPurgeTasksConsumed, txnZeroRunPurgeTasksLogged);
         // instance 0 of sym0 in partition 2022-02-24 (name txn 1) of the non-WAL table, whose index DROP
         // INDEX dropped before DROP PARTITION of 2022-02-25
@@ -526,7 +526,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         // operation. The .pc sidecar names of both carry the token 0, and VACUUM once purged them as
         // files of a stale column version. The fuzz plants no IO failure, see
         // runTxnZeroCoveredSymbolRandomFuzz().
-        Rnd rnd = generateRandom(LOG, 1L, 2L);
+        Rnd rnd = generateRandom(LOG, 45L, 550L);
         setTestParams(rnd);
 
         setFuzzProbabilities(

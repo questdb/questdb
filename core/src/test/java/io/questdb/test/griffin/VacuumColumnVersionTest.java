@@ -316,6 +316,19 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testVacuumKeepsCoveringIndexOfNameTxnZero() throws Exception {
+        // A column added before the first commit has name txn 0, which the cover file names cannot tell apart from
+        // no name txn. VACUUM must take the index's cover files for the live version's.
+        assertVacuumKeepsCoveringIndex("t_vac_cov_txn0", "sym", "sym\\.pc\\d+\\.0\\.\\d+");
+    }
+
+    @Test
+    public void testVacuumKeepsCoveringIndexOfRenamedIndexColumn() throws Exception {
+        // RENAME moves the index column to a name txn above 0, which its posting file names carry before the seal txn.
+        assertVacuumKeepsCoveringIndex("t_vac_cov_renamed", "s", "s\\.pc\\d+\\.[1-9]\\d*\\.\\d+");
+    }
+
+    @Test
     public void testVacuumPurgesColumnVersionsAfterColumnDrop() throws Exception {
         assertMemoryLeak(() -> {
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
@@ -380,6 +393,38 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
                 assertFilesExist(partitions, "testPurge", files, "", false);
 
                 Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+            }
+        });
+    }
+
+    @Test
+    public void testVacuumPurgesStalePostingFilesOfNameTxnZero() throws Exception {
+        // UPDATE of a covered column moves the index column off name txn 0. Posting files left behind under name txn
+        // 0 are stale, and VACUUM must purge them, the cover files too, which name txn 0 like no name txn.
+        Assume.assumeFalse(Os.isWindows());
+        assertMemoryLeak(() -> {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                createIndexWithNameTxnZeroTable("t_vac_stale_txn0");
+                engine.releaseAllReaders();
+                execute("UPDATE t_vac_stale_txn0 SET val = val + 100 WHERE ts IN '2024-01-01'");
+                final File partitionDir = partitionDir("t_vac_stale_txn0", "2024-01-01");
+                final String[] stale = {"sym.d.0", "sym.pk.0", "sym.pci.0", "sym.pv.0.0", "sym.pv.0.1", "sym.pc0.0.0", "sym.pc1.0.1"};
+                for (String name : stale) {
+                    Assert.assertFalse("fixture: the update purged " + name, new File(partitionDir, name).exists());
+                    Assert.assertTrue(TestFilesFacadeImpl.INSTANCE.touch(Path.getThreadLocal(new File(partitionDir, name).getAbsolutePath()).$()));
+                }
+
+                runTableVacuum("t_vac_stale_txn0");
+                runPurgeJob(purgeJob);
+
+                for (String name : stale) {
+                    Assert.assertFalse("stale file purged: " + name, new File(partitionDir, name).exists());
+                }
+                assertCoveringQuery("t_vac_stale_txn0", "sym", """
+                        sym\tval\tts
+                        A\t101.0\t2024-01-01T00:00:00.000000Z
+                        A\t4.0\t2024-01-02T00:00:00.000000Z
+                        """);
             }
         });
     }
@@ -2343,6 +2388,47 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
         }
     }
 
+    private static int countFiles(File dir, String regex) {
+        final String[] names = dir.list();
+        Assert.assertNotNull(names);
+        int count = 0;
+        for (String name : names) {
+            if (name.matches(regex)) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    /**
+     * A non-WAL table whose POSTING index on sym INCLUDEs val. sym is added before the first commit, so it has name
+     * txn 0, and 'A' has a row in each of 2024-01-01 and 2024-01-02.
+     */
+    private static void createIndexWithNameTxnZeroTable(String tableName) throws SqlException {
+        execute("CREATE TABLE " + tableName + " (ts TIMESTAMP, val DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+        execute("ALTER TABLE " + tableName + " ADD COLUMN sym SYMBOL");
+        execute("ALTER TABLE " + tableName + " ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (val)");
+        execute("INSERT INTO " + tableName + " VALUES ('2024-01-01T00:00:00', 1.0, 'A'), ('2024-01-01T01:00:00', 2.0, 'B'), ('2024-01-02T00:00:00', 4.0, 'A')");
+    }
+
+    private static File partitionDir(String tableName, String partitionName) {
+        final File tableDir = new File(configuration.getDbRoot(), engine.verifyTableName(tableName).getDirName());
+        final File[] dirs = tableDir.listFiles((dir, name) -> name.equals(partitionName) || name.startsWith(partitionName + "."));
+        Assert.assertNotNull(dirs);
+        Assert.assertEquals("one directory for partition " + partitionName + ": " + Arrays.toString(dirs), 1, dirs.length);
+        return dirs[0];
+    }
+
+    private void assertCoveringQuery(String tableName, String indexColumn, String expected) throws Exception {
+        assertQuery("SELECT " + indexColumn + ", val, ts FROM " + tableName + " WHERE " + indexColumn + " = 'A'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .timestamp("ts")
+                .withPlanContaining("CoveringIndex on: " + indexColumn + " with: val, ts")
+                .returns(expected);
+    }
+
     private void assertFilesExist(String[] partitions, String tableName, String[] files, String colSuffix, boolean exist) {
         for (int i = 0; i < partitions.length; i++) {
             String partition = partitions[i];
@@ -2369,6 +2455,37 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
 
     private static String versionSuffix(long columnNameTxn) {
         return columnNameTxn > -1 ? "." + columnNameTxn : "";
+    }
+
+    /**
+     * VACUUM, then the purge it schedules, must leave the cover files of the live index, the 2024-01-01 files that
+     * match {@code coverFileRegex}, and the covering query must read them.
+     */
+    private void assertVacuumKeepsCoveringIndex(String tableName, String indexColumn, String coverFileRegex) throws Exception {
+        Assume.assumeFalse(Os.isWindows());
+        assertMemoryLeak(() -> {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                createIndexWithNameTxnZeroTable(tableName);
+                if (!"sym".equals(indexColumn)) {
+                    execute("ALTER TABLE " + tableName + " RENAME COLUMN sym TO " + indexColumn);
+                }
+                final String expected = indexColumn + """
+                        \tval\tts
+                        A\t1.0\t2024-01-01T00:00:00.000000Z
+                        A\t4.0\t2024-01-02T00:00:00.000000Z
+                        """;
+                assertCoveringQuery(tableName, indexColumn, expected);
+                final File partitionDir = partitionDir(tableName, "2024-01-01");
+                final int coverFiles = countFiles(partitionDir, coverFileRegex);
+                Assert.assertTrue("fixture: the live index has cover files", coverFiles > 0);
+
+                runTableVacuum(tableName);
+                runPurgeJob(purgeJob);
+
+                Assert.assertEquals("live cover files kept", coverFiles, countFiles(partitionDir, coverFileRegex));
+                assertCoveringQuery(tableName, indexColumn, expected);
+            }
+        });
     }
 
     @NotNull
