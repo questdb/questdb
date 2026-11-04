@@ -164,6 +164,9 @@ public abstract class AbstractAdaptiveCrashTest extends AbstractCrashConsistency
         // here, where the clean close's flush of the txnlog comes after the power loss and counts for nothing; after
         // crash() it would flush through a handle the rollback made stale.
         engine.releaseInactiveTableSequencers();
+        // A writer's close can open another writer: with the posting seal purge queue full, it writes its ready purge
+        // tasks to sys.posting_seal_purge_log itself. The pool walk above does not visit a writer opened during it.
+        engine.releaseAllWriters();
         crashFf.crash(engine.getConfiguration().getDbRoot());
 
         // The commit phase can re-point a table's name to a token it minted (REBASE WAL swaps a new table dir in)
