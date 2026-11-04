@@ -311,6 +311,10 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // Departure episodes of a batch whose departed rows no root sealed, so the resume repairing
     // their departure anchored on the head's own root and emitted nothing: see departNewestRows.
     private int unsealedDepartures;
+    // Of those, the episodes whose kept batch landed below the newest timestamp the view had seen,
+    // which a replace band that deleted the base's newest rows leaves above every row, so their
+    // departed batch started above it: see departNewestRows.
+    private int unsealedDeparturesBelowLatestSeenTs;
 
     @Test
     public void testFuzzAnchored() throws Exception {
@@ -891,6 +895,20 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         runReplaceRangeFuzzVariants(TestUtils.generateRandom(LOG, 449697238060352L, 1793678782022L), false);
         coverage.assertReachedStat(LiveViewRefreshStats.HEAD_MISS_SPLICE_FRONTIER_TRUNCATE_COUNT);
         coverage.assertReachedStat(LiveViewRefreshStats.HEAD_MISS_SPLICE_ZERO_ROW_RETIRE_COUNT);
+    }
+
+    @Test
+    public void testFuzzReplaceRangeUnsealedDepartureAfterDeletingTheNewestRows() throws Exception {
+        // A run whose variant 4 deletes the base's newest rows through a replace band, which
+        // leaves the newest timestamp the view has seen hours above every base row, ahead of a
+        // departure episode that leaves its departed rows unsealed. Its kept batch lands below
+        // that timestamp, and the out-of-order repair that takes it seals it. The departed batch
+        // once landed below it too, so a repair sealed that batch as well, and the episode failed.
+        runReplaceRangeFuzzVariants(TestUtils.generateRandom(LOG, 483053825472492L, 1793712138610L), true);
+        Assert.assertTrue(
+                "no unsealed departure started below the newest timestamp the view had seen",
+                unsealedDeparturesBelowLatestSeenTs > 0
+        );
     }
 
     @Test
@@ -1766,10 +1784,10 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
      * Either way the root below them is the anchor, and resuming from it reads no more rows than
      * a localized rebuild would. One run in three adds a late row the filter keeps between the
      * two batches in the same commit, and one in three in the next commit. One episode in three,
-     * when {@code isUnsealedDepartureAllowed}, commits the departed batch inside the cadence
-     * instead, so the resume anchors on the head's own root and emits nothing, and adds no late
-     * row. {@code usedTs} is the run's pool of taken timestamps, or null on a base whose dedup
-     * keys keep every row unique.
+     * when {@code isUnsealedDepartureAllowed}, commits the departed batch inside the cadence and
+     * above the newest timestamp the view has seen instead, so the resume anchors on the head's
+     * own root and emits nothing, and adds no late row. {@code usedTs} is the run's pool of taken
+     * timestamps, or null on a base whose dedup keys keep every row unique.
      *
      * @return true when rows departed, and the caller restarts
      */
@@ -1808,7 +1826,14 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         try {
             final long[] departedTs = new long[4];
             final int[] departedSym = new int[4];
-            commitEpisodeBatch(rnd, keptTs[3] + 2 + rnd.nextInt(1_000_000), usedTs, symCount, departedTs, departedSym);
+            // A replace band that deleted the base's newest rows leaves the newest timestamp the
+            // view has seen above every base row, so the kept batch can land below it. A batch
+            // below it drains out of order, and the repair that takes it seals it whatever the
+            // cadence, so an unsealed departed batch starts above it.
+            final long latestSeenTs = instance.getLatestSeenTs();
+            final boolean isKeptBatchBelowLatestSeenTs = latestSeenTs > keptTs[3];
+            final long departedFromTs = isDepartedBatchUnsealed ? Math.max(keptTs[3], latestSeenTs) : keptTs[3];
+            commitEpisodeBatch(rnd, departedFromTs + 2 + rnd.nextInt(1_000_000), usedTs, symCount, departedTs, departedSym);
             drainWalQueue();
             driveRefreshToQuiescence(job);
             if (isDepartedBatchUnsealed) {
@@ -1837,6 +1862,9 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 Assert.assertEquals("with nothing fed since it", Long.MAX_VALUE, instance.getMinSeenTsSinceCheckpoint());
                 Assert.assertEquals(departedTs[3], instance.getLatestSeenTs());
                 unsealedDepartures++;
+                if (isKeptBatchBelowLatestSeenTs) {
+                    unsealedDeparturesBelowLatestSeenTs++;
+                }
             }
         } finally {
             if (isDepartedBatchUnsealed) {
