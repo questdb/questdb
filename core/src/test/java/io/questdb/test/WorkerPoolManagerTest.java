@@ -51,6 +51,7 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.mp.WorkerPoolMode;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
@@ -578,6 +579,26 @@ public class WorkerPoolManagerTest {
             workerPoolManager.halt();
         }
         Assert.assertEquals(1, managerCloseOrder.get());
+    }
+
+    @Test
+    public void testScrapeBeforeWorkersStartExportsParseableJobStartMetrics() {
+        final Metrics metrics = new Metrics(true, new MetricsRegistryImpl());
+        final WorkerPoolManager workerPoolManager = new WorkerPoolManager(createServerConfig(1, metrics, null)) {
+            @Override
+            protected void configureWorkerPools(WorkerPool sharedPoolQuery, WorkerPool sharedPoolWrite) {
+            }
+        };
+        try (DirectUtf8Sink sink = new DirectUtf8Sink(1024)) {
+            metrics.scrapeIntoPrometheus(sink);
+            final String scraped = sink.toString();
+            TestUtils.assertContains(scraped, "questdb_workers_job_start_micros_min NaN\n");
+            TestUtils.assertContains(scraped, "questdb_workers_job_start_micros_max NaN\n");
+            Assert.assertEquals(Numbers.LONG_NULL, metrics.workerMetrics().getMinElapsedMicros());
+            Assert.assertEquals(Numbers.LONG_NULL, metrics.workerMetrics().getMaxElapsedMicros());
+        } finally {
+            workerPoolManager.halt();
+        }
     }
 
     @Test

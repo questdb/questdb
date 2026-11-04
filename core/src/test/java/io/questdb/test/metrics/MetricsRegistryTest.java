@@ -34,6 +34,8 @@ import io.questdb.metrics.MetricsRegistry;
 import io.questdb.metrics.MetricsRegistryImpl;
 import io.questdb.metrics.NullMetricsRegistry;
 import io.questdb.metrics.Target;
+import io.questdb.metrics.WorkerMetrics;
+import io.questdb.std.Numbers;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -122,6 +124,40 @@ public class MetricsRegistryTest {
     }
 
     @Test
+    public void testGaugeWithNullValueScrapesAsNaN() {
+        MetricsRegistry metricsRegistry = new MetricsRegistryImpl();
+        LongGauge gauge = metricsRegistry.newLongGauge("gauge");
+
+        gauge.setValue(Numbers.LONG_NULL);
+        assertScrapable(gauge, """
+                # TYPE questdb_gauge gauge
+                questdb_gauge NaN
+
+                """);
+
+        gauge.setValue(Long.MIN_VALUE + 1);
+        assertScrapable(gauge, """
+                # TYPE questdb_gauge gauge
+                questdb_gauge -9223372036854775807
+
+                """);
+
+        gauge.setValue(Long.MAX_VALUE);
+        assertScrapable(gauge, """
+                # TYPE questdb_gauge gauge
+                questdb_gauge 9223372036854775807
+
+                """);
+
+        gauge.setValue(0);
+        assertScrapable(gauge, """
+                # TYPE questdb_gauge gauge
+                questdb_gauge 0
+
+                """);
+    }
+
+    @Test
     public void testEveryRegisteredMetricIsEnumerable() {
         MetricsRegistry metricsRegistry = new MetricsRegistryImpl();
         metricsRegistry.newAtomicLongGauge("atomic").setValue(1);
@@ -206,6 +242,44 @@ public class MetricsRegistryTest {
 
         gauge.dec();
         assetNull(gauge);
+    }
+
+    @Test
+    public void testWorkerMetricsTrackRangeAfterNoSampleState() {
+        MetricsRegistryImpl metricsRegistry = new MetricsRegistryImpl();
+        WorkerMetrics metrics = new WorkerMetrics(metricsRegistry);
+        assertWorkerMetrics(metrics, metricsRegistry, Numbers.LONG_NULL, Numbers.LONG_NULL, "NaN", "NaN");
+
+        metrics.update(5, 7);
+        assertWorkerMetrics(metrics, metricsRegistry, 5, 7, "5", "7");
+
+        // values inside the observed range leave it unchanged
+        metrics.update(6, 6);
+        assertWorkerMetrics(metrics, metricsRegistry, 5, 7, "5", "7");
+
+        metrics.update(3, 9);
+        assertWorkerMetrics(metrics, metricsRegistry, 3, 9, "3", "9");
+
+        metrics.clear();
+        assertWorkerMetrics(metrics, metricsRegistry, Numbers.LONG_NULL, Numbers.LONG_NULL, "NaN", "NaN");
+    }
+
+    private static void assertWorkerMetrics(
+            WorkerMetrics metrics,
+            MetricsRegistry metricsRegistry,
+            long expectedMin,
+            long expectedMax,
+            String expectedScrapedMin,
+            String expectedScrapedMax
+    ) {
+        Assert.assertEquals(expectedMin, metrics.getMinElapsedMicros());
+        Assert.assertEquals(expectedMax, metrics.getMaxElapsedMicros());
+        try (DirectUtf8Sink sink = new DirectUtf8Sink(256)) {
+            metricsRegistry.scrapeIntoPrometheus(sink);
+            final String scraped = sink.toString();
+            TestUtils.assertContains(scraped, "questdb_workers_job_start_micros_min " + expectedScrapedMin + '\n');
+            TestUtils.assertContains(scraped, "questdb_workers_job_start_micros_max " + expectedScrapedMax + '\n');
+        }
     }
 
     private static void assertScrapable(Target target, CharSequence expected) {
