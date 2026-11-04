@@ -155,21 +155,28 @@ public final class Fiber implements FiberWaitCoordinator.Target {
 
     /**
      * Returns whether the current Fiber holds a limited CPU grant it cannot give up because it
-     * may not park. Child work would wait for that grant, so the Fiber has to do the work itself.
+     * may not park, or its fractional quota requires local parallel work. Such work must not occupy
+     * a shared publication ring while waiting for the owner to regain CPU credit.
      */
     public static boolean isHoldingLimitedGrant() {
         final SuspensionScope.CarrierScope scope = SuspensionScope.scope();
         final Fiber fiber = scope.fiber;
         return fiber != null
-                && scope.mode != SuspensionScope.Mode.FIBER
                 && fiber.dispatchRequest != null
                 && fiber.dispatchContext != null
-                && fiber.dispatchContext.isParallelWorkLimited()
+                && (fiber.dispatchContext.isParallelWorkLocal()
+                || scope.mode != SuspensionScope.Mode.FIBER && fiber.dispatchContext.isParallelWorkLimited())
                 && isMounted();
     }
 
     public static boolean isMounted() {
         return Continuation.getCurrentContinuation(SCOPE) != null;
+    }
+
+    public static boolean needsBlockingDispatchPoll() {
+        final Fiber fiber = mountedOrNull();
+        return fiber != null && fiber.mountedDispatchTicket != null
+                && fiber.mountedDispatchTicket.needsBlockingPoll();
     }
 
     /**

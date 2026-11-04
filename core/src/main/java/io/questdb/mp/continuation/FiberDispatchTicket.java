@@ -32,6 +32,11 @@ package io.questdb.mp.continuation;
  * {@link FiberDispatchSession#completeDispatch}.
  */
 public interface FiberDispatchTicket {
+    /** Whether this ticket also needs cooperative accounting while the Fiber cannot yield. */
+    default boolean needsBlockingPoll() {
+        return false;
+    }
+
     /**
      * Invoked from an explicitly cooperative execution boundary while this ticket owns the
      * currently mounted Fiber segment. Implementations must keep the ordinary path allocation-free.
@@ -40,6 +45,13 @@ public interface FiberDispatchTicket {
     }
 
     void onMount(FiberDispatchRequest request);
+
+    /**
+     * Accounts the interval ending at a live FIBER/non-FIBER transition. Must not yield or throw:
+     * the caller may already have changed lock ownership. Report failures at the next poll.
+     */
+    default void onSuspensionModeChange(boolean fiberMode) {
+    }
 
     void onUnmount(FiberDispatchRequest request, boolean wasMounted);
 }

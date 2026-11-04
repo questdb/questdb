@@ -53,4 +53,9 @@ public interface FiberDispatchContext {
     default boolean isParallelWorkLimited() {
         return false;
     }
+
+    /** Whether parallel work must run inline to keep quota waits off shared task queues. */
+    default boolean isParallelWorkLocal() {
+        return false;
+    }
 }

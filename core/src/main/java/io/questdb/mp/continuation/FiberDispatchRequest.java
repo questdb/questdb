@@ -120,6 +120,11 @@ public final class FiberDispatchRequest {
         return lifecycleState == packLifecycleState(dispatchEpoch, STATE_REQUESTED);
     }
 
+    /** Distinguishes an in-place ticket mount from a new (possibly nested) Fiber mount. */
+    public boolean isCurrentMountedFiber() {
+        return SuspensionScope.scope().fiber == fiber && Fiber.isMounted();
+    }
+
     boolean abort(long dispatchEpoch) {
         final long requested = packLifecycleState(dispatchEpoch, STATE_REQUESTED);
         if (!Unsafe.cas(this, LIFECYCLE_STATE_OFFSET, requested, packLifecycleState(dispatchEpoch, STATE_CANCELLED))) {
