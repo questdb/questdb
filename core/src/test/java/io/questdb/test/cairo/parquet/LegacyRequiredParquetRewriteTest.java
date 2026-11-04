@@ -66,7 +66,7 @@ public class LegacyRequiredParquetRewriteTest extends AbstractCairoTest {
     // Unpack the archived 9.4.2 table directory into the engine's db root and let the registry
     // discover it from its _name file. The fixture is a single zip whose entries are rooted at
     // the table directory (legacy_all~18/...).
-    private static void loadFixture() throws Exception {
+    static void loadFixture() throws Exception {
         final byte[] buffer = new byte[1024 * 1024];
         final File root = new File(configuration.getDbRoot().toString());
         try (InputStream is = LegacyRequiredParquetRewriteTest.class.getResourceAsStream("/parquet-c3-legacy/legacy_all~18.zip")) {

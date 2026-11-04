@@ -2401,19 +2401,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         isCommitDedup && srcOooLo <= srcOooHi
                 );
 
-                // The output keeps the column tops below this row count, see computeColumnTopRowLimit()
-                final long columnTopRowLimit = computeColumnTopRowLimit(
-                        actionsBuf,
-                        rowGroupBounds,
-                        sortedTimestampsAddr,
-                        srcOooLo,
-                        isCommitDedup,
-                        partitionDecoder,
-                        timestampParquetIdx,
-                        timestampColumnType,
-                        parquetColumns,
-                        ctx
-                );
                 // the last O3 row at or below the partition max, srcOooLo - 1 when there is none
                 final long o3HiUpToPartitionMax = Vect.boundedBinarySearchIndexT(
                         sortedTimestampsAddr,
@@ -2434,63 +2421,87 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // Buffers grow as needed and are freed after all actions complete.
                 final int colCount = tableWriterMetadata.getColumnCount();
                 final LongList mergeDstBufs = ctx.getMergeDstBufs(colCount);
+                // the getters zero the lists, a row group merge that a step below prepares and keeps lives in them
                 final LongList nullBufs = ctx.getNullBufs(colCount);
                 final LongList srcPtrs = ctx.getSrcPtrs(colCount);
-
-                // In SKIP mode the dedup keeps every existing row and drops each O3 row
-                // that matches one, so a MERGE whose O3 rows the dedup all drops
-                // reproduces its row groups as they are. Such a merge decodes only the
-                // designated timestamp and the dedup key columns, and leaves the row
-                // groups as they are: an update keeps them in place, a rewrite copies
-                // them. The partition output opens at the first action that writes rows,
-                // a MERGE that keeps an O3 row or a COPY_O3. When no action does, the
-                // partition stays as it is, with no file written, as a native partition
-                // does in TableWriter. Other commits write every merged row group, the
-                // output opens upfront.
-                // An UPSERT commit runs in SKIP mode too when every O3 row at or below the
-                // partition max replaces a row with identical values: keeping the stored row
-                // gives the same rows, and native turns such a commit into a noop or an
-                // append, which keeps every column top. Only the columns without a NULL
-                // value (BOOLEAN, BYTE, SHORT) read a kept top differently from a zeroed
-                // one, so the check runs for tables that have such a column. When the commit
-                // runs in SKIP mode, the merge loop leaves every MERGE up to the max as
-                // stored and completes what the check prepared of the MERGE that also takes
-                // the O3 rows past the max. When a later MERGE changes the partition, the
-                // merge loop leaves the row groups of the identical MERGEs before it as they
-                // are, unless they hold a NULL of such a column, and completes what the check
-                // prepared of the MERGE where it stops, when it merges nothing before it.
-                // Either way it does not decode that row group again.
-                // A rewrite that copies row groups through ParquetRowGroupMaterializer
-                // decodes them into the buffers of the columns past the keys, so the check
-                // keeps those columns only when it does not.
-                final boolean isSkipMode = tableWriter.isCommitDedupSkipMode()
-                        || (isCommitDedup
-                        && columnTopRowLimit != Long.MAX_VALUE
-                        && hasNoSentinelColumn(tableWriterMetadata)
-                        && isUpsertIdenticalUpToPartitionMax(
-                        actionsBuf,
-                        actionCount,
-                        o3HiUpToPartitionMax,
-                        hasTypeConvertedColumns || forceFullReencode,
-                        parquetColumns,
-                        oooColumns,
-                        sortedTimestampsAddr,
-                        tableWriter,
-                        partitionDecoder,
-                        timestampIndex,
-                        partitionTimestamp,
-                        tableWriterMetadata,
-                        dedupColSinkAddr,
-                        tableToParquetIdx,
-                        nullBufs,
-                        srcPtrs,
-                        ctx
-                ));
                 final PartitionDescriptor chunkDescriptor = ctx.getChunkDescriptor();
                 int metadataPosition = 0;
                 // the output row where the current action starts
                 long outputRowOffset = 0;
                 try {
+                    // The output keeps the column tops below this row count, see computeColumnTopRowLimit(). When the
+                    // count needs the stored timestamps of a row group, it prepares the first stage of the merge of that
+                    // row group and keeps it: the UPSERT identity check and the merge loop complete it, and no step
+                    // decodes those timestamps again.
+                    final long columnTopRowLimit = computeColumnTopRowLimit(
+                            actionsBuf,
+                            rowGroupBounds,
+                            sortedTimestampsAddr,
+                            srcOooLo,
+                            isCommitDedup,
+                            parquetColumns,
+                            oooColumns,
+                            tableWriter,
+                            partitionDecoder,
+                            timestampIndex,
+                            partitionTimestamp,
+                            tableWriterMetadata,
+                            dedupColSinkAddr,
+                            tableToParquetIdx,
+                            nullBufs,
+                            srcPtrs,
+                            ctx
+                    );
+
+                    // In SKIP mode the dedup keeps every existing row and drops each O3 row
+                    // that matches one, so a MERGE whose O3 rows the dedup all drops
+                    // reproduces its row groups as they are. Such a merge decodes only the
+                    // designated timestamp and the dedup key columns, and leaves the row
+                    // groups as they are: an update keeps them in place, a rewrite copies
+                    // them. The partition output opens at the first action that writes rows,
+                    // a MERGE that keeps an O3 row or a COPY_O3. When no action does, the
+                    // partition stays as it is, with no file written, as a native partition
+                    // does in TableWriter. Other commits write every merged row group, the
+                    // output opens upfront.
+                    // An UPSERT commit runs in SKIP mode too when every O3 row at or below the
+                    // partition max replaces a row with identical values: keeping the stored row
+                    // gives the same rows, and native turns such a commit into a noop or an
+                    // append, which keeps every column top. Only the columns without a NULL
+                    // value (BOOLEAN, BYTE, SHORT) read a kept top differently from a zeroed
+                    // one, so the check runs for tables that have such a column. When the commit
+                    // runs in SKIP mode, the merge loop leaves every MERGE up to the max as
+                    // stored and completes what the check prepared of the MERGE that also takes
+                    // the O3 rows past the max. When a later MERGE changes the partition, the
+                    // merge loop leaves the row groups of the identical MERGEs before it as they
+                    // are, unless they hold a NULL of such a column, and completes what the check
+                    // prepared of the MERGE where it stops, when it merges nothing before it.
+                    // Either way it does not decode that row group again.
+                    // A rewrite that copies row groups through ParquetRowGroupMaterializer
+                    // decodes them into the buffers of the columns past the keys, so the check
+                    // keeps those columns only when it does not.
+                    final boolean isSkipMode = tableWriter.isCommitDedupSkipMode()
+                            || (isCommitDedup
+                            && columnTopRowLimit != Long.MAX_VALUE
+                            && hasNoSentinelColumn(tableWriterMetadata)
+                            && isUpsertIdenticalUpToPartitionMax(
+                            actionsBuf,
+                            actionCount,
+                            o3HiUpToPartitionMax,
+                            hasTypeConvertedColumns || forceFullReencode,
+                            parquetColumns,
+                            oooColumns,
+                            sortedTimestampsAddr,
+                            tableWriter,
+                            partitionDecoder,
+                            timestampIndex,
+                            partitionTimestamp,
+                            tableWriterMetadata,
+                            dedupColSinkAddr,
+                            tableToParquetIdx,
+                            nullBufs,
+                            srcPtrs,
+                            ctx
+                    ));
                     if (!isSkipMode) {
                         // set before the call, so that the cleanup covers an output that opened partially
                         isOutputOpen = true;
@@ -2556,7 +2567,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                     // every O3 row of the merge replaces a stored row
                                     mergeDuplicates = action.getO3RowCount();
                                 } else if (i == ctx.getPreparedMergeActionIndex()) {
-                                    // the UPSERT identity check prepared the merge, see isUpsertIdenticalUpToPartitionMax()
+                                    // computeColumnTopRowLimit() or the UPSERT identity check prepared the merge, see
+                                    // isUpsertIdenticalUpToPartitionMax()
                                     mergeDuplicates = ctx.getPreparedMergeDuplicateCount();
                                     isMergeKeyColumnsOnly = ctx.isPreparedMergeKeyColumnsOnly();
                                 } else {
@@ -2776,8 +2788,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         }
                     }
                 } finally {
-                    // the merge that the UPSERT identity check kept, when the output open or an action
-                    // before the merge failed; the merges of the loop free their own
+                    // the merge that computeColumnTopRowLimit() or the UPSERT identity check kept, when a step
+                    // before the merge loop reached it failed; the merges of the loop free their own
                     ctx.freeRowGroupMerge();
                     chunkDescriptor.clear();
                     for (int bufIdx = 0; bufIdx < colCount; bufIdx++) {
@@ -4267,6 +4279,14 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
      * lifts the limit to {@code Long.MAX_VALUE}. So does an UPSERT commit whose O3 rows at or below
      * the partition max all replace identical rows, which runs as SKIP, see
      * {@link #isUpsertIdenticalUpToPartitionMax}.
+     * <p>
+     * When the prefix ends inside a row group, the count needs the stored timestamps of that
+     * MERGE. The merge of the action decodes them in its first stage anyway, so the function
+     * runs that stage now, with the dedup mode of the commit, and keeps it, see
+     * {@link O3ParquetMergeContext#keepRowGroupMerge}. The UPSERT identity check and the merge
+     * loop take it over without decoding the row groups again. The first stage prepares the
+     * designated timestamp and the dedup key columns only: these live in buffers of their own,
+     * which the rewrite copies through ParquetRowGroupMaterializer before the merge do not use.
      */
     private static long computeColumnTopRowLimit(
             ObjList<O3ParquetMergeStrategy.MergeAction> actions,
@@ -4274,10 +4294,17 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long sortedTimestampsAddr,
             long srcOooLo,
             boolean isCommitDedup,
-            ParquetPartitionDecoder partitionDecoder,
-            int timestampParquetIdx,
-            int timestampColumnType,
             DirectIntList parquetColumns,
+            ReadOnlyObjList<? extends MemoryCR> oooColumns,
+            TableWriter tableWriter,
+            ParquetPartitionDecoder partitionDecoder,
+            int timestampIndex,
+            long partitionTimestamp,
+            TableRecordMetadata tableWriterMetadata,
+            long dedupColSinkAddr,
+            IntList tableToParquetIdx,
+            LongList nullBufs,
+            LongList srcPtrs,
             O3ParquetMergeContext ctx
     ) {
         // parquet partitions reject replace commits, so only dedup takes equal rows into the merge
@@ -4291,6 +4318,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             action = actions.getQuick(++actionIndex);
         }
         if (action.type == O3ParquetMergeStrategy.ActionType.MERGE) {
+            final long actionRowLo = prefixRowCount;
             for (int rg = action.rowGroupIndex; rg <= action.rowGroupIndexHi; rg++) {
                 final long rowGroupRowCount = O3ParquetMergeStrategy.getRowGroupRowCount(rowGroupBounds, rg);
                 if (O3ParquetMergeStrategy.getRowGroupMax(rowGroupBounds, rg) <= lastPrefixTimestamp) {
@@ -4298,18 +4326,42 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     continue;
                 }
                 if (O3ParquetMergeStrategy.getRowGroupMin(rowGroupBounds, rg) <= lastPrefixTimestamp) {
-                    // the prefix ends inside the row group, count its rows up to the timestamp
-                    final RowGroupBuffers timestampBuffers = ctx.getKeyRowGroupBuffers();
-                    parquetColumns.clear();
-                    parquetColumns.add(timestampParquetIdx);
-                    parquetColumns.add(timestampColumnType);
-                    partitionDecoder.decodeRowGroup(timestampBuffers, parquetColumns, rg, 0, (int) rowGroupRowCount);
-                    parquetColumns.clear();
-                    prefixRowCount += Vect.boundedBinarySearch64Bit(
-                            timestampBuffers.getChunkDataPtr(0),
+                    // The prefix ends inside the row group: prepare the first stage of the merge of the action, which
+                    // decodes its row groups, count their rows up to the timestamp, and keep the stage for the merge
+                    long actionRowCount = 0;
+                    for (int g = action.rowGroupIndex; g <= action.rowGroupIndexHi; g++) {
+                        actionRowCount += O3ParquetMergeStrategy.getRowGroupRowCount(rowGroupBounds, g);
+                    }
+                    assert actionRowCount <= Integer.MAX_VALUE;
+                    final int rgSize = (int) actionRowCount;
+                    final long duplicateCount = mergeRowGroupPrepare(
+                            parquetColumns,
+                            oooColumns,
+                            sortedTimestampsAddr,
+                            tableWriter,
+                            partitionDecoder,
+                            rgSize,
+                            action.rowGroupIndex,
+                            action.rowGroupIndexHi,
+                            timestampIndex,
+                            partitionTimestamp,
+                            action.o3Lo,
+                            action.o3Hi,
+                            tableWriterMetadata,
+                            dedupColSinkAddr,
+                            tableToParquetIdx,
+                            nullBufs,
+                            srcPtrs,
+                            true,
+                            tableWriter.isCommitDedupSkipMode(),
+                            ctx
+                    );
+                    ctx.keepRowGroupMerge(actionIndex, duplicateCount, true);
+                    prefixRowCount = actionRowLo + Vect.boundedBinarySearch64Bit(
+                            ctx.getMergeTimestampDataAddr(),
                             lastPrefixTimestamp,
                             0,
-                            rowGroupRowCount - 1,
+                            rgSize - 1,
                             Vect.BIN_SEARCH_SCAN_DOWN
                     ) + 1;
                 }
@@ -5090,29 +5142,40 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             final int rgSize = (int) rgRowCount;
             boolean isMergeKept = false;
             try {
-                final long duplicateCount = mergeRowGroupPrepare(
-                        parquetColumns,
-                        oooColumns,
-                        sortedTimestampsAddr,
-                        tableWriter,
-                        decoder,
-                        rgSize,
-                        action.rowGroupIndex,
-                        action.rowGroupIndexHi,
-                        timestampIndex,
-                        partitionTimestamp,
-                        action.o3Lo,
-                        action.o3Hi,
-                        tableWriterMetadata,
-                        dedupColSinkAddr,
-                        tableToParquetIdx,
-                        nullBufs,
-                        srcPtrs,
-                        true,
-                        false,
-                        ctx
-                );
-                tableWriter.addUpsertIdentityCheckDecodedColumns(parquetColumns.size() / 2);
+                final long duplicateCount;
+                if (i == ctx.getPreparedMergeActionIndex()) {
+                    // computeColumnTopRowLimit() prepared the first stage of this merge, as the check would: the keys
+                    // and the merge index of the UPSERT dedup. The check takes it over, and frees or keeps it below.
+                    assert ctx.isPreparedMergeKeyColumnsOnly();
+                    duplicateCount = ctx.getPreparedMergeDuplicateCount();
+                    tableWriter.addUpsertIdentityCheckDecodedColumns(ctx.getMergeFirstStageDecodedColumnCount());
+                } else {
+                    // the merges of the check prepare in order, the one computeColumnTopRowLimit() kept comes first
+                    assert ctx.getPreparedMergeActionIndex() == -1;
+                    duplicateCount = mergeRowGroupPrepare(
+                            parquetColumns,
+                            oooColumns,
+                            sortedTimestampsAddr,
+                            tableWriter,
+                            decoder,
+                            rgSize,
+                            action.rowGroupIndex,
+                            action.rowGroupIndexHi,
+                            timestampIndex,
+                            partitionTimestamp,
+                            action.o3Lo,
+                            action.o3Hi,
+                            tableWriterMetadata,
+                            dedupColSinkAddr,
+                            tableToParquetIdx,
+                            nullBufs,
+                            srcPtrs,
+                            true,
+                            false,
+                            ctx
+                    );
+                    tableWriter.addUpsertIdentityCheckDecodedColumns(parquetColumns.size() / 2);
+                }
                 if (duplicateCount != Math.min(action.o3Hi, o3HiUpToPartitionMax) - action.o3Lo + 1) {
                     if (!isMergedBefore) {
                         ctx.keepRowGroupMerge(i, duplicateCount, true);
@@ -5313,10 +5376,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         ctx.setMergeActiveColCount(activeColCount);
 
         mergeRowGroupDecode(tableWriter, decoder, rowGroupBuffers, parquetColumns, rowGroupIndex, rowGroupIndexHi, rowGroupSize);
+        tableWriter.addParquetMergeTimestampDecodes(rowGroupIndexHi - rowGroupIndex + 1);
 
         assert timestampColumnChunkIndex > -1;
         final long timestampDataPtr = rowGroupBuffers.getChunkDataPtr(timestampColumnChunkIndex);
         assert timestampDataPtr != 0;
+        ctx.setMergeFirstStage(timestampDataPtr, decodeColCount);
         final long mergeBatchRowCount = mergeRangeHi - mergeRangeLo + 1;
         final long mergeRowCount = mergeBatchRowCount + rowGroupSize;
 

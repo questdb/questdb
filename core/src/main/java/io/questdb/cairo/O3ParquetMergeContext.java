@@ -62,8 +62,12 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
     private IntList mergeActiveColIndices;
     private IntList mergeActiveToDecodeIdx;
     private LongList mergeDstBufs;
+    // the columns that the first stage of the row group merge decoded
+    private int mergeFirstStageDecodedColumnCount;
     private long mergeIndexAddr;
     private long mergeIndexSize;
+    // the stored designated timestamps of the row group merge, as its first stage decoded them
+    private long mergeTimestampDataAddr;
     private LongList nullBufs;
     // The merge action whose row group merge keepRowGroupMerge() kept, -1 when there is none, and the rows that
     // its dedup dropped
@@ -152,6 +156,8 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
         }
         mergeIndexSize = 0;
         mergeActiveColCount = 0;
+        mergeFirstStageDecodedColumnCount = 0;
+        mergeTimestampDataAddr = 0;
         preparedMergeActionIndex = -1;
     }
 
@@ -194,6 +200,11 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
         return mergeDstBufs;
     }
 
+    // the columns that the first stage of the row group merge decoded, see setMergeFirstStage()
+    public int getMergeFirstStageDecodedColumnCount() {
+        return mergeFirstStageDecodedColumnCount;
+    }
+
     public long getMergeIndexAddr() {
         return mergeIndexAddr;
     }
@@ -201,6 +212,12 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
     // Number of rows of the merged row group, one merge index entry per row
     public long getMergeRowCount() {
         return mergeIndexSize / TableWriter.TIMESTAMP_MERGE_ENTRY_BYTES;
+    }
+
+    // the stored designated timestamps of the row group merge, see setMergeFirstStage()
+    public long getMergeTimestampDataAddr() {
+        assert mergeTimestampDataAddr != 0;
+        return mergeTimestampDataAddr;
     }
 
     public LongList getNullBufs(int colCount) {
@@ -302,6 +319,17 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
 
     public void setMergeActiveColCount(int mergeActiveColCount) {
         this.mergeActiveColCount = mergeActiveColCount;
+    }
+
+    /**
+     * Records what the first stage of a row group merge decoded: the address of the stored designated
+     * timestamps of its row groups, in the decode buffers of the stage, and the number of columns it
+     * decoded. The address stays valid until the next decode into those buffers; the buffers of a stage
+     * that decodes the keys only take no other decode before {@link #freeRowGroupMerge()}.
+     */
+    public void setMergeFirstStage(long timestampDataAddr, int decodedColumnCount) {
+        mergeTimestampDataAddr = timestampDataAddr;
+        mergeFirstStageDecodedColumnCount = decodedColumnCount;
     }
 
     /**
