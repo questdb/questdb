@@ -673,14 +673,17 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
             MCSequence reduceSubSeq,
             MPSequence reducePubSeq
     ) {
-        boolean hasPublication = dispatcher == null || dispatcher.tryAcquirePublication();
+        int publication = dispatcher != null
+                ? dispatcher.acquirePublication()
+                : PageFrameReduceDispatcher.PUBLICATION_ACQUIRED;
+        boolean hasPublication = publication == PageFrameReduceDispatcher.PUBLICATION_ACQUIRED;
         boolean idle = true;
         boolean dispatched = false;
         final int collectedFrameCount = collectedFrameIndex + 1;
 
         try {
             if (!hasPublication) {
-                if (!dispatcher.isLocalReduceRequired()) {
+                if (publication == PageFrameReduceDispatcher.PUBLICATION_CLOSED) {
                     cancel(SqlExecutionCircuitBreaker.STATE_CANCELLED);
                 }
                 return false;
@@ -732,9 +735,10 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                                 return true;
                             }
                             if (dispatcher != null) {
-                                hasPublication = dispatcher.tryAcquirePublication();
+                                publication = dispatcher.acquirePublication();
+                                hasPublication = publication == PageFrameReduceDispatcher.PUBLICATION_ACQUIRED;
                                 if (!hasPublication) {
-                                    if (!dispatcher.isLocalReduceRequired()) {
+                                    if (publication == PageFrameReduceDispatcher.PUBLICATION_CLOSED) {
                                         cancel(SqlExecutionCircuitBreaker.STATE_CANCELLED);
                                     }
                                     return dispatched;

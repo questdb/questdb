@@ -32,7 +32,9 @@ package io.questdb.mp.continuation;
  * {@link FiberDispatchSession#completeDispatch}.
  */
 public interface FiberDispatchTicket {
-    /** Whether this ticket also needs cooperative accounting while the Fiber cannot yield. */
+    /**
+     * Whether this ticket also needs cooperative accounting while the Fiber cannot yield.
+     */
     default boolean needsBlockingPoll() {
         return false;
     }

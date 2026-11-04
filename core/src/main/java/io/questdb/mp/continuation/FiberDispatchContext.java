@@ -54,7 +54,9 @@ public interface FiberDispatchContext {
         return false;
     }
 
-    /** Whether parallel work must run inline to keep quota waits off shared task queues. */
+    /**
+     * Whether parallel work must run inline to keep quota waits off shared task queues.
+     */
     default boolean isParallelWorkLocal() {
         return false;
     }

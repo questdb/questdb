@@ -2872,6 +2872,51 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPublicationRefusalReasonIsNotAskedTwice() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE tab AS (
+                        SELECT
+                            x,
+                            x::varchar AS k,
+                            timestamp_sequence(0, 1_000_000) AS ts
+                        FROM long_sequence(1_000)
+                    ) TIMESTAMP(ts)
+                    """);
+            drainWalQueue();
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+
+            final FiberRuntime ownerRuntime = new RecordingFiberDispatchController().createRuntime(1);
+            final FiberRuntime reduceRuntime = new FiberRuntime(1);
+            final PageFrameReduceDispatcher dispatcher = new PageFrameReduceDispatcher(
+                    engine,
+                    engine.getMessageBus(),
+                    reduceRuntime
+            );
+            try {
+                engine.getMessageBus().setPageFrameReduceDispatcher(dispatcher);
+                assertPublicationRefusalSurvivesPolicyChange(
+                        ownerRuntime,
+                        reduceRuntime,
+                        "SELECT * FROM tab WHERE x > 0",
+                        AsyncFilteredRecordCursorFactory.class
+                );
+                assertPublicationRefusalSurvivesPolicyChange(
+                        ownerRuntime,
+                        reduceRuntime,
+                        "SELECT k, count() FROM tab GROUP BY k",
+                        AsyncGroupByRecordCursorFactory.class
+                );
+            } finally {
+                close(ownerRuntime);
+                close(reduceRuntime);
+                Misc.free(dispatcher);
+                engine.getMessageBus().setPageFrameReduceDispatcher(null);
+            }
+        });
+    }
+
+    @Test
     public void testQuiesceDoesNotWaitForActivePublication() throws Exception {
         assertMemoryLeak(() -> {
             final FiberRuntime runtime = new FiberRuntime(1);
@@ -2903,6 +2948,7 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                 Assert.assertFalse("beginQuiesce() did not return", quiesceThread.isAlive());
                 Assert.assertNull(failure.get());
                 Assert.assertFalse(dispatcher.tryAcquirePublication());
+                Assert.assertEquals(PageFrameReduceDispatcher.PUBLICATION_CLOSED, dispatcher.acquirePublication());
             } finally {
                 if (isPublicationHeld) {
                     dispatcher.releasePublication();
@@ -4801,6 +4847,60 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
         } catch (CairoException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), "cancelled by user");
             Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_CANCELLED, e.getInterruptionReason());
+        }
+    }
+
+    // The policy that made the owner refuse publication is gone by the time anyone could ask again.
+    private void assertPublicationRefusalSurvivesPolicyChange(
+            FiberRuntime ownerRuntime,
+            FiberRuntime reduceRuntime,
+            String sql,
+            Class<?> expectedFactoryClass
+    ) throws Exception {
+        final AtomicInteger localAnswers = new AtomicInteger(1);
+        final FiberDispatchContext context = new FiberDispatchContext() {
+            @Override
+            public boolean isParallelWorkLocal() {
+                return localAnswers.getAndDecrement() > 0;
+            }
+        };
+        final AtomicReference<Throwable> failure = new AtomicReference<>();
+        final AtomicInteger rowCount = new AtomicInteger();
+        try (
+                SqlCompiler compiler = engine.getSqlCompiler();
+                RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()
+        ) {
+            TestUtils.assertFactoryInTree(factory, expectedFactoryClass);
+            final FiberTask ownerTask = new FiberTask() {
+                @Override
+                protected void onError(Throwable th) {
+                    failure.set(th);
+                }
+
+                @Override
+                protected boolean runStep() {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        while (cursor.hasNext()) {
+                            rowCount.incrementAndGet();
+                        }
+                    } catch (SqlException e) {
+                        throw new AssertionError(e);
+                    }
+                    return true;
+                }
+            };
+
+            Assert.assertSame(LaunchResult.LAUNCHED, ownerRuntime.launch(ownerTask, context));
+            final long deadline = System.nanoTime() + 5_000_000_000L;
+            while (!ownerTask.isDone() && System.nanoTime() < deadline) {
+                ownerRuntime.drain(8);
+                reduceRuntime.drain(8);
+            }
+
+            Assert.assertTrue(ownerTask.isDone());
+            Assert.assertNull(failure.get());
+            Assert.assertTrue("the owner was never refused", localAnswers.get() <= 0);
+            Assert.assertEquals(1000, rowCount.get());
         }
     }
 
