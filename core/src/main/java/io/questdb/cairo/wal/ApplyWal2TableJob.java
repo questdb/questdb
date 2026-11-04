@@ -1402,7 +1402,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 if (engine.getTableSequencerAPI().updateWriterTxns(tableToken, writerTxn, dirtyWriterTxn)) {
                     if (isLastApplyStoppedByDeltaPressure) {
                         if (queueDriven) {
-                            engine.notifyWalTxnRepublisher(tableToken);
+                            // The paced scan re-notifies the still-initialised tracker. A reset would make
+                            // the scan raise the RecentWriteTracker floor over the stopped transactions.
+                            engine.notifyWalTxnRepublisher();
                         }
                     } else {
                         engine.notifyWalTxnCommitted(tableToken);
