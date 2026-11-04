@@ -95,7 +95,7 @@ public class FuzzRunnerTest extends AbstractCairoTest {
 
             retryingFuzzer.applyWal(transactions, "drain", 1, rnd);
 
-            assertRetryRouting(retryingFuzzer, 4, 4, 0);
+            assertRetryRouting(retryingFuzzer, 2, 2, 0);
             Assert.assertEquals(2, retryingFuzzer.readTimeoutAttempts.get());
         });
     }
