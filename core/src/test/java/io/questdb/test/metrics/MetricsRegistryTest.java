@@ -124,37 +124,39 @@ public class MetricsRegistryTest {
     }
 
     @Test
-    public void testGaugeWithNullValueScrapesAsNaN() {
-        MetricsRegistry metricsRegistry = new MetricsRegistryImpl();
-        LongGauge gauge = metricsRegistry.newLongGauge("gauge");
+    public void testGaugeWithNullValueScrapesAsNaN() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            MetricsRegistry metricsRegistry = new MetricsRegistryImpl();
+            LongGauge gauge = metricsRegistry.newLongGauge("gauge");
 
-        gauge.setValue(Numbers.LONG_NULL);
-        assertScrapable(gauge, """
-                # TYPE questdb_gauge gauge
-                questdb_gauge NaN
-                
-                """);
+            gauge.setValue(Numbers.LONG_NULL);
+            assertScrapable(gauge, """
+                    # TYPE questdb_gauge gauge
+                    questdb_gauge NaN
+                    
+                    """);
 
-        gauge.setValue(Long.MIN_VALUE + 1);
-        assertScrapable(gauge, """
-                # TYPE questdb_gauge gauge
-                questdb_gauge -9223372036854775807
-                
-                """);
+            gauge.setValue(Long.MIN_VALUE + 1);
+            assertScrapable(gauge, """
+                    # TYPE questdb_gauge gauge
+                    questdb_gauge -9223372036854775807
+                    
+                    """);
 
-        gauge.setValue(Long.MAX_VALUE);
-        assertScrapable(gauge, """
-                # TYPE questdb_gauge gauge
-                questdb_gauge 9223372036854775807
-                
-                """);
+            gauge.setValue(Long.MAX_VALUE);
+            assertScrapable(gauge, """
+                    # TYPE questdb_gauge gauge
+                    questdb_gauge 9223372036854775807
+                    
+                    """);
 
-        gauge.setValue(0);
-        assertScrapable(gauge, """
-                # TYPE questdb_gauge gauge
-                questdb_gauge 0
-                
-                """);
+            gauge.setValue(0);
+            assertScrapable(gauge, """
+                    # TYPE questdb_gauge gauge
+                    questdb_gauge 0
+                    
+                    """);
+        });
     }
 
     @Test
@@ -245,23 +247,25 @@ public class MetricsRegistryTest {
     }
 
     @Test
-    public void testWorkerMetricsTrackRangeAfterNoSampleState() {
-        MetricsRegistryImpl metricsRegistry = new MetricsRegistryImpl();
-        WorkerMetrics metrics = new WorkerMetrics(metricsRegistry);
-        assertWorkerMetrics(metrics, metricsRegistry, Numbers.LONG_NULL, Numbers.LONG_NULL, "NaN", "NaN");
+    public void testWorkerMetricsTrackRangeAfterNoSampleState() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            MetricsRegistryImpl metricsRegistry = new MetricsRegistryImpl();
+            WorkerMetrics metrics = new WorkerMetrics(metricsRegistry);
+            assertWorkerMetrics(metrics, metricsRegistry, Numbers.LONG_NULL, Numbers.LONG_NULL, "NaN", "NaN");
 
-        metrics.update(5, 7);
-        assertWorkerMetrics(metrics, metricsRegistry, 5, 7, "5", "7");
+            metrics.update(5, 7);
+            assertWorkerMetrics(metrics, metricsRegistry, 5, 7, "5", "7");
 
-        // values inside the observed range leave it unchanged
-        metrics.update(6, 6);
-        assertWorkerMetrics(metrics, metricsRegistry, 5, 7, "5", "7");
+            // values inside the observed range leave it unchanged
+            metrics.update(6, 6);
+            assertWorkerMetrics(metrics, metricsRegistry, 5, 7, "5", "7");
 
-        metrics.update(3, 9);
-        assertWorkerMetrics(metrics, metricsRegistry, 3, 9, "3", "9");
+            metrics.update(3, 9);
+            assertWorkerMetrics(metrics, metricsRegistry, 3, 9, "3", "9");
 
-        metrics.clear();
-        assertWorkerMetrics(metrics, metricsRegistry, Numbers.LONG_NULL, Numbers.LONG_NULL, "NaN", "NaN");
+            metrics.clear();
+            assertWorkerMetrics(metrics, metricsRegistry, Numbers.LONG_NULL, Numbers.LONG_NULL, "NaN", "NaN");
+        });
     }
 
     private static void assertScrapable(Target target, CharSequence expected) {

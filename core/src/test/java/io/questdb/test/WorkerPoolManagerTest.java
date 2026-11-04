@@ -582,22 +582,24 @@ public class WorkerPoolManagerTest {
     }
 
     @Test
-    public void testScrapeBeforeWorkersStartExportsNaNJobStartMetrics() {
-        final Metrics metrics = new Metrics(true, new MetricsRegistryImpl());
-        final WorkerPoolManager workerPoolManager = createMetricsWorkerPoolManager(metrics, null);
-        try (DirectUtf8Sink sink = new DirectUtf8Sink(1024)) {
-            // the registry renders gauges before the manager target updates them, so the second scrape sees the update
-            metrics.scrapeIntoPrometheus(sink);
-            sink.clear();
-            metrics.scrapeIntoPrometheus(sink);
-            final String scraped = sink.toString();
-            TestUtils.assertContains(scraped, "questdb_workers_job_start_micros_min NaN\n");
-            TestUtils.assertContains(scraped, "questdb_workers_job_start_micros_max NaN\n");
-            Assert.assertEquals(Numbers.LONG_NULL, metrics.workerMetrics().getMinElapsedMicros());
-            Assert.assertEquals(Numbers.LONG_NULL, metrics.workerMetrics().getMaxElapsedMicros());
-        } finally {
-            workerPoolManager.halt();
-        }
+    public void testScrapeBeforeWorkersStartExportsNaNJobStartMetrics() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final Metrics metrics = new Metrics(true, new MetricsRegistryImpl());
+            final WorkerPoolManager workerPoolManager = createMetricsWorkerPoolManager(metrics, null);
+            try (DirectUtf8Sink sink = new DirectUtf8Sink(1024)) {
+                // the registry renders gauges before the manager target updates them, so the second scrape sees the update
+                metrics.scrapeIntoPrometheus(sink);
+                sink.clear();
+                metrics.scrapeIntoPrometheus(sink);
+                final String scraped = sink.toString();
+                TestUtils.assertContains(scraped, "questdb_workers_job_start_micros_min NaN\n");
+                TestUtils.assertContains(scraped, "questdb_workers_job_start_micros_max NaN\n");
+                Assert.assertEquals(Numbers.LONG_NULL, metrics.workerMetrics().getMinElapsedMicros());
+                Assert.assertEquals(Numbers.LONG_NULL, metrics.workerMetrics().getMaxElapsedMicros());
+            } finally {
+                workerPoolManager.halt();
+            }
+        });
     }
 
     @Test
