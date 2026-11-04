@@ -38,7 +38,10 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.SqlOptimiser;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.ops.Operation;
+import io.questdb.griffin.model.IQueryModel;
+import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
@@ -172,6 +175,16 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
                     "permission denied [table=x2, columns=ts]"
             );
         });
+    }
+
+    @Test
+    public void testIndependentWildcardHolders() throws Exception {
+        assertMemoryLeak(() -> assertIndependentWildcardHolders(false));
+    }
+
+    @Test
+    public void testIndependentWildcardHoldersOfSameTable() throws Exception {
+        assertMemoryLeak(() -> assertIndependentWildcardHolders(true));
     }
 
     @Test
@@ -1765,6 +1778,65 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
     }
 
     @Test
+    public void testUnreachableWildcardHolder() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (a LONG, b LONG)");
+            try (SqlCompiler parsedCompiler = engine.getSqlCompiler(); SqlCompiler optimisedCompiler = engine.getSqlCompiler()) {
+                final IQueryModel parsed = parsedCompiler.testParseExpression(
+                        "(SELECT count() FROM (SELECT * FROM x))",
+                        QueryModel.FACTORY.newInstance()
+                ).queryModel;
+                final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = new LowerCaseCharSequenceObjHashMap<>();
+                final SqlUtil.ViewWildcardSources wildcardSources = new SqlUtil.ViewWildcardSources();
+                SqlUtil.collectTableAndColumnReferences(engine, parsed, dependencies, wildcardSources);
+                Assert.assertEquals("{x=[]}", dependenciesOf(dependencies));
+
+                // The recorded holder is outside this graph: it must not lend '*' just because it has no top-down columns.
+                final IQueryModel optimised = optimisedCompiler.generateExecutionModel("SELECT a FROM x", sqlExecutionContext).getQueryModel();
+                SqlUtil.collectTableColumnReads(engine, optimised, dependencies, wildcardSources, new SqlUtil.ViewCompileRecord(), true);
+                Assert.assertEquals("{x=[a]}", dependenciesOf(dependencies));
+            }
+        });
+    }
+
+    @Test
+    public void testWildcardHolderReachabilityAcrossCompilations() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+                recordViewDependencies(
+                        compiler,
+                        "SELECT count() FROM (SELECT * FROM x) s CROSS JOIN (SELECT * FROM y) t",
+                        "{x=[*], y=[*]}"
+                );
+                recordViewDependencies(compiler, "SELECT a FROM (SELECT * FROM x)", "{x=[a]}");
+                recordViewDependencies(
+                        compiler,
+                        "SELECT count() FROM (SELECT y.* FROM x JOIN y ON (k))",
+                        "{x=[k], y=[*]}"
+                );
+                recordViewDependencies(
+                        compiler,
+                        "SELECT count() FROM (SELECT * FROM x UNION ALL SELECT * FROM y)",
+                        "{x=[*], y=[*]}"
+                );
+                recordViewDependencies(compiler, lateralJoins("SELECT * FROM x", 2), "{x=[*], y=[]}");
+                recordViewDependencies(
+                        compiler,
+                        "SELECT count() FROM (SELECT * FROM (SELECT * FROM x) w CROSS JOIN ("
+                                + lateralJoins("SELECT k, a FROM x", 2) + ") c)",
+                        "{x=[*], y=[]}"
+                );
+                recordViewDependencies(
+                        compiler,
+                        "SELECT count() FROM (SELECT * FROM y) s CROSS JOIN (SELECT * FROM x) t",
+                        "{x=[*], y=[*]}"
+                );
+            }
+        });
+    }
+
+    @Test
     public void testWildcards() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
@@ -1953,6 +2025,16 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
         drainWalAndViewQueues();
     }
 
+    // A balanced UNION stays below the model-depth limit while giving each leaf its own wildcard holder.
+    private static String independentWildcardHolders(int lo, int hi, boolean isSameTable) {
+        if (hi - lo == 1) {
+            return "SELECT count() FROM (SELECT * FROM w" + (isSameTable ? 0 : lo) + ")";
+        }
+        final int mid = (lo + hi) / 2;
+        return "SELECT * FROM (" + independentWildcardHolders(lo, mid, isSameTable)
+                + ") UNION ALL SELECT * FROM (" + independentWildcardHolders(mid, hi, isSameTable) + ")";
+    }
+
     // Records the SELECT as the definition of the view v, asserts its dependencies, and returns the outputs the second
     // compile, which keeps the sub-query whole, adds to the sets of outputs of the columns, see
     // SqlOptimiser.recordKeptWholeOrigins().
@@ -2122,6 +2204,43 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
             }
         }
         Assert.assertEquals(viewSql, expectedScans, securityContext.toString());
+    }
+
+    private void assertIndependentWildcardHolders(boolean isSameTable) throws Exception {
+        final int maxHolders = 64;
+        for (int i = 0, n = isSameTable ? 1 : maxHolders; i < n; i++) {
+            execute("CREATE TABLE w" + i + " (a LONG)");
+        }
+        final TreeMap<String, String> expectedDependencies = new TreeMap<>();
+        try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+            long previousVisits = 0;
+            for (int holderCount : new int[]{1, maxHolders / 2, maxHolders}) {
+                expectedDependencies.clear();
+                for (int i = 0, n = isSameTable ? 1 : holderCount; i < n; i++) {
+                    expectedDependencies.put("w" + i, "[*]");
+                }
+                final long visits = recordViewDependencies(
+                        compiler,
+                        independentWildcardHolders(0, holderCount, isSameTable),
+                        expectedDependencies.toString()
+                );
+                if (holderCount == maxHolders) {
+                    Assert.assertTrue(
+                            visits + " visits with " + maxHolders + " holders, " + previousVisits + " with " + maxHolders / 2,
+                            visits < 3 * previousVisits
+                    );
+                }
+                previousVisits = visits;
+            }
+        }
+        forEachViewStatement(independentWildcardHolders(0, maxHolders, isSameTable), statement -> {
+            Assert.assertEquals(statement, expectedDependencies.toString(), dependenciesOf("v"));
+            assertQuery("SELECT * FROM v")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns("count\n" + "0\n".repeat(maxHolders));
+        });
     }
 
     // Asserts that a principal with no permission on the columns of the base tables cannot read through

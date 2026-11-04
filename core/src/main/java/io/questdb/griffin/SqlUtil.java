@@ -2285,8 +2285,7 @@ public class SqlUtil {
             final IQueryModel sourceModel = wildcardSources.holders.getQuick(i).getNestedModel();
             // a model the optimised model no longer reaches has no top-down columns, kept or not
             if (sourceModel == null
-                    || (sourceModel.getTopDownColumns().size() > 0 && sourceModel.allowsColumnsChange())
-                    || !wildcardSources.isReachable(model, sourceModel)) {
+                    || (sourceModel.getTopDownColumns().size() > 0 && sourceModel.allowsColumnsChange())) {
                 continue;
             }
             final TableToken tableToken = engine.getTableTokenIfExists(wildcardSources.tableNames.getQuick(i));
@@ -2295,6 +2294,9 @@ public class SqlUtil {
             }
             final LowerCaseCharSequenceHashSet columns = depMap.get(tableToken.getTableName());
             if (columns == null || columns.contains("*")) {
+                continue;
+            }
+            if (!wildcardSources.isReachableFromRoot(model, sourceModel)) {
                 continue;
             }
             // The plan keeps the wildcard whole, so the optimiser requires every column the wildcard selects,
@@ -2990,6 +2992,8 @@ public class SqlUtil {
         private final ObjList<IQueryModel> holders = new ObjList<>();
         // the models the current search of isReachable() has visited
         private final ObjHashSet<IQueryModel> reachedModels = new ObjHashSet<>();
+        // the models reachable from the root of the current optimised SELECT, shared by all holder checks
+        private final ObjHashSet<IQueryModel> rootReachableModels = new ObjHashSet<>();
         // the models of the optimised SELECT that scan a table
         private final ObjHashSet<IQueryModel> scans = new ObjHashSet<>();
         // the sources of the parsed FROM clauses the wildcards select the tables from, at the same index
@@ -3066,6 +3070,7 @@ public class SqlUtil {
         // SELECT recorded.
         private void clearReads() {
             reachedModels.clear();
+            rootReachableModels.clear();
             scans.clear();
             visitedModels.clear();
             visitedTimestampModels.clear();
@@ -3101,15 +3106,19 @@ public class SqlUtil {
         // it has visited: it returns as soon as it finds target, so target is not under that model.
         private boolean isReachable(@NotNull IQueryModel root, @NotNull IQueryModel target) {
             reachedModels.clear();
-            return isReachable0(root, target);
+            return isReachable0(root, target, reachedModels);
         }
 
-        private boolean isReachable0(@Nullable IQueryModel model, @NotNull IQueryModel target) {
+        private boolean isReachable0(
+                @Nullable IQueryModel model,
+                @Nullable IQueryModel target,
+                @NotNull ObjHashSet<IQueryModel> visited
+        ) {
             if (model == null) {
                 return false;
             }
             visitCount++;
-            if (!reachedModels.add(model)) {
+            if (!visited.add(model)) {
                 return false;
             }
             if (model == target) {
@@ -3117,11 +3126,21 @@ public class SqlUtil {
             }
             final ObjList<IQueryModel> joinModels = model.getJoinModels();
             for (int i = 1, n = joinModels.size(); i < n; i++) {
-                if (isReachable0(joinModels.getQuick(i), target)) {
+                if (isReachable0(joinModels.getQuick(i), target, visited)) {
                     return true;
                 }
             }
-            return isReachable0(model.getNestedModel(), target) || isReachable0(model.getUnionModel(), target);
+            return isReachable0(model.getNestedModel(), target, visited) || isReachable0(model.getUnionModel(), target, visited);
+        }
+
+        // Every holder check uses the same root. Keep its complete reachable set separate from the
+        // source-local searches in isEveryScannedColumnRead(), and forget it with clearReads().
+        private boolean isReachableFromRoot(@NotNull IQueryModel root, @NotNull IQueryModel target) {
+            if (rootReachableModels.size() == 0) {
+                // A null target visits the entire graph without stopping at any particular model.
+                isReachable0(root, null, rootReachableModels);
+            }
+            return rootReachableModels.contains(target);
         }
 
         // Whether the walk of the columns the plan reads reaches the model for the first time under the
