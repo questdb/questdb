@@ -1980,17 +1980,15 @@ public final class QueryRunner {
             String exceptionMessage
     ) {
 
-        static Outcome error (Throwable t, String message,boolean usesParquet){
+        static Outcome error(Throwable t, String message, boolean usesParquet) {
             return new Outcome(0, false, false, false, false, usesParquet, false, EMPTY_FP_MASK, t, t.getClass().getSimpleName(), message);
         }
 
-        static Outcome ok ( int rowsRead, boolean hasIndex, boolean hasPushedLimit, boolean hasEarlyExitGroupBy,
-        boolean hasBlockingAggregation, boolean usesParquet){
+        static Outcome ok(int rowsRead, boolean hasIndex, boolean hasPushedLimit, boolean hasEarlyExitGroupBy, boolean hasBlockingAggregation, boolean usesParquet) {
             return new Outcome(rowsRead, hasIndex, hasPushedLimit, hasEarlyExitGroupBy, hasBlockingAggregation, usesParquet, false, EMPTY_FP_MASK, null, null, null);
         }
 
-        static Outcome ok ( int rowsRead, boolean hasIndex, boolean usesParquet, boolean hasFusedHashJoin,
-        boolean[] fpColumnMask){
+        static Outcome ok(int rowsRead, boolean hasIndex, boolean usesParquet, boolean hasFusedHashJoin, boolean[] fpColumnMask) {
             return new Outcome(rowsRead, hasIndex, false, false, false, usesParquet, hasFusedHashJoin, fpColumnMask, null, null, null);
         }
     }
