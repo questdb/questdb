@@ -71,6 +71,42 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
+    public void testCheckpointCopyRebuildsIncompleteBitmapIndex() throws Exception {
+        Assume.assumeFalse(Os.isWindows());
+        setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, "bitmap");
+        assertMemoryLeak(() -> {
+            execute("create table x (s symbol index, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into x select 'a', '2024-01-01'::timestamp from long_sequence(100)");
+            drainWalQueue();
+            final TableToken tableToken = engine.verifyTableName("x");
+            checkpointCreate(false, false);
+
+            // Model a value file copied before the corresponding key file's size update.
+            final FilesFacade ff = configuration.getFilesFacade();
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).put(TableUtils.CHECKPOINT_META_FILE_NAME)
+                        .concat(tableToken).concat("2024-01-01").concat("s.v");
+                final long fd = ff.openRW(path.$(), configuration.getWriterFileOpenOpts());
+                Assert.assertTrue(fd > -1);
+                try {
+                    Assert.assertTrue(ff.truncate(fd, 0));
+                } finally {
+                    ff.close(fd);
+                }
+            }
+
+            checkpointRecover();
+            execute("insert into x values ('b', '2024-01-01T01:00')");
+            drainWalQueue();
+            Assert.assertFalse("table suspended", engine.getTableSequencerAPI().isSuspended(tableToken));
+            assertQuery("select count() from x where s = 'a'")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n100\n");
+            assertQuery("select count() from x where s = 'b'")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n1\n");
+        });
+    }
+
+    @Test
     public void testCheckpointEjectedWalApply() throws Exception {
         Rnd rnd = generateRandom(LOG);
         runEjectedWalApplyBody(rnd);
@@ -126,6 +162,8 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
     }
 
     private void checkpointCreate(boolean legacy, boolean hardLinkCopy) throws SqlException {
+        // A file-by-file copy can capture an index header after its value file. Rebuild those indexes on restore.
+        setProperty(PropertyKey.CAIRO_CHECKPOINT_RECOVERY_REBUILD_COLUMN_INDEXES, Boolean.toString(!hardLinkCopy));
         LOG.info().$("creating checkpoint").$();
 
         if (legacy) {
@@ -219,6 +257,8 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
     }
 
     private void fullFuzz(Rnd rnd) {
+        // Parquet partitions and covering indexes: a restore that rebuilds the indexes rebuilds theirs too.
+        final boolean withParquet = rnd.nextBoolean();
         fuzzer.setFuzzProbabilities(
                 0.5 * rnd.nextDouble(),
                 rnd.nextDouble(),
@@ -231,11 +271,17 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
                 rnd.nextDouble(),
                 0.01,
                 0.0,
+                withParquet ? 0.05 : 0.0,       // partitionToParquetProb
+                withParquet ? 0.05 : 0.0,       // partitionToNativeProb
                 0.1 * rnd.nextDouble(),
                 rnd.nextDouble(),
                 0.0,
-                0.01,
-                0
+                withParquet ? 0.0 : 0.01,       // replaceInsertProb, unsupported on parquet partitions
+                0,
+                0.0,                            // queryProb
+                withParquet ? 0.05 : 0.0,       // setParquetEncodingProb
+                withParquet ? 0.05 : 0.0,       // setTableFormatProb
+                0.1                             // addCoveringIndexProb
         );
 
         fuzzer.setFuzzCounts(
@@ -348,6 +394,10 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
             if (testHardLinkCheckpoint) {
                 node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "100G");
             }
+            // A backup restore always rebuilds the indexes; a checkpoint restore does only when asked to.
+            final boolean isIndexRebuilt = rnd.nextBoolean();
+            LOG.info().$("checkpoint recovery rebuilds column indexes [rebuild=").$(isIndexRebuilt).I$();
+            node1.setProperty(PropertyKey.CAIRO_CHECKPOINT_RECOVERY_REBUILD_COLUMN_INDEXES, isIndexRebuilt);
 
             String tableNameNonWal = getTestTableName() + "_non_wal";
             String tableNameWal = getTestTableName();
@@ -404,6 +454,10 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
                 // Restore snapshot here
                 checkpointRecover();
                 engine.notifyWalTxnRepublisher(engine.verifyTableName(tableNameWal));
+                // The indexes as the restore left them: the transactions after the checkpoint rewrite the partitions
+                // they touch, and would rebuild a broken index before the final comparison sees it.
+                drainWalQueue();
+                fuzzer.assertRandomIndexes(tableNameWal, tableNameWal, rnd);
                 if (afterSnapshot.size() > 0) {
                     fuzzer.applyWal(afterSnapshot, tableNameWal, rnd.nextInt(2) + 1, rnd);
                 } else {
