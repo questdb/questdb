@@ -519,7 +519,7 @@ public class MatViewRefreshRecompileCompatibilityTest extends AbstractCairoTest 
         assertLateralRefreshRecompiles(
                 "SELECT base.ts, sum(l.c) AS s FROM base "
                         + "LEFT JOIN LATERAL (SELECT count() c FROM dim WHERE dim.k = base.k "
-                        + "UNION ALL SELECT CAST(100 AS LONG) FROM long_sequence(0)) l ON true "
+                        + "UNION ALL SELECT CAST(100 AS LONG) AS c FROM long_sequence(0)) l ON true "
                         + "SAMPLE BY 1h"
         );
     }
@@ -712,8 +712,9 @@ public class MatViewRefreshRecompileCompatibilityTest extends AbstractCairoTest 
             for (Case c : cases) {
                 setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "false");
                 // MANUAL DEFERRED: no refresh runs at CREATE, so the factory cache stays cold and the refresh
-                // below compiles the stored query under the settings in force then.
-                execute("CREATE MATERIALIZED VIEW mv WITH BASE base REFRESH MANUAL DEFERRED AS (" + c.viewSql + ") PARTITION BY DAY" + c.createSuffix);
+                // below compiles the stored query under the settings in force then. The view is created the
+                // way versions before the explicit column name rules created it.
+                executeWithoutExplicitNamesCheck("CREATE MATERIALIZED VIEW mv WITH BASE base REFRESH MANUAL DEFERRED AS (" + c.viewSql + ") PARTITION BY DAY" + c.createSuffix);
                 drainWalQueue();
                 setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "true");
 
@@ -772,8 +773,9 @@ public class MatViewRefreshRecompileCompatibilityTest extends AbstractCairoTest 
             for (String[] c : cases) {
                 final String legacySql = c[0];
                 // MANUAL DEFERRED: no refresh runs at CREATE, so the factory cache stays cold, as on the first
-                // refresh after an upgrade restart. CREATE stores the call with its parentheses.
-                execute("CREATE MATERIALIZED VIEW mv WITH BASE base REFRESH MANUAL DEFERRED AS (" + legacySql + ") PARTITION BY DAY");
+                // refresh after an upgrade restart. The view is created the way versions before the explicit
+                // column name rules created it.
+                executeWithoutExplicitNamesCheck("CREATE MATERIALIZED VIEW mv WITH BASE base REFRESH MANUAL DEFERRED AS (" + legacySql + ") PARTITION BY DAY");
                 drainWalQueue();
                 installPersistedViewSql("mv", legacySql);
 

@@ -194,7 +194,7 @@ public class ViewsFunctionTest extends AbstractViewTest {
     public void testShowCreateViewFailMatView() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
-            createMatView("test_mv", "select ts, k, avg(v) from " + TABLE1 + " sample by 30s");
+            createMatView("test_mv", "select ts, k, avg(v) as avg from " + TABLE1 + " sample by 30s");
             assertExceptionNoLeakCheck(
                     "show create view test_mv",
                     17,

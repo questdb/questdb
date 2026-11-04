@@ -33,6 +33,7 @@ import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewTimerJob;
 import io.questdb.cairo.wal.WalPurgeJob;
+import io.questdb.griffin.SqlParser;
 import io.questdb.client.Sender;
 import io.questdb.client.cutlass.line.LineSenderException;
 import io.questdb.client.cutlass.line.LineUdpSender;
@@ -1175,7 +1176,13 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
             )) {
                 executeWithRewriteTimestamp(main1);
                 execute(main1, "insert into base_price values('gbpusd', 1.5, '2024-09-10T12:01')");
-                execute(main1, "create materialized view price_1d as (select ts, sym, avg(price) from base_price sample by 1d) partition by DAY");
+                // created the way versions before the explicit column name rules created it
+                SqlParser.setMatViewExplicitNamesCheckSkipped(true);
+                try {
+                    execute(main1, "create materialized view price_1d as (select ts, sym, avg(price) from base_price sample by 1d) partition by DAY");
+                } finally {
+                    SqlParser.setMatViewExplicitNamesCheckSkipped(false);
+                }
                 try (var refreshJob = createMatViewRefreshJob(main1.getEngine())) {
                     drainWalAndMatViewQueues(refreshJob, main1.getEngine());
                 }

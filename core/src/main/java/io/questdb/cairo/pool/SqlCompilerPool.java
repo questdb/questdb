@@ -26,6 +26,7 @@ package io.questdb.cairo.pool;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.BatchCallback;
@@ -44,6 +45,7 @@ import io.questdb.griffin.model.InsertModel;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
+import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
@@ -124,6 +126,15 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
             this.rootEntry = rootEntry;
             this.entry = entry;
             this.index = index;
+        }
+
+        @Override
+        public @Nullable String addExplicitColumnNames(
+                MatViewDefinition viewDefinition,
+                ObjList<CharSequence> viewColumnNames,
+                SqlExecutionContext executionContext
+        ) {
+            return delegate.addExplicitColumnNames(viewDefinition, viewColumnNames, executionContext);
         }
 
         @Override

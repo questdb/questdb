@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.engine.ops.Operation;
@@ -37,12 +38,31 @@ import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Mutable;
+import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 public interface SqlCompiler extends QuietCloseable, Mutable {
+
+    /**
+     * Returns the SQL of a materialized view with the explicit column names that CREATE MATERIALIZED VIEW
+     * requires, for SHOW CREATE: each generated column name aliased to the view column it feeds, and each bare
+     * zero-argument function name that the view's refresh reads as a call written with parentheses. Returns null
+     * when the SQL needs no change, and when it no longer compiles or the result would not reproduce the view's
+     * columns, so the caller shows the SQL as stored.
+     *
+     * @param viewDefinition   the definition of the view
+     * @param viewColumnNames  the names of the view's columns, in the order the view stores them
+     * @param executionContext the context to compile the SQL with, which the method leaves as it found it
+     */
+    @Nullable
+    String addExplicitColumnNames(
+            MatViewDefinition viewDefinition,
+            ObjList<CharSequence> viewColumnNames,
+            SqlExecutionContext executionContext
+    );
 
     CompiledQuery compile(CharSequence sqlText, SqlExecutionContext ctx) throws SqlException;
 

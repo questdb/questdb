@@ -1967,7 +1967,7 @@ public class MatViewTest extends AbstractCairoTest {
                     create materialized view daily_summary\s
                     WITH BASE trades
                     as (
-                    select trades.ts, count(*), sum(volume), min(price), max(price), avg(price)
+                    select trades.ts, count(*) as count, sum(volume) as sum, min(price) as min, max(price) as max, avg(price) as avg
                     FROM trades
                     asof join (select * from prices where valid) prices
                     sample by 1d
@@ -1976,7 +1976,7 @@ public class MatViewTest extends AbstractCairoTest {
                     create materialized view daily_summary\s
                     WITH BASE trades
                     as (
-                    select /*+ ASOF_LINEAR(trades prices) */ trades.ts, count(*), sum(volume), min(price), max(price), avg(price)
+                    select /*+ ASOF_LINEAR(trades prices) */ trades.ts, count(*) as count, sum(volume) as sum, min(price) as min, max(price) as max, avg(price) as avg
                     FROM trades
                     asof join (select * from prices where valid) prices
                     sample by 1d
@@ -2033,7 +2033,7 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testBareFunctionCallKeepsMeaningWhenBaseGainsColumn() throws Exception {
-        // The stored query calls pi() with its parentheses, so a column the base table gains later under the
+        // CREATE requires the parentheses of a call to pi(), so a column the base table gains later under the
         // same name leaves the view computing the function.
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
@@ -2042,7 +2042,7 @@ public class MatViewTest extends AbstractCairoTest {
                             ") timestamp(ts) partition by DAY WAL"
             );
             execute("insert into base_price values('gbpusd', 1.5, '2024-09-10T12:01')");
-            execute("create materialized view mv as (select ts, pi, avg(v) from base_price sample by 1d)");
+            execute("create materialized view mv as (select ts, pi() as pi, avg(v) as avg from base_price sample by 1d)");
             drainQueues();
 
             execute("alter table base_price add column pi double");
@@ -2053,7 +2053,7 @@ public class MatViewTest extends AbstractCairoTest {
             assertQuery("select view_sql, view_status from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
-                    .returns("view_sql\tview_status\nselect ts, pi(), avg(v) from base_price sample by 1d\tvalid\n");
+                    .returns("view_sql\tview_status\nselect ts, pi() as pi, avg(v) as avg from base_price sample by 1d\tvalid\n");
             assertQuery("mv")
                     .timestamp("ts")
                     .expectSize()
@@ -2067,10 +2067,11 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testBareFunctionCallStoredWithParentheses() throws Exception {
-        // A bare name the query reads as a call to a zero-argument function is stored with its parentheses. A
-        // passthrough view's refresh reads every bare name in the stored query as a column, so the parentheses
-        // keep the call.
+    public void testBareFunctionCallRequiresParentheses() throws Exception {
+        // CREATE reads a bare name as a column, so a bare name that names no column but a zero-argument function
+        // fails at its position and asks for the parentheses, also quoted, in another case, next to a wildcard
+        // and in sub-queries. Written with parentheses, the queries are stored as written, and a passthrough
+        // view's refresh, which reads every bare name as a column, keeps calling the function.
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
                     "create table base_price (" +
@@ -2078,30 +2079,61 @@ public class MatViewTest extends AbstractCairoTest {
                             ") timestamp(ts) partition by DAY WAL"
             );
             execute("insert into base_price values('gbpusd', 1.5, '2024-09-10T12:01')");
-            final String[] queries = {
-                    "select ts, pi, avg(v) from base_price sample by 1d",
-                    "select ts, \"pi\", avg(v) from base_price sample by 1d",
-                    "select *, pi from base_price",
-                    "select ts, avg(v) from base_price where v < (select pi from long_sequence(1)) sample by 1d",
-                    "select ts, avg(v) from base_price where v < (select pi from long_sequence(1))" +
-                            " and v <> (select pi from long_sequence(1)) sample by 1d",
-                    "select ts, PI, avg(v) from base_price sample by 1d"
+            // the query with the bare call, where the bare call starts, and the query with the parentheses
+            final String[][] queries = {
+                    {
+                            "select ts, pi, avg(v) as avg from base_price sample by 1d",
+                            "pi,",
+                            "select ts, pi() as pi, avg(v) as avg from base_price sample by 1d"
+                    },
+                    {
+                            "select ts, \"pi\", avg(v) as avg from base_price sample by 1d",
+                            "\"pi\"",
+                            "select ts, pi() as pi, avg(v) as avg from base_price sample by 1d"
+                    },
+                    {
+                            "select *, pi from base_price",
+                            "pi from",
+                            "select *, pi() as pi from base_price"
+                    },
+                    {
+                            "select ts, avg(v) as avg from base_price where v < (select pi from long_sequence(1)) sample by 1d",
+                            "pi from",
+                            "select ts, avg(v) as avg from base_price where v < (select pi() from long_sequence(1)) sample by 1d"
+                    },
+                    {
+                            "select ts, avg(v) as avg from base_price where v < (select pi() from long_sequence(1))" +
+                                    " and v <> (select pi from long_sequence(1)) sample by 1d",
+                            "pi from",
+                            "select ts, avg(v) as avg from base_price where v < (select pi() from long_sequence(1))" +
+                                    " and v <> (select pi() from long_sequence(1)) sample by 1d"
+                    },
+                    {
+                            "select ts, PI, avg(v) as avg from base_price sample by 1d",
+                            "PI,",
+                            "select ts, PI() as PI, avg(v) as avg from base_price sample by 1d"
+                    }
             };
             for (int i = 0; i < queries.length; i++) {
-                execute("create materialized view mv" + i + " as (" + queries[i] + ")");
+                final String prefix = "create materialized view mv" + i + " as (";
+                final String name = queries[i][1].startsWith("PI") ? "PI" : "pi";
+                assertExceptionNoLeakCheck(
+                        prefix + queries[i][0] + ")",
+                        prefix.length() + queries[i][0].indexOf(queries[i][1]),
+                        name + " is not a column; write " + name + "() to call the function"
+                );
+                execute(prefix + queries[i][2] + ")");
             }
             drainQueues();
             assertQuery("select view_name, view_sql, view_status from materialized_views order by view_name")
                     .noLeakCheck()
-                    .returns("""
-                            view_name\tview_sql\tview_status
-                            mv0\tselect ts, pi(), avg(v) from base_price sample by 1d\tvalid
-                            mv1\tselect ts, pi(), avg(v) from base_price sample by 1d\tvalid
-                            mv2\tselect *, pi() from base_price\tvalid
-                            mv3\tselect ts, avg(v) from base_price where v < (select pi() from long_sequence(1)) sample by 1d\tvalid
-                            mv4\tselect ts, avg(v) from base_price where v < (select pi() from long_sequence(1)) and v <> (select pi() from long_sequence(1)) sample by 1d\tvalid
-                            mv5\tselect ts, PI(), avg(v) from base_price sample by 1d\tvalid
-                            """);
+                    .returns("view_name\tview_sql\tview_status\n" +
+                            "mv0\t" + queries[0][2] + "\tvalid\n" +
+                            "mv1\t" + queries[1][2] + "\tvalid\n" +
+                            "mv2\t" + queries[2][2] + "\tvalid\n" +
+                            "mv3\t" + queries[3][2] + "\tvalid\n" +
+                            "mv4\t" + queries[4][2] + "\tvalid\n" +
+                            "mv5\t" + queries[5][2] + "\tvalid\n");
             assertQuery("mv0")
                     .timestamp("ts")
                     .expectSize()
@@ -2126,10 +2158,7 @@ public class MatViewTest extends AbstractCairoTest {
             execute(ddl);
             drainQueues();
             printSql("select view_sql from materialized_views where view_name = 'mv0'");
-            Assert.assertEquals(
-                    "select ts, pi(), avg(v) from base_price sample by 1d",
-                    sink.toString().substring("view_sql\n".length()).trim()
-            );
+            Assert.assertEquals(queries[0][2], sink.toString().substring("view_sql\n".length()).trim());
             assertQuery("mv0")
                     .timestamp("ts")
                     .expectSize()
@@ -2140,15 +2169,22 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testBareFunctionCallsStayAllowedOnContextAfterCreate() throws Exception {
-        // CREATE compiles the stored query with bare names read as columns on the caller's own context, which
-        // the connection goes on using; the context reads bare function names as calls again afterwards.
+        // CREATE compiles the view's query with bare names read as columns on the caller's own context, which
+        // the connection goes on using; the context reads bare function names as calls again afterwards, also
+        // after a CREATE that the rule fails.
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
                     "create table base_price (" +
                             "sym varchar, v double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
-            execute("create materialized view mv as (select ts, pi, avg(v) from base_price sample by 1d)");
+            execute("create materialized view mv as (select ts, pi() as pi, avg(v) as avg from base_price sample by 1d)");
+            assertQuery("select pi from long_sequence(1)")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("pi\n3.141592653589793\n");
+            final String bareCall = "create materialized view mv_bare as (select ts, pi, avg(v) as avg from base_price sample by 1d)";
+            assertExceptionNoLeakCheck(bareCall, bareCall.indexOf("pi,"), "pi is not a column; write pi() to call the function");
             assertQuery("select pi from long_sequence(1)")
                     .expectSize()
                     .noLeakCheck()
@@ -2225,7 +2261,7 @@ public class MatViewTest extends AbstractCairoTest {
                                 ") timestamp(ts) partition by DAY WAL"
                 );
                 execute("insert into base_price values('gbpusd', 'v1', 1.5, '2024-09-10T12:01')");
-                execute("create materialized view mv as (select ts, version, avg(v) from base_price sample by 1d)");
+                execute("create materialized view mv as (select ts, version, avg(v) as avg from base_price sample by 1d)");
                 drainQueues();
 
                 execute(alter);
@@ -2261,15 +2297,15 @@ public class MatViewTest extends AbstractCairoTest {
             execute("insert into base_price values('gbpusd', 1.5, '2024-09-10T12:01')");
             execute("create view v_price as select ts, sym, pi, v from base_price");
             execute("create view v_price_sub as select ts, sym, v from base_price where v < (select pi from long_sequence(1))");
-            execute("create materialized view mv_pi as (select ts, pi, avg(v) from v_price sample by 1d)");
-            execute("create materialized view mv_sub as (select ts, avg(v) from v_price_sub sample by 1d)");
+            execute("create materialized view mv_pi as (select ts, pi, avg(v) as avg from v_price sample by 1d)");
+            execute("create materialized view mv_sub as (select ts, avg(v) as avg from v_price_sub sample by 1d)");
             drainQueues();
             assertQuery("select view_name, view_sql, view_status from materialized_views order by view_name")
                     .noLeakCheck()
                     .returns("""
                             view_name\tview_sql\tview_status
-                            mv_pi\tselect ts, pi, avg(v) from v_price sample by 1d\tvalid
-                            mv_sub\tselect ts, avg(v) from v_price_sub sample by 1d\tvalid
+                            mv_pi\tselect ts, pi, avg(v) as avg from v_price sample by 1d\tvalid
+                            mv_sub\tselect ts, avg(v) as avg from v_price_sub sample by 1d\tvalid
                             """);
             assertQuery("mv_pi")
                     .timestamp("ts")
@@ -8464,7 +8500,8 @@ public class MatViewTest extends AbstractCairoTest {
         // QuestDB 8.x, and any release run with cairo.sql.column.alias.expression.enabled=false, names an
         // unaliased avg(price) "avg" and a repeated sym "sym1". The expression rules name them "avg(price)" and
         // "sym_2". The view stores its query as written, and that text fixes what every column computes, so a
-        // refresh under the expression rules keeps the view valid and keeps copying the columns by position.
+        // refresh under the expression rules keeps the view valid and keeps copying the columns by position. The
+        // views are created the way versions before the explicit column name rules created them.
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "false");
             executeWithRewriteTimestamp(
@@ -8473,8 +8510,8 @@ public class MatViewTest extends AbstractCairoTest {
                             ") timestamp(ts) partition by DAY WAL"
             );
             execute("insert into base_price values('gbpusd', 1.5, '2024-09-10T12:01')");
-            execute("create materialized view price_1d as (select ts, sym, sym, avg(price) from base_price sample by 1d)");
-            execute("create materialized view price_cte as (with p as (select ts, sym, price from base_price) select ts, sym, avg(price) from p sample by 1d)");
+            executeWithoutExplicitNamesCheck("create materialized view price_1d as (select ts, sym, sym, avg(price) from base_price sample by 1d)");
+            executeWithoutExplicitNamesCheck("create materialized view price_cte as (with p as (select ts, sym, price from base_price) select ts, sym, avg(price) from p sample by 1d)");
             drainQueues();
 
             setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "true");
@@ -8516,7 +8553,8 @@ public class MatViewTest extends AbstractCairoTest {
     public void testRefreshKeepsViewWhenLegacyAliasRulesRenameColumns() throws Exception {
         // The reverse switch. The expression rules name a repeated sym "sym_2" and cut a column reference longer
         // than cairo.sql.column.alias.generated.max.size to that size; the legacy rules name them "sym1" and
-        // the full column name.
+        // the full column name. The view is created the way versions before the explicit column name rules
+        // created it.
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "true");
             final String venue = "venue_" + "v".repeat(64);
@@ -8527,7 +8565,7 @@ public class MatViewTest extends AbstractCairoTest {
                             ") timestamp(ts) partition by DAY WAL"
             );
             execute("insert into base_price values('gbpusd', 'lmax', 1.5, '2024-09-10T12:01')");
-            execute("create materialized view price_1d as (select ts, sym, sym, " + venue + ", avg(price) avg_price from base_price sample by 1d)");
+            executeWithoutExplicitNamesCheck("create materialized view price_1d as (select ts, sym, sym, " + venue + ", avg(price) avg_price from base_price sample by 1d)");
             drainQueues();
 
             setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "false");

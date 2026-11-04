@@ -135,7 +135,7 @@ public class TableFormatTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
             drainWalQueue();
-            execute("CREATE MATERIALIZED VIEW mv AS (SELECT ts, avg(x) FROM base SAMPLE BY 1m) PARTITION BY DAY");
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT ts, avg(x) AS avg FROM base SAMPLE BY 1m) PARTITION BY DAY");
             drainWalQueue();
             try {
                 execute("ALTER TABLE mv SET FORMAT PARQUET");

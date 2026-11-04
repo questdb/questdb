@@ -114,10 +114,6 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     private final MatViewDefinition viewDefinition = new MatViewDefinition();
     private int baseTableTimestampType;
     private CreateTableOperationImpl createTableOperation;
-    // The SQL the view definition stores, when it differs from the text the user wrote: a passthrough
-    // view's query with its top-level wildcard expanded into the view's columns, and bare zero-argument
-    // function names written as calls. Null stores the text.
-    private String matViewSql;
     private boolean passthrough;
     private int periodLength;
     private char periodLengthUnit;
@@ -320,7 +316,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                 deferred,
                 baseTableTimestampType,
                 matViewToken,
-                matViewSql != null ? matViewSql : createTableOperation.getSelectText(),
+                createTableOperation.getSelectText(),
                 baseTableName,
                 samplingInterval,
                 samplingIntervalUnit,
@@ -373,11 +369,6 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     public boolean isWalEnabled() {
         assert createTableOperation.isWalEnabled();
         return true;
-    }
-
-    @Override
-    public void setMatViewSql(@Nullable String matViewSql) {
-        this.matViewSql = matViewSql;
     }
 
     /**

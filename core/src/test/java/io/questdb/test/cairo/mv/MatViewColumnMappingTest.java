@@ -131,55 +131,9 @@ public class MatViewColumnMappingTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateFailsWhenBaseChangesBeforeStoredQueryCompiles() throws Exception {
-        // CREATE compiles the query it stores once more, and refuses the view when that compile no longer produces
-        // the columns of the first one, as when a concurrent ALTER TABLE changes the base in between. The wildcard,
-        // stored as written, then produces one column fewer, and a query that names the dropped column no longer
-        // compiles. CREATE leaves no view behind, and succeeds again on the changed base.
-        assertMemoryLeak(() -> {
-            final String[][] cases = {
-                    {"SELECT * FROM base", "could not store the materialized view query", "sym\tamount\tts\n"},
-                    {"SELECT sym, price, ts FROM base", "could not store the materialized view query [error=Invalid column: price]", null}
-            };
-            for (String[] c : cases) {
-                createBase();
-                final String sql = "CREATE MATERIALIZED VIEW v AS (" + c[0] + ") PARTITION BY DAY";
-                SqlCompilerImpl.setMatViewStoredSqlCompileBarrier(() -> {
-                    try (SqlExecutionContext context = TestUtils.createSqlExecutionCtx(engine)) {
-                        execute("ALTER TABLE base DROP COLUMN price", context);
-                    } catch (SqlException e) {
-                        throw new AssertionError(e);
-                    }
-                    drainWalQueue();
-                });
-                try {
-                    execute(sql);
-                    Assert.fail("CREATE must fail");
-                } catch (SqlException e) {
-                    Assert.assertEquals(sql.indexOf(c[0]), e.getPosition());
-                    TestUtils.assertEquals(c[1], e.getFlyweightMessage());
-                } finally {
-                    SqlCompilerImpl.setMatViewStoredSqlCompileBarrier(null);
-                }
-                Assert.assertNull(engine.getTableTokenIfExists("v"));
-
-                if (c[2] != null) {
-                    execute(sql);
-                    execute("INSERT INTO base VALUES ('a', 10.0, '2024-01-01T00:10:00.000000Z')");
-                    drainWalAndMatViewQueues();
-                    assertQuery("v").timestamp("ts").noLeakCheck().expectSize().returns(c[2] + "a\t10.0\t2024-01-01T00:10:00.000000Z\n");
-                    execute("DROP MATERIALIZED VIEW v");
-                }
-                execute("DROP TABLE base");
-                drainWalQueue();
-            }
-        });
-    }
-
-    @Test
-    public void testCreateRejectsBareCallStoredUnderAnotherName() throws Exception {
-        // Under the expression alias rules a bare pi is named "pi" and the stored pi() "pi()", so CREATE cannot store
-        // the call and asks for the parentheses.
+    public void testCreateRejectsBareCall() throws Exception {
+        // CREATE reads a bare name as a column, so a bare pi that names no column fails and asks for the parentheses,
+        // instead of being stored as a call.
         setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "true");
         assertMemoryLeak(() -> {
             createBase();
@@ -187,24 +141,24 @@ public class MatViewColumnMappingTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     sql,
                     sql.indexOf("pi,"),
-                    "could not store the function calls of the materialized view query, write them with parentheses"
+                    "pi is not a column; write pi() to call the function"
             );
         });
     }
 
     @Test
     public void testCreateStoresWildcardAsWritten() throws Exception {
-        // CREATE stores a wildcard as written and adds parentheses to each bare name it reads as a call, also when
-        // the optimiser reads a name twice, as in a CTE that the query reads twice.
+        // CREATE stores the SQL as written, a wildcard included, also when the optimiser reads a sub-query twice, as
+        // for a declared sub-query that the query reads twice.
         assertMemoryLeak(() -> {
             createBase();
-            execute("CREATE MATERIALIZED VIEW star_pi AS (SELECT *, pi FROM base) PARTITION BY DAY");
-            execute("CREATE MATERIALIZED VIEW declared_pi AS (DECLARE @pi := (SELECT pi FROM long_sequence(1)) "
+            execute("CREATE MATERIALIZED VIEW star_pi AS (SELECT *, pi() AS pi FROM base) PARTITION BY DAY");
+            execute("CREATE MATERIALIZED VIEW declared_pi AS (DECLARE @pi := (SELECT pi() FROM long_sequence(1)) "
                     + "SELECT ts, sym, avg(price) AS avg_price FROM base WHERE price < @pi OR price > @pi SAMPLE BY 1h) PARTITION BY DAY");
             assertQuery("SELECT view_name, view_sql FROM materialized_views ORDER BY view_name").noLeakCheck().returns("""
                     view_name\tview_sql
                     declared_pi\tDECLARE @pi := (SELECT pi() FROM long_sequence(1)) SELECT ts, sym, avg(price) AS avg_price FROM base WHERE price < @pi OR price > @pi SAMPLE BY 1h
-                    star_pi\tSELECT *, pi() FROM base
+                    star_pi\tSELECT *, pi() AS pi FROM base
                     """);
         });
     }
@@ -353,7 +307,7 @@ public class MatViewColumnMappingTest extends AbstractCairoTest {
             setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "false");
             execute("CREATE TABLE base (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             // `price * 2` is named "column": the SQL relies on a generated name.
-            execute("CREATE MATERIALIZED VIEW price_copy AS (SELECT *, price * 2 FROM base) PARTITION BY DAY");
+            executeWithoutExplicitNamesCheck("CREATE MATERIALIZED VIEW price_copy AS (SELECT *, price * 2 FROM base) PARTITION BY DAY");
             execute("INSERT INTO base VALUES ('a', 1.5, '2024-01-01T00:10:00.000000Z')");
             drainWalAndMatViewQueues();
             final String rows = """
@@ -386,7 +340,7 @@ public class MatViewColumnMappingTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "false");
             createBase();
-            execute("CREATE MATERIALIZED VIEW price_1h AS (SELECT ts, sym, avg(price), max(amount) FROM base SAMPLE BY 1h) PARTITION BY DAY");
+            executeWithoutExplicitNamesCheck("CREATE MATERIALIZED VIEW price_1h AS (SELECT ts, sym, avg(price), max(amount) FROM base SAMPLE BY 1h) PARTITION BY DAY");
             insertBaseRows();
             drainWalAndMatViewQueues();
             final String rows = """
@@ -710,7 +664,7 @@ public class MatViewColumnMappingTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "false");
             createBase();
-            execute("CREATE MATERIALIZED VIEW price_1h AS (SELECT ts, sym, last(price) FROM base SAMPLE BY 1h) PARTITION BY DAY");
+            executeWithoutExplicitNamesCheck("CREATE MATERIALIZED VIEW price_1h AS (SELECT ts, sym, last(price) FROM base SAMPLE BY 1h) PARTITION BY DAY");
             insertBaseRows();
             drainWalAndMatViewQueues();
             final String rows = """
