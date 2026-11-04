@@ -1445,6 +1445,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "shared.worker.yield.threshold\tQDB_SHARED_WORKER_YIELD_THRESHOLD\t10\tdefault\tfalse\tfalse\n" +
                                     "shared.network.worker.affinity\tQDB_SHARED_NETWORK_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
                                     "shared.network.worker.split.by.cpu.socket\tQDB_SHARED_NETWORK_WORKER_SPLIT_BY_CPU_SOCKET\tfalse\tdefault\tfalse\tfalse\n" +
+                                    "shared.network.worker.split.steer.connections\tQDB_SHARED_NETWORK_WORKER_SPLIT_STEER_CONNECTIONS\tfalse\tdefault\tfalse\tfalse\n" +
                                     "shared.network.worker.count\tQDB_SHARED_NETWORK_WORKER_COUNT\t2\tdefault\tfalse\tfalse\n" +
                                     "shared.network.worker.fiber.enabled\tQDB_SHARED_NETWORK_WORKER_FIBER_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "shared.network.worker.fiber.max.live\tQDB_SHARED_NETWORK_WORKER_FIBER_MAX_LIVE\t0\tdefault\tfalse\ttrue\n" +

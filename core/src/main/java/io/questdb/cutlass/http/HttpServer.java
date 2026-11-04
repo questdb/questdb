@@ -170,7 +170,7 @@ public class HttpServer implements Closeable {
                 }
                 groupCount = 1;
             }
-            IODispatchers.createGroups(configuration, httpContextFactory, groupCount, dispatchers);
+            IODispatchers.createGroups(configuration, httpContextFactory, networkSharedPool, groupCount, dispatchers);
             for (int g = 0; g < groupCount; g++) {
                 waitProcessors.add(new WaitProcessor(configuration.getWaitProcessorConfiguration(), dispatchers.getQuick(g)));
             }

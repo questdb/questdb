@@ -30,6 +30,7 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
+import org.jetbrains.annotations.Nullable;
 
 public class IODispatchers {
     private static final Log LOG = LogFactory.getLog(IODispatchers.class);
@@ -74,24 +75,33 @@ public class IODispatchers {
             IOContextFactory<C> ioContextFactory,
             boolean reusePort
     ) {
-        switch (Os.type) {
-            case Os.LINUX:
-                return new IODispatcherLinux<>(configuration, ioContextFactory, reusePort);
-            case Os.DARWIN:
-            case Os.FREEBSD:
-                return new IODispatcherOsx<>(configuration, ioContextFactory, reusePort);
-            case Os.WINDOWS:
-                return new IODispatcherWindows<>(configuration, ioContextFactory, reusePort);
-            default:
-                throw new RuntimeException();
-        }
+        return create(configuration, ioContextFactory, reusePort, null, 0);
     }
 
     /**
-     * Creates one dispatcher per group into {@code dispatchers}, which must be empty. With more than
-     * one group, it first checks that no other process holds the port, then gives every listener
-     * SO_REUSEPORT. If a dispatcher fails, it frees the ones it created, leaves the list empty, and
-     * rethrows.
+     * Creates the dispatcher of worker group {@code group}, whose listener, when {@code reusePort}
+     * is set, joins the SO_REUSEPORT group of its port, and opens and closes through the port's
+     * {@code steering} when there is one.
+     */
+    public static <C extends IOContext<C>> IODispatcher<C> create(
+            IODispatcherConfiguration configuration,
+            IOContextFactory<C> ioContextFactory,
+            boolean reusePort,
+            @Nullable ConnectionSteering steering,
+            int group
+    ) {
+        return switch (Os.type) {
+            case Os.LINUX -> new IODispatcherLinux<>(configuration, ioContextFactory, reusePort, steering, group);
+            case Os.DARWIN, Os.FREEBSD -> new IODispatcherOsx<>(configuration, ioContextFactory, reusePort, steering, group);
+            case Os.WINDOWS -> new IODispatcherWindows<>(configuration, ioContextFactory, reusePort, steering, group);
+            default -> throw new RuntimeException();
+        };
+    }
+
+    /**
+     * Creates one dispatcher per group into {@code dispatchers}, as
+     * {@link #createGroups(IODispatcherConfiguration, IOContextFactory, int, int[][], ObjList)} does,
+     * without the groups' CPU sets, so without connection steering.
      */
     public static <C extends IOContext<C>> void createGroups(
             IODispatcherConfiguration configuration,
@@ -99,7 +109,52 @@ public class IODispatchers {
             int groupCount,
             ObjList<IODispatcher<C>> dispatchers
     ) {
+        createGroups(configuration, ioContextFactory, groupCount, null, dispatchers);
+    }
+
+    /**
+     * Creates one dispatcher per group into {@code dispatchers}, as
+     * {@link #createGroups(IODispatcherConfiguration, IOContextFactory, int, int[][], ObjList)} does,
+     * with the CPU sets of {@code pool}'s groups when the server has one dispatcher per group of
+     * the pool.
+     */
+    public static <C extends IOContext<C>> void createGroups(
+            IODispatcherConfiguration configuration,
+            IOContextFactory<C> ioContextFactory,
+            WorkerPool pool,
+            int groupCount,
+            ObjList<IODispatcher<C>> dispatchers
+    ) {
+        int[][] groupCpus = null;
+        if (groupCount > 1 && groupCount == pool.getGroupCount()) {
+            groupCpus = new int[groupCount][];
+            for (int g = 0; g < groupCount; g++) {
+                groupCpus[g] = pool.getGroupCpus(g);
+                if (groupCpus[g] == null) {
+                    groupCpus = null;
+                    break;
+                }
+            }
+        }
+        createGroups(configuration, ioContextFactory, groupCount, groupCpus, dispatchers);
+    }
+
+    /**
+     * Creates one dispatcher per group into {@code dispatchers}, which must be empty. With more than
+     * one group, it first checks that no other process holds the port, then gives every listener
+     * SO_REUSEPORT, and, when the configuration enables connection steering, steers each new
+     * connection by the groups' CPU sets. If a dispatcher fails, it frees the ones it created,
+     * leaves the list empty, and rethrows.
+     */
+    public static <C extends IOContext<C>> void createGroups(
+            IODispatcherConfiguration configuration,
+            IOContextFactory<C> ioContextFactory,
+            int groupCount,
+            int @Nullable [][] groupCpus,
+            ObjList<IODispatcher<C>> dispatchers
+    ) {
         assert dispatchers.size() == 0;
+        ConnectionSteering steering = null;
         try {
             if (groupCount > 1) {
                 checkPortFree(
@@ -109,14 +164,20 @@ public class IODispatchers {
                         configuration.getDispatcherLogName()
                 );
             }
+            steering = ConnectionSteering.create(configuration, groupCount, groupCpus);
             for (int g = 0; g < groupCount; g++) {
-                dispatchers.add(create(configuration, ioContextFactory, groupCount > 1));
+                dispatchers.add(create(configuration, ioContextFactory, groupCount > 1, steering, g));
+            }
+            if (steering != null) {
+                steering.start();
             }
         } catch (Throwable th) {
             for (int g = 0, n = dispatchers.size(); g < n; g++) {
                 Misc.free(dispatchers.getQuick(g), th);
             }
             dispatchers.clear();
+            // the dispatchers close the steering too, unless none was created
+            Misc.free(steering, th);
             throw th;
         }
     }

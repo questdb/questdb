@@ -41,6 +41,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjLongMatrix;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -63,6 +64,7 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
     protected static final int OPM_ID = 4;
     protected static final int OPM_COLUMN_COUNT = OPM_ID + 1;
     protected static final int OPM_OPERATION = 2;
+    private static final long LISTENER_RETRY_INTERVAL_MS = 1_000;
     private static final String[] DISCONNECT_SOURCES;
     protected final Log LOG;
     protected final MillisecondClock clock;
@@ -84,18 +86,24 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
     private final IODispatcherConfiguration configuration;
     private final AtomicInteger connectionCount = new AtomicInteger();
     private final LongGauge connectionCountGauge;
+    // this dispatcher's worker group, its index in the port's steering
+    private final int group;
     private final Counter listenerStateChangeCounter;
     private final boolean peerNoLinger;
     private final long queuedConnectionTimeoutMs;
     // the listener joins its port's SO_REUSEPORT group, shared with the dispatchers of the other
     // worker groups of the same server
     private final boolean reusePort;
+    // the port's connection steering, through which the listener opens and closes, or null
+    private final @Nullable ConnectionSteering steering;
     protected volatile boolean closed = false;
     protected long heartbeatIntervalMs;
-    protected long serverFd;
+    protected long serverFd = -1;
     private long closeListenFdEpochMs;
     // id 0 is reserved for operations on the server fd
     private long idSeq = 1;
+    // the earliest time the dispatcher loop retries a listener that failed to reopen
+    private long listenerRetryEpochMs;
     private volatile boolean listening;
     protected final QueueConsumer<IOEvent<C>> disconnectContextRef = this::disconnectContext;
     private int port;
@@ -103,11 +111,15 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
     public AbstractIODispatcher(
             IODispatcherConfiguration configuration,
             IOContextFactory<C> ioContextFactory,
-            boolean reusePort
+            boolean reusePort,
+            @Nullable ConnectionSteering steering,
+            int group
     ) {
         this.LOG = LogFactory.getLog(configuration.getDispatcherLogName());
         this.configuration = configuration;
         this.reusePort = reusePort;
+        this.steering = steering;
+        this.group = group;
         this.connectionCountGauge = configuration.getConnectionCountGauge();
         this.listenerStateChangeCounter = configuration.listenerStateChangeCounter();
         this.nf = configuration.getNetworkFacade();
@@ -148,6 +160,10 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
     @Override
     public void close() {
         closed = true;
+        if (steering != null) {
+            // stops the port's listens and rebuilds before any of its listeners closes
+            steering.close();
+        }
 
         processDisconnects(Long.MAX_VALUE);
         for (int i = 0, n = pending.size(); i < n; i++) {
@@ -164,8 +180,7 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
         }
 
         if (serverFd > 0) {
-            nf.close(serverFd, LOG);
-            serverFd = -1;
+            closeListener();
         }
     }
 
@@ -286,6 +301,9 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
         pending.set(r, OPM_ID, nextOpId());
         pending.set(r, OPM_OPERATION, -1);
         pending.set(r, context);
+        if (steering != null) {
+            context.setSteeringStamp(steering.onAccepted(group));
+        }
         pendingAdded(r);
     }
 
@@ -310,7 +328,18 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
         final int connCount = connectionCount.get();
         if (connCount < activeConnectionLimit) {
             if (serverFd < 0) {
-                createListenerFd();
+                try {
+                    createListenerFd();
+                } catch (NetworkError e) {
+                    // serverFd stays -1, so the next drop below the limit, or the dispatcher loop a
+                    // second from now, tries again
+                    listenerRetryEpochMs = clock.getTicks() + LISTENER_RETRY_INTERVAL_MS;
+                    LOG.error().$("could not reopen listener [connCount=").$(connCount)
+                            .$(", errno=").$(e.getErrno())
+                            .$(", error=").$safe(e.getFlyweightMessage())
+                            .I$();
+                    return;
+                }
                 // Make sure to always register for listening if server fd was recreated.
                 listening = false;
             }
@@ -318,46 +347,77 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
             if (!listening) {
                 registerListenerFd();
                 listening = true;
+                if (steering != null) {
+                    steering.onResume(group, clock.getTicks());
+                }
                 listenerStateChangeCounter.inc();
                 LOG.advisory().$("below maximum connection limit, registered listener [serverFd=").$(serverFd).$(", connCount=").$(connCount).I$();
             }
         }
     }
 
+    // closes the listener, through the port's steering when there is one
+    private void closeListener() {
+        if (steering != null) {
+            steering.closeListener(group, serverFd);
+        } else {
+            nf.close(serverFd, LOG);
+        }
+        serverFd = -1;
+    }
+
+    // Opens, binds and listens on a socket, and assigns serverFd only once all of that succeeded. On
+    // failure it closes the socket and throws.
     private void createListenerFd() throws NetworkError {
-        this.serverFd = nf.socketTcp(false);
-        final int backlog = configuration.getListenBacklog();
-        // outside the port == 0 block, so a listener reopened after the connection limit rejoins the group
-        if (reusePort && nf.setReusePort(serverFd) != 0) {
-            throw NetworkError.instance(nf.errno()).put("could not set SO_REUSEPORT [who=")
+        final long fd = nf.socketTcp(false);
+        if (fd < 0) {
+            throw NetworkError.instance(nf.errno()).put("could not create listener socket [who=")
                     .put(configuration.getDispatcherLogName())
-                    .put(", fd=").put(serverFd)
                     .put(']');
         }
-        if (this.port == 0) {
-            // Note that `configuration.getBindPort()` might also be 0.
-            // In such case, we will bind to an ephemeral port.
-            this.port = configuration.getBindPort();
-            if (Os.isWindows()) {
-                // Make windows release listening port faster, same as Linux
-                nf.setReusePort(serverFd);
+        final int backlog = configuration.getListenBacklog();
+        try {
+            // outside the port == 0 block, so a listener reopened after the connection limit rejoins the group
+            if (reusePort && nf.setReusePort(fd) != 0) {
+                throw NetworkError.instance(nf.errno()).put("could not set SO_REUSEPORT [who=")
+                        .put(configuration.getDispatcherLogName())
+                        .put(", fd=").put(fd)
+                        .put(']');
             }
-        }
-        if (nf.bindTcp(this.serverFd, configuration.getBindIPv4Address(), this.port)) {
+            if (this.port == 0) {
+                // Note that `configuration.getBindPort()` might also be 0.
+                // In such case, we will bind to an ephemeral port.
+                this.port = configuration.getBindPort();
+                if (Os.isWindows()) {
+                    // Make windows release listening port faster, same as Linux
+                    nf.setReusePort(fd);
+                }
+            }
+            if (!nf.bindTcp(fd, configuration.getBindIPv4Address(), this.port)) {
+                throw NetworkError.instance(nf.errno()).couldNotBindSocket(
+                        configuration.getDispatcherLogName(),
+                        configuration.getBindIPv4Address(),
+                        this.port
+                );
+            }
             if (this.port == 0) {
                 // We resolve port 0 only once. In case we close and re-open the
                 // listening socket, we will reuse the previously resolved
                 // ephemeral port.
-                this.port = nf.resolvePort(this.serverFd);
+                this.port = nf.resolvePort(fd);
             }
-            nf.listen(this.serverFd, backlog);
-        } else {
-            throw NetworkError.instance(nf.errno()).couldNotBindSocket(
-                    configuration.getDispatcherLogName(),
-                    configuration.getBindIPv4Address(),
-                    this.port
-            );
+            final int rc = steering != null ? steering.listen(group, fd, backlog) : nf.listen(fd, backlog);
+            if (rc != 0) {
+                throw NetworkError.instance(rc).put("could not listen [who=")
+                        .put(configuration.getDispatcherLogName())
+                        .put(", fd=").put(fd)
+                        .put(']');
+            }
+        } catch (Throwable th) {
+            nf.close(fd, LOG);
+            throw th;
         }
+        serverFd = fd;
         LOG.advisory().$("listening on ").$ip(configuration.getBindIPv4Address()).$(':').$(this.port)
                 .$(" [fd=").$(serverFd)
                 .$(" backlog=").$(backlog)
@@ -469,6 +529,9 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
             unregisterListenerFd();
             listening = false;
             closeListenFdEpochMs = timestamp + queuedConnectionTimeoutMs;
+            if (steering != null) {
+                steering.onPause(group, timestamp);
+            }
             LOG.advisory()
                     .$("max connection limit reached, unregistered listener [serverFd=").$(serverFd)
                     .$(", tlConCount=").$(tlConCount)
@@ -504,6 +567,9 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
                 .$(", fd=").$(fd)
                 .$(", src=").$(DISCONNECT_SOURCES[src])
                 .I$();
+        if (steering != null) {
+            steering.onDisconnected(group, context.getSteeringStamp());
+        }
         if (closed) {
             Misc.free(context);
         } else {
@@ -526,12 +592,18 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
 
     protected boolean processDisconnects(long epochMs) {
         boolean useful = disconnectSubSeq.consumeAll(disconnectQueue, disconnectContextRef);
+        if (steering != null) {
+            steering.tick(group, epochMs);
+        }
+        if (serverFd < 0 && epochMs >= listenerRetryEpochMs && !closed) {
+            // reopens a listener that a failed reopen left closed, once below the limit
+            checkConnectionLimitAndRestartListener();
+        }
         if (!listening && serverFd >= 0 && epochMs >= closeListenFdEpochMs) {
             LOG.error().$("been unable to accept connections for ").$(queuedConnectionTimeoutMs)
                     .$("ms, closing listener [serverFd=").$(serverFd)
                     .I$();
-            nf.close(serverFd);
-            serverFd = -1;
+            closeListener();
             useful = true;
         }
         return useful;

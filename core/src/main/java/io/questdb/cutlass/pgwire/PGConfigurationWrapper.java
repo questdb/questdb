@@ -27,6 +27,7 @@ package io.questdb.cutlass.pgwire;
 import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
+import io.questdb.metrics.ConnectionSteeringMetrics;
 import io.questdb.metrics.Counter;
 import io.questdb.metrics.LongGauge;
 import io.questdb.mp.DynamicFiberWorkerPoolConfiguration;
@@ -37,6 +38,7 @@ import io.questdb.network.KqueueFacade;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.SelectFacade;
 import io.questdb.std.ConcurrentCacheConfiguration;
+import io.questdb.std.CpuTopology;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.millitime.MillisecondClock;
@@ -97,6 +99,16 @@ public class PGConfigurationWrapper implements DynamicFiberWorkerPoolConfigurati
     @Override
     public LongGauge getConnectionCountGauge() {
         return metrics.pgWireMetrics().connectionCountGauge();
+    }
+
+    @Override
+    public ConnectionSteeringMetrics getConnectionSteeringMetrics() {
+        return getDelegate().getConnectionSteeringMetrics();
+    }
+
+    @Override
+    public CpuTopology getConnectionSteeringTopology() {
+        return getDelegate().getConnectionSteeringTopology();
     }
 
     @Override
@@ -372,6 +384,11 @@ public class PGConfigurationWrapper implements DynamicFiberWorkerPoolConfigurati
     @Override
     public boolean isDaemonPool() {
         return getDelegate().isDaemonPool();
+    }
+
+    @Override
+    public boolean isConnectionSteeringEnabled() {
+        return getDelegate().isConnectionSteeringEnabled();
     }
 
     @Override

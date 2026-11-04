@@ -73,7 +73,7 @@ public class LineTcpReceiver implements Closeable {
                     configuration.getConnectionPoolInitialCapacity()
             );
             final int groupCount = IODispatchers.getGroupCount(configuration, sharedPoolNetwork);
-            IODispatchers.createGroups(configuration, contextFactory, groupCount, dispatchers);
+            IODispatchers.createGroups(configuration, contextFactory, sharedPoolNetwork, groupCount, dispatchers);
             // AcceptGatedJob is stateless and the receiver frees the dispatchers, so one instance per
             // group, assigned to each of the group's workers, runs like assign(Job) on every worker
             final ObjList<AcceptGatedJob> dispatcherJobs = new ObjList<>(groupCount);

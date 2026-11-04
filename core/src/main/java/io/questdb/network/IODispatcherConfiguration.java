@@ -24,11 +24,14 @@
 
 package io.questdb.network;
 
+import io.questdb.metrics.ConnectionSteeringMetrics;
 import io.questdb.metrics.Counter;
 import io.questdb.metrics.LongGauge;
+import io.questdb.std.CpuTopology;
 import io.questdb.std.Numbers;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import org.jetbrains.annotations.Nullable;
 
 public interface IODispatcherConfiguration {
     int BIAS_READ = 1;
@@ -44,6 +47,18 @@ public interface IODispatcherConfiguration {
     MillisecondClock getClock();
 
     LongGauge getConnectionCountGauge();
+
+    default @Nullable ConnectionSteeringMetrics getConnectionSteeringMetrics() {
+        return null;
+    }
+
+    /**
+     * The {@code /proc} and {@code /sys} trees that connection steering reads, so that tests can
+     * point them at fixtures.
+     */
+    default CpuTopology getConnectionSteeringTopology() {
+        return new CpuTopology();
+    }
 
     default String getDispatcherLogName() {
         return "IODispatcher";
@@ -111,6 +126,15 @@ public interface IODispatcherConfiguration {
     int getSendBufferSize();
 
     long getTimeout();
+
+    /**
+     * Whether a server whose listener the shared network pool's split divides by worker group
+     * steers each new connection to the listener of the group on the socket that processes its
+     * packets ({@code shared.network.worker.split.steer.connections}).
+     */
+    default boolean isConnectionSteeringEnabled() {
+        return false;
+    }
 
     Counter listenerStateChangeCounter();
 }

@@ -355,6 +355,40 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
     }
 
     @Test
+    public void testConnectionSteeringSettingDefaultsToOff() throws Exception {
+        assertMemoryLeak(() -> {
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                final DynamicPropServerConfiguration configuration =
+                        (DynamicPropServerConfiguration) serverMain.getConfiguration();
+                assertFalse(configuration.getHttpServerConfiguration().isConnectionSteeringEnabled());
+                assertFalse(configuration.getPGWireConfiguration().isConnectionSteeringEnabled());
+                assertFalse(configuration.getLineTcpReceiverConfiguration().isConnectionSteeringEnabled());
+            }
+        });
+    }
+
+    @Test
+    public void testConnectionSteeringSettingReachesTheServers() throws Exception {
+        // the production configuration wraps each server's configuration, and every wrapper must
+        // forward the setting, or the servers read the default
+        assertMemoryLeak(() -> {
+            try (FileWriter writer = new FileWriter(serverConf)) {
+                writer.write("shared.network.worker.split.steer.connections=true\n");
+            }
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                final DynamicPropServerConfiguration configuration =
+                        (DynamicPropServerConfiguration) serverMain.getConfiguration();
+                Assert.assertTrue(configuration.getHttpServerConfiguration().isConnectionSteeringEnabled());
+                Assert.assertTrue(configuration.getPGWireConfiguration().isConnectionSteeringEnabled());
+                Assert.assertTrue(configuration.getLineTcpReceiverConfiguration().isConnectionSteeringEnabled());
+                Assert.assertNotNull(configuration.getHttpServerConfiguration().getConnectionSteeringMetrics());
+                Assert.assertNotNull(configuration.getPGWireConfiguration().getConnectionSteeringMetrics());
+                Assert.assertNotNull(configuration.getLineTcpReceiverConfiguration().getConnectionSteeringMetrics());
+            }
+        });
+    }
+
+    @Test
     public void testFiberLimitsReloadIntoExistingRuntime() throws Exception {
         assertFiberLimitsReloadIntoExistingRuntime(
                 "shared.network.worker",

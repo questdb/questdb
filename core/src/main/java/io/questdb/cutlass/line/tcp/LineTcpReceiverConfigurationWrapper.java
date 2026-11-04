@@ -27,6 +27,7 @@ package io.questdb.cutlass.line.tcp;
 import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.metrics.ConnectionSteeringMetrics;
 import io.questdb.metrics.Counter;
 import io.questdb.metrics.LongGauge;
 import io.questdb.mp.WorkerPoolConfiguration;
@@ -34,6 +35,7 @@ import io.questdb.network.EpollFacade;
 import io.questdb.network.KqueueFacade;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.SelectFacade;
+import io.questdb.std.CpuTopology;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
@@ -107,6 +109,16 @@ public class LineTcpReceiverConfigurationWrapper implements LineTcpReceiverConfi
     @Override
     public LongGauge getConnectionCountGauge() {
         return metrics.lineMetrics().tcpConnectionCountGauge();
+    }
+
+    @Override
+    public ConnectionSteeringMetrics getConnectionSteeringMetrics() {
+        return getDelegate().getConnectionSteeringMetrics();
+    }
+
+    @Override
+    public CpuTopology getConnectionSteeringTopology() {
+        return getDelegate().getConnectionSteeringTopology();
     }
 
     @Override
@@ -312,6 +324,11 @@ public class LineTcpReceiverConfigurationWrapper implements LineTcpReceiverConfi
     @Override
     public WorkerPoolConfiguration getWriterWorkerPoolConfiguration() {
         return getDelegate().getWriterWorkerPoolConfiguration();
+    }
+
+    @Override
+    public boolean isConnectionSteeringEnabled() {
+        return getDelegate().isConnectionSteeringEnabled();
     }
 
     @Override
