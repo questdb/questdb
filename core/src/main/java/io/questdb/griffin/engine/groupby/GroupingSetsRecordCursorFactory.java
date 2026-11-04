@@ -449,7 +449,12 @@ public class GroupingSetsRecordCursorFactory extends AbstractRecordCursorFactory
                     mapSink.copy(nullingRecords.getQuick(s), key);
                     if (functionSink != null) {
                         // Prefix expressions keep their original inputs even when
-                        // another grouping key rolls up a column they reference.
+                        // another grouping key rolls up a column they reference. They
+                        // give the same value in every set, yet each set's key evaluates
+                        // them again: keys interleave plain and expression columns, so
+                        // reusing one evaluation would need a typed per-row copy of each
+                        // value. Only expression keys pay it, once per set, next to the
+                        // hash and aggregate update that every set pays anyway.
                         functionSink.copy(baseRecord, key);
                     }
                     MapValue value = key.createValue();

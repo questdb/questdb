@@ -120,22 +120,6 @@ public class AsyncGroupingSetsAtom implements StatefulAtom, Reopenable, Closeabl
         this.workerCount = workerCount;
         this.keyTypes = new ArrayColumnTypes().addAll(keyTypes);
         this.valueTypes = new ArrayColumnTypes().addAll(valueTypes);
-        // No late materialization: every grouping set reads the key and value columns of each
-        // filtered row, so the frame is decoded in full anyway.
-        this.filterContext = new AsyncFilterContext(
-                configuration,
-                compiledFilter,
-                bindVarMemory,
-                bindVarFunctions,
-                ownerFilter,
-                null,
-                perWorkerFilters,
-                workerCount,
-                0,
-                0L,
-                0L
-        );
-        this.locks = new PerWorkerLocks(configuration, workerCount);
         this.maps = new ObjList<>((workerCount + 1) * setCount);
         this.nullingRecords = new ObjList<>((workerCount + 1) * setCount);
         this.nulledColumnsPerSet = new ObjList<>(setCount);
@@ -155,7 +139,25 @@ public class AsyncGroupingSetsAtom implements StatefulAtom, Reopenable, Closeabl
         this.updaters = new ObjList<>(workerCount + 1);
         this.allocators = new ObjList<>(workerCount + 1);
 
+        // Everything that allocates native memory runs inside the try, so that a failure closes
+        // the key functions and the per-worker copies this atom already owns.
         try {
+            // No late materialization: every grouping set reads the key and value columns of each
+            // filtered row, so the frame is decoded in full anyway.
+            this.filterContext = new AsyncFilterContext(
+                    configuration,
+                    compiledFilter,
+                    bindVarMemory,
+                    bindVarFunctions,
+                    ownerFilter,
+                    null,
+                    perWorkerFilters,
+                    workerCount,
+                    0,
+                    0L,
+                    0L
+            );
+            this.locks = new PerWorkerLocks(configuration, workerCount);
             final Class<RecordSink> sinkClass = RecordSinkFactory.getInstanceClass(
                     configuration,
                     asm,

@@ -6238,8 +6238,9 @@ public class SqlOptimiser implements Mutable {
             ObjList<ExpressionNode> keys = model.getGroupBy();
             for (int k = 0, n = keys.size(); k < n; k++) {
                 ExpressionNode key = keys.getQuick(k);
-                if ((key.type == LITERAL && Chars.equalsIgnoreCase(key.token, column.getAlias()))
-                        || ExpressionNode.compareNodesGroupBy(key, column.getAst(), chooseModel)) {
+                // Match by expression only. An output alias can be spelled like a key it does not
+                // read, as in SELECT b AS a ... GROUP BY ROLLUP(b), a, where a filter on a reads b.
+                if (ExpressionNode.compareNodesGroupBy(key, column.getAst(), chooseModel)) {
                     // A rolled key gains NULL rows, so filtering its input changes the result.
                     ObjList<IntList> sets = model.getGroupingSets();
                     for (int s = 0, sn = sets.size(); s < sn; s++) {

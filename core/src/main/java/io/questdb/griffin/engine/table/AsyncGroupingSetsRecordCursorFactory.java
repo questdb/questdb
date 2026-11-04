@@ -322,6 +322,8 @@ public class AsyncGroupingSetsRecordCursorFactory extends AbstractRecordCursorFa
             MapKey key = map.withKey();
             recordSink.copy(keyRecord, key);
             if (functionSink != null) {
+                // Key expressions give the same value in every set but run once per set, as in
+                // GroupingSetsRecordCursorFactory, which explains why that cost is accepted.
                 functionSink.copy(record, key);
             }
             MapValue value = key.createValue();

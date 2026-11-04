@@ -63,48 +63,58 @@ public class GroupingSetsTest extends AbstractCairoTest {
         // the cap step by step, so an allocation fails at every point where the grouping sets
         // factory and cursor allocate. Each failure must be a clean out-of-memory error;
         // assertMemoryLeak then checks that nothing stayed allocated.
+        // The filtered query takes the filter over into the parallel factory, and trim() allocates a
+        // native sink when it compiles, so a failure that lands in the factory must free it too.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (a INT, b INT, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO t SELECT (x % 50)::INT, (x % 7)::INT, x, (x * 60_000_000)::TIMESTAMP FROM long_sequence(5_000)");
-            String query = "SELECT a, b, grouping_id(a, b) g, sum(v) FROM t GROUP BY CUBE(a, b)";
+            execute("CREATE TABLE t (a INT, b INT, v LONG, s VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t SELECT (x % 50)::INT, (x % 7)::INT, x, ' k' || (x % 3), (x * 60_000_000)::TIMESTAMP FROM long_sequence(5_000)");
+            final String cubeQuery = "SELECT a, b, grouping_id(a, b) g, sum(v) FROM t GROUP BY CUBE(a, b)";
+            final String filteredQuery = "SELECT trim(s) k, a, sum(v) sv FROM t WHERE v > 10 GROUP BY k, ROLLUP(a)";
             for (int i = 0; i < 2; i++) {
                 sqlExecutionContext.setParallelGroupByEnabled(i == 1);
-                int failures = 0;
-                int successes = 0;
-                for (int isArmedBeforeCompile = 0; isArmedBeforeCompile < 2; isArmedBeforeCompile++) {
-                    for (long slack = 0; slack <= 512 * 1024; slack += 4 * 1024) {
-                        final long savedLimit = Unsafe.getRssMemLimit();
-                        try {
-                            if (isArmedBeforeCompile == 1) {
-                                Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + slack);
-                            }
-                            try (RecordCursorFactory factory = select(query)) {
-                                if (isArmedBeforeCompile == 0) {
+                for (String query : new String[]{cubeQuery, filteredQuery}) {
+                    int failures = 0;
+                    int successes = 0;
+                    for (int isArmedBeforeCompile = 0; isArmedBeforeCompile < 2; isArmedBeforeCompile++) {
+                        for (long slack = 0; slack <= 512 * 1024; slack += 4 * 1024) {
+                            final long savedLimit = Unsafe.getRssMemLimit();
+                            try {
+                                if (isArmedBeforeCompile == 1) {
                                     Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + slack);
                                 }
-                                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                                    while (cursor.hasNext()) {
-                                        // drain
+                                try (RecordCursorFactory factory = select(query)) {
+                                    if (isArmedBeforeCompile == 0) {
+                                        Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + slack);
+                                    }
+                                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                        while (cursor.hasNext()) {
+                                            // drain
+                                        }
                                     }
                                 }
+                                successes++;
+                            } catch (CairoException e) {
+                                Assert.assertTrue("expected out of memory, got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                                failures++;
+                            } finally {
+                                Unsafe.setRssMemLimit(savedLimit);
                             }
-                            successes++;
-                        } catch (CairoException e) {
-                            Assert.assertTrue("expected out of memory, got: " + e.getFlyweightMessage(), e.isOutOfMemory());
-                            failures++;
-                        } finally {
-                            Unsafe.setRssMemLimit(savedLimit);
                         }
                     }
+                    Assert.assertTrue("the sweep never failed an allocation: " + query, failures > 0);
+                    Assert.assertTrue("the sweep never let the query finish: " + query, successes > 0);
                 }
-                Assert.assertTrue("the sweep never failed an allocation", failures > 0);
-                Assert.assertTrue("the sweep never let the query finish", successes > 0);
-                // The engine still answers the query after the failures.
-                assertQuery("SELECT count() n, sum(s) s FROM (" + query.replace("sum(v)", "sum(v) s") + ")")
+                // The engine still answers the queries after the failures.
+                assertQuery("SELECT count() n, sum(s) s FROM (" + cubeQuery.replace("sum(v)", "sum(v) s") + ")")
                         .withContext(sqlExecutionContext)
                         .noRandomAccess()
                         .expectSize()
                         .returns("n\ts\n408\t50010000\n");
+                assertSqlCursors(
+                        "SELECT * FROM (SELECT trim(s) k, a, sum(v) sv FROM t WHERE v > 10 GROUP BY k, a " +
+                                "UNION ALL SELECT trim(s) k, NULL::INT a, sum(v) sv FROM t WHERE v > 10 GROUP BY k) ORDER BY k, a",
+                        filteredQuery + " ORDER BY k, a"
+                );
             }
         });
     }
@@ -2943,6 +2953,38 @@ public class GroupingSetsTest extends AbstractCairoTest {
                                 """,
                         "SELECT * FROM (SELECT a + 1 k, b, sum(v) s FROM t GROUP BY k, ROLLUP(b)) WHERE k = 2 ORDER BY b"
                 );
+            }
+        });
+    }
+
+    @Test
+    public void testRollupOuterFilterOnAliasSpelledLikeKey() throws Exception {
+        // The output column a reads the rolled-up b, while k reads the kept key a. A filter on a
+        // must stay above the grouping sets, or it drops the rolled-up rows of b. Sets (a, b) and
+        // (a) give (b=1, a=1, 10), (b=1, a=2, 20), (b=2, a=1, 30), (NULL, 1, 40) and (NULL, 2, 20).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE pd (a INT, b INT, v DOUBLE)");
+            execute("INSERT INTO pd VALUES (1, 1, 10), (2, 1, 20), (1, 2, 30)");
+            final String inner = "SELECT b AS a, a AS k, sum(v) s FROM pd GROUP BY k, ROLLUP(a)";
+            for (int mode = 0; mode < 2; mode++) {
+                sqlExecutionContext.setParallelGroupByEnabled(mode == 1);
+                final String rolledUpFilter = "SELECT * FROM (" + inner + ") WHERE a = 1 ORDER BY k";
+                printSql("EXPLAIN " + rolledUpFilter);
+                Assert.assertFalse(sink.toString(), sink.toString().contains("filter: b=1"));
+                assertQuery(rolledUpFilter).withContext(sqlExecutionContext).returns("""
+                        a\tk\ts
+                        1\t1\t10.0
+                        1\t2\t20.0
+                        """);
+                // A filter on the kept key still runs below the grouping sets.
+                final String keptKeyFilter = "SELECT * FROM (" + inner + ") WHERE k = 2 ORDER BY a";
+                printSql("EXPLAIN " + keptKeyFilter);
+                Assert.assertTrue(sink.toString(), sink.toString().contains("filter: a=2"));
+                assertQuery(keptKeyFilter).withContext(sqlExecutionContext).expectSize().returns("""
+                        a\tk\ts
+                        null\t2\t20.0
+                        1\t2\t20.0
+                        """);
             }
         });
     }
