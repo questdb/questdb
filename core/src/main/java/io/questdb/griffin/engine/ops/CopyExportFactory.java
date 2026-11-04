@@ -83,6 +83,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
     private int compressionLevel;
     private CopyExportContext copyContext;
     private int dataPageSize;
+    private String explicitSelectText = null;
     private String fileName;
     private MessageBus messageBus;
     private int parquetVersion;
@@ -90,10 +91,9 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
     private boolean rawArrayEncoding = false;
     private int rowGroupSize;
     private SecurityContext securityContext;
-    private String selectText = null;
+    private @Nullable String sourceTableName = null;
     private CharSequence sqlText;
     private boolean statisticsEnabled;
-    private @Nullable String tableName = null;
     private int tableOrSelectTextPos = 0;
 
     public CopyExportFactory(
@@ -110,7 +110,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         CopyExportContext.ExportTaskEntry entry = copyContext.assignExportEntry(
                 securityContext,
-                this.tableName != null ? this.tableName : this.selectText,
+                sourceTableName != null ? sourceTableName : explicitSelectText,
                 this.fileName,
                 null,
                 CopyExportContext.CopyTrigger.SQL
@@ -119,11 +119,15 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
         RecordCursorFactory selectFactory = null;
         CreateTableOperationImpl createOp = null;
         int exportPartitionBy = partitionBy;
+        // This execution keeps its routing values in locals, so a factory that a PG Wire named statement keeps
+        // resolves the same source on every call.
+        String resolvedSelectText = explicitSelectText;
+        String taskTableName = sourceTableName;
         try {
-            if (this.tableName != null) {
-                TableToken tableToken = executionContext.getTableTokenIfExists(tableName);
+            if (sourceTableName != null) {
+                TableToken tableToken = executionContext.getTableTokenIfExists(sourceTableName);
                 if (tableToken == null) {
-                    throw SqlException.tableDoesNotExist(tableOrSelectTextPos, tableName);
+                    throw SqlException.tableDoesNotExist(tableOrSelectTextPos, sourceTableName);
                 }
                 // A composite partition keeps dead rows between its live pieces, so its live row count is no longer its
                 // file extent.
@@ -133,16 +137,15 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                         int tablePartitionBy = meta.getPartitionBy();
                         if (partitionBy == -1) {
                             exportPartitionBy = tablePartitionBy;
-                            this.selectText = CopyExportRequestTask.selectAllText(this.tableName);
+                            resolvedSelectText = CopyExportRequestTask.selectAllText(sourceTableName);
                         } else if (tablePartitionBy != partitionBy || hasCompositePartitions) {
-                            this.selectText = CopyExportRequestTask.selectAllText(this.tableName);
+                            resolvedSelectText = CopyExportRequestTask.selectAllText(sourceTableName);
                         }
                     }
                 }
             }
 
             ParquetExportMode exportMode = ParquetExportMode.TABLE_READER;
-            String resolvedSelectText = this.selectText;
             if (resolvedSelectText != null) {
                 // Determine export mode before creating CreateTableOperation.
                 // For non-TEMP_TABLE modes the CreateTableOperation (and its
@@ -150,7 +153,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                 exportIdSink.clear();
                 exportIdSink.put("copy.");
                 Numbers.appendHex(exportIdSink, copyID, true);
-                this.tableName = exportIdSink.toString();
+                taskTableName = exportIdSink.toString();
 
                 CairoEngine engine = executionContext.getCairoEngine();
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
@@ -171,7 +174,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                         if (exportMode == ParquetExportMode.TEMP_TABLE) {
                             createOp = new CreateTableOperationImpl(
                                     Chars.toString(resolvedSelectText),
-                                    tableName,
+                                    taskTableName,
                                     resolvedPartitionBy,
                                     false,
                                     engine.getConfiguration().getDefaultSymbolCapacity(),
@@ -204,7 +207,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                     throw ex;
                 }
             } else if (bloomFilterColumns != null && !bloomFilterColumns.isEmpty()) {
-                TableToken token = executionContext.getTableTokenIfExists(tableName);
+                TableToken token = executionContext.getTableTokenIfExists(sourceTableName);
                 try (TableMetadata meta = executionContext.getCairoEngine().getTableMetadata(token)) {
                     CopyExportRequestTask.validateBloomFilterColumns(bloomFilterColumns, meta, bloomFilterColumnsPosition);
                 }
@@ -226,7 +229,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                     Numbers.INT_NULL,
                     "queued",
                     0,
-                    tableName,
+                    taskTableName,
                     entry.getId()
             );
 
@@ -250,7 +253,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                 task.of(
                         entry,
                         createOp,
-                        tableName,
+                        taskTableName,
                         fileName,
                         compressionCodec,
                         compressionLevel,
@@ -334,7 +337,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
         this.messageBus = messageBus;
         this.copyContext = exportContext;
         if (model.getTableName() != null) {
-            this.tableName = unquote(model.getTableName()).toString();
+            this.sourceTableName = unquote(model.getTableName()).toString();
             this.tableOrSelectTextPos = model.getTableNameExpr().position;
         } else {
             assert model.getSelectText() != null;
@@ -344,7 +347,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
         final ExpressionNode fileNameExpr = model.getFileName();
         this.fileName = fileNameExpr != null ? Chars.toString(GenericLexer.assertNoDots(unquote(fileNameExpr.token), fileNameExpr.position)) : null;
         this.securityContext = securityContext;
-        this.selectText = Chars.toString(model.getSelectText());
+        this.explicitSelectText = Chars.toString(model.getSelectText());
         this.partitionBy = model.getPartitionBy();
         this.compressionCodec = model.getCompressionCodec();
         this.compressionLevel = model.getCompressionLevel();

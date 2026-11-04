@@ -277,6 +277,163 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyFactoryRunAgainWhileExportQueuedIsDuplicate() throws Exception {
+        // A run of one compiled COPY while its previous export is still queued is rejected as a new compile of the same
+        // COPY is: the duplicate check keys on the source that the COPY names.
+        assertMemoryLeak(() -> {
+            createTableToCopyAgain("BYPASS WAL");
+            assertCopyFactoryRunWhileQueuedIsDuplicate("COPY (SELECT * FROM t) TO 'again' WITH FORMAT PARQUET", "SELECT * FROM t");
+            assertCopyFactoryRunWhileQueuedIsDuplicate("COPY t TO 'again' WITH FORMAT PARQUET PARTITION_BY MONTH", "t");
+        });
+    }
+
+    @Test
+    public void testCopyFactoryRunsAgain() throws Exception {
+        // A server-side PostgreSQL wire prepared statement keeps its compiled COPY and runs it on every execution, so
+        // every run of one compiled COPY exports the source that the COPY names.
+        assertMemoryLeak(() -> {
+            for (String walMode : new String[]{"BYPASS WAL", "WAL"}) {
+                // streams the select
+                assertCopyFactoryRunsAgain(walMode, "COPY (SELECT * FROM t) TO 'again' WITH FORMAT PARQUET", true);
+                // materializes the select in a temp table
+                assertCopyFactoryRunsAgain(walMode, "COPY (SELECT * FROM t) TO 'again' WITH FORMAT PARQUET PARTITION_BY MONTH", true);
+                // repartitions the table through a select of it
+                assertCopyFactoryRunsAgain(walMode, "COPY t TO 'again' WITH FORMAT PARQUET PARTITION_BY MONTH", true);
+                // keeps the partitioning of the table, so it reads the table
+                assertCopyFactoryRunsAgain(walMode, "COPY t TO 'again' WITH FORMAT PARQUET PARTITION_BY DAY", false);
+                // reads the table and checks the bloom filter columns against the table
+                assertCopyFactoryRunsAgain(walMode, "COPY t TO 'again' WITH FORMAT PARQUET BLOOM_FILTER_COLUMNS 'x'", false);
+            }
+        });
+    }
+
+    @Test
+    public void testCopyFactoryRunsAgainAfterBloomFilterError() throws Exception {
+        // A run that fails validation releases its export, so the next run of the same compiled COPY fails the same way.
+        assertMemoryLeak(() -> {
+            createTableToCopyAgain("BYPASS WAL");
+            try (RecordCursorFactory factory = select("COPY t TO 'again' WITH FORMAT PARQUET BLOOM_FILTER_COLUMNS 'nope'")) {
+                assertCopyFails(factory, 60, "bloom_filter_columns contains non-existent column: nope");
+                assertCopyFails(factory, 60, "bloom_filter_columns contains non-existent column: nope");
+            }
+            try (RecordCursorFactory factory = select("COPY (SELECT * FROM t) TO 'again' WITH FORMAT PARQUET BLOOM_FILTER_COLUMNS 'nope'")) {
+                assertCopyFails(factory, 76, "bloom_filter_columns contains non-existent column: nope");
+                assertCopyFails(factory, 76, "bloom_filter_columns contains non-existent column: nope");
+            }
+        });
+    }
+
+    @Test
+    public void testCopyFactoryRunsAgainAfterSourceTableDropped() throws Exception {
+        // Every run of one compiled COPY looks its source up by name, and a run that fails releases its export.
+        assertMemoryLeak(() -> {
+            createTableToCopyAgain("BYPASS WAL");
+            try (RecordCursorFactory factory = select("COPY t TO 'again' WITH FORMAT PARQUET PARTITION_BY MONTH")) {
+                assertCopyFactoryExports(factory, """
+                        x\tts
+                        1\t2024-01-01T00:00:00.000000Z
+                        2\t2024-01-01T01:00:00.000000Z
+                        """);
+                execute("DROP TABLE t");
+                assertCopyFails(factory, 5, "table does not exist [table=t]");
+                execute("CREATE TABLE t (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+                execute("INSERT INTO t VALUES (10, '2024-01-01T00:00:00.000000Z')");
+                assertCopyFactoryExports(factory, """
+                        x\tts
+                        10\t2024-01-01T00:00:00.000000Z
+                        """);
+            }
+
+            execute("DROP TABLE t");
+            // COPY (SELECT ...) compiles its select on each run, so it compiles while t does not exist.
+            try (RecordCursorFactory factory = select("COPY (SELECT * FROM t) TO 'again' WITH FORMAT PARQUET")) {
+                assertCopyFails(factory, 20, "table does not exist [table=t]");
+                execute("CREATE TABLE t (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+                execute("INSERT INTO t VALUES (20, '2024-01-01T00:00:00.000000Z')");
+                assertCopyFactoryExports(factory, """
+                        x\tts
+                        20\t2024-01-01T00:00:00.000000Z
+                        """);
+            }
+        });
+    }
+
+    @Test
+    public void testCopyFactoryRunsAgainOnCompositeTable() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+
+        // A table with a composite partition exports through a select of the table, which every run of one compiled
+        // COPY builds from the table again.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ct AS (SELECT x::INT i," +
+                    " timestamp_sequence('2024-01-01', 1_000_000L) ts FROM long_sequence(2000))" +
+                    " TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // A later, plain day, so 2024-01-01 is never the active partition and the backfill is O3.
+            execute("INSERT INTO ct VALUES (999_999, '2024-01-03T00:00:00.000000Z')");
+            drainWalQueue();
+            // Lands only inside 2024-01-01 and makes it composite.
+            execute("INSERT INTO ct SELECT x::INT + 70_000 i," +
+                    " timestamp_sequence('2024-01-01T00:00:00.500000Z', 1_000_000L) ts FROM long_sequence(40)");
+            drainWalQueue();
+            assertFirstPartitionOfCtComposite();
+
+            try (
+                    RecordCursorFactory factory = select("COPY ct TO 'again' WITH FORMAT PARQUET");
+                    RecordCursorFactory dayFactory = select("COPY ct TO 'again_day' WITH FORMAT PARQUET PARTITION_BY DAY")
+            ) {
+                final String lastDayRows = """
+                        i\tts
+                        999999\t2024-01-03T00:00:00.000000Z
+                        """;
+                assertCompositeCopyFactoryExports(factory, "again", lastDayRows);
+                assertCompositeCopyFactoryExports(dayFactory, "again_day", lastDayRows);
+
+                execute("INSERT INTO ct VALUES (4242, '2024-01-03T01:00:00.000000Z')");
+                drainWalQueue();
+                assertFirstPartitionOfCtComposite();
+                final String lastDayRowsWithInsert = """
+                        i\tts
+                        999999\t2024-01-03T00:00:00.000000Z
+                        4242\t2024-01-03T01:00:00.000000Z
+                        """;
+                assertCompositeCopyFactoryExports(factory, "again", lastDayRowsWithInsert);
+                assertCompositeCopyFactoryExports(dayFactory, "again_day", lastDayRowsWithInsert);
+            }
+        });
+    }
+
+    @Test
+    public void testCopyFactoryRunsAgainWithNewBindValue() throws Exception {
+        // Every run of one compiled COPY compiles its select with the bind values of that run.
+        assertMemoryLeak(() -> {
+            createTableToCopyAgain("BYPASS WAL");
+            execute("INSERT INTO t VALUES (3, '2024-01-01T02:00:00.000000Z')");
+            for (String copySql : new String[]{
+                    // streams the select
+                    "COPY (SELECT * FROM t WHERE x <= $1) TO 'again' WITH FORMAT PARQUET",
+                    // materializes the select in a temp table
+                    "COPY (SELECT * FROM t WHERE x <= $1) TO 'again' WITH FORMAT PARQUET PARTITION_BY MONTH"
+            }) {
+                bindVariableService.clear();
+                bindVariableService.setInt(0, 1);
+                try (RecordCursorFactory factory = select(copySql)) {
+                    assertCopyFactoryExports(factory, """
+                            x\tts
+                            1\t2024-01-01T00:00:00.000000Z
+                            """);
+                    bindVariableService.setInt(0, 2);
+                    assertCopyFactoryExports(factory, """
+                            x\tts
+                            1\t2024-01-01T00:00:00.000000Z
+                            2\t2024-01-01T01:00:00.000000Z
+                            """);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testCopyFilteredQuerySurvivesPartitionFormatChangeAfterQueue() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -951,9 +1108,6 @@ public class CopyExportTest extends AbstractCairoTest {
             execute("ALTER TABLE converted ALTER COLUMN metric SET PARQUET(default)");
             drainWalAndViewQueues();
             engine.releaseAllReaders();
-            // copyToParquet() compiles the COPY again. One compiled COPY (SELECT ...) run twice, as a server-side
-            // PostgreSQL wire prepared statement runs it, fails with "table does not exist [table=copy.<id>]" (#8152),
-            // so no test runs it that way yet.
             copyToParquet("COPY (" + query + ") TO 'reset' WITH FORMAT PARQUET");
             assertParquetMatchesQuery(query, parquetPath("reset"));
             // metric has no setting now, so it takes the INT default, PLAIN
@@ -4794,6 +4948,16 @@ public class CopyExportTest extends AbstractCairoTest {
         });
     }
 
+    // Runs the COPY of a factory that the test holds and asserts that it fails.
+    private static void assertCopyFails(RecordCursorFactory factory, int expectedPosition, String expectedMessage) {
+        try (RecordCursor ignore = factory.getCursor(sqlExecutionContext)) {
+            Assert.fail("COPY must fail with: " + expectedMessage);
+        } catch (SqlException e) {
+            TestUtils.assertEquals(expectedMessage, e.getFlyweightMessage());
+            Assert.assertEquals(expectedPosition, e.getPosition());
+        }
+    }
+
     private static Thread createJobThread(Job job, CountDownLatch workCount, AtomicBoolean stop, int workerId) {
         return new Thread(() -> {
             try {
@@ -4819,6 +4983,23 @@ public class CopyExportTest extends AbstractCairoTest {
             Assert.assertTrue(cursor.hasNext());
             CharSequence value = cursor.getRecord().getStrA(0);
             Assert.assertNotNull(value);
+        }
+    }
+
+    // Runs the COPY of a factory that the test holds and returns the id of the export it queued.
+    private static String runCopy(RecordCursorFactory factory) throws SqlException {
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            Assert.assertTrue(cursor.hasNext());
+            final String exportId = cursor.getRecord().getStrA(0).toString();
+            Assert.assertFalse(cursor.hasNext());
+            return exportId;
+        }
+    }
+
+    // Runs the queued export on this thread to its end.
+    private static void runExportJob() throws Exception {
+        try (CopyExportRequestJob job = new CopyExportRequestJob(engine)) {
+            Assert.assertTrue("the queued export must be picked up", job.run());
         }
     }
 
@@ -4877,12 +5058,85 @@ public class CopyExportTest extends AbstractCairoTest {
         }
     }
 
+    // Runs the COPY of ct that the test holds to the end of its export, one file per day.
+    private void assertCompositeCopyFactoryExports(RecordCursorFactory factory, String exportDirName, String expectedLastDayRows) throws Exception {
+        final String exportId = runCopy(factory);
+        runExportJob();
+        assertExportSucceeded(exportId);
+        final String exportDir = exportRoot + File.separator + exportDirName + File.separator;
+        assertParquetMatchesQuery("SELECT * FROM ct WHERE ts IN '2024-01-01'", exportDir + "2024-01-01.parquet");
+        assertQuery("SELECT * FROM read_parquet('" + exportDir + "2024-01-03.parquet')")
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("ts")
+                .returns(expectedLastDayRows);
+    }
+
     private void assertCompositeExportKeepsParquetSetting(String exportDirName) throws Exception {
         for (String day : new String[]{"2024-01-01", "2024-01-03"}) {
             final String parquetPath = exportRoot + File.separator + exportDirName + File.separator + day + ".parquet";
             assertParquetMatchesQuery("SELECT * FROM \"src ct\" WHERE ts IN '" + day + "'", parquetPath);
             ParquetTestUtils.assertColumnsUseDictionaryEncoding(parquetPath, configuration.getFilesFacade(), 0);
         }
+    }
+
+    // Runs the COPY of t that the test holds to the end of its export and returns the export id.
+    private String assertCopyFactoryExports(RecordCursorFactory factory, String expectedRows) throws Exception {
+        final String exportId = runCopy(factory);
+        runExportJob();
+        assertExportSucceeded(exportId);
+        assertQuery("SELECT * FROM read_parquet('" + parquetPath("again") + "')")
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("ts")
+                .returns(expectedRows);
+        return exportId;
+    }
+
+    private void assertCopyFactoryRunWhileQueuedIsDuplicate(String copySql, String copySource) throws Exception {
+        try (RecordCursorFactory factory = select(copySql)) {
+            final String firstId = runCopy(factory);
+            try {
+                // No export job runs yet, so the first export is still queued.
+                assertCopyFails(factory, 0, "duplicate sql statement: " + copySource + " [id=" + firstId + ']');
+            } finally {
+                runExportJob();
+            }
+            assertExportSucceeded(firstId);
+            final String nextId = assertCopyFactoryExports(factory, """
+                    x\tts
+                    1\t2024-01-01T00:00:00.000000Z
+                    2\t2024-01-01T01:00:00.000000Z
+                    """);
+            Assert.assertNotEquals(firstId, nextId);
+        }
+    }
+
+    private void assertCopyFactoryRunsAgain(String walMode, String copySql, boolean isExportedThroughSelect) throws Exception {
+        createTableToCopyAgain(walMode);
+        try (RecordCursorFactory factory = select(copySql)) {
+            final String firstId = assertCopyFactoryExports(factory, """
+                    x\tts
+                    1\t2024-01-01T00:00:00.000000Z
+                    2\t2024-01-01T01:00:00.000000Z
+                    """);
+            execute("INSERT INTO t VALUES (3, '2024-01-01T02:00:00.000000Z')");
+            drainWalQueue();
+            final String secondId = assertCopyFactoryExports(factory, """
+                    x\tts
+                    1\t2024-01-01T00:00:00.000000Z
+                    2\t2024-01-01T01:00:00.000000Z
+                    3\t2024-01-01T02:00:00.000000Z
+                    """);
+            Assert.assertNotEquals(firstId, secondId);
+            // An export through a select logs the temp table named after the export, an export that reads the table
+            // logs the table.
+            assertQuery("SELECT DISTINCT table_name FROM \"" + configuration.getSystemTableNamePrefix() + "copy_export_log\" WHERE id = '" + secondId + "'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("table_name\n" + (isExportedThroughSelect ? "copy." + secondId : "t") + '\n');
+        }
+        execute("DROP TABLE t");
     }
 
     private void assertCopyOfFusedJoinGroupByAfterBuildTableGrowth(
@@ -4996,6 +5250,20 @@ public class CopyExportTest extends AbstractCairoTest {
         try (RecordCursorFactory factory = select(query)) {
             Assert.assertEquals(query, expectedMode, ParquetExportMode.determineExportMode(factory, false, sqlExecutionContext));
         }
+    }
+
+    private void assertExportSucceeded(String exportId) throws Exception {
+        assertQuery("SELECT status FROM \"" + configuration.getSystemTableNamePrefix() + "copy_export_log\" WHERE id = '" + exportId + "' AND phase = 'success'")
+                .noLeakCheck()
+                .returns("status\nfinished\n");
+    }
+
+    private void assertFirstPartitionOfCtComposite() {
+        try (TableReader reader = engine.getReader(engine.verifyTableName("ct"))) {
+            Assert.assertTrue("2024-01-01 must be composite for this test to mean anything",
+                    reader.getTxFile().isPartitionComposite(0));
+        }
+        engine.releaseAllReaders();
     }
 
     private void assertParquetExportOfConvertedColumn(String srcType, String srcValueExpr, String dstType, String expectedReadback) throws Exception {
@@ -5171,6 +5439,17 @@ public class CopyExportTest extends AbstractCairoTest {
                 " TIMESTAMP(ts) PARTITION BY DAY WAL");
         // A later, plain day, so 2024-01-01 is never the active partition and the backfill is O3.
         execute("INSERT INTO \"src ct\" VALUES (999_999, '2024-01-03T00:00:00.000000Z')");
+        drainWalQueue();
+    }
+
+    // t holds one day of rows, so every route of an export of t writes the single file again.parquet.
+    private void createTableToCopyAgain(String walMode) throws Exception {
+        execute("CREATE TABLE t (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY " + walMode);
+        execute("""
+                INSERT INTO t VALUES
+                (1, '2024-01-01T00:00:00.000000Z'),
+                (2, '2024-01-01T01:00:00.000000Z')
+                """);
         drainWalQueue();
     }
 
