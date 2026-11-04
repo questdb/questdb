@@ -2766,44 +2766,21 @@ public final class IntervalUtils {
                 }
                 sink.clear(afterPrefixLen);
 
-                // Incremental merge: when interval count exceeds threshold, merge to bound memory
-                // This prevents unbounded growth from large ranges like [1..1000000]. Without a pending
-                // date-precise day filter the merge runs first, and an expanding day filter runs on the
-                // merged blocks afterwards. The merge joins only the intervals from the merge base on:
-                // those of the date list element, or of the time list value, whose day filter and time
-                // zone are still to come. Joining them with the earlier, finished intervals would
-                // shift the start of this element's intervals and leave them partly unconverted.
-                final int mergeBase = pendingDayFilter.mergeBase;
-                if (pendingDayFilter.dayFilterMask == 0) {
-                    int intervalCount = (out.size() - mergeBase) / 2;
-                    if (intervalCount >= configuration.getSqlIntervalIncrementalMergeThreshold()) {
-                        unionBracketExpandedIntervals(out, mergeBase);
-                        pendingDayFilter.elementMerged(out);
-                        // Check if we still exceed max limit after merging
-                        intervalCount = (out.size() - mergeBase) / 2;
-                        int maxIntervalsAfterMerge = configuration.getSqlIntervalMaxIntervalsAfterMerge();
-                        if (intervalCount > maxIntervalsAfterMerge) {
-                            throw SqlException.$(errorPos, "Bracket expansion produces too many intervals (max ")
-                                    .put(maxIntervalsAfterMerge).put(')');
-                        }
-                    }
-                } else if ((out.size() - pendingDayFilter.filteredLim) / 2 >= configuration.getSqlIntervalIncrementalMergeThreshold()) {
-                    // The day filter judges each leaf by its own day, so it runs on the leaves added
-                    // since the last filter before the merge joins them into blocks. Counting only
-                    // those leaves keeps the merges at one per threshold leaves. expandDateList
-                    // counts the growth across elements against the merge watermark.
-                    pendingDayFilter.apply(timestampDriver, out);
-                    // the filter may drop every new leaf, and the union needs at least two intervals
-                    if (out.size() > mergeBase + 2) {
-                        unionBracketExpandedIntervals(out, mergeBase);
-                    }
-                    pendingDayFilter.elementMerged(out);
-                    int intervalCount = (out.size() - mergeBase) / 2;
-                    int maxIntervalsAfterMerge = configuration.getSqlIntervalMaxIntervalsAfterMerge();
-                    if (intervalCount > maxIntervalsAfterMerge) {
-                        throw SqlException.$(errorPos, "Bracket expansion produces too many intervals (max ")
-                                .put(maxIntervalsAfterMerge).put(')');
-                    }
+                // Incremental merge: once the current merge range holds the threshold, merge it to
+                // bound memory. This prevents unbounded growth from large ranges like [1..1000000].
+                // The merge joins only the intervals of the current range (see PendingDayFilter):
+                // those of the date list element, or of the time list value, whose time zone, expanding
+                // day filter or tick calendar is still to come. Joining them with the earlier, finished
+                // intervals would shift the start of this range and leave its intervals partly
+                // unconverted. Without a pending date-precise day filter the merge counts the whole
+                // range, and an expanding day filter runs on the merged blocks afterwards. With one,
+                // it counts the growth of the range since its last union, which keeps the merges at
+                // one per threshold leaves.
+                final int mergeThreshold = configuration.getSqlIntervalIncrementalMergeThreshold();
+                if (pendingDayFilter.isPending()
+                        ? (out.size() - pendingDayFilter.mergedLim) / 2 >= mergeThreshold
+                        : (out.size() - pendingDayFilter.mergeBase) / 2 >= mergeThreshold) {
+                    mergeIncrementally(timestampDriver, configuration, out, pendingDayFilter, errorPos);
                 }
             }
 
@@ -3169,6 +3146,10 @@ public final class IntervalUtils {
                     }
                 }
 
+                // a day filter on an element without date precision (year or month) expands it to its
+                // matching days, while one on a precise date keeps or drops each interval
+                final boolean isElementDatePrecise = hasDatePrecision(elementSeq, resolvedElementStart, effectiveElementEnd);
+
                 // Build the full interval string: element (without tz) + suffix (without tz)
                 // When tick calendar filter is present, exclude duration from parsing
                 // (duration will be applied after the tick calendar filter)
@@ -3222,6 +3203,22 @@ public final class IntervalUtils {
                         }
                     }
 
+                    // The time zone, expanding day filter and tick calendar below run on this element's
+                    // intervals only, so an element with any of them merges its intervals in a range
+                    // of its own. Any other element adds its intervals to the merge range of the list,
+                    // where its merges union them with the finished intervals of the earlier elements.
+                    final boolean hasOwnMergeRange = activeTzLo >= 0
+                            || activeExchangeSchedule != null
+                            || (activeDayFilterMask != 0 && !isElementDatePrecise);
+                    final int listMergedLim = pendingDayFilter.mergedLim;
+                    pendingDayFilter.ofElement(
+                            activeExchangeSchedule == null ? activeDayFilterMask : 0,
+                            isElementDatePrecise,
+                            outSizeBeforeElement
+                    );
+                    if (hasOwnMergeRange) {
+                        pendingDayFilter.openMergeRange(outSizeBeforeElement);
+                    }
                     final ObjectStackPool<StringSink> sinks = tlExpansionSinks.get();
                     final StringSink expansionSink = sinks.next();
                     final boolean hadTimeListBracket;
@@ -3240,14 +3237,13 @@ public final class IntervalUtils {
                                 activeTzSeq,   // tzSeq - for time list TZ fallback
                                 activeTzLo,    // tzLo
                                 activeTzHi,    // tzHi
-                                pendingDayFilter.ofElement(
-                                        activeExchangeSchedule == null ? activeDayFilterMask : 0,
-                                        hasDatePrecision(elementSeq, resolvedElementStart, effectiveElementEnd),
-                                        outSizeBeforeElement
-                                )
+                                pendingDayFilter
                         );
                     } finally {
                         sinks.release(expansionSink);
+                        if (hasOwnMergeRange) {
+                            pendingDayFilter.restoreMergeRange(outSizeBeforeExpansion, listMergedLim);
+                        }
                     }
                     // If time list brackets were processed, they handled TZ internally
                     if (hadTimeListBracket) {
@@ -3272,7 +3268,7 @@ public final class IntervalUtils {
                                 out,
                                 outSizeBeforeElement,
                                 activeDayFilterMask,
-                                hasDatePrecision(elementSeq, resolvedElementStart, effectiveElementEnd)
+                                isElementDatePrecise
                         );
                     }
                 }
@@ -3288,10 +3284,11 @@ public final class IntervalUtils {
                             globalDurationSemicolon >= 0 ? globalDurationSemicolon + 1 : -1, lim, errorPos);
                 }
 
-                // The incremental merge of the bracket expansion joins only this element's intervals,
-                // so this check counts the intervals that the elements added since the last union of
-                // the list, after each element's filter and timezone, against the list's merge
-                // watermark. The union then joins finished intervals only.
+                // An element with a merge range of its own unions only its own intervals, and any
+                // element may end below the threshold since the last union of the list, so this check
+                // counts the intervals that the elements added since the last union of the list, after
+                // each element's filter, time zone and calendar, against the list's merge watermark.
+                // The union then joins finished intervals only.
                 if ((out.size() - pendingDayFilter.mergedLim) / 2 >= configuration.getSqlIntervalIncrementalMergeThreshold()) {
                     if (out.size() > outSizeBeforeExpansion + 2) {
                         unionBracketExpandedIntervals(out, outSizeBeforeExpansion);
@@ -3573,6 +3570,20 @@ public final class IntervalUtils {
                     }
                 }
 
+                // The time zone and tick calendar below run on this day's intervals only, so a day
+                // with either merges its intervals in a range of its own. Any other day adds its
+                // intervals to the merge range of the list. The day filter is always date-precise.
+                final boolean hasOwnMergeRange = activeTzLo >= 0 || activeExchangeSchedule != null;
+                final int listMergedLim = pendingDayFilter.mergedLim;
+                // appendDate always writes a full "YYYY-MM-DD" date
+                pendingDayFilter.ofElement(
+                        activeExchangeSchedule == null ? activeDayFilterMask : 0,
+                        true,
+                        outSizeBeforeElement
+                );
+                if (hasOwnMergeRange) {
+                    pendingDayFilter.openMergeRange(outSizeBeforeElement);
+                }
                 final ObjectStackPool<StringSink> sinks = tlExpansionSinks.get();
                 final StringSink expansionSink = sinks.next();
                 final boolean hadTimeListBracket;
@@ -3591,15 +3602,13 @@ public final class IntervalUtils {
                             activeTzSeq,
                             activeTzLo,
                             activeTzHi,
-                            // appendDate always writes a full "YYYY-MM-DD" date
-                            pendingDayFilter.ofElement(
-                                    activeExchangeSchedule == null ? activeDayFilterMask : 0,
-                                    true,
-                                    outSizeBeforeElement
-                            )
+                            pendingDayFilter
                     );
                 } finally {
                     sinks.release(expansionSink);
+                    if (hasOwnMergeRange) {
+                        pendingDayFilter.restoreMergeRange(outSizeBeforeExpansion, listMergedLim);
+                    }
                 }
                 if (hadTimeListBracket) {
                     activeTzLo = -1;
@@ -3843,6 +3852,16 @@ public final class IntervalUtils {
                 int timeEnd = tzMarker >= 0 ? tzMarker : elemEnd;
                 int tzLo = tzMarker >= 0 ? tzMarker + 1 : -1;
                 int tzHi = tzMarker >= 0 ? elemEnd : -1;
+                // its own time zone, or the one it inherits from the list, the element or the string
+                final boolean hasZone = tzLo >= 0 || globalTzLo >= 0;
+
+                if (hasSuffixBrackets && hasZone) {
+                    // The zone below converts this value's intervals as a merge range of their own.
+                    // The filter of the leaves below the value runs first, so that no filter in the
+                    // range compacts them and moves the value's first leaves below its start, where
+                    // its zone would miss them. Those leaves are final: every earlier value's zone ran.
+                    pendingDayFilter.apply(timestampDriver, out);
+                }
 
                 // Remember output size before parsing this element
                 int outSizeBeforeElement = out.size();
@@ -3864,9 +3883,14 @@ public final class IntervalUtils {
                     }
 
                     // Recursively expand brackets in the suffix. The time zone below converts this
-                    // value's intervals only, so its incremental merge must not join earlier values.
-                    final int mergeBase = pendingDayFilter.mergeBase;
-                    pendingDayFilter.mergeBase = outSizeBeforeElement;
+                    // value's intervals only, so a value with a zone merges them in a range of its own
+                    // that must not join earlier values. A value without one adds its intervals to the
+                    // enclosing merge range.
+                    final int enclosingMergeBase = pendingDayFilter.mergeBase;
+                    final int enclosingMergedLim = pendingDayFilter.mergedLim;
+                    if (hasZone) {
+                        pendingDayFilter.openMergeRange(outSizeBeforeElement);
+                    }
                     try {
                         expandBracketsRecursive(
                                 timestampDriver,
@@ -3886,7 +3910,9 @@ public final class IntervalUtils {
                                 pendingDayFilter
                         );
                     } finally {
-                        pendingDayFilter.mergeBase = mergeBase;
+                        if (hasZone) {
+                            pendingDayFilter.restoreMergeRange(enclosingMergeBase, enclosingMergedLim);
+                        }
                     }
                 } else {
                     // No brackets in suffix - parse directly
@@ -3900,6 +3926,16 @@ public final class IntervalUtils {
                 } else if (globalTzLo >= 0) {
                     // Global timezone as fallback
                     applyTimezoneToIntervals(timestampDriver, configuration, out, outSizeBeforeElement, globalTzSeq, globalTzLo, globalTzHi, errorPos);
+                }
+
+                // A value with bracketed suffixes may add many intervals, more so when its suffix
+                // holds another time list, which no numeric bracket merges. Once the value's zone ran,
+                // its intervals are final, and the enclosing merge range unions them once it grew by
+                // the threshold since its last union, which may have run in an earlier call of this
+                // time list. A value without bracketed suffixes adds the one interval it spells out.
+                if (hasSuffixBrackets
+                        && (out.size() - pendingDayFilter.mergedLim) / 2 >= configuration.getSqlIntervalIncrementalMergeThreshold()) {
+                    mergeIncrementally(timestampDriver, configuration, out, pendingDayFilter, errorPos);
                 }
 
                 // Reset sink to prefix for next element
@@ -4167,6 +4203,32 @@ public final class IntervalUtils {
                 throw SqlException.$(errorPos, "Bracket expansion produces too many intervals (max ")
                         .put(maxIntervalsAfterMerge).put(')');
             }
+        }
+    }
+
+    // Unions the current merge range of a bracket expansion, out[mergeBase, size), records the union
+    // as the merge watermark of the range, and checks the interval count of the range against the cap.
+    private static void mergeIncrementally(
+            TimestampDriver timestampDriver,
+            CairoConfiguration configuration,
+            LongList out,
+            PendingDayFilter pendingDayFilter,
+            int errorPos
+    ) throws SqlException {
+        // A pending day filter judges each leaf by its own day, so it runs on the leaves added since
+        // the last filter before the union joins them into blocks. A disarmed holder filters nothing.
+        pendingDayFilter.apply(timestampDriver, out);
+        final int mergeBase = pendingDayFilter.mergeBase;
+        // the filter may drop every new leaf, and the union needs at least two intervals
+        if (out.size() > mergeBase + 2) {
+            unionBracketExpandedIntervals(out, mergeBase);
+        }
+        pendingDayFilter.merged(out);
+        final int intervalCount = (out.size() - mergeBase) / 2;
+        final int maxIntervalsAfterMerge = configuration.getSqlIntervalMaxIntervalsAfterMerge();
+        if (intervalCount > maxIntervalsAfterMerge) {
+            throw SqlException.$(errorPos, "Bracket expansion produces too many intervals (max ")
+                    .put(maxIntervalsAfterMerge).put(')');
         }
     }
 
@@ -4730,14 +4792,26 @@ public final class IntervalUtils {
         out.setPos(writeIdx);
     }
 
-    // The date-precise day filter that a static bracket expansion still owes its leaves, and the merge
-    // watermark of the expansion. With date precision applyDayFilter keeps or drops each interval by
-    // its start day, so the incremental merge in expandBracketsRecursive, which joins adjacent days into
-    // one block, first filters the leaves added since the last filter. The holder stays disarmed for an
-    // expanding filter (year, month or week precision), so that expansion keeps its merge-then-filter
-    // order. Only a union raises mergedLim, so a new date-list element, which restarts the filter at its
-    // own first leaf, cannot hide the growth of earlier elements from expandDateList's check after each
-    // filtered element.
+    // The incremental merge state of a static bracket expansion: the merge range that its merges
+    // union, and the date-precise day filter that it still owes its leaves.
+    //
+    // A merge range is the part of the list, from mergeBase on, that a later time zone, expanding day
+    // filter or tick calendar treats as a whole: the whole expansion or date list; a date list element
+    // or a day of a date variable range with a time zone, expanding day filter or tick calendar of its
+    // own; a time list value with bracketed suffixes and a time zone, its own or an inherited one. Any
+    // other element, day or value adds its intervals to the enclosing range. Every loop that adds to a
+    // range - a numeric bracket, a time list value with bracketed suffixes, a date list element, a day
+    // of a date variable range - unions the range once it grew by the merge threshold since its last
+    // union, mergedLim, and checks the count of the range against the cap. Only a union of the range
+    // moves mergedLim, and a nested range saves and restores the enclosing one, so each range holds
+    // fewer than cap + threshold intervals after each iteration of its loops.
+    //
+    // With date precision applyDayFilter keeps or drops each interval by its start day, so a merge,
+    // which joins adjacent days into one block, first filters the leaves added since the last filter,
+    // out[filteredLim, size). The holder stays disarmed for an expanding filter (year, month or week
+    // precision), so that expansion keeps its merge-then-filter order. filteredLim never lies below the
+    // base of an open range: a zoned time list value finishes the filter below it before it opens its
+    // range, so no filter compacts the list across the start of a range whose time zone is to come.
     private static final class PendingDayFilter {
         // 0: no filter pending (no '#', expanding precision, or a tick calendar)
         private int dayFilterMask;
@@ -4745,10 +4819,9 @@ public final class IntervalUtils {
         private int filteredLim;
         // applyDayFilter's ignoreMultiDay argument; always true while a filter is pending
         private boolean isDatePrecise;
-        // The incremental merge of a bracket expansion joins out[mergeBase, size): the intervals
-        // whose day filter and time zone are still to come
+        // The incremental merge joins out[mergeBase, size), the intervals of the current merge range
         private int mergeBase;
-        // out.size() after the last union from the expansion base
+        // out.size() after the last union of the current merge range, or the start of the range
         private int mergedLim;
 
         // Filters out[filteredLim, size) and advances the filter watermark.
@@ -4759,17 +4832,11 @@ public final class IntervalUtils {
             filteredLim = out.size();
         }
 
-        // Every union from the merge base calls this. The intervals before the merge base took no
-        // part in it, so the merge watermark of the list stays.
-        void elementMerged(LongList out) {
-            filteredLim = out.size();
-        }
-
         boolean isPending() {
             return dayFilterMask != 0;
         }
 
-        // Every union from the expansion base calls this.
+        // Every union of the current merge range calls this.
         void merged(LongList out) {
             filteredLim = out.size();
             mergedLim = out.size();
@@ -4786,17 +4853,28 @@ public final class IntervalUtils {
             return this;
         }
 
-        // Starts one element of the date list that the last of() started. The merge watermark stays,
-        // so the intervals that earlier elements added since the last union still count toward the
-        // next merge. It only moves down, when a tick calendar shrank the list below it. Only a
-        // date-precise filter arms the holder.
-        PendingDayFilter ofElement(int dayFilterMask, boolean isDatePrecise, int elementBase) {
+        // Arms the filter of one element of the date list that the last of() started, or of one day
+        // of a date variable range in it. The merge range stays the list's unless the caller opens
+        // one for the element. Only a date-precise filter arms the holder.
+        void ofElement(int dayFilterMask, boolean isDatePrecise, int elementBase) {
+            // Every rewrite of the list starts at or above the merge watermark of the list, and its
+            // unions move the watermark to their end, so the list never shrinks below it.
+            assert mergedLim <= elementBase;
             this.dayFilterMask = isDatePrecise ? dayFilterMask : 0;
             this.isDatePrecise = isDatePrecise;
             this.filteredLim = elementBase;
-            this.mergeBase = elementBase;
-            this.mergedLim = Math.min(mergedLim, elementBase);
-            return this;
+        }
+
+        // Opens a merge range at base, nested in the current one, which the caller saves first.
+        void openMergeRange(int base) {
+            this.mergeBase = base;
+            this.mergedLim = base;
+        }
+
+        // Closes a nested merge range and restores the enclosing one.
+        void restoreMergeRange(int mergeBase, int mergedLim) {
+            this.mergeBase = mergeBase;
+            this.mergedLim = mergedLim;
         }
     }
 }

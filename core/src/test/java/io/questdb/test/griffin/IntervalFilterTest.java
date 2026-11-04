@@ -31,7 +31,9 @@ import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TickCalendarServiceFactory;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
@@ -50,6 +52,8 @@ import org.junit.runners.Parameterized;
 
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @RunWith(Parameterized.class)
 public class IntervalFilterTest extends AbstractCairoTest {
@@ -606,6 +610,81 @@ public class IntervalFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInDateListCoveredElementOverMaxIntervals() throws Exception {
+        // The later element of each list holds more intervals than the cap (1,024), and they never
+        // touch, but they all lie in the first element's day. With no time zone, expanding day
+        // filter or tick calendar of its own, the element adds them to the merge range of the list,
+        // whose merges union them into that day before they count. One row every 7 minutes from
+        // 2023-12-31 to 2024-01-02, 206 of them on 2024-01-01.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE t (tm #TIMESTAMP, d DATE, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", timestampType.getTypeName());
+            execute("""
+                    INSERT INTO t
+                    SELECT '2023-12-31'::TIMESTAMP + (x - 1) * 420_000_000L,
+                           ('2023-12-31'::TIMESTAMP + (x - 1) * 420_000_000L)::DATE,
+                           '2023-12-31'::TIMESTAMP + (x - 1) * 420_000_000L
+                    FROM long_sequence(618)
+                    """);
+            final String day = "year(ts) = 2024 AND month(ts) = 1 AND day(ts) = 1";
+            final String dayRows = "SELECT ts FROM t WHERE " + day;
+            // 1,200 slots of 10 ms, as numeric brackets and as a time list, 6,000 slots of 1 ms in one
+            // time list value, and 1,200 slots in nested time lists
+            final String n1 = "[2024-01-01,2024-01-01T[09..10]:00:[00..59].[0..9]0]";
+            final String n2 = "[2024-01-01,2024-01-01T[09:00,10:00]:[00..59].[0..9]0]";
+            final String n3 = "[2024-01-01,2024-01-01T[09:00]:[00..59].[0..9][0..9]0]";
+            for (String tick : new String[]{n1, n2, n3, "[2024-01-01,2024-01-01T[09:,10:][00:,01:][00..59].[0..9]0]"}) {
+                assertInOnEveryColumn(tick, day, 206);
+                bindVariableService.clear();
+                bindVariableService.setStr("p", tick);
+                for (String column : new String[]{"ts", "tm"}) {
+                    assertSqlCursors(dayRows, "SELECT ts FROM t WHERE " + column + " IN :p");
+                }
+            }
+            assertSqlCursors("SELECT ts FROM t WHERE NOT (" + day + ")", "SELECT ts FROM t WHERE ts NOT IN '" + n1 + "'");
+            // the interval scan reads the one merged day
+            assertQuery("SELECT ts FROM t WHERE ts IN '" + n1 + "'")
+                    .noLeakCheck()
+                    .assertsPlanContaining(timestampType == TestTimestampType.NANO
+                            ? "intervals: [(\"2024-01-01T00:00:00.000000000Z\",\"2024-01-01T23:59:59.999999999Z\")]"
+                            : "intervals: [(\"2024-01-01T00:00:00.000000Z\",\"2024-01-01T23:59:59.999999Z\")]");
+            // a tick string in every row, which the filter parses per row
+            executeWithRewriteTimestamp("CREATE TABLE u (ts #TIMESTAMP, s STRING, v VARCHAR) TIMESTAMP(ts) PARTITION BY DAY", timestampType.getTypeName());
+            execute("INSERT INTO u SELECT ts, '" + n1 + "', '" + n1 + "' FROM t");
+            for (String column : new String[]{"s", "v"}) {
+                assertSqlCursors("SELECT ts FROM u WHERE " + day, "SELECT ts FROM u WHERE ts IN " + column);
+            }
+
+            // A later element with a time zone keeps a merge range of its own, because the zone
+            // converts only its intervals, so its 1,200 slots fail.
+            final String overCapError = "Bracket expansion produces too many intervals (max 1024)";
+            final String n2z = n2 + "@+05:00";
+            for (String column : new String[]{"ts", "tm"}) {
+                final String sql = "SELECT ts FROM t WHERE " + column + " IN '" + n2z + "'";
+                assertExceptionNoLeakCheck(sql, sql.indexOf("'["), overCapError);
+            }
+            bindVariableService.clear();
+            bindVariableService.setStr("p", n2z);
+            assertExceptionNoLeakCheck("SELECT ts FROM t WHERE tm IN :p", 0, overCapError);
+            // the interval scan holds no rows for a bind value it cannot parse
+            assertQuery("SELECT ts FROM t WHERE ts IN :p").noLeakCheck().timestamp("ts").returns("ts\n");
+            // one factory, run again with new bind values
+            try (RecordCursorFactory factory = select("SELECT count() FROM t WHERE tm IN :p")) {
+                bindVariableService.setStr("p", n1);
+                assertFactory(factory).withContext(sqlExecutionContext).expectSize().noRandomAccess().returns("count\n206\n");
+                bindVariableService.setStr("p", n2z);
+                try (RecordCursor ignore = factory.getCursor(sqlExecutionContext)) {
+                    Assert.fail("Expected the cap error for " + n2z);
+                } catch (SqlException e) {
+                    Assert.assertEquals(0, e.getPosition());
+                    TestUtils.assertContains(e.getFlyweightMessage(), overCapError);
+                }
+                bindVariableService.setStr("p", n3);
+                assertFactory(factory).withContext(sqlExecutionContext).expectSize().noRandomAccess().returns("count\n206\n");
+            }
+        });
+    }
+
+    @Test
     public void testInDateListDayFilterAfterLargeElement() throws Exception {
         // The first element expands to 336 intervals, above the incremental merge threshold (256),
         // and the second element's day filter must judge only the Mondays of March and April 2023.
@@ -731,9 +810,9 @@ public class IntervalFilterTest extends AbstractCairoTest {
 
     @Test
     public void testInDateListOverMaxIntervalsFailsEarly() throws Exception {
-        // The one-minute values of the second element lie an hour apart and never touch. Its
-        // incremental merge counts its own 1,025th interval in February, so too-many-intervals
-        // wins over month 13.
+        // The one-minute values of the second element lie an hour apart and never touch. Its merges
+        // union them with the first element's day, and the list's 1,025th interval is the 16th
+        // value of February 16, so too-many-intervals wins over month 13.
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
                     "CREATE TABLE x (k INT, tm #TIMESTAMP, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
@@ -747,8 +826,8 @@ public class IntervalFilterTest extends AbstractCairoTest {
             for (String column : new String[]{"ts", "tm"}) {
                 assertOverMaxIntervalsError("SELECT k FROM x WHERE " + column + " IN '[2024-01-01,2024-[01..13]-[01..28]T[00..23]:00]'");
                 // The failed compilation leaves the next query intact. The second element repeats
-                // days 1-11 of January, and its merges count only its own intervals against the
-                // cap, not the first element's 960 as well.
+                // days 1-11 of January, and its merges union its values into the first element's
+                // 960 before they count them against the cap.
                 assertQuery("SELECT k FROM x WHERE " + column + " IN '[2024-[01..02]-[01..20]T[00..23]:00,2024-01-[01..11]T[00..23]:00]'")
                         .noLeakCheck()
                         .returns("k\n1\n");
@@ -1792,6 +1871,89 @@ public class IntervalFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInTimeListSuffixBracketsAboveMergeThreshold() throws Exception {
+        // Time list values with bracketed suffixes merge between them once the list has grown by
+        // the incremental merge threshold (256), and the merges count against the cap (1,024).
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE x (k INT, tm #TIMESTAMP, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                    timestampType.getTypeName()
+            );
+            // 2024-01-01 and 2024-01-08 are Mondays, 2024-01-06 a Saturday
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, '2024-01-01T04:00:00.005000Z', '2024-01-01T04:00:00.005000Z'),
+                    (2, '2024-01-01T04:00:00.015000Z', '2024-01-01T04:00:00.015000Z'),
+                    (3, '2024-01-01T09:00:00.505000Z', '2024-01-01T09:00:00.505000Z'),
+                    (4, '2024-01-01T09:00:01.505000Z', '2024-01-01T09:00:01.505000Z'),
+                    (5, '2024-01-01T09:00:59.905000Z', '2024-01-01T09:00:59.905000Z'),
+                    (6, '2024-01-01T09:00:59.995000Z', '2024-01-01T09:00:59.995000Z'),
+                    (7, '2024-01-06T04:00:10.000000Z', '2024-01-06T04:00:10.000000Z'),
+                    (8, '2024-01-08T04:00:05.000000Z', '2024-01-08T04:00:05.000000Z'),
+                    (9, '2024-01-08T04:00:10.000000Z', '2024-01-08T04:00:10.000000Z'),
+                    (10, '2024-01-08T09:00:05.000000Z', '2024-01-08T09:00:05.000000Z'),
+                    (11, '2024-01-08T09:00:10.000000Z', '2024-01-08T09:00:10.000000Z'),
+                    (12, '2024-01-09T04:00:10.000000Z', '2024-01-09T04:00:10.000000Z')
+                    """);
+            // The 600 slots of 10 ms of the minute 09:00 from 10 duplicate values hold rows 3, 4 and
+            // 5; rows 2 and 6 lie between slots. At +05:00 the minute is 04:00Z and holds row 1.
+            final String values = "09:00,".repeat(9) + "09:00";
+            assertInTickRows("2024-01-01T[" + values + "]:[00..59].[0..9]0", "k\n3\n4\n5\n");
+            assertInTickRows("2024-01-01T[" + values + "]:[00..59].[0..9]0@+05:00", "k\n1\n");
+            assertInTickRows("2024-01-01T[" + "09:00@+05:00,".repeat(9) + "09:00@+05:00]:[00..59].[0..9]0", "k\n1\n");
+            assertInTickRows("2024-01-01T[" + "09:00@+05:00,04:00,".repeat(4) + "09:00@+05:00,04:00]:[00..59].[0..9]0", "k\n1\n");
+            // 100 outer values of the same 100 seconds: the second 09:00:00 holds row 3
+            assertInTickRows("2024-01-01T[" + "09:,".repeat(99) + "09:][" + "00:00,".repeat(99) + "00:00]", "k\n3\n");
+            // Sunday 2024-01-07 and Monday 2024-01-08 at 09:00 at +05:00, 04:00Z on the same day: the
+            // first 16 seconds of the minutes 04:00 to 04:16 on Monday hold rows 8 and 9. The
+            // dropped Sunday leaves never move Monday's leaves below the start of their zoned value,
+            // which would leave them at 09:00Z, local time read as UTC (rows 10 and 11).
+            final StringBuilder minutes = new StringBuilder();
+            final StringBuilder seconds = new StringBuilder();
+            for (int k = 0; k < 17; k++) {
+                minutes.append(k == 0 ? "" : ",").append(':').append(twoDigits(k));
+                if (k < 16) {
+                    seconds.append(k == 0 ? "" : ",").append(':').append(twoDigits(k));
+                }
+            }
+            assertInTickRows("2024-01-[07..08]T[09@+05:00][" + minutes + "][" + seconds + "]#mon", "k\n8\n9\n");
+            // One zoned value per day, 04:00:00 to 04:00:50Z on each Monday to Friday among days 1-28
+            // of each month: rows 1, 2, 8, 9 and 12, not the Saturday (row 7) or 09:00Z (rows 10 and 11)
+            final String workdayTick = "2024-[01..12]-[01..28]T[09:00@+05:00]:[00..50].[0..9]#workday";
+            final String workdayRows = "SELECT k FROM x WHERE year(ts) = 2024 AND day(ts) <= 28 AND day_of_week(ts) <= 5 AND hour(ts) = 4 AND minute(ts) = 0 AND second(ts) <= 50";
+            assertQuery(workdayRows).noLeakCheck().returns("k\n1\n2\n8\n9\n12\n");
+            final int callerJitMode = sqlExecutionContext.getJitMode();
+            try {
+                for (int jitMode : new int[]{SqlJitMode.JIT_MODE_ENABLED, SqlJitMode.JIT_MODE_DISABLED}) {
+                    sqlExecutionContext.setJitMode(jitMode);
+                    bindVariableService.clear();
+                    bindVariableService.setStr("p", workdayTick);
+                    for (String column : new String[]{"ts", "tm"}) {
+                        assertSqlCursors(workdayRows, "SELECT k FROM x WHERE " + column + " IN '" + workdayTick + "'");
+                        assertSqlCursors(workdayRows, "SELECT k FROM x WHERE " + column + " IN :p");
+                    }
+                }
+            } finally {
+                sqlExecutionContext.setJitMode(callerJitMode);
+            }
+
+            // The first two values hold 1,200 intervals that never touch, so too-many-intervals
+            // wins over the invalid third value.
+            for (String tick : new String[]{
+                    "2024-01-01T[00:00,00:01,25:99]:[00..59].[0..9]0",
+                    "2024-01-01T[00:00,00:01,25:99]:[00..59].[0..9]0@+05:00",
+                    "2024-01-01T[00:00@+05:00,00:01@+05:00,25:99@+05:00]:[00..59].[0..9]0",
+                    "2024-01-01T[09:,10:,25:][" + evenSeconds(600) + "]",
+            }) {
+                for (String column : new String[]{"ts", "tm"}) {
+                    final String sql = "SELECT k FROM x WHERE " + column + " IN '" + tick + "'";
+                    assertExceptionNoLeakCheck(sql, sql.indexOf("'2024"), "Bracket expansion produces too many intervals (max 1024)");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testInTimeListTimeZoneAboveMergeThreshold() throws Exception {
         // Each time list value expands the first minute of its hour to 600 tenths of a second, above
         // the incremental merge threshold (256), and then converts them from its own time zone.
@@ -1853,7 +2015,7 @@ public class IntervalFilterTest extends AbstractCairoTest {
             final StringSink sink = new StringSink();
             final LongList expected = new LongList();
             final LongList actual = new LongList();
-            for (int i = 0; i < 3_000; i++) {
+            for (int i = 0; i < 4_500; i++) {
                 final String tick = randomTickString(rnd, tickSink, true);
                 expected.clear();
                 actual.clear();
@@ -1923,7 +2085,7 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     """);
             final StringSink sink = new StringSink();
             final StringSink tickSink = new StringSink();
-            for (int i = 0; i < 300; i++) {
+            for (int i = 0; i < 450; i++) {
                 final long now = Micros.toMicros(2023, 12, 28, 0, 0) + rnd.nextLong(25 * Micros.DAY_MICROS);
                 setCurrentMicros(now);
                 final String bindValue = randomTickString(rnd, tickSink, true);
@@ -2322,13 +2484,113 @@ public class IntervalFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRandomTickStringCoversTimeListsAndCoveredElements() throws Exception {
+        // testIncrementalMergeMatchesUnmergedParse and testIntervalScanMatchesRowFilter reach the
+        // merges between time list values and the merge range of a date list only through the
+        // tick strings that randomTickString builds, so it must build each shape that runs them.
+        // The merge threshold is 256 intervals.
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        // case 6: the date or day range, the values, the tenths, the global zone and the day filter
+        final Pattern timeListPattern = Pattern.compile("2024-01-(\\d\\d|\\[(\\d\\d)\\.\\.(\\d\\d)])T\\[([^]]+)]:\\[00\\.\\.59](\\.\\[0\\.\\.9])?(@[^#;]+)?(#[^;]+)?(;\\d+m)?");
+        // case 7: the time of the later element and the day filter
+        final Pattern coveredPattern = Pattern.compile("\\[2024-01-(\\d\\d),2024-01-\\d\\dT(.+)](#.+)?");
+        // case 8: the outer values, the inner values, the seconds bracket and the day filter
+        final Pattern nestedPattern = Pattern.compile("2024-01-\\d\\dT\\[([^]]+)]\\[([^]]+)](\\[00\\.\\.59])?(#.+)?");
+        final String overCapError = "Bracket expansion produces too many intervals (max 1024)";
+        assertMemoryLeak(() -> {
+            final TimestampDriver timestampDriver = timestampType.getDriver();
+            final StringSink tickSink = new StringSink();
+            final StringSink sink = new StringSink();
+            final LongList intervals = new LongList();
+            boolean hasZonedTenthValues = false;
+            boolean hasZonedSecondValues = false;
+            boolean hasZonelessValues = false;
+            boolean hasFilteredValues = false;
+            boolean hasDayRangeOfSmallCalls = false;
+            final boolean[] hasCoveredSpelling = new boolean[3];
+            boolean hasNestedMinutes = false;
+            boolean hasNestedSeconds = false;
+            boolean hasNestedZoneAndFilter = false;
+            boolean hasNestedMergeBeforeLastValue = false;
+            for (int i = 0; i < 4_500; i++) {
+                final String tick = randomTickString(rnd, tickSink, true);
+                final Matcher timeList = timeListPattern.matcher(tick);
+                if (timeList.matches()) {
+                    final int valueCount = countValues(timeList.group(4));
+                    final boolean hasValueZone = timeList.group(4).indexOf('@') >= 0;
+                    final boolean hasZone = hasValueZone || timeList.group(6) != null;
+                    final boolean hasTenths = timeList.group(5) != null;
+                    final boolean hasDayFilter = timeList.group(7) != null;
+                    // 600 leaves per value: the values merge from the third on
+                    hasZonedTenthValues |= hasValueZone && hasTenths && valueCount >= 3;
+                    // 60 leaves per value: only the merges between values run
+                    hasZonedSecondValues |= hasZone && !hasTenths && valueCount >= 5;
+                    hasZonelessValues |= !hasZone && valueCount >= 3;
+                    hasFilteredValues |= hasDayFilter;
+                    // Each day runs the time list, whose 60 leaves per value stay below the threshold,
+                    // while the days together reach it: the merges between values join values of
+                    // several days.
+                    if (timeList.group(2) != null && !hasTenths && hasZone && hasDayFilter) {
+                        final int dayCount = Integer.parseInt(timeList.group(3)) - Integer.parseInt(timeList.group(2)) + 1;
+                        hasDayRangeOfSmallCalls |= valueCount * 60 < 256 && dayCount * valueCount * 60 >= 256;
+                    }
+                    continue;
+                }
+                final Matcher covered = coveredPattern.matcher(tick);
+                if (covered.matches()) {
+                    // the list parses, while its later element fails alone
+                    final String laterTime = covered.group(2);
+                    // [HH..HH]:00:..., [HH:MM,HH:MM]:... or [HH:MM]:...
+                    final int spelling = laterTime.charAt(3) == '.' ? 0 : laterTime.charAt(6) == ',' ? 1 : 2;
+                    intervals.clear();
+                    IntervalUtils.parseTickExpr(timestampDriver, configuration, tick, 0, tick.length(), 0, intervals, sink);
+                    final String laterElement = "2024-01-" + covered.group(1) + 'T' + laterTime + (covered.group(3) != null ? covered.group(3) : "");
+                    intervals.clear();
+                    try {
+                        IntervalUtils.parseTickExpr(timestampDriver, configuration, laterElement, 0, laterElement.length(), 0, intervals, sink);
+                    } catch (SqlException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), overCapError);
+                        hasCoveredSpelling[spelling] = true;
+                    }
+                    continue;
+                }
+                final Matcher nested = nestedPattern.matcher(tick);
+                if (nested.matches()) {
+                    final boolean isMinutes = nested.group(3) != null;
+                    hasNestedMinutes |= isMinutes;
+                    hasNestedSeconds |= !isMinutes;
+                    hasNestedZoneAndFilter |= nested.group(1).indexOf('@') >= 0 && nested.group(4) != null;
+                    // the outer values before the last one add 256 one-second leaves or more
+                    hasNestedMergeBeforeLastValue |= !isMinutes && (countValues(nested.group(1)) - 1) * countValues(nested.group(2)) >= 256;
+                }
+            }
+            Assert.assertTrue("zoned values of 600 leaves", hasZonedTenthValues);
+            Assert.assertTrue("zoned values of 60 leaves", hasZonedSecondValues);
+            Assert.assertTrue("zone-less values", hasZonelessValues);
+            Assert.assertTrue("values under a day filter", hasFilteredValues);
+            Assert.assertTrue("a day range of time lists below the merge threshold", hasDayRangeOfSmallCalls);
+            Assert.assertTrue("covered element of hour brackets", hasCoveredSpelling[0]);
+            Assert.assertTrue("covered element of two time list values", hasCoveredSpelling[1]);
+            Assert.assertTrue("covered element of one time list value", hasCoveredSpelling[2]);
+            Assert.assertTrue("nested minutes", hasNestedMinutes);
+            Assert.assertTrue("nested seconds", hasNestedSeconds);
+            Assert.assertTrue("nested values with a zone under a day filter", hasNestedZoneAndFilter);
+            Assert.assertTrue("nested values that merge before the last outer value", hasNestedMergeBeforeLastValue);
+        });
+    }
+
+    @Test
     public void testRandomTickStringExceedsMaxIntervalsFromListStart() throws Exception {
         // testIncrementalMergeMatchesUnmergedParse catches an incremental merge that counts the
         // earlier elements' intervals against the cap (1,024) only if randomTickString builds
-        // lists that hold more than the cap while a later element merges. Without a day filter,
-        // no other read of the cap sees such a list: the assertion on entry sees the empty list,
-        // and the other checks follow a union of the whole list, which holds at most 960
-        // intervals here. Each element order must reach such a merge.
+        // lists that hold more than the cap while a later element merges. A later element with a
+        // time zone keeps a merge range of its own, whose merges count only its own intervals while
+        // the list holds more: each element order must reach such a merge. A later element without
+        // a zone adds its intervals to the merge range of the list, whose merges union them with the
+        // earlier elements' before they count, so no read of the cap sees more than the union of the
+        // list, at most 960 intervals. Without a day filter, no other read of the cap sees such a
+        // list: the assertion on entry sees the empty list, and the other checks follow a union of
+        // the whole list.
         final Rnd rnd = TestUtils.generateRandom(LOG);
         assertMemoryLeak(() -> {
             final TimestampDriver timestampDriver = timestampType.getDriver();
@@ -2342,18 +2604,21 @@ public class IntervalFilterTest extends AbstractCairoTest {
             Assert.assertEquals(configuration.getSqlIntervalMaxIntervalsAfterMerge(), maxIntervals);
             boolean hasLargerFirstOverCap = false;
             boolean hasSmallerFirstOverCap = false;
-            for (int i = 0; i < 3_000; i++) {
+            for (int i = 0; i < 4_500; i++) {
                 final String tick = randomTickString(rnd, tickSink, true);
-                if (tick.indexOf('#') >= 0) {
+                final boolean isLargerFirst = tick.startsWith("[2024-[01..02]");
+                if (tick.indexOf('#') >= 0 || (!isLargerFirst && !tick.contains(",2024-[01..02]"))) {
                     continue;
                 }
                 intervals.clear();
                 listSizeConfiguration.maxListIntervalCount = 0;
                 IntervalUtils.parseTickExpr(timestampDriver, listSizeConfiguration, tick, 0, tick.length(), 0, intervals, sink);
-                if (listSizeConfiguration.maxListIntervalCount > maxIntervals) {
-                    if (tick.startsWith("[2024-[01..02]")) {
+                if (tick.indexOf('@') < 0) {
+                    Assert.assertTrue(tick + ": " + listSizeConfiguration.maxListIntervalCount, listSizeConfiguration.maxListIntervalCount <= maxIntervals);
+                } else if (listSizeConfiguration.maxListIntervalCount > maxIntervals) {
+                    if (isLargerFirst) {
                         hasLargerFirstOverCap = true;
-                    } else if (tick.contains(",2024-[01..02]")) {
+                    } else {
                         hasSmallerFirstOverCap = true;
                     }
                 }
@@ -2427,15 +2692,47 @@ public class IntervalFilterTest extends AbstractCairoTest {
         }
     }
 
+    // The number of comma-separated values
+    private static int countValues(String values) {
+        int valueCount = 1;
+        for (int i = 0, n = values.length(); i < n; i++) {
+            if (values.charAt(i) == ',') {
+                valueCount++;
+            }
+        }
+        return valueCount;
+    }
+
+    // The time list values MM:SS of the first count even seconds from 00:00: 00:00,00:02,...
+    private static String evenSeconds(int count) {
+        final StringBuilder values = new StringBuilder();
+        for (int k = 0; k < count; k++) {
+            values.append(k == 0 ? "" : ",").append(twoDigits(2 * k / 60)).append(':').append(twoDigits(2 * k % 60));
+        }
+        return values.toString();
+    }
+
+    // A time zone of the time list value, with probability 1/3. Hours 06-19 at either offset stay
+    // on the same day in UTC, so a day filter judges a leaf by its local and its UTC day alike.
+    private static void putRandomValueZone(Rnd rnd, StringSink sink) {
+        switch (rnd.nextInt(6)) {
+            case 0 -> sink.put("@+05:00");
+            case 1 -> sink.put("@-03:30");
+            default -> {
+            }
+        }
+    }
+
     // A tick string over the days of January 2024, in one case also of February, that both the
     // interval scan and the row filter resolve: lists, ranges, times, durations, repetitions,
-    // fixed offsets and day filters.
+    // fixed offsets, day filters, time lists with bracketed suffixes and nested time lists.
     private static String randomTickString(Rnd rnd, StringSink sink, boolean isDayFilterAllowed) {
         sink.clear();
         final int day = 1 + rnd.nextInt(20);
         boolean hasTime = rnd.nextBoolean();
+        boolean isZoneAllowed = true;
         int listDurationMinutes = 0;
-        switch (rnd.nextInt(6)) {
+        switch (rnd.nextInt(9)) {
             case 0 -> sink.put("2024-01-").put(twoDigits(day));
             case 1 -> {
                 sink.put("2024-01-[").put(twoDigits(day));
@@ -2458,11 +2755,12 @@ public class IntervalFilterTest extends AbstractCairoTest {
             case 4 -> {
                 // Two overlapping elements of hourly values at one minute, in random order: days
                 // 1-20 of January and February, and 3 to 20 of those days in January. The union
-                // is the larger element's 960 values, but while the later element merges, the
-                // list holds more than the cap (1,024): 960 + 256 intervals at the first merge of
-                // a smaller second element of 11 days or more, and 72 + 960 or more at the last
-                // merge of a larger second element. Each merge must count only the later
-                // element's intervals.
+                // is the larger element's 960 values. Under a time zone, the later element merges a
+                // range of its own while the list holds more than the cap (1,024): 960 + 256
+                // intervals at the first merge of a smaller second element of 11 days or more, and
+                // 72 + 960 or more at the last merge of a larger second element; each merge must
+                // count only the later element's intervals. Without a zone, the later element's
+                // merges union its values with the earlier element's before they count.
                 final String minute = twoDigits(rnd.nextInt(60));
                 final int smallerDayCount = 3 + rnd.nextInt(18);
                 final int smallerFirstDay = 1 + rnd.nextInt(21 - smallerDayCount);
@@ -2475,6 +2773,72 @@ public class IntervalFilterTest extends AbstractCairoTest {
                 // durations up to 58 minutes keep the values apart
                 listDurationMinutes = rnd.nextBoolean() ? 1 + rnd.nextInt(58) : 0;
             }
+            case 6 -> {
+                // Time list values with bracketed suffixes: 60 touching seconds or 600 touching
+                // tenths of a second each, some with a time zone of their own, on one day or on a
+                // range of days, each of which runs the time list. Values above the incremental
+                // merge threshold (256) merge within, and the values merge between them once they
+                // have added that many, also across the days.
+                final int lastDay = day + rnd.nextInt(4);
+                sink.put("2024-01-");
+                if (lastDay > day) {
+                    sink.put('[').put(twoDigits(day)).put("..").put(twoDigits(lastDay)).put(']');
+                } else {
+                    sink.put(twoDigits(day));
+                }
+                sink.put("T[");
+                for (int i = 0, n = 1 + rnd.nextInt(6); i < n; i++) {
+                    sink.put(i == 0 ? "" : ",").put(twoDigits(6 + rnd.nextInt(14))).put(':').put(twoDigits(rnd.nextInt(60)));
+                    putRandomValueZone(rnd, sink);
+                }
+                sink.put(rnd.nextBoolean() ? "]:[00..59]" : "]:[00..59].[0..9]");
+                hasTime = false;
+                listDurationMinutes = rnd.nextBoolean() ? 1 + rnd.nextInt(58) : 0;
+            }
+            case 7 -> {
+                // A later element of 1,200 or 6,000 intervals that never touch, more than the cap
+                // (1,024), all in the first element's day. With no time zone of its own it adds
+                // them to the merge range of the list, whose merges union them into that day. No
+                // time zone, with which the element fails by design, and no duration, which would
+                // shorten the covering day.
+                final int hour = 6 + rnd.nextInt(13);
+                sink.put("[2024-01-").put(twoDigits(day)).put(",2024-01-").put(twoDigits(day)).put("T[").put(twoDigits(hour));
+                switch (rnd.nextInt(3)) {
+                    case 0 -> sink.put("..").put(twoDigits(hour + 1)).put("]:00:[00..59].[0..9]0]");
+                    case 1 -> {
+                        final String minute = twoDigits(rnd.nextInt(60));
+                        sink.put(':').put(minute).put(',').put(twoDigits(hour + 1)).put(':').put(minute).put("]:[00..59].[0..9]0]");
+                    }
+                    default -> sink.put(':').put(twoDigits(rnd.nextInt(60))).put("]:[00..59].[0..9][0..9]0]");
+                }
+                hasTime = false;
+                isZoneAllowed = false;
+            }
+            case 8 -> {
+                // Nested time lists: the seconds of whole minutes, or single seconds, which the
+                // outer values merge between them once they have added 256 intervals. A global
+                // zone would convert the inner times twice, so only the outer values carry zones.
+                sink.put("2024-01-").put(twoDigits(day)).put("T[");
+                final boolean isMinutes = rnd.nextBoolean();
+                for (int i = 0, n = 2 + rnd.nextInt(isMinutes ? 3 : 5); i < n; i++) {
+                    sink.put(i == 0 ? "" : ",").put(twoDigits(6 + rnd.nextInt(14))).put(':');
+                    putRandomValueZone(rnd, sink);
+                }
+                sink.put("][");
+                if (isMinutes) {
+                    for (int i = 0, n = 2 + rnd.nextInt(5); i < n; i++) {
+                        sink.put(i == 0 ? "" : ",").put(twoDigits(rnd.nextInt(60))).put(':');
+                    }
+                    sink.put("][00..59]");
+                } else {
+                    for (int i = 0, n = 20 + rnd.nextInt(61); i < n; i++) {
+                        sink.put(i == 0 ? "" : ",").put(twoDigits(rnd.nextInt(60))).put(':').put(twoDigits(rnd.nextInt(60)));
+                    }
+                    sink.put(']');
+                }
+                hasTime = false;
+                isZoneAllowed = false;
+            }
             default -> {
                 sink.put("[2024-01-").put(twoDigits(day));
                 for (int i = 0, n = 1 + rnd.nextInt(3); i < n; i++) {
@@ -2486,7 +2850,7 @@ public class IntervalFilterTest extends AbstractCairoTest {
         if (hasTime) {
             sink.put('T').put(twoDigits(rnd.nextInt(24))).put(":00");
         }
-        switch (rnd.nextInt(4)) {
+        switch (isZoneAllowed ? rnd.nextInt(4) : 3) {
             case 0 -> sink.put("@+05:00");
             case 1 -> sink.put("@-03:30");
             default -> {
@@ -2538,6 +2902,25 @@ public class IntervalFilterTest extends AbstractCairoTest {
                 sqlExecutionContext.setJitMode(jitMode);
                 for (String column : new String[]{"ts", "tm", "d"}) {
                     assertSqlCursors(reference, "SELECT ts FROM t WHERE " + column + " IN '" + tick + "'");
+                }
+            }
+        } finally {
+            sqlExecutionContext.setJitMode(callerJitMode);
+        }
+    }
+
+    // Expects the rows of the tick string on the designated ts and the non-designated tm of table
+    // x, as a literal and as a bind variable, with the JIT on and off
+    private void assertInTickRows(String tick, String expected) throws Exception {
+        final int callerJitMode = sqlExecutionContext.getJitMode();
+        try {
+            for (int jitMode : new int[]{SqlJitMode.JIT_MODE_ENABLED, SqlJitMode.JIT_MODE_DISABLED}) {
+                sqlExecutionContext.setJitMode(jitMode);
+                bindVariableService.clear();
+                bindVariableService.setStr("p", tick);
+                for (String column : new String[]{"ts", "tm"}) {
+                    assertQuery("SELECT k FROM x WHERE " + column + " IN '" + tick + "'").noLeakCheck().returns(expected);
+                    assertQuery("SELECT k FROM x WHERE " + column + " IN :p").noLeakCheck().returns(expected);
                 }
             }
         } finally {
