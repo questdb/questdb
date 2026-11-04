@@ -87,7 +87,9 @@ import static io.questdb.griffin.engine.table.AsyncFilterUtils.prepareBindVarMem
  * nothing more. Taken for a master that is small against its symbol tables, and for a query whose
  * key arrays the memory tracker refuses: one state, as the serial ASOF JOIN holds. A query whose
  * worker state the tracker refuses inside a frame goes on serially too, from that frame: the query's
- * thread joins with the slots already built and its own state, and the workers free theirs.</li>
+ * thread joins with the slots already built and its own state. Before it joins the first such frame
+ * it frees what only the parallel way uses, the workers' state and the prevailing summaries (see
+ * {@link #releaseParallelState}), so that the serial way never needs more than its own state.</li>
  * </ul>
  * Per slot (and for the query's thread), the span scan keeps per key the last slave row id met so
  * far in the page frame's slave span, in an {@link AsyncAsOfJoinKeyTable}: allocated by the slot's
@@ -140,6 +142,8 @@ public class AsyncAsOfJoinAtom implements StatefulAtom, PerWorkerLockOwner, Reop
     private final IntList gatherColumns = new IntList();
     private final IntList gatherPositions = new IntList();
     private final LongList gatherNullBits = new LongList();
+    // the slots releaseParallelState() holds
+    private final IntList heldSlots;
     private final int masterSymbolIndex;
     private final int masterTimestampIndex;
     private final long masterTsScale;
@@ -184,6 +188,8 @@ public class AsyncAsOfJoinAtom implements StatefulAtom, PerWorkerLockOwner, Reop
     private ConcurrentTimeFrameState sharedState;
     private final long toleranceInterval;
     private boolean compiledMasterFilterSuspended;
+    // the query's thread freed the parallel way's state after a switch to the serial way
+    private boolean isParallelStateReleased;
     private int joinableCount;
     private StaticSymbolTable masterSymbolTable;
     private int masterSlotCount;
@@ -249,6 +255,7 @@ public class AsyncAsOfJoinAtom implements StatefulAtom, PerWorkerLockOwner, Reop
                 perWorkerKeyTables.extendAndSet(i, new AsyncAsOfJoinKeyTable());
             }
             this.perWorkerLocks = new PerWorkerLocks(configuration, slotCount);
+            this.heldSlots = new IntList(slotCount);
 
             // what the reduce gathers per slave column
             final RecordMetadata slaveMetadata = slaveFactory.getMetadata();
@@ -519,6 +526,16 @@ public class AsyncAsOfJoinAtom implements StatefulAtom, PerWorkerLockOwner, Reop
     }
 
     @TestOnly
+    public WindowJoinPrevailingSummaries getPrevailingSummaries() {
+        return prevailingSummaries;
+    }
+
+    @TestOnly
+    public int getSlotCount() {
+        return perWorkerKeyTables.size();
+    }
+
+    @TestOnly
     public long getStatFramesSerial() {
         return statFramesSerial.get();
     }
@@ -608,6 +625,7 @@ public class AsyncAsOfJoinAtom implements StatefulAtom, PerWorkerLockOwner, Reop
         statFramesSpan.set(0);
         statFramesWalk.set(0);
         statWalkAborts.set(0);
+        isParallelStateReleased = false;
         joinableCount = 0;
         masterSlotCount = 0;
         slaveSlotCount = 0;
@@ -715,6 +733,11 @@ public class AsyncAsOfJoinAtom implements StatefulAtom, PerWorkerLockOwner, Reop
         return masterSlotsAddress != 0;
     }
 
+    @TestOnly
+    public boolean isParallelStateReleased() {
+        return isParallelStateReleased;
+    }
+
     /**
      * True when the query's thread joins the frames, see the class comment.
      */
@@ -755,9 +778,50 @@ public class AsyncAsOfJoinAtom implements StatefulAtom, PerWorkerLockOwner, Reop
     }
 
     /**
-     * The serial way: a worker frees its slot's per-key state and prevailing cache, which the query
-     * no longer uses, so that the query's thread has their memory. The slot's own thread, under the
-     * slot's lock; not the query thread's state (-1), which the serial way uses.
+     * The switched serial way (see {@link #switchToSerial()}), on the query's thread: before it joins
+     * the first frame a worker left, or once it switched the query itself because the limit refused
+     * its own work (see {@link #switchToSerialOrThrow}). Frees what only the parallel way uses -
+     * every slot's state (see {@link #releaseSlotState}) and the Parquet row groups its slave time
+     * frame cursor decoded, and the prevailing summaries, which are switched off for the rest of the
+     * query - so that the query's thread has the memory its own state needs. A worker joins a frame
+     * only under its slot, and the query's thread is the only other user of the summaries: holding
+     * every slot, it waits out the frames the workers are joining and frees with no one reading. A
+     * worker that takes a slot afterwards finds the query serial and joins nothing, so nothing is
+     * allocated again. Once per query; nothing to free for a query that chose the serial way when it
+     * opened.
+     *
+     * @throws io.questdb.cairo.CairoException when the circuit breaker trips during the wait
+     */
+    public void releaseParallelState(SqlExecutionCircuitBreaker circuitBreaker) {
+        if (isParallelStateReleased || !serial || !hasJoinableSlots()) {
+            return;
+        }
+        final int slotCount = perWorkerKeyTables.size();
+        heldSlots.clear();
+        try {
+            while (heldSlots.size() < slotCount) {
+                heldSlots.add(perWorkerLocks.acquireSlot(-1, circuitBreaker));
+            }
+            for (int slotId = 0; slotId < slotCount; slotId++) {
+                releaseSlotState(slotId);
+                // closed as clear() closes it, and bound again by the next query
+                perWorkerSlaveTimeFrameCursors.getQuick(slotId).close();
+            }
+            prevailingSummaries.release();
+            isParallelStateReleased = true;
+        } finally {
+            for (int i = 0, n = heldSlots.size(); i < n; i++) {
+                perWorkerLocks.releaseSlot(heldSlots.getQuick(i));
+            }
+            heldSlots.clear();
+        }
+    }
+
+    /**
+     * The serial way: frees a slot's per-key state and prevailing cache, which the query no longer
+     * uses, so that the query's thread has their memory. Under the slot's lock: by the worker that
+     * holds it, or by the query's thread holding every slot (see {@link #releaseParallelState});
+     * not the query thread's state (-1), which the serial way uses.
      */
     public void releaseSlotState(int slotId) {
         if (slotId != -1) {
@@ -777,10 +841,29 @@ public class AsyncAsOfJoinAtom implements StatefulAtom, PerWorkerLockOwner, Reop
 
     /**
      * From here on the query's thread joins the frames: a worker's per-key state hit the query's
-     * memory limit. The frames a worker has joined stay joined.
+     * memory limit. The frames a worker has joined stay joined. Once set, the query stays serial:
+     * {@link #releaseParallelState} frees the workers' state on that promise.
      */
     public void switchToSerial() {
         serial = true;
+    }
+
+    /**
+     * The query's thread was refused memory for its own work, such as decoding the Parquet row group
+     * a row's slave columns are read from. While the workers' state and the prevailing summaries
+     * hold memory the serial way does not need, the query goes on serially from here, as when a
+     * worker is refused, and returns once they are freed, for the caller to try again. Rethrows the
+     * error otherwise: an error that is not a refusal, or a refusal with nothing left to free.
+     *
+     * @throws io.questdb.cairo.CairoException when the circuit breaker trips during the wait, see
+     *                                         {@link #releaseParallelState}
+     */
+    public void switchToSerialOrThrow(CairoException e, SqlExecutionCircuitBreaker circuitBreaker) {
+        if (!e.isOutOfMemory() || !hasJoinableSlots() || isParallelStateReleased) {
+            throw e;
+        }
+        switchToSerial();
+        releaseParallelState(circuitBreaker);
     }
 
     /**

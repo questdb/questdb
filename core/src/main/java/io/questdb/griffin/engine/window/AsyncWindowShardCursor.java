@@ -31,7 +31,6 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordChain;
-import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameCursor;
@@ -99,7 +98,6 @@ public class AsyncWindowShardCursor implements RecordCursor {
 
     private final int keyColumnIndex;
     private final SelectedRecord record;
-    private final RecordSink recordSink;
     private final long roundRows;
     private final ShardRound[] rounds;
     private final RecordMetadata scanMetadata;
@@ -141,7 +139,6 @@ public class AsyncWindowShardCursor implements RecordCursor {
             @NotNull AsyncWindowAtom atom,
             @NotNull ObjList<UnorderedPageFrameSequence<AsyncWindowRecordCursor.RoundAtom>> sequences,
             @NotNull ColumnTypes columnTypes,
-            @NotNull RecordSink recordSink,
             @NotNull RecordMetadata scanMetadata,
             int keyColumnIndex,
             @NotNull AsyncWindowSplitPlan splitPlan
@@ -155,7 +152,6 @@ public class AsyncWindowShardCursor implements RecordCursor {
         this.sliceRows = Math.max(1024, configuration.getSqlParallelWindowTaskRows() / 4);
         this.columnTypes = columnTypes;
         this.rowKernelsEnabled = configuration.isSqlParallelWindowKeyRunsEnabled();
-        this.recordSink = recordSink;
         this.scanMetadata = scanMetadata;
         this.keyColumnIndex = keyColumnIndex;
         this.shardCount = atom.getWorkerSlotCount();
@@ -497,9 +493,12 @@ public class AsyncWindowShardCursor implements RecordCursor {
     }
 
     private Task newTask() {
+        // No sink of its own: whichever slot computes the task copies its rows in through the
+        // slot's sink, see AsyncWindowAtom.setOutputSinks(). A sink stages DECIMAL128 and
+        // DECIMAL256 values in fields of its own, and the tasks of a round compute at once.
         final RecordChain chain = new RecordChain(
                 columnTypes,
-                recordSink,
+                null,
                 chainPageSize,
                 (int) Math.min(chainMaxPages, Integer.MAX_VALUE),
                 PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_BYTES.getPropertyPath()

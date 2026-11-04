@@ -328,8 +328,18 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
     }
 
     public long put(Record record, long prevRecordOffset) {
+        return put(record, prevRecordOffset, recordSink);
+    }
+
+    /**
+     * Appends {@code record} as {@link #put(Record, long)} does, copied by {@code sink} rather
+     * than the chain's own: a sink may hold scratch state, such as the DECIMAL128 and DECIMAL256
+     * values it stages, so threads that each fill chains of their own must each copy through a
+     * sink of their own too.
+     */
+    public long put(Record record, long prevRecordOffset, RecordSink sink) {
         long offset = beginRecord(prevRecordOffset);
-        recordSink.copy(record, this);
+        sink.copy(record, this);
         return offset;
     }
 

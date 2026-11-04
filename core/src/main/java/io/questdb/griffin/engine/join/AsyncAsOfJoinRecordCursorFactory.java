@@ -501,7 +501,8 @@ public class AsyncAsOfJoinRecordCursorFactory extends AbstractRecordCursorFactor
     // serial way when it opened keys the query thread's state by the slave key, holding the keys the
     // frame meets. A query that switched to it (a worker's state hit the memory limit) has the
     // joinable slots: the query's thread then runs the parallel way's span scan with its own state,
-    // which allocates nothing the parallel way had not already, while the workers free theirs.
+    // once it has freed the workers' state and the prevailing summaries, which the query can no
+    // longer afford: from there on the query holds the key arrays, one state and the frames' output.
     static void joinFrameSerial(
             AsyncAsOfJoinAtom atom,
             PageFrameMemoryRecord record,
@@ -510,6 +511,8 @@ public class AsyncAsOfJoinRecordCursorFactory extends AbstractRecordCursorFactor
             long rowCount,
             SqlExecutionCircuitBreaker circuitBreaker
     ) {
+        // first, before this thread allocates anything
+        atom.releaseParallelState(circuitBreaker);
         final long outOffset = isMasterFiltered ? rowCount : 0;
         final long outAddress = reserveOutput(atom, rows, outOffset, rowCount);
         final WindowJoinTimeFrameHelper helper = atom.getSlaveTimeFrameHelper(-1);

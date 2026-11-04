@@ -418,7 +418,14 @@ class AsyncAsOfJoinRecordCursor implements NoRandomAccessRecordCursor {
         masterRecord.setRowIndex(isMasterFiltered ? filteredRows.get(p) : p);
         final long slaveRowId = Unsafe.getLong(slaveRowIdsAddress() + (p << 3));
         if (slaveRowId >= 0) {
-            slaveRowCursor.recordAt(slaveRecord, slaveRowId);
+            try {
+                slaveRowCursor.recordAt(slaveRecord, slaveRowId);
+            } catch (CairoException e) {
+                // a Parquet slave decodes the row's row group here: refused while the workers'
+                // state holds memory, the query goes on serially and the decode runs again
+                masterFrameSequence.getAtom().switchToSerialOrThrow(e, executionContext.getCircuitBreaker());
+                slaveRowCursor.recordAt(slaveRecord, slaveRowId);
+            }
             record.hasSlave(true);
         } else {
             record.hasSlave(false);

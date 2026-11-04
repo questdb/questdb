@@ -46,9 +46,6 @@ import java.io.IOException;
 import java.net.Socket;
 import java.nio.file.Files;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
-import java.util.concurrent.locks.LockSupport;
 
 /**
  * While a QWP connection is open, an idle network worker waits in the HTTP dispatcher's poll ({@code http.net.poll.block.timeout})
@@ -72,6 +69,8 @@ public class QwpEgressPollBlockTest extends AbstractReusedServerQwpEgressTest {
     // Linux keeps the first 15 bytes of a thread name: the comm of shared-network_0 is shared-network_
     private static final String NETWORK_WORKER_NAME = "shared-network_";
     private static final String PARK_MILLIS = "1000";
+    // IODispatcherLinux lets a worker wait in its poll only once it has found nothing to do for this long
+    private static final long POLL_WAIT_MIN_IDLE_NANOS = 1_000_000;
     private static final String PROBE_THREAD_NAME = "epoll-probe";
     // the /proc/self/task entries of the network workers of the server under test
     private final ObjList<File> networkWorkers = new ObjList<>();
@@ -172,9 +171,14 @@ public class QwpEgressPollBlockTest extends AbstractReusedServerQwpEgressTest {
 
     @Test
     public void testNoBlockUnderBackToBackRequests() throws Exception {
-        // a worker that just served a request spins and picks the next one up; one waiting in the
-        // poll would hold the dispatcher and keep it from doing so. Requests well under a
-        // millisecond apart never find a worker in the poll
+        // A worker that just served a request spins and picks the next one up; one waiting in the
+        // poll would hold the dispatcher and keep it from doing so. A worker may wait there only
+        // once the dispatcher has found nothing to do for a millisecond, and the dispatcher handed
+        // the request out after the client sent it; a worker that waited in the poll until then
+        // left it to do so. So from the answer until a millisecond after the request was sent, no
+        // worker waits in the poll, however late any thread runs. Later, one may: a busy machine
+        // can hold the client back until the dispatcher has idled for a millisecond. Waiting
+        // between back-to-back requests puts a worker in the poll right after each answer.
         TestUtils.assertMemoryLeak(() -> {
             try (
                     TestServerMain ignore = startPollBlockServer(2, "100");
@@ -182,45 +186,22 @@ public class QwpEgressPollBlockTest extends AbstractReusedServerQwpEgressTest {
             ) {
                 client.connect();
                 assertBlockedPoll();
-                assertSelectOneFast(client, 0);
-                final AtomicBoolean done = new AtomicBoolean();
-                final AtomicInteger blocked = new AtomicInteger();
-                final AtomicInteger samples = new AtomicInteger();
-                final AtomicReference<Throwable> samplerError = new AtomicReference<>();
-                final Thread sampler = new Thread(() -> {
-                    try {
-                        while (!done.get()) {
-                            samples.incrementAndGet();
-                            if (findWorkerInPoll() != null) {
-                                blocked.incrementAndGet();
-                            }
-                            LockSupport.parkNanos(50_000);
+                final long deadline = System.nanoTime() + 1_500_000_000L;
+                for (int i = 0; System.nanoTime() < deadline; i++) {
+                    final long sentNanos = System.nanoTime();
+                    assertSelectOneFast(client, i);
+                    // the next request follows 0.2 ms after the answer
+                    final long answeredNanos = System.nanoTime();
+                    long nowNanos;
+                    do {
+                        final String syscall = findWorkerInPoll();
+                        nowNanos = System.nanoTime();
+                        if (syscall != null && nowNanos - sentNanos < POLL_WAIT_MIN_IDLE_NANOS) {
+                            Assert.fail("a worker waits in the HTTP poll " + (nowNanos - sentNanos) / 1_000
+                                    + "us after request " + i + " was sent [syscall=" + syscall + ']');
                         }
-                    } catch (Throwable th) {
-                        samplerError.set(th);
-                    }
-                });
-                sampler.start();
-                try {
-                    final long deadline = System.nanoTime() + 1_500_000_000L;
-                    for (int i = 1; System.nanoTime() < deadline; i++) {
-                        assertSelectOneFast(client, i);
-                        LockSupport.parkNanos(200_000);
-                    }
-                } finally {
-                    done.set(true);
-                    sampler.join();
+                    } while (nowNanos - answeredNanos < 200_000);
                 }
-                if (samplerError.get() != null) {
-                    throw new AssertionError("the sampler failed", samplerError.get());
-                }
-                // a request delayed past a millisecond by scheduling may let a worker wait for once;
-                // waiting between back-to-back requests puts a worker there in a third of samples
-                Assert.assertTrue("samples: " + samples.get(), samples.get() > 100);
-                Assert.assertTrue(
-                        "samples with a worker in the poll: " + blocked.get() + " of " + samples.get(),
-                        blocked.get() * 100 < samples.get()
-                );
             }
         });
     }

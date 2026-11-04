@@ -71,6 +71,7 @@ public class AsyncWindowGroupByStage extends AsyncWindowStage {
     private final ObjList<Function> projection;
     // the layout of the step's input rows, for the chains that capture a task's head rows
     private ColumnTypes headTypes;
+    // copies the head rows into those chains; this copy's own, see setHeadLayout()
     private RecordSink headSink;
     private final int valueCount;
     private long[] closedKeys;
@@ -255,10 +256,6 @@ public class AsyncWindowGroupByStage extends AsyncWindowStage {
         return headRowCount;
     }
 
-    public RecordSink getHeadSink() {
-        return headSink;
-    }
-
     public ColumnTypes getHeadTypes() {
         return headTypes;
     }
@@ -277,7 +274,9 @@ public class AsyncWindowGroupByStage extends AsyncWindowStage {
 
     /**
      * The layout of the step's input rows, which the chains of a task's head rows hold, see
-     * {@link #beginHeadCapture}.
+     * {@link #beginHeadCapture}, and the sink this copy of the step copies them with. The sink
+     * stages DECIMAL128 and DECIMAL256 values in fields of its own: each copy, one per worker
+     * slot, needs one that no other copy shares.
      */
     public void setHeadLayout(ColumnTypes headTypes, RecordSink headSink) {
         this.headTypes = headTypes;
@@ -343,7 +342,7 @@ public class AsyncWindowGroupByStage extends AsyncWindowStage {
                 for (int i = 0, n = keyColumns.length; i < n; i++) {
                     headKeys[i] = readKey(record, keyColumns[i], keyTypes[i]);
                 }
-                headPrevOffset = headChain.put(record, -1);
+                headPrevOffset = headChain.put(record, -1, headSink);
                 headRowCount++;
                 rowId++;
                 return false;
@@ -356,7 +355,7 @@ public class AsyncWindowGroupByStage extends AsyncWindowStage {
                 }
             }
             if (same) {
-                headPrevOffset = headChain.put(record, headPrevOffset);
+                headPrevOffset = headChain.put(record, headPrevOffset, headSink);
                 headRowCount++;
                 rowId++;
                 return false;
