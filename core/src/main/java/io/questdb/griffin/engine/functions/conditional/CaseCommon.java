@@ -85,6 +85,10 @@ public class CaseCommon {
         if (ColumnType.isDecimal(toType)) {
             return DecimalUtil.getImplicitCastFunction(arg, argPosition, toType, sqlExecutionContext);
         }
+        if (ColumnType.isTimestamp(argType) && ColumnType.isTimestamp(toType) && argType != toType) {
+            // CASE and coalesce read their timestamp arguments without converting units
+            return new CastTimestampToTimestampFunctionFactory.Func(arg, argType, toType);
+        }
         final int keyIndex = castFactories.keyIndex(Numbers.encodeLowHighInts(argType, toType));
         if (keyIndex < 0) {
             FunctionFactory factory = castFactories.valueAt(keyIndex);
@@ -164,7 +168,8 @@ public class CaseCommon {
      * missing from the row needs no cast: the branch's own getter converts, or the pair never
      * escalates (see {@link RelationRules#caseEscalation}). Rows are keyed by encoded type: of the
      * two TIMESTAMP encodings only TIMESTAMP_MICRO has casts, and TIMESTAMP_NANO is neither a
-     * source nor a target. Decimal and array types bypass the table.
+     * source nor a target. Decimal and array types bypass the table, and so does a timestamp of
+     * the other unit, which {@link #getCastFunction} converts itself.
      * {@code TypeRelationGoldenTest.testCaseCastFactory} pins the rows.
      */
     private static Cast[] castRow(int fromType) {
