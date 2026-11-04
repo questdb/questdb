@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.websocket;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SecurityContext;
@@ -45,6 +46,7 @@ import io.questdb.cutlass.qwp.server.QwpIngressUpgradeProcessor;
 import io.questdb.cutlass.qwp.websocket.WebSocketCloseCode;
 import io.questdb.cutlass.qwp.websocket.WebSocketOpcode;
 import io.questdb.network.ServerDisconnectException;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
@@ -56,6 +58,7 @@ import io.questdb.std.Vect;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -1230,6 +1233,61 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
      * dictionary does. Frame 2 commits the batch before it joins, so the redo after
      * frame 3's failure replays frame 2 alone, and frame 1 keeps x.
      */
+    /**
+     * A table dropped and re-created between passes leaves a stale entry, which the next
+     * lookup evicts. When closing the evicted writer fails, the entry keeps its writer, and
+     * the table cache must still not serve it again: the re-created table's two frames in
+     * the next pass share one commit batch on the new writer.
+     */
+    @Test
+    public void testRecreatedTableAfterFailedEvictionSharesOneBatch() throws Exception {
+        // Closing a WAL writer msyncs its files only when the commit mode is not NOSYNC.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "async");
+        final AtomicBoolean isMsyncArmed = new AtomicBoolean();
+        final AtomicInteger failedMsyncCount = new AtomicInteger();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public void msync(long addr, long len, boolean async) {
+                // Fails the first msync once armed: the close of the evicted writer.
+                if (isMsyncArmed.compareAndSet(true, false)) {
+                    failedMsyncCount.incrementAndGet();
+                    throw CairoException.critical(5).put("could not msync");
+                }
+                super.msync(addr, len, async);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("CREATE TABLE tab (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try (Connection connection = new Connection(
+                    engine,
+                    httpConfig,
+                    AllowAllSecurityContext.INSTANCE,
+                    false,
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tab", 100L, 1_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tab", 200L, 2_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tab", 300L, 3_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tab", 400L, 4_000_000L))
+            )) {
+                // The second frame finds tab's entry, which the cache then checks first.
+                connection.deliverFrames(2);
+                drainWalQueue();
+                execute("DROP TABLE tab");
+                execute("CREATE TABLE tab (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                isMsyncArmed.set(true);
+                connection.deliverFrames(2);
+                Assert.assertEquals("test setup: closing the evicted writer must fail", 1, failedMsyncCount.get());
+                Assert.assertFalse(hasErrorResponseForSeq(connection.sentFrames(), 2));
+                Assert.assertFalse(hasErrorResponseForSeq(connection.sentFrames(), 3));
+                Assert.assertEquals(3, maxCumulativeOkAck(connection.sentFrames()));
+            }
+            drainWalQueue();
+            assertQuery("SELECT v FROM tab").noLeakCheck().expectSize().returns("v\n300\n400\n");
+            Assert.assertEquals("the re-created table takes both frames in one commit",
+                    1, engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("tab")));
+        });
+    }
+
     @Test
     public void testRedefiningSymbolDictionaryEndsCommitBatch() throws Exception {
         assertMemoryLeak(() -> {

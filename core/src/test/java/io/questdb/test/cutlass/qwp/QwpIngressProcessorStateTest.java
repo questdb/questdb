@@ -663,6 +663,105 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
     }
 
     /**
+     * Every path that takes a table's entry out of the table cache keeps the lookup
+     * shortcut, which checks the entry found last before hashing, from serving it again,
+     * whether that entry was the one found last or not.
+     */
+    @Test
+    public void testRemovedEntryIsNotServedAgain() throws Exception {
+        final AtomicBoolean isChangeLogOpenFailing = new AtomicBoolean();
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (Utf8s.endsWithAscii(name, "_txnlog.meta.d") && isChangeLogOpenFailing.compareAndSet(true, false)) {
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+        };
+        assertMemoryLeak(() -> {
+            final DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration));
+            final QwpTudCache.CommittedTxnConsumer consumer = (tableName, tableDirName, seqTxn) -> {
+            };
+            final Utf8String gone = new Utf8String("gone");
+            final Utf8String kept = new Utf8String("kept");
+            execute("CREATE TABLE kept (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final String[] removals = {
+                    "commitAll", "commitIfMaxUncommittedRowsReached", "commitAllBestEffort", "commitWalTables",
+                    "failed lookup", "stale lookup", "releaseIdleWriters"
+            };
+            for (String removal : removals) {
+                for (boolean isGoneFoundLast : new boolean[]{true, false}) {
+                    final String what = removal + (isGoneFoundLast ? ", removed entry found last" : ", other entry found last");
+                    execute("CREATE TABLE gone (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                    // A max of one uncommitted row: a single buffered row reaches it.
+                    try (QwpTudCache cache = new QwpTudCache(engine, true, true, defaultColumnTypes, PartitionBy.DAY, -1, 1)) {
+                        final WalTableUpdateDetails goneTud = cache.getTableUpdateDetails(AllowAllSecurityContext.INSTANCE, gone, null, null, 10);
+                        final WalTableUpdateDetails keptTud = cache.getTableUpdateDetails(AllowAllSecurityContext.INSTANCE, kept, null, null, 10);
+                        Assert.assertSame(isGoneFoundLast ? goneTud : keptTud, cache.getCachedTableUpdateDetails(isGoneFoundLast ? gone : kept));
+                        WalTableUpdateDetails replacement = null;
+                        switch (removal) {
+                            case "commitAll", "commitIfMaxUncommittedRowsReached" -> {
+                                appendRow(goneTud);
+                                execute("DROP TABLE gone");
+                                Throwable failure = null;
+                                try {
+                                    if (removal.equals("commitAll")) {
+                                        cache.commitAll(consumer);
+                                    } else {
+                                        cache.commitIfMaxUncommittedRowsReached(consumer);
+                                    }
+                                } catch (Throwable th) {
+                                    failure = th;
+                                }
+                                Assert.assertTrue(what + ": the dropped table's rows must be refused", failure instanceof CairoException);
+                                TestUtils.assertContains(((CairoException) failure).getFlyweightMessage(), "dropped table discarded buffered rows");
+                            }
+                            case "commitAllBestEffort" -> {
+                                execute("DROP TABLE gone");
+                                cache.commitAllBestEffort();
+                            }
+                            case "commitWalTables" -> {
+                                execute("DROP TABLE gone");
+                                cache.commitWalTables(0);
+                            }
+                            case "failed lookup" -> {
+                                // A structure change makes the lookup replay the change log, which fails to open.
+                                execute("ALTER TABLE gone ADD COLUMN w LONG");
+                                drainWalQueue();
+                                isChangeLogOpenFailing.set(true);
+                                try {
+                                    cache.getTableUpdateDetails(AllowAllSecurityContext.INSTANCE, gone, null, null, 10);
+                                    Assert.fail(what + ": the lookup must fail");
+                                } catch (CairoException expected) {
+                                }
+                            }
+                            case "stale lookup" -> {
+                                execute("DROP TABLE gone");
+                                execute("CREATE TABLE gone (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                                replacement = cache.getTableUpdateDetails(AllowAllSecurityContext.INSTANCE, gone, null, null, 10);
+                                Assert.assertNotSame(goneTud, replacement);
+                            }
+                            case "releaseIdleWriters" -> {
+                                // Uncommitted rows keep the other table's writer.
+                                appendRow(keptTud);
+                                cache.releaseIdleWriters();
+                            }
+                            default -> throw new AssertionError(removal);
+                        }
+                        Assert.assertSame(what, replacement, cache.getCachedTableUpdateDetails(gone));
+                        Assert.assertSame(what, keptTud, cache.getCachedTableUpdateDetails(kept));
+                        Assert.assertEquals(what, replacement != null ? 2 : 1, cache.size());
+                    }
+                    execute("DROP TABLE IF EXISTS gone");
+                    drainWalQueue();
+                }
+            }
+        });
+    }
+
+    /**
      * The block cursor keeps a table's schema parse on the table's entry in the
      * connection's table cache: none before the table is open, one shared by every
      * spelling of its name while it is open, and none once the entry is freed, which
@@ -6814,6 +6913,13 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
             }
         }
         return seq;
+    }
+
+    // Buffers one row, v = 1, in the table's writer.
+    private static void appendRow(WalTableUpdateDetails tud) {
+        final TableWriter.Row row = tud.getWriter().newRow(1_000_000L);
+        row.putLong(0, 1);
+        row.append();
     }
 
     // Decodes a one-row block of table [val LONG, ts] (plus extraColumn LONG when not

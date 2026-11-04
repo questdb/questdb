@@ -111,8 +111,8 @@ public class QwpTudCache implements QwpSchemaCache, QuietCloseable {
     private MemoryMARW ddlMem;
     private boolean isDistressed = false;
     // The entry getCachedTableUpdateDetails() found last, checked before the hash
-    // lookup. A freed entry has no writer; reset(), the distressed clear() and
-    // releaseIdleWriters() forget it.
+    // lookup: null or an entry of the map. onEntryRemoved(), reset() and the
+    // distressed clear() forget it.
     private WalTableUpdateDetails lastCachedTud;
     private Path path;
     // Number of releasedTables entries in state TABLE_RELEASED.
@@ -280,7 +280,7 @@ public class QwpTudCache implements QwpSchemaCache, QuietCloseable {
 
             if (tud.isDropped()) {
                 tableUpdateDetails.removeAtQuick(keyIndex, i);
-                cachedTableCount = tableUpdateDetails.size();
+                onEntryRemoved(tud);
                 // The free below rolls back this dropped table's buffered rows.
                 // On the QWP deferred-ack path the caller must NOT clear its
                 // uncommitted-deferred-rows clamp, or the cumulative durable-ack
@@ -356,8 +356,7 @@ public class QwpTudCache implements QwpSchemaCache, QuietCloseable {
      */
     public WalTableUpdateDetails getCachedTableUpdateDetails(Utf8Sequence tableNameUtf8) {
         WalTableUpdateDetails tud = lastCachedTud;
-        // An entry leaves the map only when freed, and a freed entry has no writer.
-        if (tud == null || tud.getWriter() == null || !Utf8s.equalsIgnoreCaseAscii(tud.getTableNameUtf8(), tableNameUtf8)) {
+        if (tud == null || !Utf8s.equalsIgnoreCaseAscii(tud.getTableNameUtf8(), tableNameUtf8)) {
             tud = tableUpdateDetails.get(tableNameUtf8);
             if (tud != null) {
                 lastCachedTud = tud;
@@ -442,7 +441,7 @@ public class QwpTudCache implements QwpSchemaCache, QuietCloseable {
 
             if (tud.isDropped()) {
                 tableUpdateDetails.removeAtQuick(keyIndex, i);
-                cachedTableCount = tableUpdateDetails.size();
+                onEntryRemoved(tud);
                 // See commitAll: a mid-group forced commit that discards a
                 // dropped table's buffered rows must not let the deferred-ack
                 // clamp release, or the group-closing commit would phantom-ack
@@ -530,7 +529,7 @@ public class QwpTudCache implements QwpSchemaCache, QuietCloseable {
 
             if (tud.isDropped()) {
                 tableUpdateDetails.removeAtQuick(keyIndex, i);
-                cachedTableCount = tableUpdateDetails.size();
+                onEntryRemoved(tud);
                 try {
                     Misc.free(tud);
                 } catch (Throwable th) {
@@ -609,7 +608,7 @@ public class QwpTudCache implements QwpSchemaCache, QuietCloseable {
 
             if (tud.isDropped()) {
                 tableUpdateDetails.removeAtQuick(keyIndex, i);
-                cachedTableCount = tableUpdateDetails.size();
+                onEntryRemoved(tud);
                 try {
                     Misc.free(tud);
                 } catch (Throwable th) {
@@ -655,7 +654,7 @@ public class QwpTudCache implements QwpSchemaCache, QuietCloseable {
                     // holds; the client replays). The next lookup acquires a
                     // fresh writer from the pool.
                     tableUpdateDetails.removeAt(key);
-                    cachedTableCount = tableUpdateDetails.size();
+                    onEntryRemoved(tud);
                     Misc.free(tud, th);
                     throw th;
                 }
@@ -745,12 +744,7 @@ public class QwpTudCache implements QwpSchemaCache, QuietCloseable {
                 releasedTables.putAt(releasedIndex, releasedName, TABLE_RELEASED);
                 releasedTableCount++;
                 tableUpdateDetails.removeAtQuick(keyIndex, i);
-                cachedTableCount = tableUpdateDetails.size();
-                // A free that fails below leaves the writer set, and the shortcut
-                // would keep serving the released entry.
-                if (tud == lastCachedTud) {
-                    lastCachedTud = null;
-                }
+                onEntryRemoved(tud);
                 try {
                     Misc.free(tud);
                 } catch (Throwable th) {
@@ -1082,7 +1076,7 @@ public class QwpTudCache implements QwpSchemaCache, QuietCloseable {
             }
         }
         tableUpdateDetails.removeAt(key);
-        cachedTableCount = tableUpdateDetails.size();
+        onEntryRemoved(tud);
         try {
             // Freeing a commitOnClose=false TUD rolls back whatever is still
             // uncommitted -- real file IO that can fail on ENOSPC/EIO.
@@ -1195,6 +1189,15 @@ public class QwpTudCache implements QwpSchemaCache, QuietCloseable {
         // commit latches writerInError -- a deliberate change from master,
         // which retried the wedged entry forever.
         return byName != null || engine.getTableTokenByDirName(cachedToken.getDirName()) == null;
+    }
+
+    // Every entry that leaves the map passes through here: getCachedTableUpdateDetails()
+    // serves lastCachedTud without checking that it is still mapped.
+    private void onEntryRemoved(WalTableUpdateDetails tud) {
+        cachedTableCount = tableUpdateDetails.size();
+        if (tud == lastCachedTud) {
+            lastCachedTud = null;
+        }
     }
 
     /**
