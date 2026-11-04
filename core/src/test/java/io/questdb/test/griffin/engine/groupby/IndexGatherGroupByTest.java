@@ -31,6 +31,9 @@ import io.questdb.cairo.PartitionGeometry;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.idx.AbstractPostingIndexReader;
+import io.questdb.cairo.idx.IndexReader;
+import io.questdb.cairo.idx.PostingIndexFwdReader;
+import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -49,6 +52,7 @@ import io.questdb.griffin.engine.table.IndexGatherPageFrameCursor;
 import io.questdb.griffin.engine.table.IndexGatherRecordCursorFactory;
 import io.questdb.griffin.engine.table.IndexScanChoiceRecordCursorFactory;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.MillisecondClock;
@@ -275,6 +279,20 @@ public class IndexGatherGroupByTest extends AbstractCairoTest {
                     }
                 }
             }, configuration, LOG);
+        });
+    }
+
+    @Test
+    public void testCancellationPoolsHeldCursorBeforeReaderReturns() throws Exception {
+        // a key of more rows than a task's batch keeps its detached cursor open across batches;
+        // when the breaker trips mid-key, the query cursor's close() must return that cursor to
+        // the posting reader before the TableReader goes back to the pool
+        setProperty(PropertyKey.CAIRO_INACTIVE_READER_MAX_OPEN_PARTITIONS, 10_000);
+        // a task reads a key's every row, 8 batches of a 500,000-row key
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_INDEX_GROUPBY_TASK_ROWS, 1_000_000);
+        assertMemoryLeak(() -> {
+            assertCancellationPoolsHeldCursor("t_serial", null);
+            assertCancellationPoolsHeldCursor("t_parallel", new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG))));
         });
     }
 
@@ -1443,6 +1461,112 @@ public class IndexGatherGroupByTest extends AbstractCairoTest {
     private static void setFeatures(boolean gather, boolean choice) {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_INDEX_GROUPBY_ENABLED, String.valueOf(gather));
         setProperty(PropertyKey.CAIRO_SQL_INDEX_SCAN_CHOICE_ENABLED, String.valueOf(choice));
+    }
+
+    private void assertCancellationPoolsHeldCursor(String table, WorkerPool pool) throws Exception {
+        // the breakers trip at their first check after the query took a detached cursor: after
+        // a task's first batch, with the batch's key not drained yet; the task loops check the
+        // engine's breakers, which read this configuration too, and every check reads the clock
+        final long[] tripAfterNews = {Long.MAX_VALUE};
+        final DefaultSqlExecutionCircuitBreakerConfiguration cbConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
+            @Override
+            public int getCircuitBreakerThrottle() {
+                // every check reads the clock
+                return 0;
+            }
+
+            @Override
+            @NotNull
+            public MillisecondClock getClock() {
+                return () -> AbstractPostingIndexReader.DETACHED_CURSOR_NEWS.get() < tripAfterNews[0] ? System.currentTimeMillis() : Long.MAX_VALUE;
+            }
+
+            @Override
+            public long getQueryTimeout() {
+                return 600_000;
+            }
+        };
+        circuitBreakerConfiguration = cbConfiguration;
+        TestUtils.execute(pool, (engine, compiler, context) -> {
+            final SqlExecutionContextImpl ctx = (SqlExecutionContextImpl) context;
+            // one day partition of 2,000,000 rows; k<n> is the rows x with x % 4 = n, 500,000
+            // rows each, 8 batches of 65,536 rows
+            final int rows = 2_000_000;
+            engine.execute("create table " + table + " (ts timestamp, psym symbol index type posting, a long) timestamp(ts) partition by day bypass wal", ctx);
+            engine.execute("insert into " + table + " select ((x - 1) * 10_000L)::timestamp, 'k' || (x % 4), x from long_sequence(" + rows + ")", ctx);
+            long count = 0;
+            long sum = 0;
+            for (long x = 1; x <= rows; x++) {
+                if (x % 4 == 1 || x % 4 == 2) {
+                    count++;
+                    sum += x;
+                }
+            }
+            final String expected = "count\tsum\n" + count + "\t" + sum + "\n";
+            // the partition's posting reader, which stays open with its partition between queries
+            final PostingIndexFwdReader postingReader;
+            try (TableReader reader = engine.getReader(table)) {
+                postingReader = (PostingIndexFwdReader) reader.getIndexReader(0, reader.getMetadata().getColumnIndex("psym"), IndexReader.DIR_FORWARD);
+            }
+            Assert.assertEquals(0, postingReader.getFreeDetachedCursorCount());
+            final boolean[] isArmed = {false};
+            final AtomicInteger returns = new AtomicInteger();
+            final AtomicInteger pooledAtReturn = new AtomicInteger(-1);
+            engine.setPoolListener((factoryType, _, tableToken, event, _, _) -> {
+                if (isArmed[0] && factoryType == PoolListener.SRC_READER && event == PoolListener.EV_RETURN
+                        && tableToken != null && Chars.equals(tableToken.getTableName(), table)) {
+                    returns.incrementAndGet();
+                    pooledAtReturn.set(postingReader.getFreeDetachedCursorCount());
+                }
+            });
+            setFeatures(true, false);
+            final NetworkSqlExecutionCircuitBreaker circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine, cbConfiguration);
+            try {
+                ctx.with(ctx.getSecurityContext(), ctx.getBindVariableService(), ctx.getRandom(), ctx.getRequestFd(), circuitBreaker);
+                try (RecordCursorFactory factory = compiler.compile("select count(), sum(a) from " + table + " where psym in ('k1', 'k2')", ctx).getRecordCursorFactory()) {
+                    Assert.assertNotNull(findGather(factory));
+                    final long news = AbstractPostingIndexReader.DETACHED_CURSOR_NEWS.get();
+                    tripAfterNews[0] = news + 1;
+                    circuitBreaker.resetTimer();
+                    // with workers the failed query may release its TableReader before
+                    // hasNext() throws, so the listener watches from the cursor's start
+                    isArmed[0] = true;
+                    final RecordCursor cursor = factory.getCursor(ctx);
+                    try {
+                        //noinspection StatementWithEmptyBody
+                        while (cursor.hasNext()) {
+                            // drain
+                        }
+                        Assert.fail("expected a timeout");
+                    } catch (Throwable e) {
+                        TestUtils.assertContains(e.getMessage(), "timeout, query aborted");
+                    }
+                    cursor.close();
+                    isArmed[0] = false;
+                    // the pool was empty, so every cursor the query took was new; all of them,
+                    // the one held mid-key included, are back in the pool when the reader returns
+                    final long taken = AbstractPostingIndexReader.DETACHED_CURSOR_NEWS.get() - news;
+                    Assert.assertTrue("cursors taken: " + taken, taken > 0);
+                    Assert.assertEquals(1, returns.get());
+                    Assert.assertEquals(taken, pooledAtReturn.get());
+
+                    // the same factory runs again from the pooled cursors: a run has one task per
+                    // key, each holding one cursor at a time, so the reader never needs more than
+                    // two, however the runs interleave their tasks
+                    tripAfterNews[0] = Long.MAX_VALUE;
+                    for (int i = 0; i < 5; i++) {
+                        TestUtils.assertEquals(expected, print(factory, ctx));
+                    }
+                    final long built = AbstractPostingIndexReader.DETACHED_CURSOR_NEWS.get() - news;
+                    Assert.assertTrue("detached cursors built: " + built, built <= 2);
+                    Assert.assertEquals(built, postingReader.getFreeDetachedCursorCount());
+                }
+            } finally {
+                engine.setPoolListener(null);
+                Misc.free(circuitBreaker);
+            }
+        }, configuration, LOG);
+        circuitBreakerConfiguration = null;
     }
 
     /**

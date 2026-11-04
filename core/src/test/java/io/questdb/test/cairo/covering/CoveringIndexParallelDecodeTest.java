@@ -1439,6 +1439,61 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelCoveredDecodeReusesDetachedCursors() throws Exception {
+        // the covered decode takes a detached cursor per frame; with the partitions kept open
+        // between runs (the server default), repeated runs reuse the posting readers' pooled
+        // cursors instead of building one per frame
+        // 500 rows of S0 per partition, so 3 covered frames per partition at 200 rows a frame
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 200);
+        setProperty(PropertyKey.CAIRO_INACTIVE_READER_MAX_OPEN_PARTITIONS, 10_000);
+        final int partitions = 64;
+        final String covered = "SELECT sum(px), count() FROM %s WHERE sym = 'S0'";
+        final String scan = "SELECT /*+ no_index */ sum(px), count() FROM %s WHERE sym = 'S0'";
+        assertMemoryLeak(() -> {
+            // without workers a run holds one cursor at a time: the warm-up run pools one
+            // cursor per partition and later runs build none
+            TestUtils.execute(
+                    null,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        createReuseTable(engine, sqlExecutionContext, "cov_serial", partitions);
+                        final String sql = String.format(covered, "cov_serial");
+                        final String ref = String.format(scan, "cov_serial");
+                        TestUtils.assertSqlCursors(compiler, sqlExecutionContext, ref, sql, LOG);
+                        final long news = AbstractPostingIndexReader.DETACHED_CURSOR_NEWS.get();
+                        for (int i = 0; i < 10; i++) {
+                            TestUtils.assertSqlCursors(compiler, sqlExecutionContext, ref, sql, LOG);
+                        }
+                        assertEquals(news, AbstractPostingIndexReader.DETACHED_CURSOR_NEWS.get());
+                    },
+                    configuration,
+                    LOG
+            );
+            // with workers a partition's pool grows to at most one cursor per thread decoding
+            // its frames at once, never one per frame per run
+            final int workers = 4;
+            final WorkerPool pool = new TestWorkerPool(workers, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        createReuseTable(engine, sqlExecutionContext, "cov_parallel", partitions);
+                        final String sql = String.format(covered, "cov_parallel");
+                        final String ref = String.format(scan, "cov_parallel");
+                        final long news = AbstractPostingIndexReader.DETACHED_CURSOR_NEWS.get();
+                        final int runs = 10;
+                        for (int i = 0; i < runs; i++) {
+                            TestUtils.assertSqlCursors(compiler, sqlExecutionContext, ref, sql, LOG);
+                        }
+                        // one cursor per frame per run would be 10 x 64 x 3 = 1,920
+                        final long built = AbstractPostingIndexReader.DETACHED_CURSOR_NEWS.get() - news;
+                        assertTrue("detached cursors built: " + built, built <= (long) partitions * (workers + 1));
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
     public void testParallelCoveredDecodeSparseMultiGenMatchesReference() throws Exception {
         // C1 regression (review): a single-key covered decode (sym = 'x') is produced metadata-only at
         // frame production and DECODED ON THE ASYNC WORKERS over a SHARED, frozen posting reader. The
@@ -2366,6 +2421,27 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
     // isInterruption()/isCancellation() set (here the "cancelled by user" variant; we
     // accept the timeout "query aborted" variant too so the helper is robust to which
     // breaker check fires first).
+    private static void createReuseTable(CairoEngine engine, SqlExecutionContext ctx, String name, int partitions) throws Exception {
+        final int rowsPerPartition = 4000;
+        engine.execute(
+                "CREATE TABLE " + name + " (" +
+                        "  ts TIMESTAMP," +
+                        "  sym SYMBOL INDEX TYPE POSTING INCLUDE (px)," +
+                        "  px DOUBLE" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL",
+                ctx
+        );
+        engine.execute(
+                "INSERT INTO " + name + " SELECT" +
+                        " ('2024-01-01'::TIMESTAMP + (x - 1) * " + (86_400_000_000L / rowsPerPartition) + "L)::timestamp ts," +
+                        " ('S' || ((x - 1) % 8))::symbol sym," +
+                        " (x % 997)::double px" +
+                        " FROM long_sequence(" + (long) rowsPerPartition * partitions + ")",
+                ctx
+        );
+        engine.releaseAllWriters();
+    }
+
     private static void assertCoveredQueryCancels(
             SqlCompiler compiler,
             SqlExecutionContext context,
