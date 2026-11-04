@@ -132,7 +132,7 @@ public class MetricsRegistryTest {
         assertScrapable(gauge, """
                 # TYPE questdb_gauge gauge
                 questdb_gauge NaN
-
+                
                 """);
 
         gauge.setValue(Long.MIN_VALUE + 1);
