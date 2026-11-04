@@ -924,10 +924,12 @@ public class CopyExportTest extends AbstractCairoTest {
                                         2020-01-01T00:00:00.000000Z\t0
                                         2020-01-01T00:00:01.000000Z\t10
                                         """);
+                        // The single-pass conversion leaves the table name out of the file schema's root, so
+                        // the converted 2020-01-01 is ten bytes - "test_table" - short of a named one.
                         assertQuery("select path, diskSizeHuman from export_files()  order by path")
                                 .noLeakCheck()
                                 .returns("path\tdiskSizeHuman\n" +
-                                        "test_table" + File.separator + "2020-01-01.parquet\t666.0 B\n" +
+                                        "test_table" + File.separator + "2020-01-01.parquet\t656.0 B\n" +
                                         "test_table" + File.separator + "2020-01-02.parquet\t648.0 B\n");
                     });
             testCopyExport(stmt, test);
