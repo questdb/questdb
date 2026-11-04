@@ -161,6 +161,11 @@ public class MatViewState implements QuietCloseable {
     // refresh iteration's base-table scan, in nanoseconds. See
     // avgScanRangeTsUnits.
     private volatile long avgScanSampleNanos;
+    // What the column mapping that the last compile of the view's SQL built leaves out, for materialized_views():
+    // null before the first such compile in this process and after one that failed. Refresh writes it under the
+    // latch, view ADD COLUMN's check without it, and the catalogue reads it, so it is one volatile reference to an
+    // immutable summary. Kept in memory only.
+    private volatile MatViewColumnMapping.Summary columnMappingSummary;
     // Set once the owner store tears this state down (e.g. a role demote frees
     // the discarded store). A refresh worker that holds the latch across the
     // teardown consults this in the *refreshSuccess* park methods: rather than
@@ -643,6 +648,15 @@ public class MatViewState implements QuietCloseable {
 
     public long getAvgScanSampleNanos() {
         return avgScanSampleNanos;
+    }
+
+    /**
+     * Returns what the column mapping that the last compile of the view's SQL built leaves out: the view columns the
+     * SQL does not produce and the SQL's columns the view lacks. Returns null before the first such compile in this
+     * process and after one that failed. Refresh compiles the SQL, and so does view ADD COLUMN's check.
+     */
+    public @Nullable MatViewColumnMapping.Summary getColumnMappingSummary() {
+        return columnMappingSummary;
     }
 
     /**
@@ -1298,6 +1312,12 @@ public class MatViewState implements QuietCloseable {
                 return;
             }
         }
+    }
+
+    // Keeps the summary of a column mapping that a compile of the view's SQL built, or null after one that failed, see
+    // getColumnMappingSummary().
+    public void setColumnMappingSummary(@Nullable MatViewColumnMapping.Summary columnMappingSummary) {
+        this.columnMappingSummary = columnMappingSummary;
     }
 
     public void setLastPeriodHi(long lastPeriodHi) {

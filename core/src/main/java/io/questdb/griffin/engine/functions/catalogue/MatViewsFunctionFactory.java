@@ -40,6 +40,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.mv.MatViewBackfillValidator;
+import io.questdb.cairo.mv.MatViewColumnMapping;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateReader;
@@ -144,6 +145,8 @@ public class MatViewsFunctionFactory implements FunctionFactory {
         private static final int COLUMN_EXPIRE_CLEANUP_EVERY = COLUMN_EXPIRE_CLAUSE + 1;
         private static final int COLUMN_EXPIRE_ENFORCEMENT = COLUMN_EXPIRE_CLEANUP_EVERY + 1;
         private static final int COLUMN_BACKFILL_MAX_TS = COLUMN_EXPIRE_ENFORCEMENT + 1;
+        private static final int COLUMN_UNMAPPED_VIEW_COLUMNS = COLUMN_BACKFILL_MAX_TS + 1;
+        private static final int COLUMN_IGNORED_QUERY_COLUMNS = COLUMN_UNMAPPED_VIEW_COLUMNS + 1;
         private static final RecordMetadata METADATA;
         private final ViewsListCursor cursor;
 
@@ -304,6 +307,8 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                         // nothing schedules the view: the timer job never registered it, or lost it.
                         // No other column shows that -- view_status keeps reporting 'valid'.
                         final int timersRegistered = state != null ? state.getRegisteredTimerCount() : 0;
+                        // Kept in memory only: unknown until the view's SQL compiles in this process.
+                        final MatViewColumnMapping.Summary columnMappingSummary = state != null ? state.getColumnMappingSummary() : null;
 
                         // The row-expiry policy lives in the view's table metadata (_meta), not the
                         // mat-view definition. The graph is populated synchronously at startup while the
@@ -411,7 +416,8 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                                 expirePredicate,
                                 expireCleanupMicros,
                                 expireEnforcement,
-                                backfillMaxTs
+                                backfillMaxTs,
+                                columnMappingSummary
                         );
                         viewIndex++;
                         return true;
@@ -494,6 +500,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                 private long avgScanRangeTsUnits;
                 private long avgScanSampleNanos;
                 private long backfillMaxTs;
+                private MatViewColumnMapping.Summary columnMappingSummary;
                 private long commitGapThresholdTsUnits;
                 private boolean hasExpireCleanupEvery;
                 private boolean hasExpirePredicate;
@@ -573,6 +580,10 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                         case COLUMN_EXPIRE_CLAUSE -> hasExpirePredicate ? expirePredicateSink : null;
                         case COLUMN_EXPIRE_CLEANUP_EVERY -> hasExpireCleanupEvery ? expireCleanupEverySink : null;
                         case COLUMN_EXPIRE_ENFORCEMENT -> expireEnforcement;
+                        case COLUMN_UNMAPPED_VIEW_COLUMNS ->
+                                columnMappingSummary != null ? columnMappingSummary.getUnmappedViewColumns() : null;
+                        case COLUMN_IGNORED_QUERY_COLUMNS ->
+                                columnMappingSummary != null ? columnMappingSummary.getIgnoredQueryColumns() : null;
                         default -> null;
                     };
                 }
@@ -613,7 +624,8 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                         CharSequence expirePredicate,
                         long expireCleanupMicros,
                         String expireEnforcement,
-                        long backfillMaxTs
+                        long backfillMaxTs,
+                        MatViewColumnMapping.Summary columnMappingSummary
                 ) {
                     this.viewDefinition = viewDefinition;
                     this.lastRefreshStartTimestamp = lastRefreshStartTimestamp;
@@ -637,6 +649,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                     this.avgScanRangeTsUnits = avgScanRangeTsUnits;
                     this.commitGapThresholdTsUnits = commitGapThresholdTsUnits;
                     this.backfillMaxTs = backfillMaxTs;
+                    this.columnMappingSummary = columnMappingSummary;
                     this.retrying = retrying;
                     this.timersRegistered = timersRegistered;
                     expirePredicateSink.clear();
@@ -703,6 +716,11 @@ public class MatViewsFunctionFactory implements FunctionFactory {
             // rows fall in or past the managed zone and are rejected at commit.
             // NULL when REFRESH LIMIT is not set (no frozen zone exists).
             metadata.add(new TableColumnMetadata("backfill_max_ts", ColumnType.TIMESTAMP_MICRO));
+            // What the column mapping that the last compile of the view's SQL built leaves out: the view columns the
+            // SQL does not produce, which receive NULL, and the SQL's columns the view lacks, which refresh ignores.
+            // Comma-separated, empty for none, NULL until the SQL compiles in this process, see MatViewState.
+            metadata.add(new TableColumnMetadata("unmapped_view_columns", ColumnType.STRING));
+            metadata.add(new TableColumnMetadata("ignored_query_columns", ColumnType.STRING));
             METADATA = metadata;
         }
     }

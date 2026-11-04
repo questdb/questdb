@@ -35,6 +35,9 @@ import static io.questdb.griffin.engine.ops.AlterOperation.*;
 import static io.questdb.tasks.TableWriterTask.CMD_ALTER_TABLE;
 
 public class AlterOperationBuilder implements Mutable {
+    // ADD COLUMN keeps this many values per column in extraInfo, see addColumnToList(); AlterOperation reads them
+    // in the same order.
+    private static final int ADD_COLUMN_INFO_SIZE = 6;
     private final LongList extraInfo = new LongList();
     private final ObjList<CharSequence> extraStrInfo = new ObjList<>();
     private final AlterOperation op;
@@ -92,6 +95,16 @@ public class AlterOperationBuilder implements Mutable {
         tableToken = null;
         tableId = -1;
         tableNamePosition = -1;
+    }
+
+    // Returns where the statement names the column at the given index of an ADD COLUMN list.
+    public int getAddColumnNamePosition(int columnIndex) {
+        return (int) extraInfo.getQuick(columnIndex * ADD_COLUMN_INFO_SIZE + ADD_COLUMN_INFO_SIZE - 1);
+    }
+
+    // Returns the type of the column at the given index of an ADD COLUMN list.
+    public int getAddColumnType(int columnIndex) {
+        return (int) extraInfo.getQuick(columnIndex * ADD_COLUMN_INFO_SIZE);
     }
 
     public ObjList<CharSequence> getExtraStrInfo() {

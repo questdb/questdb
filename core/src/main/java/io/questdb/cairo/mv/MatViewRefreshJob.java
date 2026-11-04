@@ -1574,8 +1574,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     }
 
     // Builds the copier from the query's columns to the view's: by position when the view's SQL relies on generated
-    // column names, by name otherwise, see MatViewColumnMapping.
+    // column names, by name otherwise, see MatViewColumnMapping. The view's state keeps what the mapping leaves out,
+    // for materialized_views(); a mapping that fails leaves it unknown.
     private RecordToRowCopier getRecordToRowCopier(
+            MatViewState viewState,
             TableToken viewToken,
             WalWriter walWriter,
             RecordCursorFactory factory,
@@ -1583,16 +1585,19 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             boolean isPositional,
             boolean hasTopLevelProjectionWildcard
     ) {
+        viewState.setColumnMappingSummary(null);
         if (isPositional) {
             validateViewSchema(viewToken, factory.getMetadata(), walWriter.getMetadata(), hasTopLevelProjectionWildcard);
         }
-        return MatViewColumnMapping.newRecordToRowCopier(
+        final RecordToRowCopier copier = MatViewColumnMapping.newRecordToRowCopier(
                 asm,
                 factory.getMetadata(),
                 walWriter.getMetadata(),
                 isPositional,
                 configuration
         );
+        viewState.setColumnMappingSummary(MatViewColumnMapping.summarize(factory.getMetadata(), walWriter.getMetadata(), isPositional));
+        return copier;
     }
 
     private int preflightMaterialization(
@@ -1634,12 +1639,15 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     try (SqlCompiler compiler = engine.getSqlCompiler()) {
                         refreshSqlExecutionContext.resetTopLevelProjectionWildcard();
                         refreshSqlExecutionContext.setViewSqlGeneratedColumnNames(true);
+                        // a compile that fails leaves the view's column mapping unknown
+                        viewState.setColumnMappingSummary(null);
                         final CompiledQuery compiledQuery = compiler.compile(viewSql, refreshSqlExecutionContext);
                         assert compiledQuery.getType() == CompiledQuery.SELECT;
                         factory = compiledQuery.getRecordCursorFactory();
                         final boolean isPositional = refreshSqlExecutionContext.hasViewSqlGeneratedColumnNames();
                         // A new factory can expose different result types even when the view schema is unchanged.
                         copier = getRecordToRowCopier(
+                                viewState,
                                 viewToken,
                                 walWriter,
                                 factory,
@@ -1966,6 +1974,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                             LOG.info().$("compiling materialized view [view=").$(viewTableToken).$(", attempt=").$(i).I$();
                             refreshSqlExecutionContext.resetTopLevelProjectionWildcard();
                             refreshSqlExecutionContext.setViewSqlGeneratedColumnNames(true);
+                            // a compile that fails leaves the view's column mapping unknown
+                            viewState.setColumnMappingSummary(null);
                             final CompiledQuery compiledQuery = compiler.compile(viewSql, refreshSqlExecutionContext);
                             assert compiledQuery.getType() == CompiledQuery.SELECT;
                             factory = compiledQuery.getRecordCursorFactory();
@@ -1979,6 +1989,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                             isPositional = refreshSqlExecutionContext.hasViewSqlGeneratedColumnNames();
                             // A new factory can expose different result types even when the view schema is unchanged.
                             copier = getRecordToRowCopier(
+                                    viewState,
                                     viewTableToken,
                                     walWriter,
                                     factory,
@@ -2076,7 +2087,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                 viewState.recordCommitNanos(System.nanoTime() - commitStart);
                                 runBatchCommittedSeamForTesting();
                                 if (walWriter.getMetadata().getMetadataVersion() != copierMetadataVersion) {
-                                    copier = rebuildRecordToRowCopier(viewTableToken, walWriter, factory, isPositional);
+                                    copier = rebuildRecordToRowCopier(viewState, viewTableToken, walWriter, factory, isPositional);
                                     copierMetadataVersion = walWriter.getMetadata().getMetadataVersion();
                                 }
                                 if (pendingScanRangeTsUnits > 0) {
@@ -2173,7 +2184,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                     );
                                     runBatchCommittedSeamForTesting();
                                     if (walWriter.getMetadata().getMetadataVersion() != copierMetadataVersion) {
-                                        copier = rebuildRecordToRowCopier(viewTableToken, walWriter, factory, isPositional);
+                                        copier = rebuildRecordToRowCopier(viewState, viewTableToken, walWriter, factory, isPositional);
                                         copierMetadataVersion = walWriter.getMetadata().getMetadataVersion();
                                     }
                                 }
@@ -3022,6 +3033,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     // view columns by index, and a dropped column's buffer is gone, so the rows after the commit need a copier
     // built for the new schema. The factory, and so the query's columns, stay as they are.
     private RecordToRowCopier rebuildRecordToRowCopier(
+            MatViewState viewState,
             TableToken viewToken,
             WalWriter walWriter,
             RecordCursorFactory factory,
@@ -3033,7 +3045,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             // The compile checked a top-level wildcard's column names against the view's; a view column never
             // moves, so only the column count of a positional copy needs the check again.
-            return getRecordToRowCopier(viewToken, walWriter, factory, compiler.getAsm(), isPositional, false);
+            return getRecordToRowCopier(viewState, viewToken, walWriter, factory, compiler.getAsm(), isPositional, false);
         }
     }
 

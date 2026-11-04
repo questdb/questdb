@@ -41,7 +41,9 @@ import io.questdb.griffin.RecordToRowCopierUtils;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.SelectedRecord;
 import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.Chars;
 import io.questdb.std.IntList;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
@@ -198,6 +200,54 @@ public final class MatViewColumnMapping {
         );
     }
 
+    /**
+     * Returns what the mapping from the query's columns to the view's leaves out, see {@link Summary}: nothing for a
+     * positional copy, which fills every view column from the query column at its position.
+     */
+    public static Summary summarize(RecordMetadata queryMetadata, RecordMetadata viewMetadata, boolean isPositional) {
+        return isPositional ? Summary.EMPTY : summarize(queryMetadata, viewMetadata, null);
+    }
+
+    /**
+     * Returns what a name mapping from the query's columns to the view's leaves out, see {@link Summary}. The view
+     * has the columns of {@code viewMetadata}, and also {@code addedViewColumnName} when not null, a column the view
+     * is about to gain.
+     */
+    public static Summary summarize(
+            RecordMetadata queryMetadata,
+            RecordMetadata viewMetadata,
+            @Nullable CharSequence addedViewColumnName
+    ) {
+        StringSink unmappedViewColumns = null;
+        for (int i = 0, n = viewMetadata.getColumnCount(); i < n; i++) {
+            // a dropped column keeps its slot with a negative type
+            if (viewMetadata.getColumnType(i) > -1) {
+                final CharSequence columnName = viewMetadata.getColumnName(i);
+                if (queryMetadata.getColumnIndexQuiet(columnName) < 0) {
+                    unmappedViewColumns = putListed(unmappedViewColumns, columnName);
+                }
+            }
+        }
+        if (addedViewColumnName != null && queryMetadata.getColumnIndexQuiet(addedViewColumnName) < 0) {
+            unmappedViewColumns = putListed(unmappedViewColumns, addedViewColumnName);
+        }
+        StringSink ignoredQueryColumns = null;
+        for (int i = 0, n = queryMetadata.getColumnCount(); i < n; i++) {
+            final CharSequence columnName = queryMetadata.getColumnName(i);
+            if (viewMetadata.getColumnIndexQuiet(columnName) < 0
+                    && (addedViewColumnName == null || !Chars.equalsIgnoreCase(columnName, addedViewColumnName))) {
+                ignoredQueryColumns = putListed(ignoredQueryColumns, columnName);
+            }
+        }
+        if (unmappedViewColumns == null && ignoredQueryColumns == null) {
+            return Summary.EMPTY;
+        }
+        return new Summary(
+                unmappedViewColumns != null ? unmappedViewColumns.toString() : "",
+                ignoredQueryColumns != null ? ignoredQueryColumns.toString() : ""
+        );
+    }
+
     private static void checkConvertible(RecordMetadata queryMetadata, int queryColumnIndex, RecordMetadata viewMetadata, int viewColumnIndex) {
         final int fromType = queryMetadata.getColumnType(queryColumnIndex);
         final int toType = viewMetadata.getColumnType(viewColumnIndex);
@@ -220,6 +270,42 @@ public final class MatViewColumnMapping {
         final EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
         entityColumnFilter.of(queryMetadata.getColumnCount());
         return RecordToRowCopierUtils.generateCopier(asm, queryMetadata, viewMetadata, entityColumnFilter, configuration);
+    }
+
+    // Appends the name to a comma-separated list, which starts on the first name.
+    private static StringSink putListed(@Nullable StringSink list, CharSequence name) {
+        if (list == null) {
+            list = new StringSink();
+        } else {
+            list.put(',');
+        }
+        list.put(name);
+        return list;
+    }
+
+    /**
+     * What the mapping from a view's query columns to its columns leaves out, as {@code materialized_views()} reports
+     * it: the view columns no query column names, which get NULL, and the query columns no view column names, which
+     * refresh ignores. Each is a comma-separated list of names, in column order, and empty when there is none. A
+     * positional copy leaves nothing out.
+     */
+    public static final class Summary {
+        public static final Summary EMPTY = new Summary("", "");
+        private final String ignoredQueryColumns;
+        private final String unmappedViewColumns;
+
+        private Summary(String unmappedViewColumns, String ignoredQueryColumns) {
+            this.unmappedViewColumns = unmappedViewColumns;
+            this.ignoredQueryColumns = ignoredQueryColumns;
+        }
+
+        public String getIgnoredQueryColumns() {
+            return ignoredQueryColumns;
+        }
+
+        public String getUnmappedViewColumns() {
+            return unmappedViewColumns;
+        }
     }
 
     // Copies the query columns a name mapping matched, projected in query order, into the view columns the filter names.

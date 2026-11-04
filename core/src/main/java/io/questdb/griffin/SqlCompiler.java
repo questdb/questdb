@@ -193,6 +193,24 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
             int position
     ) throws SqlException;
 
+    /**
+     * Validates the SQL of a materialized view under the caller's context, for {@link MatViewSqlValidator}: parses
+     * it and, with {@code isCompiling} set, compiles it as the view's refresh reads it, then reports to the
+     * validator what it found. A SQL that does not parse or compile reports its error; the method throws only an
+     * authorization error, a cancellation or a timeout.
+     *
+     * @param viewDefinition   the definition of the view
+     * @param isCompiling      false to only parse the SQL
+     * @param executionContext the context to compile the SQL with, which the method leaves as it found it
+     * @param validator        receives the outcome
+     */
+    void validateMatViewSql(
+            MatViewDefinition viewDefinition,
+            boolean isCompiling,
+            SqlExecutionContext executionContext,
+            MatViewSqlValidator validator
+    ) throws SqlException;
+
     @TestOnly
     void setEnableJitNullChecks(boolean value);
 

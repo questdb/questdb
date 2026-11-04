@@ -227,14 +227,19 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     // a later TRUNCATE or covering REPLACE_RANGE can still skip the data before it. An SQL
                     // transaction stays a hard barrier even for a mat view, as it may read existing data.
                     //
-                    // This mat-view exemption is safe only because no row-order-dependent structural change
-                    // can reach a mat view: a column type conversion - the one such operation - is rejected on
-                    // a mat view (SqlCompilerImpl.checkViewModification), and the column alters that a mat view
-                    // does permit (ADD INDEX, DROP INDEX, SYMBOL CAPACITY) are non-structural, so they commit
-                    // as walId > 0 SQL transactions and stay hard barriers via the futureType != SQL check
-                    // below. Making a row-dependent op structural and allowing it on a mat view would reopen
-                    // the cross-instance divergence; WalWriterReplaceRangeTest's
-                    // testMatViewPermittedColumnAltersStayNonStructural guards the non-structural half.
+                    // This mat-view exemption is safe only because no structural change a mat view takes reads
+                    // the rows before it. The structural changes a mat view takes are view ADD COLUMN and DROP
+                    // COLUMN (ALTER MATERIALIZED VIEW ... ADD | DROP COLUMN): a new column starts empty behind a
+                    // column top, and a dropped column goes without its rows being read, so skipping an insert
+                    // across either leaves the same rows as applying it. The one row-order-dependent structural
+                    // change, a column type conversion, is rejected on a mat view
+                    // (SqlCompilerImpl.checkViewModification), and the column alters that a mat view does permit
+                    // (ADD INDEX, DROP INDEX, SYMBOL CAPACITY) are non-structural, so they commit as walId > 0 SQL
+                    // transactions and stay hard barriers via the futureType != SQL check below. Making a
+                    // row-dependent op structural and allowing it on a mat view would reopen the cross-instance
+                    // divergence; WalWriterReplaceRangeTest's testMatViewPermittedColumnAltersStayNonStructural
+                    // pins which alters are structural, and testReplaceRangeSkipsInsertAcrossViewColumnChanges
+                    // that a skip across view ADD and DROP COLUMN leaves the rows a full apply leaves.
                     if (isMatView && futureType != SQL) {
                         firstNonSkippableTxn = Math.min(firstNonSkippableTxn, futureSeqTxn);
                         continue;

@@ -117,16 +117,20 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
         // Locks in the assumption behind the materialized-view skip-barrier exemption in
         // ApplyWal2TableJob.calculateSkipTransactionCount: a mat view scans PAST a non-data barrier (so an
         // insert before it can still be skipped) unless the barrier is an SQL transaction. That is safe only
-        // because the column operations a mat view is allowed to run - ADD INDEX, DROP INDEX, SYMBOL CAPACITY
-        // - are non-structural, so they commit as walId > 0 SQL transactions (hard barriers via the
-        // futureType != SQL carve-out) rather than walId < 1 structural changes (exempted soft barriers). The
-        // one row-order-dependent structural op, a column type conversion, is structural AND separately
-        // rejected on a mat view, so it can never reach the exempted path.
+        // because no structural change a mat view takes reads the rows before it. The structural changes a
+        // mat view takes are view ADD COLUMN and DROP COLUMN: a new column starts empty behind a column top,
+        // and a dropped column goes without its rows being read, so skipping an insert across either leaves
+        // the same rows (testReplaceRangeSkipsInsertAcrossViewColumnChanges). The other column operations a
+        // mat view is allowed to run - ADD INDEX, DROP INDEX, SYMBOL CAPACITY - are non-structural, so they
+        // commit as walId > 0 SQL transactions (hard barriers via the futureType != SQL carve-out) rather
+        // than walId < 1 structural changes (exempted soft barriers), and so does a view DROP PARTITION,
+        // which removes rows. The one row-order-dependent structural op, a column type conversion, is
+        // structural AND separately rejected on a mat view, so it can never reach the exempted path.
         //
-        // If any of these column alters were ever made structural (added to AlterOperation.isStructural()),
-        // it would silently become an exempted soft barrier on a mat view and could let a primary and a
-        // replica skip different transactions ahead of it - reopening the symbol-map divergence the barrier
-        // closes. This test fails the moment that assumption breaks.
+        // If any of these row-dependent alters were ever made structural (added to
+        // AlterOperation.isStructural()), it would silently become an exempted soft barrier on a mat view and
+        // could let a primary and a replica skip different transactions ahead of it - reopening the
+        // symbol-map divergence the barrier closes. This test fails the moment that assumption breaks.
         assertMemoryLeak(() -> {
             execute("create table t (s1 symbol, s2 symbol index, ts timestamp) timestamp(ts) partition by DAY WAL");
 
@@ -138,6 +142,19 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
             // A column type conversion is structural - the op the barrier exists for - and is separately
             // rejected on a mat view, so it never reaches the exempted soft-barrier path.
             assertAlterIsStructural("alter table t alter column s1 type varchar", true);
+
+            // The same alters on a mat view itself, and the view's own column and partition DDL: view ADD and
+            // DROP COLUMN are the structural changes a mat view takes, which read no rows, while DROP
+            // PARTITION, which removes rows, stays an SQL hard barrier.
+            execute("create table base (s symbol, v double, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("create materialized view mv as (select s, last(v) v, ts from base sample by 1h) partition by DAY");
+            drainWalQueue();
+            assertAlterIsStructural("alter materialized view mv alter column s add index", false);
+            assertAlterIsStructural("alter materialized view mv alter column s symbol capacity 256", false);
+            assertAlterIsStructural("alter materialized view mv drop partition list '2022-02-24'", false);
+            assertAlterIsStructural("alter materialized view mv drop partition where ts < '2022-02-24'", false);
+            assertAlterIsStructural("alter materialized view mv add column extra int", true);
+            assertAlterIsStructural("alter materialized view mv drop column v", true);
         });
     }
 
@@ -1401,6 +1418,101 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReplaceRangeSkipsInsertAcrossViewColumnChanges() throws Exception {
+        // A view ADD COLUMN and DROP COLUMN are structural changes on the view's own WAL, which the mat-view
+        // exemption scans past: an insert before them that a later REPLACE_RANGE covers is skipped. That is safe
+        // because neither change reads the rows before it - a new column starts empty behind a column top, and a
+        // dropped column goes without its rows being read - so the view ends with the same rows as when the
+        // insert is applied. Two views take the same commits: mv_applied applies the insert before the
+        // REPLACE_RANGE is committed, so nothing can skip it, and mv_skipped applies everything in one batch.
+        assertMemoryLeak(() -> {
+            execute("create table base (s symbol, v double, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("create materialized view mv_applied as (select s, last(v) v, ts from base sample by 1h) partition by DAY");
+            execute("create materialized view mv_skipped as (select s, last(v) v, ts from base sample by 1h) partition by DAY");
+            drainWalQueue();
+            final long rangeLo = MicrosTimestampDriver.floor("2022-02-24T00");
+            final long rangeHi = MicrosTimestampDriver.floor("2022-02-24T01"); // exclusive
+            final long keptTs = MicrosTimestampDriver.floor("2022-02-23T05");
+
+            for (String viewName : new String[]{"mv_applied", "mv_skipped"}) {
+                final TableToken tableToken = engine.verifyTableName(viewName);
+                // a row the REPLACE_RANGE does not cover, in a partition of its own, already applied
+                try (WalWriter ww = engine.getWalWriter(tableToken)) {
+                    TableWriter.Row row = ww.newRow(keptTs);
+                    row.putSym(0, "kept");
+                    row.putDouble(1, 5);
+                    row.append();
+                    ww.commit();
+                }
+                drainWalQueue();
+
+                // the insert the REPLACE_RANGE covers
+                try (WalWriter ww = engine.getWalWriter(tableToken)) {
+                    for (int i = 0; i < 10; i++) {
+                        TableWriter.Row row = ww.newRow(rangeLo + i * 60_000_000L);
+                        row.putSym(0, "old" + i);
+                        row.putDouble(1, i);
+                        row.append();
+                    }
+                    ww.commit();
+                }
+                if (viewName.equals("mv_applied")) {
+                    drainWalQueue();
+                }
+
+                execute("alter materialized view " + viewName + " add column extra int");
+                execute("alter materialized view " + viewName + " drop column v");
+
+                try (WalWriter ww = engine.getWalWriter(tableToken)) {
+                    final int extraIndex = ww.getMetadata().getColumnIndex("extra");
+                    for (int i = 0; i < 10; i++) {
+                        TableWriter.Row row = ww.newRow(rangeLo + i * 60_000_000L);
+                        row.putSym(0, "new" + i);
+                        row.putInt(extraIndex, 100 + i);
+                        row.append();
+                    }
+                    ww.commitWithParams(rangeLo, rangeHi, WAL_DEDUP_MODE_REPLACE_RANGE);
+                }
+
+                final long physicalRowsBefore = engine.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows();
+                drainWalQueue();
+                if (viewName.equals("mv_skipped")) {
+                    // Only the REPLACE_RANGE's 10 rows reach disk: the insert is skipped across the column changes.
+                    // Applying it would write its 10 rows as well.
+                    Assert.assertEquals(
+                            10,
+                            engine.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows() - physicalRowsBefore
+                    );
+                }
+                Assert.assertFalse("view WAL is suspended", engine.getTableSequencerAPI().isSuspended(tableToken));
+
+                assertQuery("select s, ts, extra from " + viewName + " order by ts")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                s\tts\textra
+                                kept\t2022-02-23T05:00:00.000000Z\tnull
+                                new0\t2022-02-24T00:00:00.000000Z\t100
+                                new1\t2022-02-24T00:01:00.000000Z\t101
+                                new2\t2022-02-24T00:02:00.000000Z\t102
+                                new3\t2022-02-24T00:03:00.000000Z\t103
+                                new4\t2022-02-24T00:04:00.000000Z\t104
+                                new5\t2022-02-24T00:05:00.000000Z\t105
+                                new6\t2022-02-24T00:06:00.000000Z\t106
+                                new7\t2022-02-24T00:07:00.000000Z\t107
+                                new8\t2022-02-24T00:08:00.000000Z\t108
+                                new9\t2022-02-24T00:09:00.000000Z\t109
+                                """);
+                // the skipped insert's symbols reach the symbol table as if it had been applied
+                try (TableReader reader = engine.getReader(tableToken)) {
+                    Assert.assertEquals(21, reader.getSymbolMapReader(reader.getMetadata().getColumnIndex("s")).getSymbolCount());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testReplaceRangeSkipsInsertBeforeMultipleBarriersAndTruncateOnMatView() throws Exception {
         // Stacked-barrier variant of testReplaceRangeSkipsInsertBeforeTruncateAfterBarrierOnMatView:
         //   INSERT(0) -> MAT_VIEW_INVALIDATE(1) -> MAT_VIEW_INVALIDATE(2) -> TRUNCATE(3)
@@ -1481,12 +1593,12 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
         // WalWriter.truncateSoft() (see MatViewRefreshJob), so the data it is about to wipe is not
         // materialised first.
         //
-        // ADD COLUMN (the barrier in the original trace) cannot run on a mat view, so MAT_VIEW_INVALIDATE is
-        // the realistic mat-view barrier. The truncate wipes the insert either way, so the rendered data is
-        // identical whether or not the INSERT is skipped. The test therefore guards the exemption through
-        // physically-written rows rather than the data: when the INSERT is skipped, its rows never reach disk;
-        // if the isMatView() branch regressed and applied the INSERT before the truncate, those rows would be
-        // written first and the assertion below would fail.
+        // MAT_VIEW_INVALIDATE stands for the barrier here; a view ADD COLUMN, the barrier in the original trace,
+        // is scanned past the same way (testReplaceRangeSkipsInsertAcrossViewColumnChanges). The truncate wipes
+        // the insert either way, so the rendered data is identical whether or not the INSERT is skipped. The
+        // test therefore guards the exemption through physically-written rows rather than the data: when the
+        // INSERT is skipped, its rows never reach disk; if the isMatView() branch regressed and applied the
+        // INSERT before the truncate, those rows would be written first and the assertion below would fail.
         assertMemoryLeak(() -> {
             execute("create table base (s string, v double, ts timestamp) timestamp(ts) partition by DAY WAL");
             execute("create materialized view mv as (select s, last(v) v, ts from base sample by 1h) partition by DAY");
