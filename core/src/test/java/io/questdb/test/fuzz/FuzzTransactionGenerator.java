@@ -82,6 +82,88 @@ public class FuzzTransactionGenerator {
             double probabilityOfSetTableFormat,
             double probabilityOfVacuum
     ) {
+        return generateSet(
+                initialRowCount,
+                sequencerMetadata,
+                tableMetadata,
+                rnd,
+                minTimestamp,
+                maxTimestamp,
+                rowCount,
+                transactionCount,
+                o3,
+                probabilityOfCancelRow,
+                probabilityOfUnassignedColumnValue,
+                probabilityOfAssigningNull,
+                probabilityOfTransactionRollback,
+                probabilityOfAddingNewColumn,
+                probabilityOfRemovingColumn,
+                probabilityOfRenamingColumn,
+                probabilityOfColumnTypeChange,
+                probabilityOfDataInsert,
+                probabilityOfSameTimestamp,
+                probabilityOfDropPartition,
+                probabilityOfConvertPartitionToParquet,
+                probabilityOfConvertPartitionToNative,
+                probabilityOfTruncate,
+                probabilityOfDropTable,
+                probabilityOfSetTtl,
+                replaceInsertProb,
+                probabilityOfSymbolAccessValidation,
+                probabilityOfQuery,
+                maxStrLenForStrColumns,
+                symbols,
+                metaVersion,
+                probabilityOfSetParquetEncoding,
+                probabilityOfAddCoveringIndex,
+                probabilityOfSetTableFormat,
+                probabilityOfVacuum,
+                0.0
+        );
+    }
+
+    /**
+     * A backfill is an O3 block clustered at a random point behind the run's front, cutting older days into splits
+     * and pieces. A zero {@code probabilityOfBackfill} draws nothing from {@code rnd}, keeping old runs reproducible.
+     */
+    public static ObjList<FuzzTransaction> generateSet(
+            long initialRowCount,
+            TableRecordMetadata sequencerMetadata,
+            TableMetadata tableMetadata,
+            Rnd rnd,
+            long minTimestamp,
+            long maxTimestamp,
+            int rowCount,
+            int transactionCount,
+            boolean o3,
+            double probabilityOfCancelRow,
+            double probabilityOfUnassignedColumnValue,
+            double probabilityOfAssigningNull,
+            double probabilityOfTransactionRollback,
+            double probabilityOfAddingNewColumn,
+            double probabilityOfRemovingColumn,
+            double probabilityOfRenamingColumn,
+            double probabilityOfColumnTypeChange,
+            double probabilityOfDataInsert,
+            double probabilityOfSameTimestamp,
+            double probabilityOfDropPartition,
+            double probabilityOfConvertPartitionToParquet,
+            double probabilityOfConvertPartitionToNative,
+            double probabilityOfTruncate,
+            double probabilityOfDropTable,
+            double probabilityOfSetTtl,
+            double replaceInsertProb,
+            double probabilityOfSymbolAccessValidation,
+            double probabilityOfQuery,
+            int maxStrLenForStrColumns,
+            String[] symbols,
+            int metaVersion,
+            double probabilityOfSetParquetEncoding,
+            double probabilityOfAddCoveringIndex,
+            double probabilityOfSetTableFormat,
+            double probabilityOfVacuum,
+            double probabilityOfBackfill
+    ) {
         ObjList<FuzzTransaction> transactionList = new ObjList<>();
         int waitBarrierVersion = 0;
         RecordMetadata meta = deepMetadataCopyOf(sequencerMetadata, tableMetadata);
@@ -260,9 +342,9 @@ public class FuzzTransactionGenerator {
             } else if (wantToDropPartition) {
                 generateDropPartition(transactionList, metaVersion, waitBarrierVersion++, lastTimestamp, rnd);
             } else if (wantToConvertPartitionToParquet) {
-                generateConvertPartitionToParquet(transactionList, metaVersion, waitBarrierVersion++, lastTimestamp, rnd);
+                generateConvertPartitionToParquet(transactionList, metaVersion, waitBarrierVersion++, minTimestamp, lastTimestamp, rnd);
             } else if (wantToConvertPartitionToNative) {
-                generateConvertPartitionToNative(transactionList, metaVersion, waitBarrierVersion++, lastTimestamp, rnd);
+                generateConvertPartitionToNative(transactionList, metaVersion, waitBarrierVersion++, minTimestamp, lastTimestamp, rnd);
             } else if (wantToAddCoveringIndex) {
                 if (generateAddCoveringIndex(transactionList, metaVersion, waitBarrierVersion, rnd, meta)) {
                     waitBarrierVersion++;
@@ -307,6 +389,11 @@ public class FuzzTransactionGenerator {
                 final long startTs, stopTs;
                 final boolean isCollision = pendingCollisionTs != Long.MIN_VALUE;
                 final boolean isAnchored = isCollision || (probabilityOfAnchoredBlock > 0 && anchors.size() > 0 && rnd.nextDouble() < probabilityOfAnchoredBlock);
+                final boolean isBackfill = !isAnchored
+                        && o3
+                        && probabilityOfBackfill > 0
+                        && lastTimestamp > minTimestamp
+                        && rnd.nextDouble() < probabilityOfBackfill;
                 if (isCollision) {
                     // generate new rows at the previous anchor's timestamp
                     startTs = pendingCollisionTs;
@@ -335,7 +422,9 @@ public class FuzzTransactionGenerator {
                     // a small block keeps the partition's existing prefix large enough to split
                     blockRows = Math.min(blockRows, 1 + rnd.nextInt(16));
                 } else {
-                    if (o3) {
+                    if (isBackfill) {
+                        startTs = minTimestamp + rnd.nextLong(lastTimestamp - minTimestamp);
+                    } else if (o3) {
                         long offset = (long) ((maxTimestamp - minTimestamp + 1.0) / transactionCount * i);
                         long jitter = (long) ((maxTimestamp - minTimestamp + 1.0) / transactionCount * rnd.nextDouble());
                         if (rnd.nextBoolean()) {
@@ -351,6 +440,10 @@ public class FuzzTransactionGenerator {
                     if (o3) {
                         //noinspection lossy-conversions
                         step *= rnd.nextDouble();
+                    }
+                    if (isBackfill) {
+                        // A tenth of an ordinary block's width at most, so the cluster has existing rows on both sides.
+                        step = Math.max(1, step / 10);
                     }
                     stopTs = Math.min(startTs + step, maxTimestamp);
                 }
@@ -381,8 +474,11 @@ public class FuzzTransactionGenerator {
                 );
                 rowCount -= blockRows;
                 // Drop and convert partition operations use lastTimestamp as their cutoff. An anchored block
-                // revisits older data, so it only moves lastTimestamp forward.
-                lastTimestamp = isAnchored ? Math.max(lastTimestamp, stopTs) : stopTs;
+                // revisits older data, so it only moves lastTimestamp forward; a backfill does not move the front
+                // the next blocks are placed against.
+                if (!isBackfill) {
+                    lastTimestamp = isAnchored ? Math.max(lastTimestamp, stopTs) : stopTs;
+                }
                 if (probabilityOfAnchoredBlock > 0) {
                     addAnchors(transactionList.getLast(), anchors);
                 }
@@ -413,6 +509,21 @@ public class FuzzTransactionGenerator {
         }
         anchors.add(minTs);
         anchors.add(maxTs);
+    }
+
+    /**
+     * Picks the active day 4 in 10, the day before it 3 in 10, else a random older day, so conversions keep
+     * reaching days the O3 commits cut into splits and pieces.
+     */
+    private static long convertCutoffTimestamp(long minTimestamp, long lastTimestamp, Rnd rnd) {
+        final int target = rnd.nextInt(100);
+        if (target < 30) {
+            return lastTimestamp - DAY_MICROS;
+        }
+        if (target < 60 && lastTimestamp - minTimestamp > DAY_MICROS) {
+            return minTimestamp + DAY_MICROS + rnd.nextLong(lastTimestamp - minTimestamp - DAY_MICROS);
+        }
+        return lastTimestamp;
     }
 
     private static void copyColumnsExcept(RecordMetadata from, FuzzTestColumnMeta to, int columnIndex) {
@@ -510,14 +621,10 @@ public class FuzzTransactionGenerator {
 
     private static void generateConvertPartitionToNative(
             ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion,
-            long lastTimestamp, Rnd rnd
+            long minTimestamp, long lastTimestamp, Rnd rnd
     ) {
-        long cutoffTimestamp = lastTimestamp;
-        if (rnd.nextInt(100) <= 20) {
-            cutoffTimestamp -= DAY_MICROS;
-        }
         FuzzTransaction transaction = new FuzzTransaction();
-        transaction.operationList.add(new FuzzConvertPartitionToNativeOperation(cutoffTimestamp));
+        transaction.operationList.add(new FuzzConvertPartitionToNativeOperation(convertCutoffTimestamp(minTimestamp, lastTimestamp, rnd)));
         transaction.waitBarrierVersion = waitBarrierVersion;
         transaction.structureVersion = metadataVersion;
         transaction.waitAllDone = true;
@@ -526,14 +633,10 @@ public class FuzzTransactionGenerator {
 
     private static void generateConvertPartitionToParquet(
             ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion,
-            long lastTimestamp, Rnd rnd
+            long minTimestamp, long lastTimestamp, Rnd rnd
     ) {
-        long cutoffTimestamp = lastTimestamp;
-        if (rnd.nextInt(100) <= 20) {
-            cutoffTimestamp -= DAY_MICROS;
-        }
         FuzzTransaction transaction = new FuzzTransaction();
-        transaction.operationList.add(new FuzzConvertPartitionToParquetOperation(cutoffTimestamp));
+        transaction.operationList.add(new FuzzConvertPartitionToParquetOperation(convertCutoffTimestamp(minTimestamp, lastTimestamp, rnd)));
         transaction.waitBarrierVersion = waitBarrierVersion;
         transaction.structureVersion = metadataVersion;
         transaction.waitAllDone = true;

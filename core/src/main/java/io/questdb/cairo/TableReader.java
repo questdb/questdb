@@ -930,12 +930,13 @@ public class TableReader implements Closeable, SymbolTableSource {
     /**
      * Fails the query when the index of {@code columnIndex} on a parquet partition does not cover the partition's
      * data. QuestDB 9.3.4 - 10.0.1 merged O3 rows into parquet partitions without resetting the column tops in
-     * {@code _cv}, and built the index from that stale top: rows below it are missing from the index (and from the
-     * covered values of a covering index), and the index readers answer them as NULL.
+     * {@code _cv}, and built the index from that stale top: rows inside it are missing from the index (and from the
+     * covered values of a covering index), and the index readers answer them as NULL. {@code PartitionCompactionScanJob}
+     * repairs such a partition: it rebuilds its indexes and zeroes the stale tops.
      * <p>
      * Lazy and per partition: runs on the first index use of the partition, checks every indexed column of it, and
      * remembers a clean result against the {@code _cv} version and the parquet file size. Only the {@code _pm}
-     * statistics are read - a column must hold nothing but NULLs below its top.
+     * statistics are read - a column must hold nothing but NULLs inside its top.
      */
     private void checkParquetIndexes(int partitionIndex, int columnIndex) {
         final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
@@ -962,12 +963,12 @@ public class TableReader implements Closeable, SymbolTableSource {
                 if (!metadata.isColumnIndexed(i)) {
                     continue;
                 }
-                int staleColumnIndex = hasDataBelowColumnTop(partitionTimestamp, partitionRowCount, i) ? i : -1;
+                int staleColumnIndex = hasDataInsideColumnTop(partitionTimestamp, partitionRowCount, i) ? i : -1;
                 final IntList coveredWriterIndices = metadata.getColumnMetadata(i).getCoveringColumnIndices();
                 if (coveredWriterIndices != null) {
                     for (int c = 0, n = coveredWriterIndices.size(); c < n && staleColumnIndex < 0; c++) {
                         final int coveredColumnIndex = getColumnIndexByWriterIndex(coveredWriterIndices.getQuick(c));
-                        if (coveredColumnIndex > -1 && hasDataBelowColumnTop(partitionTimestamp, partitionRowCount, coveredColumnIndex)) {
+                        if (coveredColumnIndex > -1 && hasDataInsideColumnTop(partitionTimestamp, partitionRowCount, coveredColumnIndex)) {
                             staleColumnIndex = coveredColumnIndex;
                         }
                     }
@@ -1405,10 +1406,10 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     /**
-     * Whether the parquet column holds a non-NULL value below its {@code _cv} column top, judged from the {@code _pm}
+     * Whether the parquet column holds a non-NULL value inside its {@code _cv} column top, judged from the {@code _pm}
      * null counts alone. A column the file does not carry is not judged.
      */
-    private boolean hasDataBelowColumnTop(long partitionTimestamp, long partitionRowCount, int columnIndex) {
+    private boolean hasDataInsideColumnTop(long partitionTimestamp, long partitionRowCount, int columnIndex) {
         final int parquetColumnIndex = parquetMetaReader.getColumnIndexById(metadata.getOriginalWriterIndex(columnIndex));
         if (parquetColumnIndex < 0) {
             return false;
@@ -1418,7 +1419,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             // the column is absent from the partition
             columnTop = partitionRowCount;
         }
-        return parquetMetaReader.hasNonNullValuesBelowRow(parquetColumnIndex, columnTop);
+        return parquetMetaReader.hasNonNullValuesInsideColumnTop(parquetColumnIndex, columnTop);
     }
 
     private void init() {
