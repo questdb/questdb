@@ -2876,7 +2876,9 @@ public class SqlUtil {
      * {@link SqlCompiler#collectOtherReadDependencies}. The latter takes the values each PIVOT IN
      * sub-query returned rather than running the sub-queries again, and finds a table of the same name with
      * another id than the one the plan scans out of date: a table that replaced it would lend its own
-     * columns to the dependencies of the view.
+     * columns to the dependencies of the view. It also finds a view out of date that it expands with another
+     * definition than the plan, or that only one of them expands, see {@link #checkViews}: it would run
+     * another SELECT than the plan, whose PIVOT IN sub-queries the plan did not run.
      */
     public static final class ViewCompileRecord implements Mutable {
         private static final int TABLE_ID_CONFLICT = Integer.MIN_VALUE + 1;
@@ -2889,6 +2891,8 @@ public class SqlUtil {
         // the ids of the tables the plan scans, TABLE_ID_CONFLICT for a name it scans with several, and
         // TABLE_ID_UNKNOWN for a name it does not scan
         private final LowerCaseCharSequenceIntHashMap tableIds = new LowerCaseCharSequenceIntHashMap(8, 0.5, TABLE_ID_UNKNOWN);
+        // the definitions of the views the plan expands, see checkViews()
+        private final ObjList<ViewDefinition> views = new ObjList<>();
         // the PIVOT IN sub-query the next one to take values runs as, see takePivotIn()
         private int pivotInReplayIndex;
 
@@ -2898,9 +2902,38 @@ public class SqlUtil {
             pivotInValueHis.clear();
             pivotInValues.clear();
             tableIds.clear();
+            views.clear();
             pivotInReplayIndex = 0;
         }
 
+        /**
+         * Finds out of date a view that another compile of the same SELECT expands with another definition than
+         * the plan, a view it expands and the plan does not, and a view the plan expands and it does not: a view
+         * altered, dropped or created between the compiles. Only a compile that expands the views the plan
+         * expands runs the SELECT of the plan, and so runs the PIVOT IN sub-queries the plan ran, in the order the
+         * plan ran them, see {@link #takePivotIn}. The statement then compiles both again, as it does when the
+         * plan finds a view out of date as it opens, see StaleViewCheckFactory.
+         *
+         * @param views the definitions of the views the other compile expands, as its parse recorded them
+         */
+        void checkViews(ObjList<ViewDefinition> views) {
+            for (int i = 0, n = views.size(); i < n; i++) {
+                final ViewDefinition view = views.getQuick(i);
+                final ViewDefinition recordedView = findView(this.views, view.getViewToken());
+                if (recordedView == null) {
+                    throw TableReferenceOutOfDateException.of(view.getViewToken());
+                }
+                if (recordedView.getSeqTxn() != view.getSeqTxn()) {
+                    throw TableReferenceOutOfDateException.ofOutdatedView(view.getViewToken(), recordedView.getSeqTxn(), view.getSeqTxn());
+                }
+            }
+            for (int i = 0, n = this.views.size(); i < n; i++) {
+                final TableToken viewToken = this.views.getQuick(i).getViewToken();
+                if (findView(views, viewToken) == null) {
+                    throw TableReferenceOutOfDateException.of(viewToken);
+                }
+            }
+        }
 
         /**
          * Returns the value at index of the PIVOT IN sub-query takePivotIn() returned, the token a plan of
@@ -2933,9 +2966,18 @@ public class SqlUtil {
         }
 
         /**
+         * Records the definitions of the views the plan expands, as its parse recorded them, for
+         * {@link #checkViews}.
+         */
+        void recordViews(ObjList<ViewDefinition> views) {
+            this.views.addAll(views);
+        }
+
+        /**
          * Returns the index of the recorded PIVOT IN sub-query the next sub-query a compile of the same SELECT
-         * runs corresponds to. Both compiles optimise the SELECT the same way up to the PIVOT IN sub-queries,
-         * so they run them in the same order, at the same positions.
+         * runs corresponds to. Both compiles expand the same views, see {@link #checkViews}, and optimise the
+         * SELECT the same way up to the PIVOT IN sub-queries, so they run them in the same order, at the same
+         * positions.
          */
         int takePivotIn(int position) {
             final int index = pivotInReplayIndex++;
@@ -2944,10 +2986,21 @@ public class SqlUtil {
             return index;
         }
 
+        // the definition of the view among the definitions, or null when there is none
+        private static @Nullable ViewDefinition findView(ObjList<ViewDefinition> views, TableToken viewToken) {
+            for (int i = 0, n = views.size(); i < n; i++) {
+                final ViewDefinition view = views.getQuick(i);
+                if (view.getViewToken().equals(viewToken)) {
+                    return view;
+                }
+            }
+            return null;
+        }
+
         // Finds the table the scan of another compile of the same SELECT reads out of date when the plan scans
         // a table of the same name with another id, several tables of the name, or none: the compiles saw
-        // different tables. A view the SELECT reads that changed in between the plan finds out of date as it
-        // opens, see StaleViewCheckFactory.
+        // different tables. A view the SELECT reads that changed in between the other compile finds out of
+        // date as it parses the SELECT, see checkViews().
         private void checkTableId(TableToken tableToken, int tableId) {
             final int recordedTableId = tableIds.get(tableToken.getTableName());
             if (recordedTableId != tableId) {

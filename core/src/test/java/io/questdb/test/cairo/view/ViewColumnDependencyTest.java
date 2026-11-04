@@ -1130,39 +1130,51 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
             createTables();
             execute("CREATE VIEW vv AS (SELECT ts, k, c, d FROM y)");
             drainWalAndViewQueues();
-            // vv reads c of y as d too from the time the first compile checks whether x is visible, after it parsed
-            // the old definition of vv, and before the second compile parses the SELECT. Both compiles scan y, and the
-            // plan of the first one finds vv out of date as it opens, see StaleViewCheckFactory, so the statement
-            // compiles both again: the view lists what vv reads now, and not d.
+            // vv changes from the time the first compile checks whether x is visible, after it parsed the old
+            // definition of vv, and before the second compile parses the SELECT. The second compile finds vv out of
+            // date as it parses the SELECT, so the statement compiles both again: the view lists what vv reads now.
+            // In the first change vv reads c of y as d too, so the view no longer lists d. In the second one vv
+            // gains a PIVOT IN sub-query, whose values the second compile would otherwise take from a first compile
+            // that never ran it.
             final String viewSql = "SELECT x.a, p.mx FROM x CROSS JOIN (SELECT max(c) mx, min(d) mn FROM vv) p";
+            final String[][] changes = {
+                    {"SELECT ts, k, c, c d FROM y", "{vv=[], x=[a], y=[c]}"},
+                    {
+                            "SELECT y.ts, y.k, y.c, y.d FROM y CROSS JOIN ((SELECT k, c FROM y) PIVOT (sum(c) FOR k IN (SELECT DISTINCT k FROM y))) pv",
+                            "{vv=[], x=[a], y=[?d, c, k]}"
+                    }
+            };
             final AlteringSecurityContext securityContext = new AlteringSecurityContext("x");
             try (SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1).with(securityContext, bindVariableService, null, -1, null)) {
-                for (String statement : new String[]{"CREATE VIEW", "ALTER VIEW"}) {
-                    if (statement.equals("ALTER VIEW")) {
-                        execute("CREATE VIEW v AS (SELECT x FROM long_sequence(1))");
+                for (String[] change : changes) {
+                    for (String statement : new String[]{"CREATE VIEW", "ALTER VIEW"}) {
+                        final String message = statement + ", vv: " + change[0];
+                        if (statement.equals("ALTER VIEW")) {
+                            execute("CREATE VIEW v AS (SELECT x FROM long_sequence(1))");
+                            drainWalAndViewQueues();
+                        }
+                        securityContext.alterAtCheck(0, "ALTER VIEW vv AS (" + change[0] + ")");
+                        execute(statement + " v AS (" + viewSql + ")", context);
+                        drainWalAndViewQueues();
+                        Assert.assertFalse(message, securityContext.isAlterPending());
+                        // the first compile, then both compiles again
+                        Assert.assertEquals(message, 3, securityContext.takeCheckCount());
+                        Assert.assertEquals(message, change[1], dependenciesOf("v"));
+                        assertQuery("SELECT * FROM v")
+                                .noLeakCheck()
+                                .inferTimestamp()
+                                .inferRandomAccess()
+                                .sizeMayVary()
+                                .returns("""
+                                        a\tmx
+                                        1\t7
+                                        3\t7
+                                        """);
+                        // the next statement starts with vv as it was
+                        execute("DROP VIEW v");
+                        execute("ALTER VIEW vv AS (SELECT ts, k, c, d FROM y)");
                         drainWalAndViewQueues();
                     }
-                    securityContext.alterAtCheck(0, "ALTER VIEW vv AS (SELECT ts, k, c, c d FROM y)");
-                    execute(statement + " v AS (" + viewSql + ")", context);
-                    drainWalAndViewQueues();
-                    Assert.assertFalse(statement, securityContext.isAlterPending());
-                    // two compiles, twice
-                    Assert.assertEquals(statement, 4, securityContext.takeCheckCount());
-                    Assert.assertEquals(statement, "{vv=[], x=[a], y=[c]}", dependenciesOf("v"));
-                    assertQuery("SELECT * FROM v")
-                            .noLeakCheck()
-                            .inferTimestamp()
-                            .inferRandomAccess()
-                            .sizeMayVary()
-                            .returns("""
-                                    a\tmx
-                                    1\t7
-                                    3\t7
-                                    """);
-                    // the next statement starts with vv as it was
-                    execute("DROP VIEW v");
-                    execute("ALTER VIEW vv AS (SELECT ts, k, c, d FROM y)");
-                    drainWalAndViewQueues();
                 }
             }
         });

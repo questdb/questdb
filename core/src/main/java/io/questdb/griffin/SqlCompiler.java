@@ -61,7 +61,8 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
      * Call it on a compiler of its own after the SELECT of the view is optimised and before its plan is
      * generated, with what that compile recorded: this takes the values of the PIVOT IN sub-queries from it
      * rather than running them again, and finds a table out of date when it scans one of another id than that
-     * compile.
+     * compile, and a view out of date when it expands another definition of it than that compile, see
+     * {@link SqlUtil.ViewCompileRecord}.
      *
      * @param viewSql          the SELECT of the view
      * @param executionContext the context to compile the SELECT in

@@ -425,6 +425,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             final ExecutionModel model = parser.parse(lexer, executionContext, this);
             // the caller compiled the same SELECT before, and collected the objects and the wildcards it names
             assert model.getModelType() == ExecutionModel.QUERY;
+            // The parse expands the views as they are now. A view altered since the caller's compile expanded it
+            // makes this another SELECT, whose PIVOT IN sub-queries the caller did not run, so the statement
+            // compiles again, before the replay of their values.
+            compileRecord.checkViews(((IQueryModel) model).getReferencedViews());
             SqlUtil.collectTableAndColumnReferences(engine, (IQueryModel) model, otherReadDependencies, viewWildcardSources);
             final IQueryModel queryModel;
             optimiser.setSubQueryKeptWhole(true);
@@ -646,6 +650,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         // given, so the parsed one goes first.
         SqlUtil.collectTableAndColumnReferences(engine, (IQueryModel) model, dependencies, viewWildcardSources);
         viewCompileRecord.clear();
+        // the compile that collects the reads planned otherwise has to expand the same views
+        viewCompileRecord.recordViews(((IQueryModel) model).getReferencedViews());
         try {
             optimiser.setPivotInValueRecorder(viewCompileRecord);
             final IQueryModel queryModel;
@@ -4739,6 +4745,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     // columns reads every column only the optimised model tells. The walk of the parsed model
                     // that collects such wildcards records the same objects and wildcards into the map again.
                     SqlUtil.collectTableAndColumnReferences(engine, (IQueryModel) executionModel, dependencies, viewWildcardSources);
+                    // the compile that collects the reads planned otherwise has to expand the same views
+                    viewCompileRecord.recordViews(((IQueryModel) executionModel).getReferencedViews());
                     optimiser.setPivotInValueRecorder(viewCompileRecord);
                     try {
                         queryModel = optimiser.optimise((IQueryModel) executionModel, executionContext, this);
