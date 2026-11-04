@@ -249,6 +249,8 @@ public class TableUtilsTest extends AbstractTest {
         // STORAGE POLICY does; apply must not log its own scheduled work as an intruder.
         Assert.assertFalse(TableUtils.isUnsolicitedTableLock(getCommandName(CMD_COMPOSITE_PARTITION_SWAP)));
         Assert.assertFalse(TableUtils.isUnsolicitedTableLock(getCommandName(CMD_PARQUET_PARTITION_SWAP)));
+        // A publisher that finds the writer back in the pool ticks the queue under the pool's own reason.
+        Assert.assertFalse(TableUtils.isUnsolicitedTableLock(WriterPool.OWNERSHIP_REASON_ASYNC_COMMAND));
 
         // Any other reason IS unsolicited
         Assert.assertTrue(TableUtils.isUnsolicitedTableLock("ALTER TABLE"));
