@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.wal;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.PartitionDeltaWriter;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
@@ -52,6 +53,7 @@ import static org.junit.Assert.assertTrue;
  */
 public class WalApplyDeltaStopTest extends AbstractCairoTest {
     private static final long DAY_2020_01_01 = 1_577_836_800_000_000L;
+    private static final long DAY_MICROS = 86_400_000_000L;
     private static final String TAG_WRITER_TXN = "questdb_wal_apply_writer_txn";
     private static final AtomicInteger denials = new AtomicInteger();
     private static final AtomicInteger gateCalls = new AtomicInteger();
@@ -172,6 +174,67 @@ public class WalApplyDeltaStopTest extends AbstractCairoTest {
                 assertEquals(pendingRowsBefore, walPendingRowCount(token));
             }
         });
+    }
+
+    @Test
+    public void testGateConsultedOnlyForTransactionsReachingDeltaActivePartition() throws Exception {
+        // A table name of its own: the write tracker keeps a seqTxn floor per table token across tests
+        final String mergeAppend = configuration.isO3PartitionMergeAppendEnabled() ? "true" : "false";
+        final long splitMinSize = configuration.getPartitionO3SplitMinSize();
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        try {
+            assertMemoryLeak(() -> {
+                execute("CREATE TABLE gate_tab (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("INSERT INTO gate_tab VALUES (1, '2020-01-01T00:00:00'), (2, '2020-01-10T00:00:00')");
+                drainWalQueue();
+                try (TableWriter writer = getWriter("gate_tab")) {
+                    writer.getTxWriter().setPartitionDeltaActiveByTimestamp(DAY_2020_01_01);
+                    writer.getTxWriter().setPartitionDeltaActiveByTimestamp(DAY_2020_01_01 + 9 * DAY_MICROS);
+                    writer.bumpPartitionTableVersion();
+                    writer.commit();
+                }
+
+                // Past the Delta-active last partition: native rows only
+                assertEquals(0, insertAndCountGateCalls("SELECT x::INT, '2020-01-20T00:00:00'::TIMESTAMP + x * 1_000_000L FROM long_sequence(20) UNION ALL SELECT 4, '2020-01-20T23:00:00'"));
+                // A gap day after a Delta-active day, before the next partition
+                assertEquals(0, insertAndCountGateCalls("VALUES (5, '2020-01-05T00:00:00')"));
+                // Into the Delta-active day
+                assertEquals(1, insertAndCountGateCalls("VALUES (6, '2020-01-10T01:00:00')"));
+                // From a gap into a later Delta-active day
+                assertEquals(1, insertAndCountGateCalls("VALUES (7, '2020-01-07T00:00:00'), (8, '2020-01-10T02:00:00')"));
+
+                // An O3 row in the middle of 01-20 splits it
+                execute("INSERT INTO gate_tab VALUES (9, '2020-01-20T12:00:00')");
+                drainWalQueue();
+                final long splitTs;
+                try (TableWriter writer = getWriter("gate_tab")) {
+                    final int last = writer.getPartitionCount() - 1;
+                    splitTs = writer.getTxWriter().getPartitionTimestampByIndex(last);
+                    assertTrue(splitTs > DAY_2020_01_01 + 19 * DAY_MICROS);
+                }
+                // A later split part of a native day, not at its lo timestamp
+                assertEquals(0, insertAndCountGateCalls("VALUES (10, '2020-01-20T23:30:00')"));
+                try (TableWriter writer = getWriter("gate_tab")) {
+                    writer.getTxWriter().setPartitionDeltaActiveByTimestamp(splitTs);
+                    writer.bumpPartitionTableVersion();
+                    writer.commit();
+                }
+                // A Delta-active split part
+                assertEquals(1, insertAndCountGateCalls("VALUES (11, '2020-01-20T23:45:00')"));
+            });
+        } finally {
+            // Overrides outlive the test
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, mergeAppend);
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, splitMinSize);
+        }
+    }
+
+    private static int insertAndCountGateCalls(String insertBody) throws Exception {
+        gateCalls.set(0);
+        execute("INSERT INTO gate_tab " + insertBody);
+        drainWalQueue();
+        return gateCalls.get();
     }
 
     private static long walPendingRowCount(TableToken token) {

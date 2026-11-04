@@ -21094,9 +21094,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     /**
      * Whether {@code [minTs, maxTs]} intersects an attached partition whose
-     * delta-write bit is set, judged over partition floor intervals. Gaps
-     * between attached partitions count toward the earlier partition's
-     * interval, so the test is conservative (never a false negative).
+     * delta-write bit is set. The scan starts at the partition holding minTs,
+     * or at the next one when minTs falls in a gap, and counts every partition
+     * that starts at or before maxTs, so the test is conservative (never a
+     * false negative).
      */
     private boolean timestampRangeOverlapsDeltaActivePartition(long minTs, long maxTs) {
         // O(1) exit for tables without delta-active partitions: skips the walk on each WAL apply.
@@ -21105,11 +21106,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         // WAL apply calls this per transaction, so a binary search skips the partitions that
-        // end at or before minTs. Example: partitions 01-01, 01-03 and minTs 01-02 start at 01-01.
+        // end at or before minTs. Example: partitions 01-01, 01-03 and minTs 01-02 start at 01-03.
         int i = txWriter.findAttachedPartitionIndexByLoTimestamp(minTs);
         if (i < 0) {
-            // Not found: the partition before the insertion point holds minTs, if there is one.
-            i = Math.max(-i - 2, 0);
+            // Not found: the partition before the insertion point holds minTs only if its logical partition ends after it.
+            i = -i - 2;
+            if (i < 0 || txWriter.getNextLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(i)) <= minTs) {
+                i++;
+            }
         }
 
         for (int n = txWriter.getPartitionCount(); i < n; i++) {
