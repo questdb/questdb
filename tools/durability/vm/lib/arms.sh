@@ -150,8 +150,9 @@ harness_workload_env() {
 
 # Every key the two builders share must carry the SAME value, because the recording and the replay
 # are separate JVMs reading the same settings. An override that reaches only the verifier makes the
-# replay client look in a directory the workload never wrote to, and "the client replayed NOTHING"
-# is reported as a durability failure of the product. test/t11 pins the pairing.
+# replay client look in a directory the workload never wrote to. It finds nothing to replay, so
+# every boundary passes with nothing replayed, and the sweep fails only at the end, as
+# NOT_EVALUATED, because no boundary proved a replay. test/t11 pins the pairing.
 
 # harness_assert_config -> 0 if the environment this run was asked for is coherent, 64 if not.
 #
