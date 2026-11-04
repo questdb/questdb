@@ -54,6 +54,7 @@ import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunction;
 import io.questdb.griffin.engine.orderby.LongTopKRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByAtom;
 import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncStreamGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByAllIndexedJob;
 import io.questdb.griffin.engine.table.LatestByAllIndexedRecordCursorFactory;
 import io.questdb.mp.CountDownLatchSPI;
@@ -2381,6 +2382,149 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
     @Test
     public void testVectorGroupByOwnerCancelledMidDrainWaitsForCompletion() throws Exception {
         assertParallelOwnerCancelledMidDrain(DrainTaskType.VECTOR_AGGREGATE);
+    }
+
+    @Test
+    public void testStreamGroupByFiberOwnerMergesShardsWithoutConsumers() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
+                @Override
+                public int getGroupByShardingThreshold() {
+                    return 1;
+                }
+
+                @Override
+                public long getQueryContinuationWakeIntervalMillis() {
+                    return TimeUnit.HOURS.toMillis(1);
+                }
+
+                @Override
+                public int getSqlPageFrameMaxRows() {
+                    return 128;
+                }
+
+                @Override
+                public int getSqlPageFrameMinRows() {
+                    return 1;
+                }
+            };
+            final WorkerPoolConfiguration poolConfiguration = new WorkerPoolConfiguration() {
+                @Override
+                public Metrics getMetrics() {
+                    return Metrics.DISABLED;
+                }
+
+                @Override
+                public String getPoolName() {
+                    return "stream-owner-merges";
+                }
+
+                @Override
+                public int getWorkerCount() {
+                    return 0;
+                }
+
+                @Override
+                public WorkerPoolMode getWorkerPoolMode() {
+                    return WorkerPoolMode.FIBER_HOST;
+                }
+            };
+            final TestWorkerPool queryPool = new TestWorkerPool(poolConfiguration);
+            try (CairoEngine engine = new CairoEngine(configuration);
+                 SqlCompiler compiler = engine.getSqlCompiler();
+                 SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine, 1);
+                 TestWorkerPool ownerPool = new TestWorkerPool("stream-owner-merges-owner", 1, Metrics.DISABLED, WorkerPoolMode.FIBER_HOST)) {
+                TestUtils.setupWorkerPool(queryPool, engine);
+                queryPool.start(LOG);
+                final int rows = 512;
+                engine.execute(
+                        "CREATE TABLE tab AS (SELECT x::TIMESTAMP ts, ('k' || x) key, x v FROM long_sequence(" + rows + ")) TIMESTAMP(ts) PARTITION BY DAY",
+                        executionContext
+                );
+                final String sql = "SELECT timestamp_floor('1d', ts) d, key, MAX(v) m FROM tab";
+                try (RecordCursorFactory factory = compiler.compile(sql, executionContext).getRecordCursorFactory()) {
+                    TestUtils.assertFactoryInTree(factory, AsyncStreamGroupByRecordCursorFactory.class);
+                }
+
+                final FiberRuntime ownerRuntime = ownerPool.getFiberRuntime();
+                final AtomicReference<Throwable> ownerFailure = new AtomicReference<>();
+                final CountDownLatch ownerDone = new CountDownLatch(1);
+                final AtomicBoolean launched = new AtomicBoolean();
+                final AtomicInteger rowCount = new AtomicInteger();
+                final AtomicLong valueSum = new AtomicLong();
+                final FiberTask ownerTask = new FiberTask() {
+                    @Override
+                    protected void onDone() {
+                        ownerDone.countDown();
+                    }
+
+                    @Override
+                    protected void onError(Throwable th) {
+                        ownerFailure.compareAndSet(null, th);
+                        ownerDone.countDown();
+                    }
+
+                    @Override
+                    protected boolean runStep() {
+                        SuspensionScope.enterTimerShards(engine.getTimerShards());
+                        try (RecordCursorFactory factory = engine.select(sql, executionContext);
+                             RecordCursor cursor = factory.getCursor(executionContext)) {
+                            final Record record = cursor.getRecord();
+                            while (cursor.hasNext()) {
+                                rowCount.incrementAndGet();
+                                valueSum.addAndGet(record.getLong(2));
+                            }
+                        } catch (SqlException e) {
+                            throw new AssertionError(e);
+                        }
+                        return true;
+                    }
+                };
+                ownerPool.assign(_ -> {
+                    if (launched.compareAndSet(false, true)) {
+                        final LaunchResult result = ownerRuntime.launch(ownerTask);
+                        if (result != LaunchResult.LAUNCHED) {
+                            ownerFailure.compareAndSet(null, new AssertionError("owner Fiber launch failed [result=" + result + ']'));
+                            ownerDone.countDown();
+                        }
+                        return true;
+                    }
+                    return false;
+                });
+
+                final MessageBus messageBus = engine.getMessageBus();
+                final QueryParallelFiberDispatcher dispatcher = messageBus.getQueryParallelFiberDispatcher();
+                final long publishedBefore = messageBus.getGroupByMergeShardPubSeq().current();
+                boolean isOwnerPoolStarted = false;
+                try {
+                    ownerPool.start(LOG);
+                    isOwnerPoolStarted = true;
+                    // Nothing else consumes the merge queue, so an owner that parks on it never finishes.
+                    Assert.assertTrue("Fiber owner did not merge its shards", ownerDone.await(20, TimeUnit.SECONDS));
+                    Assert.assertNull(ownerFailure.get());
+                    Assert.assertEquals(rows, rowCount.get());
+                    Assert.assertEquals(rows * (rows + 1L) / 2, valueSum.get());
+                    Assert.assertTrue(messageBus.getGroupByMergeShardPubSeq().current() > publishedBefore);
+                    Assert.assertEquals(messageBus.getGroupByMergeShardPubSeq().current(), messageBus.getGroupByMergeShardSubSeq().current());
+                    Assert.assertEquals(0, dispatcher.getMergeShardCreatedTaskCount());
+                } finally {
+                    if (ownerDone.getCount() > 0) {
+                        executionContext.getCircuitBreaker().cancel();
+                        final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+                        while (ownerDone.getCount() > 0 && System.nanoTime() < deadline) {
+                            if (!drainPublishedTasks(DrainTaskType.MERGE_SHARD, messageBus, dispatcher, ownerFailure)) {
+                                Os.pause();
+                            }
+                        }
+                    }
+                    if (isOwnerPoolStarted) {
+                        ownerPool.haltAndAssertCleanForTest(WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS);
+                    }
+                }
+            } finally {
+                queryPool.haltAndAssertCleanForTest(WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS);
+            }
+        });
     }
 
     @Test

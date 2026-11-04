@@ -318,7 +318,9 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
                 circuitBreaker,
                 postAggregationCircuitBreaker,
                 postAggregationDoneLatch,
-                postAggregationStartedCounter
+                postAggregationStartedCounter,
+                // The workers may stay busy reducing later frames, so the owner must not wait for them.
+                true
         );
         if (postAggregationCircuitBreaker.checkIfTrippedOrYield()) {
             throwPostAggregationException();
@@ -492,7 +494,9 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
         }
         while (frameIndex < frameLimit) {
             circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
-            cursor = frameSequence.next(frameSequence.getAtom().getDispatchLimit(frameIndex + 1), false);
+            final int dispatchLimit = frameSequence.getAtom().getDispatchLimit(frameIndex + 1);
+            frameSequence.dispatchAhead(dispatchLimit);
+            cursor = frameSequence.next(dispatchLimit, false);
             if (cursor >= 0) {
                 final PageFrameReduceTask task = frameSequence.getTask(cursor);
                 if (task.hasError()) {

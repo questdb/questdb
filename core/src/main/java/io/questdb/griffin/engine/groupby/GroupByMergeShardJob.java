@@ -75,7 +75,8 @@ public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeS
             SqlExecutionCircuitBreaker circuitBreaker,
             PostAggregationCircuitBreaker postAggregationCircuitBreaker,
             SOUnboundedCountDownLatch postAggregationDoneLatch,
-            AtomicInteger postAggregationStartedCounter
+            AtomicInteger postAggregationStartedCounter,
+            boolean isOwnerHelping
     ) {
         postAggregationCircuitBreaker.reset();
         postAggregationStartedCounter.set(0);
@@ -153,7 +154,7 @@ public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeS
                         postAggregationCircuitBreaker.cancel();
                     }
 
-                    if (!ownerLoop.isOwnerParkable() && strategy.shouldSteal(mergedCount)) {
+                    if ((isOwnerHelping || !ownerLoop.isOwnerParkable()) && strategy.shouldSteal(mergedCount)) {
                         long cursor = subSeq.next();
                         if (cursor > -1) {
                             GroupByMergeShardTask task = queue.get(cursor);
@@ -164,7 +165,7 @@ public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeS
                                 run(-1, task, subSeq, cursor, merger);
                             }
                             reclaimed++;
-                        } else {
+                        } else if (!ownerLoop.awaitProgressWhileDraining(isOwnerTripped)) {
                             Os.pause();
                         }
                     } else if (!ownerLoop.awaitProgressWhileDraining(isOwnerTripped)) {

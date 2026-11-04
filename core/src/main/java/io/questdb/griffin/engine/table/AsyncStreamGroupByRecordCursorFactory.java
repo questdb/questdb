@@ -150,6 +150,11 @@ public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorF
         return frameSequence.getDispatchedFrameCount();
     }
 
+    @TestOnly
+    public int getReducedFrameCount() {
+        return frameSequence.getReducedFrameCount();
+    }
+
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottledOrYield();

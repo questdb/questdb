@@ -157,6 +157,35 @@ public class PageFrameMemoryPoolTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReusedBuffersForgetTheirFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable();
+            try (RecordCursorFactory factory = select("t");
+                 PageFrameCursor frameCursor = factory.getPageFrameCursor(sqlExecutionContext, PartitionFrameCursorFactory.ORDER_ASC);
+                 PageFrameAddressCache addressCache = new PageFrameAddressCache();
+                 PageFrameMemoryPool pool = new PageFrameMemoryPool(configuration, 0L);
+                 PageFrameMemoryRecord record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER)) {
+                Assert.assertTrue(loadFrames(factory, frameCursor, addressCache) >= 2);
+                Assert.assertEquals(PartitionFormat.PARQUET, addressCache.getFrameFormat(0));
+                Assert.assertEquals(PartitionFormat.PARQUET, addressCache.getFrameFormat(1));
+                pool.of(addressCache, ParquetDecodeHint.MONOTONIC, null);
+                record.of(frameCursor);
+                // The record and the frame memory pin one buffer each, so the pool holds two of them.
+                pool.navigateTo(0, record);
+                pool.navigateTo(1);
+                Assert.assertEquals(2, pool.getCachedFrameCount());
+                pool.reuseParquetBuffers();
+                Assert.assertEquals(0, pool.getCachedFrameCount());
+                pool.navigateTo(1, record);
+                // The second buffer last held frame 1, which now belongs to the first buffer.
+                pool.navigateTo(0);
+                Assert.assertEquals(2, pool.getCachedFrameCount());
+                pool.releaseParquetBuffers();
+            }
+        });
+    }
+
+    @Test
     public void testReusedBuffersKeepTheirMemoryBetweenFrames() throws Exception {
         assertMemoryLeak(() -> {
             createTable();
