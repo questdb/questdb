@@ -25,7 +25,6 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.idx.BitmapIndexUtils;
-import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.griffin.PurgingOperator;
 import io.questdb.log.Log;
@@ -268,30 +267,13 @@ public class ColumnPurgeOperator implements Closeable {
         }
     }
 
-    private boolean couldNotRemoveIndexFiles(byte indexType, CharSequence columnName, long columnVersion, int pathTrimToPartition) {
-        if (IndexType.isIndexed(indexType) && indexType != IndexType.BITMAP) {
-            if (IndexType.isPosting(indexType)) {
-                boolean sidecarRemovalFailed = PostingIndexUtils.removeAllSealedFiles(ff, path, pathTrimToPartition, columnName, columnVersion);
-                path.trimTo(pathTrimToPartition);
-                if (couldNotRemove(ff, IndexFactory.keyFileName(indexType, path, columnName, columnVersion))) {
-                    return true;
-                }
-                if (sidecarRemovalFailed) {
-                    // .pci or one of the .pc<N>.*.* files survived. Tell the
-                    // caller the purge is incomplete so it retries instead
-                    // of marking the task done and leaking the sidecars.
-                    return true;
-                }
-            } else {
-                path.trimTo(pathTrimToPartition);
-                if (couldNotRemove(ff, IndexFactory.keyFileName(indexType, path, columnName, columnVersion))) {
-                    return true;
-                }
-                path.trimTo(pathTrimToPartition);
-                if (couldNotRemove(ff, IndexFactory.valueFileName(indexType, path, columnName, columnVersion, columnVersion))) {
-                    return true;
-                }
-            }
+    private boolean couldNotRemoveIndexFiles(CharSequence columnName, long columnVersion, int pathTrimToPartition) {
+        // VACUUM and replayed purge tasks see the current metadata, not necessarily the retired index type.
+        // Remove both index families, but only for the column version that passed the reader/epoch checks.
+        final boolean hasSidecarRemovalFailure = PostingIndexUtils.removeAllSealedFiles(ff, path, pathTrimToPartition, columnName, columnVersion);
+        path.trimTo(pathTrimToPartition);
+        if (couldNotRemove(ff, PostingIndexUtils.keyFileName(path, columnName, columnVersion)) || hasSidecarRemovalFailure) {
+            return true;
         }
         path.trimTo(pathTrimToPartition);
         if (couldNotRemove(ff, BitmapIndexUtils.keyFileName(path, columnName, columnVersion))) {
@@ -301,46 +283,22 @@ public class ColumnPurgeOperator implements Closeable {
         return couldNotRemove(ff, BitmapIndexUtils.valueFileName(path, columnName, columnVersion));
     }
 
-    private boolean existsIndexFile(byte indexType, CharSequence columnName, long columnVersion, int pathTrimToPartition) {
-        if (IndexType.isIndexed(indexType) && indexType != IndexType.BITMAP) {
-            path.trimTo(pathTrimToPartition);
-            if (ff.exists(IndexFactory.keyFileName(indexType, path, columnName, columnVersion))) {
-                return true;
-            }
-            if (IndexType.isPosting(indexType)) {
-                path.trimTo(pathTrimToPartition);
-                long fromPk = PostingIndexUtils.readSealTxnFromKeyFile(
-                        ff, PostingIndexUtils.keyFileName(path, columnName, columnVersion));
-                if (fromPk >= 0) {
-                    // .pk gave us the live sealTxn; probe the exact .pv path.
-                    path.trimTo(pathTrimToPartition);
-                    if (ff.exists(PostingIndexUtils.valueFileName(path, columnName, columnVersion, fromPk))) {
-                        return true;
-                    }
-                } else {
-                    // .pk is gone or unreadable -- cannot resolve the live
-                    // sealTxn, and the previous fallback to
-                    // sealTxn = columnVersion probed a path that almost
-                    // never matched. Scan the partition for any orphan
-                    // .pv.<columnVersion>.<sealTxn> or
-                    // .pc<N>.<columnVersion>.<C>.<sealTxn>; if one exists
-                    // the purge is not complete and must retry, otherwise
-                    // the caller's "files all gone" shortcut leaks them.
-                    sealedPostingFileScanProbe.of(columnVersion);
-                    PostingIndexUtils.scanSealedFiles(ff, path, pathTrimToPartition, columnName, sealedPostingFileScanProbe);
-                    if (sealedPostingFileScanProbe.hasMatch()) {
-                        return true;
-                    }
-                }
-            } else {
-                // BITMAP: valueFileName ignores the sealTxn arg.
-                path.trimTo(pathTrimToPartition);
-                if (ff.exists(IndexFactory.valueFileName(indexType, path, columnName, columnVersion, columnVersion))) {
-                    return true;
-                }
-            }
+    private boolean existsIndexFile(CharSequence columnName, long columnVersion, int pathTrimToPartition) {
+        path.trimTo(pathTrimToPartition);
+        if (ff.exists(PostingIndexUtils.keyFileName(path, columnName, columnVersion))) {
+            return true;
         }
-        // Always check legacy .k/.v
+        path.trimTo(pathTrimToPartition);
+        if (ff.exists(PostingIndexUtils.coverInfoFileName(path, columnName, columnVersion))) {
+            return true;
+        }
+        // A partial purge can leave value or cover files without a key file. Their seal txn is independent
+        // of the column name txn, so probe directory entries rather than guessing a sealed file name.
+        sealedPostingFileScanProbe.of(columnVersion);
+        PostingIndexUtils.scanSealedFiles(ff, path, pathTrimToPartition, columnName, sealedPostingFileScanProbe);
+        if (sealedPostingFileScanProbe.hasMatch()) {
+            return true;
+        }
         path.trimTo(pathTrimToPartition);
         if (ff.exists(BitmapIndexUtils.keyFileName(path, columnName, columnVersion))) {
             return true;
@@ -526,9 +484,8 @@ public class ColumnPurgeOperator implements Closeable {
                             // In the case of symbol root files, we need to check if .k and .v files exist in table root.
                             // In the case of symbol files in partition, we need to check if .k and .v files exist in partition
                             // that can be index files after index drop SQL.
-                            byte idxType = task.getIndexType();
                             if (!ff.exists(TableUtils.offsetFileName(path.trimTo(pathTrimToPartition), columnName, columnVersion))) {
-                                if (!existsIndexFile(idxType, columnName, columnVersion, pathTrimToPartition)) {
+                                if (!existsIndexFile(columnName, columnVersion, pathTrimToPartition)) {
                                     completedRowIds.add(updateRowId);
                                     continue;
                                 }
@@ -538,6 +495,15 @@ public class ColumnPurgeOperator implements Closeable {
                             completedRowIds.add(updateRowId);
                             continue;
                         }
+                    }
+
+                    // Index probes and directory scans reuse path. Restore the data file before attempting
+                    // its removal; otherwise a sidecar-only purge can try to unlink the partition directory.
+                    path.trimTo(pathTrimToPartition);
+                    if (isSymbolRootFiles) {
+                        TableUtils.charFileName(path, columnName, columnVersion);
+                    } else {
+                        TableUtils.dFile(path, columnName, columnVersion);
                     }
 
                     if (setupScoreboard) {
@@ -622,7 +588,6 @@ public class ColumnPurgeOperator implements Closeable {
 
                     // Check if it's a symbol, try to remove index files in the partition
                     if (ColumnType.isSymbol(columnType) || columnTypeRogue) {
-                        byte idxType = task.getIndexType();
                         if (isSymbolRootFiles) {
                             path.trimTo(pathTrimToPartition);
                             if (couldNotRemove(ff, TableUtils.charFileName(path, columnName, columnVersion))) {
@@ -650,10 +615,7 @@ public class ColumnPurgeOperator implements Closeable {
                                 continue;
                             }
                         } else {
-                            // Remove partition-level index files. Use IndexFactory for the known
-                            // type; always try legacy .k/.v as well (old index files may remain
-                            // after DROP INDEX when indexType is NONE).
-                            if (couldNotRemoveIndexFiles(idxType, columnName, columnVersion, pathTrimToPartition)) {
+                            if (couldNotRemoveIndexFiles(columnName, columnVersion, pathTrimToPartition)) {
                                 allDone = false;
                                 continue;
                             }

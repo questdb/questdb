@@ -150,6 +150,7 @@ public class FuzzRunner {
     private double tableDropProb;
     private int transactionCount;
     private double truncateProb;
+    private double vacuumProb = 0.001;
 
     public FuzzRunner() {
         checkNoSuspendedTablesRef = this::checkNoSuspendedTables;
@@ -554,7 +555,8 @@ public class FuzzRunner {
                 generateSymbols(rnd, rnd.nextInt(Math.max(1, symbolCountMax - 5)) + 5, symbolStrLenMax, tableName),
                 (int) sequencerMetadata.getMetadataVersion(),
                 setParquetEncodingProb,
-                addCoveringIndexProb, setTableFormatProb
+                addCoveringIndexProb, setTableFormatProb,
+                vacuumProb
         );
     }
 
@@ -845,6 +847,13 @@ public class FuzzRunner {
         this.setParquetEncodingProb = setParquetEncodingProb;
         this.setTableFormatProb = setTableFormatProb;
         this.addCoveringIndexProb = addCoveringIndexProb;
+    }
+
+    /**
+     * Inserts VACUUM before each generated transaction with this probability, independently of operation weights.
+     */
+    public void setVacuumProbability(double vacuumProb) {
+        this.vacuumProb = vacuumProb;
     }
 
     public void withDb(CairoEngine engine, SqlExecutionContext sqlExecutionContext) {
