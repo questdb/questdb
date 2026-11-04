@@ -239,9 +239,11 @@ public class IndexGatherPageFrameCursor implements PageFrameCursor {
 
     @Override
     public void close() {
+        // the task readers return their detached cursors to the posting readers while the
+        // TableReader that owns them is still this cursor's, before inner releases it
+        Misc.freeObjListAndKeepObjects(taskReaderSlots);
         unfreeze();
         Misc.free(inner);
-        Misc.freeObjListAndKeepObjects(taskReaderSlots);
     }
 
     @Override

@@ -26,6 +26,7 @@ package io.questdb.test.griffin.engine.table;
 import io.questdb.PropertyKey;
 import io.questdb.std.Rnd;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.idx.AbstractPostingIndexReader;
 import io.questdb.cairo.PartitionGeometry;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
@@ -426,6 +427,31 @@ public class IndexKeyScanParallelTest extends AbstractCairoTest {
                 }
             }
             Assert.assertTrue(java.util.Arrays.toString(frames), frames[1] < frames[0]);
+        });
+    }
+
+    @Test
+    public void testNoDetachedCursorPerFrame() throws Exception {
+        // the frames read from the index reuse their posting readers' detached cursors across runs
+        assertMemoryLeak(() -> {
+            createTable(engine, sqlExecutionContext);
+            final String query = "select * from t where sym = 'A'";
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FRAME_DISPATCH_ENABLED, "false");
+            final String expected = print(engine, sqlExecutionContext, query);
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FRAME_DISPATCH_ENABLED, "true");
+            DeferredSingleSymbolFilterPageFrameRecordCursorFactory.setParallelThresholdsForTesting(0, 0, 0);
+            try (RecordCursorFactory factory = select(query)) {
+                TestUtils.assertEquals(expected, print(factory, sqlExecutionContext));
+                Assert.assertEquals(1, findScan(factory).getOpenCounts()[1]);
+                final long news = AbstractPostingIndexReader.DETACHED_CURSOR_NEWS.get();
+                IndexKeyPageFrameCursor.TEST_INDEX_FRAMES.set(0);
+                for (int run = 0; run < 3; run++) {
+                    TestUtils.assertEquals(expected, print(factory, sqlExecutionContext));
+                }
+                Assert.assertEquals(4, findScan(factory).getOpenCounts()[1]);
+                Assert.assertTrue(IndexKeyPageFrameCursor.TEST_INDEX_FRAMES.get() > 0);
+                Assert.assertEquals(news, AbstractPostingIndexReader.DETACHED_CURSOR_NEWS.get());
+            }
         });
     }
 

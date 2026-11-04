@@ -30,6 +30,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.PartitionGeometry;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.idx.AbstractPostingIndexReader;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -741,6 +742,63 @@ public class IndexGatherGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNoAllocationPerPartitionAndKey() throws Exception {
+        // at the server default of cairo.inactive.reader.max.open.partitions the partitions stay
+        // open between runs, so a run reuses their posting readers' detached cursors instead of
+        // building one per (partition, key)
+        setProperty(PropertyKey.CAIRO_INACTIVE_READER_MAX_OPEN_PARTITIONS, 10_000);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(pool, (engine, compiler, ctx) -> {
+                // 1,000 hours of 100 rows; k<n> is the rows x with x % 100 = n
+                final int partitions = 1000;
+                final int rows = partitions * 100;
+                engine.execute("create table t (ts timestamp, psym symbol index type posting, a long) timestamp(ts) partition by hour bypass wal", ctx);
+                engine.execute("insert into t select ((x - 1) * 36_000_000L)::timestamp, 'k' || (x % 100), x from long_sequence(" + rows + ")", ctx);
+                long count = 0;
+                long sum = 0;
+                for (long x = 1; x <= rows; x++) {
+                    if (x % 100 == 2 || x % 100 == 3) {
+                        count++;
+                        sum += x;
+                    }
+                }
+                final String expected = "count\tsum\n" + count + "\t" + sum + "\n";
+                setFeatures(true, false);
+                final String sql = "select count(), sum(a) from t where psym in ('k2', 'k3')";
+                try (RecordCursorFactory factory = compiler.compile(sql, ctx).getRecordCursorFactory()) {
+                    Assert.assertNotNull(findGather(factory));
+                    for (int i = 0; i < 20; i++) {
+                        TestUtils.assertEquals(expected, print(factory, ctx));
+                    }
+                    final StringSink sink = new StringSink();
+                    final int runs = 50;
+                    try (TestUtils.ThreadMetricsScope<com.sun.management.ThreadMXBean> scope = TestUtils.threadAllocationScope()) {
+                        final com.sun.management.ThreadMXBean bean = scope.getBean();
+                        final long news = AbstractPostingIndexReader.DETACHED_CURSOR_NEWS.get();
+                        final long allocated = allThreadsAllocatedBytes(bean);
+                        for (int i = 0; i < runs; i++) {
+                            sink.clear();
+                            try (RecordCursor cursor = factory.getCursor(ctx)) {
+                                io.questdb.cairo.CursorPrinter.println(cursor, factory.getMetadata(), sink);
+                            }
+                        }
+                        final long perRun = (allThreadsAllocatedBytes(bean) - allocated) / runs;
+                        // without reuse a run builds a cursor per (partition, key): 2,000 cursors of
+                        // about 1.1 KB; the pools fill during the warm-up runs
+                        Assert.assertTrue("bytes per run: " + perRun, perRun < 64 * 1024);
+                        Assert.assertTrue(
+                                "detached cursors built: " + (AbstractPostingIndexReader.DETACHED_CURSOR_NEWS.get() - news),
+                                AbstractPostingIndexReader.DETACHED_CURSOR_NEWS.get() - news < partitions
+                        );
+                    }
+                    TestUtils.assertEquals(expected, sink);
+                }
+            }, configuration, LOG);
+        });
+    }
+
+    @Test
     public void testNotKeyed() throws Exception {
         assertMemoryLeak(() -> {
             createTable(engine, sqlExecutionContext, "t", ROWS, 29);
@@ -1109,6 +1167,16 @@ public class IndexGatherGroupByTest extends AbstractCairoTest {
                 Assert.assertTrue("no worker took a task", workerTasks > 0);
             }, configuration, LOG);
         });
+    }
+
+    private static long allThreadsAllocatedBytes(com.sun.management.ThreadMXBean bean) {
+        long sum = 0;
+        for (long bytes : bean.getThreadAllocatedBytes(bean.getAllThreadIds())) {
+            if (bytes > 0) {
+                sum += bytes;
+            }
+        }
+        return sum;
     }
 
     private static void assertWithinTolerance(String sql, String expected, String actual) {

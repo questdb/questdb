@@ -35,9 +35,14 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.TestOnly;
 
 public class PostingIndexFwdReader extends AbstractPostingIndexReader {
     private static final int MIN_BUFFER_CAPACITY = 4;
+    // detached cursors closed by their owner, for getDetachedCursor() to reuse; both lists are
+    // guarded by synchronized (freeDetachedCursors), as any thread may take or close one
+    private final ObjList<Cursor> freeDetachedCursors = new ObjList<>();
+    private final ObjList<NullCursor> freeDetachedNullCursors = new ObjList<>();
     private final ObjList<Cursor> freeCursors = new ObjList<>();
     private final ObjList<NullCursor> freeNullCursors = new ObjList<>();
 
@@ -93,6 +98,18 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             freeNullCursors.getQuick(i).releaseResources();
         }
         Misc.clear(freeNullCursors);
+        // super.close() closed the key file, so a detached cursor closed from now on sees
+        // !isOpen() under the lock and releases itself instead of pooling
+        synchronized (freeDetachedCursors) {
+            for (int i = 0, n = freeDetachedCursors.size(); i < n; i++) {
+                freeDetachedCursors.getQuick(i).releaseResources();
+            }
+            Misc.clear(freeDetachedCursors);
+            for (int i = 0, n = freeDetachedNullCursors.size(); i < n; i++) {
+                freeDetachedNullCursors.getQuick(i).releaseResources();
+            }
+            Misc.clear(freeDetachedNullCursors);
+        }
     }
 
     @Override
@@ -168,15 +185,15 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
     }
 
     /**
-     * Returns a cursor that a single worker thread owns outright: it is
-     * constructed fresh (never popped from the shared freeCursors pool) and
-     * marked detached, so its {@link Cursor#close()} frees its own native
-     * scratch directly and never pushes back to the pool. This makes N such
-     * cursors safe to iterate concurrently over ONE reader, provided the
-     * reader's shared state was made read-only first via
-     * {@link AbstractPostingIndexReader#warmForKeys}. Positioning is identical
-     * to {@link #getCursor(int, long, long, int[])}; only the construct/close
-     * lifecycle differs.
+     * Returns a cursor that a single worker thread owns outright: it is never
+     * drawn from the owner's freeCursors pool but reused through a synchronized
+     * per-reader detached pool, and marked detached, so its {@link Cursor#close()}
+     * returns it to that detached pool (or frees its native scratch) without
+     * touching freeCursors. This makes N such cursors safe to iterate
+     * concurrently over ONE reader, provided the reader's shared state was made
+     * read-only first via {@link AbstractPostingIndexReader#warmForKeys}.
+     * Positioning is identical to {@link #getCursor(int, long, long, int[])};
+     * only the construct/close lifecycle differs.
      * <p>
      * Unlike {@link #getCursor}, this does NOT stamp the operating-thread
      * tripwire: detached cursors are deliberately driven off the reader's
@@ -193,11 +210,21 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         long indexMaxValue = entryMaxValue >= 0 ? Math.min(maxValue, entryMaxValue) : maxValue;
 
         if (key == 0 && columnTop > 0 && minValue < columnTop) {
-            NullCursor nc = new NullCursor();
-            nc.isDetached = true;
-            // of() can throw (e.g. OOM growing the block buffer). A detached cursor is
-            // never in the reader's free list, so nothing else would reclaim it; release
-            // its native scratch on a mid-of() failure (mirrors getCursor).
+            NullCursor nc = null;
+            synchronized (freeDetachedCursors) {
+                if (freeDetachedNullCursors.size() > 0) {
+                    nc = freeDetachedNullCursors.popLast();
+                    nc.isPooled = false;
+                }
+            }
+            if (nc == null) {
+                nc = new NullCursor();
+                nc.isDetached = true;
+                assert DETACHED_CURSOR_NEWS.incrementAndGet() > 0;
+            }
+            // of() can throw (e.g. OOM growing the block buffer). The cursor is in no
+            // pool now, so nothing else would reclaim it; release its native scratch on
+            // a mid-of() failure (mirrors getCursor).
             try {
                 nc.cursorCoverCount = cursorCoverCount(requiredCoverColumns);
                 nc.of(key, minValue, indexMaxValue);
@@ -213,8 +240,18 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
 
         if (key < keyCount) {
             openRequiredSidecars(requiredCoverColumns);
-            Cursor c = new Cursor();
-            c.isDetached = true;
+            Cursor c = null;
+            synchronized (freeDetachedCursors) {
+                if (freeDetachedCursors.size() > 0) {
+                    c = freeDetachedCursors.popLast();
+                    c.isPooled = false;
+                }
+            }
+            if (c == null) {
+                c = new Cursor();
+                c.isDetached = true;
+                assert DETACHED_CURSOR_NEWS.incrementAndGet() > 0;
+            }
             try {
                 c.cursorCoverCount = cursorCoverCount(requiredCoverColumns);
                 c.of(key, minValue, indexMaxValue);
@@ -228,15 +265,45 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         return EmptyRowCursor.INSTANCE;
     }
 
+    /**
+     * Detached cursors waiting in this reader's detached pool, plain and NULL-key together.
+     */
+    @TestOnly
+    public int getFreeDetachedCursorCount() {
+        synchronized (freeDetachedCursors) {
+            return freeDetachedCursors.size() + freeDetachedNullCursors.size();
+        }
+    }
+
+    // Returns a closed detached cursor to its pool, with the same reset the owner pool
+    // makes, or frees it when the reader is closed or the pool is full.
+    private <T extends Cursor> void closeDetached(ObjList<T> pool, T cursor) {
+        if (cursor.isPooled) {
+            // closed twice
+            return;
+        }
+        cursor.closeCoveringResources();
+        cursor.resetCoveringState();
+        synchronized (freeDetachedCursors) {
+            if (isOpen() && pool.size() < MAX_CACHED_FREE_CURSORS) {
+                cursor.isPooled = true;
+                pool.add(cursor);
+                return;
+            }
+        }
+        cursor.releaseResources();
+    }
+
     private class Cursor extends AbstractCoveringCursor {
         private final LongList builderEntries = new LongList();
         protected long maxValue;
         protected long minValue;
         protected long next;
         // Set for cursors handed out by getDetachedCursor: a single worker owns
-        // this cursor and it was never drawn from freeCursors, so close() must
-        // free its native scratch directly and never push it back to the pool
-        // (which is racy under the concurrent same-reader decode this enables).
+        // this cursor and it is never drawn from freeCursors, so close() must
+        // never push it to that pool (which is racy under the concurrent
+        // same-reader decode this enables); it goes to the synchronized
+        // freeDetachedCursors pool instead, for the cursor's whole life.
         boolean isDetached;
         private long blockBufferAddr = 0;
         private int blockBufferCapacity = 0;
@@ -285,10 +352,10 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         public void close() {
             // Detached cursors are owned by a single worker thread that is, by
             // design, NOT the reader's owning thread; they never touch the
-            // shared freeCursors pool. Free their native scratch directly and
-            // skip both the operating-thread gate and the pool-push.
+            // shared freeCursors pool. They skip the operating-thread gate and
+            // return to the synchronized detached pool instead.
             if (isDetached) {
-                releaseResources();
+                closeDetached(freeDetachedCursors, this);
                 return;
             }
             // Re-pool only while the reader is still open (a cursor that re-pools
@@ -1249,9 +1316,9 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         @Override
         public void close() {
             // See Cursor.close(): detached cursors bypass the operating-thread
-            // gate and the pool, freeing their own native scratch directly.
+            // gate and return to the synchronized detached pool.
             if (isDetached) {
-                releaseResources();
+                closeDetached(freeDetachedNullCursors, this);
                 return;
             }
             // See Cursor.close(): re-pool only while the reader is open and on the

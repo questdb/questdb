@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.PartitionGeometry;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.idx.AbstractPostingIndexReader;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -197,6 +198,36 @@ public class KeyMajorPlannedWalkTest extends AbstractCairoTest {
         } finally {
             KeyMajorPageFrameRecordCursor.setIndexRanksEnabled(true);
         }
+    }
+
+    @Test
+    public void testNoDetachedCursorPerFrame() throws Exception {
+        // the partitions stay open between runs at the server default, see
+        // cairo.inactive.reader.max.open.partitions; a planned walk then reuses each posting
+        // reader's detached cursor instead of building one per (key, frame)
+        setProperty(PropertyKey.CAIRO_INACTIVE_READER_MAX_OPEN_PARTITIONS, 10_000);
+        assertMemoryLeak(() -> {
+            execute("create table t (sym symbol index type posting, a int, ts timestamp) timestamp(ts) partition by HOUR");
+            // 200 hours of 60 rows, 4 frames each
+            execute("insert into t select rnd_symbol('A','B','C','D'), x::int, ((x - 1) * 60_000_000L)::timestamp from long_sequence(12_000)");
+            setProperty(PropertyKey.CAIRO_SQL_INDEX_SCAN_PAGE_FRAME_MAX_ROWS, 15);
+            sqlExecutionContext.changePageFrameSizes(1, 15);
+            final String query = "select * from t where sym in ('A', 'C') order by sym";
+            for (boolean ranks : new boolean[]{true, false}) {
+                // without ranks a walk counts a (key, frame)'s rows by reading them
+                KeyMajorPageFrameRecordCursor.setIndexRanksEnabled(ranks);
+                try {
+                    assertPlannedWalkMatchesFullSort(query);
+                    final long news = AbstractPostingIndexReader.DETACHED_CURSOR_NEWS.get();
+                    for (int run = 0; run < 3; run++) {
+                        assertPlannedWalkMatchesFullSort(query);
+                    }
+                    Assert.assertEquals("ranks: " + ranks, news, AbstractPostingIndexReader.DETACHED_CURSOR_NEWS.get());
+                } finally {
+                    KeyMajorPageFrameRecordCursor.setIndexRanksEnabled(true);
+                }
+            }
+        });
     }
 
     @Test

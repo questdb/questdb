@@ -61,8 +61,12 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicLong;
 
 public abstract class AbstractPostingIndexReader implements IndexReader {
+    // tests: detached cursors constructed because the reader's detached pool was empty, counted under -ea
+    @TestOnly
+    public static final AtomicLong DETACHED_CURSOR_NEWS = new AtomicLong();
     // values of a covered key block a cursor decodes at once for its point reads, see
     // AbstractCoveringCursor.decodeColumnWindow()
     static final int DECODE_WINDOW = 4096;
