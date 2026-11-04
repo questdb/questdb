@@ -82,28 +82,28 @@ final class HashJoinAggregationPlanning implements Mutable {
     private static final ExpressionVisitor PARALLEL_STABLE = node -> node instanceof CursorExpression || node instanceof OuterColumnExpression
             ? TreeWalk.STOP : TreeWalk.CONTINUE;
     private final ObjectPool<AggregatePlan> aggregates;
-    private final ExpressionVisitor castsKept = this::visitCast;
     private final OptimiserContext context;
     private final ObjList<FilterPlan> filters = new ObjList<>();
-    private final ExpressionVisitor frameReads = this::visitFrameRead;
     private final ObjectPool<HashJoinAggregation> hashJoins;
     private final OutputSchema joined = new OutputSchema();
     private final GenericRecordMetadata joinedMetadata = new GenericRecordMetadata();
-    private final ExpressionVisitor payloadReads = this::visitPayloadRead;
     private final IntList projectedIds = new IntList();
     private final ObjList<ProjectPlan> projections = new ObjList<>();
     private final ObjList<BoundExpression> rowFilters = new ObjList<>();
-    private final ExpressionVisitor schemaReads = this::visitSchemaRead;
     private BoundExpression gate;
     private BoundExpression keyFilter;
     private OutputSchema masterOutput;
     private BoundExpression onFilter;
     private IntList payloadColumns;
     private OutputSchema payloadOutput;
+    private final ExpressionVisitor payloadReads = this::visitPayloadRead;
     private BoundExpression postJoinFilter;
     private ProjectPlan projection;
+    private final ExpressionVisitor castsKept = this::visitCast;
     private OutputSchema readSchema;
+    private final ExpressionVisitor schemaReads = this::visitSchemaRead;
     private OutputSchema slaveOutput;
+    private final ExpressionVisitor frameReads = this::visitFrameRead;
 
     HashJoinAggregationPlanning(OptimiserContext context, PlanNodePools planNodes) {
         this.context = context;
@@ -576,9 +576,8 @@ final class HashJoinAggregationPlanning implements Mutable {
         final BuildSide side = switch (kind) {
             case RIGHT_OUTER -> BuildSide.MASTER;
             // An input without a row bound, a live view, keeps the slave built.
-            case INNER ->
-                    BuildSide.smaller(masterRows, slaveRows, BuildSide.SLAVE) == BuildSide.MASTER
-                            ? BuildSide.MASTER : BuildSide.SLAVE;
+            case INNER -> BuildSide.smaller(masterRows, slaveRows, BuildSide.SLAVE) == BuildSide.MASTER
+                    ? BuildSide.MASTER : BuildSide.SLAVE;
             default -> BuildSide.SLAVE;
         };
         final HashJoinAggregation hashJoin = orientation(aggregate, join, side, master, masterRead, masterRows, slave, slaveRead, slaveRows, slaveRowScan);
