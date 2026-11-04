@@ -230,6 +230,7 @@ silently stops checking.
 | **Builder parity** | `t11` | A setting reaches the verifier but not the workload, an invalid `QDB_WAL_TABLE` falls back to a default, or a defanged negative control still holds a live ack tier |
 | **Verdict vocabulary** | `t12` | A verdict line classifies to the wrong token, a token is added without a test row, or a pass/instrument-fault predicate changes meaning |
 | **Absent-table watermark** | `t13` | `guest/verify.sh` grades a missing table against a different watermark file than the arm's workload writes (`lib/arms.sh arm_progress_file`), so committed rows lost with their table read as `NO_COMMIT` |
+| **Replay grading** | `t15` | `guest/verify.sh` in compare mode passes a replay that left recovered rows missing, passes a replay client that reported nothing, or counts a boundary with nothing to replay as proof of the replay |
 | **Device reset** | every sweep, `replay_reset_assert()` | `blkdiscard` reports success and the device is not zeroed, including a partial zero |
 | **Informative sample** | every sweep | The workload never reached its first commit, or every boundary verified as `NO_COMMIT` |
 
@@ -282,6 +283,7 @@ bash test/t09-junit-xml.sh           # the CI report must be valid and honest
 bash test/t11-builder-parity.sh      # both JVMs must get the same settings
 bash test/t12-verdict-vocabulary.sh  # a verdict line must mean what it says
 bash test/t13-absent-table-watermark.sh  # a lost table is judged by its own arm's watermark
+bash test/t15-sf-replay-grading.sh       # a replay is judged by what the client recovered
 bash test/t06-log-writes-replay.sh --self-test    # the cross-check logic, VM-free
 bash test/t10-wal-barrier-control.sh --self-test  # the barrier judge, VM-free
 
