@@ -157,6 +157,19 @@ public class QwpCrashIngestClient {
             System.out.flush();
             final long before = queryCount(addr);
             try (QwpWebSocketSender replay = (QwpWebSocketSender) Sender.fromConfig(conf)) {
+                // What startup recovery found on disk, read before anything is sent: the highest
+                // frame recovered, and the acknowledged frontier it resumes from. Under
+                // sf_durability=periodic a frame published after the last sync dies with the
+                // device, so the oracle cannot demand the rows the workload SENT. It can demand
+                // every row the client RECOVERED, which is what this line lets it check.
+                final var engine = replay.getCursorEngineForTesting();
+                if (engine != null) {
+                    System.out.println("qwp replay-only: sfRecoveredFsn=" + engine.getRingForTesting().publishedFsn()
+                            + " sfAckedFsn=" + engine.ackedFsn());
+                } else {
+                    System.out.println("qwp replay-only: no store-and-forward engine; nothing recovered");
+                }
+                System.out.flush();
                 replay.flush();
             }
             // The replayed rows still have to be APPLIED before they are queryable.
@@ -283,6 +296,7 @@ public class QwpCrashIngestClient {
                         // measured replay of 532,000 rows.
                         (ackedRows + "\nC=" + c + "\nWm=" + wm + "\nrows=" + ackedRows
                                 + "\nsent=" + id
+                                + "\nbatch=" + BATCH
                                 + "\nackedFsn=" + ackedFsn
                                 + "\nlocalAcks=" + localAcks + "\ntrimAdv=" + trimAdvances + "\n")
                                 .getBytes(StandardCharsets.US_ASCII));

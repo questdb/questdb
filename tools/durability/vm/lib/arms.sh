@@ -144,7 +144,8 @@ harness_workload_env() {
          "QDB_QWP_BATCH=${QDB_QWP_BATCH:-1000}" \
          "QDB_EDITION=${QDB_EDITION:-oss}" \
          "QDB_QWP_SF_DIR=${QDB_QWP_SF_DIR:-/mnt/qdb/sf}" \
-         "QDB_QWP_SF_DURABILITY=${QDB_QWP_SF_DURABILITY:-periodic}"
+         "QDB_QWP_SF_DURABILITY=${QDB_QWP_SF_DURABILITY:-periodic}" \
+         "QDB_QWP_SF_SYNC_MS=${QDB_QWP_SF_SYNC_MS:-20}"
 }
 
 # Every key the two builders share must carry the SAME value, because the recording and the replay
