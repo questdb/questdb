@@ -218,7 +218,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         final int size = staticIntervals.size();
         try {
             parsedIntervals.clear();
-            IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, parsedIntervals, IntervalOperation.INTERSECT, sink, true);
+            IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, parsedIntervals, IntervalOperation.INTERSECT, sink);
             if (dynamicRangeList.size() == 0) {
                 staticIntervals.add(parsedIntervals);
                 if (intervalApplied) {
@@ -774,7 +774,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         final int size = staticIntervals.size();
         try {
             parsedIntervals.clear();
-            IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, parsedIntervals, IntervalOperation.SUBTRACT, sink, true);
+            IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, parsedIntervals, IntervalOperation.SUBTRACT, sink);
             if (dynamicRangeList.size() == 0) {
                 staticIntervals.add(parsedIntervals);
                 IntervalUtils.invert(staticIntervals, size);
@@ -863,7 +863,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         final int size = staticIntervals.size();
         try {
             parsedIntervals.clear();
-            IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, parsedIntervals, IntervalOperation.UNION, sink, true);
+            IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, parsedIntervals, IntervalOperation.UNION, sink);
             if (dynamicRangeList.size() == 0) {
                 staticIntervals.add(parsedIntervals);
                 if (intervalApplied) {

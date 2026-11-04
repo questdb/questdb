@@ -26,6 +26,7 @@ package io.questdb.griffin.optimiser;
 
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
+import io.questdb.griffin.plan.logical.BuildSide;
 import io.questdb.griffin.plan.logical.DistinctPlan;
 import io.questdb.griffin.plan.logical.DomainReadPlan;
 import io.questdb.griffin.plan.logical.FillPlan;
@@ -36,6 +37,7 @@ import io.questdb.griffin.plan.logical.HorizonJoinSlave;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinKey;
 import io.questdb.griffin.plan.logical.JoinKind;
+import io.questdb.griffin.plan.logical.JoinNullExtension;
 import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LatestByPlan;
 import io.questdb.griffin.plan.logical.LimitPlan;
@@ -135,26 +137,26 @@ final class PhysicalChoiceVerifier {
      * {@link JoinInput#getBuildSide}: none for a step that is not a light hash join or for a LEFT or RIGHT one, and the
      * smaller input at execution for a FULL one NULL-extended by its keys whose master supports random access, else the
      * slave. An INNER step whose master side is undecided records none, and one whose master a consumer fixed records
-     * {@link JoinInput.BuildSide#FIXED_MASTER}. A step the smaller input drives hashes the slave when its master lacks
+     * {@link BuildSide#FIXED_MASTER}. A step the smaller input drives hashes the slave when its master lacks
      * random access, and records an input to hash only where its master is one input, both inputs have a row bound, see
      * {@link PhysicalProperties#rowBoundScan}, and every LIMIT whose count only execution knows that bounds the other
      * input bounds it too, see {@link PhysicalProperties#hasRuntimeLimitsOf}. Where the row counts of tables give the
      * rows of both inputs, see {@link PhysicalProperties#rowCountScan}, one never holds more rows than the other, so it
-     * leaves the choice to execution, {@link JoinInput.BuildSide#SMALLER}, only where such LIMITs differ between them.
+     * leaves the choice to execution, {@link BuildSide#SMALLER}, only where such LIMITs differ between them.
      */
     private static boolean isBuildSideSettled(JoinPlan join, int position, JoinInput step) {
         if (!step.isAlgorithmDecided()) {
             return true;
         }
-        final JoinInput.BuildSide side = step.getBuildSide();
+        final BuildSide side = step.getBuildSide();
         if (step.getAlgorithm() != JoinInput.Algorithm.LIGHT_HASH) {
             return side == null;
         }
         final boolean isMasterRandomAccess = position > 0
                 && PhysicalProperties.masterSupportsRandomAccess(join, position) == PhysicalProperties.Capability.YES;
         if (step.getJoinType() == JoinKind.FULL_OUTER) {
-            return side == (step.getNullExtension() == JoinInput.NullExtension.BY_KEYS && isMasterRandomAccess
-                    ? JoinInput.BuildSide.SMALLER : JoinInput.BuildSide.SLAVE);
+            return side == (step.getNullExtension() == JoinNullExtension.BY_KEYS && isMasterRandomAccess
+                    ? BuildSide.SMALLER : BuildSide.SLAVE);
         }
         if (step.getJoinType() != JoinKind.INNER || side == null) {
             return side == null;
@@ -197,8 +199,8 @@ final class PhysicalChoiceVerifier {
      */
     private static boolean isHashJoinOrientation(HashJoinAggregation hashJoin) {
         final JoinKind kind = hashJoin.getJoinType();
-        final boolean isMasterBuilt = hashJoin.getBuildSide() == JoinInput.BuildSide.MASTER;
-        final boolean isBuildFixed = hashJoin.getBuildSide() != JoinInput.BuildSide.SMALLER
+        final boolean isMasterBuilt = hashJoin.getBuildSide() == BuildSide.MASTER;
+        final boolean isBuildFixed = hashJoin.getBuildSide() != BuildSide.SMALLER
                 && (kind == JoinKind.INNER || isMasterBuilt == (kind == JoinKind.RIGHT_OUTER));
         final BoundExpression postJoinFilter = hashJoin.getPostJoinFilter();
         return (kind == JoinKind.INNER || kind == JoinKind.LEFT_OUTER || kind == JoinKind.RIGHT_OUTER) && isBuildFixed
@@ -247,7 +249,7 @@ final class PhysicalChoiceVerifier {
      */
     private static boolean isMasterReadByRowId(JoinInput step) {
         return step.getAlgorithm() == JoinInput.Algorithm.MARKOUT || step.getAlgorithm() == JoinInput.Algorithm.SPLICE
-                || step.isAlgorithmDecided() && step.getBuildSide() == JoinInput.BuildSide.MASTER;
+                || step.isAlgorithmDecided() && step.getBuildSide() == BuildSide.MASTER;
     }
 
     /**

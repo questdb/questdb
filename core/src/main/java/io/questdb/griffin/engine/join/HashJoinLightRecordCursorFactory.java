@@ -45,13 +45,13 @@ import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.SymbolTranslatingRecord;
-import io.questdb.griffin.plan.logical.JoinInput;
+import io.questdb.griffin.plan.logical.BuildSide;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.Nullable;
 
 public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFactory {
-    private final JoinInput.BuildSide buildSide;
+    private final BuildSide buildSide;
     private final RecordSink masterSink;
     private final int @Nullable [] masterSymbolKeyColumnIndices;
     private final RecordSink slaveKeySink;
@@ -72,10 +72,10 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
             Plannable joinCondition,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
-            JoinInput.BuildSide buildSide
+            BuildSide buildSide
     ) {
         super(metadata, joinCondition, masterFactory, slaveFactory);
-        assert buildSide != JoinInput.BuildSide.SMALLER || masterFactory.recordCursorSupportsRandomAccess() : "hashed master lacks random access";
+        assert buildSide != BuildSide.SMALLER || masterFactory.recordCursorSupportsRandomAccess() : "hashed master lacks random access";
         this.buildSide = buildSide;
         this.masterSymbolKeyColumnIndices = masterSymbolKeyColumnIndices;
         this.slaveSymbolKeyColumnIndices = slaveSymbolKeyColumnIndices;
@@ -94,7 +94,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
 
     @Override
     public boolean followedOrderByAdvice() {
-        return buildSide == JoinInput.BuildSide.FIXED_MASTER && masterFactory.followedOrderByAdvice();
+        return buildSide == BuildSide.FIXED_MASTER && masterFactory.followedOrderByAdvice();
     }
 
     @Override
@@ -107,7 +107,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
                 case MASTER -> true;
                 case FIXED_MASTER, SLAVE -> false;
                 case SMALLER ->
-                        JoinInput.BuildSide.smaller(masterCursor.size(), slaveCursor.size(), JoinInput.BuildSide.SLAVE) == JoinInput.BuildSide.MASTER;
+                        BuildSide.smaller(masterCursor.size(), slaveCursor.size(), BuildSide.SLAVE) == BuildSide.MASTER;
             };
             if (isMasterBuilt) {
                 final RecordCursor temp = masterCursor;
@@ -130,7 +130,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
 
     @Override
     public int getScanDirection() {
-        return buildSide == JoinInput.BuildSide.FIXED_MASTER ? masterFactory.getScanDirection() : SCAN_DIRECTION_OTHER;
+        return buildSide == BuildSide.FIXED_MASTER ? masterFactory.getScanDirection() : SCAN_DIRECTION_OTHER;
     }
 
     @Override
@@ -150,7 +150,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
         if (symbolTranslatingRecord != null) {
             sink.attr("symbolKeyJoin").val(true);
         }
-        if (buildSide == JoinInput.BuildSide.MASTER) {
+        if (buildSide == BuildSide.MASTER) {
             sink.child(slaveFactory);
             sink.child("Hash", masterFactory);
         } else {

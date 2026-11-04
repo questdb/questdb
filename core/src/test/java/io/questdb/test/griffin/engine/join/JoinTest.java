@@ -8707,10 +8707,9 @@ public class JoinTest extends AbstractCairoTest {
 
     @Test
     public void testNonEquiOuterJoinMasterFilterStaysPostJoin() throws Exception {
-        // A RIGHT/FULL OUTER join with a NON-equi ON clause carries no join keys, so
-        // JoinBinder (which runs before FilterPushdown.pushJoinFilters) rewrites it to
-        // JOIN_CROSS_RIGHT/JOIN_CROSS_FULL. Those CROSS variants still NULL-extend the
-        // master (NestedLoopRight/FullJoin), so a master-only WHERE must stay a post-join
+        // A RIGHT/FULL OUTER join with a NON-equi ON clause carries no join keys, so it runs
+        // as a nested loop that still NULL-extends the master (NestedLoopRight/FullJoin),
+        // so a master-only WHERE must stay a post-join
         // filter. With the predicate pushed into the master sub-query the unmatched
         // (NULL-master) slave rows leaked. i=5 is a non-NULL predicate, so the result must
         // equal the INNER ground truth (5|-5, 5|-4).
@@ -8741,9 +8740,8 @@ public class JoinTest extends AbstractCairoTest {
     public void testNonEquiOuterJoinReorderedFilterStaysPostJoin() throws Exception {
         // Companion to testNonEquiOuterJoinMasterFilterStaysPostJoin, which filters the directly
         // NULL-extended master. Here the WHERE predicate (c.v = 1) is on an INNER-joined table after a
-        // non-equi RIGHT/FULL OUTER. That join carries no join keys and homogenizes to
-        // JOIN_CROSS_RIGHT/JOIN_CROSS_FULL, which JoinOrderSolver used to append after c, NULL-extending
-        // c; pushing c.v = 1 into c then leaked the (null,100,null) row -- 2 rows for 1.
+        // non-equi RIGHT/FULL OUTER. That join carries no join keys, and JoinOrderSolver used to append
+        // it after c, NULL-extending c; pushing c.v = 1 into c then leaked the (null,100,null) row -- 2 rows for 1.
         // JoinBinder.constrainNullingJoinConsumers keeps the outer join before c, whose INNER join drops
         // that row, so the exec-order-aware FilterPushdown.pushJoinFilters pushes c.v = 1 into c.
         assertMemoryLeak(() -> {

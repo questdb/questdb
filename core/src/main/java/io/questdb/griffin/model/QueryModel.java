@@ -28,10 +28,8 @@ import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.table.ShowCreateDatabaseRecordCursorFactory;
 import io.questdb.std.Chars;
-import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
-import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
@@ -55,8 +53,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public static final QueryModelFactory FACTORY = new QueryModelFactory();
     public static final int JOIN_ASOF = 4;
     public static final int JOIN_CROSS = 3;
-    public static final int JOIN_CROSS_FULL = 12;
-    public static final int JOIN_CROSS_RIGHT = 11;
     public static final int JOIN_FULL_OUTER = 10;
     public static final int JOIN_HORIZON = 13;
     public static final int JOIN_INNER = 1;
@@ -77,15 +73,9 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public static final int ORDER_DIRECTION_ASCENDING = 0;
     public static final int ORDER_DIRECTION_DESCENDING = 1;
     public static final int SELECT_MODEL_CHOOSE = 1;
-    public static final int SELECT_MODEL_CURSOR = 6;
-    public static final int SELECT_MODEL_DISTINCT = 5;
-    public static final int SELECT_MODEL_GROUP_BY = 4;
-    public static final int SELECT_MODEL_HORIZON_JOIN = 9;
     public static final int SELECT_MODEL_NONE = 0;
-    public static final int SELECT_MODEL_SHOW = 7;
+    public static final int SELECT_MODEL_SHOW = 3;
     public static final int SELECT_MODEL_VIRTUAL = 2;
-    public static final int SELECT_MODEL_WINDOW = 3;
-    public static final int SELECT_MODEL_WINDOW_JOIN = 8;
     public static final int SET_OPERATION_EXCEPT = 2;
     public static final int SET_OPERATION_EXCEPT_ALL = 3;
     public static final int SET_OPERATION_INTERSECT = 4;
@@ -117,10 +107,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final LowerCaseCharSequenceObjHashMap<QueryColumn> aliasToColumnMap = new LowerCaseCharSequenceObjHashMap<>();
     private final LowerCaseCharSequenceObjHashMap<CharSequence> aliasToColumnNameMap = new LowerCaseCharSequenceObjHashMap<>();
     private final LowerCaseCharSequenceHashSet auditedDecls = new LowerCaseCharSequenceHashSet();
-    private final ObjList<QueryColumn> bottomUpColumns = new ObjList<>();
-    private final LowerCaseCharSequenceIntHashMap columnAliasIndexes = new LowerCaseCharSequenceIntHashMap();
+    private final ObjList<QueryColumn> columns = new ObjList<>();
     private final LowerCaseCharSequenceObjHashMap<ExpressionNode> decls = new LowerCaseCharSequenceObjHashMap<>();
-    private final IntHashSet dependencies = new IntHashSet();
     private final ObjList<ExpressionNode> expressionModels = new ObjList<>();
     private final ObjList<ExpressionNode> groupBy = new ObjList<>();
     private final LowerCaseCharSequenceObjHashMap<CharSequence> hintsMap = new LowerCaseCharSequenceObjHashMap<>();
@@ -141,14 +129,12 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final ObjList<QueryColumn> pivotGroupByColumns = new ObjList<>();
     private final ObjList<ViewDefinition> referencedViews = new ObjList<>();
     private final ObjList<ExpressionNode> sampleByFill = new ObjList<>();
-    private final ObjList<QueryColumn> topDownColumns = new ObjList<>();
     private final ObjList<CharSequence> unnestColumnAliases = new ObjList<>();
     private final ObjList<ExpressionNode> unnestExpressions = new ObjList<>();
     private final ObjList<ObjList<CharSequence>> unnestJsonColumnNames = new ObjList<>();
     private final ObjList<IntList> unnestJsonColumnTypes = new ObjList<>();
     private final ObjList<ExpressionNode> updateSetColumns = new ObjList<>();
     private final ObjList<ViewAuditModel> viewAudits = new ObjList<>();
-    private final ObjList<CharSequence> wildcardColumnNames = new ObjList<>();
     private final WindowJoinContext windowJoinContext = new WindowJoinContext();
     private final LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauseModel = new LowerCaseCharSequenceObjHashMap<>();
     // used for the parallel sample by rewrite. In the future, if we deprecate original SAMPLE BY, then these will
@@ -201,7 +187,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private CharSequence subQueryTokens;
     private ExpressionNode subsample;
     private int subsamplePosition;
-    private int tableId = -1;
     private ExpressionNode tableNameExpr;
     private ExpressionNode timestamp;
     private QueryModel unionModel;
@@ -219,15 +204,15 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 || joinType == JOIN_LATERAL_CROSS;
     }
 
-    public void addBottomUpColumn(QueryColumn column) throws SqlException {
-        addBottomUpColumn(0, column, false, null);
+    public void addColumn(QueryColumn column) throws SqlException {
+        addColumn(0, column, false, null);
     }
 
-    public void addBottomUpColumn(int position, QueryColumn column, boolean allowDuplicates) throws SqlException {
-        addBottomUpColumn(position, column, allowDuplicates, null);
+    public void addColumn(int position, QueryColumn column, boolean allowDuplicates) throws SqlException {
+        addColumn(position, column, allowDuplicates, null);
     }
 
-    public void addBottomUpColumn(
+    public void addColumn(
             int position,
             QueryColumn column,
             boolean allowDuplicates,
@@ -236,12 +221,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         if (!allowDuplicates && aliasToColumnMap.contains(column.getName())) {
             throw SqlException.duplicateColumn(position, column.getName(), additionalMessage);
         }
-        addBottomUpColumnIfNotExists(column);
-    }
-
-    public void addBottomUpColumnIfNotExists(QueryColumn column) {
         if (addField(column)) {
-            bottomUpColumns.add(column);
+            columns.add(column);
         }
     }
 
@@ -258,8 +239,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         int aliasKeyIndex = aliasToColumnNameMap.keyIndex(alias);
         if (aliasKeyIndex > -1) {
             aliasToColumnNameMap.putAt(aliasKeyIndex, alias, ast.token);
-            wildcardColumnNames.add(alias);
-            columnAliasIndexes.put(alias, wildcardColumnNames.size() - 1);
             return true;
         }
         return false;
@@ -307,16 +286,21 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     @Override
     public void clear() {
-        bottomUpColumns.clear();
+        columns.clear();
         aliasToColumnNameMap.clear();
         joinModels.clear();
         joinModels.add(this);
-        clearSampleBy();
+        sampleBy = null;
+        sampleByUnit = null;
+        sampleByFill.clear();
+        sampleByTimezoneName = null;
+        sampleByOffset = null;
+        sampleByTo = null;
+        sampleByFrom = null;
         orderBy.clear();
         orderByDirection.clear();
         orderByPosition = 0;
         groupBy.clear();
-        dependencies.clear();
         whereClause = null;
         nestedModel = null;
         tableNameExpr = null;
@@ -328,7 +312,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         joinCriteria = null;
         joinType = JOIN_NONE;
         joinKeywordPosition = 0;
-        columnAliasIndexes.clear();
         limitHi = null;
         limitLo = null;
         limitPosition = 0;
@@ -337,15 +320,12 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         withClauseModel.clear();
         namedWindows.clear();
         selectModelType = SELECT_MODEL_NONE;
-        tableId = -1;
         metadataVersion = -1;
-        wildcardColumnNames.clear();
         expressionModels.clear();
         distinct = false;
         nestedModelIsSubQuery = false;
         unionModel = null;
         modelPosition = 0;
-        topDownColumns.clear();
         aliasToColumnMap.clear();
         // TODO: replace booleans with an enum-like type: UPDATE/MAT_VIEW/INSERT_AS_SELECT/SELECT
         //  default is SELECT
@@ -385,16 +365,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         pivotGroupByColumnHasNoAlias = false;
         referencedViews.clear();
         viewAudits.clear();
-    }
-
-    public void clearSampleBy() {
-        sampleBy = null;
-        sampleByUnit = null;
-        sampleByFill.clear();
-        sampleByTimezoneName = null;
-        sampleByOffset = null;
-        sampleByTo = null;
-        sampleByFrom = null;
     }
 
     public boolean containsJoin() {
@@ -451,20 +421,12 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return auditedDecls;
     }
 
-    public ObjList<QueryColumn> getBottomUpColumns() {
-        return bottomUpColumns;
-    }
-
     public ObjList<QueryColumn> getColumns() {
-        return topDownColumns.size() > 0 ? topDownColumns : bottomUpColumns;
+        return columns;
     }
 
     public LowerCaseCharSequenceObjHashMap<ExpressionNode> getDecls() {
         return decls;
-    }
-
-    public IntHashSet getDependencies() {
-        return dependencies;
     }
 
     public ObjList<ExpressionNode> getExpressionModels() {
@@ -644,10 +606,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public int getSubsamplePosition() {
         return subsamplePosition;
-    }
-
-    public int getTableId() {
-        return tableId;
     }
 
     @Override
@@ -839,15 +797,13 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
      * Removes column from the model by index. This method also removes all references to column alias, but
      * leaves out column name to alias mapping. This is because the mapping is ambiguous.
      *
-     * @param columnIndex of the column to remove. This index is based on bottomUpColumns list.
+     * @param columnIndex of the column to remove. This index is based on the columns list.
      */
     public void removeColumn(int columnIndex) {
-        CharSequence columnAlias = bottomUpColumns.getQuick(columnIndex).getAlias();
-        bottomUpColumns.remove(columnIndex);
-        wildcardColumnNames.remove(columnAlias);
+        CharSequence columnAlias = columns.getQuick(columnIndex).getAlias();
+        columns.remove(columnIndex);
         aliasToColumnMap.remove(columnAlias);
         aliasToColumnNameMap.remove(columnAlias);
-        columnAliasIndexes.remove(columnAlias);
     }
 
     public void setAlias(ExpressionNode alias) {
@@ -1005,10 +961,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.subsamplePosition = position;
     }
 
-    public void setTableId(int id) {
-        this.tableId = id;
-    }
-
     public void setTableNameExpr(ExpressionNode tableNameExpr) {
         this.tableNameExpr = tableNameExpr;
     }
@@ -1056,24 +1008,15 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         }
     }
 
-    // returns textual description of this model, e.g. select-choose [top-down-columns] bottom-up-columns from X ...
+    // returns textual description of this model, e.g. select-choose columns from X ...
     public void toSink0(CharSink<?> sink, boolean showOrderBy) {
         if (selectModelType == QueryModel.SELECT_MODEL_SHOW) {
             sink.put(getSelectModelTypeText());
         } else {
-            final boolean hasColumns = topDownColumns.size() > 0 || bottomUpColumns.size() > 0;
-            if (hasColumns) {
+            if (columns.size() > 0) {
                 sink.put(getSelectModelTypeText());
-                if (topDownColumns.size() > 0) {
-                    sink.putAscii(' ');
-                    sink.putAscii('[');
-                    sinkColumns(sink, topDownColumns);
-                    sink.putAscii(']');
-                }
-                if (bottomUpColumns.size() > 0) {
-                    sink.putAscii(' ');
-                    sinkColumns(sink, bottomUpColumns);
-                }
+                sink.putAscii(' ');
+                sinkColumns(sink, columns);
                 sink.putAscii(" from ");
             }
             if (tableNameExpr != null) {
@@ -1163,7 +1106,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             }
         }
 
-        if (groupBy.size() > 0 && selectModelType != SELECT_MODEL_GROUP_BY) {
+        if (groupBy.size() > 0) {
             sink.putAscii(" group by ");
             for (int i = 0, n = groupBy.size(); i < n; i++) {
                 if (i > 0) {
@@ -1466,12 +1409,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         modelTypeName.extendAndSet(SELECT_MODEL_NONE, "select");
         modelTypeName.extendAndSet(SELECT_MODEL_CHOOSE, "select-choose");
         modelTypeName.extendAndSet(SELECT_MODEL_VIRTUAL, "select-virtual");
-        modelTypeName.extendAndSet(SELECT_MODEL_WINDOW, "select-window");
-        modelTypeName.extendAndSet(SELECT_MODEL_GROUP_BY, "select-group-by");
-        modelTypeName.extendAndSet(SELECT_MODEL_DISTINCT, "select-distinct");
-        modelTypeName.extendAndSet(SELECT_MODEL_CURSOR, "select-cursor");
         modelTypeName.extendAndSet(SELECT_MODEL_SHOW, "show");
-        modelTypeName.extendAndSet(SELECT_MODEL_WINDOW_JOIN, "select-window-join");
-        modelTypeName.extendAndSet(SELECT_MODEL_HORIZON_JOIN, "select-horizon-join");
     }
 }

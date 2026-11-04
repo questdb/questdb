@@ -28,11 +28,11 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
+import org.jetbrains.annotations.Nullable;
 
 public interface FunctionFactory {
     default int getExecutionRequirements() {
@@ -108,11 +108,13 @@ public interface FunctionFactory {
     String getSignature();
 
     /**
-     * How the value of the parsed call depends on the precision of its TIMESTAMP argument, so a filter over a set column
+     * How the value of the call depends on the precision of its TIMESTAMP argument, so a filter over a set column
      * whose branches differ in precision may make the call at each branch's precision when it does not depend on it.
      * The default answers {@link TimestampPrecisionUse#DEPENDENT}.
+     *
+     * @param firstConstant the text of the call's first argument when that is a constant, otherwise null
      */
-    default TimestampPrecisionUse getTimestampPrecisionUse(ExpressionNode call) {
+    default TimestampPrecisionUse getTimestampPrecisionUse(@Nullable CharSequence firstConstant) {
         return TimestampPrecisionUse.DEPENDENT;
     }
 

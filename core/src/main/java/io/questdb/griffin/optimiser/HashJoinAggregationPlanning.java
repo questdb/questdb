@@ -32,13 +32,14 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.HashJoinGroupByKeys;
 import io.questdb.griffin.HashJoinGroupByMetadata;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.engine.functions.groupby.HashJoinGroupByAggregates;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BindVariableExpression;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.BoundExpressionRewriter;
+import io.questdb.griffin.plan.logical.BuildSide;
 import io.questdb.griffin.plan.logical.ColumnExpression;
+import io.questdb.griffin.plan.logical.ComparisonOperator;
 import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.CursorExpression;
 import io.questdb.griffin.plan.logical.ExpressionVisitor;
@@ -59,7 +60,6 @@ import io.questdb.griffin.plan.logical.PlanToFactoryRules;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.griffin.plan.logical.TreeWalk;
-import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
@@ -148,7 +148,7 @@ final class HashJoinAggregationPlanning implements Mutable {
     }
 
     private static boolean isBooleanOperation(FunctionExpression call) {
-        return call.isAnd() || call.isOr() || SqlKeywords.isNotKeyword(call.getName()) || isComparison(call.getName());
+        return call.isAnd() || call.isOr() || call.isNot() || ComparisonOperator.of(call.getName()) != null;
     }
 
     /**
@@ -159,7 +159,7 @@ final class HashJoinAggregationPlanning implements Mutable {
         if (!(expression instanceof FunctionExpression call)) {
             return false;
         }
-        if (call.isAnd() || call.isOr() || SqlKeywords.isNotKeyword(call.getName())) {
+        if (call.isAnd() || call.isOr() || call.isNot()) {
             for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
                 if (!isCheap(call.argumentAt(i))) {
                     return false;
@@ -167,7 +167,7 @@ final class HashJoinAggregationPlanning implements Mutable {
             }
             return true;
         }
-        if (call.getArgumentCount() != 2 || !isComparison(call.getName())) {
+        if (call.getArgumentCount() != 2 || ComparisonOperator.of(call.getName()) == null) {
             return false;
         }
         for (int i = 0; i < 2; i++) {
@@ -177,11 +177,6 @@ final class HashJoinAggregationPlanning implements Mutable {
             }
         }
         return true;
-    }
-
-    private static boolean isComparison(CharSequence name) {
-        return Chars.equals(name, "=") || Chars.equals(name, "!=") || Chars.equals(name, "<>")
-                || Chars.equals(name, "<") || Chars.equals(name, "<=") || Chars.equals(name, ">") || Chars.equals(name, ">=");
     }
 
     /**
@@ -290,7 +285,7 @@ final class HashJoinAggregationPlanning implements Mutable {
     private HashJoinAggregation orientation(
             AggregatePlan aggregate,
             JoinPlan join,
-            JoinInput.BuildSide side,
+            BuildSide side,
             LogicalPlan master,
             HashJoinAggregation.InputRead masterRead,
             long masterRows,
@@ -302,7 +297,7 @@ final class HashJoinAggregationPlanning implements Mutable {
         final JoinInput first = join.getOrderedInputs().getQuick(0);
         final JoinInput second = join.getOrderedInputs().getQuick(1);
         final JoinKind kind = second.getJoinType();
-        final boolean isMasterBuilt = side == JoinInput.BuildSide.MASTER;
+        final boolean isMasterBuilt = side == BuildSide.MASTER;
         final HashJoinAggregation hashJoin = hashJoins.next().of(aggregates.next().of(join, aggregate.getPosition()), kind, side,
                 isMasterBuilt ? slave : master, isMasterBuilt ? slaveRead : masterRead, (isMasterBuilt ? second : first).getBindingAlias(),
                 isMasterBuilt ? master : slave, isMasterBuilt ? masterRead : slaveRead, (isMasterBuilt ? first : second).getBindingAlias());
@@ -373,7 +368,7 @@ final class HashJoinAggregationPlanning implements Mutable {
         if (keyFilter != null && (!isParallelStable(keyFilter) || !onlyReads(keyFilter, buildOutput))) {
             return null;
         }
-        final boolean isPresized = JoinInput.BuildSide.smaller(masterRows, slaveRows, side) == side;
+        final boolean isPresized = BuildSide.smaller(masterRows, slaveRows, side) == side;
         if (onFilter != null && (!isParallelStable(onFilter) || !onlyReads(onFilter, buildOutput) || !isPresized && isExpensive(onFilter))) {
             return null;
         }
@@ -570,7 +565,7 @@ final class HashJoinAggregationPlanning implements Mutable {
         final ScanPlan slaveRowScan = kind == JoinKind.RIGHT_OUTER ? PhysicalProperties.rowFloorScan(slave) : PhysicalProperties.rowBoundScan(slave);
         final long slaveRows = kind == JoinKind.RIGHT_OUTER ? context.rowFloor(slave, slaveRowScan) : context.rowBound(slave);
         if (kind == JoinKind.RIGHT_OUTER && (slaveRowScan == null
-                || JoinInput.BuildSide.smaller(masterRows, slaveRows, JoinInput.BuildSide.MASTER) != JoinInput.BuildSide.MASTER)) {
+                || BuildSide.smaller(masterRows, slaveRows, BuildSide.MASTER) != BuildSide.MASTER)) {
             return null;
         }
         masterOutput = HashJoinAggregation.frameOutput(master);
@@ -578,13 +573,13 @@ final class HashJoinAggregationPlanning implements Mutable {
         if (!planFilters(join, kind)) {
             return null;
         }
-        final JoinInput.BuildSide side = switch (kind) {
-            case RIGHT_OUTER -> JoinInput.BuildSide.MASTER;
+        final BuildSide side = switch (kind) {
+            case RIGHT_OUTER -> BuildSide.MASTER;
             // An input without a row bound, a live view, keeps the slave built.
             case INNER ->
-                    JoinInput.BuildSide.smaller(masterRows, slaveRows, JoinInput.BuildSide.SLAVE) == JoinInput.BuildSide.MASTER
-                            ? JoinInput.BuildSide.MASTER : JoinInput.BuildSide.SLAVE;
-            default -> JoinInput.BuildSide.SLAVE;
+                    BuildSide.smaller(masterRows, slaveRows, BuildSide.SLAVE) == BuildSide.MASTER
+                            ? BuildSide.MASTER : BuildSide.SLAVE;
+            default -> BuildSide.SLAVE;
         };
         final HashJoinAggregation hashJoin = orientation(aggregate, join, side, master, masterRead, masterRows, slave, slaveRead, slaveRows, slaveRowScan);
         if (hashJoin == null) {
@@ -594,8 +589,8 @@ final class HashJoinAggregationPlanning implements Mutable {
         // A SYMBOL key translates every distinct key the probe reads into the build's dictionary, so probing the
         // input with more rows costs about what building it would: SYMBOL keys keep the one build.
         if (kind == JoinKind.INNER && !hashJoin.getKeys().hasTranslatedSymbol() && (masterScan.isIntervalScan() || slaveScan.isIntervalScan())) {
-            hashJoin.setAlternate(orientation(aggregate, join, side == JoinInput.BuildSide.MASTER
-                    ? JoinInput.BuildSide.SLAVE : JoinInput.BuildSide.MASTER, master, masterRead, masterRows, slave, slaveRead, slaveRows, slaveRowScan));
+            hashJoin.setAlternate(orientation(aggregate, join, side == BuildSide.MASTER
+                    ? BuildSide.SLAVE : BuildSide.MASTER, master, masterRead, masterRows, slave, slaveRead, slaveRows, slaveRowScan));
         }
         return hashJoin;
     }

@@ -31,6 +31,7 @@ import io.questdb.griffin.optimiser.DecorrelationCarriers;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
+import io.questdb.griffin.plan.logical.BuildSide;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.CursorExpression;
@@ -45,10 +46,12 @@ import io.questdb.griffin.plan.logical.HorizonJoinPlan;
 import io.questdb.griffin.plan.logical.JoinGraph;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinKind;
+import io.questdb.griffin.plan.logical.JoinNullExtension;
 import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LatestByPlan;
 import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
+import io.questdb.griffin.plan.logical.NullKeyMatch;
 import io.questdb.griffin.plan.logical.OuterColumnExpression;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.PlanExpressionVisitor;
@@ -126,8 +129,8 @@ public class PlanVerifierTest extends AbstractCairoTest {
             assertAlgorithmContradicts("SELECT count(*), sum(hb.w) FROM ha LEFT JOIN hb ON ha.k = hb.k", AggregatePlan.class, aggregate -> {
                 final HashJoinAggregation hashJoin = aggregate.getHashJoin();
                 Assert.assertNotNull(hashJoin);
-                Assert.assertEquals(JoinInput.BuildSide.SLAVE, hashJoin.getBuildSide());
-                hashJoin.of(hashJoin.getAggregate(), hashJoin.getJoinType(), JoinInput.BuildSide.MASTER,
+                Assert.assertEquals(BuildSide.SLAVE, hashJoin.getBuildSide());
+                hashJoin.of(hashJoin.getAggregate(), hashJoin.getJoinType(), BuildSide.MASTER,
                         hashJoin.getProbeInput(), hashJoin.getProbeRead(), hashJoin.getProbeAlias(),
                         hashJoin.getBuildInput(), hashJoin.getBuildRead(), hashJoin.getBuildAlias());
             }, PlanVerifier.AGGREGATE_ALGORITHM);
@@ -678,7 +681,7 @@ public class PlanVerifierTest extends AbstractCairoTest {
                             sqlExecutionContext).getRecordCursorFactory()
             ) {
                 final JoinInput step = find(compiler.getPlanForTesting(), JoinPlan.class).getOrderedInputs().getQuick(1);
-                Assert.assertEquals(JoinInput.BuildSide.FIXED_MASTER, step.getBuildSide());
+                Assert.assertEquals(BuildSide.FIXED_MASTER, step.getBuildSide());
                 Assert.assertFalse(step.isSmallerDriven());
             }
             // A FULL join hashes the smaller input at execution, as its master supports random access; a master fixed by
@@ -686,60 +689,60 @@ public class PlanVerifierTest extends AbstractCairoTest {
             assertAlgorithmContradicts("SELECT a.x, b.x FROM bs_a a FULL JOIN bs_b b ON a.k = b.k", JoinPlan.class, join -> {
                 final JoinInput step = join.getOrderedInputs().getQuick(1);
                 Assert.assertEquals(JoinInput.Algorithm.LIGHT_HASH, step.getAlgorithm());
-                Assert.assertEquals(JoinInput.BuildSide.SMALLER, step.getBuildSide());
-                step.setBuildSide(JoinInput.BuildSide.FIXED_MASTER);
+                Assert.assertEquals(BuildSide.SMALLER, step.getBuildSide());
+                step.setBuildSide(BuildSide.FIXED_MASTER);
             }, PlanVerifier.JOIN_BUILD_SIDE);
             // A FULL join over a master without random access hashes its slave.
             assertAlgorithmContradicts("SELECT a.x, b.x FROM (SELECT * FROM bs_a UNION ALL SELECT * FROM bs_a) a FULL JOIN bs_b b ON a.k = b.k",
                     JoinPlan.class, join -> {
                         final JoinInput step = join.getOrderedInputs().getQuick(1);
                         Assert.assertEquals(JoinInput.Algorithm.LIGHT_HASH, step.getAlgorithm());
-                        Assert.assertEquals(JoinInput.BuildSide.SLAVE, step.getBuildSide());
-                        step.setBuildSide(JoinInput.BuildSide.SMALLER);
+                        Assert.assertEquals(BuildSide.SLAVE, step.getBuildSide());
+                        step.setBuildSide(BuildSide.SMALLER);
                     }, PlanVerifier.JOIN_BUILD_SIDE);
             // Both tables bound their inputs, and the master supports random access, so the plan picks the input to hash.
             assertAlgorithmContradicts("SELECT a.x, b.x FROM bs_a a JOIN bs_b b ON a.k = b.k", JoinPlan.class, join -> {
                 final JoinInput step = join.getOrderedInputs().getQuick(1);
                 Assert.assertTrue(step.isSmallerDriven());
-                Assert.assertEquals(JoinInput.BuildSide.SLAVE, step.getBuildSide());
-                step.setBuildSide(JoinInput.BuildSide.SMALLER);
+                Assert.assertEquals(BuildSide.SLAVE, step.getBuildSide());
+                step.setBuildSide(BuildSide.SMALLER);
             }, PlanVerifier.JOIN_BUILD_SIDE);
             // No table bounds the rows of long_sequence(), so execution picks the input to hash.
             assertAlgorithmContradicts("SELECT a.x, l.x FROM bs_a a JOIN (SELECT x::INT k, x::INT x FROM long_sequence(3)) l ON a.k = l.k",
                     JoinPlan.class, join -> {
                         final JoinInput step = join.getOrderedInputs().getQuick(1);
                         Assert.assertTrue(step.isSmallerDriven());
-                        Assert.assertEquals(JoinInput.BuildSide.SMALLER, step.getBuildSide());
-                        step.setBuildSide(JoinInput.BuildSide.SLAVE);
+                        Assert.assertEquals(BuildSide.SMALLER, step.getBuildSide());
+                        step.setBuildSide(BuildSide.SLAVE);
                     }, PlanVerifier.JOIN_BUILD_SIDE);
             bindVariableService.setLong("n", 2);
             bindVariableService.setLong("m", 2);
             // The LIMIT never holds more rows than bs_b, which holds no more rows than bs_a, so the plan hashes it.
             assertAlgorithmContradicts("SELECT a.x, l.x FROM bs_a a JOIN (SELECT k, x FROM bs_b LIMIT :n) l ON a.k = l.k", JoinPlan.class, join -> {
                 final JoinInput step = join.getOrderedInputs().getQuick(1);
-                Assert.assertEquals(JoinInput.BuildSide.SLAVE, step.getBuildSide());
-                step.setBuildSide(JoinInput.BuildSide.MASTER);
+                Assert.assertEquals(BuildSide.SLAVE, step.getBuildSide());
+                step.setBuildSide(BuildSide.MASTER);
             }, PlanVerifier.JOIN_BUILD_SIDE);
             // LIMITs of two bind variables bound the inputs, so execution picks the input to hash.
             assertAlgorithmContradicts("SELECT a.x, l.x FROM (SELECT k, x FROM bs_a LIMIT :m) a JOIN (SELECT k, x FROM bs_b LIMIT :n) l ON a.k = l.k",
                     JoinPlan.class, join -> {
                         final JoinInput step = join.getOrderedInputs().getQuick(1);
-                        Assert.assertEquals(JoinInput.BuildSide.SMALLER, step.getBuildSide());
-                        step.setBuildSide(JoinInput.BuildSide.SLAVE);
+                        Assert.assertEquals(BuildSide.SMALLER, step.getBuildSide());
+                        step.setBuildSide(BuildSide.SLAVE);
                     }, PlanVerifier.JOIN_BUILD_SIDE);
             final String union = "(SELECT k, x FROM bs_b UNION ALL SELECT k, x FROM bs_b)";
             // A full-fat hash join of a slave without random access always hashes its slave.
             assertAlgorithmContradicts("SELECT b.x, u.x FROM bs_b b JOIN " + union + " u ON b.k = u.k", JoinPlan.class, join -> {
                 final JoinInput step = join.getOrderedInputs().getQuick(1);
                 Assert.assertEquals(JoinInput.Algorithm.HASH, step.getAlgorithm());
-                step.setBuildSide(JoinInput.BuildSide.SLAVE);
+                step.setBuildSide(BuildSide.SLAVE);
             }, PlanVerifier.JOIN_BUILD_SIDE);
             // A LIMIT bounds the rows of the union, which cannot be read back by row id to be hashed.
             assertAlgorithmContradicts("SELECT u.x, b.x FROM (SELECT * FROM " + union + " LIMIT 3) u JOIN bs_b b ON u.k = b.k", JoinPlan.class, join -> {
                 final JoinInput step = join.getOrderedInputs().getQuick(1);
                 Assert.assertEquals(JoinInput.Algorithm.LIGHT_HASH, step.getAlgorithm());
-                Assert.assertEquals(JoinInput.BuildSide.FIXED_MASTER, step.getBuildSide());
-                step.setBuildSide(JoinInput.BuildSide.MASTER);
+                Assert.assertEquals(BuildSide.FIXED_MASTER, step.getBuildSide());
+                step.setBuildSide(BuildSide.MASTER);
             }, PlanVerifier.JOIN_BUILD_SIDE);
             // The parallel filter of the master returns the last master rows that the negative LIMIT reads in master
             // order.
@@ -752,9 +755,9 @@ public class PlanVerifierTest extends AbstractCairoTest {
                 final LogicalPlan plan = compiler.getPlanForTesting();
                 Assert.assertEquals(LimitPlan.Application.MASTER_SUFFIX, find(plan, LimitPlan.class).getApplication());
                 final JoinInput step = find(plan, JoinPlan.class).getOrderedInputs().getQuick(1);
-                Assert.assertEquals(JoinInput.BuildSide.FIXED_MASTER, step.getBuildSide());
+                Assert.assertEquals(BuildSide.FIXED_MASTER, step.getBuildSide());
                 verifier.verify(plan, PlanStage.PHYSICAL, PASS);
-                step.setBuildSide(JoinInput.BuildSide.SLAVE);
+                step.setBuildSide(BuildSide.SLAVE);
                 assertFails(plan, PlanVerifier.LIMIT_APPLICATION, "LimitPlan");
             }
             execute("INSERT INTO bs_a VALUES (1, 1, '2024-01-01'), (2, 2, '2024-01-01')");
@@ -768,7 +771,7 @@ public class PlanVerifierTest extends AbstractCairoTest {
                 final LogicalPlan plan = compiler.getPlanForTesting();
                 final JoinInput step = find(plan, JoinPlan.class).getOrderedInputs().getQuick(1);
                 Assert.assertTrue(step.isSmallerDriven());
-                Assert.assertEquals(JoinInput.BuildSide.SMALLER, step.getBuildSide());
+                Assert.assertEquals(BuildSide.SMALLER, step.getBuildSide());
                 verifier.verify(plan, PlanStage.PHYSICAL, PASS);
             }
         });
@@ -856,7 +859,7 @@ public class PlanVerifierTest extends AbstractCairoTest {
         final JoinInput step = join.getInputs().getQuick(1);
         step.setJoinType(JoinKind.LEFT_OUTER);
         step.addKey(1, 5, "m.a", "s.a", 0);
-        step.setNullExtension(JoinInput.NullExtension.BY_ON_RESIDUAL);
+        step.setNullExtension(JoinNullExtension.BY_ON_RESIDUAL);
         assertFails(join, PlanVerifier.JOIN_NULL_EXTENSION, "JoinPlan");
         step.setOnResidual(column(6, ColumnType.BOOLEAN));
         verifier.verify(join, PlanStage.REWRITTEN, PASS);
@@ -880,7 +883,7 @@ public class PlanVerifierTest extends AbstractCairoTest {
             assertAlgorithmContradicts(query, JoinPlan.class, join -> {
                 final BoundExpression nullKeyCheck = nullExtendedStep(join).getNullKeyCheck();
                 final JoinInput step = join.getOrderedInputs().getLast();
-                Assert.assertEquals(JoinInput.NullExtension.BY_KEYS, step.getNullExtension());
+                Assert.assertEquals(JoinNullExtension.BY_KEYS, step.getNullExtension());
                 Assert.assertNull(step.getNullKeyCheck());
                 step.setNullKeyCheck(nullKeyCheck);
             }, PlanVerifier.JOIN_NULL_KEY_CHECK);
@@ -900,15 +903,15 @@ public class PlanVerifierTest extends AbstractCairoTest {
             execute("CREATE TABLE nm_b (id INT, x INT, k INT)");
             execute("CREATE TABLE nm_c (id INT, k INT)");
             final String query = "SELECT a.id, b.id, c.id FROM nm_a a %s JOIN nm_b b ON %s JOIN nm_c c ON a.w = c.k AND b.k = c.k";
-            assertNullKeyMatch(query.formatted("LEFT", "b.x > 1"), JoinInput.NullKeyMatch.PER_SLAVE_ROW);
-            assertNullKeyMatch(query.formatted("RIGHT", "b.x > a.x"), JoinInput.NullKeyMatch.PER_PAIR);
-            assertNullKeyMatch(query.formatted("FULL", "b.x > rnd_int()"), JoinInput.NullKeyMatch.PER_PAIR);
+            assertNullKeyMatch(query.formatted("LEFT", "b.x > 1"), NullKeyMatch.PER_SLAVE_ROW);
+            assertNullKeyMatch(query.formatted("RIGHT", "b.x > a.x"), NullKeyMatch.PER_PAIR);
+            assertNullKeyMatch(query.formatted("FULL", "b.x > rnd_int()"), NullKeyMatch.PER_PAIR);
             try (
                     SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
                     RecordCursorFactory ignored = compiler.compile(query.formatted("LEFT", "b.x > 1"), sqlExecutionContext).getRecordCursorFactory()
             ) {
                 final JoinInput step = find(compiler.getPlanForTesting(), JoinPlan.class).getOrderedInputs().getLast();
-                Assert.assertEquals(JoinInput.NullExtension.BY_KEYS, step.getNullExtension());
+                Assert.assertEquals(JoinNullExtension.BY_KEYS, step.getNullExtension());
                 Assert.assertNull(PlanToFactoryRules.nullKeyMatch(step));
             }
         });
@@ -1683,7 +1686,7 @@ public class PlanVerifierTest extends AbstractCairoTest {
     private static JoinInput nullExtendedStep(JoinPlan join) {
         final ObjList<JoinInput> steps = join.getOrderedInputs();
         for (int i = 0, n = steps.size(); i < n; i++) {
-            if (steps.getQuick(i).getNullExtension() == JoinInput.NullExtension.BY_ON_RESIDUAL) {
+            if (steps.getQuick(i).getNullExtension() == JoinNullExtension.BY_ON_RESIDUAL) {
                 return steps.getQuick(i);
             }
         }
@@ -1740,7 +1743,7 @@ public class PlanVerifierTest extends AbstractCairoTest {
      * The consumer reads the designated timestamp of the light hash join of l and r, so operator planning fixes the
      * join's master side; a side left to the smaller input drops the timestamp and fails the plan.
      */
-    private void assertNullKeyMatch(String sql, JoinInput.NullKeyMatch expected) throws Exception {
+    private void assertNullKeyMatch(String sql, NullKeyMatch expected) throws Exception {
         try (
                 SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
                 RecordCursorFactory ignored = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()
@@ -1757,9 +1760,9 @@ public class PlanVerifierTest extends AbstractCairoTest {
             final LogicalPlan plan = compiler.getPlanForTesting();
             final JoinInput step = lightHashStep(plan);
             Assert.assertNotNull(sql, step);
-            Assert.assertEquals(sql, JoinInput.BuildSide.FIXED_MASTER, step.getBuildSide());
+            Assert.assertEquals(sql, BuildSide.FIXED_MASTER, step.getBuildSide());
             verifier.verify(plan, PlanStage.PHYSICAL, PASS);
-            step.setBuildSide(JoinInput.BuildSide.SLAVE);
+            step.setBuildSide(BuildSide.SLAVE);
             assertAccessPathsFail(plan, PlanVerifier.TIMESTAMP_READ, consumer);
         }
     }

@@ -2451,7 +2451,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      * Binds the model into {@link #root}, the bound plan the caller optimises.
      */
     private void bindQuery(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
-        assert model.getBottomUpColumns().size() > 0 || model.getNestedModel() == null;
+        assert model.getColumns().size() > 0 || model.getNestedModel() == null;
         optimiser.clear();
         planNodePools.clear();
         CairoException.rethrowCleanupFailure(clearPlan(null));

@@ -63,6 +63,7 @@ public final class IntervalUtils {
     private static final int FRIDAY = 5;
     // Day of week constants (Monday=1, Sunday=7, matching TimestampDriver.getDayOfWeek())
     private static final int MONDAY = 1;
+    private static final int PERIOD_COUNT_MASK = 0x00FFFFFF;
     private static final int SATURDAY = 6;
     private static final int SUNDAY = 7;
     private static final int DAY_FILTER_WEEKEND = (1 << (SATURDAY - 1)) | (1 << (SUNDAY - 1)); // Sat-Sun
@@ -322,12 +323,6 @@ public final class IntervalUtils {
         );
     }
 
-    public static int decodeDayFilterMask(LongList intervals, int index) {
-        // Day filter mask is stored in the high byte of periodCount
-        int encodedPeriodCount = Numbers.decodeHighInt(intervals.getQuick(index + PERIOD_COUNT_INDEX));
-        return (encodedPeriodCount >>> 24) & 0xFF;
-    }
-
     public static long decodeIntervalHi(LongList out, int index) {
         return out.getQuick(index + HI_INDEX);
     }
@@ -341,8 +336,7 @@ public final class IntervalUtils {
     }
 
     public static int decodePeriodCount(LongList intervals, int index) {
-        // Mask out the high byte which contains dayFilterMask
-        return Numbers.decodeHighInt(intervals.getQuick(index + PERIOD_COUNT_INDEX)) & 0x00FFFFFF;
+        return Numbers.decodeHighInt(intervals.getQuick(index + PERIOD_COUNT_INDEX));
     }
 
     public static char decodePeriodType(LongList intervals, int index) {
@@ -372,7 +366,6 @@ public final class IntervalUtils {
                 IntervalDynamicIndicator.NONE,
                 IntervalOperation.NONE,
                 operation,
-                0,
                 out
         );
     }
@@ -390,11 +383,8 @@ public final class IntervalUtils {
             short adjustment,
             short dynamicIndicator,
             short operation,
-            int dayFilterMask,
             LongList out
     ) {
-        // Encode dayFilterMask in high byte of periodCount (only uses 7 bits)
-        int encodedPeriodCount = (periodCount & 0x00FFFFFF) | ((dayFilterMask & 0xFF) << 24);
         out.add(
                 lo,
                 hi,
@@ -402,22 +392,8 @@ public final class IntervalUtils {
                         Numbers.encodeLowHighShorts(operation, (short) ((int) periodType + Short.MIN_VALUE)),
                         Numbers.encodeLowHighShorts(adjustment, dynamicIndicator)
                 ),
-                Numbers.encodeLowHighInts(period, encodedPeriodCount)
+                Numbers.encodeLowHighInts(period, periodCount & PERIOD_COUNT_MASK)
         );
-    }
-
-    public static void encodeInterval(
-            long lo,
-            long hi,
-            int period,
-            char periodType,
-            int periodCount,
-            short adjustment,
-            short dynamicIndicator,
-            short operation,
-            LongList out
-    ) {
-        encodeInterval(lo, hi, period, periodType, periodCount, adjustment, dynamicIndicator, operation, 0, out);
     }
 
     public static void encodeInterval(
@@ -768,9 +744,7 @@ public final class IntervalUtils {
      * }</pre>
      *
      * <h4>Output Format</h4>
-     * <p>Intervals are appended to the {@code out} list. In static mode ({@code applyEncoded=true}),
-     * each interval is stored as 2 longs: {@code [lo, hi]}. In dynamic mode ({@code applyEncoded=false}),
-     * each interval is stored as 4 longs: {@code [lo, hi, operation|periodType|adjustment, period|count]}.
+     * <p>Intervals are appended to the {@code out} list, each stored as 2 longs: {@code [lo, hi]}.
      * When multiple intervals are generated, they are automatically unioned (merged if overlapping).</p>
      *
      * @param timestampDriver the timestamp driver determining precision (microseconds or nanoseconds)
@@ -781,8 +755,6 @@ public final class IntervalUtils {
      * @param out             output list where parsed intervals will be appended as lo/hi pairs
      * @param operation       the interval operation type (e.g., {@link IntervalOperation#INTERSECT})
      * @param sink            a reusable string sink for internal string manipulation; contents may be modified
-     * @param applyEncoded    if {@code true}, intervals are fully resolved (static mode);
-     *                        if {@code false}, interval metadata is preserved for runtime evaluation (dynamic mode)
      * @throws SqlException if the interval string is malformed (e.g., unclosed bracket, invalid range,
      *                      empty bracket, invalid timezone, invalid duration format)
      * @see IntervalOperation
@@ -797,10 +769,9 @@ public final class IntervalUtils {
             int position,
             LongList out,
             short operation,
-            StringSink sink,
-            boolean applyEncoded
+            StringSink sink
     ) throws SqlException {
-        parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, out, operation, sink, applyEncoded, timestampDriver.getTicks());
+        parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, out, operation, sink, timestampDriver.getTicks());
     }
 
     /**
@@ -816,7 +787,6 @@ public final class IntervalUtils {
      * @param out             output list where parsed intervals will be appended
      * @param operation       the interval operation type
      * @param sink            a reusable string sink for internal string manipulation
-     * @param applyEncoded    if true, intervals are fully resolved (static mode)
      * @param nowTimestamp    the timestamp to use for resolving date variables ($today, $now, etc.)
      */
     public static void parseTickExpr(
@@ -829,12 +799,11 @@ public final class IntervalUtils {
             LongList out,
             short operation,
             StringSink sink,
-            boolean applyEncoded,
             long nowTimestamp
     ) throws SqlException {
         assert configuration.getSqlIntervalMaxIntervalsAfterMerge() > configuration.getSqlIntervalIncrementalMergeThreshold()
                 : "sqlIntervalMaxIntervalsAfterMerge must be greater than sqlIntervalIncrementalMergeThreshold";
-        if (applyEncoded && hasSubPrecisionDigits(timestampDriver, seq, lo, lim)) {
+        if (hasSubPrecisionDigits(timestampDriver, seq, lo, lim)) {
             parseSubPrecisionTickExpr(timestampDriver, configuration, seq, lo, lim, position, out, operation, sink, nowTimestamp);
             return;
         }
@@ -917,7 +886,6 @@ public final class IntervalUtils {
                         out,
                         operation,
                         dateSink,
-                        applyEncoded,
                         outSize,
                         dayFilterMask,
                         nowTimestamp
@@ -927,10 +895,8 @@ public final class IntervalUtils {
                     applyExchangeFilterAndDuration(timestampDriver, exchangeSchedule, out, outSize, effectiveSeq,
                             globalSemicolon >= 0 ? globalSemicolon + 1 : -1, effectiveSeqLim, position);
                 }
-                // In static mode, union all bracket-expanded intervals and validate count
-                if (applyEncoded) {
-                    mergeAndValidateIntervals(configuration, out, outSize, position);
-                }
+                // Union all bracket-expanded intervals and validate count
+                mergeAndValidateIntervals(configuration, out, outSize, position);
             } catch (SqlException e) {
                 out.setPos(outSize);
                 throw e;
@@ -992,7 +958,6 @@ public final class IntervalUtils {
                         out,
                         operation,
                         dateSink,
-                        applyEncoded,
                         outSize,
                         dayFilterMask,
                         nowTimestamp
@@ -1003,9 +968,7 @@ public final class IntervalUtils {
                     applyExchangeFilterAndDuration(timestampDriver, exchangeSchedule, out, outSize, wrappedSink,
                             semicolon >= 0 ? semicolon + 1 : -1, wrappedSink.length(), position);
                 }
-                if (applyEncoded) {
-                    mergeAndValidateIntervals(configuration, out, outSize, position);
-                }
+                mergeAndValidateIntervals(configuration, out, outSize, position);
             } catch (SqlException e) {
                 out.setPos(outSize);
                 throw e;
@@ -1046,7 +1009,7 @@ public final class IntervalUtils {
                 try {
                     expandDateList(
                             timestampDriver, configuration, wrappedSink, 0, wrappedSink.length(),
-                            position, out, operation, dateSink, applyEncoded, outSize,
+                            position, out, operation, dateSink, outSize,
                             dayFilterMask, nowTimestamp
                     );
                     if (exchangeSchedule != null) {
@@ -1054,9 +1017,7 @@ public final class IntervalUtils {
                         applyExchangeFilterAndDuration(timestampDriver, exchangeSchedule, out, outSize, wrappedSink,
                                 semicolon >= 0 ? semicolon + 1 : -1, wrappedSink.length(), position);
                     }
-                    if (applyEncoded) {
-                        mergeAndValidateIntervals(configuration, out, outSize, position);
-                    }
+                    mergeAndValidateIntervals(configuration, out, outSize, position);
                 } catch (SqlException e) {
                     out.setPos(outSize);
                     throw e;
@@ -1137,25 +1098,20 @@ public final class IntervalUtils {
             } else {
                 parseIntervalSuffix(timestampDriver, effectiveSeq, effectiveSeqLo, effectiveSeqLim, position, out, operation);
             }
-            if (applyEncoded) {
-                applyLastEncodedInterval(timestampDriver, out);
-                // Day filter applies BEFORE timezone conversion (based on local time)
-                if (dayFilterMask != 0 && exchangeSchedule == null) {
-                    applyDayFilter(
-                            timestampDriver,
-                            out,
-                            outSize,
-                            dayFilterMask,
-                            hasDatePrecision(effectiveSeq, effectiveSeqLo, effectiveDateLim)
-                    );
-                }
-            } else if (dayFilterMask != 0 && exchangeSchedule == null) {
-                // Dynamic mode: store day filter mask for runtime evaluation
-                setDayFilterMaskOnEncodedIntervals(out, outSize, dayFilterMask);
+            applyLastEncodedInterval(timestampDriver, out);
+            // Day filter applies BEFORE timezone conversion (based on local time)
+            if (dayFilterMask != 0 && exchangeSchedule == null) {
+                applyDayFilter(
+                        timestampDriver,
+                        out,
+                        outSize,
+                        dayFilterMask,
+                        hasDatePrecision(effectiveSeq, effectiveSeqLo, effectiveDateLim)
+                );
             }
             // Apply timezone conversion if present (before tick calendar filter)
             if (tzMarkerPos >= 0) {
-                applyTimezoneToIntervals(timestampDriver, configuration, out, outSize, effectiveSeq, tzLo, tzHi, position, applyEncoded);
+                applyTimezoneToIntervals(timestampDriver, configuration, out, outSize, effectiveSeq, tzLo, tzHi, position);
             }
             // Tick calendar filter applies AFTER timezone conversion (intersects with UTC trading hours)
             if (exchangeSchedule != null) {
@@ -1206,7 +1162,6 @@ public final class IntervalUtils {
                     operation,
                     expansionSink,
                     0,
-                    applyEncoded,
                     outSize,
                     effectiveSeq, // globalTzSeq - sequence with timezone
                     tzLo,         // globalTzLo
@@ -1214,32 +1169,27 @@ public final class IntervalUtils {
             );
             // Day filter applies BEFORE timezone conversion (based on local time)
             if (dayFilterMask != 0 && exchangeSchedule == null) {
-                if (applyEncoded) {
-                    applyDayFilter(
-                            timestampDriver,
-                            out,
-                            outSize,
-                            dayFilterMask,
-                            hasDatePrecision(parseSeq, parseLo, parseDateLim)
-                    );
-                } else {
-                    // Dynamic mode: store day filter mask for runtime evaluation
-                    setDayFilterMaskOnEncodedIntervals(out, outSize, dayFilterMask);
-                }
+                applyDayFilter(
+                        timestampDriver,
+                        out,
+                        outSize,
+                        dayFilterMask,
+                        hasDatePrecision(parseSeq, parseLo, parseDateLim)
+                );
             }
             // Apply timezone conversion if present AND no time list brackets were processed
             // (time list brackets handle their own timezone internally)
             if (tzMarkerPos >= 0 && !hadTimeListBracket) {
-                applyTimezoneToIntervals(timestampDriver, configuration, out, outSize, effectiveSeq, tzLo, tzHi, position, applyEncoded);
+                applyTimezoneToIntervals(timestampDriver, configuration, out, outSize, effectiveSeq, tzLo, tzHi, position);
             }
             // Tick calendar filter applies AFTER timezone conversion (intersects with UTC trading hours)
             if (exchangeSchedule != null) {
                 applyExchangeFilterAndDuration(timestampDriver, exchangeSchedule, out, outSize, effectiveSeq,
                         semicolonPos >= 0 ? semicolonPos + 1 : -1, effectiveSeqLim, position);
             }
-            // In static mode, union all bracket-expanded intervals with each other
+            // Union all bracket-expanded intervals with each other
             // (they were added without union during expansion)
-            if (applyEncoded && out.size() > outSize + 2) {
+            if (out.size() > outSize + 2) {
                 unionBracketExpandedIntervals(out, outSize);
                 // Check final interval count against limit
                 int intervalCount = (out.size() - outSize) / 2;
@@ -1262,17 +1212,14 @@ public final class IntervalUtils {
             @Nullable CharSequence seq,
             LongList out,
             int position,
-            StringSink sink,
-            boolean applyEncoded
+            StringSink sink
     ) throws SqlException {
         if (seq != null) {
-            parseTickExpr(timestampDriver, configuration, seq, 0, seq.length(), position, out, IntervalOperation.INTERSECT, sink, applyEncoded);
+            parseTickExpr(timestampDriver, configuration, seq, 0, seq.length(), position, out, IntervalOperation.INTERSECT, sink);
         } else {
             // null expression
             encodeInterval(Numbers.LONG_NULL, Numbers.LONG_NULL, IntervalOperation.INTERSECT, out);
-            if (applyEncoded) {
-                applyLastEncodedInterval(timestampDriver, out);
-            }
+            applyLastEncodedInterval(timestampDriver, out);
         }
     }
 
@@ -1329,28 +1276,6 @@ public final class IntervalUtils {
                 )
         );
         out.setQuick(lastIndex + PERIOD_COUNT_INDEX, Numbers.encodeLowHighInts(period, periodCount));
-    }
-
-    /**
-     * Sets the day filter mask on intervals in dynamic (4-long) format.
-     * This modifies encoded intervals in-place to add day filtering for runtime evaluation.
-     *
-     * @param intervals     the interval list containing encoded intervals
-     * @param startIndex    start index of intervals to modify
-     * @param dayFilterMask bitmask for day-of-week filter (bits 0-6 for Mon-Sun)
-     */
-    public static void setDayFilterMaskOnEncodedIntervals(LongList intervals, int startIndex, int dayFilterMask) {
-        if (dayFilterMask == 0) {
-            return;
-        }
-        for (int i = startIndex; i < intervals.size(); i += STATIC_LONGS_PER_DYNAMIC_INTERVAL) {
-            long periodCountLong = intervals.getQuick(i + PERIOD_COUNT_INDEX);
-            int period = Numbers.decodeLowInt(periodCountLong);
-            int periodCount = Numbers.decodeHighInt(periodCountLong);
-            // Clear existing dayFilterMask bits and set new ones
-            int newPeriodCount = (periodCount & 0x00FFFFFF) | ((dayFilterMask & 0xFF) << 24);
-            intervals.setQuick(i + PERIOD_COUNT_INDEX, Numbers.encodeLowHighInts(period, newPeriodCount));
-        }
     }
 
     /**
@@ -1859,7 +1784,6 @@ public final class IntervalUtils {
      * @param tzLo                    start index in tz
      * @param tzHi                    end index in tz
      * @param position                position for error reporting
-     * @param isStaticMode            true if intervals are in 2-long format, false if 4-long format
      */
     private static void applyTimezoneToIntervals(
             TimestampDriver timestampDriver,
@@ -1869,10 +1793,8 @@ public final class IntervalUtils {
             CharSequence tz,
             int tzLo,
             int tzHi,
-            int position,
-            boolean isStaticMode
+            int position
     ) throws SqlException {
-        int stride = isStaticMode ? 2 : 4;
         int currentSize = out.size();
 
         // Pre-parse timezone once outside the loop to avoid repeated parsing
@@ -1886,7 +1808,7 @@ public final class IntervalUtils {
                 // Numeric offset - convert minutes to timestamp units
                 numericOffset = timestampDriver.fromMinutes(Numbers.decodeLowInt(l));
                 // Numeric offset - simple subtraction loop
-                for (int i = outSizeBeforeConversion; i < currentSize; i += stride) {
+                for (int i = outSizeBeforeConversion; i < currentSize; i += 2) {
                     out.setQuick(i, out.getQuick(i) - numericOffset);
                     out.setQuick(i + 1, out.getQuick(i + 1) - numericOffset);
                 }
@@ -1897,7 +1819,7 @@ public final class IntervalUtils {
                         timestampDriver.getTZRuleResolution()
                 );
                 // Named timezone - handle DST gaps
-                for (int i = outSizeBeforeConversion; i < currentSize; i += stride) {
+                for (int i = outSizeBeforeConversion; i < currentSize; i += 2) {
                     long lo = out.getQuick(i);
                     long hi = out.getQuick(i + 1);
 
@@ -2213,7 +2135,7 @@ public final class IntervalUtils {
                     timestampDriver, configuration, parseSink,
                     0, parseSink.length(), parseSink.length(),
                     position, tmp, IntervalOperation.INTERSECT,
-                    expansionSink, 0, true, 0,
+                    expansionSink, 0, 0,
                     null, -1, -1
             );
         } else {
@@ -2429,7 +2351,7 @@ public final class IntervalUtils {
                     timestampDriver, configuration, parseSink,
                     0, dateLimInSink, parseSink.length(),
                     position, tmp, IntervalOperation.INTERSECT,
-                    expansionSink, 0, true, 0,
+                    expansionSink, 0, 0,
                     null, -1, -1
             );
         } else {
@@ -2732,7 +2654,6 @@ public final class IntervalUtils {
             short operation,
             StringSink sink,
             int depth,
-            boolean applyEncoded,
             int outSizeBeforeExpansion,
             CharSequence globalTzSeq, // original sequence containing timezone (for applying global TZ)
             int globalTzLo,           // start of global timezone in globalTzSeq (-1 if none)
@@ -2767,7 +2688,7 @@ public final class IntervalUtils {
                 if (hasSuffixTime || hasSuffixDuration) {
                     boolean isExpanded = expandImpreciseDateInBracket(
                             timestampDriver, seq, pos, fullLim, errorPos, out, operation,
-                            sink, applyEncoded, outSizeBeforeExpansion
+                            sink
                     );
                     if (isExpanded) {
                         sink.clear(startLen);
@@ -2777,7 +2698,7 @@ public final class IntervalUtils {
             }
             // Note: sink always has content here (at minimum the expanded bracket value)
             sink.put(seq, pos, fullLim);
-            parseExpandedInterval(timestampDriver, sink, errorPos, out, operation, applyEncoded, outSizeBeforeExpansion);
+            parseExpandedInterval(timestampDriver, sink, errorPos, out, operation);
             sink.clear(startLen);
             return false; // No time list bracket processed
         }
@@ -2801,7 +2722,7 @@ public final class IntervalUtils {
                         timestampDriver, configuration, seq,
                         bracketStart, bracketEnd, fullLim, errorPos, out, operation,
                         sink, startLen, afterPrefixLen,
-                        applyEncoded, outSizeBeforeExpansion,
+                        outSizeBeforeExpansion,
                         globalTzSeq, globalTzLo, globalTzHi
                 );
                 sink.clear(startLen);
@@ -2819,7 +2740,6 @@ public final class IntervalUtils {
                     operation,
                     sink,
                     afterPrefixLen,
-                    applyEncoded,
                     outSizeBeforeExpansion,
                     globalTzSeq,
                     globalTzLo,
@@ -2907,7 +2827,7 @@ public final class IntervalUtils {
                 appendPaddedInt(sink, v, padWidth);
                 if (expandBracketsRecursive(
                         timestampDriver, configuration, seq, bracketEnd + 1, dateLim, fullLim,
-                        errorPos, out, operation, sink, depth + 1, applyEncoded, outSizeBeforeExpansion,
+                        errorPos, out, operation, sink, depth + 1, outSizeBeforeExpansion,
                         globalTzSeq, globalTzLo, globalTzHi
                 )) {
                     foundTimeListBracket = true;
@@ -2916,17 +2836,15 @@ public final class IntervalUtils {
 
                 // Incremental merge: when interval count exceeds threshold, merge to bound memory
                 // This prevents unbounded growth from large ranges like [1..1000000]
-                if (applyEncoded) {
-                    int intervalCount = (out.size() - outSizeBeforeExpansion) / 2;
-                    if (intervalCount >= configuration.getSqlIntervalIncrementalMergeThreshold()) {
-                        unionBracketExpandedIntervals(out, outSizeBeforeExpansion);
-                        // Check if we still exceed max limit after merging
-                        intervalCount = (out.size() - outSizeBeforeExpansion) / 2;
-                        int maxIntervalsAfterMerge = configuration.getSqlIntervalMaxIntervalsAfterMerge();
-                        if (intervalCount > maxIntervalsAfterMerge) {
-                            throw SqlException.$(errorPos, "Bracket expansion produces too many intervals (max ")
-                                    .put(maxIntervalsAfterMerge).put(')');
-                        }
+                int intervalCount = (out.size() - outSizeBeforeExpansion) / 2;
+                if (intervalCount >= configuration.getSqlIntervalIncrementalMergeThreshold()) {
+                    unionBracketExpandedIntervals(out, outSizeBeforeExpansion);
+                    // Check if we still exceed max limit after merging
+                    intervalCount = (out.size() - outSizeBeforeExpansion) / 2;
+                    int maxIntervalsAfterMerge = configuration.getSqlIntervalMaxIntervalsAfterMerge();
+                    if (intervalCount > maxIntervalsAfterMerge) {
+                        throw SqlException.$(errorPos, "Bracket expansion produces too many intervals (max ")
+                                .put(maxIntervalsAfterMerge).put(')');
                     }
                 }
             }
@@ -2970,7 +2888,6 @@ public final class IntervalUtils {
      * @param out                    output list for parsed intervals
      * @param operation              interval operation
      * @param sink                   reusable StringSink for building expanded strings.
-     * @param applyEncoded           if true, converts to simple format
      * @param outSizeBeforeExpansion size of out before expansion started
      * @param dayFilterMask          bitmask for day-of-week filter (0 if not specified)
      * @param nowTimestamp           timestamp to use for resolving date variables ($today, $now, etc.)
@@ -2985,7 +2902,6 @@ public final class IntervalUtils {
             LongList out,
             short operation,
             StringSink sink,
-            boolean applyEncoded,
             int outSizeBeforeExpansion,
             int dayFilterMask,
             long nowTimestamp
@@ -3104,7 +3020,6 @@ public final class IntervalUtils {
                                 out,
                                 operation,
                                 sink,
-                                applyEncoded,
                                 outSizeBeforeExpansion
                         );
                         elementStart = i + 1;
@@ -3365,7 +3280,6 @@ public final class IntervalUtils {
                                 operation,
                                 expansionSink,
                                 0,
-                                applyEncoded,
                                 outSizeBeforeExpansion,
                                 activeTzSeq,   // tzSeq - for time list TZ fallback
                                 activeTzLo,    // tzLo
@@ -3380,30 +3294,25 @@ public final class IntervalUtils {
                     }
                 } else {
                     // No brackets - parse directly
-                    parseExpandedInterval(timestampDriver, sink, errorPos, out, operation, applyEncoded, outSizeBeforeExpansion);
+                    parseExpandedInterval(timestampDriver, sink, errorPos, out, operation);
                 }
 
                 // Day filter applies BEFORE timezone conversion (based on local time)
                 if (activeDayFilterMask != 0 && activeExchangeSchedule == null) {
-                    if (applyEncoded) {
-                        // Only expand to individual days if the element is an imprecise date (year/month)
-                        // Precise dates (with day component) should just be filtered, not expanded
-                        applyDayFilter(
-                                timestampDriver,
-                                out,
-                                outSizeBeforeElement,
-                                activeDayFilterMask,
-                                hasDatePrecision(elementSeq, resolvedElementStart, effectiveElementEnd)
-                        );
-                    } else {
-                        // Dynamic mode: store day filter mask for runtime evaluation
-                        setDayFilterMaskOnEncodedIntervals(out, outSizeBeforeElement, activeDayFilterMask);
-                    }
+                    // Only expand to individual days if the element is an imprecise date (year/month)
+                    // Precise dates (with day component) should just be filtered, not expanded
+                    applyDayFilter(
+                            timestampDriver,
+                            out,
+                            outSizeBeforeElement,
+                            activeDayFilterMask,
+                            hasDatePrecision(elementSeq, resolvedElementStart, effectiveElementEnd)
+                    );
                 }
 
                 // Apply timezone conversion if present (per-element or global) and NOT already handled by time list
                 if (activeTzLo >= 0) {
-                    applyTimezoneToIntervals(timestampDriver, configuration, out, outSizeBeforeElement, activeTzSeq, activeTzLo, activeTzHi, errorPos, applyEncoded);
+                    applyTimezoneToIntervals(timestampDriver, configuration, out, outSizeBeforeElement, activeTzSeq, activeTzLo, activeTzHi, errorPos);
                 }
 
                 // Tick calendar filter applies AFTER timezone conversion (intersects with UTC trading hours)
@@ -3447,7 +3356,6 @@ public final class IntervalUtils {
             LongList out,
             short operation,
             StringSink sink,
-            boolean applyEncoded,
             int outSizeBeforeExpansion
     ) throws SqlException {
         // Find duration semicolon in suffix (for applying duration after tick calendar filter)
@@ -3513,21 +3421,12 @@ public final class IntervalUtils {
             // Time-based range: produce single interval from start to end
             int outSizeBeforeInterval = out.size();
             encodeInterval(startTimestamp, endTimestamp, operation, out);
-            if (applyEncoded) {
-                // Static mode: convert from 4-long format to 2-long format
-                applyLastEncodedInterval(timestampDriver, out);
-            }
+            applyLastEncodedInterval(timestampDriver, out);
 
             // Apply day filter BEFORE timezone conversion (local-time semantics)
             // Day filter should check the day in local time, not UTC
             if (dayFilterMask != 0) {
-                if (applyEncoded) {
-                    // Static mode: filter intervals directly
-                    applyDayFilter(timestampDriver, out, outSizeBeforeInterval, dayFilterMask, true);
-                } else {
-                    // Dynamic mode: store mask for runtime evaluation
-                    setDayFilterMaskOnEncodedIntervals(out, outSizeBeforeInterval, dayFilterMask);
-                }
+                applyDayFilter(timestampDriver, out, outSizeBeforeInterval, dayFilterMask, true);
             }
 
             // Resolve active timezone: element-level takes precedence over global
@@ -3548,7 +3447,7 @@ public final class IntervalUtils {
 
             // Apply timezone AFTER day filter (converts local to UTC)
             if (activeTzLo >= 0) {
-                applyTimezoneToIntervals(timestampDriver, configuration, out, outSizeBeforeInterval, seq, activeTzLo, activeTzHi, errorPos, applyEncoded);
+                applyTimezoneToIntervals(timestampDriver, configuration, out, outSizeBeforeInterval, seq, activeTzLo, activeTzHi, errorPos);
             }
             return;
         }
@@ -3705,7 +3604,6 @@ public final class IntervalUtils {
                             operation,
                             expansionSink,
                             0,
-                            applyEncoded,
                             outSizeBeforeExpansion,
                             activeTzSeq,
                             activeTzLo,
@@ -3718,22 +3616,18 @@ public final class IntervalUtils {
                     activeTzLo = -1;
                 }
             } else {
-                parseExpandedInterval(timestampDriver, sink, errorPos, out, operation, applyEncoded, outSizeBeforeExpansion);
+                parseExpandedInterval(timestampDriver, sink, errorPos, out, operation);
             }
 
             // Day filter applies BEFORE timezone conversion (based on local time)
             if (activeDayFilterMask != 0 && activeExchangeSchedule == null) {
-                if (applyEncoded) {
-                    // expandMultiDay=false: appendDate always produces full "YYYY-MM-DD" dates
-                    applyDayFilter(timestampDriver, out, outSizeBeforeElement, dayFilterMask, true);
-                } else {
-                    setDayFilterMaskOnEncodedIntervals(out, outSizeBeforeElement, dayFilterMask);
-                }
+                // expandMultiDay=false: appendDate always produces full "YYYY-MM-DD" dates
+                applyDayFilter(timestampDriver, out, outSizeBeforeElement, dayFilterMask, true);
             }
 
             // Apply timezone conversion
             if (activeTzLo >= 0) {
-                applyTimezoneToIntervals(timestampDriver, configuration, out, outSizeBeforeElement, activeTzSeq, activeTzLo, activeTzHi, errorPos, applyEncoded);
+                applyTimezoneToIntervals(timestampDriver, configuration, out, outSizeBeforeElement, activeTzSeq, activeTzLo, activeTzHi, errorPos);
             }
 
             // Tick calendar filter applies AFTER timezone conversion (intersects with UTC trading hours)
@@ -3744,17 +3638,15 @@ public final class IntervalUtils {
 
             // Incremental merge: when interval count exceeds threshold, merge to bound memory
             // This prevents unbounded growth from large ranges like [$today..$today+10000d]
-            if (applyEncoded) {
-                int intervalCount = (out.size() - outSizeBeforeExpansion) / 2;
-                if (intervalCount >= configuration.getSqlIntervalIncrementalMergeThreshold()) {
-                    unionBracketExpandedIntervals(out, outSizeBeforeExpansion);
-                    // Check if we still exceed max limit after merging
-                    intervalCount = (out.size() - outSizeBeforeExpansion) / 2;
-                    int maxIntervalsAfterMerge = configuration.getSqlIntervalMaxIntervalsAfterMerge();
-                    if (intervalCount > maxIntervalsAfterMerge) {
-                        throw SqlException.$(errorPos, "Date range expansion produces too many intervals (max ")
-                                .put(maxIntervalsAfterMerge).put(')');
-                    }
+            int intervalCount = (out.size() - outSizeBeforeExpansion) / 2;
+            if (intervalCount >= configuration.getSqlIntervalIncrementalMergeThreshold()) {
+                unionBracketExpandedIntervals(out, outSizeBeforeExpansion);
+                // Check if we still exceed max limit after merging
+                intervalCount = (out.size() - outSizeBeforeExpansion) / 2;
+                int maxIntervalsAfterMerge = configuration.getSqlIntervalMaxIntervalsAfterMerge();
+                if (intervalCount > maxIntervalsAfterMerge) {
+                    throw SqlException.$(errorPos, "Date range expansion produces too many intervals (max ")
+                            .put(maxIntervalsAfterMerge).put(')');
                 }
             }
 
@@ -3782,9 +3674,7 @@ public final class IntervalUtils {
             int errorPos,
             LongList out,
             short operation,
-            StringSink sink,
-            boolean applyEncoded,
-            int outSizeBeforeExpansion
+            StringSink sink
     ) throws SqlException {
         long packed = parseMonthLevelDate(sink, 0, sink.length());
         if (packed < 0) {
@@ -3803,7 +3693,7 @@ public final class IntervalUtils {
             sink.put('-');
             appendPaddedInt(sink, d, 2);
             sink.put(seq, suffixPos, fullLim);
-            parseExpandedInterval(timestampDriver, sink, errorPos, out, operation, applyEncoded, outSizeBeforeExpansion);
+            parseExpandedInterval(timestampDriver, sink, errorPos, out, operation);
         }
         return true;
     }
@@ -3828,7 +3718,6 @@ public final class IntervalUtils {
             StringSink sink,
             int startLen,
             int afterPrefixLen,
-            boolean applyEncoded,
             int outSizeBeforeExpansion,
             CharSequence globalTzSeq,
             int globalTzLo,
@@ -3841,7 +3730,7 @@ public final class IntervalUtils {
             // Not a recognized month-level date — fall back to normal expansion
             expandTimeListBracket(timestampDriver, configuration, seq,
                     bracketStart, bracketEnd, fullLim, errorPos, out, operation,
-                    sink, afterPrefixLen, applyEncoded, outSizeBeforeExpansion,
+                    sink, afterPrefixLen, outSizeBeforeExpansion,
                     globalTzSeq, globalTzLo, globalTzHi);
             return;
         }
@@ -3860,7 +3749,7 @@ public final class IntervalUtils {
             int newPrefixLen = sink.length();
             expandTimeListBracket(timestampDriver, configuration, seq,
                     bracketStart, bracketEnd, fullLim, errorPos, out, operation,
-                    sink, newPrefixLen, applyEncoded, outSizeBeforeExpansion,
+                    sink, newPrefixLen, outSizeBeforeExpansion,
                     globalTzSeq, globalTzLo, globalTzHi);
         }
     }
@@ -3881,7 +3770,6 @@ public final class IntervalUtils {
      * @param operation              interval operation
      * @param sink                   reusable StringSink containing the prefix (e.g., "2024-01-15T")
      * @param sinkPrefixLen          length of prefix to preserve in sink
-     * @param applyEncoded           if true, converts to simple format
      * @param outSizeBeforeExpansion size of out before expansion started
      * @param globalTzSeq            original sequence containing timezone (for applying global TZ)
      * @param globalTzLo             start of global timezone in globalTzSeq (-1 if none)
@@ -3899,7 +3787,6 @@ public final class IntervalUtils {
             short operation,
             StringSink sink,
             int sinkPrefixLen,
-            boolean applyEncoded,
             int outSizeBeforeExpansion,
             CharSequence globalTzSeq,
             int globalTzLo,
@@ -3998,7 +3885,6 @@ public final class IntervalUtils {
                             operation,
                             recursionSink,
                             0,              // depth
-                            applyEncoded,
                             outSizeBeforeExpansion,
                             globalTzSeq,
                             tzLo >= 0 ? -1 : globalTzLo,  // Skip global TZ if per-element TZ
@@ -4006,16 +3892,16 @@ public final class IntervalUtils {
                     );
                 } else {
                     // No brackets in suffix - parse directly
-                    parseExpandedInterval(timestampDriver, sink, errorPos, out, operation, applyEncoded, outSizeBeforeExpansion);
+                    parseExpandedInterval(timestampDriver, sink, errorPos, out, operation);
                 }
 
                 // Apply timezone: per-element takes precedence, then global fallback
                 if (tzLo >= 0) {
                     // Per-element timezone
-                    applyTimezoneToIntervals(timestampDriver, configuration, out, outSizeBeforeElement, seq, tzLo, tzHi, errorPos, applyEncoded);
+                    applyTimezoneToIntervals(timestampDriver, configuration, out, outSizeBeforeElement, seq, tzLo, tzHi, errorPos);
                 } else if (globalTzLo >= 0) {
                     // Global timezone as fallback
-                    applyTimezoneToIntervals(timestampDriver, configuration, out, outSizeBeforeElement, globalTzSeq, globalTzLo, globalTzHi, errorPos, applyEncoded);
+                    applyTimezoneToIntervals(timestampDriver, configuration, out, outSizeBeforeElement, globalTzSeq, globalTzLo, globalTzHi, errorPos);
                 }
 
                 // Reset sink to prefix for next element
@@ -4156,20 +4042,6 @@ public final class IntervalUtils {
             }
         }
         return -1;
-    }
-
-    private static short getEffectiveOp(short operation, boolean isFirstInterval) {
-        short effectiveOp;
-        if (operation == IntervalOperation.SUBTRACT) {
-            // For SUBTRACT: each interval is processed individually (inverted and intersected)
-            // This achieves: NOT A AND NOT B AND NOT C...
-            effectiveOp = operation;
-        } else {
-            // For INTERSECT: first uses INTERSECT, subsequent use UNION to combine
-            // This achieves: (A OR B OR C...) AND previous
-            effectiveOp = isFirstInterval ? operation : IntervalOperation.UNION;
-        }
-        return effectiveOp;
     }
 
     /**
@@ -4455,34 +4327,18 @@ public final class IntervalUtils {
     }
 
     /**
-     * Parses a fully-expanded interval string (no brackets) and adds result to output.
-     * In static mode (applyEncoded=true), results are converted to 2-long format.
+     * Parses a fully-expanded interval string (no brackets) and adds the resolved interval to output.
      * Union of bracket-expanded intervals is done at the end of parseTickExpr.
-     * In dynamic mode (applyEncoded=false), results stay in 4-long format:
-     * - For INTERSECT operations: first interval uses INTERSECT, subsequent use UNION
-     * (intervals are combined, then intersected with previous constraints)
-     * - For SUBTRACT operations: all intervals use SUBTRACT
-     * (each interval is individually inverted and intersected, achieving NOT A AND NOT B)
      */
     private static void parseExpandedInterval(
             TimestampDriver timestampDriver,
             CharSequence seq,
             int errorPos,
             LongList out,
-            short operation,
-            boolean applyEncoded,
-            int outSizeBeforeExpansion
+            short operation
     ) throws SqlException {
-        if (applyEncoded) {
-            // Static mode: convert to 2-long format
-            // Union is done at the end of bracket expansion in parseTickExpr
-            parseIntervalSuffix(timestampDriver, seq, 0, seq.length(), errorPos, out, operation);
-            applyLastEncodedInterval(timestampDriver, out);
-        } else {
-            // Dynamic mode: keep 4-long format
-            boolean isFirstInterval = out.size() == outSizeBeforeExpansion;
-            parseIntervalSuffix(timestampDriver, seq, 0, seq.length(), errorPos, out, getEffectiveOp(operation, isFirstInterval));
-        }
+        parseIntervalSuffix(timestampDriver, seq, 0, seq.length(), errorPos, out, operation);
+        applyLastEncodedInterval(timestampDriver, out);
     }
 
     private static void parseIntervalSuffix(
@@ -4769,7 +4625,7 @@ public final class IntervalUtils {
     ) throws SqlException {
         final int outSize = out.size();
         final TimestampDriver nanos = NanosTimestampDriver.INSTANCE;
-        parseTickExpr(nanos, configuration, seq, lo, lim, position, out, operation, sink, true,
+        parseTickExpr(nanos, configuration, seq, lo, lim, position, out, operation, sink,
                 nanos.from(nowTimestamp, timestampDriver.getTimestampType()));
         int write = outSize;
         for (int read = outSize, n = out.size(); read < n; read += 2) {

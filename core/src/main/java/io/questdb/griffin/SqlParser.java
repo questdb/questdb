@@ -2798,7 +2798,7 @@ public class SqlParser {
         // is captured only from named WINDOW clauses, so an inline anchor parses
         // but never wires through to the reset path - reject up front and
         // point the user at the named-window form.
-        ObjList<QueryColumn> columns = queryModel.getBottomUpColumns();
+        ObjList<QueryColumn> columns = queryModel.getColumns();
         for (int i = 0, n = columns.size(); i < n; i++) {
             QueryColumn qc = columns.getQuick(i);
             if (qc.isWindowExpression()) {
@@ -2844,7 +2844,7 @@ public class SqlParser {
      */
     private static void rejectBareUnboundedWindows(QueryModel queryModel) throws SqlException {
         final LowerCaseCharSequenceObjHashMap<WindowExpression> named = queryModel.getNamedWindows();
-        final ObjList<QueryColumn> columns = queryModel.getBottomUpColumns();
+        final ObjList<QueryColumn> columns = queryModel.getColumns();
         // Named definitions a stateless call has vouched for. Collected during the
         // walk and read after it, because a definition is only cleared by its calls.
         final ObjList<WindowExpression> vouchedFor = new ObjList<>();
@@ -3012,7 +3012,7 @@ public class SqlParser {
      */
     private static void validateLiveViewFiniteInfluence(QueryModel queryModel) throws SqlException {
         LowerCaseCharSequenceObjHashMap<WindowExpression> named = queryModel.getNamedWindows();
-        ObjList<QueryColumn> columns = queryModel.getBottomUpColumns();
+        ObjList<QueryColumn> columns = queryModel.getColumns();
         for (int i = 0, n = columns.size(); i < n; i++) {
             QueryColumn qc = columns.getQuick(i);
             if (qc.isWindowExpression()) {
@@ -3294,7 +3294,7 @@ public class SqlParser {
      * a lead-only query. This walk is the parser-level safety net.
      */
     private static void rejectLeadInSelect(QueryModel queryModel) throws SqlException {
-        ObjList<QueryColumn> columns = queryModel.getBottomUpColumns();
+        ObjList<QueryColumn> columns = queryModel.getColumns();
         for (int i = 0, n = columns.size(); i < n; i++) {
             walkForLeadCall(columns.getQuick(i).getAst());
         }
@@ -6847,7 +6847,7 @@ public class SqlParser {
                 if (qc.getAlias() == null) {
                     generateColumnAlias(lexer, qc, hasFrom);
                 }
-                model.addBottomUpColumn(accumulatedColumnPositions.getQuick(i), qc, false);
+                model.addColumn(accumulatedColumnPositions.getQuick(i), qc, false);
             }
         } finally {
             // release this clause's columns, keeping the enclosing clause's ones below the offset
@@ -7222,7 +7222,7 @@ public class SqlParser {
             updateQueryModel.getUpdateExpressions().add(setColumnExpression);
 
             QueryColumn valueColumn = queryColumnPool.next().of(col, colPosition, expr);
-            fromModel.addBottomUpColumn(colPosition, valueColumn, false, "in SET clause");
+            fromModel.addColumn(colPosition, valueColumn, false, "in SET clause");
 
             tok = optTok(lexer);
             if (tok == null) {
@@ -8555,7 +8555,7 @@ public class SqlParser {
 
     private void validateNamedWindowReferences(QueryModel model) throws SqlException {
         LowerCaseCharSequenceObjHashMap<WindowExpression> namedWindows = model.getNamedWindows();
-        ObjList<QueryColumn> columns = model.getBottomUpColumns();
+        ObjList<QueryColumn> columns = model.getColumns();
         for (int i = 0, n = columns.size(); i < n; i++) {
             QueryColumn qc = columns.getQuick(i);
             if (qc.isWindowExpression()) {

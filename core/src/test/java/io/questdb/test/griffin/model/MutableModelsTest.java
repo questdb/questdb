@@ -226,7 +226,7 @@ public class MutableModelsTest {
         model.setSampleByTimezoneName(newExpressionNode());
         model.setLatestByType(QueryModel.LATEST_BY_NEW);
         model.setOrderByPosition(42);
-        model.addBottomUpColumn(newQueryColumn());
+        model.addColumn(newQueryColumn());
         model.addField(newQueryColumn());
         model.setNestedModel(QueryModel.FACTORY.newInstance());
         model.addJoinModel(QueryModel.FACTORY.newInstance());

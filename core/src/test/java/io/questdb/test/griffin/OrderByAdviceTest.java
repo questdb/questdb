@@ -40,6 +40,7 @@ import io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory;
 import io.questdb.griffin.engine.table.AbstractPageFrameRecordCursor;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorImpl;
 import io.questdb.griffin.engine.table.SortedSymbolIndexRowCursorFactory;
+import io.questdb.griffin.plan.logical.IndexOrder;
 import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.std.Chars;
 import io.questdb.std.MemoryTracker;
@@ -295,9 +296,9 @@ public class OrderByAdviceTest extends AbstractCairoTest {
     public void testInputOrderAggregatesReadIndexKeysInAnyOrder() throws Exception {
         assertMemoryLeak(() -> {
             createIndexedKeyTable();
-            assertIndexOrder(ScanPlan.IndexOrder.TABLE_PER_FRAME, "SELECT sym, arg_max(v, ts) FROM t WHERE sym IN ('a', 'b') GROUP BY sym");
-            assertIndexOrder(ScanPlan.IndexOrder.TABLE_PER_FRAME, "SELECT sym, string_agg(v::STRING, ',') FROM t WHERE sym IN ('a', 'b') GROUP BY sym");
-            assertIndexOrder(ScanPlan.IndexOrder.KEY_PER_FRAME, "SELECT arg_max(v, ts) FROM t WHERE sym IN ('a', 'b')");
+            assertIndexOrder(IndexOrder.TABLE_PER_FRAME, "SELECT sym, arg_max(v, ts) FROM t WHERE sym IN ('a', 'b') GROUP BY sym");
+            assertIndexOrder(IndexOrder.TABLE_PER_FRAME, "SELECT sym, string_agg(v::STRING, ',') FROM t WHERE sym IN ('a', 'b') GROUP BY sym");
+            assertIndexOrder(IndexOrder.KEY_PER_FRAME, "SELECT arg_max(v, ts) FROM t WHERE sym IN ('a', 'b')");
             assertQuery("SELECT arg_max(v, ts) FROM t WHERE sym IN ('a', 'b')")
                     .noLeakCheck()
                     .assertsPlan("""
@@ -311,7 +312,7 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                                           filter: sym='a'
                                     Frame forward scan on: t
                             """);
-            assertIndexOrder(ScanPlan.IndexOrder.KEY_PER_FRAME, "SELECT mode(v) FROM t WHERE sym IN ('a', 'b')");
+            assertIndexOrder(IndexOrder.KEY_PER_FRAME, "SELECT mode(v) FROM t WHERE sym IN ('a', 'b')");
             assertQuery("SELECT mode(v) FROM t WHERE sym IN ('a', 'b')")
                     .noLeakCheck()
                     .assertsPlan("""
@@ -325,7 +326,7 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                                           filter: sym='a'
                                     Frame forward scan on: t
                             """);
-            assertIndexOrder(ScanPlan.IndexOrder.KEY_PER_FRAME, "SELECT string_agg(v::STRING, ',') FROM t WHERE sym IN ('a', 'b')");
+            assertIndexOrder(IndexOrder.KEY_PER_FRAME, "SELECT string_agg(v::STRING, ',') FROM t WHERE sym IN ('a', 'b')");
             assertQuery("SELECT string_agg(v::STRING, ',') FROM t WHERE sym IN ('a', 'b')")
                     .noLeakCheck()
                     .assertsPlan("""
@@ -3320,8 +3321,8 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                             tw
                             2.25
                             """);
-            assertIndexOrder(ScanPlan.IndexOrder.TABLE, "SELECT twap(v, ts) FROM t WHERE sym IN ('a', 'b')");
-            assertIndexOrder(ScanPlan.IndexOrder.TABLE, "SELECT sym, first(v) FROM t WHERE sym IN ('a', 'b') GROUP BY sym");
+            assertIndexOrder(IndexOrder.TABLE, "SELECT twap(v, ts) FROM t WHERE sym IN ('a', 'b')");
+            assertIndexOrder(IndexOrder.TABLE, "SELECT sym, first(v) FROM t WHERE sym IN ('a', 'b') GROUP BY sym");
         });
     }
 
@@ -3509,7 +3510,7 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                 .returns("sym\tspread\n", expected);
     }
 
-    private static void assertIndexOrder(ScanPlan.IndexOrder expected, String sql) throws Exception {
+    private static void assertIndexOrder(IndexOrder expected, String sql) throws Exception {
         assertPlanned(engine, sqlExecutionContext, sql, ScanPlan.class, scan -> Assert.assertEquals(expected, scan.getIndexOrder()));
     }
 

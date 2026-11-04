@@ -38,7 +38,6 @@ import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.MonotonicTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
@@ -58,7 +57,7 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory, Mon
     }
 
     @Override
-    public TimestampPrecisionUse getTimestampPrecisionUse(ExpressionNode call) {
+    public TimestampPrecisionUse getTimestampPrecisionUse(CharSequence firstConstant) {
         return TimestampPrecisionUse.INVARIANT;
     }
 

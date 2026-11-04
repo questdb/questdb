@@ -35,7 +35,7 @@ import io.questdb.cairo.sql.RowCursorFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.plan.logical.ScanPlan;
+import io.questdb.griffin.plan.logical.IndexOrder;
 import io.questdb.griffin.plan.logical.SortDirection;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
@@ -66,7 +66,7 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
             @NotNull @Transient ObjList<Function> keyValues,
             int columnIndex,
             @Nullable Function filter,
-            @NotNull ScanPlan.IndexOrder indexOrder,
+            @NotNull IndexOrder indexOrder,
             SortDirection orderDirection,
             int indexDirection,
             @NotNull IntList columnIndexes,
@@ -82,7 +82,7 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
         try {
             cursorFactoriesIdx = new int[]{0};
             // the bit set applies the filter to the merged rows
-            final Function keyFilter = indexOrder == ScanPlan.IndexOrder.TABLE_PER_FRAME ? null : filter;
+            final Function keyFilter = indexOrder == IndexOrder.TABLE_PER_FRAME ? null : filter;
             for (int i = 0; i < nKeyValues; i++) {
                 addSymbolKey(keyValues.get(i), indexDirection, keyFilter);
             }

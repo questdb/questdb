@@ -900,50 +900,6 @@ public final class ScanPlan extends LogicalPlan {
     }
 
     /**
-     * The order an index access path reading a list of keys emits its rows in.
-     */
-    public enum IndexOrder {
-        /**
-         * Not a read of several keys: the access path reads no index keys, or a single key in index order.
-         */
-        NONE,
-        /**
-         * Ordered by the index key, then by designated timestamp in the index direction, as the consumers request.
-         */
-        KEY,
-        /**
-         * Ordered by designated timestamp, as the consumers request, merging the keys row by row.
-         */
-        TIMESTAMP,
-        /**
-         * In table order, merging the keys row by row, so that the consumers may stop at any row.
-         */
-        TABLE,
-        /**
-         * In table order, merging all keys of a page frame before its first row.
-         */
-        TABLE_PER_FRAME,
-        /**
-         * Key by key within each page frame.
-         */
-        KEY_PER_FRAME;
-
-        /**
-         * Whether the order is the one the consumers request.
-         */
-        public boolean isRequested() {
-            return this == KEY || this == TIMESTAMP;
-        }
-
-        /**
-         * Whether each page frame emits its rows in table order.
-         */
-        public boolean isTableOrder() {
-            return this == TIMESTAMP || this == TABLE || this == TABLE_PER_FRAME;
-        }
-    }
-
-    /**
      * How an access path reads the index of its key column.
      */
     public enum IndexRead {

@@ -206,29 +206,36 @@ public final class WindowSpec implements PlanFactSource {
         return isSubsampleKeepFlag;
     }
 
-    public WindowSpec of(WindowExpression expression) {
-        final int orderByCount = expression.getOrderBy().size();
-        if (orderByCount > 0) {
-            orderByColumnIds.checkCapacity(orderByCount);
-            orderByDirections.checkCapacity(orderByCount);
-            orderByNames.checkCapacity(orderByCount);
-            orderByPositions.checkCapacity(orderByCount);
-        }
-        partitionBy.checkCapacity(expression.getPartitionBy().size());
-        exclusionKind = expression.getExclusionKind();
-        exclusionKindPos = expression.getExclusionKindPos();
-        framingMode = expression.getFramingMode();
-        isIgnoreNulls = expression.isIgnoreNulls();
-        isSubsampleKeepFlag = expression.isSubsampleKeepFlag();
-        nullsDescPos = expression.getNullsDescPos();
-        rowsHi = expression.getRowsHi();
-        rowsHiExprPos = expression.getRowsHiExprPos();
-        rowsHiExprTimeUnit = expression.getRowsHiExprTimeUnit();
-        rowsHiKindPos = expression.getRowsHiKindPos();
-        rowsLo = expression.getRowsLo();
-        rowsLoExprPos = expression.getRowsLoExprPos();
-        rowsLoExprTimeUnit = expression.getRowsLoExprTimeUnit();
-        rowsLoKindPos = expression.getRowsLoKindPos();
+    public WindowSpec ofFrame(
+            int framingMode,
+            long rowsLo,
+            int rowsLoKindPos,
+            int rowsLoExprPos,
+            char rowsLoExprTimeUnit,
+            long rowsHi,
+            int rowsHiKindPos,
+            int rowsHiExprPos,
+            char rowsHiExprTimeUnit,
+            int exclusionKind,
+            int exclusionKindPos,
+            boolean isIgnoreNulls,
+            int nullsDescPos,
+            boolean isSubsampleKeepFlag
+    ) {
+        this.exclusionKind = exclusionKind;
+        this.exclusionKindPos = exclusionKindPos;
+        this.framingMode = framingMode;
+        this.isIgnoreNulls = isIgnoreNulls;
+        this.isSubsampleKeepFlag = isSubsampleKeepFlag;
+        this.nullsDescPos = nullsDescPos;
+        this.rowsHi = rowsHi;
+        this.rowsHiExprPos = rowsHiExprPos;
+        this.rowsHiExprTimeUnit = rowsHiExprTimeUnit;
+        this.rowsHiKindPos = rowsHiKindPos;
+        this.rowsLo = rowsLo;
+        this.rowsLoExprPos = rowsLoExprPos;
+        this.rowsLoExprTimeUnit = rowsLoExprTimeUnit;
+        this.rowsLoKindPos = rowsLoKindPos;
         return this;
     }
 
@@ -251,6 +258,17 @@ public final class WindowSpec implements PlanFactSource {
         rowsLoExprPos = spec.rowsLoExprPos;
         rowsLoExprTimeUnit = spec.rowsLoExprTimeUnit;
         rowsLoKindPos = spec.rowsLoKindPos;
+        return this;
+    }
+
+    /**
+     * Takes the frame of a window with no frame clause: RANGE from the first row of the partition to the last.
+     */
+    public WindowSpec ofUnboundedFrame() {
+        exclusionKind = WindowExpression.EXCLUDE_NO_OTHERS;
+        framingMode = WindowExpression.FRAMING_RANGE;
+        rowsHi = Long.MAX_VALUE;
+        rowsLo = Long.MIN_VALUE;
         return this;
     }
 

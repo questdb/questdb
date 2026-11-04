@@ -184,7 +184,7 @@ final class CorrelatedChainRewriter {
     private LogicalPlan rankLatest(LatestByPlan latest, LogicalPlan input, int base) throws SqlException {
         final int position = latest.getPosition();
         final OutputSchema output = input.getOutput();
-        final WindowSpec spec = planNodes.windowSpecs.next().of(planNodes.unboundedWindow);
+        final WindowSpec spec = planNodes.windowSpecs.next().ofUnboundedFrame();
         for (int i = 0, n = latest.getKeyColumnIds().size(); i < n; i++) {
             final int columnId = latest.getKeyColumnIds().getQuick(i);
             spec.getPartitionBy().add(planNodes.columns.next().of(columnId, output.getColumnType(output.getColumnIndexById(columnId)), position));
@@ -209,7 +209,7 @@ final class CorrelatedChainRewriter {
                 && LogicalPlans.isColumnProjection(project) ? project : null;
         LogicalPlan ordered = wrapper != null ? wrapper.getChild() : input;
         final OutputSchema output = ordered.getOutput();
-        final WindowSpec spec = planNodes.windowSpecs.next().of(planNodes.unboundedWindow);
+        final WindowSpec spec = planNodes.windowSpecs.next().ofUnboundedFrame();
         for (int k = base, n = mapping.mark(); k < n; k++) {
             final int columnId = wrapper != null ? LogicalPlans.projectedSourceColumnId(wrapper, mapping.columnIdAt(k)) : mapping.columnIdAt(k);
             spec.getPartitionBy().add(planNodes.columns.next().of(columnId, output.getColumnType(output.getColumnIndexById(columnId)), position));

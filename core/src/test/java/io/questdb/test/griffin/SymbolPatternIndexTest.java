@@ -67,7 +67,7 @@ import io.questdb.griffin.engine.table.BaseAsyncHorizonJoinAtom;
 import io.questdb.griffin.engine.table.HeapRowCursorFactory;
 import io.questdb.griffin.engine.table.SymbolPatternIndexRecordCursorFactory;
 import io.questdb.griffin.model.QueryModel;
-import io.questdb.griffin.plan.logical.ScanPlan;
+import io.questdb.griffin.plan.logical.IndexOrder;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
@@ -3772,13 +3772,13 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
 
     @Test
     public void testIndexFactoryCloseReleasesResourcesWhenPartitionFactoryCloseThrowsWithSequentialCursor() throws Exception {
-        assertIndexFactoryCloseReleasesResourcesOnThrow(ScanPlan.IndexOrder.KEY_PER_FRAME);
+        assertIndexFactoryCloseReleasesResourcesOnThrow(IndexOrder.KEY_PER_FRAME);
     }
 
     // close() cannot retry after a partition-factory failure, so later native owners must still close.
     @Test
     public void testIndexFactoryCloseReleasesResourcesWhenPartitionFactoryCloseThrowsWithHeapCursor() throws Exception {
-        assertIndexFactoryCloseReleasesResourcesOnThrow(ScanPlan.IndexOrder.TABLE);
+        assertIndexFactoryCloseReleasesResourcesOnThrow(IndexOrder.TABLE);
     }
 
     @Test
@@ -4365,7 +4365,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         return Long.parseLong(token);
     }
 
-    private void assertIndexFactoryCloseReleasesResourcesOnThrow(ScanPlan.IndexOrder indexOrder) throws Exception {
+    private void assertIndexFactoryCloseReleasesResourcesOnThrow(IndexOrder indexOrder) throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
             execute("INSERT INTO t SELECT rnd_symbol('aa','ab','ba'), x, timestamp_sequence(0, 60_000_000) FROM long_sequence(1_000)");

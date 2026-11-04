@@ -485,7 +485,7 @@ final class PivotBinder implements Mutable {
             final QueryModel input = pivot.getNestedModel();
             final OutputSchema scope = source.getOutput();
             final CharSequence alias = sourceAlias(input);
-            final WindowSpec spec = ctx.planNodes.windowSpecs.next().of(syntax);
+            final WindowSpec spec = windowBinder.newSpec(syntax);
             for (int k = 0, count = syntax.getPartitionBy().size(); k < count; k++) {
                 spec.getPartitionBy().add(ctx.functionBinder.bind(syntax.getPartitionBy().getQuick(k), scope, alias, executionContext));
             }

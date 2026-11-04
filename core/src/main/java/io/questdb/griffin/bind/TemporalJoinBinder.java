@@ -310,7 +310,7 @@ final class TemporalJoinBinder {
     }
 
     private static int timestampPredicatePosition(ExpressionNode node, CharSequence timestamp) {
-        if (node.paramCount == 2 && SqlKeywords.isAndKeyword(node.token)) {
+        if (node.isAnd()) {
             final int position = timestampPredicatePosition(node.lhs, timestamp);
             return position >= 0 ? position : timestampPredicatePosition(node.rhs, timestamp);
         }
@@ -361,8 +361,8 @@ final class TemporalJoinBinder {
     }
 
     private static CharSequence windowJoinAggregateName(ExpressionNode node, QueryModel model) {
-        for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
-            final QueryColumn column = model.getBottomUpColumns().getQuick(i);
+        for (int i = 0, n = model.getColumns().size(); i < n; i++) {
+            final QueryColumn column = model.getColumns().getQuick(i);
             if (column.getAst() == node) {
                 return column.getName();
             }
@@ -380,7 +380,7 @@ final class TemporalJoinBinder {
         if (criteria == null) {
             return slaveFilter;
         }
-        if (SqlKeywords.isAndKeyword(criteria.token) && criteria.paramCount == 2) {
+        if (criteria.isAnd()) {
             slaveFilter = bindHorizonKeys(criteria.lhs, slaveFilter, step, master, masterAlias, slave, slaveAlias);
             return bindHorizonKeys(criteria.rhs, slaveFilter, step, master, masterAlias, slave, slaveAlias);
         }
@@ -520,7 +520,7 @@ final class TemporalJoinBinder {
      * position of the leftmost one.
      */
     private void rejectWindows(QueryModel model, QueryModel source, String message) throws SqlException {
-        final ObjList<QueryColumn> selected = model.getBottomUpColumns();
+        final ObjList<QueryColumn> selected = model.getColumns();
         for (int i = 0, n = selected.size(); i < n; i++) {
             final QueryColumn column = selected.getQuick(i);
             final int position = column.isWindowExpression() ? column.getAst().position : windowBinder.findWindowPosition(column.getAst());
@@ -717,7 +717,7 @@ final class TemporalJoinBinder {
         if (timestampIndex < 0 || hasOwnTimestampContract(input)) {
             return;
         }
-        final ObjList<QueryColumn> columns = model.getBottomUpColumns();
+        final ObjList<QueryColumn> columns = model.getColumns();
         for (int i = 0, n = columns.size(); i < n; i++) {
             final ExpressionNode ast = columns.getQuick(i).getAst();
             if (ast.type == ExpressionNode.LITERAL && FunctionBinder.findColumn(ast, output, alias) == timestampIndex) {
@@ -793,7 +793,7 @@ final class TemporalJoinBinder {
             throw SqlException.$(source.getSampleBy().position, "SAMPLE BY cannot be used with HORIZON JOIN");
         }
         rejectWindows(model, source, "WINDOW functions are not allowed in HORIZON JOIN queries");
-        final ObjList<QueryColumn> selected = model.getBottomUpColumns();
+        final ObjList<QueryColumn> selected = model.getColumns();
         final ObjList<ExpressionNode> groupBy = blockGroupBy(model, source);
         if (groupBy.size() > 0 && !model.isPivot()) {
             validateHorizonGroupBy(selected, groupBy);
@@ -1042,22 +1042,22 @@ final class TemporalJoinBinder {
         if (groupBy.size() > 0) {
             throw SqlException.$(groupBy.getQuick(0).position, "GROUP BY cannot be used with WINDOW JOIN");
         }
-        final WindowJoinPlan plan = bindWindowJoin(model, model.getBottomUpColumns(), null, source, where, executionContext);
+        final WindowJoinPlan plan = bindWindowJoin(model, model.getColumns(), null, source, where, executionContext);
         final OutputSchema output = plan.getOutput();
         final CharSequence masterAlias = plan.getSteps().getQuick(0).getMasterAlias();
         final ObjList<ColumnExpression> aggregateColumns = scope.substitutionColumns;
         final ObjList<ExpressionNode> aggregateSources = scope.substitutionNodes;
         aggregateColumns.clear();
         aggregateSources.clear();
-        for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
-            collectWindowJoinAggregateOccurrences(model.getBottomUpColumns().getQuick(i).getAst(), plan, aggregateSources, aggregateColumns);
+        for (int i = 0, n = model.getColumns().size(); i < n; i++) {
+            collectWindowJoinAggregateOccurrences(model.getColumns().getQuick(i).getAst(), plan, aggregateSources, aggregateColumns);
         }
         scope.resetAliases();
         scope.projectionAliasIndexes.clear();
         final ProjectPlan project = ctx.planNodes.projects.next().of(plan, model.getModelPosition());
         scope.sourceProjectionIndexes.setAll(output.getColumnCount(), -1);
-        for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
-            final QueryColumn column = model.getBottomUpColumns().getQuick(i);
+        for (int i = 0, n = model.getColumns().size(); i < n; i++) {
+            final QueryColumn column = model.getColumns().getQuick(i);
             final ExpressionNode expression = column.getAst();
             if (expression.isWildcard()) {
                 for (int s = 0, m = plan.getSteps().size(); s < m; s++) {

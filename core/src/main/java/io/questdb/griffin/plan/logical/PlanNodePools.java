@@ -27,8 +27,6 @@ package io.questdb.griffin.plan.logical;
 import io.questdb.ParanoiaState;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.griffin.StaticTypeFunction;
-import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.WindowExpression;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjectFactory;
 import io.questdb.std.ObjectPool;
@@ -36,7 +34,7 @@ import io.questdb.std.ObjectPool;
 /**
  * The pools the binder, at every nesting depth, and the optimiser draw plan nodes, sub-queries and bound expressions from. A
  * node lives until the compiler rebuilds the statement's plan, so the nodes of a sub-query stay valid while the query
- * that contains it consumes them. {@link #syntheticNodes} and {@link #staticTypes} live for one binding call instead: the call takes a
+ * that contains it consumes them. {@link #staticTypes} live for one binding call instead: the call takes a
  * mark on entry and rewinds to it on exit, so a sub-query bound inside the call releases only its own. Between
  * statements a pool keeps what its recent uses took, see {@link io.questdb.std.RetainedCapacity}, and never trims
  * below the configured expression pool capacity for bound expressions or the configured model pool capacity for plan
@@ -77,15 +75,12 @@ public final class PlanNodePools implements Mutable {
     public final ObjectPool<SortPlan> sorts;
     public final ObjectPool<StaticTypeFunction> staticTypes;
     public final ObjectPool<Subquery> subqueries;
-    public final ObjectPool<ExpressionNode> syntheticNodes;
     public final ObjectPool<TypeExpression> types;
-    public final WindowExpression unboundedWindow = WindowExpression.FACTORY.newInstance();
     public final ObjectPool<UnnestSpec> unnestSpecs;
     public final ObjectPool<WindowJoinPlan> windowJoinPlans;
     public final ObjectPool<WindowJoinStep> windowJoinSteps;
     public final ObjectPool<WindowPlan> windowPlans;
     public final ObjectPool<WindowSpec> windowSpecs;
-    public final ObjectPool<WindowExpression> windowSyntax;
     private final PlanFactRecorder clearedFacts = ParanoiaState.PLAN_PARANOIA_MODE ? new PlanFactRecorder() : null;
     private final PlanFactRecorder newFacts = ParanoiaState.PLAN_PARANOIA_MODE ? new PlanFactRecorder() : null;
     private boolean hasSharedSources;
@@ -125,14 +120,12 @@ public final class PlanNodePools implements Mutable {
         this.sorts = new ObjectPool<>(SortPlan.FACTORY, 4, planCapacity);
         this.staticTypes = new ObjectPool<>(StaticTypeFunction::new, 8, expressionCapacity);
         this.subqueries = new ObjectPool<>(Subquery.FACTORY, 4, planCapacity);
-        this.syntheticNodes = new ObjectPool<>(ExpressionNode.FACTORY, 32, expressionCapacity);
         this.types = new ObjectPool<>(TypeExpression.FACTORY, 8, expressionCapacity);
         this.unnestSpecs = new ObjectPool<>(UnnestSpec.FACTORY, 4, planCapacity);
         this.windowJoinPlans = new ObjectPool<>(WindowJoinPlan.FACTORY, 2, planCapacity);
         this.windowJoinSteps = new ObjectPool<>(WindowJoinStep.FACTORY, 2, planCapacity);
         this.windowPlans = new ObjectPool<>(WindowPlan.FACTORY, 4, planCapacity);
         this.windowSpecs = new ObjectPool<>(WindowSpec.FACTORY, 4, planCapacity);
-        this.windowSyntax = new ObjectPool<>(WindowExpression.FACTORY, 4, expressionCapacity);
     }
 
     @Override
@@ -160,13 +153,11 @@ public final class PlanNodePools implements Mutable {
         setOperations.clear();
         sorts.clear();
         staticTypes.clear();
-        syntheticNodes.clear();
         unnestSpecs.clear();
         windowJoinPlans.clear();
         windowJoinSteps.clear();
         windowPlans.clear();
         windowSpecs.clear();
-        windowSyntax.clear();
         hasSharedSources = false;
         nextColumnId = 0;
         if (clearedFacts != null) {
@@ -210,10 +201,6 @@ public final class PlanNodePools implements Mutable {
      */
     public void recordSharedSource() {
         hasSharedSources = true;
-    }
-
-    public void rewindSyntheticNodes(int mark) {
-        syntheticNodes.rewind(mark);
     }
 
     private void verifyCleared() {

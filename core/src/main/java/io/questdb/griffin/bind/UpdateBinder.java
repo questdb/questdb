@@ -85,8 +85,8 @@ final class UpdateBinder implements Mutable {
     }
 
     private SqlException aggregateException(QueryModel model) {
-        for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
-            final ExpressionNode value = model.getBottomUpColumns().getQuick(i).getAst();
+        for (int i = 0, n = model.getColumns().size(); i < n; i++) {
+            final ExpressionNode value = model.getColumns().getQuick(i).getAst();
             if (value.type == ExpressionNode.FUNCTION && ctx.functionFactoryCache.isGroupBy(value.token)) {
                 return SqlException.$(value.position, "Unsupported function in SET clause");
             }
@@ -114,7 +114,7 @@ final class UpdateBinder implements Mutable {
         final IntList targetTypes = project.getUpdateTargetTypes();
         final OutputSchema output = project.getOutput();
         final OutputSchema targetOutput = targetScan.getOutput();
-        final ObjList<QueryColumn> targets = model.getBottomUpColumns();
+        final ObjList<QueryColumn> targets = model.getColumns();
         final ObjList<CharSequence> targetNames = target.getColumnNames();
         targetNames.clear();
         boolean hasConversions = false;
@@ -153,7 +153,7 @@ final class UpdateBinder implements Mutable {
     }
 
     private SqlException windowException(QueryModel model) {
-        final ObjList<QueryColumn> columns = model.getBottomUpColumns();
+        final ObjList<QueryColumn> columns = model.getColumns();
         boolean isGrouped = false;
         for (int i = 0, n = columns.size(); i < n && !isGrouped; i++) {
             final ExpressionNode expression = columns.getQuick(i).getAst();
@@ -206,8 +206,8 @@ final class UpdateBinder implements Mutable {
         final ProjectPlan project = ctx.planNodes.projects.next().of(input, model.getModelPosition());
         scope.sourceProjectionIndexes.setAll(output.getColumnCount(), -1);
         binder.clearCursorColumns();
-        for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
-            bindAssignment(model.getBottomUpColumns().getQuick(i), project, output, source, executionContext);
+        for (int i = 0, n = model.getColumns().size(); i < n; i++) {
+            bindAssignment(model.getColumns().getQuick(i), project, output, source, executionContext);
         }
         prepareAssignments(model, project, executionContext);
         return orderBinder.designateTimestamp(project);

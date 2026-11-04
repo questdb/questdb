@@ -50,6 +50,8 @@ public final class BoundExpressionRewriter implements Mutable {
     private final PreparedFunctions prepared;
     private final IntList tmpPositions;
     private final ObjectPool<ObjList<BoundExpression>> rewriteArguments;
+    private final IntList substitutedColumnId = new IntList(1);
+    private final ObjList<BoundExpression> substitutedValue = new ObjList<>(1);
     private final ObjectPool<TypeExpression> types;
     private boolean isReplacementPlaced;
 
@@ -430,28 +432,8 @@ public final class BoundExpressionRewriter implements Mutable {
      * preparations stay with the originals.
      */
     public BoundExpression substituteColumns(BoundExpression expression, IntList columnIds, ObjList<BoundExpression> replacements) {
-        if (expression instanceof ColumnExpression column) {
-            final int index = columnIds.indexOf(column.getColumnId(), 0, columnIds.size());
-            return index < 0 ? expression : copy(replacements.getQuick(index));
-        }
-        if (!(expression instanceof FunctionExpression call)) {
-            return expression;
-        }
-        ObjList<BoundExpression> args = null;
-        for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
-            final BoundExpression argument = call.argumentAt(i);
-            final BoundExpression substituted = substituteColumns(argument, columnIds, replacements);
-            if (args == null && substituted != argument) {
-                args = rewriteArguments.next();
-                for (int k = 0; k < i; k++) {
-                    args.add(call.argumentAt(k));
-                }
-            }
-            if (args != null) {
-                args.add(substituted);
-            }
-        }
-        return args == null ? expression : functions.next().of(call, args, substitutedFlags(call, args));
+        isReplacementPlaced = true;
+        return substitute(expression, columnIds, replacements);
     }
 
     /**
@@ -674,16 +656,17 @@ public final class BoundExpressionRewriter implements Mutable {
         }
     }
 
-    private BoundExpression substituteColumn0(BoundExpression expression, int columnId, BoundExpression replacement) {
+    private BoundExpression substitute(BoundExpression expression, IntList columnIds, ObjList<BoundExpression> replacements) {
         if (expression instanceof ColumnExpression column) {
-            if (column.getColumnId() != columnId) {
+            final int index = columnIds.indexOf(column.getColumnId(), 0, columnIds.size());
+            if (index < 0) {
                 return expression;
             }
             if (isReplacementPlaced) {
-                return copy(replacement);
+                return copy(replacements.getQuick(index));
             }
             isReplacementPlaced = true;
-            return replacement;
+            return replacements.getQuick(index);
         }
         if (!(expression instanceof FunctionExpression call)) {
             return expression;
@@ -691,7 +674,7 @@ public final class BoundExpressionRewriter implements Mutable {
         ObjList<BoundExpression> args = null;
         for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
             final BoundExpression argument = call.argumentAt(i);
-            final BoundExpression substituted = substituteColumn0(argument, columnId, replacement);
+            final BoundExpression substituted = substitute(argument, columnIds, replacements);
             if (args == null && substituted != argument) {
                 args = rewriteArguments.next();
                 for (int k = 0; k < i; k++) {
@@ -703,6 +686,18 @@ public final class BoundExpressionRewriter implements Mutable {
             }
         }
         return args == null ? expression : functions.next().of(call, args, substitutedFlags(call, args));
+    }
+
+    private BoundExpression substituteColumn0(BoundExpression expression, int columnId, BoundExpression replacement) {
+        substitutedColumnId.clear();
+        substitutedColumnId.add(columnId);
+        substitutedValue.clear();
+        substitutedValue.add(replacement);
+        try {
+            return substitute(expression, substitutedColumnId, substitutedValue);
+        } finally {
+            substitutedValue.clear();
+        }
     }
 
     /**

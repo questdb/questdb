@@ -36,7 +36,9 @@ import io.questdb.griffin.engine.table.ExtraNullColumnCursorFactory;
 import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
 import io.questdb.griffin.optimiser.PlanVerifier;
 import io.questdb.griffin.plan.logical.AggregatePlan;
+import io.questdb.griffin.plan.logical.BuildSide;
 import io.questdb.griffin.plan.logical.FilterPlan;
+import io.questdb.griffin.plan.logical.IndexOrder;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
@@ -205,7 +207,7 @@ public class PhysicalPropertiesTest extends AbstractCairoTest {
                 assertPlanned(engine, sqlExecutionContext, sql, JoinPlan.class, join -> {
                     final JoinInput step = join.getOrderedInputs().getQuick(1);
                     Assert.assertEquals(JoinInput.Algorithm.LIGHT_HASH, step.getAlgorithm());
-                    Assert.assertEquals(JoinInput.BuildSide.SMALLER, step.getBuildSide());
+                    Assert.assertEquals(BuildSide.SMALLER, step.getBuildSide());
                     Assert.assertFalse(step.isSmallerDriven());
                 });
             }
@@ -305,7 +307,7 @@ public class PhysicalPropertiesTest extends AbstractCairoTest {
                 final ScanPlan scan = find(filter, ScanPlan.class);
                 Assert.assertEquals(ScanPlan.AccessPath.SYMBOL_INDEX, scan.getAccessPath());
                 Assert.assertEquals(ScanPlan.IndexRead.INDEX, scan.getIndexRead());
-                Assert.assertEquals(ScanPlan.IndexOrder.KEY, scan.getIndexOrder());
+                Assert.assertEquals(IndexOrder.KEY, scan.getIndexOrder());
                 Assert.assertTrue(scan.isRequestedOrderDelivered());
                 Assert.assertEquals(Capability.YES, PhysicalProperties.followsOrderAdvice(filter));
                 Assert.assertEquals(Capability.YES, PhysicalProperties.supportsRandomAccess(filter));

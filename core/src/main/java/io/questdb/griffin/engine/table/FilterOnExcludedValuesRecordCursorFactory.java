@@ -37,7 +37,7 @@ import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.plan.logical.ScanPlan;
+import io.questdb.griffin.plan.logical.IndexOrder;
 import io.questdb.griffin.plan.logical.SortDirection;
 import io.questdb.std.Chars;
 import io.questdb.std.IntHashSet;
@@ -76,7 +76,7 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
             @NotNull @Transient ObjList<Function> keyValues,
             int columnIndex,
             @Nullable Function filter,
-            @NotNull ScanPlan.IndexOrder indexOrder,
+            @NotNull IndexOrder indexOrder,
             SortDirection orderDirection,
             int indexDirection,
             @NotNull IntList columnIndexes,
@@ -93,7 +93,7 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
         cursorFactoriesIdx = new int[]{0};
         cursorFactories = new ObjList<>(keyValues.size());
         // the bit set applies the filter to the merged rows
-        isKeyFiltered = filter != null && indexOrder != ScanPlan.IndexOrder.TABLE_PER_FRAME;
+        isKeyFiltered = filter != null && indexOrder != IndexOrder.TABLE_PER_FRAME;
         cursor = PageFrameRecordCursorImpl.newIndexScanCursor(
                 configuration,
                 metadata,

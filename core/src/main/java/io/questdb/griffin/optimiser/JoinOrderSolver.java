@@ -33,6 +33,7 @@ import io.questdb.griffin.plan.logical.JoinEquality;
 import io.questdb.griffin.plan.logical.JoinGraph;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinKind;
+import io.questdb.griffin.plan.logical.JoinNullExtension;
 import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LogicalPlans;
 import io.questdb.griffin.plan.logical.OutputSchema;
@@ -53,6 +54,7 @@ import io.questdb.std.ObjectPool;
  * the lists it owns stay until {@link #clear()}, and the borrowed ones are temporaries of one ordering.
  */
 final class JoinOrderSolver implements Mutable {
+    private static final IntList NO_CONSTRAINTS = new IntList();
     private final ObjList<JoinKind> bestJoinTypes = new ObjList<>();
     private final IntList bestOrder;
     private final IntList candidateOrder;
@@ -240,7 +242,7 @@ final class JoinOrderSolver implements Mutable {
                         : context.getRewriter().combineConjunction(equality, input.getOnResidual(), position));
             }
         }
-        input.setNullExtension(JoinInput.NullExtension.BY_ON_RESIDUAL);
+        input.setNullExtension(JoinNullExtension.BY_ON_RESIDUAL);
     }
 
     /**
@@ -295,32 +297,8 @@ final class JoinOrderSolver implements Mutable {
 
     private boolean dependsOn(int source, int target) {
         pendingSources.clear();
-        markedIndexes.clear();
         pendingSources.add(source);
-        final IntList constraints = graph.getOrderingConstraints();
-        while (pendingSources.size() > 0) {
-            final int last = pendingSources.size() - 1;
-            final int node = pendingSources.getQuick(last);
-            pendingSources.setPos(last);
-            if (node == target) {
-                return true;
-            }
-            if (markedIndexes.add(node)) {
-                final JoinDependency dependency = dependencies.getQuick(node);
-                if (dependency != null) {
-                    final IntHashSet parents = dependency.getParents();
-                    for (int i = 0, n = parents.size(); i < n; i++) {
-                        pendingSources.add(parents.get(i));
-                    }
-                }
-                for (int i = 0, n = constraints.size(); i < n; i += 2) {
-                    if (constraints.getQuick(i + 1) == node) {
-                        pendingSources.add(constraints.getQuick(i));
-                    }
-                }
-            }
-        }
-        return false;
+        return isReachedFromPending(target, graph.getOrderingConstraints());
     }
 
     private boolean hasLeadingJoinDependency(JoinPlan join) {
@@ -345,7 +323,6 @@ final class JoinOrderSolver implements Mutable {
 
     private boolean hasOtherDependencyPath(JoinDependency source, int target) {
         pendingSources.clear();
-        markedIndexes.clear();
         final IntHashSet sourceParents = source.getParents();
         for (int i = 0, n = sourceParents.size(); i < n; i++) {
             final int parent = sourceParents.get(i);
@@ -353,24 +330,7 @@ final class JoinOrderSolver implements Mutable {
                 pendingSources.add(parent);
             }
         }
-        while (pendingSources.size() > 0) {
-            final int last = pendingSources.size() - 1;
-            final int parent = pendingSources.getQuick(last);
-            pendingSources.setPos(last);
-            if (parent == target) {
-                return true;
-            }
-            if (markedIndexes.add(parent)) {
-                final JoinDependency dependency = dependencies.getQuick(parent);
-                if (dependency != null) {
-                    final IntHashSet parents = dependency.getParents();
-                    for (int i = 0, n = parents.size(); i < n; i++) {
-                        pendingSources.add(parents.get(i));
-                    }
-                }
-            }
-        }
-        return false;
+        return isReachedFromPending(target, NO_CONSTRAINTS);
     }
 
     /**
@@ -476,6 +436,33 @@ final class JoinOrderSolver implements Mutable {
     private boolean isParentless(int source) {
         final JoinDependency dependency = dependencies.getQuick(source);
         return dependency == null || dependency.getParents().size() == 0;
+    }
+
+    private boolean isReachedFromPending(int target, IntList constraints) {
+        markedIndexes.clear();
+        while (pendingSources.size() > 0) {
+            final int last = pendingSources.size() - 1;
+            final int node = pendingSources.getQuick(last);
+            pendingSources.setPos(last);
+            if (node == target) {
+                return true;
+            }
+            if (markedIndexes.add(node)) {
+                final JoinDependency dependency = dependencies.getQuick(node);
+                if (dependency != null) {
+                    final IntHashSet parents = dependency.getParents();
+                    for (int i = 0, n = parents.size(); i < n; i++) {
+                        pendingSources.add(parents.get(i));
+                    }
+                }
+                for (int i = 0, n = constraints.size(); i < n; i += 2) {
+                    if (constraints.getQuick(i + 1) == node) {
+                        pendingSources.add(constraints.getQuick(i));
+                    }
+                }
+            }
+        }
+        return false;
     }
 
     /**

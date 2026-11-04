@@ -41,7 +41,6 @@ import io.questdb.griffin.engine.functions.MonotonicTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.std.Chars;
@@ -88,8 +87,8 @@ public class TimestampAddFunctionFactory implements FunctionFactory, MonotonicTi
     }
 
     @Override
-    public TimestampPrecisionUse getTimestampPrecisionUse(ExpressionNode call) {
-        return periodPrecisionUse(call);
+    public TimestampPrecisionUse getTimestampPrecisionUse(CharSequence firstConstant) {
+        return periodPrecisionUse(firstConstant);
     }
 
     @Override
@@ -151,10 +150,9 @@ public class TimestampAddFunctionFactory implements FunctionFactory, MonotonicTi
      * The use of the parsed call by the constant period it adds, see {@link TimestampPrecisionUse#ofShift}, and
      * {@link TimestampPrecisionUse#DEPENDENT} when no one-letter literal spells the period.
      */
-    static TimestampPrecisionUse periodPrecisionUse(ExpressionNode call) {
-        final ExpressionNode period = call.paramCount < 3 ? call.lhs : call.args.getLast();
-        return period != null && period.type == ExpressionNode.CONSTANT && period.token.length() == 3 && Chars.isQuoted(period.token)
-                ? TimestampPrecisionUse.ofShift(period.token.charAt(1)) : TimestampPrecisionUse.DEPENDENT;
+    static TimestampPrecisionUse periodPrecisionUse(CharSequence period) {
+        return period != null && period.length() == 3 && Chars.isQuoted(period)
+                ? TimestampPrecisionUse.ofShift(period.charAt(1)) : TimestampPrecisionUse.DEPENDENT;
     }
 
     private static class TimestampAddConstConstVar extends TimestampFunction implements UnaryFunction, MonotonicTimestampFunction {

@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.engine.functions.bool.AndFunctionFactory;
+import io.questdb.griffin.engine.functions.bool.NotFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.OrFunctionFactory;
 import io.questdb.griffin.engine.functions.array.DoubleArrayElemAvgFunctionFactory;
 import io.questdb.griffin.engine.functions.array.DoubleArrayElemMaxFunctionFactory;
@@ -50,11 +51,11 @@ public class FunctionFactoryDescriptor {
     private FunctionFactoryDescriptor commutedEquality;
     private final FunctionFactory factory;
     private final boolean isAnd;
-    private final boolean isArrayAccess;
     private final boolean isArrayColumnLayoutSensitive;
     private final boolean isArrayElementWiseScalar;
     private final boolean isCase;
     private final boolean isListed;
+    private final boolean isNot;
     private final boolean isOr;
     private final boolean isRelocatableScalar;
     private final boolean isRowCount;
@@ -71,20 +72,22 @@ public class FunctionFactoryDescriptor {
     // Only the cache's audited argument-swapping/negating aliases inherit this contract.
     FunctionFactoryDescriptor(FunctionFactory factory, boolean isRelocatableScalar) throws SqlException {
         this.factory = factory;
-        this.isAnd = factory.getClass() == AndFunctionFactory.class;
-        this.isArrayAccess = factory.getClass() == DoubleArrayAccessFunctionFactory.class
-                || factory.getClass() == DoubleArraySliceFunctionFactory.class;
-        this.isArrayColumnLayoutSensitive = isArrayAccess || factory.getClass() == ArrayDimLengthFunctionFactory.class;
-        this.isArrayElementWiseScalar = factory.getClass() == DoubleArrayElemAvgFunctionFactory.class
-                || factory.getClass() == DoubleArrayElemMaxFunctionFactory.class
-                || factory.getClass() == DoubleArrayElemMinFunctionFactory.class
-                || factory.getClass() == DoubleArrayElemSumFunctionFactory.class;
-        this.isCase = factory.getClass() == CaseFunctionFactory.class;
+        final Class<?> factoryClass = factory.getClass();
+        this.isAnd = factoryClass == AndFunctionFactory.class;
+        this.isArrayColumnLayoutSensitive = factoryClass == DoubleArrayAccessFunctionFactory.class
+                || factoryClass == DoubleArraySliceFunctionFactory.class
+                || factoryClass == ArrayDimLengthFunctionFactory.class;
+        this.isArrayElementWiseScalar = factoryClass == DoubleArrayElemAvgFunctionFactory.class
+                || factoryClass == DoubleArrayElemMaxFunctionFactory.class
+                || factoryClass == DoubleArrayElemMinFunctionFactory.class
+                || factoryClass == DoubleArrayElemSumFunctionFactory.class;
+        this.isCase = factoryClass == CaseFunctionFactory.class;
         this.isListed = FunctionFactoryScanner.isListed(factory);
-        this.isOr = factory.getClass() == OrFunctionFactory.class;
-        this.isSwitch = factory.getClass() == SwitchFunctionFactory.class;
+        this.isNot = factoryClass == NotFunctionFactory.class;
+        this.isOr = factoryClass == OrFunctionFactory.class;
         this.isRelocatableScalar = isRelocatableScalar;
-        this.isRowCount = factory.getClass() == CountGroupByFunctionFactory.class;
+        this.isRowCount = factoryClass == CountGroupByFunctionFactory.class;
+        this.isSwitch = factoryClass == SwitchFunctionFactory.class;
 
         final String sig = factory.getSignature();
         this.openParenIndex = validateSignatureAndGetNameSeparator(sig);
@@ -328,10 +331,6 @@ public class FunctionFactoryDescriptor {
         return isAnd;
     }
 
-    public boolean isArrayAccess() {
-        return isArrayAccess;
-    }
-
     public boolean isArrayColumnLayoutSensitive() {
         return isArrayColumnLayoutSensitive;
     }
@@ -350,6 +349,10 @@ public class FunctionFactoryDescriptor {
      */
     public boolean isListed() {
         return isListed;
+    }
+
+    public boolean isNot() {
+        return isNot;
     }
 
     public boolean isOr() {

@@ -49,7 +49,7 @@ public final class HashJoinAggregation implements Mutable {
     private BoundExpression buildOnFilter;
     private OutputSchema buildOutput;
     private InputRead buildRead;
-    private JoinInput.BuildSide buildSide;
+    private BuildSide buildSide;
     private BoundExpression gate;
     private boolean isKeyCapacityPresized;
     private JoinKind joinType;
@@ -130,7 +130,7 @@ public final class HashJoinAggregation implements Mutable {
         return buildRead;
     }
 
-    public JoinInput.BuildSide getBuildSide() {
+    public BuildSide getBuildSide() {
         return buildSide;
     }
 
@@ -188,7 +188,7 @@ public final class HashJoinAggregation implements Mutable {
 
     /**
      * Whether the build may size its key table by its row count: the build input's row bound is no larger than the
-     * probe's, see {@link JoinInput.BuildSide#smaller}.
+     * probe's, see {@link BuildSide#smaller}.
      */
     public boolean isKeyCapacityPresized() {
         return isKeyCapacityPresized;
@@ -197,7 +197,7 @@ public final class HashJoinAggregation implements Mutable {
     public HashJoinAggregation of(
             AggregatePlan aggregate,
             JoinKind joinType,
-            JoinInput.BuildSide buildSide,
+            BuildSide buildSide,
             LogicalPlan probeInput,
             InputRead probeRead,
             CharSequence probeAlias,

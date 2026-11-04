@@ -108,7 +108,7 @@ public class SqlUtil {
             ObjectPool<QueryColumn> queryColumnPool,
             ObjectPool<ExpressionNode> expressionNodePool
     ) throws SqlException {
-        model.addBottomUpColumn(nextColumn(queryColumnPool, expressionNodePool, "*", "*", true, 0));
+        model.addColumn(nextColumn(queryColumnPool, expressionNodePool, "*", "*", true, 0));
         model.setArtificialStar(true);
     }
 

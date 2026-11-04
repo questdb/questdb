@@ -81,8 +81,8 @@ import io.questdb.griffin.engine.table.HashJoinGroupByBuildChoiceRecordCursorFac
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.plan.logical.BuildSide;
 import io.questdb.griffin.plan.logical.HashJoinAggregation;
-import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.mp.Job;
@@ -1392,7 +1392,7 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                 b.queryFactory = null;
             }
             try {
-                new HashJoinGroupByBuildChoiceRecordCursorFactory(scalar, keyedFactory, JoinInput.BuildSide.SLAVE);
+                new HashJoinGroupByBuildChoiceRecordCursorFactory(scalar, keyedFactory, BuildSide.SLAVE);
                 Assert.fail("orientations with different outputs must be rejected");
             } catch (IllegalArgumentException expected) {
                 Assert.assertEquals("fused hash join orientations disagree on output", expected.getMessage());

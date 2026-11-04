@@ -82,6 +82,7 @@ import io.questdb.griffin.plan.logical.CursorExpression;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.FunctionSourcePlan;
+import io.questdb.griffin.plan.logical.IndexOrder;
 import io.questdb.griffin.plan.logical.LatestByPlan;
 import io.questdb.griffin.plan.logical.LogicalPlans;
 import io.questdb.griffin.plan.logical.OutputSchema;
@@ -917,7 +918,7 @@ final class ScanFactoryGenerator {
             @Nullable ObjList<Function> workerFilters,
             @Nullable Function limit,
             int limitPosition,
-            ScanPlan.IndexOrder indexOrder,
+            IndexOrder indexOrder,
             boolean isCovering,
             boolean isParallel,
             boolean isPreTouchEnabled,
@@ -1018,7 +1019,7 @@ final class ScanFactoryGenerator {
             ObjList<Function> keys,
             int keyIndex,
             @Nullable Function filter,
-            ScanPlan.IndexOrder indexOrder,
+            IndexOrder indexOrder,
             SortDirection orderDirection,
             int indexDirection,
             IntList columnIndexes,

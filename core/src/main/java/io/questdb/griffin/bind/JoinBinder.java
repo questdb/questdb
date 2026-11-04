@@ -33,7 +33,6 @@ import io.questdb.griffin.OperatorExpression;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlHints;
-import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
@@ -477,7 +476,7 @@ final class JoinBinder implements Mutable {
     }
 
     private ExpressionNode appendJoinConjuncts(ExpressionNode prefix, ExpressionNode expression) {
-        if (expression.paramCount == 2 && SqlKeywords.isAndKeyword(expression.token)) {
+        if (expression.isAnd()) {
             return appendJoinConjuncts(appendJoinConjuncts(prefix, expression.lhs), expression.rhs);
         }
         if (prefix == null) {
@@ -628,7 +627,7 @@ final class JoinBinder implements Mutable {
     private BoundExpression bindJoinConjunct(ExpressionNode expression, ExpressionNode conjunction, JoinPlan join, QueryModel source,
                                              int lastInput, int originalOnSource, SqlExecutionContext executionContext) throws SqlException {
         final BindScope scope = ctx.scope();
-        if (expression.paramCount == 2 && SqlKeywords.isAndKeyword(expression.token)) {
+        if (expression.isAnd()) {
             final BoundExpression left = bindJoinConjunct(expression.lhs, conjunction, join, source, lastInput, originalOnSource, executionContext);
             final BoundExpression right = bindJoinConjunct(expression.rhs, conjunction, join, source, lastInput, originalOnSource, executionContext);
             return ctx.expressionRewriter.combineConjunction(left, right, expression.position);
@@ -958,7 +957,7 @@ final class JoinBinder implements Mutable {
         if (expression == null) {
             return null;
         }
-        if (expression.paramCount == 2 && SqlKeywords.isAndKeyword(expression.token)) {
+        if (expression.isAnd()) {
             final ExpressionNode left = collectJoinConditions(expression.lhs, join, origin, hasBarriers, hasNonEquiNullingJoin);
             final ExpressionNode right = collectJoinConditions(expression.rhs, join, origin, hasBarriers, hasNonEquiNullingJoin);
             return ctx.combinePredicates(left, right);
@@ -1222,7 +1221,7 @@ final class JoinBinder implements Mutable {
      * filter for -1.
      */
     private int countJoinFilterConjuncts(ExpressionNode conjunction, int filterInput, JoinPlan join, int lastInput) {
-        if (conjunction.paramCount == 2 && SqlKeywords.isAndKeyword(conjunction.token)) {
+        if (conjunction.isAnd()) {
             return countJoinFilterConjuncts(conjunction.lhs, filterInput, join, lastInput)
                     + countJoinFilterConjuncts(conjunction.rhs, filterInput, join, lastInput);
         }
@@ -1334,7 +1333,7 @@ final class JoinBinder implements Mutable {
     }
 
     private boolean hasOwnJoinKey(ExpressionNode expression, JoinPlan join, int input) {
-        if (expression.paramCount == 2 && SqlKeywords.isAndKeyword(expression.token)) {
+        if (expression.isAnd()) {
             return hasOwnJoinKey(expression.lhs, join, input) || hasOwnJoinKey(expression.rhs, join, input);
         }
         if (isColumnEquality(expression, join)) {
@@ -1560,7 +1559,7 @@ final class JoinBinder implements Mutable {
         if (expression == null) {
             return prefix;
         }
-        if (expression.paramCount == 2 && SqlKeywords.isAndKeyword(expression.token)) {
+        if (expression.isAnd()) {
             return spliceResidual(spliceResidual(prefix, expression.lhs, join, slave), expression.rhs, join, slave);
         }
         if (isColumnEquality(expression, join)) {
@@ -1581,7 +1580,7 @@ final class JoinBinder implements Mutable {
             rejectedTerms = null;
             return;
         }
-        if (expression.paramCount == 2 && SqlKeywords.isAndKeyword(expression.token)) {
+        if (expression.isAnd()) {
             splitJoinTerms(expression.lhs, terms, join, origin);
             final ExpressionNode selectedLeft = selectedTerms;
             final ExpressionNode rejectedLeft = rejectedTerms;
@@ -1635,7 +1634,7 @@ final class JoinBinder implements Mutable {
         if (expression == null) {
             return;
         }
-        if (expression.paramCount == 2 && SqlKeywords.isAndKeyword(expression.token)) {
+        if (expression.isAnd()) {
             validateSpliceOnAnalysis(expression.lhs, join);
             validateSpliceOnAnalysis(expression.rhs, join);
         } else if (expression.token != null && (Chars.equals(expression.token, '=') || Chars.equals(expression.token, '~'))) {

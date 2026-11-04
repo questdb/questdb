@@ -161,7 +161,7 @@ final class ScalarCompensation implements Mutable {
      * The comparison a count conjunct applies: the operand of a NOT, otherwise the conjunct itself.
      */
     private static FunctionExpression countComparison(FunctionExpression call) {
-        return call.getArgumentCount() == 1 && "not".equals(call.getName()) && call.argumentAt(0) instanceof FunctionExpression comparison
+        return call.isNot() && call.argumentAt(0) instanceof FunctionExpression comparison
                 ? comparison : call;
     }
 

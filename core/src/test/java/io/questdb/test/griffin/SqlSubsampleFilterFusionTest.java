@@ -78,19 +78,16 @@ public class SqlSubsampleFilterFusionTest extends AbstractCairoTest {
 
     @Test
     public void testWindowSpecCopiesAndClearsOnlyExplicitMarker() {
-        final WindowExpression expression = WindowExpression.FACTORY.newInstance();
         final WindowSpec spec = new WindowSpec();
         Assert.assertFalse(spec.isSubsampleKeepFlag());
-        spec.of(expression);
+        ofFrame(spec, false);
         Assert.assertFalse(spec.isSubsampleKeepFlag());
-        expression.setSubsampleKeepFlag(true);
-        spec.of(expression);
+        ofFrame(spec, true);
         Assert.assertTrue(spec.isSubsampleKeepFlag());
         spec.clear();
         Assert.assertFalse(spec.isSubsampleKeepFlag());
-        spec.of(expression);
-        expression.setSubsampleKeepFlag(false);
-        spec.of(expression);
+        ofFrame(spec, true);
+        ofFrame(spec, false);
         Assert.assertFalse(spec.isSubsampleKeepFlag());
     }
 
@@ -107,5 +104,24 @@ public class SqlSubsampleFilterFusionTest extends AbstractCairoTest {
         execute("INSERT INTO lp_keep VALUES(1,true,'2024-01-01T00:00:01'),"
                 + "(2,false,'2024-01-01T00:00:02'),(3,true,'2024-01-01T00:00:03'),"
                 + "(4,false,'2024-01-01T00:00:04'),(5,true,'2024-01-01T00:00:05')");
+    }
+
+    private static void ofFrame(WindowSpec spec, boolean isSubsampleKeepFlag) {
+        spec.ofFrame(
+                WindowExpression.FRAMING_RANGE,
+                Long.MIN_VALUE,
+                0,
+                0,
+                (char) 0,
+                Long.MAX_VALUE,
+                0,
+                0,
+                (char) 0,
+                WindowExpression.EXCLUDE_NO_OTHERS,
+                0,
+                false,
+                0,
+                isSubsampleKeepFlag
+        );
     }
 }

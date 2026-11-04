@@ -44,6 +44,7 @@ import io.questdb.griffin.plan.logical.ExpressionVisitor;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.HorizonJoinPlan;
+import io.questdb.griffin.plan.logical.IndexOrder;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LatestByPlan;
@@ -163,11 +164,11 @@ final class AccessPathPlanning {
      * table order when the consumers require the order, key by key within each page frame when an aggregate without
      * keys folds the rows, and merged frame by frame in table order otherwise.
      */
-    private static ScanPlan.IndexOrder unrequestedIndexOrder(ScanPlan scan) {
+    private static IndexOrder unrequestedIndexOrder(ScanPlan scan) {
         return switch (scan.getRowOrder()) {
-            case REQUIRED -> ScanPlan.IndexOrder.TABLE;
-            case ANY_SINGLE_GROUP -> ScanPlan.IndexOrder.KEY_PER_FRAME;
-            case ANY -> ScanPlan.IndexOrder.TABLE_PER_FRAME;
+            case REQUIRED -> IndexOrder.TABLE;
+            case ANY_SINGLE_GROUP -> IndexOrder.KEY_PER_FRAME;
+            case ANY -> IndexOrder.TABLE_PER_FRAME;
         };
     }
 
@@ -237,7 +238,7 @@ final class AccessPathPlanning {
             return false;
         }
         final String name = call.getName();
-        return call.getArgumentCount() == 1 && "not".equals(name) && isIndexedSymbolPattern(call.argumentAt(0), output)
+        return call.isNot() && isIndexedSymbolPattern(call.argumentAt(0), output)
                 || call.getArgumentCount() == 2 && "!~".equals(name) && isIndexedSymbolColumn(call.argumentAt(0), output);
     }
 
@@ -276,7 +277,7 @@ final class AccessPathPlanning {
         final SortKeys order = scan.getRequestedOrder();
         final int orderCount = order.size();
         final int timestampId = output.getTimestampColumnId();
-        ScanPlan.IndexOrder indexOrder = ScanPlan.IndexOrder.NONE;
+        IndexOrder indexOrder = IndexOrder.NONE;
         SortDirection indexDirection = keyCount == 1 ? scan.getScanDirection() : SortDirection.ASCENDING;
         boolean isTimestampDropped = false;
         // A sort keeps the row ids of a read that a nested loop repeats, where the key order of the index reads the index and
@@ -285,21 +286,21 @@ final class AccessPathPlanning {
                 && order.getColumnIds().getQuick(0) == keyId) {
             isTimestampDropped = true;
             if (orderCount == 1) {
-                indexOrder = ScanPlan.IndexOrder.KEY;
+                indexOrder = IndexOrder.KEY;
             } else if (order.getColumnIds().getQuick(1) == timestampId) {
-                indexOrder = ScanPlan.IndexOrder.KEY;
+                indexOrder = IndexOrder.KEY;
                 indexDirection = order.getDirections().getQuick(1);
                 scan.setScanDirection(indexDirection);
             }
         }
-        if (indexOrder == ScanPlan.IndexOrder.NONE && orderCount == 1 && order.getColumnIds().getQuick(0) == timestampId) {
+        if (indexOrder == IndexOrder.NONE && orderCount == 1 && order.getColumnIds().getQuick(0) == timestampId) {
             final boolean isDescending = order.getDirections().getQuick(0) == SortDirection.DESCENDING;
             if (keyCount == 1 || !isDescending) {
-                indexOrder = ScanPlan.IndexOrder.TIMESTAMP;
+                indexOrder = IndexOrder.TIMESTAMP;
                 indexDirection = order.getDirections().getQuick(0);
             }
         }
-        if (indexOrder == ScanPlan.IndexOrder.NONE && keyCount != 1) {
+        if (indexOrder == IndexOrder.NONE && keyCount != 1) {
             indexOrder = unrequestedIndexOrder(scan);
         }
         scan.setTimestampDropped(isTimestampDropped);
@@ -318,7 +319,7 @@ final class AccessPathPlanning {
         }
         scan.setIndexKeys(keys.getValues());
         final boolean isCovering = context.getExecutionContext().isCoveringIndexEnabled() && !scan.isUpdate()
-                && (keyCount == 1 || indexOrder != ScanPlan.IndexOrder.KEY) && !scan.hasHint(ScanPlan.HINT_NO_COVERING)
+                && (keyCount == 1 || indexOrder != IndexOrder.KEY) && !scan.hasHint(ScanPlan.HINT_NO_COVERING)
                 && table.isCovering(tableKeyIndex, tableColumnIndexes);
         scan.setIndex(keyId, isCovering ? ScanPlan.IndexRead.COVERING : ScanPlan.IndexRead.INDEX);
         scan.setAccessPath(ScanPlan.AccessPath.SYMBOL_INDEX, filter);
@@ -423,7 +424,7 @@ final class AccessPathPlanning {
                 && !isNegated && table.isCovering(tableColumnIndex(output, keyId), tableColumnIndexes);
         scan.setKeyPattern(pattern);
         scan.setIndex(keyId, isCovering ? ScanPlan.IndexRead.COVERING : ScanPlan.IndexRead.INDEX);
-        scan.setIndexOrder(scan.isNativeTimestampOrderRequested() ? ScanPlan.IndexOrder.TABLE
+        scan.setIndexOrder(scan.isNativeTimestampOrderRequested() ? IndexOrder.TABLE
                 : unrequestedIndexOrder(scan), SortDirection.ASCENDING);
         scan.setAccessPath(ScanPlan.AccessPath.SYMBOL_PATTERN, residual);
         return true;
@@ -656,7 +657,7 @@ final class AccessPathPlanning {
             final SortDirection indexDirection = scan.getRequestedOrder().size() == 2
                     ? scan.getRequestedOrder().getDirections().getQuick(1) : SortDirection.ASCENDING;
             scan.setScanDirection(indexDirection);
-            scan.setIndexOrder(ScanPlan.IndexOrder.KEY, indexDirection);
+            scan.setIndexOrder(IndexOrder.KEY, indexDirection);
             scan.setAccessPath(ScanPlan.AccessPath.SORTED_SYMBOL_INDEX, isLiveView ? liveViewResidual : null);
         } else {
             scan.setAccessPath(ScanPlan.AccessPath.PAGE_FRAMES, isLiveView ? liveViewResidual : residual);

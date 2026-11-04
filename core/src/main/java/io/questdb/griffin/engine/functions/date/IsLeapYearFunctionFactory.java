@@ -34,7 +34,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.TimestampPrecisionUse;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -53,7 +52,7 @@ public class IsLeapYearFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public TimestampPrecisionUse getTimestampPrecisionUse(ExpressionNode call) {
+    public TimestampPrecisionUse getTimestampPrecisionUse(CharSequence firstConstant) {
         return TimestampPrecisionUse.INVARIANT;
     }
 

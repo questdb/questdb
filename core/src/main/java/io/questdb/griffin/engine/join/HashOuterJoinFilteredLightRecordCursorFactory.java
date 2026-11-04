@@ -48,8 +48,10 @@ import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.SymbolTranslatingRecord;
-import io.questdb.griffin.plan.logical.JoinInput;
+import io.questdb.griffin.plan.logical.BuildSide;
 import io.questdb.griffin.plan.logical.JoinKind;
+import io.questdb.griffin.plan.logical.JoinNullExtension;
+import io.questdb.griffin.plan.logical.NullKeyMatch;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
@@ -61,14 +63,14 @@ import org.jetbrains.annotations.Nullable;
  */
 public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinRecordCursorFactory {
 
-    private final JoinInput.BuildSide buildSide;
+    private final BuildSide buildSide;
     private final int columnSplit;
     private final JoinSymbolTableSource filterSymbolTableSource;
     private final JoinKind joinType;
     private final RecordSink masterKeySink;
     private final int @Nullable [] masterSymbolKeyColumnIndices;
-    private final JoinInput.NullExtension nullExtension;
-    private final @Nullable JoinInput.NullKeyMatch nullKeyMatch;
+    private final JoinNullExtension nullExtension;
+    private final @Nullable NullKeyMatch nullKeyMatch;
     private final RecordSink slaveKeySink;
     private final int @Nullable [] slaveSymbolKeyColumnIndices;
     private AbstractHashOuterJoinLightRecordCursor cursor;
@@ -94,13 +96,13 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
             JoinKind joinType,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
-            JoinInput.NullExtension nullExtension,
+            JoinNullExtension nullExtension,
             @Nullable Function nullKeyCheck,
-            @Nullable JoinInput.NullKeyMatch nullKeyMatch,
-            @Nullable JoinInput.BuildSide buildSide
+            @Nullable NullKeyMatch nullKeyMatch,
+            @Nullable BuildSide buildSide
     ) {
         super(metadata, joinCondition, masterFactory, slaveFactory);
-        assert buildSide != JoinInput.BuildSide.SMALLER || joinType == JoinKind.FULL_OUTER && nullExtension == JoinInput.NullExtension.BY_KEYS
+        assert buildSide != BuildSide.SMALLER || joinType == JoinKind.FULL_OUTER && nullExtension == JoinNullExtension.BY_KEYS
                 && masterFactory.recordCursorSupportsRandomAccess() : "hashed master lacks random access or NULL-extends by its ON residual";
         this.buildSide = buildSide;
         this.filter = filter;
@@ -181,8 +183,8 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
         RecordCursor masterCursor = null;
         try {
             masterCursor = masterFactory.getCursor(executionContext);
-            if (buildSide == JoinInput.BuildSide.SMALLER
-                    && JoinInput.BuildSide.smaller(masterCursor.size(), slaveCursor.size(), JoinInput.BuildSide.SLAVE) == JoinInput.BuildSide.MASTER) {
+            if (buildSide == BuildSide.SMALLER
+                    && BuildSide.smaller(masterCursor.size(), slaveCursor.size(), BuildSide.SLAVE) == BuildSide.MASTER) {
                 final RecordCursor temp = masterCursor;
                 masterCursor = slaveCursor;
                 slaveCursor = temp;

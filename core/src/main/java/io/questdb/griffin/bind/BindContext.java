@@ -41,6 +41,7 @@ import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.TableFunctionSources;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.model.WindowExpression;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.BoundExpressionRewriter;
@@ -86,10 +87,12 @@ final class BindContext implements Mutable {
     final PlanReadIds planReadIds;
     final PlanTables planTables;
     final PreparedFunctions preparedFunctions;
+    final ObjectPool<ExpressionNode> syntheticNodes;
     final ObjList<BoundExpression> tmpArguments;
     final IntList tmpOuterColumns;
     final IntList tmpPositions;
     final OutputSchema tmpScope;
+    final ObjectPool<WindowExpression> windowSyntax;
     private final BindScopeStack scopes;
     /**
      * The query block being bound is a set-operation branch: the set operation binds the trailing
@@ -127,6 +130,8 @@ final class BindContext implements Mutable {
         this.planNodes = planNodes;
         this.planTables = planTables;
         this.preparedFunctions = preparedFunctions;
+        this.syntheticNodes = new ObjectPool<>(ExpressionNode.FACTORY, 32, planNodes.minRetainedExpressions);
+        this.windowSyntax = new ObjectPool<>(WindowExpression.FACTORY, 4, planNodes.minRetainedExpressions);
         this.functionSources = functionSources;
         this.expressionRewriter = expressionRewriter;
         this.functionInstantiator = functionInstantiator;
@@ -142,6 +147,8 @@ final class BindContext implements Mutable {
     @Override
     public void clear() {
         functionBinder.clear();
+        syntheticNodes.clear();
+        windowSyntax.clear();
         isSetOperationBranch = false;
     }
 
@@ -422,8 +429,8 @@ final class BindContext implements Mutable {
         if (blockGroupBy(model, source).size() > 0) {
             return true;
         }
-        for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
-            if (hasAggregate(model.getBottomUpColumns().getQuick(i).getAst())) {
+        for (int i = 0, n = model.getColumns().size(); i < n; i++) {
+            if (hasAggregate(model.getColumns().getQuick(i).getAst())) {
                 return true;
             }
         }
@@ -488,8 +495,8 @@ final class BindContext implements Mutable {
     }
 
     void promoteNoArgFunctions(QueryModel model, OutputSchema scope, CharSequence alias) {
-        for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
-            final ExpressionNode expression = model.getBottomUpColumns().getQuick(i).getAst();
+        for (int i = 0, n = model.getColumns().size(); i < n; i++) {
+            final ExpressionNode expression = model.getColumns().getQuick(i).getAst();
             if (expression.type == ExpressionNode.LITERAL && !expression.isWildcard()
                     && FunctionBinder.findColumn(expression, scope, alias) == -1
                     && functionFactoryCache.isValidNoArgFunction(expression)

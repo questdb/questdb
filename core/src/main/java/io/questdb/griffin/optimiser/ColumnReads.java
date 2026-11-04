@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.optimiser;
 
-import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
@@ -306,7 +305,7 @@ final class ColumnReads implements Mutable {
                 count = aggregate.getAggregates().getQuick(i);
             }
         }
-        return count != null && count.getArgumentCount() == 0 && SqlKeywords.isCountKeyword(count.getName());
+        return count != null && LogicalPlans.isCountCall(count);
     }
 
     /**

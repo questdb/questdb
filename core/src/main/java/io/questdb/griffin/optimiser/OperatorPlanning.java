@@ -35,6 +35,7 @@ import io.questdb.griffin.engine.orderby.SortKeyEncoder;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.BoundExpressionRewriter;
+import io.questdb.griffin.plan.logical.BuildSide;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.DistinctPlan;
@@ -49,6 +50,7 @@ import io.questdb.griffin.plan.logical.HorizonJoinSlave;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinKey;
 import io.questdb.griffin.plan.logical.JoinKind;
+import io.questdb.griffin.plan.logical.JoinNullExtension;
 import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LatestByPlan;
 import io.questdb.griffin.plan.logical.LimitPlan;
@@ -634,17 +636,17 @@ final class OperatorPlanning implements Mutable {
      * slave when its master, the first {@code inputIndex} ordered inputs, lacks the random access a hashed master needs
      * or when the slave never holds more rows than the master, see {@link #isNeverLarger}, else the master when it never
      * holds more rows than the slave, and keeps the row counts the choice holds for, see {@link #keepBuildSide}. Any
-     * other step leaves the choice to execution, {@link JoinInput.BuildSide#SMALLER}: one over a master of several
+     * other step leaves the choice to execution, {@link BuildSide#SMALLER}: one over a master of several
      * inputs, one with an input without a bound, and one where neither input is proven never to hold more rows than the
      * other, such as one whose filter, interval or GROUP BY leaves an unknown part of its table.
      */
     private void planBuildSide(JoinPlan join, int inputIndex, JoinInput step) {
         if (PhysicalProperties.masterSupportsRandomAccess(join, inputIndex) != PhysicalProperties.Capability.YES) {
-            step.setBuildSide(JoinInput.BuildSide.SLAVE);
+            step.setBuildSide(BuildSide.SLAVE);
             return;
         }
         if (inputIndex != 1) {
-            step.setBuildSide(JoinInput.BuildSide.SMALLER);
+            step.setBuildSide(BuildSide.SMALLER);
             return;
         }
         final LogicalPlan master = join.getOrderedInputs().getQuick(0).getInput();
@@ -652,7 +654,7 @@ final class OperatorPlanning implements Mutable {
         final long masterRows = context.rowBound(master);
         final long slaveRows = context.rowBound(slave);
         if (masterRows == -1 || slaveRows == -1) {
-            step.setBuildSide(JoinInput.BuildSide.SMALLER);
+            step.setBuildSide(BuildSide.SMALLER);
             return;
         }
         final ScanPlan masterScan = PhysicalProperties.rowCountScan(master);
@@ -660,13 +662,13 @@ final class OperatorPlanning implements Mutable {
         final long masterFloor = context.rowFloor(master, masterScan);
         final long slaveFloor = context.rowFloor(slave, slaveScan);
         if (isNeverLarger(slave, slaveRows, master, masterFloor)) {
-            step.setBuildSide(JoinInput.BuildSide.SLAVE);
+            step.setBuildSide(BuildSide.SLAVE);
             keepBuildSide(slave, slaveRows, master, masterScan, masterFloor);
         } else if (isNeverLarger(master, masterRows, slave, slaveFloor)) {
-            step.setBuildSide(JoinInput.BuildSide.MASTER);
+            step.setBuildSide(BuildSide.MASTER);
             keepBuildSide(master, masterRows, slave, slaveScan, slaveFloor);
         } else {
-            step.setBuildSide(JoinInput.BuildSide.SMALLER);
+            step.setBuildSide(BuildSide.SMALLER);
         }
     }
 
@@ -820,15 +822,15 @@ final class OperatorPlanning implements Mutable {
         switch (step.getJoinType()) {
             case INNER -> {
                 if (isMasterRandomAccess == PhysicalProperties.Capability.NO) {
-                    step.setBuildSide(JoinInput.BuildSide.FIXED_MASTER);
+                    step.setBuildSide(BuildSide.FIXED_MASTER);
                 } else {
                     undecidedSteps.add(step);
                     undecidedJoins.add(join);
                     undecidedInputIndexes.add(inputIndex);
                 }
             }
-            case FULL_OUTER -> step.setBuildSide(step.getNullExtension() == JoinInput.NullExtension.BY_KEYS
-                    && isMasterRandomAccess == PhysicalProperties.Capability.YES ? JoinInput.BuildSide.SMALLER : JoinInput.BuildSide.SLAVE);
+            case FULL_OUTER -> step.setBuildSide(step.getNullExtension() == JoinNullExtension.BY_KEYS
+                    && isMasterRandomAccess == PhysicalProperties.Capability.YES ? BuildSide.SMALLER : BuildSide.SLAVE);
             default -> {
             }
         }
@@ -1134,7 +1136,7 @@ final class OperatorPlanning implements Mutable {
                 if (!step.isAlgorithmDecided()) {
                     if (isAdviceRead && PhysicalProperties.masterFollowsOrderAdvice(join, inputCount - 1) == PhysicalProperties.Capability.YES
                             || isDirectionRead && PhysicalProperties.masterScanDirection(join, inputCount - 1) != PhysicalProperties.ScanDirection.OTHER) {
-                        step.setBuildSide(JoinInput.BuildSide.FIXED_MASTER);
+                        step.setBuildSide(BuildSide.FIXED_MASTER);
                     }
                 }
                 readJoinOrder(join, inputCount - 1, isAdviceRead, isDirectionRead);
@@ -1158,7 +1160,7 @@ final class OperatorPlanning implements Mutable {
         for (int i = 1, n = ordered.size(); i < n; i++) {
             final JoinInput step = ordered.getQuick(i);
             if (!step.isAlgorithmDecided()) {
-                step.setBuildSide(JoinInput.BuildSide.FIXED_MASTER);
+                step.setBuildSide(BuildSide.FIXED_MASTER);
             }
         }
     }
@@ -1865,7 +1867,7 @@ final class OperatorPlanning implements Mutable {
     /**
      * Lets the smaller input drive every light INNER hash join whose order no decision read since
      * {@link #planOperators} planned it, recording the input {@link #planBuildSide} decides it hashes; a decision that
-     * read the order of a step's master recorded {@link JoinInput.BuildSide#FIXED_MASTER} for it.
+     * read the order of a step's master recorded {@link BuildSide#FIXED_MASTER} for it.
      */
     void settleMasterSides() {
         for (int i = 0, n = undecidedSteps.size(); i < n; i++) {

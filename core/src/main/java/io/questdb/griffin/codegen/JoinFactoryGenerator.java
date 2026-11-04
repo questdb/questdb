@@ -124,6 +124,7 @@ import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinKey;
 import io.questdb.griffin.plan.logical.JoinKind;
+import io.questdb.griffin.plan.logical.JoinNullExtension;
 import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.PlanToFactoryRules;
@@ -791,7 +792,7 @@ final class JoinFactoryGenerator {
             final ArrayColumnTypes valueTypes = frame.valueTypes;
             final int[] masterSymbolKeyCols = joinKeys.masterSymbolKeys;
             final int[] slaveSymbolKeyCols = joinKeys.slaveSymbolKeys;
-            assert step.getNullExtension() == JoinInput.NullExtension.BY_KEYS || filter != null : "outer join NULL-extended by its ON residual has none";
+            assert step.getNullExtension() == JoinNullExtension.BY_KEYS || filter != null : "outer join NULL-extended by its ON residual has none";
 
             assert joinType != JoinKind.OUTER_CROSS : "OUTER CROSS join has a join key";
             if (step.getAlgorithm() == JoinInput.Algorithm.LIGHT_HASH) {

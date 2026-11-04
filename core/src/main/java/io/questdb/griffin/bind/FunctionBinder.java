@@ -767,7 +767,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         final int expressionMark = expressionStack.size();
         final int functionMark = functionStack.size();
         final int unconstructedMark = unconstructed.size();
-        final int syntheticNodeMark = ctx.planNodes.syntheticNodes.getPos();
+        final int syntheticNodeMark = ctx.syntheticNodes.getPos();
         final int staticTypeMark = ctx.planNodes.staticTypes.getPos();
         final boolean isUpdateAssignment = scope.bindingRole == BindingRole.UPDATE_ASSIGNMENT;
         try {
@@ -810,7 +810,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
             positionStack.setPos(functionMark);
             scope.bindingRoot = null;
             scope.projectedOffsets.clear();
-            ctx.planNodes.rewindSyntheticNodes(syntheticNodeMark);
+            ctx.syntheticNodes.rewind(syntheticNodeMark);
             scope.currentPreparation = null;
             scope.boundLowerBound = null;
             scope.boundLowerBoundNode = null;
@@ -847,7 +847,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         if (isRewritable) {
             // DECLARE references may share parser nodes across occurrences.
             // Reassociation belongs to this binding, never to that shared AST.
-            node = ExpressionNode.deepClone(ctx.planNodes.syntheticNodes, node);
+            node = ExpressionNode.deepClone(ctx.syntheticNodes, node);
         }
         scope.bindingRoot = node;
         if (scope.bindingRole == BindingRole.PREDICATE) {
@@ -1361,7 +1361,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
      * conjuncts left to right, or null.
      */
     private ExpressionNode findTimestampBetweenLowerBound(ExpressionNode node) {
-        if (node.paramCount == 2 && SqlKeywords.isAndKeyword(node.token)) {
+        if (node.isAnd()) {
             final ExpressionNode lo = findTimestampBetweenLowerBound(node.lhs);
             return lo != null ? lo : findTimestampBetweenLowerBound(node.rhs);
         }
@@ -2109,7 +2109,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
                 final CharSequence seq = intervalSpelling(argument, text);
                 parsedIntervals.clear();
                 IntervalUtils.parseTickExpr(driver, executionContext.getCairoEngine().getConfiguration(), seq, 1, seq.length() - 1,
-                        argument.getPosition(), parsedIntervals, IntervalOperation.INTERSECT, intervalSink, true);
+                        argument.getPosition(), parsedIntervals, IntervalOperation.INTERSECT, intervalSink);
                 parsedIntervals.clear();
             }
             return;
@@ -2146,11 +2146,11 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         if (findColumn(node, scope.expressionInput, scope.expressionInputAlias) != timestampIndex) {
             return node;
         }
-        final ExpressionNode dateadd = ctx.planNodes.syntheticNodes.next().of(ExpressionNode.FUNCTION, "dateadd", 0, node.position);
+        final ExpressionNode dateadd = ctx.syntheticNodes.next().of(ExpressionNode.FUNCTION, "dateadd", 0, node.position);
         dateadd.paramCount = 3;
         dateadd.args.add(node);
-        dateadd.args.add(ctx.planNodes.syntheticNodes.next().of(ExpressionNode.CONSTANT, stride, 0, node.position));
-        dateadd.args.add(ctx.planNodes.syntheticNodes.next().of(ExpressionNode.CONSTANT, unit, 0, node.position));
+        dateadd.args.add(ctx.syntheticNodes.next().of(ExpressionNode.CONSTANT, stride, 0, node.position));
+        dateadd.args.add(ctx.syntheticNodes.next().of(ExpressionNode.CONSTANT, unit, 0, node.position));
         scope.projectedOffsets.add(dateadd);
         return dateadd;
     }

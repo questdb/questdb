@@ -447,7 +447,7 @@ final class OrderBinder implements Mutable {
     }
 
     LogicalPlan bindRowCount(QueryModel model, QueryModel source, LogicalPlan input, SqlExecutionContext executionContext) throws SqlException {
-        final QueryColumn column = model.getBottomUpColumns().getQuick(0);
+        final QueryColumn column = model.getColumns().getQuick(0);
         final ExpressionNode expression = column.getAst();
         final FunctionExpression count = ctx.functionBinder.bindAggregate(rowCountCall(expression), input.getOutput(), sourceAlias(source), executionContext);
         final AggregatePlan aggregate = ctx.aggregate(input, expression.position);
@@ -700,8 +700,8 @@ final class OrderBinder implements Mutable {
      */
     ObjList<ExpressionNode> selectExpressions(QueryModel model) {
         selectExpressions.clear();
-        for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
-            selectExpressions.add(model.getBottomUpColumns().getQuick(i).getAst());
+        for (int i = 0, n = model.getColumns().size(); i < n; i++) {
+            selectExpressions.add(model.getColumns().getQuick(i).getAst());
         }
         return selectExpressions;
     }

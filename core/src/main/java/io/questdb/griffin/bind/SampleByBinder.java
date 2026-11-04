@@ -557,8 +557,8 @@ final class SampleByBinder {
         }
         boolean hasAggregate = false;
         ExpressionNode wildcard = null;
-        for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
-            final ExpressionNode expression = model.getBottomUpColumns().getQuick(i).getAst();
+        for (int i = 0, n = model.getColumns().size(); i < n; i++) {
+            final ExpressionNode expression = model.getColumns().getQuick(i).getAst();
             if (wildcard == null && expression.isWildcard()) {
                 wildcard = expression;
             }
@@ -994,14 +994,14 @@ final class SampleByBinder {
             call.lhs = ExpressionNode.deepClone(ctx.bindingExpressions, target);
             call.rhs = ExpressionNode.deepClone(ctx.bindingExpressions, seed);
         }
-        final WindowExpression syntax = ctx.planNodes.windowSyntax.next();
+        final WindowExpression syntax = ctx.windowSyntax.next();
         syntax.setSubsampleKeepFlag(true);
         syntax.setPendingSubsample(subsample, source.getSubsamplePosition(), subsampleTimestamp(sourcePlan) >= 0);
         syntax.addOrderBy(ctx.bindingExpressions.next().of(ExpressionNode.LITERAL, timestampName, 0, subsample.position),
                 QueryModel.ORDER_DIRECTION_ASCENDING);
         call.windowExpression = syntax;
         windowBinder.normalizeWindowFrame(syntax, executionContext);
-        final WindowSpec spec = ctx.planNodes.windowSpecs.next().of(syntax);
+        final WindowSpec spec = windowBinder.newSpec(syntax);
         if (executionContext.isLiveViewCompile()) {
             spec.setLiveViewDescription(LiveViewWindowDescription.of(syntax));
         }
@@ -1035,8 +1035,8 @@ final class SampleByBinder {
         final OutputSchema output = sourcePlan.getOutput();
         final int timestampId = subsampleTimestamp(sourcePlan);
         final int timestampIndex = timestampId < 0 ? -1 : output.getColumnIndexById(timestampId);
-        for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
-            final ExpressionNode expression = model.getBottomUpColumns().getQuick(i).getAst();
+        for (int i = 0, n = model.getColumns().size(); i < n; i++) {
+            final ExpressionNode expression = model.getColumns().getQuick(i).getAst();
             if (expression.type != ExpressionNode.LITERAL) {
                 continue;
             }
@@ -1152,8 +1152,8 @@ final class SampleByBinder {
     void validateSubsampleSelectValue(ExpressionNode value, QueryModel model) throws SqlException {
         if (value.type == ExpressionNode.LITERAL) {
             final CharSequence protectedName = SqlUtil.protectColumnAlias(ctx.characterStore, value.token);
-            for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
-                final CharSequence name = model.getBottomUpColumns().getQuick(i).getName();
+            for (int i = 0, n = model.getColumns().size(); i < n; i++) {
+                final CharSequence name = model.getColumns().getQuick(i).getName();
                 if (Chars.equalsIgnoreCase(name, value.token) || Chars.equalsIgnoreCase(name, protectedName)) {
                     return;
                 }

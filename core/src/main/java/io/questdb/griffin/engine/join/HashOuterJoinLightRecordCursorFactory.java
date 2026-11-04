@@ -44,7 +44,7 @@ import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.SymbolTranslatingRecord;
-import io.questdb.griffin.plan.logical.JoinInput;
+import io.questdb.griffin.plan.logical.BuildSide;
 import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
@@ -54,7 +54,7 @@ import static io.questdb.griffin.engine.join.HashOuterJoinFilteredLightRecordCur
 
 public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFactory {
 
-    private final JoinInput.BuildSide buildSide;
+    private final BuildSide buildSide;
     private final int columnSplit;
     private final JoinKind joinType;
     private final RecordSink masterKeySink;
@@ -80,10 +80,10 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
             JoinKind joinType,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
-            @Nullable JoinInput.BuildSide buildSide
+            @Nullable BuildSide buildSide
     ) {
         super(metadata, context, masterFactory, slaveFactory);
-        assert buildSide != JoinInput.BuildSide.SMALLER || joinType == JoinKind.FULL_OUTER && masterFactory.recordCursorSupportsRandomAccess()
+        assert buildSide != BuildSide.SMALLER || joinType == JoinKind.FULL_OUTER && masterFactory.recordCursorSupportsRandomAccess()
                 : "hashed master lacks random access";
         this.buildSide = buildSide;
         this.masterSymbolKeyColumnIndices = masterSymbolKeyColumnIndices;
@@ -153,8 +153,8 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
         RecordCursor masterCursor = null;
         try {
             masterCursor = masterFactory.getCursor(executionContext);
-            if (buildSide == JoinInput.BuildSide.SMALLER
-                    && JoinInput.BuildSide.smaller(masterCursor.size(), slaveCursor.size(), JoinInput.BuildSide.SLAVE) == JoinInput.BuildSide.MASTER) {
+            if (buildSide == BuildSide.SMALLER
+                    && BuildSide.smaller(masterCursor.size(), slaveCursor.size(), BuildSide.SLAVE) == BuildSide.MASTER) {
                 final RecordCursor temp = masterCursor;
                 masterCursor = slaveCursor;
                 slaveCursor = temp;

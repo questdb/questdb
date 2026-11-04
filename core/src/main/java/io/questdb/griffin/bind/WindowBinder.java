@@ -235,7 +235,7 @@ final class WindowBinder {
             if (scope.windowAliasIds.getQuick(column) < 0 && areWindowsBound(copy)) {
                 final BoundExpression bound = bindVolatile(replaceWindowReferences(copy), source, executionContext);
                 if (bound != null) {
-                    scope.windowAliasIds.setQuick(column, appendWindowInputExpression(bound, model.getBottomUpColumns().getQuick(column).getName(), copy.position));
+                    scope.windowAliasIds.setQuick(column, appendWindowInputExpression(bound, model.getColumns().getQuick(column).getName(), copy.position));
                 }
             }
         }
@@ -282,7 +282,7 @@ final class WindowBinder {
         final BindScope scope = ctx.scope();
         final OutputSchema output = input.getOutput();
         final ProjectPlan project = ctx.planNodes.projects.next().of(input, model.getModelPosition());
-        final ObjList<QueryColumn> columns = model.getBottomUpColumns();
+        final ObjList<QueryColumn> columns = model.getColumns();
         for (int i = 0, n = columns.size(); i < n; i++) {
             final ExpressionNode ast = columns.getQuick(i).getAst();
             if (ast.isWildcard()) {
@@ -491,8 +491,8 @@ final class WindowBinder {
     }
 
     private boolean hasPureComputedColumn(QueryModel model) {
-        for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
-            if (isPureComputedColumn(model.getBottomUpColumns().getQuick(i).getAst())) {
+        for (int i = 0, n = model.getColumns().size(); i < n; i++) {
+            if (isPureComputedColumn(model.getColumns().getQuick(i).getAst())) {
                 return true;
             }
         }
@@ -684,7 +684,7 @@ final class WindowBinder {
     }
 
     private WindowExpression resolveWindow(WindowExpression syntax, QueryModel model) throws SqlException {
-        final WindowExpression result = syntax.deepCloneSpec(ctx.planNodes.windowSyntax, ctx.bindingExpressions);
+        final WindowExpression result = syntax.deepCloneSpec(ctx.windowSyntax, ctx.bindingExpressions);
         if (syntax.isNamedWindowReference()) {
             final WindowExpression named = lookupWindow(model, syntax.getWindowName());
             if (named == null) {
@@ -780,14 +780,14 @@ final class WindowBinder {
             ctx.bindColumnIndex(expression, input, source);
         }
         if (isAlias) {
-            for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
-                final ExpressionNode selected = model.getBottomUpColumns().getQuick(i).getAst();
+            for (int i = 0, n = model.getColumns().size(); i < n; i++) {
+                final ExpressionNode selected = model.getColumns().getQuick(i).getAst();
                 if (scope.windowAliasIds.getQuick(i) >= 0 && selected.type == ExpressionNode.LITERAL && Chars.equalsIgnoreCase(selected.token, expression.token)) {
                     return windowColumnReference(scope.windowAliasIds.getQuick(i), expression.position);
                 }
             }
-            for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
-                final QueryColumn column = model.getBottomUpColumns().getQuick(i);
+            for (int i = 0, n = model.getColumns().size(); i < n; i++) {
+                final QueryColumn column = model.getColumns().getQuick(i);
                 if (!Chars.equalsIgnoreCase(column.getName(), expression.token)) {
                     continue;
                 }
@@ -868,8 +868,8 @@ final class WindowBinder {
      * The SELECT expression an ORDER BY expression repeats, or the ORDER BY expression itself.
      */
     private ExpressionNode selectedOrderExpression(QueryModel model, ExpressionNode order) {
-        for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
-            final ExpressionNode selected = model.getBottomUpColumns().getQuick(i).getAst();
+        for (int i = 0, n = model.getColumns().size(); i < n; i++) {
+            final ExpressionNode selected = model.getColumns().getQuick(i).getAst();
             if (ExpressionNode.compareNodesExact(order, selected)) {
                 return selected;
             }
@@ -967,7 +967,7 @@ final class WindowBinder {
         if (index < 0) {
             return node.token;
         }
-        final CharSequence alias = model.getBottomUpColumns().getQuick(index).getName();
+        final CharSequence alias = model.getColumns().getQuick(index).getName();
         return Chars.indexOf(alias, '.') < 0 ? alias : node.token;
     }
 
@@ -1006,7 +1006,7 @@ final class WindowBinder {
         }
         bindScope.windowSelectExpressions.clear();
         bindScope.windowSelectIndexes.clear();
-        bindScope.windowAliasIds.setAll(model.getBottomUpColumns().size(), -1);
+        bindScope.windowAliasIds.setAll(model.getColumns().size(), -1);
         bindScope.resetAliases();
         ProjectPlan innerProject = null;
         if (hasPureComputedColumn(model) && model.getNamedWindows().size() == 0
@@ -1016,8 +1016,8 @@ final class WindowBinder {
             bindScope.windowInput = innerProject;
         }
         bindScope.resetAliases(bindScope.windowInput.getOutput());
-        for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
-            final ExpressionNode selected = model.getBottomUpColumns().getQuick(i).getAst();
+        for (int i = 0, n = model.getColumns().size(); i < n; i++) {
+            final ExpressionNode selected = model.getColumns().getQuick(i).getAst();
             final ExpressionNode ast = copyWindowSyntax(selected, selected);
             if (ast.windowExpression != null && isConstantCount(ast)) {
                 ast.rhs = null;
@@ -1050,7 +1050,7 @@ final class WindowBinder {
                 }
                 final ExpressionNode node = bindScope.windowNodes.getQuick(i);
                 final WindowExpression syntax = node.windowExpression;
-                final WindowSpec spec = ctx.planNodes.windowSpecs.next().of(syntax);
+                final WindowSpec spec = newSpec(syntax);
                 bindScope.windowLevelSpecs.add(spec);
                 if (executionContext.isLiveViewCompile()) {
                     spec.setLiveViewDescription(LiveViewWindowDescription.of(syntax));
@@ -1185,7 +1185,7 @@ final class WindowBinder {
      * Such a reference reads the earlier column's value rather than evaluating it again.
      */
     boolean hasProjectionReferences(QueryModel model, OutputSchema source) {
-        final ObjList<QueryColumn> columns = model.getBottomUpColumns();
+        final ObjList<QueryColumn> columns = model.getColumns();
         clearSelectAliasIndexes();
         boolean hasReferences = false;
         for (int i = 1, n = columns.size(); i < n && !hasReferences; i++) {
@@ -1200,7 +1200,7 @@ final class WindowBinder {
      * window function's value.
      */
     boolean hasWindowProjectionReferences(QueryModel model, OutputSchema source) {
-        final ObjList<QueryColumn> columns = model.getBottomUpColumns();
+        final ObjList<QueryColumn> columns = model.getColumns();
         clearSelectAliasIndexes();
         boolean hasReferences = false;
         for (int i = 1, n = columns.size(); i < n && !hasReferences; i++) {
@@ -1213,8 +1213,8 @@ final class WindowBinder {
     }
 
     boolean hasWindows(QueryModel model, QueryModel source) {
-        for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
-            if (findWindowPosition(model.getBottomUpColumns().getQuick(i).getAst()) >= 0) {
+        for (int i = 0, n = model.getColumns().size(); i < n; i++) {
+            if (findWindowPosition(model.getColumns().getQuick(i).getAst()) >= 0) {
                 return true;
             }
         }
@@ -1230,8 +1230,8 @@ final class WindowBinder {
         if (blockGroupBy(model, source).size() > 0) {
             return false;
         }
-        for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
-            final ExpressionNode expression = model.getBottomUpColumns().getQuick(i).getAst();
+        for (int i = 0, n = model.getColumns().size(); i < n; i++) {
+            final ExpressionNode expression = model.getColumns().getQuick(i).getAst();
             if (expression.windowExpression == null && ctx.hasAggregate(expression)) {
                 return false;
             }
@@ -1249,6 +1249,25 @@ final class WindowBinder {
      * Resolves the frame bounds of the window to their offsets, see {@link SqlUtil#normalizeWindowFrame}; each bound
      * must be a constant, non-negative integer, see {@link #constantBoundValue}.
      */
+    WindowSpec newSpec(WindowExpression syntax) {
+        return ctx.planNodes.windowSpecs.next().ofFrame(
+                syntax.getFramingMode(),
+                syntax.getRowsLo(),
+                syntax.getRowsLoKindPos(),
+                syntax.getRowsLoExprPos(),
+                syntax.getRowsLoExprTimeUnit(),
+                syntax.getRowsHi(),
+                syntax.getRowsHiKindPos(),
+                syntax.getRowsHiExprPos(),
+                syntax.getRowsHiExprTimeUnit(),
+                syntax.getExclusionKind(),
+                syntax.getExclusionKindPos(),
+                syntax.isIgnoreNulls(),
+                syntax.getNullsDescPos(),
+                syntax.isSubsampleKeepFlag()
+        );
+    }
+
     void normalizeWindowFrame(WindowExpression syntax, SqlExecutionContext executionContext) throws SqlException {
         SqlUtil.normalizeWindowFrame(syntax, frameBoundValue(syntax.getRowsLoExpr(), executionContext),
                 frameBoundValue(syntax.getRowsHiExpr(), executionContext));
@@ -1294,8 +1313,8 @@ final class WindowBinder {
      */
     void validateWindowAggregation(QueryModel model, QueryModel source) throws SqlException {
         boolean hasTopLevelWindow = false;
-        for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
-            hasTopLevelWindow |= validateWindowAggregation(model.getBottomUpColumns().getQuick(i).getAst());
+        for (int i = 0, n = model.getColumns().size(); i < n; i++) {
+            hasTopLevelWindow |= validateWindowAggregation(model.getColumns().getQuick(i).getAst());
         }
         for (int i = 0, n = source.getOrderBy().size(); i < n; i++) {
             hasTopLevelWindow |= validateWindowAggregation(source.getOrderBy().getQuick(i));
@@ -1318,8 +1337,8 @@ final class WindowBinder {
                 continue;
             }
             boolean isSelected = false;
-            for (int k = 0, count = model.getBottomUpColumns().size(); k < count; k++) {
-                if (ExpressionNode.compareNodesExact(expression, model.getBottomUpColumns().getQuick(k).getAst())) {
+            for (int k = 0, count = model.getColumns().size(); k < count; k++) {
+                if (ExpressionNode.compareNodesExact(expression, model.getColumns().getQuick(k).getAst())) {
                     isSelected = true;
                     break;
                 }

@@ -27,6 +27,7 @@ package io.questdb.test.griffin.plan.logical;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompilerImpl;
+import io.questdb.griffin.plan.logical.BuildSide;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.griffin.plan.logical.LogicalPlan;
@@ -91,8 +92,8 @@ public class PlanFactsTest extends AbstractCairoTest {
         Assert.assertNull(step.getBuildSide());
         step.setAlgorithm(JoinInput.Algorithm.LIGHT_HASH);
         assertUndecided(step::getBuildSide, "JoinInput.buildSide");
-        step.setBuildSide(JoinInput.BuildSide.SMALLER);
-        Assert.assertEquals(JoinInput.BuildSide.SMALLER, step.getBuildSide());
+        step.setBuildSide(BuildSide.SMALLER);
+        Assert.assertEquals(BuildSide.SMALLER, step.getBuildSide());
         step.clear();
         assertUndecided(step::getBuildSide, "JoinInput.buildSide");
     }

@@ -84,7 +84,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             return false;
         }
         try {
-            IntervalUtils.parseTickExpr(driver, configuration, seq, lo, lim, 0, out, IntervalOperation.INTERSECT, sink, true);
+            IntervalUtils.parseTickExpr(driver, configuration, seq, lo, lim, 0, out, IntervalOperation.INTERSECT, sink);
             return true;
         } catch (SqlException e) {
             out.clear();
@@ -124,7 +124,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         }
         final StringSink sink = VETTED_SINK.get();
         sink.clear();
-        IntervalUtils.parseTickExprAndIntersect(ColumnType.getTimestampDriver(timestampType), configuration, right, values, argPositions.getQuick(1), sink, true);
+        IntervalUtils.parseTickExprAndIntersect(ColumnType.getTimestampDriver(timestampType), configuration, right, values, argPositions.getQuick(1), sink);
         return true;
     }
 
@@ -407,7 +407,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         ) throws SqlException {
             this.left = left;
             final StringSink sink = new StringSink();
-            IntervalUtils.parseTickExprAndIntersect(ColumnType.getTimestampDriver(leftTimestampType), configuration, right, intervals, rightPosition, sink, true);
+            IntervalUtils.parseTickExprAndIntersect(ColumnType.getTimestampDriver(leftTimestampType), configuration, right, intervals, rightPosition, sink);
         }
 
         @Override
@@ -458,7 +458,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             intervals.clear();
             try {
                 // we are ignoring exception contents here, so we do not need the exact position
-                IntervalUtils.parseTickExprAndIntersect(timestampDriver, configuration, timestampAsString, intervals, 0, sink, true);
+                IntervalUtils.parseTickExprAndIntersect(timestampDriver, configuration, timestampAsString, intervals, 0, sink);
             } catch (SqlException e) {
                 return negated;
             }
@@ -617,7 +617,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             switch (intervalFunc.getType()) {
                 case ColumnType.STRING:
                 case ColumnType.VARCHAR:
-                    IntervalUtils.parseTickExprAndIntersect(driver, executionContext.getCairoEngine().getConfiguration(), intervalFunc.getStrA(null), intervals, 0, sink, true);
+                    IntervalUtils.parseTickExprAndIntersect(driver, executionContext.getCairoEngine().getConfiguration(), intervalFunc.getStrA(null), intervals, 0, sink);
                     break;
                 default:
                     throw SqlException

@@ -26,6 +26,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
+import io.questdb.griffin.plan.logical.BuildSide;
 import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinPlan;
@@ -139,7 +140,7 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
                 // which fixes the master.
                 sqlExecutionContext.setParallelHashJoinGroupByEnabled(false);
                 assertPlanned(engine, sqlExecutionContext, sql, JoinPlan.class,
-                        join -> Assert.assertEquals(JoinInput.BuildSide.FIXED_MASTER, join.getOrderedInputs().getQuick(1).getBuildSide()));
+                        join -> Assert.assertEquals(BuildSide.FIXED_MASTER, join.getOrderedInputs().getQuick(1).getBuildSide()));
                 // The GROUP BY fused into the join builds its own hash table and computes only aggregates whose result
                 // does not depend on the order of rows, and its output designates no timestamp, so nothing reads the
                 // order of the join, which lets the smaller input drive it.
@@ -354,7 +355,7 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
             assertPlanned(engine, sqlExecutionContext, unordered, JoinPlan.class,
                     join -> Assert.assertTrue(join.getOrderedInputs().getQuick(1).isSmallerDriven()));
             assertPlanned(engine, sqlExecutionContext, ordered, JoinPlan.class,
-                    join -> Assert.assertEquals(JoinInput.BuildSide.FIXED_MASTER, join.getOrderedInputs().getQuick(1).getBuildSide()));
+                    join -> Assert.assertEquals(BuildSide.FIXED_MASTER, join.getOrderedInputs().getQuick(1).getBuildSide()));
             // The smaller master drives the hash join from its slave unless a consumer reads the master's order.
             assertQuery(unordered)
                     .noRandomAccess()
@@ -427,9 +428,9 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
                     join -> Assert.assertTrue(join.getOrderedInputs().getQuick(1).isSmallerDriven()));
             // The constant-false step emits no rows, yet its empty factory designates the timestamp the side keeps.
             assertPlanned(engine, sqlExecutionContext, "SELECT ts, count() FROM (" + empty + ") SAMPLE BY 1d ALIGN TO FIRST OBSERVATION", JoinPlan.class,
-                    join -> Assert.assertEquals(JoinInput.BuildSide.FIXED_MASTER, join.getOrderedInputs().getQuick(1).getBuildSide()));
+                    join -> Assert.assertEquals(BuildSide.FIXED_MASTER, join.getOrderedInputs().getQuick(1).getBuildSide()));
             assertPlanned(engine, sqlExecutionContext, "SELECT a.ts, count() FROM t a JOIN u b ON a.x = b.x WHERE false SAMPLE BY 1d ALIGN TO FIRST OBSERVATION", JoinPlan.class,
-                    join -> Assert.assertEquals(JoinInput.BuildSide.FIXED_MASTER, join.getOrderedInputs().getQuick(1).getBuildSide()));
+                    join -> Assert.assertEquals(BuildSide.FIXED_MASTER, join.getOrderedInputs().getQuick(1).getBuildSide()));
         });
     }
 
@@ -574,7 +575,7 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
             createSwappableJoinTables();
             final String sql = SWAPPABLE_JOIN + " ORDER BY ts";
             assertPlanned(engine, sqlExecutionContext, sql, JoinPlan.class,
-                    join -> Assert.assertEquals(JoinInput.BuildSide.FIXED_MASTER, join.getOrderedInputs().getQuick(1).getBuildSide()));
+                    join -> Assert.assertEquals(BuildSide.FIXED_MASTER, join.getOrderedInputs().getQuick(1).getBuildSide()));
             assertQuery(sql)
                     .timestamp("ts")
                     .noRandomAccess()
@@ -1839,7 +1840,7 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
                             """);
             final String ordered = sql + " ORDER BY ts";
             assertPlanned(engine, sqlExecutionContext, ordered, JoinPlan.class,
-                    join -> Assert.assertEquals(JoinInput.BuildSide.FIXED_MASTER, join.getOrderedInputs().getQuick(1).getBuildSide()));
+                    join -> Assert.assertEquals(BuildSide.FIXED_MASTER, join.getOrderedInputs().getQuick(1).getBuildSide()));
             assertQuery(ordered)
                     .timestamp("ts")
                     .noRandomAccess()

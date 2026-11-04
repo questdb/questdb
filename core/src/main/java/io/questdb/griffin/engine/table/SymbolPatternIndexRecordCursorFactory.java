@@ -34,7 +34,7 @@ import io.questdb.cairo.sql.RowCursorFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.plan.logical.ScanPlan;
+import io.questdb.griffin.plan.logical.IndexOrder;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -76,7 +76,7 @@ public class SymbolPatternIndexRecordCursorFactory extends AbstractPageFrameReco
             @NotNull PartitionFrameCursorFactory partitionFrameCursorFactory,
             int columnIndex,
             @NotNull IntList effectiveKeys,
-            @NotNull ScanPlan.IndexOrder indexOrder,
+            @NotNull IndexOrder indexOrder,
             int indexDirection,
             @NotNull IntList columnIndexes,
             @NotNull IntList columnSizeShifts

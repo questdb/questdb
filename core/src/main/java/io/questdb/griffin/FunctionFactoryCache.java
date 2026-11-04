@@ -144,11 +144,13 @@ public class FunctionFactoryCache {
      */
     public TimestampPrecisionUse getTimestampPrecisionUse(ExpressionNode call) {
         final ObjList<FunctionFactoryDescriptor> overloads = getOverloadList(call.token);
+        final ExpressionNode first = call.paramCount < 3 ? call.lhs : call.args.getLast();
+        final CharSequence firstConstant = first != null && first.type == ExpressionNode.CONSTANT ? first.token : null;
         TimestampPrecisionUse use = null;
         for (int i = 0, n = overloads == null ? 0 : overloads.size(); i < n; i++) {
             final FunctionFactoryDescriptor overload = overloads.getQuick(i);
             if (overload.getSigArgCount() == call.paramCount) {
-                final TimestampPrecisionUse overloadUse = overload.getFactory().getTimestampPrecisionUse(call);
+                final TimestampPrecisionUse overloadUse = overload.getFactory().getTimestampPrecisionUse(firstConstant);
                 if (use != null && use != overloadUse) {
                     return TimestampPrecisionUse.DEPENDENT;
                 }

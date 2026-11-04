@@ -282,6 +282,10 @@ public class ExpressionNode implements Mutable, Sinkable {
         return this;
     }
 
+    public boolean isAnd() {
+        return paramCount == 2 && SqlKeywords.isAndKeyword(token);
+    }
+
     /**
      * Whether {@link #cacheConstantFold} built this node's LONG-width fold - for a CONSTANT leaf,
      * whether it parsed the token; for a binary pair, whether it combined its children's folds.

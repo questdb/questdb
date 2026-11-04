@@ -64,7 +64,7 @@ public final class JoinInput implements PlanFactSource {
     private BoundExpression keyFilter;
     private int markoutSequenceColumnId = -1;
     private int markoutTimestampColumnId = -1;
-    private NullExtension nullExtension = NullExtension.BY_KEYS;
+    private JoinNullExtension nullExtension = JoinNullExtension.BY_KEYS;
     private BoundExpression nullKeyCheck;
     private BoundExpression onResidual;
     private int position = -1;
@@ -108,7 +108,7 @@ public final class JoinInput implements PlanFactSource {
         joinType = null;
         markoutSequenceColumnId = -1;
         markoutTimestampColumnId = -1;
-        nullExtension = NullExtension.BY_KEYS;
+        nullExtension = JoinNullExtension.BY_KEYS;
         nullKeyCheck = null;
         onResidual = null;
         position = -1;
@@ -202,13 +202,13 @@ public final class JoinInput implements PlanFactSource {
     /**
      * How the outer step decides which of the rows it preserves it NULL-extends.
      */
-    public NullExtension getNullExtension() {
+    public JoinNullExtension getNullExtension() {
         return nullExtension;
     }
 
     /**
      * The predicate over the master row that the master columns of the keys all hold the values a NULL record reads for
-     * them, see {@link NullExtension#BY_ON_RESIDUAL}, which operator planning records for a step that NULL-extends
+     * them, see {@link JoinNullExtension#BY_ON_RESIDUAL}, which operator planning records for a step that NULL-extends
      * master rows by its ON residual, see {@link PlanToFactoryRules#isMasterNullKeyChecked}; null for any other step.
      */
     public BoundExpression getNullKeyCheck() {
@@ -416,7 +416,7 @@ public final class JoinInput implements PlanFactSource {
         markoutSequenceColumnId = sequenceColumnId;
     }
 
-    public void setNullExtension(NullExtension nullExtension) {
+    public void setNullExtension(JoinNullExtension nullExtension) {
         this.nullExtension = Objects.requireNonNull(nullExtension);
     }
 
@@ -545,44 +545,6 @@ public final class JoinInput implements PlanFactSource {
     }
 
     /**
-     * How an outer step decides which of the rows it preserves it NULL-extends.
-     */
-    public enum NullExtension {
-        /**
-         * A preserved row whose key partners all fail the ON residual: the keys state the ON clause's equalities.
-         */
-        BY_KEYS,
-        /**
-         * A preserved row whose keys all hold the values the NULL record of the other input reads for them, NULL, or
-         * false or 0 for a type with no NULL sentinel, and whom every row of the other input fails the ON residual; the
-         * step drops every other preserved row without a key partner that passes the ON residual. The keys are
-         * equalities a later INNER join implies, which hold for every row that join keeps, and the ON residual holds
-         * the whole ON clause: the later join drops every other row the ON clause pairs or NULL-extends, so every row
-         * the step emits holds its keys.
-         */
-        BY_ON_RESIDUAL
-    }
-
-    /**
-     * How the factory of a step NULL-extended by its ON residual, see {@link NullExtension#BY_ON_RESIDUAL}, finds the
-     * rows that pass the ON residual with a row whose keys are all NULL: the slave rows that pass it with such a master
-     * row, and for a RIGHT or FULL step the rows of the NULL key chain that pass it with some master row.
-     */
-    public enum NullKeyMatch {
-        /**
-         * Evaluates the ON residual on each pair of a master and a slave row the factory walks.
-         */
-        PER_PAIR,
-        /**
-         * Evaluates the ON residual on slave rows alone: the ON residual reads only the slave input and takes the same
-         * value for a row on every evaluation, so no master row changes whether a slave row passes. The factory tests
-         * once per execution whether some slave row passes, and tests a row of the NULL key chain when it emits the
-         * slave rows no master row matched.
-         */
-        PER_SLAVE_ROW
-    }
-
-    /**
      * How a keyed ASOF join that navigates the time frames of its slave finds the slave row of each master row, see
      * {@link #getTimeFrameScan}. The variants that read a single symbol key map the master's symbol keys onto the
      * slave's symbol table.
@@ -616,36 +578,5 @@ public final class JoinInput implements PlanFactSource {
          * {@code asof_memoized_driveby} hint asks for.
          */
         MEMOIZED_DRIVEBY
-    }
-
-    /**
-     * Which input of a hash join, its master or its slave, the operator hashes; it probes the hash with the other one.
-     * An outer join hashes the input it NULL-extends.
-     */
-    public enum BuildSide {
-        /**
-         * The slave, with the master fixed as the input that drives the light INNER hash join, so it emits rows in the
-         * master's order, which a consumer of the join reads.
-         */
-        FIXED_MASTER,
-        MASTER,
-        SLAVE,
-        /**
-         * The input whose cursor reports fewer rows when the light hash join opens, and the slave when either cursor
-         * cannot tell or both report as many; operator planning records it only over a master that supports random
-         * access.
-         */
-        SMALLER;
-
-        /**
-         * The input to hash so that the hash holds the fewer rows, {@code tie} when both inputs hold as many rows, and
-         * {@link #SMALLER} when either row count is unknown, -1.
-         */
-        public static BuildSide smaller(long masterRows, long slaveRows, BuildSide tie) {
-            if (masterRows < 0 || slaveRows < 0) {
-                return SMALLER;
-            }
-            return masterRows < slaveRows ? MASTER : masterRows > slaveRows ? SLAVE : tie;
-        }
     }
 }

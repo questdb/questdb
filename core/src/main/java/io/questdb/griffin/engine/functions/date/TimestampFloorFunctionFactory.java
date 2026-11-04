@@ -33,7 +33,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.TimestampPrecisionUse;
 import io.questdb.griffin.engine.functions.MonotonicTimestampFunctionFactory;
-import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
@@ -61,13 +60,12 @@ public class TimestampFloorFunctionFactory implements FunctionFactory, Monotonic
     }
 
     @Override
-    public TimestampPrecisionUse getTimestampPrecisionUse(ExpressionNode call) {
-        final ExpressionNode unit = call.lhs;
-        if (unit.type != ExpressionNode.CONSTANT || unit.token.length() < 3 || !Chars.isQuoted(unit.token)) {
+    public TimestampPrecisionUse getTimestampPrecisionUse(CharSequence firstConstant) {
+        if (firstConstant == null || firstConstant.length() < 3 || !Chars.isQuoted(firstConstant)) {
             return TimestampPrecisionUse.DEPENDENT;
         }
-        final int hi = unit.token.length() - 1;
-        return TimestampPrecisionUse.ofFloor(stride(unit.token, 1, hi), unit.token.charAt(hi - 1));
+        final int hi = firstConstant.length() - 1;
+        return TimestampPrecisionUse.ofFloor(stride(firstConstant, 1, hi), firstConstant.charAt(hi - 1));
     }
 
     @Override

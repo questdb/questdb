@@ -37,7 +37,7 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.plan.logical.ScanPlan;
+import io.questdb.griffin.plan.logical.IndexOrder;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -408,13 +408,13 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
 
     /**
      * Returns the cursor over the rows the per-key row cursor factories find, in the index order the planner chose:
-     * key by key for {@link ScanPlan.IndexOrder#KEY}, otherwise in page frame order, merged by the row cursor factory
+     * key by key for {@link IndexOrder#KEY}, otherwise in page frame order, merged by the row cursor factory
      * that the order names.
      */
     static PageFrameRecordCursorImpl newIndexScanCursor(
             CairoConfiguration configuration,
             @Transient RecordMetadata metadata,
-            ScanPlan.IndexOrder indexOrder,
+            IndexOrder indexOrder,
             ObjList<? extends FunctionBasedRowCursorFactory> cursorFactories,
             int[] cursorFactoriesIdx,
             int indexDirection,

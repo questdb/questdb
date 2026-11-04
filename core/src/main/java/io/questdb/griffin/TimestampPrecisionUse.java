@@ -28,7 +28,7 @@ import io.questdb.std.datetime.microtime.Micros;
 
 /**
  * How a function's value depends on the precision of its TIMESTAMP argument, see
- * {@link FunctionFactory#getTimestampPrecisionUse(io.questdb.griffin.model.ExpressionNode)}.
+ * {@link FunctionFactory#getTimestampPrecisionUse}.
  */
 public enum TimestampPrecisionUse {
     /**

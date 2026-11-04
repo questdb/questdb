@@ -5091,9 +5091,7 @@ public class CompiledFilterIRSerializer implements Mutable {
                 intervalEx,
                 intervals,
                 position,
-                sink,
-                true
-        );
+                sink);
 
         final BoundExpression lhs = lhs(predicateContext.inOperationNode);
         if (intervals.size() == 0) {

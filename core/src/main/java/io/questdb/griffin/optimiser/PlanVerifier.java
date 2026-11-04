@@ -46,6 +46,7 @@ import io.questdb.griffin.plan.logical.JoinDependency;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinKey;
 import io.questdb.griffin.plan.logical.JoinKind;
+import io.questdb.griffin.plan.logical.JoinNullExtension;
 import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LatestByPlan;
 import io.questdb.griffin.plan.logical.LimitPlan;
@@ -851,7 +852,7 @@ public final class PlanVerifier {
                 fail(JOIN_OUTER_CROSS);
             }
         }
-        if (step.getNullExtension() == JoinInput.NullExtension.BY_ON_RESIDUAL) {
+        if (step.getNullExtension() == JoinNullExtension.BY_ON_RESIDUAL) {
             final JoinInput.Algorithm algorithm = step.getAlgorithm();
             if (!type.isOuter() || step.getOnResidual() == null
                     || algorithm != null && algorithm != JoinInput.Algorithm.HASH && algorithm != JoinInput.Algorithm.LIGHT_HASH) {

@@ -295,7 +295,7 @@ final class FilterPushdown implements OptimiserPass {
         if (!(expression instanceof FunctionExpression call)) {
             return false;
         }
-        if (call.getArgumentCount() == 1 && "not".equals(call.getName())) {
+        if (call.isNot()) {
             return isLatestKeyResidual(call.argumentAt(0));
         }
         if (call.getArgumentCount() != 2 || ComparisonOperator.of(call.getName()) == null) {

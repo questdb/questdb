@@ -336,7 +336,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                                     "select a,b, avg(c) over (partition by b order by ts #FRAME between 10 preceding and 5 preceding) from xyz".replace("#FRAME", frameType),
                                     sqlExecutionContext
                             );
-                            ObjList<QueryColumn> columns = model.getQueryModel().getBottomUpColumns();
+                            ObjList<QueryColumn> columns = model.getQueryModel().getColumns();
                             Assert.assertEquals(3, columns.size());
 
                             QueryColumn ac = columns.getQuick(2);

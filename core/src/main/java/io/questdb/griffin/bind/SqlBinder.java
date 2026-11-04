@@ -264,8 +264,8 @@ public final class SqlBinder implements Mutable {
     }
 
     private static boolean hasComputedColumn(QueryModel model) {
-        for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
-            if (model.getBottomUpColumns().getQuick(i).getAst().type != ExpressionNode.LITERAL) {
+        for (int i = 0, n = model.getColumns().size(); i < n; i++) {
+            if (model.getColumns().getQuick(i).getAst().type != ExpressionNode.LITERAL) {
                 return true;
             }
         }
@@ -455,7 +455,7 @@ public final class SqlBinder implements Mutable {
 
     private BoundExpression bindFilterConjunct(ExpressionNode expression, LogicalPlan input, CharSequence alias,
                                                boolean isAndArgument, SqlExecutionContext executionContext) throws SqlException {
-        if (expression.paramCount == 2 && SqlKeywords.isAndKeyword(expression.token)) {
+        if (expression.isAnd()) {
             final BoundExpression left = bindFilterConjunct(expression.lhs, input, alias, true, executionContext);
             final BoundExpression right = bindFilterConjunct(expression.rhs, input, alias, true, executionContext);
             return ctx.expressionRewriter.combineConjunction(left, right, expression.position);
@@ -529,7 +529,7 @@ public final class SqlBinder implements Mutable {
 
     private LogicalPlan bindQueryBlockWithHints(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         final BindScope bindScope = ctx.scope();
-        if (model.isPivot() && model.getBottomUpColumns().size() == 0) {
+        if (model.isPivot() && model.getColumns().size() == 0) {
             return pivotBinder.rewritePivot(model, executionContext);
         }
         final boolean isOrderBound = !ctx.isSetOperationBranch;
@@ -610,13 +610,13 @@ public final class SqlBinder implements Mutable {
             bindScope.resetAliases();
         }
 
-        if (!model.isDistinct() && model.getBottomUpColumns().size() == 1
-                && !model.getBottomUpColumns().getQuick(0).isWindowExpression()
+        if (!model.isDistinct() && model.getColumns().size() == 1
+                && !model.getColumns().getQuick(0).isWindowExpression()
                 && source.getSampleBy() == null
                 && blockGroupBy(model, source).size() == 0
                 && bindScope.outerColumnIds.size() == outerColumnBase
-                && isRowCount(model.getBottomUpColumns().getQuick(0).getAst())
-                && isRowCountOrder(model.getBottomUpColumns().getQuick(0), source)) {
+                && isRowCount(model.getColumns().getQuick(0).getAst())
+                && isRowCountOrder(model.getColumns().getQuick(0), source)) {
             final LogicalPlan counted = orderBinder.bindRowCount(model, source, input, executionContext);
             return source.getSubsample() == null ? counted : sampleByBinder.bindSubsample(counted, sourcePlan, source, executionContext);
         }
@@ -674,8 +674,8 @@ public final class SqlBinder implements Mutable {
         final OutputSchema output = sourcePlan.getOutput();
         final OutputSchema bindingScope = hasWindows ? ctx.windowBindingScope(output) : output;
         final boolean hasComputedProjection = hasComputedColumn(model);
-        for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
-            final QueryColumn column = model.getBottomUpColumns().getQuick(i);
+        for (int i = 0, n = model.getColumns().size(); i < n; i++) {
+            final QueryColumn column = model.getColumns().getQuick(i);
             final ExpressionNode expression = hasWindows ? bindScope.windowSelectExpressions.getQuick(i) : column.getAst();
             if (expression.isWildcard()) {
                 boolean hasMatch = false;
@@ -695,7 +695,7 @@ public final class SqlBinder implements Mutable {
                 continue;
             }
             if (!hasWindows && bindScope.outerScopes.size() > 0) {
-                validateOuterNames(expression, model.getBottomUpColumns(), i, output, sourceAlias(source));
+                validateOuterNames(expression, model.getColumns(), i, output, sourceAlias(source));
             }
             final int cursorSource = i < bindScope.cursorProjectionSources.size() ? bindScope.cursorProjectionSources.getQuick(i) : -1;
             final int aliasIndex = hasWindows && bindScope.windowAliasIds.getQuick(i) >= 0
@@ -975,7 +975,7 @@ public final class SqlBinder implements Mutable {
 
     private boolean collectCursorColumns(QueryModel model) {
         final BindScope scope = ctx.scope();
-        final ObjList<QueryColumn> columns = model.getBottomUpColumns();
+        final ObjList<QueryColumn> columns = model.getColumns();
         scope.cursorProjectionSources.setAll(columns.size(), -1);
         for (int i = 0, n = columns.size(); i < n; i++) {
             final ExpressionNode ast = columns.getQuick(i).getAst();
@@ -1432,8 +1432,8 @@ public final class SqlBinder implements Mutable {
     }
 
     static void linkWindowExpressions(QueryModel model) {
-        for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
-            if (model.getBottomUpColumns().getQuick(i) instanceof WindowExpression window
+        for (int i = 0, n = model.getColumns().size(); i < n; i++) {
+            if (model.getColumns().getQuick(i) instanceof WindowExpression window
                     && window.getAst() != null && window.getAst().windowExpression == null) {
                 window.getAst().windowExpression = window;
             }
