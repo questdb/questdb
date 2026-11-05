@@ -9861,8 +9861,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
             // We require timestamp with asc order.
             final int timestampIndex;
-            // Require timestamp in sub-query when it's not additionally specified as timestamp(col).
-            executionContext.pushTimestampRequiredFlag(model.getTimestamp() == null);
+            // Do not require implicit timestamp synthesis in sub-query when it's not projected (#7626).
+            executionContext.pushTimestampRequiredFlag(false);
             try {
                 factory = generateSubQuery(model, executionContext);
                 timestampIndex = getTimestampIndex(model, factory);

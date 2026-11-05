@@ -25638,7 +25638,7 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     private static String keyedSampleByReuseSql(String fill) {
-        return "SELECT sym, sum(price) FROM (SELECT sym, price FROM trades) SAMPLE BY 1h" + fill;
+        return "SELECT sym, sum(price) FROM (SELECT sym, price, ts FROM trades) SAMPLE BY 1h" + fill;
     }
 
     private static String sampleByPushdownPlan(String fill, String align) {
@@ -26435,6 +26435,21 @@ public class SampleByTest extends AbstractCairoTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan(actualPlan);
+        });
+    }
+
+    @Test
+    public void testSampleByFailsWhenSubqueryDoesNotProvideTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table trades (price double, timestamp timestamp) timestamp(timestamp) partition by day;");
+            assertQuery("""
+                    select max(price) from (select price from trades where timestamp in '$today')
+                     sample by 1m;""")
+                    .fails(0, "base query does not provide designated TIMESTAMP column");
+            assertQuery("""
+                    select max(price) from (select price from trades)
+                     sample by 1m;""")
+                    .fails(0, "base query does not provide designated TIMESTAMP column");
         });
     }
 
