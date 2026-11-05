@@ -4963,7 +4963,7 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
         }
     }
 
-    private void assertOrderedStolenFrameMode(boolean isLimited, boolean isForeign, boolean expectedFiberMode) throws Exception {
+    private void assertOrderedStolenFrameMode(boolean isLimited, boolean isForeign, boolean isFiberModeExpected) throws Exception {
         assertMemoryLeak(() -> {
             final RecordingFiberDispatchController controller = new RecordingFiberDispatchController();
             final FiberRuntime runtime = controller.createRuntime(1);
@@ -5004,7 +5004,7 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                 Assert.assertEquals(1, runtime.drain(1));
                 Assert.assertTrue(ownerTask.isDone());
                 Assert.assertNull(failure.get());
-                Assert.assertEquals(expectedFiberMode, fiberMode.get());
+                Assert.assertEquals(isFiberModeExpected, fiberMode.get());
             } finally {
                 close(runtime);
                 Misc.free(circuitBreaker);
@@ -5063,7 +5063,7 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
         }
     }
 
-    private void assertUnorderedStolenFrameMode(boolean isLimited, boolean isForeign, boolean expectedFiberMode) throws Exception {
+    private void assertUnorderedStolenFrameMode(boolean isLimited, boolean isForeign, boolean isFiberModeExpected) throws Exception {
         assertMemoryLeak(() -> {
             final RecordingFiberDispatchController controller = new RecordingFiberDispatchController();
             final FiberRuntime runtime = controller.createRuntime(1);
@@ -5101,7 +5101,7 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                 Assert.assertEquals(1, runtime.drain(1));
                 Assert.assertTrue(ownerTask.isDone());
                 Assert.assertNull(failure.get());
-                Assert.assertEquals(expectedFiberMode, fiberMode.get());
+                Assert.assertEquals(isFiberModeExpected, fiberMode.get());
             } finally {
                 close(runtime);
                 Misc.free(circuitBreaker);

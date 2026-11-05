@@ -100,6 +100,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private long intervalPlanGeneration;
     private long intervalPlanGenerationCounter;
     private boolean isMetadataProbe;
+    private boolean isSessionScoped;
     private int jitMode;
     private boolean liveViewCompile;
     private MemoryTracker memoryTracker;
@@ -123,7 +124,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private ResourcePoolSupervisor<TableReader> readerPoolSupervisor;
     private long requestFd = -1;
     private @Nullable String sessionResourceGroup;
-    private boolean sessionScoped;
     private TableFunctionView tableFunctionView;
     private boolean useSimpleCircuitBreaker;
     private boolean validationOnly = false;
@@ -508,7 +508,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
 
     @Override
     public boolean isSessionScoped() {
-        return sessionScoped;
+        return isSessionScoped;
     }
 
     @Override
@@ -754,8 +754,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.sessionResourceGroup = Chars.toString(resourceGroup);
     }
 
-    public void setSessionScoped(boolean sessionScoped) {
-        this.sessionScoped = sessionScoped;
+    public void setSessionScoped(boolean isSessionScoped) {
+        this.isSessionScoped = isSessionScoped;
     }
 
     @Override

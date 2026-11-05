@@ -52,7 +52,7 @@ public interface FiberDispatchTicket {
      * Accounts the interval ending at a live FIBER/non-FIBER transition. Must not yield or throw:
      * the caller may already have changed lock ownership. Report failures at the next poll.
      */
-    default void onSuspensionModeChange(boolean fiberMode) {
+    default void onSuspensionModeChange(boolean isFiberMode) {
     }
 
     void onUnmount(FiberDispatchRequest request, boolean wasMounted);
