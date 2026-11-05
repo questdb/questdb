@@ -154,6 +154,18 @@ public final class Fiber implements FiberWaitCoordinator.Target {
     }
 
     /**
+     * Returns whether the mounted Fiber's dispatch is under a CPU limit, so that it can wait for its
+     * group's budget at any cooperative poll.
+     */
+    public static boolean isDispatchLimited() {
+        final Fiber fiber = mountedOrNull();
+        return fiber != null
+                && fiber.dispatchRequest != null
+                && fiber.dispatchContext != null
+                && fiber.dispatchContext.isParallelWorkLimited();
+    }
+
+    /**
      * Returns whether the current Fiber holds a limited CPU grant it cannot give up because it
      * may not park, or its fractional quota requires local parallel work. Such work must not occupy
      * a shared publication ring while waiting for the owner to regain CPU credit.

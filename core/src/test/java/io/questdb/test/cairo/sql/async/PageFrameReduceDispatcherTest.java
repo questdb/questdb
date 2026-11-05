@@ -2162,6 +2162,13 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOrderedFrameStolenByLimitedOwnerDoesNotSuspend() throws Exception {
+        assertOrderedStolenFrameMode(true, true, false);
+        assertOrderedStolenFrameMode(true, false, true);
+        assertOrderedStolenFrameMode(false, true, true);
+    }
+
+    @Test
     public void testOrderedOwnerInlineStealsForeignTaskAcrossSuspend() throws Exception {
         assertMemoryLeak(() -> {
             final FiberRuntime runtime = new FiberRuntime(1);
@@ -4158,6 +4165,13 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnorderedFrameStolenByLimitedOwnerDoesNotSuspend() throws Exception {
+        assertUnorderedStolenFrameMode(true, true, false);
+        assertUnorderedStolenFrameMode(true, false, true);
+        assertUnorderedStolenFrameMode(false, true, true);
+    }
+
+    @Test
     public void testUnorderedOwnerInlineStealsForeignTaskAcrossSuspend() throws Exception {
         assertMemoryLeak(() -> {
             final FiberRuntime runtime = new FiberRuntime(1);
@@ -4440,6 +4454,51 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                     throw failure;
                 }
                 return super.getCircuitBreakerThrottle();
+            }
+        };
+    }
+
+    private static FiberDispatchContext limitedContext(boolean isLimited) {
+        return new FiberDispatchContext() {
+            @Override
+            public boolean isParallelWorkLimited() {
+                return isLimited;
+            }
+        };
+    }
+
+    private static PageFrameSequence<StatefulAtom> newOrderedStealSequence(AtomicReference<Boolean> fiberMode) {
+        return new PageFrameSequence<>(
+                engine,
+                configuration,
+                engine.getMessageBus(),
+                new StatefulAtom() {
+                },
+                (_, _, _, _, _) -> fiberMode.set(SuspensionScope.isFiberMode()),
+                () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_OFFLOAD),
+                1,
+                PageFrameReduceTask.TYPE_FILTER
+        ) {
+            @Override
+            public SqlExecutionCircuitBreaker getCircuitBreaker() {
+                return SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
+            }
+        };
+    }
+
+    private static UnorderedPageFrameSequence<StatefulAtom> newUnorderedStealSequence(AtomicReference<Boolean> fiberMode) {
+        return new UnorderedPageFrameSequence<>(
+                engine,
+                configuration,
+                engine.getMessageBus(),
+                new StatefulAtom() {
+                },
+                (_, _, _, _, _, _) -> fiberMode.set(SuspensionScope.isFiberMode()),
+                1
+        ) {
+            @Override
+            public SqlExecutionCircuitBreaker getCircuitBreaker() {
+                return SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
             }
         };
     }
@@ -4904,6 +4963,59 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
         }
     }
 
+    private void assertOrderedStolenFrameMode(boolean isLimited, boolean isForeign, boolean expectedFiberMode) throws Exception {
+        assertMemoryLeak(() -> {
+            final RecordingFiberDispatchController controller = new RecordingFiberDispatchController();
+            final FiberRuntime runtime = controller.createRuntime(1);
+            final RingQueue<PageFrameReduceTask> queue = new RingQueue<>(
+                    () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_OFFLOAD),
+                    1
+            );
+            final MPSequence pubSeq = new MPSequence(queue.getCycle());
+            final MCSequence subSeq = new MCSequence(queue.getCycle());
+            pubSeq.then(subSeq).then(pubSeq);
+            final AtomicReference<Boolean> fiberMode = new AtomicReference<>();
+            final PageFrameSequence<StatefulAtom> ownerSequence = newOrderedStealSequence(fiberMode);
+            final PageFrameSequence<StatefulAtom> foreignSequence = newOrderedStealSequence(fiberMode);
+            final PageFrameMemoryRecord record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
+            final SqlExecutionCircuitBreakerWrapper circuitBreaker = new SqlExecutionCircuitBreakerWrapper(
+                    engine,
+                    configuration.getCircuitBreakerConfiguration()
+            );
+            final AtomicReference<Throwable> failure = new AtomicReference<>();
+            final FiberTask ownerTask = new FiberTask() {
+                @Override
+                protected void onError(Throwable th) {
+                    failure.set(th);
+                }
+
+                @Override
+                protected boolean runStep() {
+                    Assert.assertFalse(PageFrameReduceJob.consumeQueue(queue, subSeq, record, circuitBreaker, ownerSequence));
+                    return true;
+                }
+            };
+            try {
+                final long cursor = pubSeq.next();
+                Assert.assertTrue(cursor > -1);
+                queue.get(cursor).of(isForeign ? foreignSequence : ownerSequence, 0, false);
+                pubSeq.done(cursor);
+                Assert.assertSame(LaunchResult.LAUNCHED, runtime.launch(ownerTask, limitedContext(isLimited)));
+                Assert.assertEquals(1, runtime.drain(1));
+                Assert.assertTrue(ownerTask.isDone());
+                Assert.assertNull(failure.get());
+                Assert.assertEquals(expectedFiberMode, fiberMode.get());
+            } finally {
+                close(runtime);
+                Misc.free(circuitBreaker);
+                Misc.free(record);
+                Misc.free(foreignSequence);
+                Misc.free(ownerSequence);
+                Misc.free(queue);
+            }
+        });
+    }
+
     private void assertSameRuntimeQueryReducesLocally(
             FiberRuntime runtime,
             PageFrameReduceDispatcher dispatcher,
@@ -4949,6 +5061,56 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
             Assert.assertEquals(0, runtime.getParkedFiberCount());
             Assert.assertEquals(0, dispatcher.getCreatedTaskCount());
         }
+    }
+
+    private void assertUnorderedStolenFrameMode(boolean isLimited, boolean isForeign, boolean expectedFiberMode) throws Exception {
+        assertMemoryLeak(() -> {
+            final RecordingFiberDispatchController controller = new RecordingFiberDispatchController();
+            final FiberRuntime runtime = controller.createRuntime(1);
+            final RingQueue<UnorderedPageFrameReduceTask> queue = new RingQueue<>(UnorderedPageFrameReduceTask::new, 1);
+            final MPSequence pubSeq = new MPSequence(queue.getCycle());
+            final MCSequence subSeq = new MCSequence(queue.getCycle());
+            pubSeq.then(subSeq).then(pubSeq);
+            final AtomicReference<Boolean> fiberMode = new AtomicReference<>();
+            final UnorderedPageFrameSequence<StatefulAtom> ownerSequence = newUnorderedStealSequence(fiberMode);
+            final UnorderedPageFrameSequence<StatefulAtom> foreignSequence = newUnorderedStealSequence(fiberMode);
+            final PageFrameMemoryRecord record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
+            final SqlExecutionCircuitBreakerWrapper circuitBreaker = new SqlExecutionCircuitBreakerWrapper(
+                    engine,
+                    configuration.getCircuitBreakerConfiguration()
+            );
+            final AtomicReference<Throwable> failure = new AtomicReference<>();
+            final FiberTask ownerTask = new FiberTask() {
+                @Override
+                protected void onError(Throwable th) {
+                    failure.set(th);
+                }
+
+                @Override
+                protected boolean runStep() {
+                    Assert.assertFalse(UnorderedPageFrameReduceJob.consumeQueue(queue, subSeq, record, circuitBreaker, ownerSequence));
+                    return true;
+                }
+            };
+            try {
+                final long cursor = pubSeq.next();
+                Assert.assertTrue(cursor > -1);
+                queue.get(cursor).of(isForeign ? foreignSequence : ownerSequence, 0);
+                pubSeq.done(cursor);
+                Assert.assertSame(LaunchResult.LAUNCHED, runtime.launch(ownerTask, limitedContext(isLimited)));
+                Assert.assertEquals(1, runtime.drain(1));
+                Assert.assertTrue(ownerTask.isDone());
+                Assert.assertNull(failure.get());
+                Assert.assertEquals(expectedFiberMode, fiberMode.get());
+            } finally {
+                close(runtime);
+                Misc.free(circuitBreaker);
+                Misc.free(record);
+                Misc.free(foreignSequence);
+                Misc.free(ownerSequence);
+                Misc.free(queue);
+            }
+        });
     }
 
     private void assertUnorderedTailCompletion(TailCompletionScenario scenario) throws Exception {
