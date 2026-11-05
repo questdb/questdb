@@ -854,6 +854,52 @@ public class KeyOrderedPageFrameRecordCursorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFilteredNegativeLimitHoldsOnlyTheRowsItFindsWithinQueryMemoryLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT x id, ('k' || (x % 2))::SYMBOL s, timestamp_sequence(0, 100_000) ts
+                        FROM long_sequence(100_000)
+                    ), INDEX(s) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            sqlExecutionContext.changePageFrameSizes(1_000, 1_000);
+            final String keys = "id, s, ts FROM t WHERE ts IN '1970-01-01' AND s IN ('k0', 'k1') AND test_latched_counter()";
+            // the 80_000 rows of the LIMIT would take 640 KB and the 20_000 rows 160 KB, past the 128 KB of the limit
+            final String[] tails = {
+                    " AND id = 3 ORDER BY s, ts LIMIT -80_000",
+                    " AND id % 1_000 = 0 ORDER BY s, ts LIMIT -80_000",
+                    " AND id > 0 ORDER BY s, ts LIMIT -20_000",
+                    " AND id > 0 ORDER BY s, ts LIMIT -5_000"
+            };
+            // the 5_000 rows fit the memory of the rows the read may keep, so that it filters only the 50_000 rows of the
+            // last key, and each other read gives up on its last rows and filters every row
+            final long[] filteredRowCounts = {-1, -1, -1, 50_000};
+            final String[] expected = new String[tails.length];
+            final StringSink rows = new StringSink();
+            for (int i = 0; i < tails.length; i++) {
+                printSql("SELECT /*+ no_index(t) */ " + keys + tails[i], rows);
+                expected[i] = rows.toString();
+            }
+            node1.setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 128 * 1024L);
+            try {
+                for (int i = 0; i < tails.length; i++) {
+                    assertQuery("SELECT " + keys + tails[i]).noLeakCheck().sizeMayVary().inferTimestamp().withPlanContaining("symbolOrder: asc").returns(expected[i]);
+                    TestLatchedCounterFunctionFactory.reset(null);
+                    printSql("SELECT " + keys + tails[i], rows);
+                    TestUtils.assertEquals(expected[i], rows);
+                    if (filteredRowCounts[i] > 0) {
+                        Assert.assertEquals(filteredRowCounts[i], TestLatchedCounterFunctionFactory.getCount());
+                    } else {
+                        Assert.assertTrue("the read filters every row", TestLatchedCounterFunctionFactory.getCount() >= 100_000);
+                    }
+                }
+            } finally {
+                node1.setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0L);
+            }
+        });
+    }
+
+    @Test
     public void testFilteredNegativeLimitOfDenseGatherGathersItsRows() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 1_000);
         node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 64 * 1024 * 1024L);
@@ -1226,6 +1272,85 @@ public class KeyOrderedPageFrameRecordCursorTest extends AbstractCairoTest {
                 final PageFrameMemoryPool pool = ((AbstractPageFrameRecordCursor) cursor).getFrameMemoryPool();
                 Assert.assertEquals("the read keeps gathering its rows", ParquetDecodeHint.MONOTONIC, pool.getDecodeHint());
                 Assert.assertTrue("decodes: " + pool.getDecodeCount(), pool.getDecodeCount() < 80);
+            }
+        });
+    }
+
+    @Test
+    public void testFilteredWindowsOfLateWideRowHandReadToKeyPasses() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        assertMemoryLeak(() -> {
+            // the 320 row groups of 80 interleaved keys pass the 256 row groups the decode cache keeps, and the 8 MiB row
+            // leaves windows of one row, far more windows than keys, each of which decodes the row groups of its key
+            execute("""
+                    CREATE TABLE w AS (
+                        SELECT x id, ('k' || (x % 80))::SYMBOL s,
+                            (CASE WHEN x = 32_000 THEN concat(
+                                rpad('w', 1_048_576, 'w'), rpad('w', 1_048_576, 'w'), rpad('w', 1_048_576, 'w'), rpad('w', 1_048_576, 'w'),
+                                rpad('w', 1_048_576, 'w'), rpad('w', 1_048_576, 'w'), rpad('w', 1_048_576, 'w'), rpad('w', 1_048_576, 'w')
+                            ) ELSE rpad('w', 16, 'w') END)::VARCHAR payload,
+                            timestamp_sequence(0, 1_000) ts
+                        FROM long_sequence(32_000)
+                    ), INDEX(s) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("INSERT INTO w VALUES (32_001, 'k1', 'x', '1970-01-03')");
+            execute("ALTER TABLE w CONVERT PARTITION TO PARQUET WHERE ts < '1970-01-03'");
+            final String tail = "id, s, payload, ts FROM w WHERE ts IN '1970-01-01' AND s != 'UNKNOWN' AND id > 0 ORDER BY s, ts";
+            final StringSink expected = new StringSink();
+            printSql("SELECT /*+ no_index(w) */ " + tail, expected);
+            assertQuery("SELECT " + tail).noLeakCheck().sizeMayVary().inferTimestamp().withPlanContaining("symbolOrder: asc").returns(expected);
+            try (RecordCursorFactory factory = select("SELECT " + tail); RecordCursor cursor = factory.getBaseFactory().getCursor(sqlExecutionContext)) {
+                TestUtils.assertCursor(expected, cursor, factory.getMetadata(), true, new StringSink());
+                final long decodes = ((AbstractPageFrameRecordCursor) cursor).getFrameMemoryPool().getDecodeCount();
+                // the passes of the two windows that the wide row ends, and a pass of each key over the row groups
+                Assert.assertTrue("decodes: " + decodes, decodes <= 2 * 320 + 80 * 320);
+            }
+        });
+    }
+
+    @Test
+    public void testFilteredWindowsOfLateWideRowOverSmallCacheHandReadToKeyPasses() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 256 * 1024L);
+        assertMemoryLeak(() -> {
+            createPayloadTable("s SYMBOL INDEX", "lpad((x % 500)::STRING, 3, '0')", "CASE WHEN x = 8_000 THEN rpad('w', 1_048_576, 'w') ELSE rpad('w', 16, 'w') END");
+            final StringSink keys = new StringSink();
+            for (int i = 0; i < 500; i++) {
+                keys.put(i > 0 ? ", 'k" : "'k").put(i / 100).put(i / 10 % 10).put(i % 10).put('\'');
+            }
+            final String tail = "id, s, payload, ts FROM w WHERE ts IN '1970-01-01' AND s IN (" + keys + ") AND id > 0 ORDER BY s, ts";
+            final StringSink expected = new StringSink();
+            printSql("SELECT /*+ no_index(w) */ " + tail, expected);
+            assertQuery("SELECT " + tail).noLeakCheck().sizeMayVary().inferTimestamp().returns(expected);
+            try (RecordCursorFactory factory = select("SELECT " + tail); RecordCursor cursor = factory.getBaseFactory().getCursor(sqlExecutionContext)) {
+                TestUtils.assertCursor(expected, cursor, factory.getMetadata(), true, new StringSink());
+                final long decodes = ((AbstractPageFrameRecordCursor) cursor).getFrameMemoryPool().getDecodeCount();
+                // the passes of the two windows that the wide row ends, and a decode for each of the 8_000 rows in the passes
+                Assert.assertTrue("decodes: " + decodes, decodes <= 2 * 80 + 8_000);
+            }
+        });
+    }
+
+    @Test
+    public void testFilteredWindowsWithoutCountsOfIndexHandReadToKeyPasses() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 256 * 1024L);
+        assertMemoryLeak(() -> {
+            // the wide row comes half way through the 80 row groups, so that its window discards fewer of them than a scan
+            createPayloadTable("s SYMBOL INDEX TYPE POSTING", "x % 80", "CASE WHEN x = 4_000 THEN rpad('w', 1_048_576, 'w') ELSE rpad('w', 16, 'w') END");
+            final StringSink keys = new StringSink();
+            for (int i = 0; i < 80; i++) {
+                keys.put(i > 0 ? ", 'k" : "'k").put(i).put('\'');
+            }
+            final String tail = "id, s, payload, ts FROM w WHERE ts IN '1970-01-01' AND s IN (" + keys + ") AND id > 0 ORDER BY s, ts";
+            final StringSink expected = new StringSink();
+            printSql("SELECT /*+ no_index(w) */ " + tail, expected);
+            assertQuery("SELECT " + tail).noLeakCheck().sizeMayVary().inferTimestamp().returns(expected);
+            try (RecordCursorFactory factory = select("SELECT " + tail); RecordCursor cursor = factory.getBaseFactory().getCursor(sqlExecutionContext)) {
+                TestUtils.assertCursor(expected, cursor, factory.getMetadata(), true, new StringSink());
+                final long decodes = ((AbstractPageFrameRecordCursor) cursor).getFrameMemoryPool().getDecodeCount();
+                // the pass of the window that the wide row ends, and a pass of each key over the row groups
+                Assert.assertTrue("decodes: " + decodes, decodes <= 40 + 80 * 80);
             }
         });
     }
