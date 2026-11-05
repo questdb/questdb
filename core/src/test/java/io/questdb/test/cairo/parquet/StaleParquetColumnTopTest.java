@@ -314,11 +314,11 @@ public class StaleParquetColumnTopTest extends AbstractCairoTest {
                         .returns("count\n25\n");
             }
 
-            // reindex keeps the tops of sound partitions: v and b are still absent from day 1
+            // Conversion materializes the NULL rows; reindex keeps the resulting zero column tops.
             try (TableReader reader = getReader("t")) {
                 final long day1 = reader.getPartitionMinTimestampFromMetadata(0);
-                Assert.assertEquals(-1, reader.getColumnVersionReader().getColumnTop(day1, reader.getMetadata().getWriterIndex(reader.getMetadata().getColumnIndex("v"))));
-                Assert.assertEquals(-1, reader.getColumnVersionReader().getColumnTop(day1, reader.getMetadata().getWriterIndex(reader.getMetadata().getColumnIndex("b"))));
+                Assert.assertEquals(0, reader.getColumnVersionReader().getColumnTop(day1, reader.getMetadata().getWriterIndex(reader.getMetadata().getColumnIndex("v"))));
+                Assert.assertEquals(0, reader.getColumnVersionReader().getColumnTop(day1, reader.getMetadata().getWriterIndex(reader.getMetadata().getColumnIndex("b"))));
             }
 
             // a single index of a single partition
