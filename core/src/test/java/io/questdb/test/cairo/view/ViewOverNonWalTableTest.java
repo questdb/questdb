@@ -35,6 +35,7 @@ import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.view.ViewStateStore;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -765,6 +766,51 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
     }
 
     @Test
+    public void testTruncateFailsWhenCheckpointStartsDuringViewCompileWait() throws Exception {
+        // While TRUNCATE waits for a view compile run that holds t's reader, another session
+        // starts a checkpoint. TRUNCATE checks for a checkpoint before each lock attempt, so once
+        // the run ends it fails as it does when the checkpoint starts first, and leaves t's rows be.
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, Long.MAX_VALUE);
+            createTableAndViewsThenAddColumn();
+            try {
+                executeWhileViewCompileHolds(
+                        "t",
+                        PoolListener.SRC_READER,
+                        "TRUNCATE TABLE t",
+                        () -> executeInOwnContext("CHECKPOINT CREATE")
+                );
+                Assert.fail("expected to fail: TRUNCATE TABLE t");
+            } catch (SqlException e) {
+                TestUtils.assertEquals("there is an active query against 't'. Try again.", e.getFlyweightMessage());
+            } finally {
+                execute("CHECKPOINT RELEASE");
+            }
+            capture.drain();
+            capture.assertOnlyOnce(Pattern.quote(WAIT_LINE));
+            assertQuery("t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a\tb
+                            1\tnull
+                            2\tnull
+                            """);
+
+            execute("TRUNCATE TABLE t");
+            assertQuery("t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("a\tb\n");
+            drainViewQueue();
+            assertViewState("v");
+            assertViewState("v_dep");
+            assertViewColumns("v", "a:INT, b:INT");
+            assertViewColumns("v_dep", "a:INT, b:INT");
+        });
+    }
+
+    @Test
     public void testTruncateOfTwoTablesWaitsForViewCompile() throws Exception {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, Long.MAX_VALUE);
@@ -804,6 +850,67 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
     }
 
     @Test
+    public void testTruncateRetriesOnceAfterViewCompileWhenQueryHoldsTable() throws Exception {
+        // A query holds t's reader while a view compile run over another table runs. TRUNCATE
+        // cannot tell the query from the run, so it waits for the run, tries the lock once more,
+        // and then fails on the query as it does today, instead of trying until the timeout.
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, Long.MAX_VALUE);
+            createTableWithRows("t");
+            createTableWithRows("t2");
+            createView("v2", "SELECT * FROM t2");
+            execute("ALTER TABLE t2 ADD COLUMN b INT");
+
+            final ReaderHoldingThread query = ReaderHoldingThread.start(engine, "t");
+            final ViewCompileParker run = ViewCompileParker.ofQueueDrain(engine, "t2", PoolListener.SRC_READER);
+            engine.setPoolListener(run);
+            try {
+                run.start();
+                run.releaseAfterLogged(capture, WAIT_LINE, null);
+                // TRUNCATE reads the clock when it waits for view compile runs. One that kept trying
+                // the lock after the run ended would read it on every try, and never reach the
+                // timeout: end the query after many reads with no run running, so that such a
+                // TRUNCATE succeeds and fails the test.
+                final long ddlThread = Thread.currentThread().threadId();
+                final AtomicInteger clockReadsWithNoRun = new AtomicInteger();
+                testMicrosClock = () -> {
+                    if (Thread.currentThread().threadId() == ddlThread
+                            && !ViewStateStore.isCompileRunRunning(engine.getViewStateStore().getCompileRunActivity())
+                            && clockReadsWithNoRun.incrementAndGet() == 1_000) {
+                        closeQuery(query);
+                    }
+                    return defaultMicrosecondClock.getTicks();
+                };
+                assertDdlFails("TRUNCATE TABLE t", "there is an active query against 't'. Try again.");
+            } finally {
+                testMicrosClock = defaultMicrosecondClock;
+                run.join();
+                engine.setPoolListener(null);
+                query.close();
+            }
+            capture.drain();
+            capture.assertOnlyOnce(Pattern.quote(WAIT_LINE));
+            assertQuery("t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a
+                            1
+                            2
+                            """);
+
+            execute("TRUNCATE TABLE t");
+            assertQuery("t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("a\n");
+            drainViewQueue();
+            assertViewState("v2");
+            assertViewColumns("v2", "a:INT, b:INT");
+        });
+    }
+
+    @Test
     public void testTruncateRightAfterAlterWaitsForViewCompile() throws Exception {
         // The ALTER queues the recompile of the views over t, and the run holds t's reader when
         // TRUNCATE locks t's readers. TRUNCATE waits for the run instead of failing with
@@ -821,6 +928,103 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
             assertViewState("v_dep");
             assertViewColumns("v", "a:INT, b:INT");
             assertViewColumns("v_dep", "a:INT, b:INT");
+        });
+    }
+
+    @Test
+    public void testTruncateWaitsAtMostBusyWaitTimeoutOverAllWaits() throws Exception {
+        // The busy wait timeout bounds all waits of one TRUNCATE together. The test clock stands
+        // still while TRUNCATE waits for a view compile run over t, and a query holds t meanwhile.
+        // The second lock attempt of TRUNCATE closes the reader that the run left in the pool: at
+        // that moment the clock moves by the whole timeout, and a run over t2 starts. The attempt
+        // fails on the query while that run runs, and TRUNCATE gives up at once instead of waiting
+        // for the run.
+        assertMemoryLeak(() -> {
+            final long timeoutMillis = 1_000;
+            node1.setProperty(PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, timeoutMillis);
+            createTableWithRows("t");
+            createTableWithRows("t2");
+            createView("v2", "SELECT * FROM t2");
+            createViewsThenAddColumn();
+            setCurrentMicros(ALTER_MICROS);
+
+            final ViewCompileParker runOverT = ViewCompileParker.ofQueueDrain(engine, "t", PoolListener.SRC_READER);
+            final ViewCompileParker runOverT2 = ViewCompileParker.ofQueueDrain(engine, "t2", PoolListener.SRC_READER);
+            final AtomicInteger readerCloses = new AtomicInteger();
+            final long ddlThread = Thread.currentThread().threadId();
+            engine.setPoolListener((factoryType, thread, tableToken, event, segment, position) -> {
+                runOverT.onEvent(factoryType, thread, tableToken, event, segment, position);
+                runOverT2.onEvent(factoryType, thread, tableToken, event, segment, position);
+                // Runs on the DDL thread, inside the second lock attempt, which reads the clock once
+                // it fails. The attempt holds the lock of t's readers, so a run over t could not
+                // borrow one: the run that starts here reads t2.
+                if (thread == ddlThread
+                        && factoryType == PoolListener.SRC_READER
+                        && event == PoolListener.EV_LOCK_CLOSE
+                        && Chars.equals(tableToken.getTableName(), "t")
+                        && readerCloses.incrementAndGet() == 1) {
+                    currentMicros += timeoutMillis * 1_000;
+                    engine.enqueueCompileView(engine.verifyTableName("t2"));
+                    startRun(runOverT2);
+                }
+            });
+            // a TRUNCATE that waited past the timeout would wait for the parked run over t2
+            // forever: release that run after a while, so that such a TRUNCATE ends and fails the
+            // test
+            final CountDownLatch isTruncateDone = new CountDownLatch(1);
+            final Thread watchdog = new Thread(() -> {
+                try {
+                    if (!isTruncateDone.await(30, TimeUnit.SECONDS)) {
+                        runOverT2.release();
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            });
+            watchdog.start();
+            ReaderHoldingThread query = null;
+            try {
+                runOverT.start();
+                // The run holds t's reader in the pool's first slot, so the query takes the second
+                // slot. The first lock attempt of TRUNCATE fails on the run's slot, and the second
+                // one closes the reader that the run returned there before it fails on the query.
+                query = ReaderHoldingThread.start(engine, "t");
+                runOverT.releaseAfterLogged(capture, WAIT_LINE, null);
+                assertDdlFails("TRUNCATE TABLE t", "there is an active query against 't'. Try again.");
+                Assert.assertTrue(
+                        "TRUNCATE waited for the run over t2",
+                        ViewStateStore.isCompileRunRunning(engine.getViewStateStore().getCompileRunActivity())
+                );
+            } finally {
+                isTruncateDone.countDown();
+                watchdog.join();
+                runOverT.join();
+                runOverT2.join();
+                engine.setPoolListener(null);
+                if (query != null) {
+                    query.close();
+                }
+            }
+            Assert.assertEquals(1, readerCloses.get());
+            capture.drain();
+            capture.assertOnlyOnce(Pattern.quote(WAIT_LINE));
+            assertQuery("t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a\tb
+                            1\tnull
+                            2\tnull
+                            """);
+
+            // The failed second attempt kept the first slot of t's reader pool, as any failed lock
+            // attempt keeps the slots it took. TRUNCATE on the same thread passes over the slot,
+            // and its unlock drops t's pool entry with the slot.
+            execute("TRUNCATE TABLE t");
+            assertQuery("t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("a\tb\n");
         });
     }
 
@@ -930,6 +1134,14 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
             }
         }
         Assert.assertEquals(expectedColumns, sink.toString());
+    }
+
+    private static void closeQuery(ReaderHoldingThread query) {
+        try {
+            query.close();
+        } catch (InterruptedException e) {
+            throw new AssertionError(e);
+        }
     }
 
     // counts the DDL thread's locks of t's pooled metadata, one per lock attempt of DROP or RENAME
