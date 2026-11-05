@@ -44,6 +44,7 @@ import io.questdb.std.Os;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.LimitedMemoryTracker;
+import io.questdb.test.tools.MethodCheckCircuitBreaker;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
@@ -203,7 +204,7 @@ public class HashJoinGroupByCancellationTest extends AbstractCairoTest {
                     final MethodCheckCircuitBreaker breaker = new MethodCheckCircuitBreaker(
                             db, UnorderedPageFrameSequence.class.getName(), "reduceLocally", 3, true);
                     final AtomicInteger filteredAtCancel = new AtomicInteger(-1);
-                    breaker.onReached = () -> filteredAtCancel.set(TestLatchedCounterFunctionFactory.getCount());
+                    breaker.setOnReached(() -> filteredAtCancel.set(TestLatchedCounterFunctionFactory.getCount()));
                     TestLatchedCounterFunctionFactory.reset(null);
                     context.with(breaker);
                     try (RecordCursor cursor = factory.getCursor(context)) {
@@ -488,14 +489,14 @@ public class HashJoinGroupByCancellationTest extends AbstractCairoTest {
                                 final MethodCheckCircuitBreaker breaker = new MethodCheckCircuitBreaker(
                                         db, HashJoinBuildFrames.class.getName(), "beginCopy", 1, false);
                                 final AtomicReference<ObjList<ParquetFile>> originals = new AtomicReference<>();
-                                breaker.onReached = () -> {
+                                breaker.setOnReached(() -> {
                                     Assert.assertNotNull(atom.getFrozenBuild());
                                     try {
                                         originals.set(corruptParquetPages(db, "b"));
                                     } catch (IOException e) {
                                         throw new AssertionError(e);
                                     }
-                                };
+                                });
                                 context.with(breaker);
                                 try (RecordCursor cursor = factory.getCursor(context)) {
                                     cursor.hasNext();
@@ -646,64 +647,6 @@ public class HashJoinGroupByCancellationTest extends AbstractCairoTest {
      * one runs its hook and, when asked to, cancels the query. A breaker of a class of its own is
      * thread safe, so the workers consult it directly rather than through a copy.
      */
-    private static class MethodCheckCircuitBreaker extends AtomicBooleanCircuitBreaker {
-        private static final StackWalker STACK_WALKER = StackWalker.getInstance();
-        private final AtomicInteger checks = new AtomicInteger();
-        private final String className;
-        private final boolean isCancelling;
-        private final String methodName;
-        private final int reachedCheck;
-        // Runs at the given check, before the breaker cancels the query there.
-        private volatile Runnable onReached;
-
-        private MethodCheckCircuitBreaker(CairoEngine engine, String className, String methodName, int reachedCheck, boolean isCancelling) {
-            super(engine);
-            this.className = className;
-            this.methodName = methodName;
-            this.reachedCheck = reachedCheck;
-            this.isCancelling = isCancelling;
-        }
-
-        @Override
-        public boolean checkIfTripped() {
-            onCheck();
-            return super.checkIfTripped();
-        }
-
-        public int getChecks() {
-            return checks.get();
-        }
-
-        @Override
-        public int getState() {
-            onCheck();
-            return super.getState();
-        }
-
-        @Override
-        public void statefulThrowExceptionIfTrippedNoThrottle() {
-            onCheck();
-            super.statefulThrowExceptionIfTrippedNoThrottle();
-        }
-
-        private boolean isInside() {
-            return STACK_WALKER.walk(frames -> frames.anyMatch(frame -> frame.getClassName().equals(className)
-                    && frame.getMethodName().equals(methodName)));
-        }
-
-        private void onCheck() {
-            if (isInside() && checks.incrementAndGet() == reachedCheck) {
-                final Runnable hook = onReached;
-                if (hook != null) {
-                    hook.run();
-                }
-                if (isCancelling) {
-                    cancel();
-                }
-            }
-        }
-    }
-
     private record ParquetFile(Path path, byte[] contents) {
     }
 

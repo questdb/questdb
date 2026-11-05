@@ -38,6 +38,7 @@ import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
@@ -45,20 +46,26 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.griffin.engine.functions.test.TestFaultFunctionFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
+import io.questdb.griffin.engine.table.GroupByShardingContext;
 import io.questdb.griffin.engine.table.IndexGatherPageFrameCursor;
 import io.questdb.griffin.engine.table.IndexGatherRecordCursorFactory;
 import io.questdb.griffin.engine.table.IndexScanChoiceRecordCursorFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Chars;
+import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.Misc;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.mp.TestWorkerPool;
+import io.questdb.test.tools.LimitedMemoryTracker;
+import io.questdb.test.tools.MethodCheckCircuitBreaker;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.After;
@@ -478,6 +485,72 @@ public class IndexGatherGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testErrorOtherThanMemoryLimitIsNotRetried() throws Exception {
+        // Only the memory limit sends an index gather to its retry on one map: a task's error, and
+        // a cancellation while the maps merge, fail the query as they are, and the factory runs
+        // again. With four worker slots and no pool to run them, the query's thread runs every task.
+        // test_fault() folds to true outside dev mode
+        setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            try (SqlExecutionContextImpl ctx = TestUtils.createSqlExecutionCtx(engine, bindVariableService, 4)) {
+                engine.execute("create table m (sym symbol index type posting, k varchar, v long, ts timestamp) timestamp(ts) partition by day bypass wal", ctx);
+                engine.execute("insert into m select rnd_symbol('A', 'B', 'C', 'D'), (x % 40_000)::varchar, x, timestamp_sequence(0, 1_000_000L) from long_sequence(200_000)", ctx);
+                final String[] queries = {
+                        "select k, count() n, sum(v) s from m where sym in ('A', 'B', 'C') and test_fault() order by k",
+                        "select count_distinct(v % 40_000) c, count() n, sum(v) s from m where sym in ('A', 'B', 'C') and test_fault()",
+                };
+                final SqlExecutionCircuitBreaker defaultBreaker = ctx.getCircuitBreaker();
+                for (int q = 0; q < queries.length; q++) {
+                    final String sql = queries[q];
+                    final boolean keyed = q == 0;
+                    setFeatures(false, false);
+                    final String expected = runToString(engine, ctx, sql);
+                    setFeatures(true, false);
+                    try (
+                            SqlCompiler compiler = engine.getSqlCompiler();
+                            RecordCursorFactory factory = compiler.compile(sql, ctx).getRecordCursorFactory()
+                    ) {
+                        final RecordCursorFactory groupBy = keyed ? findAsyncGather(factory) : findAsyncNotKeyedGather(factory);
+                        Assert.assertNotNull(sql, groupBy);
+                        // a task fails
+                        TestFaultFunctionFactory.armToFailAfter(1_000);
+                        try {
+                            print(factory, ctx);
+                            Assert.fail("expected the task's error: " + sql);
+                        } catch (CairoException e) {
+                            TestUtils.assertContains(e.getFlyweightMessage(), "test_fault: injected failure");
+                            Assert.assertFalse(e.isOutOfMemory());
+                        } finally {
+                            TestFaultFunctionFactory.disarm();
+                        }
+                        Assert.assertEquals(1, TestFaultFunctionFactory.faultsTriggered());
+                        Assert.assertEquals(sql, 0, getSerialRetries(groupBy));
+                        TestUtils.assertEquals(sql, expected, print(factory, ctx));
+                        if (keyed) {
+                            // the query is cancelled at the merge's first check
+                            final MethodCheckCircuitBreaker breaker = new MethodCheckCircuitBreaker(engine, GroupByShardingContext.class.getName(), "mergeShards", 1, true);
+                            ctx.with(breaker);
+                            try {
+                                print(factory, ctx);
+                                Assert.fail("expected the cancellation: " + sql);
+                            } catch (CairoException e) {
+                                Assert.assertTrue(e.getFlyweightMessage().toString(), e.isCancellation());
+                                Assert.assertFalse(e.isOutOfMemory());
+                            } finally {
+                                ctx.with(defaultBreaker);
+                            }
+                            // it tripped there; the merge drains its queued tasks, checking on
+                            Assert.assertTrue(breaker.getChecks() > 0);
+                            Assert.assertEquals(sql, 0, getSerialRetries(groupBy));
+                            TestUtils.assertEquals(sql, expected, print(factory, ctx));
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testExplain() throws Exception {
         assertMemoryLeak(() -> {
             createTable(engine, sqlExecutionContext, "t", 1000, 11);
@@ -702,60 +775,250 @@ public class IndexGatherGroupByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testMemoryLimitFallsBackToOneMap() throws Exception {
-        // a query whose per-worker maps break the limit while one map fits completes with the
-        // same rows on the query's thread
+    public void testMemoryLimitAtEveryStepLeavesNothingCharged() throws Exception {
+        // Raising the limit step by step until the index gather fits fails it at allocations of
+        // the workers' maps, of their merge, and of the retry on one map. Each failure leaves
+        // nothing charged and no worker slot taken, and a retry runs at most once. With four
+        // worker slots and no pool to run them, the query's thread runs every task, so every run
+        // allocates the same: the keyed merge also shards the workers' empty maps and needs more
+        // than the retry, so the first limit that fits it is one its retry fits; the not-keyed
+        // merge has no worker values to merge.
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
-            TestUtils.execute(pool, (engine, compiler, ctx) -> {
+            try (
+                    SqlExecutionContextImpl ctx = TestUtils.createSqlExecutionCtx(engine, bindVariableService, 4);
+                    LimitedMemoryTracker tracker = new LimitedMemoryTracker(Long.MAX_VALUE)
+            ) {
+                engine.execute("create table m (sym symbol index type posting, k varchar, v long, ts timestamp) timestamp(ts) partition by day bypass wal", ctx);
+                engine.execute("insert into m select rnd_symbol('A', 'B', 'C', 'D'), (x % 40_000)::varchar, x, timestamp_sequence(0, 1_000_000L) from long_sequence(200_000)", ctx);
+                final String[] queries = {
+                        "select k, count() n, sum(v) s from m where sym in ('A', 'B', 'C') order by k",
+                        "select count_distinct(v % 40_000) c, count() n, sum(v) s from m where sym in ('A', 'B', 'C')",
+                };
+                for (int q = 0; q < queries.length; q++) {
+                    final String sql = queries[q];
+                    final boolean keyed = q == 0;
+                    setFeatures(false, false);
+                    final String expected = runToString(engine, ctx, sql);
+                    setFeatures(true, false);
+                    try (
+                            SqlCompiler compiler = engine.getSqlCompiler();
+                            RecordCursorFactory factory = compiler.compile(sql, ctx).getRecordCursorFactory()
+                    ) {
+                        // the GROUP BY alone: the sort above it would charge too
+                        final RecordCursorFactory groupBy = keyed ? findAsyncGather(factory) : findAsyncNotKeyedGather(factory);
+                        Assert.assertNotNull(sql, groupBy);
+                        // the first power of two that fits sizes the steps
+                        long fitting = 1024;
+                        while (!isFitting(groupBy, ctx, tracker, fitting)) {
+                            fitting *= 2;
+                        }
+                        final long step = fitting / 64;
+                        int failures = 0;
+                        int retriedFailures = 0;
+                        for (long limit = step; ; limit += step) {
+                            final long retriesBefore = getSerialRetries(groupBy);
+                            final boolean fits = isFitting(groupBy, ctx, tracker, limit);
+                            final long retries = getSerialRetries(groupBy) - retriesBefore;
+                            Assert.assertTrue(sql + ", limit " + limit, retries <= 1);
+                            if (fits) {
+                                if (keyed) {
+                                    Assert.assertEquals(sql + ", limit " + limit, 1, retries);
+                                }
+                                break;
+                            }
+                            failures++;
+                            retriedFailures += (int) retries;
+                        }
+                        final String counts = sql + ": failures " + failures + ", retried " + retriedFailures;
+                        Assert.assertTrue(counts, failures > 10);
+                        Assert.assertTrue(counts, retriedFailures > 0);
+                        // the factory still runs, with the serial plan's rows
+                        TestUtils.assertEquals(sql, expected, print(factory, ctx));
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testMemoryLimitFallsBackToOneMap() throws Exception {
+        // the maps shard: the merge shards what is left and builds the merged shards
+        assertMemoryLimitFallsBackToOneMap("select k, count() n, sum(v) s from m where sym in ('A', 'B', 'C') order by k");
+    }
+
+    @Test
+    public void testMemoryLimitFallsBackToOneValue() throws Exception {
+        // not keyed: the merge grows the owner's set of distinct values by the workers' ones
+        assertMemoryLimitFallsBackToOneMap("select count_distinct(v % 40_000) c, count() n, sum(v) s from m where sym in ('A', 'B', 'C')");
+    }
+
+    @Test
+    public void testMemoryLimitInMergeFallsBackToOneMap() throws Exception {
+        // The workers' maps can fit the limit while their merge, which still holds them as it
+        // builds the merged maps, does not. With four worker slots and no pool to run them, the
+        // query's thread runs every task: the groups all land in its own map, the workers' maps
+        // stay empty, and the merge shards them too, 256 shard maps each, at every run. The
+        // gather then holds less than the serial plan, its merge more. Each limit at which the
+        // serial plan completes must complete the index plan too, which retries on one map; the
+        // choice's scan plan falls back to it, and it retries in turn.
+        assertMemoryLeak(() -> {
+            try (SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine, bindVariableService, 4)) {
                 engine.execute("create table m (sym symbol index type posting, k varchar, v long, ts timestamp) timestamp(ts) partition by day bypass wal", ctx);
                 engine.execute("insert into m select rnd_symbol('A', 'B', 'C', 'D'), (x % 40_000)::varchar, x, timestamp_sequence(0, 1_000_000L) from long_sequence(200_000)", ctx);
                 final String sql = "select k, count() n, sum(v) s from m where sym in ('A', 'B', 'C') order by k";
                 setFeatures(false, false);
                 final String expected = runToString(engine, ctx, sql);
-                boolean gatherRetried = false;
-                boolean choiceFellBack = false;
-                for (long limit = 2L << 20; limit <= 48L << 20; limit += 1L << 20) {
-                    boolean hasFallenBack = false;
+                boolean mergeRetried = false;
+                boolean choiceRetried = false;
+                boolean failed = false;
+                for (long limit = 2L << 20; limit <= 10L << 20; limit += 1L << 20) {
                     setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, limit);
                     setFeatures(false, false);
-                    final String serial;
+                    boolean serialCompletes = true;
                     try {
-                        serial = runToString(engine, ctx, sql);
+                        TestUtils.assertEquals(expected, runToString(engine, ctx, sql));
                     } catch (CairoException e) {
                         Assert.assertTrue(e.isOutOfMemory());
-                        continue;
+                        serialCompletes = false;
                     }
-                    TestUtils.assertEquals(expected, serial);
                     for (boolean choice : new boolean[]{false, true}) {
                         setFeatures(true, choice);
-                        try (RecordCursorFactory factory = compiler.compile(sql, ctx).getRecordCursorFactory()) {
-                            TestUtils.assertEquals("limit " + limit, expected, print(factory, ctx));
-                            if (choice) {
-                                final IndexScanChoiceRecordCursorFactory chooser = findChoice(factory);
-                                Assert.assertNotNull(chooser);
-                                hasFallenBack |= chooser.getMemoryLimitFallbacks() > 0;
-                                choiceFellBack |= chooser.getMemoryLimitFallbacks() > 0;
-                            } else {
-                                final AsyncGroupByRecordCursorFactory async = findAsyncGather(factory);
-                                Assert.assertNotNull(async);
-                                hasFallenBack |= async.getSerialRetries() > 0;
-                                gatherRetried |= async.getSerialRetries() > 0;
+                        try (
+                                SqlCompiler compiler = engine.getSqlCompiler();
+                                RecordCursorFactory factory = compiler.compile(sql, ctx).getRecordCursorFactory()
+                        ) {
+                            final AsyncGroupByRecordCursorFactory async = findAsyncGather(factory);
+                            Assert.assertNotNull(async);
+                            try {
+                                TestUtils.assertEquals("limit " + limit, expected, print(factory, ctx));
+                            } catch (CairoException e) {
+                                // only where the serial plan fails too, and with the limit's error
+                                Assert.assertFalse("limit " + limit + ": " + e.getFlyweightMessage(), serialCompletes);
+                                Assert.assertTrue(e.isOutOfMemory());
+                                TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                                // a failed retry fails the query, it does not retry again
+                                Assert.assertTrue(async.getSerialRetries() <= 1);
+                                failed = true;
+                                continue;
+                            }
+                            // the gather holds less than the serial plan: a limit the serial plan
+                            // fits retries only for the merge
+                            if (serialCompletes && async.getSerialRetries() > 0) {
+                                Assert.assertEquals(1, async.getSerialRetries());
+                                if (choice) {
+                                    Assert.assertEquals(1, findChoice(factory).getMemoryLimitFallbacks());
+                                    choiceRetried = true;
+                                } else {
+                                    mergeRetried = true;
+                                }
                             }
                         }
                     }
-                    if (gatherRetried && choiceFellBack && !hasFallenBack) {
-                        // both fallbacks seen, and this limit needs neither: the larger limits run
-                        // as this one did
-                        break;
-                    }
                 }
                 setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
-                // the limits must have reached both fallbacks: the scan plan's, which opens the
-                // index plan, and the index gather's own, which runs its tasks on one map
-                Assert.assertTrue("no limit made the index gather retry serially", gatherRetried);
-                Assert.assertTrue("no limit made the scan plan fall back", choiceFellBack);
-            }, configuration, LOG);
+                Assert.assertTrue("no limit failed the query", failed);
+                Assert.assertTrue("no limit made the merge retry", mergeRetried);
+                Assert.assertTrue("no limit made the scan plan fall back to an index plan that retries", choiceRetried);
+                // the table and the factory still work
+                setFeatures(true, false);
+                TestUtils.assertEquals(expected, runToString(engine, ctx, sql));
+            }
+        });
+    }
+
+    @Test
+    public void testMemoryLimitRetryThatCannotReopenLeavesNothingCharged() throws Exception {
+        // The retry frees the parallel pass and opens its base again. Should that open fail, the
+        // query fails with that error, nothing stays charged, no worker slot stays taken, and the
+        // factory runs again. The open's n-th function init fails for n = 0, 1, ...: first in the
+        // parallel pass's open, then in the retry's, until neither fails; also with the checked
+        // SqlException, which the retry, inside the cursor, raises as a CairoException. With four
+        // worker slots and no pool to run them, the query's thread runs every task: the keyed
+        // merge, which also shards the workers' empty maps, needs more than the retry, so a limit
+        // fits the retry only; the not-keyed pass needs what its retry does, so a limit that fails
+        // the pass fails the retry too, past its open.
+        // test_fault() folds to true outside dev mode
+        setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            try (
+                    SqlExecutionContextImpl ctx = TestUtils.createSqlExecutionCtx(engine, bindVariableService, 4);
+                    LimitedMemoryTracker tracker = new LimitedMemoryTracker(Long.MAX_VALUE)
+            ) {
+                engine.execute("create table m (sym symbol index type posting, k varchar, v long, ts timestamp) timestamp(ts) partition by day bypass wal", ctx);
+                engine.execute("insert into m select rnd_symbol('A', 'B', 'C', 'D'), (x % 40_000)::varchar, x, timestamp_sequence(0, 1_000_000L) from long_sequence(200_000)", ctx);
+                final String[] queries = {
+                        "select k, count() n, sum(v) s from m where sym in ('A', 'B', 'C') and test_fault() order by k",
+                        "select count_distinct(v % 40_000) c, count() n, sum(v) s from m where sym in ('A', 'B', 'C') and test_fault()",
+                };
+                for (int q = 0; q < queries.length; q++) {
+                    final String sql = queries[q];
+                    final boolean keyed = q == 0;
+                    setFeatures(false, false);
+                    final String expected = runToString(engine, ctx, sql);
+                    setFeatures(true, false);
+                    try (
+                            SqlCompiler compiler = engine.getSqlCompiler();
+                            RecordCursorFactory factory = compiler.compile(sql, ctx).getRecordCursorFactory()
+                    ) {
+                        final RecordCursorFactory groupBy = keyed ? findAsyncGather(factory) : findAsyncNotKeyedGather(factory);
+                        Assert.assertNotNull(sql, groupBy);
+                        // keyed: the smallest power of two the retry fits, and the parallel pass
+                        // does not; not keyed: the largest one that fails the pass, and the retry
+                        long limit = 1024;
+                        long retries = getSerialRetries(groupBy);
+                        while (!isFitting(groupBy, ctx, tracker, limit)) {
+                            limit *= 2;
+                            retries = getSerialRetries(groupBy);
+                        }
+                        if (keyed) {
+                            Assert.assertEquals(sql, retries + 1, getSerialRetries(groupBy));
+                        } else {
+                            Assert.assertEquals(sql, retries, getSerialRetries(groupBy));
+                            limit /= 2;
+                        }
+                        for (boolean isSqlException : new boolean[]{false, true}) {
+                            int parallelOpenFailures = 0;
+                            int retryOpenFailures = 0;
+                            for (int n = 0; ; n++) {
+                                final String at = sql + ", n = " + n + ", SqlException " + isSqlException;
+                                final long retriesBefore = getSerialRetries(groupBy);
+                                if (isSqlException) {
+                                    TestFaultFunctionFactory.armToFailAfterInitsWithSqlException(n);
+                                } else {
+                                    TestFaultFunctionFactory.armToFailAfterInits(n);
+                                }
+                                try {
+                                    Assert.assertEquals(at, keyed, isFitting(groupBy, ctx, tracker, limit));
+                                    Assert.assertEquals(at, 0, TestFaultFunctionFactory.faultsTriggered());
+                                    Assert.assertEquals(at, retriesBefore + 1, getSerialRetries(groupBy));
+                                    break;
+                                } catch (SqlException | CairoException e) {
+                                    // isFitting() has asserted that nothing stays charged and no slot taken
+                                    TestUtils.assertContains(((FlyweightMessageContainer) e).getFlyweightMessage(), "test_fault: injected init failure");
+                                    if (getSerialRetries(groupBy) == retriesBefore) {
+                                        // the parallel pass's open, which the factory raises as it is
+                                        Assert.assertEquals(at, 0, retryOpenFailures);
+                                        Assert.assertEquals(at, isSqlException, e instanceof SqlException);
+                                        parallelOpenFailures++;
+                                    } else {
+                                        // the retry's open, which the cursor raises
+                                        Assert.assertEquals(at, retriesBefore + 1, getSerialRetries(groupBy));
+                                        Assert.assertTrue(at, e instanceof CairoException);
+                                        Assert.assertFalse(at, ((CairoException) e).isOutOfMemory());
+                                        retryOpenFailures++;
+                                    }
+                                } finally {
+                                    TestFaultFunctionFactory.disarm();
+                                }
+                            }
+                            final String counts = sql + ", SqlException " + isSqlException + ": parallel pass's open failed " + parallelOpenFailures + ", the retry's " + retryOpenFailures;
+                            Assert.assertTrue(counts, parallelOpenFailures > 0);
+                            Assert.assertTrue(counts, retryOpenFailures > 0);
+                        }
+                        TestUtils.assertEquals(sql, expected, print(factory, ctx));
+                    }
+                }
+            }
         });
     }
 
@@ -1397,6 +1660,17 @@ public class IndexGatherGroupByTest extends AbstractCairoTest {
         return null;
     }
 
+    private static AsyncGroupByNotKeyedRecordCursorFactory findAsyncNotKeyedGather(RecordCursorFactory factory) {
+        RecordCursorFactory f = factory;
+        for (int i = 0; f != null && i < 6; i++) {
+            if (f instanceof AsyncGroupByNotKeyedRecordCursorFactory async && async.getBaseFactory() instanceof IndexGatherRecordCursorFactory) {
+                return async;
+            }
+            f = f instanceof IndexScanChoiceRecordCursorFactory choice ? choice.getIndexPlan() : f.getBaseFactory();
+        }
+        return null;
+    }
+
     private static IndexScanChoiceRecordCursorFactory findChoice(RecordCursorFactory factory) {
         RecordCursorFactory f = factory;
         for (int i = 0; f != null && i < 6; i++) {
@@ -1425,6 +1699,43 @@ public class IndexGatherGroupByTest extends AbstractCairoTest {
             f = f.getBaseFactory();
         }
         return null;
+    }
+
+    private static long getSerialRetries(RecordCursorFactory factory) {
+        final AsyncGroupByRecordCursorFactory keyed = findAsyncGather(factory);
+        if (keyed != null) {
+            return keyed.getSerialRetries();
+        }
+        final AsyncGroupByNotKeyedRecordCursorFactory notKeyed = findAsyncNotKeyedGather(factory);
+        Assert.assertNotNull(notKeyed);
+        return notKeyed.getSerialRetries();
+    }
+
+    private static PerWorkerLocks getPerWorkerLocks(RecordCursorFactory groupBy) {
+        return groupBy instanceof AsyncGroupByRecordCursorFactory keyed
+                ? keyed.getAtom().getPerWorkerLocks()
+                : ((AsyncGroupByNotKeyedRecordCursorFactory) groupBy).getAtom().getPerWorkerLocks();
+    }
+
+    private static boolean isFitting(RecordCursorFactory groupBy, SqlExecutionContextImpl ctx, LimitedMemoryTracker tracker, long limit) throws SqlException {
+        tracker.setLimit(limit);
+        ctx.setMemoryTracker(tracker);
+        try (RecordCursor cursor = groupBy.getCursor(ctx)) {
+            //noinspection StatementWithEmptyBody
+            while (cursor.hasNext()) {
+            }
+            return true;
+        } catch (CairoException e) {
+            if (!e.isOutOfMemory()) {
+                throw e;
+            }
+            return false;
+        } finally {
+            // whatever failed, the limit or not
+            ctx.setMemoryTracker(null);
+            Assert.assertEquals("limit " + limit, 0, tracker.getUsed());
+            Assert.assertEquals("limit " + limit, 0, getPerWorkerLocks(groupBy).getAcquiredSlotCount());
+        }
     }
 
     private static String print(RecordCursorFactory factory, SqlExecutionContext ctx) throws SqlException {
@@ -1461,6 +1772,61 @@ public class IndexGatherGroupByTest extends AbstractCairoTest {
     private static void setFeatures(boolean gather, boolean choice) {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_INDEX_GROUPBY_ENABLED, String.valueOf(gather));
         setProperty(PropertyKey.CAIRO_SQL_INDEX_SCAN_CHOICE_ENABLED, String.valueOf(choice));
+    }
+
+    private void assertMemoryLimitFallsBackToOneMap(String sql) throws Exception {
+        // a query whose per-worker maps, or their merge, break the limit while one map fits
+        // completes with the same rows on the query's thread
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(pool, (engine, compiler, ctx) -> {
+                engine.execute("create table m (sym symbol index type posting, k varchar, v long, ts timestamp) timestamp(ts) partition by day bypass wal", ctx);
+                engine.execute("insert into m select rnd_symbol('A', 'B', 'C', 'D'), (x % 40_000)::varchar, x, timestamp_sequence(0, 1_000_000L) from long_sequence(200_000)", ctx);
+                setFeatures(false, false);
+                final String expected = runToString(engine, ctx, sql);
+                boolean gatherRetried = false;
+                boolean choiceFellBack = false;
+                for (long limit = 2L << 20; limit <= 48L << 20; limit += 1L << 20) {
+                    boolean hasFallenBack = false;
+                    setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, limit);
+                    setFeatures(false, false);
+                    final String serial;
+                    try {
+                        serial = runToString(engine, ctx, sql);
+                    } catch (CairoException e) {
+                        Assert.assertTrue(e.isOutOfMemory());
+                        continue;
+                    }
+                    TestUtils.assertEquals(expected, serial);
+                    for (boolean choice : new boolean[]{false, true}) {
+                        setFeatures(true, choice);
+                        try (RecordCursorFactory factory = compiler.compile(sql, ctx).getRecordCursorFactory()) {
+                            TestUtils.assertEquals("limit " + limit, expected, print(factory, ctx));
+                            if (choice) {
+                                final IndexScanChoiceRecordCursorFactory chooser = findChoice(factory);
+                                Assert.assertNotNull(chooser);
+                                hasFallenBack |= chooser.getMemoryLimitFallbacks() > 0;
+                                choiceFellBack |= chooser.getMemoryLimitFallbacks() > 0;
+                            } else {
+                                final long serialRetries = getSerialRetries(factory);
+                                hasFallenBack |= serialRetries > 0;
+                                gatherRetried |= serialRetries > 0;
+                            }
+                        }
+                    }
+                    if (gatherRetried && choiceFellBack && !hasFallenBack) {
+                        // both fallbacks seen, and this limit needs neither: the larger limits run
+                        // as this one did
+                        break;
+                    }
+                }
+                setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
+                // the limits must have reached both fallbacks: the scan plan's, which opens the
+                // index plan, and the index gather's own, which runs its tasks on one map
+                Assert.assertTrue("no limit made the index gather retry serially", gatherRetried);
+                Assert.assertTrue("no limit made the scan plan fall back", choiceFellBack);
+            }, configuration, LOG);
+        });
     }
 
     private void assertCancellationPoolsHeldCursor(String table, WorkerPool pool) throws Exception {

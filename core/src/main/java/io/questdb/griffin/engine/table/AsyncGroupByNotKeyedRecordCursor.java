@@ -44,6 +44,7 @@ import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
@@ -51,14 +52,13 @@ import org.jetbrains.annotations.TestOnly;
 
 class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
     private static final Log LOG = LogFactory.getLog(AsyncGroupByNotKeyedRecordCursor.class);
-    // the base of an index gather, which a serial retry reopens, see buildValue()
+    // the base of an index gather, which a serial retry reopens, see gatherAndMerge()
     private final RecordCursorFactory base;
     // the reducer of an index gather's tasks, null for a GROUP BY over page frames
     private final UnorderedPageFrameReducer gatherReducer;
     private final ObjList<GroupByFunction> groupByFunctions;
     private final VirtualRecord recordA;
     private SqlExecutionContext executionContext;
-    private boolean isSerialRetry;
     private long serialRetries;
     private SqlExecutionCircuitBreaker circuitBreaker;
     private UnorderedPageFrameSequence<AsyncGroupByNotKeyedAtom> frameSequence;
@@ -101,7 +101,6 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
             } finally {
                 Misc.clearObjList(groupByFunctions);
                 isOpen = false;
-                isSerialRetry = false;
                 executionContext = null;
             }
         }
@@ -164,11 +163,41 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
         frameSequence.getAtom().getFilterContext().initMemoryPools(frameSequence.getPageFrameAddressCache(), frameSequence.getMemoryTracker());
         if (gatherReducer == null) {
             frameSequence.dispatchAndAwait();
+            mergeValues();
         } else {
-            gather();
+            gatherAndMerge();
         }
+        isValueBuilt = true;
+    }
 
-        // Merge the values.
+    /**
+     * Runs the tasks of an index gather on the workers and merges the values they built. When
+     * either step hits the query's memory limit - the merge grows the owner's value by the
+     * workers' ones, which it still holds - the pass runs again on the query's thread alone, as
+     * the serial GROUP BY would, see {@code AsyncGroupByRecordCursor.gatherAndMerge()}.
+     */
+    private void gatherAndMerge() {
+        try {
+            frameSequence.dispatchRoundAndAwait(gatherReducer, getGatherTaskRowCounts());
+            mergeValues();
+            return;
+        } catch (CairoException e) {
+            if (!e.isOutOfMemory()) {
+                throw e;
+            }
+            LOG.info().$("index gather GROUP BY hit the memory limit, retrying on the query thread [error=").$safe(e.getFlyweightMessage()).I$();
+        }
+        reopenForSerialPass();
+        frameSequence.runRoundLocally(gatherReducer, getGatherTaskRowCounts());
+        // the workers' values stay empty: the owner's is the result
+        mergeValues();
+    }
+
+    private LongList getGatherTaskRowCounts() {
+        return ((IndexGatherPageFrameCursor) frameSequence.getPageFrameCursor()).getTaskRowCounts();
+    }
+
+    private void mergeValues() {
         final AsyncGroupByNotKeyedAtom atom = frameSequence.getAtom();
         final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(-1);
         final SimpleMapValue destValue = atom.getOwnerMapValue();
@@ -185,44 +214,23 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
             }
             destValue.setNew(false);
         }
-
-        isValueBuilt = true;
     }
 
-    /**
-     * Runs the tasks of an index gather on the workers, and, when that hits the query's memory
-     * limit, again on the query's thread alone, as the serial GROUP BY would.
-     */
-    private void gather() {
-        final IndexGatherPageFrameCursor gatherCursor = (IndexGatherPageFrameCursor) frameSequence.getPageFrameCursor();
-        if (isSerialRetry) {
-            frameSequence.runRoundLocally(gatherReducer, gatherCursor.getTaskRowCounts());
-            return;
-        }
+    private void reopenForSerialPass() {
+        serialRetries++;
+        // free what the parallel pass built, as close() would, and open the base again
+        frameSequence.await();
+        frameSequence.reset();
+        Misc.clearObjList(groupByFunctions);
+        isOpen = false;
         try {
-            frameSequence.dispatchRoundAndAwait(gatherReducer, gatherCursor.getTaskRowCounts());
-        } catch (CairoException e) {
-            if (!e.isOutOfMemory()) {
-                throw e;
-            }
-            LOG.info().$("index gather GROUP BY hit the memory limit, retrying on the query thread [error=").$safe(e.getFlyweightMessage()).I$();
-            serialRetries++;
-            // free what the parallel pass built, as close() would, and open the base again
-            frameSequence.await();
-            frameSequence.reset();
-            Misc.clearObjList(groupByFunctions);
-            isOpen = false;
-            try {
-                frameSequence.of(base, executionContext, PartitionFrameCursorFactory.ORDER_ASC);
-                isSerialRetry = true;
-                of(frameSequence, executionContext);
-            } catch (SqlException se) {
-                throw CairoException.nonCritical().put(se.getFlyweightMessage());
-            }
-            frameSequence.prepareForDispatch();
-            frameSequence.getAtom().getFilterContext().initMemoryPools(frameSequence.getPageFrameAddressCache(), frameSequence.getMemoryTracker());
-            gather();
+            frameSequence.of(base, executionContext, PartitionFrameCursorFactory.ORDER_ASC);
+            of(frameSequence, executionContext);
+        } catch (SqlException se) {
+            throw CairoException.nonCritical().put(se.getFlyweightMessage());
         }
+        frameSequence.prepareForDispatch();
+        frameSequence.getAtom().getFilterContext().initMemoryPools(frameSequence.getPageFrameAddressCache(), frameSequence.getMemoryTracker());
     }
 
     @TestOnly

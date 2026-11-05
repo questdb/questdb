@@ -436,6 +436,9 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
     /**
      * Merges per-worker shard maps into destination shards in parallel.
      * The owner thread publishes merge tasks and work-steals when the queue is full.
+     * Whether this returns or throws, no merge task is still queued or running: on a failure it
+     * cancels the tasks left and waits for them, so the caller may free the maps. A task's failure
+     * does not throw here; the post-aggregation circuit breaker carries it.
      *
      * @return destination shard maps (non-intersecting key sets)
      */
