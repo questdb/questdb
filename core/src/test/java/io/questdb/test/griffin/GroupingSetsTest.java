@@ -2992,6 +2992,38 @@ public class GroupingSetsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRollupNullColumnKey() throws Exception {
+        // A NULL column from a subquery is a zero-width key: the keys after it read their own
+        // values in every grouping set, in the fixed-size key layout and in the var-size one.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x INT, s STRING)");
+            execute("INSERT INTO t VALUES (1, 'a'), (1, 'a'), (2, 'bb')");
+            assertGroupingSetsQuery(
+                    """
+                            k\tx\tn\tg
+                            null\t1\t2\t0
+                            null\t2\t1\t0
+                            null\tnull\t3\t1
+                            null\tnull\t3\t3
+                            """,
+                    "SELECT k, x, count() n, GROUPING_ID(k, x) g FROM (SELECT null AS k, x FROM t) GROUP BY ROLLUP(k, x) ORDER BY g, x"
+            );
+            assertGroupingSetsQuery(
+                    """
+                            k\ts\tn\tg
+                            null\ta\t2\t0
+                            null\tbb\t1\t0
+                            null\t\t3\t1
+                            null\ta\t2\t2
+                            null\tbb\t1\t2
+                            null\t\t3\t3
+                            """,
+                    "SELECT k, s, count() n, GROUPING_ID(k, s) g FROM (SELECT null AS k, s FROM t) GROUP BY CUBE(k, s) ORDER BY g, s"
+            );
+        });
+    }
+
+    @Test
     public void testRollupOmittedKey() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (a INT, b INT, v DOUBLE)");

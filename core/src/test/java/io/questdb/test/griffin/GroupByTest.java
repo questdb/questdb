@@ -2170,6 +2170,141 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupByNullColumnKeyBeforeFixedSizeKeys() throws Exception {
+        // A NULL column from a subquery is a zero-width key, so the fixed-size keys after it keep
+        // the fixed-size layout and read their own values. The reference groups the same rows
+        // under a constant NULL, which the optimizer keeps out of the group-by map.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT
+                            x::INT AS x,
+                            CASE WHEN x % 3 = 0 THEN NULL ELSE x * 10 END AS l,
+                            CASE WHEN x % 4 = 0 THEN NULL ELSE x / 2.0 END AS d,
+                            CASE WHEN x % 5 = 0 THEN NULL ELSE (x * 86_400_000_000)::TIMESTAMP END AS ts,
+                            rnd_symbol('a', 'b') AS sym,
+                            rnd_uuid4() AS u,
+                            rnd_long256() AS l256,
+                            rnd_geohash(30) AS g,
+                            rnd_ipv4() AS ip,
+                            rnd_boolean() AS bo,
+                            rnd_char() AS ch,
+                            x::SHORT AS sh,
+                            x::BYTE AS bt,
+                            rnd_decimal(18, 3, 0) AS dc
+                        FROM long_sequence(20)
+                    )
+                    """);
+            execute("INSERT INTO t (x) VALUES (21)");
+            final String columns = "x, l, d, ts, sym, u, l256, g, ip, bo, ch, sh, bt, dc";
+            // The cursor comparison has no case for a NULL-typed column, so the two compare as printed text.
+            printSql("SELECT null AS k, " + columns + ", count() c FROM t GROUP BY 1, " + columns + " ORDER BY x");
+            assertQuery("SELECT k, " + columns + ", count() c FROM (SELECT null AS k, " + columns + " FROM t) GROUP BY k, " + columns + " ORDER BY x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(sink.toString());
+
+            execute("CREATE TABLE t2 (x INT)");
+            execute("INSERT INTO t2 VALUES (1), (1), (2), (null)");
+            assertQuery("SELECT k, x, count() c FROM (SELECT null AS k, x FROM t2) GROUP BY k, x ORDER BY x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            k\tx\tc
+                            null\tnull\t1
+                            null\t1\t2
+                            null\t2\t1
+                            """);
+            assertQuery("SELECT k, x, count() c FROM (SELECT null AS k, x FROM t2 WHERE x > 100) GROUP BY k, x")
+                    .noLeakCheck()
+                    .returns("k\tx\tc\n");
+        });
+    }
+
+    @Test
+    public void testGroupByNullColumnKeyBeforeVarSizeKeys() throws Exception {
+        // A NULL column takes no bytes in a var-size key too, so reading a key after it steps over
+        // it as zero bytes rather than as a length-prefixed value. The reference groups the same
+        // rows under a constant NULL, which the optimizer keeps out of the group-by map.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT
+                            x::INT AS x,
+                            CASE WHEN x % 4 = 0 THEN NULL WHEN x % 4 = 1 THEN '' ELSE 'żółw' || x END AS s,
+                            CASE WHEN x % 3 = 0 THEN NULL WHEN x % 3 = 1 THEN ''::VARCHAR ELSE ('\uD83D\uDE00€' || x)::VARCHAR END AS v,
+                            rnd_bin(1, 8, 3) AS b,
+                            ARRAY[x::DOUBLE, -1.5] AS arr
+                        FROM long_sequence(20)
+                    )
+                    """);
+            execute("INSERT INTO t (x) VALUES (21)");
+            // The cursor comparison has no case for a NULL-typed column, so the two compare as printed text.
+            for (String columns : new String[]{"s, x", "v, x", "b, x", "arr, x", "s, v, b, arr, x"}) {
+                printSql("SELECT null AS k, " + columns + ", count() c FROM t GROUP BY 1, " + columns + " ORDER BY x");
+                assertQuery("SELECT k, " + columns + ", count() c FROM (SELECT null AS k, " + columns + " FROM t) GROUP BY k, " + columns + " ORDER BY x")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns(sink.toString());
+            }
+
+            execute("CREATE TABLE t2 (s STRING)");
+            execute("INSERT INTO t2 VALUES ('a'), ('a'), ('bb')");
+            assertQuery("WITH q AS (SELECT null AS k, s FROM t2) SELECT k, s, count() c FROM q GROUP BY k, s ORDER BY s")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            k\ts\tc
+                            null\ta\t2
+                            null\tbb\t1
+                            """);
+            assertQuery("SELECT DISTINCT k, s FROM (SELECT null AS k, s FROM t2) ORDER BY s")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            k\ts
+                            null\ta
+                            null\tbb
+                            """);
+        });
+    }
+
+    @Test
+    public void testGroupByNullExpressionKeyBeforeOtherKeys() throws Exception {
+        // CASE without a non-NULL branch is a NULL-typed key that the optimizer keeps, unlike a bare
+        // NULL literal next to other keys. It takes no bytes in the map key, so the keys after it
+        // read their own values, in the fixed-size layout and in the var-size one, whichever record
+        // sink kind writes the key: the single-method, the chunked or the looping one.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x INT, s STRING)");
+            execute("INSERT INTO t VALUES (1, 'a'), (1, 'a'), (2, 'bb'), (3, 'ccc')");
+            for (int copierType = 1; copierType <= 3; copierType++) {
+                setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, copierType);
+                assertQuery("SELECT CASE WHEN x > 1 THEN NULL END AS k, x + 1 AS b, count() AS c FROM t GROUP BY 1, 2 ORDER BY 2")
+                        .noLeakCheck()
+                        .withPlanContaining("keys: [k,b]")
+                        .expectSize()
+                        .returns("""
+                                k\tb\tc
+                                null\t2\t2
+                                null\t3\t1
+                                null\t4\t1
+                                """);
+                assertQuery("SELECT CASE WHEN x > 1 THEN NULL END AS k, concat(s, '!') AS b, x * 2 AS d, count() AS c FROM t GROUP BY 1, 2, 3 ORDER BY 3")
+                        .noLeakCheck()
+                        .withPlanContaining("keys: [k,b,d]")
+                        .expectSize()
+                        .returns("""
+                                k\tb\td\tc
+                                null\ta!\t2\t2
+                                null\tbb!\t4\t1
+                                null\tccc!\t6\t1
+                                """);
+            }
+        });
+    }
+
+    @Test
     public void testGroupByNullLiteralKey() throws Exception {
         // Regression: a bare `null` literal in the SELECT list referenced from GROUP BY
         // used to blow up the map key sink codegen with
@@ -2202,6 +2337,8 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByNullLiteralKeyWithTightMapPage() throws Exception {
+        // A 17-byte map page fits the 16-byte value of count_distinct() or avg() but not a key
+        // length header in front of it, so a NULL key must take no bytes, on both group-by factories.
         setProperty(PropertyKey.CAIRO_SQL_SMALL_MAP_PAGE_SIZE, 17);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE null_key_t (v INT)");
@@ -2211,11 +2348,20 @@ public class GroupByTest extends AbstractCairoTest {
                     FROM (SELECT v AS k, count() AS cnt FROM null_key_t)
                     GROUP BY 1
                     """)
-                    .expectSize()
                     .noLeakCheck()
+                    .withPlanContaining("GroupBy vectorized: false")
+                    .expectSize()
                     .returns("""
                             e0\ta0
                             null\t2
+                            """);
+            assertQuery("SELECT null AS e0, avg(v) AS a0 FROM null_key_t GROUP BY 1")
+                    .noLeakCheck()
+                    .withPlanContaining("Async Group By")
+                    .expectSize()
+                    .returns("""
+                            e0\ta0
+                            null\t1.3333333333333333
                             """);
         });
     }

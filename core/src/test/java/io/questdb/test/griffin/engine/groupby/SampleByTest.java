@@ -11673,6 +11673,93 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByNullColumnKey() throws Exception {
+        // A NULL key takes no bytes in the map key, so SAMPLE BY reads the keys after it at their own
+        // offsets, in the fixed-size key layout and in the var-size one: on the SAMPLE BY cursors,
+        // which a NULL column from a subquery reaches, and on the GROUP BY rewrite and its FILL
+        // cursor, which a NULL-typed key expression over a table reaches. The FILL queries sort their
+        // output, so the expected rows do not depend on the order a FILL cursor emits a bucket in.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, x INT, s STRING) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00.000000Z', 1, 'a'),
+                    ('2024-01-01T00:30:00.000000Z', 1, 'a'),
+                    ('2024-01-01T02:00:00.000000Z', 2, 'bb')
+                    """);
+            assertQuery("SELECT ts, k, x, count() c FROM (SELECT ts, null AS k, x FROM t) SAMPLE BY 1h")
+                    .noLeakCheck()
+                    .withPlanContaining("Sample By\n  keys: [ts,k,x]")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tk\tx\tc
+                            2024-01-01T00:00:00.000000Z\tnull\t1\t2
+                            2024-01-01T02:00:00.000000Z\tnull\t2\t1
+                            """);
+            assertQuery("SELECT ts, k, s, count() c FROM (SELECT ts, null AS k, s FROM t) SAMPLE BY 1h ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .withPlanContaining("Sample By\n  keys: [ts,k,s]")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tk\ts\tc
+                            2024-01-01T00:00:00.000000Z\tnull\ta\t2
+                            2024-01-01T02:00:00.000000Z\tnull\tbb\t1
+                            """);
+            assertQuery("SELECT * FROM (SELECT ts, k, s, count() c FROM (SELECT ts, null AS k, s FROM t) SAMPLE BY 1h FILL(NULL)) ORDER BY ts, s")
+                    .noLeakCheck()
+                    .withPlanContaining("Sample By\n", "fill: null\n", "keys: [ts,k,s]\n")
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tk\ts\tc
+                            2024-01-01T00:00:00.000000Z\tnull\ta\t2
+                            2024-01-01T00:00:00.000000Z\tnull\tbb\tnull
+                            2024-01-01T01:00:00.000000Z\tnull\ta\tnull
+                            2024-01-01T01:00:00.000000Z\tnull\tbb\tnull
+                            2024-01-01T02:00:00.000000Z\tnull\ta\tnull
+                            2024-01-01T02:00:00.000000Z\tnull\tbb\t1
+                            """);
+            assertQuery("SELECT ts, CASE WHEN x > 0 THEN NULL END AS k, concat(s, '!') AS b, count() c FROM t SAMPLE BY 1h")
+                    .noLeakCheck()
+                    .withPlanContaining("keys: [ts,k,b]")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tk\tb\tc
+                            2024-01-01T00:00:00.000000Z\tnull\ta!\t2
+                            2024-01-01T02:00:00.000000Z\tnull\tbb!\t1
+                            """);
+            assertQuery("SELECT * FROM (SELECT ts, CASE WHEN x > 0 THEN NULL END AS k, concat(s, '!') AS b, count() c FROM t SAMPLE BY 1h FILL(NULL)) ORDER BY ts, b")
+                    .noLeakCheck()
+                    .withPlanContaining("Sample By Fill")
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tk\tb\tc
+                            2024-01-01T00:00:00.000000Z\tnull\ta!\t2
+                            2024-01-01T00:00:00.000000Z\tnull\tbb!\tnull
+                            2024-01-01T01:00:00.000000Z\tnull\ta!\tnull
+                            2024-01-01T01:00:00.000000Z\tnull\tbb!\tnull
+                            2024-01-01T02:00:00.000000Z\tnull\ta!\tnull
+                            2024-01-01T02:00:00.000000Z\tnull\tbb!\t1
+                            """);
+            assertQuery("SELECT * FROM (SELECT ts, CASE WHEN x > 0 THEN NULL END AS k, x + 1 AS b, count() c FROM t SAMPLE BY 1h FILL(PREV)) ORDER BY ts, b")
+                    .noLeakCheck()
+                    .withPlanContaining("Sample By Fill")
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tk\tb\tc
+                            2024-01-01T00:00:00.000000Z\tnull\t2\t2
+                            2024-01-01T00:00:00.000000Z\tnull\t3\tnull
+                            2024-01-01T01:00:00.000000Z\tnull\t2\t2
+                            2024-01-01T01:00:00.000000Z\tnull\t3\tnull
+                            2024-01-01T02:00:00.000000Z\tnull\t2\t2
+                            2024-01-01T02:00:00.000000Z\tnull\t3\t1
+                            """);
+        });
+    }
+
+    @Test
     public void testSampleByNullDesignatedTimestampCursor() throws Exception {
         // TIMESTAMP(ts) designates a column that holds NULL, and the sort puts the NULL first. The SAMPLE BY cursor
         // starts its grid, its time zone offset and its first bucket from the first row it reads, each alignment in

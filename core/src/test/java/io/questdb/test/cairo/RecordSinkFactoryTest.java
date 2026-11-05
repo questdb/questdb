@@ -865,6 +865,47 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNullFunctionKeyWritesNothing() {
+        // A NULL key takes no bytes in a map key, so every sink kind skips a NULL key function,
+        // never reads it, and writes the key functions around it. 700 INT column keys make the
+        // chunked type split the copy across methods rather than fall back to a single method.
+        final int columnCount = 700;
+        final ArrayColumnTypes columnTypes = new ArrayColumnTypes();
+        final ListColumnFilter columnFilter = new ListColumnFilter();
+        final IntList expectedPutTypes = new IntList();
+        for (int i = 0; i < columnCount; i++) {
+            columnTypes.add(ColumnType.INT);
+            columnFilter.add(i + 1);
+            expectedPutTypes.add(ColumnType.INT);
+        }
+        expectedPutTypes.add(ColumnType.INT);
+        expectedPutTypes.add(ColumnType.LONG);
+
+        for (int sinkType : SINK_TYPES) {
+            final ObjList<Function> keyFunctions = new ObjList<>();
+            keyFunctions.add(new TestFunction(ColumnType.INT));
+            keyFunctions.add(new TestFunction(ColumnType.NULL));
+            keyFunctions.add(new TestFunction(ColumnType.LONG));
+            final RecordSink sink = RecordSinkFactory.getInstance(
+                    copierConfiguration(sinkType),
+                    new BytecodeAssembler(),
+                    columnTypes,
+                    columnFilter,
+                    keyFunctions,
+                    null
+            );
+            assertSinkKind(sink, sinkType);
+
+            final TestRecordSink testRecordSink = new TestRecordSink();
+            sink.copy(new TestRecord(), testRecordSink);
+            Assert.assertEquals(expectedPutTypes, testRecordSink.recordedTypes);
+            Assert.assertEquals(1, ((TestFunction) keyFunctions.get(0)).callCount);
+            Assert.assertEquals(0, ((TestFunction) keyFunctions.get(1)).callCount);
+            Assert.assertEquals(1, ((TestFunction) keyFunctions.get(2)).callCount);
+        }
+    }
+
+    @Test
     public void testRecordSinkFactoryWithEmptyFilter() {
         // Test with empty column filter
         ArrayColumnTypes columnTypes = new ArrayColumnTypes();

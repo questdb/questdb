@@ -76,8 +76,11 @@ import static org.junit.Assert.fail;
 // in CI frequently along with other fuzz tests.
 public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     private static final int MIN_PAGE_FRAME_MAX_ROWS = 100;
+    private static final String NULL_ONLY_KEY_QUERY = "SELECT null AS k, count() AS c, sum(x) AS s FROM tab GROUP BY 1";
     private static final int PAGE_FRAME_COUNT = 4; // also used to set queue size, so must be a power of 2
     private static final int ROW_COUNT = 10 * PAGE_FRAME_COUNT * MIN_PAGE_FRAME_MAX_ROWS;
+    private static final String VAR_SIZE_KEY_AFTER_NULL_QUERY = "SELECT CASE WHEN x > 0 THEN NULL END AS k, concat('v', x % 1000) AS b, count() AS c, sum(x) AS s "
+            + "FROM tab GROUP BY 1, 2 ORDER BY 2 LIMIT 3";
     private final boolean compositePartition;
     private final boolean convertToParquet;
     private final boolean enableJitCompiler;
@@ -1901,6 +1904,47 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         k3\t-1.1266060077039999\t-1.126049103395
                         k4\t-1.172914311098\t-1.172699075325
                         """
+        );
+    }
+
+    @Test
+    public void testParallelGroupByNullKey() throws Exception {
+        // A NULL key takes no bytes in the map key: the per-worker maps of an all-NULL key merge into
+        // a single group, and the keys after a NULL one read their own values once the maps are
+        // sharded, in the fixed-size key layout and in the var-size one.
+        final int perClass = ROW_COUNT / 1000;
+        testParallelNullKeyGroupBy(
+                NULL_ONLY_KEY_QUERY,
+                nullOnlyKeyResult(),
+                "Async Group By",
+                "SELECT count() AS n, sum(c) AS sc, sum(s) AS ss, min(b) AS mn, max(b) AS mx " +
+                        "FROM (SELECT CASE WHEN x > 0 THEN NULL END AS k, x % 1000 AS b, count() AS c, sum(x) AS s FROM tab GROUP BY 1, 2)",
+                "n\tsc\tss\tmn\tmx\n" + "1000\t" + ROW_COUNT + "\t" + sumOfClasses() + "\t0\t999\n",
+                "Async Group By",
+                "SELECT CASE WHEN x > 0 THEN NULL END AS k, x % 1000 AS b, count() AS c, sum(x) AS s FROM tab GROUP BY 1, 2 ORDER BY 2 LIMIT 2",
+                "k\tb\tc\ts\n"
+                        + "null\t0\t" + perClass + "\t" + sumOfClass(0, perClass) + "\n"
+                        + "null\t1\t" + perClass + "\t" + sumOfClass(1, perClass) + "\n",
+                "Async Group By",
+                VAR_SIZE_KEY_AFTER_NULL_QUERY,
+                varSizeKeyAfterNullResult(),
+                "Async Group By"
+        );
+    }
+
+    @Test
+    public void testParallelGroupByNullKeyTightMapPage() throws Exception {
+        // A 17-byte map page fits the 16-byte value of count() and sum() but not a key length header
+        // in front of it, so the batch probe and the merges must give a NULL key no bytes. A NULL key
+        // next to a fixed-size one makes a 24-byte entry, which this page rejects up front.
+        setProperty(PropertyKey.CAIRO_SQL_SMALL_MAP_PAGE_SIZE, 17);
+        testParallelNullKeyGroupBy(
+                NULL_ONLY_KEY_QUERY,
+                nullOnlyKeyResult(),
+                "Async Group By",
+                VAR_SIZE_KEY_AFTER_NULL_QUERY,
+                varSizeKeyAfterNullResult(),
+                "Async Group By"
         );
     }
 
@@ -4935,6 +4979,32 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         }
     }
 
+    private static String nullOnlyKeyResult() {
+        return "k\tc\ts\n" + "null\t" + ROW_COUNT + "\t" + sumOfClasses() + "\n";
+    }
+
+    // Sum of the x in 1..ROW_COUNT with x % 1000 == r: 1000, 2000, ... for r = 0; r, r + 1000, ... otherwise.
+    private static long sumOfClass(long r, long perClass) {
+        if (r == 0) {
+            return 1000 * perClass * (perClass + 1) / 2;
+        }
+        return r * perClass + 1000 * perClass * (perClass - 1) / 2;
+    }
+
+    // Sum of x = 1..ROW_COUNT.
+    private static long sumOfClasses() {
+        return (long) ROW_COUNT * (ROW_COUNT + 1) / 2;
+    }
+
+    // 'v0' < 'v1' < 'v10' as strings.
+    private static String varSizeKeyAfterNullResult() {
+        final int perClass = ROW_COUNT / 1000;
+        return "k\tb\tc\ts\n"
+                + "null\tv0\t" + perClass + "\t" + sumOfClass(0, perClass) + "\n"
+                + "null\tv1\t" + perClass + "\t" + sumOfClass(1, perClass) + "\n"
+                + "null\tv10\t" + perClass + "\t" + sumOfClass(10, perClass) + "\n";
+    }
+
     /**
      * With {@code compositePartition} set, makes {@code tableName}'s rows in
      * [{@code rangeLoIso}, {@code rangeHiIso}) - a range that must fall inside a non-active
@@ -5562,6 +5632,30 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         }
 
                         TestUtils.assertEquals(sink, sinkB);
+                    }
+            );
+        });
+    }
+
+    // Expected values come from x = 1..ROW_COUNT, each x % 1000 class holding ROW_COUNT / 1000 rows.
+    private void testParallelNullKeyGroupBy(String... queriesExpectedResultsAndPlans) throws Exception {
+        Assume.assumeTrue(enableParallelGroupBy);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
+            executeWithPool(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+
+                        execute(
+                                compiler,
+                                "CREATE TABLE tab AS (SELECT x, timestamp_sequence(0, 864_000_000) ts FROM long_sequence(" + ROW_COUNT + ")) TIMESTAMP(ts) PARTITION BY DAY",
+                                sqlExecutionContext
+                        );
+                        if (convertToParquet) {
+                            execute(compiler, "ALTER TABLE tab CONVERT PARTITION TO PARQUET WHERE ts >= 0", sqlExecutionContext);
+                        }
+                        assertQueriesAndPlans(engine, sqlExecutionContext, queriesExpectedResultsAndPlans);
                     }
             );
         });
