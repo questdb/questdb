@@ -3029,6 +3029,70 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCheckpointRestoreRebuildsIndexesOfParquetPartitionWithIndexRowMap() throws Exception {
+        // An in-place O3 update moves the row groups it rewrites to fresh index rows, so the footer carries an
+        // index row map. The restore must build the indexes in index rows, not in partition rows.
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "1.0");
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, Long.MAX_VALUE);
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (
+                        val LONG,
+                        s1 SYMBOL INDEX,
+                        s2 SYMBOL INDEX TYPE POSTING,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t
+                    SELECT
+                        x,
+                        CASE x % 3 WHEN 0 THEN 'a' WHEN 1 THEN 'b' ELSE 'c' END,
+                        CASE x % 4 WHEN 0 THEN 'a' WHEN 1 THEN 'b' ELSE 'c' END,
+                        dateadd('h', x::INT, '2024-01-01')
+                    FROM long_sequence(12)
+                    """);
+            execute("INSERT INTO t VALUES (100, 'a', 'a', '2024-01-02T00:00:00.000000Z')");
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            // Rewrites the first and the second row group in place.
+            execute("INSERT INTO t VALUES (-1, 'b', 'c', '2024-01-01T00:30:00.000000Z'), (-2, 'a', 'b', '2024-01-01T06:30:00.000000Z')");
+
+            TableToken tableToken = engine.verifyTableName("t");
+            try (TableReader reader = engine.getReader(tableToken)) {
+                reader.openPartition(0);
+                Assert.assertTrue("the footer must carry an index row map", reader.getAndInitParquetPartitionDecoder(0).metadata().hasIndexRowMap());
+            }
+
+            String dbRoot = engine.getConfiguration().getDbRoot();
+            File partDir = findParquetPartitionDir(new File(dbRoot, tableToken.getDirName()), "2024-01-01");
+            engine.clear();
+            // Delete the index files so the restore has to build them.
+            deleteFilesWithPrefix(partDir, "s1.k");
+            deleteFilesWithPrefix(partDir, "s1.v");
+            deleteFilesWithPrefix(partDir, "s2.p");
+            try (
+                    Path tablePath = new Path().of(dbRoot).concat(tableToken).slash();
+                    TableSnapshotRestore restoreAgent = new TableSnapshotRestore(configuration)
+            ) {
+                restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), true);
+            }
+
+            for (String column : new String[]{"s1", "s2"}) {
+                for (String key : new String[]{"a", "b", "c"}) {
+                    final String select = "SELECT val, ts FROM t WHERE ts IN '2024-01-01' AND " + column;
+                    printSql(select + "::STRING = '" + key + "'");
+                    assertQuery(select + " = '" + key + "'")
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .withPlanContaining("on: " + column)
+                            .returns(sink.toString());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testCheckpointRestoreRebuildsPostingIndex() throws Exception {
         // Regression: TableSnapshotRestore must produce sealed posting index
         // generations and covering sidecars after rebuild, parallel to how it
@@ -3304,6 +3368,65 @@ public class CheckpointTest extends AbstractCairoTest {
             // Covering query must keep returning the same rows.
             assertQuery("SELECT price FROM t_pi_parquet WHERE sym = 'A' ORDER BY ts")
                     .noLeakCheck()
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreRebuildsPostingIndexOnParquetPartitionKeepsCoveredValues() throws Exception {
+        // A parquet partition has no native column files, so the restore rebuild of its POSTING index must decode
+        // the covered values from the parquet file. Read from the missing .d files instead, every covered value,
+        // the auto-included designated timestamp too, came back as NULL through the covering index.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_pi_parquet_cov (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_pi_parquet_cov VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.0),
+                    ('2024-01-01T01:00:00', 'B', 2.0),
+                    ('2024-01-01T02:00:00', 'A', 3.0),
+                    ('2024-01-01T03:00:00', 'A', 4.0),
+                    ('2024-01-02T00:00:00', 'A', 5.0)
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE t_pi_parquet_cov CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+
+            final String query = "SELECT ts, price FROM t_pi_parquet_cov WHERE sym = 'A' AND ts IN '2024-01-01'";
+            final String expected = """
+                    ts\tprice
+                    2024-01-01T00:00:00.000000Z\t1.0
+                    2024-01-01T02:00:00.000000Z\t3.0
+                    2024-01-01T03:00:00.000000Z\t4.0
+                    """;
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("CoveringIndex")
+                    .returns(expected);
+
+            final TableToken tableToken = engine.verifyTableName("t_pi_parquet_cov");
+            engine.clear();
+            try (
+                    Path tablePath = new Path().of(engine.getConfiguration().getDbRoot()).concat(tableToken).slash();
+                    TableSnapshotRestore restoreAgent = new TableSnapshotRestore(configuration)
+            ) {
+                restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), true);
+            }
+
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("CoveringIndex")
                     .returns(expected);
         });
     }
