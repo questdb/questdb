@@ -1197,6 +1197,18 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testHashJoinValuePageSizeClampedToOne() throws Exception {
+        // hash.join.value.page.size is a RecordChain page like sort.value.page.size, which runs at 1 byte
+        // and has no fixed block. A page of 0 never extends, so its first write lands outside the chain.
+        Properties properties = new Properties();
+        properties.setProperty("cairo.sql.hash.join.value.page.size", "0");
+
+        CairoConfiguration cairo = newPropServerConfiguration(properties).getCairoConfiguration();
+
+        Assert.assertEquals(1, cairo.getSqlHashJoinValuePageSize());
+    }
+
+    @Test
     public void testSortValuePageSizeClampedToOne() throws Exception {
         // sort.value.page.size is a divisor-only RecordChain page (no fixed block), so 0 clamps to 1
         // rather than being rejected - see testPageSizeBelowBlockSizeRejected for the heap-backed keys.

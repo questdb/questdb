@@ -30,6 +30,122 @@ import org.junit.Test;
 public class SampleByFillPrevTest extends AbstractCairoTest {
 
     @Test
+    public void testNanosecondStrideOnMicrosTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE fu AS (
+                        SELECT (1_704_067_200_000_000 + x * 7 + (x / 10) * 50)::TIMESTAMP ts, (x % 2)::SYMBOL k, x v
+                        FROM long_sequence(3_000)
+                    ) TIMESTAMP(ts) PARTITION BY HOUR
+                    """);
+            final String[][] strides = {{"1n", "1U"}, {"500n", "1U"}, {"1000n", "1U"}, {"3000n", "3U"}, {"7000n", "7U"}, {"11000n", "11U"}};
+            final String[] fills = {"", " FILL(NONE)", " FILL(NULL)", " FILL(PREV)", " FILL(0)", " FILL(LINEAR)"};
+            final String[][] modifiers = {
+                    {"", ""},
+                    {" FROM '2024-01-01'", ""},
+                    {"", " ALIGN TO CALENDAR WITH OFFSET '00:15'"},
+                    {"", " ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'"}
+            };
+            for (String[] stride : strides) {
+                for (String fill : fills) {
+                    for (String[] modifier : modifiers) {
+                        final String tail = modifier[0] + fill + modifier[1];
+                        final String keyless = "SELECT ts, avg(v), sum(v), count() FROM fu SAMPLE BY $stride" + tail;
+                        assertSqlCursors(keyless.replace("$stride", stride[1]), keyless.replace("$stride", stride[0]));
+                        final String keyed = "SELECT ts, k, avg(v), sum(v), count() FROM fu SAMPLE BY $stride" + tail + " ORDER BY ts, k";
+                        assertSqlCursors(keyed.replace("$stride", stride[1]), keyed.replace("$stride", stride[0]));
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testNanosecondStrideOnNanosTableFills() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE fn (ts TIMESTAMP_NS, v LONG) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO fn VALUES ('1970-01-01T00:00:00.000000000Z', 1), ('1970-01-01T00:00:00.000005000Z', 2)");
+            assertQuery("SELECT ts, sum(v) s FROM fn SAMPLE BY 2500n FILL(NULL)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\ts
+                            1970-01-01T00:00:00.000000000Z\t1
+                            1970-01-01T00:00:00.000002500Z\tnull
+                            1970-01-01T00:00:00.000005000Z\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testUnevenNanosecondStrideOnMicrosTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE fu AS (SELECT (x - 1)::TIMESTAMP ts, (x % 2)::SYMBOL k, x v FROM long_sequence(10)) TIMESTAMP(ts) PARTITION BY DAY");
+            // 2500n puts the buckets at 0, 2500, 5000 and 7500 nanoseconds, or 0, 2, 5 and 7 whole microseconds.
+            assertQuery("SELECT ts, count() c FROM fu SAMPLE BY 2500n")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tc
+                            1970-01-01T00:00:00.000000Z\t3
+                            1970-01-01T00:00:00.000002Z\t2
+                            1970-01-01T00:00:00.000005Z\t3
+                            1970-01-01T00:00:00.000007Z\t2
+                            """);
+            assertQuery("SELECT ts, count() c FROM fu SAMPLE BY 2500n FILL(NONE)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tc
+                            1970-01-01T00:00:00.000000Z\t3
+                            1970-01-01T00:00:00.000002Z\t2
+                            1970-01-01T00:00:00.000005Z\t3
+                            1970-01-01T00:00:00.000007Z\t2
+                            """);
+            // 1500n puts the buckets at 0, 1500, 3000, 4500, 6000, 7500 and 9000 nanoseconds, or 0, 1, 3, 4, 6, 7 and 9
+            // whole microseconds. They hold the microseconds 0-1, 2, 3-4, 5, 6-7, 8 and 9. The fill steps through every
+            // microsecond.
+            assertQuery("SELECT ts, count() c FROM fu SAMPLE BY 1500n FILL(NULL)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tc
+                            1970-01-01T00:00:00.000000Z\t2
+                            1970-01-01T00:00:00.000001Z\t1
+                            1970-01-01T00:00:00.000002Z\tnull
+                            1970-01-01T00:00:00.000003Z\t2
+                            1970-01-01T00:00:00.000004Z\t1
+                            1970-01-01T00:00:00.000005Z\tnull
+                            1970-01-01T00:00:00.000006Z\t2
+                            1970-01-01T00:00:00.000007Z\t1
+                            1970-01-01T00:00:00.000008Z\tnull
+                            1970-01-01T00:00:00.000009Z\t1
+                            """);
+            // FILL(LINEAR) runs on the sampler's grid alone.
+            assertSqlCursors("SELECT ts, avg(v) a FROM fu SAMPLE BY 2U FILL(LINEAR)", "SELECT ts, avg(v) a FROM fu SAMPLE BY 2500n FILL(LINEAR)");
+            final String message = "FILL does not support this stride on a microsecond timestamp, use a whole number of microseconds";
+            for (String stride : new String[]{"2001n", "2500n", "3500n", "7999n"}) {
+                for (String fill : new String[]{"NULL", "PREV", "0"}) {
+                    final String keyless = "SELECT ts, count() c FROM fu SAMPLE BY " + stride + " FILL(" + fill + ")";
+                    assertExceptionNoLeakCheck(keyless, keyless.indexOf(stride), message);
+                    final String keyed = "SELECT ts, k, count() c FROM fu SAMPLE BY " + stride + " FILL(" + fill + ")";
+                    assertExceptionNoLeakCheck(keyed, keyed.indexOf(stride), message);
+                }
+            }
+            // The table still works after the errors.
+            assertQuery("SELECT count() c FROM fu")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("c\n10\n");
+        });
+    }
+
+    @Test
     public void testFillPrevAcceptPrevToSelfPrev() throws Exception {
         assertMemoryLeak(() -> {
             // FILL(PREV(b), PREV): a references b, and b is bare PREV

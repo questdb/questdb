@@ -63,8 +63,9 @@ import static io.questdb.griffin.engine.table.GroupByMapFragment.NUM_SHARDS;
 import static io.questdb.griffin.engine.table.GroupByMapFragment.NUM_SHARDS_SHR;
 
 public final class StreamGroupByMap implements QuietCloseable {
-    // clear() shrinks the map once its capacity exceeds this many slots per key the finished segment needed.
     private static final int SHARDED_BREAKER_CHECK_MASK = 4095;
+    private static final long SHARD_PAGE_SIZE = 4 * 1024;
+    // clear() shrinks the map once its capacity exceeds this many slots per key the finished segment needed.
     private static final int SHRINK_RATIO = 8;
     private final DirectLongList batchRows;
     private final int batchSize;
@@ -388,7 +389,7 @@ public final class StreamGroupByMap implements QuietCloseable {
     }
 
     public Map newMergeShard() {
-        return MapFactory.createUnorderedMap(configuration, mapKeyTypes, mapValueTypes, false, false);
+        return MapFactory.createUnorderedMap(configuration, mapKeyTypes, mapValueTypes, configuration.getSqlSmallMapKeyCapacity(), shardPageSize(), false, false);
     }
 
     public void ofRow(Record row, long segmentKey) {
@@ -420,7 +421,7 @@ public final class StreamGroupByMap implements QuietCloseable {
         }
         if (shards.size() == 0) {
             for (int i = 0; i < NUM_SHARDS; i++) {
-                shards.add(MapFactory.createUnorderedMap(configuration, mapKeyTypes, mapValueTypes, true, false));
+                shards.add(MapFactory.createUnorderedMap(configuration, mapKeyTypes, mapValueTypes, configuration.getSqlSmallMapKeyCapacity(), shardPageSize(), true, false));
             }
         }
         // A merge or unshard() closed the shards.
@@ -516,6 +517,13 @@ public final class StreamGroupByMap implements QuietCloseable {
                 updater.updateExisting(value, record, baseRowId + rowIndex);
             }
         }
+    }
+
+    // A sharded map owns hundreds of these, most of which hold a few keys.
+    private long shardPageSize() {
+        // A var-size key reports -1 and starts small enough to grow on demand.
+        final long entrySize = Math.max(ColumnTypes.sizeInBytes(mapKeyTypes), 0) + ColumnTypes.sizeInBytes(mapValueTypes);
+        return Math.min(configuration.getSqlSmallMapPageSize(), Math.max(SHARD_PAGE_SIZE, 2 * entrySize));
     }
 
     private void unshard() {

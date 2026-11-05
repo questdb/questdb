@@ -457,11 +457,16 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                     if (dispatchStartFrameIndex == collectedFrameIndex + 1) {
                         return -2;
                     }
-                } else if (dispatch(dispatchLimit, countOnly)) {
-                    // We have dispatched something, so let's try to collect it.
-                    continue;
-                } else if (dispatcher != null && !isActive()) {
-                    continue;
+                } else {
+                    final int dispatchedBefore = dispatchStartFrameIndex;
+                    // A finished frame can sit behind a ring slot held by a fiber that needs this carrier to finish.
+                    if (dispatch(dispatchLimit, countOnly) && (!canPark || dispatchStartFrameIndex > dispatchedBefore)) {
+                        // We have dispatched something, so let's try to collect it.
+                        continue;
+                    }
+                    if (dispatcher != null && !isActive()) {
+                        continue;
+                    }
                 }
                 if (dispatchStartFrameIndex == collectedFrameIndex + 1) {
                     reduceLocally(countOnly);

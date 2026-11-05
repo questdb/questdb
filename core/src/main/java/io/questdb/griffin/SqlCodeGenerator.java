@@ -404,6 +404,7 @@ import io.questdb.std.Transient;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
@@ -4724,6 +4725,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             assert samplingInterval > 0;
             assert samplingIntervalEnd < fillStride.token.length();
             char samplingIntervalUnit = fillStride.token.charAt(samplingIntervalEnd);
+            // The sampler steps through whole microseconds, so a larger uneven stride's buckets can fall between its steps.
+            if (samplingIntervalUnit == 'n' && ColumnType.isTimestampMicro(timestampType)
+                    && samplingInterval > 2 * Micros.MICRO_NANOS && samplingInterval % Micros.MICRO_NANOS != 0) {
+                throw SqlException.$(fillStride.position, "FILL does not support this stride on a microsecond timestamp, use a whole number of microseconds");
+            }
             TimestampSampler timestampSampler = TimestampSamplerFactory.getInstance(driver, samplingInterval, samplingIntervalUnit, fillStride.position);
             // For day-or-larger stride with non-UTC TIME ZONE, the cursor wraps the
             // uniform-UTC sampler with a TimezoneFloorTimestampSampler at of() time

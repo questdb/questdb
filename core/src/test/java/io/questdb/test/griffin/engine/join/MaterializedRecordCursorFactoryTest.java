@@ -225,6 +225,31 @@ public class MaterializedRecordCursorFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHashJoinValuePageOfOneByte() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_PAGE_SIZE, 1);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT timestamp_sequence('2024-01-01', 60_000_000L) ts, (x % 2)::VARCHAR s, x v FROM long_sequence(200)) TIMESTAMP(ts) PARTITION BY DAY");
+            assertQuery("SELECT ts, s, sum(v) sv FROM t SAMPLE BY 1h ORDER BY ts, s LIMIT -2")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\ts\tsv
+                            2024-01-01T03:00:00.000000Z\t0\t1910
+                            2024-01-01T03:00:00.000000Z\t1\t1900
+                            """);
+            assertQuery("SELECT count(), sum(sv) FROM long_sequence(3) a CROSS JOIN (SELECT ts, s, sum(v) sv FROM t SAMPLE BY 1h) b")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count\tsum
+                            24\t60300
+                            """);
+        });
+    }
+
+    @Test
     public void testHashJoinReadsStreamThroughCopy() throws Exception {
         run((engine, compiler, context) -> {
             createTables(engine, context);

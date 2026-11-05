@@ -25,12 +25,16 @@ package io.questdb.test.griffin;
 
 import com.sun.management.ThreadMXBean;
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.RecordChain;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
@@ -443,6 +447,69 @@ public class StreamGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSpanShardsStartWithSmallPages() throws Exception {
+        Assume.assumeTrue(parallel);
+        final int rows = 2_000;
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 100);
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, rows);
+        run((engine, compiler, context) -> {
+            // A key of two columns makes the shards ordered maps, which allocate a page up front. One bucket covers
+            // every frame, so at the default page size each frame's shards alone take 8 MiB, as do the merged ones.
+            engine.execute("CREATE TABLE t AS (SELECT (x * 1_000L)::TIMESTAMP ts, x % 1_000 k, (x % 7)::SYMBOL y, x v FROM long_sequence(" + rows + ")) "
+                    + "TIMESTAMP(ts) PARTITION BY YEAR", context);
+            try (RecordCursorFactory factory = compiler.compile("SELECT count() count, sum(s) sum FROM (SELECT ts, k, y, sum(v) s FROM t SAMPLE BY 1h)", context).getRecordCursorFactory();
+                 MemoryTracker tracker = engine.getMemoryTrackerProvider().acquire(context.getSecurityContext(), 42, MemoryTrackerWorkload.QUERY)) {
+                context.setMemoryTracker(tracker);
+                setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 8L << 20);
+                try {
+                    // 2,000 rows, 1,000 values of k and 7 of y that always differ on a shared k: every row is its own key.
+                    Assert.assertEquals("count\tsum\n" + rows + "\t" + (rows * (rows + 1L) / 2) + "\n", read(factory, context));
+                } finally {
+                    setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
+                    context.setMemoryTracker(null);
+                }
+                Assert.assertEquals(0, tracker.getUsed());
+            }
+            Assert.assertTrue(shardMergeCountOf(compiler, context, "SELECT ts, k, y, sum(v) s FROM t SAMPLE BY 1h") > 0);
+        });
+    }
+
+    @Test
+    public void testSpanShardsFitEntriesWiderThanTheirPage() throws Exception {
+        Assume.assumeTrue(parallel);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 10);
+        run((engine, compiler, context) -> {
+            engine.execute("CREATE TABLE t AS (SELECT (x * 1_000L)::TIMESTAMP ts, x % 100 k, (x % 7)::SYMBOL y, x v FROM long_sequence(500)) "
+                    + "TIMESTAMP(ts) PARTITION BY YEAR", context);
+            // 600 aggregates take 4,800 bytes per key. The optimizer folds sum(v + constant) into sum(v), but not max().
+            final StringBuilder sums = new StringBuilder();
+            for (int i = 0; i < 600; i++) {
+                sums.append(", max(v + ").append(i).append(") s").append(i);
+            }
+            try (RecordCursorFactory factory = compiler.compile("SELECT ts, k, y" + sums + " FROM t SAMPLE BY 1h", context).getRecordCursorFactory();
+                 RecordCursor cursor = factory.getCursor(context)) {
+                final AsyncStreamGroupByRecordCursorFactory stream = (AsyncStreamGroupByRecordCursorFactory) getGroupBy(factory);
+                final int s0 = factory.getMetadata().getColumnIndex("s0");
+                final int s599 = factory.getMetadata().getColumnIndex("s599");
+                final Record record = cursor.getRecord();
+                long rows = 0;
+                long sum0 = 0;
+                long sum599 = 0;
+                while (cursor.hasNext()) {
+                    rows++;
+                    sum0 += record.getLong(s0);
+                    sum599 += record.getLong(s599);
+                }
+                // Every row is its own key, and v adds up to 125,250 over the 500 rows.
+                Assert.assertEquals(500, rows);
+                Assert.assertEquals(125_250, sum0);
+                Assert.assertEquals(125_250 + 500 * 599, sum599);
+                Assert.assertTrue(stream.getAtom().getShardMergeCount() > 0 || frameRows < 11);
+            }
+        });
+    }
+
+    @Test
     public void testLargeBucketFitsMemoryLimit() throws Exception {
         // One thread aggregates the bucket only when frames do not spread over workers.
         Assume.assumeTrue(!parallel || workers == 0);
@@ -461,6 +528,79 @@ public class StreamGroupByTest extends AbstractCairoTest {
                                 """);
             } finally {
                 setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
+            }
+        });
+    }
+
+    @Test
+    public void testKSumCompensatesAcrossFrames() throws Exception {
+        run((engine, compiler, context) -> {
+            engine.execute("CREATE TABLE tk (ts TIMESTAMP, d DOUBLE, k SYMBOL) TIMESTAMP(ts) PARTITION BY DAY", context);
+            // 8,760 values of 0.7 add up to exactly 6,132. Next to 1e16 only a Kahan sum's compensation keeps them.
+            engine.execute("INSERT INTO tk VALUES ('2024-01-01', 1e16, 'a')", context);
+            engine.execute("INSERT INTO tk SELECT timestamp_sequence('2024-01-01T00:00:01', 3_600_000_000L), 0.7, 'a' FROM long_sequence(8_760)", context);
+            engine.execute("INSERT INTO tk VALUES ('2024-12-31T23:00', -1e16, 'a')", context);
+            for (String sql : new String[]{"SELECT ts, ksum(d) s FROM tk SAMPLE BY 1y", "SELECT ts, k, ksum(d) s FROM tk SAMPLE BY 1y"}) {
+                try (RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory()) {
+                    assertStream(factory, true);
+                    try (RecordCursor cursor = factory.getCursor(context)) {
+                        Assert.assertTrue(cursor.hasNext());
+                        final double sum = cursor.getRecord().getDouble(factory.getMetadata().getColumnIndex("s"));
+                        // 2.0 is the distance between doubles near 1e16, the best any Kahan sum can do here.
+                        Assert.assertEquals(sql, 6_132.0, sum, 2.0);
+                        Assert.assertFalse(cursor.hasNext());
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testStreamGroupByDisabledByConfiguration() throws Exception {
+        final CairoConfiguration streamOff = new CairoConfigurationWrapper(configuration) {
+            @Override
+            public boolean isSqlStreamGroupByEnabled() {
+                return false;
+            }
+        };
+        assertMemoryLeak(() -> TestUtils.execute(workers == 0 ? null : new TestWorkerPool(workers), (engine, compiler, context) -> {
+            createTable(compiler, context);
+            for (String sql : new String[]{"SELECT ts, sym, count(*) FROM trades SAMPLE BY 1m", "SELECT timestamp_floor('1m', ts) bucket, count(*) FROM trades"}) {
+                try (RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory()) {
+                    final String plan = plan(factory, context);
+                    Assert.assertFalse(plan, plan.contains("Stream Group By"));
+                    Assert.assertTrue(plan, plan.contains(parallel ? "Async Group By" : "GroupBy"));
+                }
+            }
+        }, streamOff, LOG));
+    }
+
+    @Test
+    public void testSumOfOppositeInfinitiesIsNullInEveryLayout() throws Exception {
+        run((engine, compiler, context) -> {
+            engine.execute("CREATE TABLE s (ts TIMESTAMP, d DOUBLE, f FLOAT, k SYMBOL) TIMESTAMP(ts) PARTITION BY DAY", context);
+            engine.execute("""
+                    INSERT INTO s VALUES
+                        ('2024-01-01T00', 1, 1, 'a'), ('2024-01-01T01', 'Infinity', 'Infinity', 'a'), ('2024-01-01T02', 2, 2, 'a'),
+                        ('2024-01-02T00', 1, 1, 'b'), ('2024-01-02T01', '-Infinity', '-Infinity', 'b'), ('2024-01-02T02', 'Infinity', 'Infinity', 'b'),
+                        ('2024-01-02T03', 1, 1, 'b'), ('2024-01-02T04', 1, 1, 'b'),
+                        ('2024-01-03T00', null, null, 'c'), ('2024-01-03T01', 5, 5, 'c'),
+                        ('2024-01-04T00', null, null, 'd'),
+                        ('2024-01-05T00', '-Infinity', '-Infinity', 'e'), ('2024-01-05T01', 3, 3, 'e')""", context);
+            // Text output prints Infinity as null, so these compare the values themselves.
+            final double[] perGroup = {Double.POSITIVE_INFINITY, Double.NaN, 5, Double.NaN, Double.NEGATIVE_INFINITY};
+            for (String arg : new String[]{"d", "f", "d + 0", "f + 0"}) {
+                for (String filter : new String[]{"", " WHERE ts > 0"}) {
+                    final String sum = "sum(" + arg + ") sum FROM s" + filter;
+                    assertSums(compiler, context, "SELECT ts, k, " + sum + " SAMPLE BY 1d ORDER BY ts, k", perGroup);
+                    assertSums(compiler, context, "SELECT ts, " + sum + " SAMPLE BY 1d ORDER BY ts", perGroup);
+                    assertSums(compiler, context, "SELECT k, " + sum + " ORDER BY k", perGroup);
+                    assertSums(compiler, context, "SELECT " + sum, new double[]{Double.NaN});
+                }
+            }
+            // A sum that became NaN and one that never had a value are the same NULL to whatever reads them.
+            try (RecordCursorFactory factory = compiler.compile("SELECT sum, count() count FROM (SELECT k, sum(d) sum FROM s WHERE k IN ('b', 'd'))", context).getRecordCursorFactory()) {
+                Assert.assertEquals("sum\tcount\nnull\t2\n", read(factory, context));
             }
         });
     }
@@ -1680,6 +1820,33 @@ public class StreamGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFramePredictionStopsAtRowsAcrossTimeGap() throws Exception {
+        Assume.assumeTrue(parallel);
+        // 300 days lie inside the first frame, so the share of time alone would predict millions of groups. A frame holds
+        // all the rows of the single partition, or a quarter of them with four workers.
+        final int rows = 131_572;
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, rows);
+        run((engine, compiler, context) -> {
+            engine.execute("CREATE TABLE gap AS (SELECT (CASE WHEN x < 10_000 THEN x * 1_000_000L ELSE 25_920_000_000_000L + x * 1_000_000L END)::TIMESTAMP ts, "
+                    + "x % 3 k, x v FROM long_sequence(" + rows + ")) TIMESTAMP(ts) PARTITION BY YEAR", context);
+            try (RecordCursorFactory factory = compiler.compile("SELECT ts, sum(v) s FROM gap SAMPLE BY 1s", context).getRecordCursorFactory();
+                 RecordCursor cursor = factory.getCursor(context)) {
+                Assert.assertTrue(cursor.hasNext());
+                final DirectLongList results = ((AsyncStreamGroupByRecordCursorFactory) getGroupBy(factory)).getAtom().getResultValues(0);
+                Assert.assertTrue("capacity " + results.getCapacity() + " for " + results.size() + " longs", results.getCapacity() <= results.size() * 5 / 4);
+            }
+            try (RecordCursorFactory factory = compiler.compile("SELECT ts, k, sum(v) s FROM gap SAMPLE BY 1s", context).getRecordCursorFactory();
+                 RecordCursor cursor = factory.getCursor(context)) {
+                Assert.assertTrue(cursor.hasNext());
+                final RecordChain results = ((AsyncStreamGroupByRecordCursorFactory) getGroupBy(factory)).getAtom().getResultRecords(0);
+                final long used = results.getAppendOffset();
+                Assert.assertTrue("used " + used, used > 128 * 1024);
+                Assert.assertTrue("reserved " + results.getReservedBytes() + " for " + used, results.getReservedBytes() <= used * 5 / 4);
+            }
+        });
+    }
+
+    @Test
     public void testFrameResultsReserveAfterSample() throws Exception {
         Assume.assumeTrue(parallel);
         // A frame holds all the rows, or a quarter of them with four workers. Either way its two longs per group
@@ -1695,12 +1862,12 @@ public class StreamGroupByTest extends AbstractCairoTest {
                     + "TIMESTAMP(ts) PARTITION BY YEAR", context);
             assertFirstFrameCapacityMatchesGroups(compiler, context, "SELECT ts, sum(v) s FROM even SAMPLE BY 1s");
             assertFirstFrameCapacityMatchesGroups(compiler, context, "SELECT ts, sum(v) s FROM even SAMPLE BY 1s ORDER BY ts DESC");
-            // The estimate never reserves more groups than the frame has rows, on top of the sampled groups.
+            // The burst covers less than half of the frame's time range, whatever share of the rows it holds.
             try (RecordCursorFactory factory = compiler.compile("SELECT ts, sum(v) s FROM burst SAMPLE BY 1s", context).getRecordCursorFactory();
                  RecordCursor cursor = factory.getCursor(context)) {
                 Assert.assertTrue(cursor.hasNext());
                 final DirectLongList results = ((AsyncStreamGroupByRecordCursorFactory) getGroupBy(factory)).getAtom().getResultValues(0);
-                Assert.assertTrue("capacity " + results.getCapacity(), results.getCapacity() <= 2L * rows + 2 * 8_192);
+                Assert.assertTrue("capacity " + results.getCapacity() + " for " + results.size() + " longs", results.getCapacity() <= 3 * results.size());
             }
             final String expected = "count\tsum\n" + "5127\t" + (rows * (rows + 1L) / 2) + "\n";
             try (RecordCursorFactory factory = compiler.compile(
@@ -1749,13 +1916,26 @@ public class StreamGroupByTest extends AbstractCairoTest {
         run((engine, compiler, context) -> {
             engine.execute("CREATE TABLE keyed AS (SELECT (x * 250L)::TIMESTAMP ts, x % 1_000 k, x v FROM long_sequence(" + rows + ")) "
                     + "TIMESTAMP(ts) PARTITION BY YEAR", context);
-            try (RecordCursorFactory factory = compiler.compile("SELECT ts, k, count() c, sum(v) s FROM keyed SAMPLE BY 1s", context).getRecordCursorFactory();
+            // A burst of small buckets opens the frame, so the sample overestimates the chain that follows.
+            engine.execute("CREATE TABLE burst AS (SELECT (CASE WHEN x <= 5_000 THEN x * 1_000_000L "
+                    + "ELSE 10_000_000_000L + x * 1_000L END)::TIMESTAMP ts, x % 3 k, x v FROM long_sequence(" + rows + ")) "
+                    + "TIMESTAMP(ts) PARTITION BY YEAR", context);
+            for (String order : new String[]{"", " ORDER BY ts DESC"}) {
+                try (RecordCursorFactory factory = compiler.compile("SELECT ts, k, count() c, sum(v) s FROM keyed SAMPLE BY 1s" + order, context).getRecordCursorFactory();
+                     RecordCursor cursor = factory.getCursor(context)) {
+                    Assert.assertTrue(cursor.hasNext());
+                    final RecordChain results = ((AsyncStreamGroupByRecordCursorFactory) getGroupBy(factory)).getAtom().getResultRecords(0);
+                    final long used = results.getAppendOffset();
+                    Assert.assertTrue(order + " used " + used, used > 128 * 1024);
+                    Assert.assertTrue(order + " reserved " + results.getReservedBytes() + " for " + used, results.getReservedBytes() <= used * 5 / 4);
+                }
+            }
+            try (RecordCursorFactory factory = compiler.compile("SELECT ts, k, count() c, sum(v) s FROM burst SAMPLE BY 1s", context).getRecordCursorFactory();
                  RecordCursor cursor = factory.getCursor(context)) {
                 Assert.assertTrue(cursor.hasNext());
                 final RecordChain results = ((AsyncStreamGroupByRecordCursorFactory) getGroupBy(factory)).getAtom().getResultRecords(0);
                 final long used = results.getAppendOffset();
-                Assert.assertTrue("used " + used, used > 128 * 1024);
-                Assert.assertTrue("reserved " + results.getReservedBytes() + " for " + used, results.getReservedBytes() <= used * 5 / 4);
+                Assert.assertTrue("reserved " + results.getReservedBytes() + " for " + used, results.getReservedBytes() <= 3 * used);
             }
         });
     }
@@ -2298,6 +2478,27 @@ public class StreamGroupByTest extends AbstractCairoTest {
                 + "(x % 5_000)::VARCHAR s, x v, (x % 3)::SYMBOL sym FROM long_sequence(30_000)) TIMESTAMP(ts) PARTITION BY DAY", context);
         engine.execute("CREATE TABLE hash_input (ts TIMESTAMP, k LONG, s VARCHAR, v LONG, sym SYMBOL)", context);
         engine.execute("INSERT INTO hash_input SELECT * FROM trades", context);
+    }
+
+    private static void assertSums(SqlCompiler compiler, SqlExecutionContext context, String sql, double[] expected) throws Exception {
+        try (RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory();
+             RecordCursor cursor = factory.getCursor(context)) {
+            final int column = factory.getMetadata().getColumnIndex("sum");
+            final boolean isFloat = factory.getMetadata().getColumnType(column) == ColumnType.FLOAT;
+            final Record record = cursor.getRecord();
+            for (double value : expected) {
+                Assert.assertTrue(sql, cursor.hasNext());
+                Assert.assertEquals(sql, value, isFloat ? record.getFloat(column) : record.getDouble(column), 0);
+            }
+            Assert.assertFalse(sql, cursor.hasNext());
+        }
+    }
+
+    private static int shardMergeCountOf(SqlCompiler compiler, SqlExecutionContext context, String sql) throws Exception {
+        try (RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory()) {
+            read(factory, context);
+            return ((AsyncStreamGroupByRecordCursorFactory) getGroupBy(factory)).getAtom().getShardMergeCount();
+        }
     }
 
     private static RecordCursorFactory getGroupBy(RecordCursorFactory factory) {

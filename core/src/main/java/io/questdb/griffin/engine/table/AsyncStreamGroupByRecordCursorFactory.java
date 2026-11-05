@@ -250,7 +250,9 @@ public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorF
                 final RecordChain results = atom.getResultRecords(task);
                 long previous = -1;
                 long segmentCount = 0;
-                long chainRows = 0;
+                long sampleRows = 0;
+                long sampleStartKey = 0;
+                long sampleStartOffset = 0;
                 boolean isChainReserved = false;
                 for (long lo = 0, hi = rowCount; lo < hi; segmentCount++) {
                     circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
@@ -278,11 +280,22 @@ public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorF
                     } else {
                         map.clear(key);
                         map.aggregate(record, rows, start, end, baseRowId, isBatch, circuitBreaker);
+                        final boolean isChainStart = previous == -1;
                         previous = map.appendTo(results, previous, circuitBreaker);
-                        chainRows += end - start;
-                        if (!isChainReserved && results.getAppendOffset() >= CHAIN_SAMPLE_BYTES) {
-                            isChainReserved = true;
-                            reserveChain(results, results.getAppendOffset() * (chainRows + hi - lo) / chainRows);
+                        sampleRows += end - start;
+                        if (lo < hi) {
+                            final long offset = results.getAppendOffset();
+                            if (isChainStart) {
+                                // The frame's edge usually cuts this bucket, so the sample starts at the next one.
+                                sampleRows = 0;
+                                sampleStartKey = getKey(record, rows, keyFunction, isDescending ? hi - 1 : lo);
+                                sampleStartOffset = offset;
+                            } else if (!isChainReserved && offset - sampleStartOffset >= CHAIN_SAMPLE_BYTES) {
+                                isChainReserved = true;
+                                final long nextKey = getKey(record, rows, keyFunction, isDescending ? hi - 1 : lo);
+                                final long lastKey = getKey(record, rows, keyFunction, isDescending ? 0 : rowCount - 1);
+                                reserveChain(results, sampleStartOffset + predictFrameTotal(offset - sampleStartOffset, sampleStartKey, nextKey, lastKey, sampleRows, hi - lo));
+                            }
                         }
                     }
                     task.setGroupByLastKey(key);
@@ -298,11 +311,14 @@ public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorF
             final int keyIndex = atom.getStateTypes().getColumnCount() - 1;
             final long stride = (value.getSizeInBytes() + 7) / 8;
             final DirectLongList results = atom.getResultValues(task);
+            long firstKey = 0;
             for (long lo = 0, hi = rowCount, groups = 0; lo < hi; groups++) {
                 circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 if (groups == GROUP_SAMPLE_SIZE) {
                     final long rowsLeft = hi - lo;
-                    reserveGroups(results, (groups * rowsLeft / (rowCount - rowsLeft) + 1) * stride);
+                    final long nextKey = getKey(record, rows, keyFunction, isDescending ? hi - 1 : lo);
+                    final long lastKey = getKey(record, rows, keyFunction, isDescending ? 0 : rowCount - 1);
+                    reserveGroups(results, predictFrameTotal(groups, firstKey, nextKey, lastKey, rowCount - rowsLeft, rowsLeft) * stride - results.size());
                 }
                 final long key = getKey(record, rows, keyFunction, isDescending ? hi - 1 : lo);
                 final long start = isDescending ? findGroupStart(record, rows, keyFunction, key, lo, hi) : lo;
@@ -314,6 +330,9 @@ public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorF
                 }
                 final long firstRow = rows == null ? start : rows.get(start);
                 final boolean isContiguous = rows == null || rows.get(end - 1) - firstRow == end - start - 1;
+                if (groups == 0) {
+                    firstKey = key;
+                }
                 results.ensureCapacity(stride);
                 final long valueAddress = results.getAddress() + groups * stride * Long.BYTES;
                 value.of(valueAddress);
@@ -436,8 +455,16 @@ public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorF
         return keyFunction.getLong(record);
     }
 
-    // The sampled rows predict the frame's total, which skips the costly large reallocations. Doubling takes over
-    // when the prediction exceeds the memory limit, so a wrong prediction cannot fail a query that fits the limit.
+    // Predicts a frame's results from those of its first buckets, which skips the costly large reallocations. Buckets
+    // divide time, so the share of the time range they cover predicts the rest, however unevenly rows crowd into them.
+    // Gaps in time inflate that share, so the share of rows bounds it. Doubling takes over when the total exceeds the
+    // prediction or the memory limit.
+    private static long predictFrameTotal(long sampled, long firstKey, long nextKey, long lastKey, long sampledRows, long rowsLeft) {
+        final double byTime = (double) Math.abs(lastKey - firstKey) / Math.abs(nextKey - firstKey);
+        final double byRows = (double) rowsLeft / sampledRows;
+        return (long) (sampled * (Math.min(byTime, byRows) + 1));
+    }
+
     private static void reserveChain(RecordChain results, long bytes) {
         try {
             results.reserve(bytes);

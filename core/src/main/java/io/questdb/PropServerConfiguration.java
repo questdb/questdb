@@ -1866,7 +1866,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             warnIfMaxBytesBelowPageSize(properties, env,
                     PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES, this.sqlSortLightValueMaxBytes,
                     PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_PAGE_SIZE, this.sqlSortLightValuePageSize);
-            this.sqlHashJoinValuePageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_PAGE_SIZE, 16777216);
+            // divisor-only RecordChain page, as sort.value.page.size below.
+            this.sqlHashJoinValuePageSize = Math.max(1, getIntSize(properties, env, PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_PAGE_SIZE, 16777216));
             this.sqlHashJoinValueMaxPages = getIntSize(properties, env, PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_MAX_PAGES, Integer.MAX_VALUE);
             this.sqlLatestByJitEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_LATEST_BY_JIT_ENABLED, true);
             this.sqlLatestByRowCount = getInt(properties, env, PropertyKey.CAIRO_SQL_LATEST_BY_ROW_COUNT, 1000);

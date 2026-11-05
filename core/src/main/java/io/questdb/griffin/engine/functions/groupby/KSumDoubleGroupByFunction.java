@@ -169,7 +169,7 @@ public class KSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
             final long destCount = destValue.getLong(valueIndex + 2);
             if (destCount > 0) {
                 final double destSum = destValue.getDouble(valueIndex);
-                final double y = srcSum - srcC;
+                final double y = srcSum - srcC - destValue.getDouble(valueIndex + 1);
                 final double t = destSum + y;
                 destValue.putDouble(valueIndex, t);
                 destValue.putDouble(valueIndex + 1, t - destSum - y);

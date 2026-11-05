@@ -26,6 +26,7 @@ package io.questdb.test.cairo.sql.async;
 
 import io.questdb.DefaultFactoryProvider;
 import io.questdb.FactoryProvider;
+import io.questdb.MessageBus;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoConfigurationWrapper;
@@ -33,6 +34,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
+import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordCursor;
@@ -75,6 +77,7 @@ import io.questdb.mp.continuation.TimerShards;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Os;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -1246,6 +1249,16 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                 Misc.free(frameSequence);
             }
         });
+    }
+
+    @Test
+    public void testFiberOwnerCancelledWhileForeignSlotBlocksCollect() throws Exception {
+        assertFiberOwnerParksWhileForeignSlotBlocksCollect(true);
+    }
+
+    @Test
+    public void testFiberOwnerParksWhileForeignSlotBlocksCollect() throws Exception {
+        assertFiberOwnerParksWhileForeignSlotBlocksCollect(false);
     }
 
     @Test
@@ -4581,6 +4594,143 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                 Misc.free(dispatcher);
                 Misc.free(frameSequence);
                 Misc.free(queue);
+            }
+        });
+    }
+
+    private void assertFiberOwnerParksWhileForeignSlotBlocksCollect(boolean isCancelled) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE blocked_collect AS (SELECT x FROM long_sequence(1))");
+            final MessageBus messageBus = engine.getMessageBus();
+            final FiberRuntime ownerRuntime = new FiberRuntime(1);
+            final FiberRuntime queryRuntime = new FiberRuntime(1);
+            final FiberWalWaitQueue waitQueue = new FiberWalWaitQueue();
+            final PageFrameReduceDispatcher dispatcher = new PageFrameReduceDispatcher(engine, messageBus, queryRuntime);
+            final PageFrameReduceDispatcher previousDispatcher = messageBus.getPageFrameReduceDispatcher();
+            final PageFrameSequence<StatefulAtom> ownerSequence = new PageFrameSequence<>(
+                    engine,
+                    configuration,
+                    messageBus,
+                    new StatefulAtom() {
+                    },
+                    (_, _, _, _, _) -> {
+                    },
+                    () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_OFFLOAD),
+                    1,
+                    PageFrameReduceTask.TYPE_FILTER
+            );
+            final PageFrameSequence<StatefulAtom> foreignSequence = new PageFrameSequence<>(
+                    engine,
+                    configuration,
+                    messageBus,
+                    new StatefulAtom() {
+                    },
+                    (_, _, _, _, _) -> park(waitQueue),
+                    () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_OFFLOAD),
+                    1,
+                    PageFrameReduceTask.TYPE_FILTER
+            ) {
+                @Override
+                public SqlExecutionCircuitBreaker getCircuitBreaker() {
+                    return SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
+                }
+            };
+            final SCSequence collectSubSeq = new SCSequence();
+            final AtomicBoolean isStopped = new AtomicBoolean();
+            final AtomicLong collected = new AtomicLong(-1);
+            final AtomicReference<Throwable> failure = new AtomicReference<>();
+            // A carrier of its own keeps the test thread free if the owner never gives it up.
+            final Thread carrier = new Thread(() -> {
+                while (!isStopped.get()) {
+                    if (ownerRuntime.drain(8) == 0) {
+                        Os.pause();
+                    }
+                }
+            });
+            messageBus.setPageFrameReduceDispatcher(dispatcher);
+            try (
+                    NetworkSqlExecutionCircuitBreaker breaker = new NetworkSqlExecutionCircuitBreaker(engine, new DefaultSqlExecutionCircuitBreakerConfiguration());
+                    SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1).with(sqlExecutionContext.getSecurityContext(), null, null, -1, breaker);
+                    RecordCursorFactory factory = select("blocked_collect")
+            ) {
+                ownerSequence.of(factory, context, collectSubSeq, PartitionFrameCursorFactory.ORDER_ASC);
+                ownerSequence.prepareForDispatch();
+
+                // The foreign frame takes the ring slot ahead of the owner's frame, so collecting has to wait for it.
+                final int shard = ownerSequence.getShard();
+                final RingQueue<PageFrameReduceTask> queue = messageBus.getPageFrameReduceQueue(shard);
+                final MPSequence pubSeq = messageBus.getPageFrameReducePubSeq(shard);
+                final MCSequence subSeq = messageBus.getPageFrameReduceSubSeq(shard);
+                final long foreignCursor = pubSeq.next();
+                Assert.assertTrue(foreignCursor > -1);
+                queue.get(foreignCursor).of(foreignSequence, 0, false);
+                pubSeq.done(foreignCursor);
+                Assert.assertFalse(dispatcher.consumeOrdered(0, queue, subSeq, null));
+                Assert.assertEquals(1, queryRuntime.getParkedFiberCount());
+
+                final FiberTask ownerTask = new FiberTask() {
+                    @Override
+                    protected void onError(Throwable th) {
+                        failure.set(th);
+                    }
+
+                    @Override
+                    protected boolean runStep() {
+                        collected.set(ownerSequence.next());
+                        return true;
+                    }
+                };
+                Assert.assertSame(LaunchResult.LAUNCHED, ownerRuntime.launch(ownerTask));
+                carrier.start();
+                final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
+                try {
+                    while (ownerSequence.getReduceFinishedCounter().get() != 1 || ownerRuntime.getParkedFiberCount() != 1) {
+                        Assert.assertNull(failure.get());
+                        Assert.assertTrue("the owner kept its carrier while another fiber's slot blocked collection", System.nanoTime() < deadline);
+                        Os.pause();
+                    }
+                    Assert.assertFalse(ownerTask.isDone());
+                    Assert.assertEquals(0, foreignSequence.getReduceFinishedCounter().get());
+                    if (isCancelled) {
+                        breaker.cancel();
+                        while (failure.get() == null) {
+                            Assert.assertTrue("cancellation did not reach the waiting owner", System.nanoTime() < deadline);
+                            Os.pause();
+                        }
+                        Assert.assertTrue(failure.get().toString(), failure.get() instanceof CairoException e && e.isCancellation());
+                        Assert.assertEquals(0, foreignSequence.getReduceFinishedCounter().get());
+                    }
+                } finally {
+                    // The foreign frame must finish even after a failure, or an owner that kept its carrier never stops.
+                    waitQueue.fire(1, false);
+                    final long drainDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
+                    while (queryRuntime.getOutstandingTaskCount() > 0 && System.nanoTime() < drainDeadline) {
+                        queryRuntime.drain(8);
+                    }
+                }
+                Assert.assertEquals(1, foreignSequence.getReduceFinishedCounter().get());
+                if (!isCancelled) {
+                    while (!ownerTask.isDone()) {
+                        Assert.assertTrue("the owner did not wake up", System.nanoTime() < deadline);
+                        Os.pause();
+                    }
+                    Assert.assertNull(failure.get());
+                    Assert.assertTrue(collected.get() > foreignCursor);
+                    Assert.assertSame(ownerSequence, queue.get(collected.get()).getFrameSequence());
+                    ownerSequence.collect(collected.get(), false);
+                }
+                ownerSequence.await();
+            } finally {
+                isStopped.set(true);
+                if (carrier.isAlive()) {
+                    carrier.join();
+                }
+                messageBus.setPageFrameReduceDispatcher(previousDispatcher);
+                close(ownerRuntime);
+                close(queryRuntime);
+                Misc.free(dispatcher);
+                Misc.free(ownerSequence);
+                Misc.free(foreignSequence);
             }
         });
     }
