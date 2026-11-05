@@ -26,6 +26,7 @@ package io.questdb.test.griffin.fuzz;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
@@ -265,6 +266,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
     @After
     public void tearDown() throws Exception {
         IndexGatherRecordCursorFactory.setEstimateBudgetForTesting(64, 4096);
+        PageFrameMemoryPool.setPoisoningFreedCoveredBuffers(false);
         super.tearDown();
     }
 
@@ -677,6 +679,10 @@ public class QueryFuzzTest extends AbstractCairoTest {
         // Enable dev mode so the test_fault() function the FUNCTION fault relies on
         // is active; it folds to the constant true otherwise.
         setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+        // A frame decoded from a covering index is freed as soon as its reader is done with it;
+        // poisoned on the way, a value a reader kept past the frame reads wrong, and the shadow
+        // table, with other index settings, tells.
+        PageFrameMemoryPool.setPoisoningFreedCoveredBuffers(true);
         // Install a FailureFileFacade as the engine's files facade so the runner can
         // arm file-I/O faults; it is a transparent passthrough until armed.
         final FailureFileFacade faultFf = new FailureFileFacade(engine.getConfiguration().getFilesFacade());

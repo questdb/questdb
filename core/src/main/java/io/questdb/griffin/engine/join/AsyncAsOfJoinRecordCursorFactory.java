@@ -652,8 +652,8 @@ public class AsyncAsOfJoinRecordCursorFactory extends AbstractRecordCursorFactor
 
     // Sizes the frame's output in the task's row list and returns its address. The row list belongs
     // to a pooled reduce task and outlives the query, so growth is charged to the query's tracker
-    // and the charge settled when the tracker is released (its covered-bytes ledger), as the
-    // covered index decode buffers of the frame memory pool are.
+    // and the charge settled when the tracker is released (its covered-bytes ledger), see
+    // MemoryTracker.addCoveredBytes().
     private static long reserveOutput(AsyncAsOfJoinAtom atom, DirectLongList rows, long outOffset, long rowCount) {
         final long totalLongs = outOffset + rowCount * (1 + atom.getGatherCount());
         final long capacity = rows.getCapacity();

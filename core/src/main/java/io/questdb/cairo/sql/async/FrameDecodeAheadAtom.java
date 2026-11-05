@@ -34,7 +34,8 @@ import org.jetbrains.annotations.Nullable;
  * whose rows are below its base's local reduce threshold, but whose frames are too many to decode
  * on one thread, first runs a round in which each covered frame is decoded into the memory pool of
  * the slot that takes it, then reduces every frame on the query's thread, in frame order, reading a
- * decoded frame from the pool that decoded it. The fold therefore sees the rows in the order of a
+ * decoded frame from the pool that decoded it, which keeps the frame until the fold has read it, see
+ * {@link PageFrameMemoryPool#decodeAhead(int)}. The fold therefore sees the rows in the order of a
  * local reduce, and its results are bit for bit those of a local reduce, also for aggregates whose
  * result depends on the order they see rows in (a DOUBLE sum, for instance).
  */

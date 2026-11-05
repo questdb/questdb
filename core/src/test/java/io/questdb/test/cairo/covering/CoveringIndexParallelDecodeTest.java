@@ -433,12 +433,11 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
     public void testCoveredDecodeBuffersAreTrackedAndReleased() throws Exception {
         // Level-3 review follow-up (M1/M2): covered decode buffers charge a tracked byte
         // counter (getCoveredCachedBytes) that grows as covered frames decode and returns
-        // to zero once the buffers are released. This keeps the query-lifetime covered
-        // buffers observable (they cannot be LRU-evicted mid-query, so the per-query
-        // MemoryTracker captured by each CoveringBuffers is the real ceiling) and proves
-        // the symmetric free accounts every byte it allocated -- a leak would leave the
-        // counter non-zero (and trip releaseCoveringBuffers()'s assert) and assertMemoryLeak
-        // would fail on the native allocation.
+        // to zero once the buffers are released. This keeps the covered buffers a pool
+        // holds observable and proves the symmetric free accounts every byte it
+        // allocated -- a leak would leave the counter non-zero (and trip
+        // releaseCoveringBuffers()'s assert) and assertMemoryLeak would fail on the
+        // native allocation.
         final int coveredColumnIndex = 1;
         assertMemoryLeak(() -> {
             execute("""
@@ -507,8 +506,11 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
     public void testCoveredDecodeShellsAreReusedAcrossQueries() throws Exception {
         // A released covered frame keeps its buffer's address lists and metadata arrays as a shell
         // (its column buffers are freed), and the next decodes take the shells: of the same layout,
-        // of another layout with other columns, and back. Every value reads as decoded fresh, the
-        // covered byte accounting nets to zero at each release, and close() frees the shells.
+        // of another layout with other columns, and back. A zero-budget pool holds the frame its
+        // record is bound to alone, so a scan that moves the record from frame to frame releases
+        // each frame as it takes the next, and the next takes its shell: one buffer serves the scan.
+        // Every value reads as decoded fresh, the covered byte accounting nets to zero at each
+        // release, and close() frees the shells.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t_sh1 (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (payload), payload VARCHAR) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
             execute("INSERT INTO t_sh1 SELECT '2024-01-01'::TIMESTAMP + x * 3_600_000_000L, 'A', 'payload-value-' || x FROM long_sequence(200)");
@@ -542,8 +544,15 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
                         record.of(cursor);
                         final StringSink sink = new StringSink();
                         long expectedRow = 0;
+                        // the previous query released its frame into the shell the first frame takes
+                        assertEquals(queries[q], q == 0 ? 0 : 1, shellsBefore);
                         for (int frameIndex = 0; frameIndex < frameCount; frameIndex++) {
                             pool.navigateTo(frameIndex, record);
+                            // the record's frame alone, in the shell its previous frame left
+                            assertEquals(queries[q], 1, pool.getCoveredFrameCount());
+                            assertEquals(queries[q], 0, pool.getCoveringShellCount());
+                            assertTrue(queries[q], pool.getCoveredCachedBytes() > 0);
+                            assertFalse("a record over a covered frame is not stable", record.isStable());
                             for (long r = 0, n = addressCache.getFrameSize(frameIndex); r < n; r++) {
                                 record.setRowIndex(r);
                                 expectedRow++;
@@ -557,17 +566,11 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
                                 }
                             }
                         }
-                        assertEquals(queries[q], frameCount, pool.getCoveredFrameCount());
-                        if (q > 0) {
-                            // the frames took the previous query's shells
-                            assertTrue(queries[q] + " shells " + shellsBefore, shellsBefore > 0);
-                            assertEquals(queries[q], Math.max(0, shellsBefore - frameCount), pool.getCoveringShellCount());
-                        }
                         // released at the next of(), as at a query boundary
                         pool.clear();
                         assertEquals("covered byte accounting must net to zero after release", 0L, pool.getCoveredCachedBytes());
                         assertEquals(queries[q], 0, pool.getCoveredFrameCount());
-                        assertTrue(queries[q], pool.getCoveringShellCount() >= Math.min(frameCount, 512));
+                        assertEquals(queries[q], 1, pool.getCoveringShellCount());
                     }
                 }
             }
@@ -708,18 +711,13 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
     public void testCoveredQueryWithManyFramesNoLeak() throws Exception {
         // Regression GUARD for the worker covered-buffer lifecycle on the async
         // REDUCE path (Task 11). Covered columns are decoded on async workers into
-        // per-worker PageFrameMemoryPool.CoveringBuffers, cached per frame in
-        // coveringByFrame and freed only at a query boundary (of/clear/close), NOT
-        // by the per-frame releaseParquetBuffers() -- because a covered frame
-        // reports NATIVE, so a zero-copy first()/last() over a covered varchar
-        // STORES A RAW POINTER into those buffers for the merge phase, and a
-        // per-frame free would dangle it.
-        //
-        // The concern is the SHARED ring-queue reduce-task pools
-        // (PageFrameReduceTask.frameMemoryPool, one per ring slot): on the reduce
-        // path PageFrameReduceTask.collected() frees covered buffers via clear()
-        // only for the last ~frameQueueCapacity frames, and the non-last branch
-        // (releaseFrameMemory -> releaseParquetBuffers) deliberately keeps them.
+        // the pool of the reduce task that carries the frame, a slot of the SHARED
+        // ring queue (PageFrameReduceTask.frameMemoryPool, one per ring slot). A
+        // covered frame is a decoded frame, as a Parquet one is: the slot frees it
+        // once the cursor has collected it, in PageFrameReduceTask.collected(), so
+        // no slot keeps a covered frame past its query, and a record over it is not
+        // stable, so a zero-copy first()/last() over a covered varchar copies the
+        // value for the merge phase rather than keeping a pointer into the frame.
         // The async FILTER over a covering scan (`SELECT cols ... WHERE key AND
         // residual`, verified via EXPLAIN to be `Async Filter -> CoveringIndex`)
         // is the path that decodes covered frames into those ring-slot pools, so
@@ -733,11 +731,12 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
         // NATIVE_INDEX_READER (the tag CoveringBuffers allocate under) directly,
         // AFTER each covered query returns but WHILE the engine/bus still lives,
         // and assert it returns to the pre-query baseline. That is the only signal
-        // that observes ring-slot residue, and it locks in the structural reason
-        // there is none: the ring queue has exactly frameQueueCapacity slots, so
-        // the last frameQueueCapacity frames re-occupy every still-active slot and
-        // every slot's final collected task therefore hits the clear() (freeing)
-        // branch -- no slot's covered buffers survive the query.
+        // that observes ring-slot residue. The correctness check that compares the
+        // covered query with its non-indexed twin runs both cursors at once; when
+        // they share a ring, the covered one reduces most of its frames on the
+        // query's thread, which used to leave covered frames in the slots that a
+        // later query on the same ring then freed, below the baseline;
+        // CoveringIndexDecodeLifetimeTest pins that case down on a single ring.
         final int rowsPerPartition = 2000;
         final int partitions = 64; // 128k rows across 64 daily partitions
         final long rows = (long) rowsPerPartition * partitions;
@@ -771,8 +770,8 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
                                 sqlExecutionContext
                         );
                         // A covered VARCHAR (s) is included so first()/last() over a
-                        // covered varchar exercises the zero-copy stable-pointer path
-                        // whose lifetime the per-query free protects.
+                        // covered varchar exercises the copy of a value that is not
+                        // stable, from a frame the reducer frees after aggregating it.
                         final String gen =
                                 "SELECT" +
                                         " ('2024-01-01'::TIMESTAMP + (x - 1) * " + (86_400_000_000L / rowsPerPartition) + "L)::timestamp ts," +
@@ -818,11 +817,11 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
                         }
 
                         // first()/last() over the covered VARCHAR routes through the
-                        // async group-by (atom per-worker pools). It stores raw stable
-                        // pointers into the covered buffers for the post-await merge,
-                        // so it both exercises the stable-pointer path (proving the
-                        // free is NOT premature -> no use-after-free) and must match
-                        // the reference. > frameQueueCapacity covered frames for S0.
+                        // async group-by (atom per-worker pools), whose reducers free each
+                        // covered frame after aggregating it. A record over a covered frame
+                        // is not stable, so first() and last() copy the values the
+                        // post-await merge reads, and the result must match the reference.
+                        // > frameQueueCapacity covered frames for S0.
                         final String coveredFirstLast = "SELECT sym, first(s), last(s), count() FROM cov WHERE sym = 'S0'";
                         final String refFirstLast = "SELECT sym, first(s), last(s), count() FROM ref WHERE sym = 'S0'";
                         TestUtils.assertSqlCursors(compiler, sqlExecutionContext, refFirstLast, coveredFirstLast, LOG);
@@ -1160,7 +1159,7 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
         // BINARY/ARRAY), insert with per-type NULLs and longish var values, then under 4 workers
         // and a small frame cap (so each partition splits into several worker-decoded frames)
         // compare a projecting residual filter (record fast-path) and first/last aggregates
-        // (stable-pointer path) against a non-indexed twin. `ref` is INSERT...SELECT * FROM cov so
+        // (which copy the values of frames their reducers free) against a non-indexed twin. `ref` is INSERT...SELECT * FROM cov so
         // the rnd-generated values match exactly.
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 200);
         assertMemoryLeak(() -> {
@@ -1257,8 +1256,8 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
         // 8/16/32/64/128/256), CHAR, and a covered TIMESTAMP -- which were only exercised
         // single-threaded via the record path. Decode them under 4 workers + a small frame cap so
         // each partition splits into several worker-decoded frames, and compare a projecting
-        // residual filter (record fast-path) AND first/last (stable-pointer path, where the type
-        // supports it) against a non-indexed twin. rnd seeds match because ref is INSERT...SELECT *.
+        // residual filter (record fast-path) AND first/last (which copy the values of frames
+        // their reducers free, where the type supports it) against a non-indexed twin. rnd seeds match because ref is INSERT...SELECT *.
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 200);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
@@ -1620,14 +1619,14 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
 
     @Test
     public void testParallelCoveredFirstLastArrayAcrossManyFrames() throws Exception {
-        // Review finding #3: first()/last() over a covered ARRAY is the riskiest lifetime case --
-        // the aggregate retains a RAW pointer into a covered decode buffer for the merge phase, so
-        // if a covered buffer were freed/rebound while a stable pointer still referenced it the
-        // result would be wrong. Drive first(arr)/last(arr) over a covered query spanning MANY
-        // frames (small frame cap + many partitions, well past the frame queue capacity) under 4
-        // workers, vs a non-indexed twin. (BINARY has no first/last aggregate, so its covered
-        // stable-pointer surface is the record/projection path already covered by the all-types
-        // test; here we additionally project a_bin across many frames as a belt-and-suspenders.)
+        // Review finding #3: first()/last() over a covered ARRAY keeps a value for the merge
+        // phase that a covered decode buffer held, a buffer its reducer frees once it has
+        // aggregated the frame, so the aggregate must have copied it. Drive first(arr)/last(arr)
+        // over a covered query spanning MANY frames (small frame cap + many partitions, well past
+        // the frame queue capacity) under 4 workers, vs a non-indexed twin. (BINARY has no
+        // first/last aggregate, so its covered surface is the record/projection path already
+        // covered by the all-types test; here we additionally project a_bin across many frames as
+        // a belt-and-suspenders.)
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 128);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));

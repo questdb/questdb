@@ -145,7 +145,7 @@ public class CoveredIndexDecodeBenchmark {
     // covered-vs-scan changes with selectivity.
     @Param({"0.1", "1", "5", "10", "25", "50"})
     public String selectivity;
-    @Param({"sum", "multi_agg", "first_last", "count", "residual", "filter_project", "groupby_symbol", "groupby_varchar"})
+    @Param({"sum", "multi_agg", "first_last", "first_last_varchar", "count", "residual", "filter_project", "groupby_symbol", "groupby_varchar"})
     public String shape;
     private SqlExecutionContext ctx;
     private RecordCursorFactory factory;
@@ -358,6 +358,9 @@ public class CoveredIndexDecodeBenchmark {
                 return "SELECT sum(qty), max(qty) FROM " + table + w;
             case "first_last":
                 return "SELECT first(px), last(px) FROM " + table + w;
+            case "first_last_varchar":
+                // a covered frame's VARCHAR is not stable, so last() copies the value of every row
+                return "SELECT first(tag), last(tag) FROM " + table + w;
             case "count":
                 return "SELECT count() FROM " + table + w;
             case "residual":

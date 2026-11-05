@@ -838,7 +838,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     public void init(PageFrameMemory frameMemory) {
         this.frameIndex = frameMemory.getFrameIndex();
         this.frameFormat = frameMemory.getFrameFormat();
-        this.stableStrings = (frameFormat == PartitionFormat.NATIVE);
+        this.stableStrings = frameMemory.isStable();
         this.hasTypeCasts = frameMemory.hasColumnTypeCasts();
         this.rowIdOffset = frameMemory.getRowIdOffset();
         this.pageAddresses = frameMemory.getPageAddresses();
@@ -1607,9 +1607,14 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         return null; // Column top.
     }
 
+    /**
+     * Binds the record to a frame's columns. {@code isStable} tells whether the columns stay valid
+     * until the query ends, see {@link PageFrameMemory#isStable()}.
+     */
     void init(
             int frameIndex,
             byte frameFormat,
+            boolean isStable,
             long rowIdOffset,
             DirectLongList pageAddresses,
             DirectLongList auxPageAddresses,
@@ -1623,7 +1628,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     ) {
         this.frameIndex = frameIndex;
         this.frameFormat = frameFormat;
-        this.stableStrings = (frameFormat == PartitionFormat.NATIVE);
+        this.stableStrings = isStable;
         this.hasTypeCasts = hasTypeCasts;
         this.columnTops = columnTops;
         // The pool passes its own IntList by reference and mutates it in place on every

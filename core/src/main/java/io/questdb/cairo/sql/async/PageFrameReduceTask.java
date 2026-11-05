@@ -44,6 +44,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 public class PageFrameReduceTask implements QuietCloseable, Mutable {
     public static final byte TYPE_FILTER = 0;
@@ -276,6 +277,15 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
 
     public PageFrameMemory getFrameMemory() {
         return frameMemory;
+    }
+
+    /**
+     * The task's own pool, which the reducers of its frames decode into; tests read what it holds
+     * between queries.
+     */
+    @TestOnly
+    public PageFrameMemoryPool getFrameMemoryPool() {
+        return frameMemoryPool;
     }
 
     public long getFrameRowCount() {
@@ -531,7 +541,9 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         if (forceCollect || frameIndex >= frameCount - frameQueueCapacity) {
             clear();
         } else {
-            // Never keep parquet buffers around to avoid OOM even if there is an ongoing query.
+            // Never keep decoded frames around, Parquet or covered, to avoid OOM even if there is an
+            // ongoing query: the slot belongs to the shared queue, and keeps nothing of its frame
+            // once collected.
             releaseFrameMemory();
         }
     }

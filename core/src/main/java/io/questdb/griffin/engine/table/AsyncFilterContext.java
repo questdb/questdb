@@ -167,7 +167,7 @@ public class AsyncFilterContext implements Closeable {
     public void clear() {
         ownerMemoryPoolOverride = null;
         // cleared, not closed: a pool keeps its covered decode buffers' shells for the next query,
-        // see PageFrameMemoryPool.releaseCoveringBuffers(); close() frees them
+        // see PageFrameMemoryPool.setRetainsCoveringShells(); close() frees them
         ownerMemoryPool.clear();
         for (int i = 0, n = perWorkerMemoryPools.size(); i < n; i++) {
             // null once close() has freed the list

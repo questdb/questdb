@@ -430,8 +430,8 @@ public class FrameProjection implements QuietCloseable {
     // Grows the frame's value list, charging the growth to the query's memory limit, whose breach
     // project() turns into a frame left to the projection's own thread. The list belongs to a reduce
     // task of the shared queue, which may free or reuse it after the query ends, so its frees are
-    // global-only and the charge is released when the query's tracker is reconciled, as covered
-    // decode buffers' are, see MemoryTracker.addCoveredBytes().
+    // global-only and the charge is released when the query's tracker is reconciled, see
+    // MemoryTracker.addCoveredBytes().
     static void ensureCapacity(DirectLongList sink, long words, @Nullable MemoryTracker memoryTracker) {
         final long capacityBefore = sink.getCapacity();
         if (memoryTracker == null || capacityBefore >= words) {

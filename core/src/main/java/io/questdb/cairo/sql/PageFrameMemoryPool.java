@@ -103,16 +103,26 @@ import java.util.Arrays;
  * projection, see {@link #of(PageFrameAddressCache, ParquetDecodeHint, IntHashSet)}, and the pool
  * then decodes only those columns, so the cache budget holds more frames.
  * <p>
+ * A frame that a covering index serves for a single key reports NATIVE, but its columns are
+ * decoded from the index into this pool's buffers, which live as a decoded Parquet frame's do:
+ * while the frame memory or a record is bound to them, or while the same cache budget has room for
+ * them, until {@link #releaseParquetBuffers()} or a query boundary frees them. A record over such a
+ * frame is not stable, see {@link PageFrameMemory#isStable()}. So a pool holds the covered frames
+ * its readers are on, not every frame it has decoded, and a pool of a shared queue's task keeps
+ * none past the frame it carries.
+ * <p>
  * This pool is thread-unsafe as it may hold navigated Parquet partition data,
  * so it shouldn't be shared between multiple threads.
  */
 public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, Mutable {
     private static final byte FRAME_MEMORY_MASK = 1 << 2;
+    // a covered decode that binds no holder, see acquireCoveringBuffers()
+    private static final byte NO_HOLDER = 0;
     private static final byte RECORD_A_MASK = 1;
     private static final byte RECORD_B_MASK = 1 << 1;
     // values of a compressed covered run decoded at once, see CoveringBuffers.copyRun()
     private static final int RUN_DECODE_CHUNK = 4096;
-    // CoveringBuffers shells kept across queries at most, see releaseCoveringBuffers()
+    // CoveringBuffers shells kept at most, see evictCovered()
     private static final int COVERING_SHELL_POOL_CAP = 512;
     private static final int SHELL_POOL_CAP = 256;
     // O(1) frameIndex lookup. LRU order is tracked separately via the
@@ -122,17 +132,21 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     // Rebuilt each time openParquet() encounters a new file.
     private final IntIntHashMap columnIdToParquetIdx;
     private final CairoConfiguration configuration;
-    // Per-worker covered (posting-index sidecar) decode buffers, keyed by frame
-    // index. A covered frame's decoded native buffers must live for the WHOLE
-    // query, not just one navigateTo: covered frames report NATIVE, so a record
-    // read of a covered VARCHAR/STRING is "stable" and zero-copy aggregates
-    // (first/last) STORE the raw buffer pointer for the merge phase. Reusing one
-    // slot across frames (or freeing it per frame in releaseParquetBuffers) would
-    // dangle those pointers. So we cache one CoveringBuffers per frame and free
-    // them all only at a query boundary (of / clear / close), mirroring the
-    // eager production path, which allocates fresh per-frame buffers and frees
-    // them at cursor close. The pool is per reduce slot, owned by one worker.
+    // The covered (posting-index sidecar) frames this pool has decoded, keyed by frame index, in LRU
+    // order through coveredLruHead/coveredLruTail. A covered frame is a decoded frame, as a Parquet
+    // frame is, and its buffers live as a Parquet frame's do: while the frame memory or a record is
+    // bound to them, or unbound while the cache budget has room for them; releaseParquetBuffers()
+    // frees them all, and so do the query boundaries (of, clear, close). A record bound to them is
+    // not stable (see PageFrameMemory.isStable()), so a reader that keeps a value past the frame,
+    // such as first() over a VARCHAR, copies it. Only a frame decoded ahead of a fold outlives
+    // releaseParquetBuffers(), until the fold releases it, see decodeAhead().
     private final IntObjHashMap<CoveringBuffers> coveringByFrame = new IntObjHashMap<>();
+    // the covered buffers the frame memory and the records are bound to, each pinning its buffers
+    private CoveringBuffers coveredBoundForFrameMemory;
+    private CoveringBuffers coveredBoundForRecordA;
+    private CoveringBuffers coveredBoundForRecordB;
+    private CoveringBuffers coveredLruHead;
+    private CoveringBuffers coveredLruTail;
     // scratch of RUN_DECODE_CHUNK longs for the range decode of compressed covered runs, see
     // CoveringBuffers.copyRun(); 0 until first used, freed with the covered decode buffers
     private long runDecodeWorkspace;
@@ -140,9 +154,10 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     // so detached covered-cursor decodes can reuse these arrays without per-frame GC.
     private final ObjList<int[]> coveringIncludeIndexScratch = new ObjList<>();
     private final IntList declaredFrameRowCounts = new IntList(16);
-    // Released CoveringBuffers, their column buffers freed and their address lists and metadata
-    // arrays kept, reused by the next frames' decodes, also of later queries, see
-    // releaseCoveringBuffers(); at most COVERING_SHELL_POOL_CAP, freed by close()
+    // Released CoveringBuffers, their column buffers freed and their metadata arrays kept, reused by
+    // the next frames' decodes, also of later queries; at most COVERING_SHELL_POOL_CAP, freed by
+    // close(). A pool that keeps shells keeps their address lists too, see setRetainsCoveringShells();
+    // any other parks them, closed, so that the pool keeps no native memory past a frame.
     private final ObjList<CoveringBuffers> freeCoveringShells = new ObjList<>();
     private final PageFrameMemoryImpl frameMemory;
     // Bounded LIFO of closed ParquetBuffers shells, reused by acquireBuffer on the
@@ -165,6 +180,10 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     private final IntLongHashMap recordAtSlices = new IntLongHashMap();
     // test seam: covered frames decoded for their declared rows alone
     private static long coveredRowDecodeCount;
+    // test seam: fills covered decode buffers with POISON_BYTE before they are freed, see
+    // setPoisoningFreedCoveredBuffers()
+    private static volatile boolean isPoisoningFreedCoveredBuffers;
+    private static final int POISON_BYTE = 0xA5;
     // a covered frame's declared rows, see decodeCoveredFrameForRecord()
     private DirectLongList coveredRowScratch;
     // Per-column source type tag for fixed-to-var type-cast columns.
@@ -186,22 +205,15 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     private ParquetBuffers boundForRecordA;
     private ParquetBuffers boundForRecordB;
     private long cachedBytes;
-    // Live native bytes held by retained CoveringBuffers (covered decode buffers).
-    // Unlike parquet's cachedBytes this is NOT an eviction budget: covered buffers are
-    // query-lifetime and cannot be LRU-evicted mid-query (zero-copy first()/last()
-    // aggregates retain raw pointers into them for the merge phase, so evicting a still
-    // referenced frame would be a use-after-free). For observability and tests only;
-    // always == the sum of every retained CoveringBuffers' live allocation.
+    // Live native bytes of the covered decode buffers this pool holds, the sum of every
+    // CoveringBuffers' allocatedBytes. With cachedBytes, it is what the cache budget bounds, see
+    // trimCoveredToBudget().
     //
-    // Covered allocations charge the per-query MemoryTracker (MemoryTag.NATIVE_INDEX_READER,
-    // via growNative/ensureCapacity), so the query memory limit sees and caps covered decode.
-    // The matching free is global-only: a CoveringBuffers is freed lazily at the NEXT query's
-    // clear()/of() (the reduce task that owns the pool is reset on reuse, not at the owning
-    // query's teardown), which is after the owning query's tracker has been recycled, so a
-    // tracker-charged free there would decrement an unrelated workload's recycled block. Instead
-    // MemoryTracker.reconcileCovered() releases the outstanding charge from used at tracker
-    // teardown, keeping the pooled block clean while the buffers stay accounted globally until
-    // their lazy free.
+    // Covered allocations charge the per-query MemoryTracker (MemoryTag.NATIVE_INDEX_READER), so
+    // the query memory limit sees and caps covered decode, and the free releases the charge, so
+    // that the limit sees the covered frames the query holds, not those it has decoded. A buffer
+    // freed after its query's tracker has been reconciled frees on global-only accounting, see
+    // CoveringBuffers.chargedTracker().
     private long coveredCachedBytes;
     private ParquetDecodeHint decodeHint = ParquetDecodeHint.MONOTONIC;
     private long effectiveBudgetBytes;
@@ -300,6 +312,17 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         return coveredRowDecodeCount;
     }
 
+    /**
+     * Makes every pool fill a covered frame's decode buffers with a byte pattern before it frees
+     * them, so that a reader that kept a pointer into a released covered frame reads the pattern
+     * rather than the stale values, which a freed block still holds until it is reused, and a
+     * result that a test compares with a reference query comes out wrong.
+     */
+    @TestOnly
+    public static void setPoisoningFreedCoveredBuffers(boolean isPoisoning) {
+        isPoisoningFreedCoveredBuffers = isPoisoning;
+    }
+
     @TestOnly
     public long getCachedBytes() {
         return cachedBytes;
@@ -351,11 +374,11 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         if (format == PartitionFormat.NATIVE) {
             // a deferred frame's columns are computed by the first thread that comes here
             addressCache.ensureFrameReady(frameIndex);
-            // A covered frame reports NATIVE but is served by this pool's per-frame
-            // CoveringBuffers, NOT the query-stable address-cache arrays, so it must
-            // take the parquet-style guarded bind below -- never the frame-index-only
-            // fast-return, which would leave the record pointing at recycled buffers
-            // of a different generation. Detect and handle it before that fast-return.
+            // A covered frame reports NATIVE but is decoded into this pool's buffers, NOT read
+            // from the query-stable address-cache arrays, so it must take the guarded bind of a
+            // decoded frame -- never the frame-index-only fast-return, which would leave the
+            // record pointing at buffers the pool has released or given to another frame.
+            // Detect and handle it before that fast-return.
             if (navigateCoveredRecord(frameIndex, record)) {
                 return;
             }
@@ -366,9 +389,11 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             }
             final byte usageBit = record.getLetter() == PageFrameMemoryRecord.RECORD_A_LETTER ? RECORD_A_MASK : RECORD_B_MASK;
             unbind(usageBit);
+            unbindCovered(usageBit);
             record.init(
                     frameIndex,
                     format,
+                    true,
                     addressCache.getRowIdOffset(frameIndex),
                     addressCache.getPageAddresses(),
                     addressCache.getAuxPageAddresses(),
@@ -405,6 +430,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             // repeat visit the rebuild is skipped but the still-valid mapping is reused. Only the
             // expensive decode() stays gated on the buffer cache miss / partial window.
             final byte usageBit = record.getLetter() == PageFrameMemoryRecord.RECORD_A_LETTER ? RECORD_A_MASK : RECORD_B_MASK;
+            assert isCoveredUnbound(usageBit);
             ParquetBuffers parquetBuffers = tryHit(frameIndex, usageBit);
             final int rowGroupLo = addressCache.getParquetRowGroupLo(frameIndex);
             final int rowGroupHi = addressCache.getParquetRowGroupHi(frameIndex);
@@ -461,6 +487,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             record.init(
                     frameIndex,
                     format,
+                    false,
                     addressCache.getRowIdOffset(frameIndex),
                     parquetBuffers.pageAddresses,
                     parquetBuffers.auxPageAddresses,
@@ -544,10 +571,12 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             } catch (Throwable th) {
                 // Mirror the PARQUET arm: drop frameMemory's stale binding so a
                 // subsequent fast-return does not serve the half-bound state.
+                unbindCovered(FRAME_MEMORY_MASK);
                 frameMemory.clear();
                 throw th;
             }
         } else if (format == PartitionFormat.PARQUET) {
+            assert isCoveredUnbound(FRAME_MEMORY_MASK);
             final int rowGroupLo = addressCache.getParquetRowGroupLo(frameIndex);
             final int rowGroupHi = addressCache.getParquetRowGroupHi(frameIndex);
             final int decodeLo = (int) Math.min(rowGroupHi, rowGroupLo + (long) inFrameRowLo);
@@ -658,10 +687,12 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 patchCoveredFrameMemory(frameIndex, columnIndexes);
             } catch (Throwable th) {
                 // Mirror the PARQUET arm: drop frameMemory's stale binding on failure.
+                unbindCovered(FRAME_MEMORY_MASK);
                 frameMemory.clear();
                 throw th;
             }
         } else if (format == PartitionFormat.PARQUET) {
+            assert isCoveredUnbound(FRAME_MEMORY_MASK);
             ParquetBuffers parquetBuffers = tryHit(frameIndex, FRAME_MEMORY_MASK);
             if (parquetBuffers != null && parquetBuffers.isRowFiltered) {
                 // A row-filtered buffer holds NULLs for undeclared rows and must not
@@ -766,8 +797,8 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
      */
     public void of(PageFrameAddressCache addressCache, ParquetDecodeHint hint, @Nullable IntHashSet projection) {
         releaseParquetBuffers();
-        // A new query (or the same query's next address cache) invalidates any
-        // covered buffers retained for stable-string aggregates of the prior one.
+        // A new query (or the same query's next address cache) invalidates the covered
+        // frames of the prior one, including those decoded ahead of a fold.
         releaseCoveringBuffers();
         this.addressCache = addressCache;
         this.decodeHint = hint;
@@ -788,13 +819,50 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         frameMemoryRecord.setRowIndex(Rows.toLocalRowID(atRowId));
     }
 
+    /**
+     * Decodes every covered column of a single-key covered frame for a fold that reads the frame
+     * later through this pool, see {@link io.questdb.cairo.sql.async.FrameDecodeAheadAtom}: the
+     * pool passes to the fold's thread with the frame, which outlives {@link #releaseParquetBuffers()},
+     * called by the fold's reducers after each frame, and the cache budget, until
+     * {@link #releaseDecodedAhead(int)} or a query boundary releases it. Does nothing for another
+     * frame. Binds neither the frame memory nor a record.
+     */
+    public void decodeAhead(int frameIndex) {
+        if (!addressCache.isFrameSingleKeyCovered(frameIndex)) {
+            return;
+        }
+        final CoveringBuffers buffers = acquireCoveringBuffers(frameIndex, NO_HOLDER);
+        buffers.isDecodedAhead = true;
+        decodeCovered(buffers, frameIndex, null);
+        trimCoveredToBudget(false);
+    }
+
     public void releaseFrameMemory() {
         unbind(FRAME_MEMORY_MASK);
+        unbindCovered(FRAME_MEMORY_MASK);
         frameMemory.clear();
     }
 
     /**
-     * Frees all decoded Parquet buffers and clears bookkeeping.
+     * Releases a frame that {@link #decodeAhead(int)} decoded, once the fold has read it: the frame
+     * is freed, or, while the frame memory or a record is still bound to it, left to the cache
+     * budget. Does nothing for a frame not decoded ahead.
+     */
+    public void releaseDecodedAhead(int frameIndex) {
+        final CoveringBuffers buffers = coveringByFrame.get(frameIndex);
+        if (buffers != null && buffers.isDecodedAhead) {
+            buffers.isDecodedAhead = false;
+            if (buffers.usageFlags == 0) {
+                evictCovered(buffers);
+            }
+        }
+    }
+
+    /**
+     * Frees every decoded frame: the Parquet buffers and the covered decode buffers, but the
+     * covered frames decoded ahead of a fold (see {@link #decodeAhead(int)}), and clears
+     * bookkeeping. The reduce paths call it once they are done with a frame, so that a pool,
+     * also a shared queue task's, keeps no decoded frame between frames and past its query.
      * <p>
      * Bulk shutdown path: this does NOT honor the {@code usageFlags} pin
      * bits, so any {@link PageFrameMemoryRecord} or {@code frameMemory}
@@ -830,12 +898,9 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         if (frameMemory != null) {
             frameMemory.clear();
         }
-        // NOTE: covered (CoveringBuffers) buffers are deliberately NOT freed here.
-        // The async reduce paths call this per frame, but a covered frame's native
-        // buffers must outlive a single frame -- zero-copy first()/last() over a
-        // covered NATIVE varchar/string stores a raw pointer into them for the
-        // merge phase. They are freed only at a query boundary by
-        // releaseCoveringBuffers() (of / clear / close).
+        // A covered frame is a decoded frame too: a record over it is not stable, so no reader
+        // keeps a pointer into it past the frame, see PageFrameMemory.isStable().
+        releaseCoveredFrames(false);
     }
 
     /**
@@ -869,14 +934,17 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     }
 
     /**
-     * Keeps released covered decode buffers as shells for later decodes, up to a bound, see
-     * {@link #releaseCoveringBuffers()}: for a pool its owner keeps across queries and closes with
-     * itself, such as an atom's, not a shared queue task's.
+     * Keeps the address lists of released covered decode buffers with their shells for later
+     * decodes, up to a bound, see {@link #evictCovered}, and the run decode scratch between frames:
+     * for a pool its owner keeps across queries and closes with itself, such as an atom's, not a
+     * shared queue task's, which keeps no native memory past a frame.
      */
     public void setRetainsCoveringShells(boolean isRetainingCoveringShells) {
         this.isRetainingCoveringShells = isRetainingCoveringShells;
         if (!isRetainingCoveringShells) {
-            Misc.freeObjListAndClear(freeCoveringShells);
+            for (int i = 0, n = freeCoveringShells.size(); i < n; i++) {
+                freeCoveringShells.getQuick(i).park();
+            }
         }
     }
 
@@ -1115,45 +1183,44 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     }
 
     /**
-     * Acquire (or reuse) this pool's per-frame {@link CoveringBuffers} for a
-     * single-key covered frame and decode its covered columns into them, returning
-     * the buffers; returns {@code null} for a non-covered frame or a multi-key
-     * (merged) covered frame, which cannot be reproduced from a single detached
-     * cursor and stays on the eager flat addresses. Shared by the flyweight
-     * ({@link #patchCoveredFrameMemory}) and record ({@link #navigateCoveredRecord})
-     * arms so both decode identically.
+     * Decodes the covered columns of a single-key covered frame into this pool's buffers for the
+     * frame, binds the {@code usageBit} holder to them and returns them; returns {@code null} for a
+     * non-covered frame or a multi-key (merged) covered frame, which cannot be reproduced from a
+     * single detached cursor and stays on the eager flat addresses. Shared by the flyweight
+     * ({@link #patchCoveredFrameMemory}) and record ({@link #navigateCoveredRecord}) arms so both
+     * decode identically.
      */
     @Nullable
-    private CoveringBuffers decodeCoveredFrame(int frameIndex) {
-        return decodeCoveredFrame(frameIndex, null);
+    private CoveringBuffers decodeCoveredFrame(int frameIndex, @Nullable IntHashSet columnIndexes, byte usageBit) {
+        if (!addressCache.isFrameSingleKeyCovered(frameIndex)) {
+            return null;
+        }
+        final CoveringBuffers buffers = acquireCoveringBuffers(frameIndex, usageBit);
+        decodeCovered(buffers, frameIndex, columnIndexes);
+        trimCoveredToBudget(false);
+        return buffers;
     }
 
-    @Nullable
-    private CoveringBuffers decodeCoveredFrame(int frameIndex, @Nullable IntHashSet columnIndexes) {
-        if (!addressCache.isFrameCovered(frameIndex)) {
-            return null;
+    // Decodes the frame's columns that the buffers lack into them. Idempotent: decode() is a no-op
+    // for the columns the buffers already hold, so a repeat navigate to the same frame reuses
+    // them. A failed decode frees the buffers: a holder bound to them is unbound, and the next
+    // navigation decodes the frame again.
+    private void decodeCovered(CoveringBuffers buffers, int frameIndex, @Nullable IntHashSet columnIndexes) {
+        try {
+            buffers.decode(
+                    frameIndex,
+                    addressCache.getCoveredIndexReader(frameIndex),
+                    addressCache.getCoveredKey(frameIndex),
+                    addressCache.getCoveredRowLo(frameIndex),
+                    addressCache.getCoveredRowHi(frameIndex),
+                    addressCache.getCoveredIncludeIndices(frameIndex),
+                    coveredRowCount(frameIndex),
+                    columnIndexes
+            );
+        } catch (Throwable th) {
+            evictCovered(buffers);
+            throw th;
         }
-        final int key = addressCache.getCoveredKey(frameIndex);
-        if (key == SymbolTable.VALUE_NOT_FOUND) {
-            // Multi-key (merged) covered frame: cannot be reproduced from a single
-            // detached cursor.
-            return null;
-        }
-        final CoveringBuffers buffers = acquireCoveringBuffers(frameIndex);
-        // Idempotent: decode() is a no-op once this frame has been decoded, so a
-        // repeat navigate to the same frame reuses the live buffers (and keeps any
-        // pointers stable aggregates stored into them).
-        buffers.decode(
-                frameIndex,
-                addressCache.getCoveredIndexReader(frameIndex),
-                key,
-                addressCache.getCoveredRowLo(frameIndex),
-                addressCache.getCoveredRowHi(frameIndex),
-                addressCache.getCoveredIncludeIndices(frameIndex),
-                coveredRowCount(frameIndex),
-                columnIndexes
-        );
-        return buffers;
     }
 
     /**
@@ -1162,62 +1229,260 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
      * {@link #isRowFilterEligible}), as a record visits only those; else in full.
      */
     @Nullable
-    private CoveringBuffers decodeCoveredFrameForRecord(int frameIndex) {
+    private CoveringBuffers decodeCoveredFrameForRecord(int frameIndex, byte usageBit) {
         final long slice = recordAtSlices.get(frameIndex);
         if (slice == -1
                 || !addressCache.isFrameSingleKeyCovered(frameIndex)
                 || !isRowFilterEligible(frameIndex, Numbers.decodeHighInt(slice) - Numbers.decodeLowInt(slice))) {
-            return decodeCoveredFrame(frameIndex, null);
+            return decodeCoveredFrame(frameIndex, null, usageBit);
         }
-        final CoveringBuffers buffers = acquireCoveringBuffers(frameIndex);
+        final CoveringBuffers buffers = acquireCoveringBuffers(frameIndex, usageBit);
         if (buffers.isRowFiltered && buffers.frameIndex == frameIndex || buffers.isFullyDecoded() && buffers.frameIndex == frameIndex) {
+            // the holder's previous frame, which it has left, is the budget's
+            trimCoveredToBudget(false);
             return buffers;
         }
         final int sliceLo = Numbers.decodeLowInt(slice);
         final int sliceHi = Numbers.decodeHighInt(slice);
-        if (coveredRowScratch == null) {
-            coveredRowScratch = new DirectLongList(sliceHi - sliceLo, MemoryTag.NATIVE_DEFAULT);
-        }
-        coveredRowScratch.clear();
-        coveredRowScratch.ensureCapacity(sliceHi - sliceLo);
-        // ascending, and a row declared twice decodes once
-        long prev = -1;
-        for (int i = sliceLo; i < sliceHi; i++) {
-            final long row = recordAtRows.get(i);
-            if (row != prev) {
-                coveredRowScratch.add(row);
-                prev = row;
+        try {
+            if (coveredRowScratch == null) {
+                coveredRowScratch = new DirectLongList(sliceHi - sliceLo, MemoryTag.NATIVE_DEFAULT);
             }
+            coveredRowScratch.clear();
+            coveredRowScratch.ensureCapacity(sliceHi - sliceLo);
+            // ascending, and a row declared twice decodes once
+            long prev = -1;
+            for (int i = sliceLo; i < sliceHi; i++) {
+                final long row = recordAtRows.get(i);
+                if (row != prev) {
+                    coveredRowScratch.add(row);
+                    prev = row;
+                }
+            }
+            coveredRowDecodeCount++;
+            buffers.decodeRows(
+                    frameIndex,
+                    addressCache.getCoveredIndexReader(frameIndex),
+                    addressCache.getCoveredKey(frameIndex),
+                    addressCache.getCoveredRowLo(frameIndex),
+                    addressCache.getCoveredRowHi(frameIndex),
+                    addressCache.getCoveredIncludeIndices(frameIndex),
+                    coveredRowCount(frameIndex),
+                    coveredRowScratch
+            );
+        } catch (Throwable th) {
+            evictCovered(buffers);
+            throw th;
         }
-        coveredRowDecodeCount++;
-        buffers.decodeRows(
-                frameIndex,
-                addressCache.getCoveredIndexReader(frameIndex),
-                addressCache.getCoveredKey(frameIndex),
-                addressCache.getCoveredRowLo(frameIndex),
-                addressCache.getCoveredRowHi(frameIndex),
-                addressCache.getCoveredIncludeIndices(frameIndex),
-                coveredRowCount(frameIndex),
-                coveredRowScratch
-        );
+        trimCoveredToBudget(false);
         return buffers;
     }
 
-    // One CoveringBuffers per frame, retained for the query (see coveringByFrame).
-    private CoveringBuffers acquireCoveringBuffers(int frameIndex) {
+    /**
+     * Returns this pool's buffers for a covered frame, the cached ones or new ones, with the
+     * {@code usageBit} holder bound to them, see {@link #bindCovered}; {@link #NO_HOLDER} binds none.
+     * New buffers take the place of the unbound ones the cache budget has no room for, see
+     * {@link #trimCoveredToBudget}, and the holder's own buffers are released first, so that a
+     * zero-budget pool that moves from frame to frame holds one frame at a time.
+     */
+    private CoveringBuffers acquireCoveringBuffers(int frameIndex, byte usageBit) {
         final int keyIndex = coveringByFrame.keyIndex(frameIndex);
         CoveringBuffers buffers = coveringByFrame.valueAt(keyIndex);
-        if (buffers == null) {
-            final int shellCount = freeCoveringShells.size();
-            if (shellCount > 0) {
-                buffers = freeCoveringShells.getQuick(shellCount - 1);
-                freeCoveringShells.setPos(shellCount - 1);
-            } else {
-                buffers = new CoveringBuffers();
-            }
-            coveringByFrame.putAt(keyIndex, frameIndex, buffers);
+        if (buffers != null) {
+            coveredLruMoveToTail(buffers);
+            bindCovered(usageBit, buffers);
+            return buffers;
         }
+        unbindCovered(usageBit);
+        trimCoveredToBudget(true);
+        final int shellCount = freeCoveringShells.size();
+        if (shellCount > 0) {
+            buffers = freeCoveringShells.getQuick(shellCount - 1);
+            freeCoveringShells.setPos(shellCount - 1);
+            // a parked shell gets its address lists back
+            try {
+                buffers.reopen();
+            } catch (Throwable th) {
+                // in no list now, so nothing else would free what the reopen allocated
+                buffers.close();
+                throw th;
+            }
+        } else {
+            buffers = new CoveringBuffers();
+        }
+        buffers.cacheFrameIndex = frameIndex;
+        coveringByFrame.put(frameIndex, buffers);
+        coveredLruAppend(buffers);
+        bindCovered(usageBit, buffers);
         return buffers;
+    }
+
+    // Binds the usageBit holder to the buffers, releasing the buffers it was bound to.
+    private void bindCovered(byte usageBit, CoveringBuffers buffers) {
+        if (usageBit == NO_HOLDER) {
+            return;
+        }
+        final CoveringBuffers bound = getCoveredBound(usageBit);
+        if (bound != buffers) {
+            if (bound != null) {
+                bound.usageFlags &= (byte) ~usageBit;
+            }
+            buffers.usageFlags |= usageBit;
+            setCoveredBound(usageBit, buffers);
+        }
+    }
+
+    private void coveredLruAppend(CoveringBuffers b) {
+        b.prev = coveredLruTail;
+        b.next = null;
+        if (coveredLruTail != null) {
+            coveredLruTail.next = b;
+        } else {
+            coveredLruHead = b;
+        }
+        coveredLruTail = b;
+    }
+
+    private void coveredLruMoveToTail(CoveringBuffers b) {
+        if (b != coveredLruTail) {
+            coveredLruUnlink(b);
+            coveredLruAppend(b);
+        }
+    }
+
+    private void coveredLruUnlink(CoveringBuffers b) {
+        if (b.prev != null) {
+            b.prev.next = b.next;
+        } else {
+            coveredLruHead = b.next;
+        }
+        if (b.next != null) {
+            b.next.prev = b.prev;
+        } else {
+            coveredLruTail = b.prev;
+        }
+        b.prev = null;
+        b.next = null;
+    }
+
+    /**
+     * Frees a covered frame's buffers, unbinding the holders bound to them. A record bound to them
+     * through {@link PageFrameMemoryRecord#init(PageFrameMemory)}, which does not bind, fails the
+     * bind-generation check of its next navigation and rebinds. The buffers become a shell for the
+     * next frames, with their address lists in a pool that keeps shells and parked, holding no
+     * native memory, in any other, or past the shell cap are closed.
+     */
+    private void evictCovered(CoveringBuffers b) {
+        bindGeneration++;
+        if (b.usageFlags != 0) {
+            if (coveredBoundForFrameMemory == b) {
+                coveredBoundForFrameMemory = null;
+                frameMemory.clear();
+            }
+            if (coveredBoundForRecordA == b) {
+                coveredBoundForRecordA = null;
+            }
+            if (coveredBoundForRecordB == b) {
+                coveredBoundForRecordB = null;
+            }
+            b.usageFlags = 0;
+        }
+        coveringByFrame.remove(b.cacheFrameIndex);
+        coveredLruUnlink(b);
+        b.isDecodedAhead = false;
+        if (freeCoveringShells.size() < COVERING_SHELL_POOL_CAP) {
+            if (isRetainingCoveringShells) {
+                b.recycle();
+            } else {
+                b.park();
+            }
+            freeCoveringShells.add(b);
+        } else {
+            b.close();
+        }
+    }
+
+    // A covering scan's frames are all NATIVE, so an address cache never holds a covered frame and a
+    // Parquet frame: a holder that binds a Parquet frame is on no covered one.
+    private boolean isCoveredUnbound(byte usageBit) {
+        return getCoveredBound(usageBit) == null && (usageBit != FRAME_MEMORY_MASK || frameMemory.coveringBuffers == null);
+    }
+
+    private CoveringBuffers getCoveredBound(byte usageBit) {
+        return switch (usageBit) {
+            case RECORD_A_MASK -> coveredBoundForRecordA;
+            case RECORD_B_MASK -> coveredBoundForRecordB;
+            case FRAME_MEMORY_MASK -> coveredBoundForFrameMemory;
+            default -> {
+                assert false : "unknown usage bit";
+                yield null;
+            }
+        };
+    }
+
+    // Frees the covered frames, but, unless isAll, those decoded ahead of a fold, whose holders are
+    // unbound. The run decode scratch goes with them in a pool that keeps no shells, which keeps no
+    // native memory past a frame.
+    private void releaseCoveredFrames(boolean isAll) {
+        CoveringBuffers b = coveredLruHead;
+        while (b != null) {
+            final CoveringBuffers next = b.next;
+            if (!isAll && b.isDecodedAhead) {
+                b.usageFlags = 0;
+            } else {
+                evictCovered(b);
+            }
+            b = next;
+        }
+        coveredBoundForFrameMemory = null;
+        coveredBoundForRecordA = null;
+        coveredBoundForRecordB = null;
+        if (runDecodeWorkspace != 0 && (isAll || !isRetainingCoveringShells)) {
+            runDecodeWorkspace = Unsafe.free(runDecodeWorkspace, (long) RUN_DECODE_CHUNK * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+        }
+    }
+
+    private void setCoveredBound(byte usageBit, CoveringBuffers b) {
+        switch (usageBit) {
+            case RECORD_A_MASK -> coveredBoundForRecordA = b;
+            case RECORD_B_MASK -> coveredBoundForRecordB = b;
+            case FRAME_MEMORY_MASK -> coveredBoundForFrameMemory = b;
+            default -> {
+                assert false : "unknown usage bit";
+            }
+        }
+    }
+
+    /**
+     * Frees the unbound covered frames, oldest first, that the cache budget has no room for: while
+     * the decoded frames' bytes, covered and Parquet, exceed the pool's budget, or the covered frames
+     * are more than {@link #maxCachedBuffers()}, counting one more when {@code isMakingRoom}, for a
+     * frame about to be decoded. A zero-budget pool keeps the bound ones alone. A frame that the
+     * frame memory or a record is bound to, or that was decoded ahead of a fold, stays.
+     */
+    private void trimCoveredToBudget(boolean isMakingRoom) {
+        final long budgetBytes = effectiveBudgetBytes - cachedBytes;
+        final int maxFrames = maxCachedBuffers() - (isMakingRoom ? 1 : 0);
+        CoveringBuffers b = coveredLruHead;
+        while (b != null && (coveredCachedBytes > budgetBytes || coveringByFrame.size() > maxFrames)) {
+            final CoveringBuffers next = b.next;
+            if (b.usageFlags == 0 && !b.isDecodedAhead) {
+                evictCovered(b);
+            }
+            b = next;
+        }
+    }
+
+    // Releases the covered buffers the usageBit holder is bound to; they stay cached, unbound.
+    private void unbindCovered(byte usageBit) {
+        if (usageBit == NO_HOLDER) {
+            return;
+        }
+        final CoveringBuffers bound = getCoveredBound(usageBit);
+        if (bound != null) {
+            bound.usageFlags &= (byte) ~usageBit;
+            setCoveredBound(usageBit, null);
+        }
     }
 
     private int coveredRowCount(int frameIndex) {
@@ -1315,9 +1580,8 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     private void evictRowFilteredBuffers() {
         // a covered frame decoded for the declared rows alone decodes again, in full or for the
         // next declaration; records bound to it rebind
-        final Object[] covered = coveringByFrame.getValues();
-        for (int i = 0, n = covered.length; i < n; i++) {
-            if (covered[i] instanceof CoveringBuffers c && c.isRowFiltered) {
+        for (CoveringBuffers c = coveredLruHead; c != null; c = c.next) {
+            if (c.isRowFiltered) {
                 c.isRowFiltered = false;
                 bindGeneration++;
             }
@@ -1372,8 +1636,10 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     private boolean isFrameMemoryCovering(int frameIndex, int inFrameRowLo, int inFrameRowHi) {
         if (frameMemory.frameFormat == PartitionFormat.NATIVE) {
             if (addressCache.isFrameSingleKeyCovered(frameIndex)) {
-                final CoveringBuffers buffers = coveringByFrame.valueAt(coveringByFrame.keyIndex(frameIndex));
-                return buffers != null && buffers.isFullyDecoded();
+                // the frame memory on a covered frame is bound to its buffers
+                final CoveringBuffers buffers = frameMemory.coveringBuffers;
+                assert buffers != null && buffers.cacheFrameIndex == frameIndex;
+                return buffers.isFullyDecoded();
             }
             return true;
         }
@@ -1397,9 +1663,11 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     private boolean isFrameMemoryCovering(int frameIndex, IntHashSet columnIndexes) {
         if (frameMemory.frameFormat == PartitionFormat.NATIVE) {
             if (addressCache.isFrameSingleKeyCovered(frameIndex)) {
-                // a covered filter-first decode holds the filter's columns only
-                final CoveringBuffers buffers = coveringByFrame.valueAt(coveringByFrame.keyIndex(frameIndex));
-                return buffers != null && buffers.hasFullColumns(columnIndexes);
+                // a covered filter-first decode holds the filter's columns only; the frame memory
+                // on a covered frame is bound to its buffers
+                final CoveringBuffers buffers = frameMemory.coveringBuffers;
+                assert buffers != null && buffers.cacheFrameIndex == frameIndex;
+                return buffers.hasFullColumns(columnIndexes);
             }
             return true;
         }
@@ -1461,12 +1729,14 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
      * {@code recordAt}, negative-limit, {@code AbstractPageFrameRecordCursor}).
      * Mirrors {@link #patchCoveredFrameMemory} but binds a {@link Record} instead
      * of the flyweight: when {@code frameIndex} is a single-key covered frame,
-     * decode its covered columns into this pool's per-frame {@link CoveringBuffers}
-     * and point {@code record} at them.
+     * decode its covered columns into this pool's per-frame {@link CoveringBuffers},
+     * bind the record's letter to them, which keeps them from the cache budget until
+     * the record moves to another frame, and point {@code record} at them. The record
+     * is not stable, see {@link PageFrameMemory#isStable()}.
      * <p>
      * The bind uses the SAME guard as the parquet record arm -- {@code boundPool ==
      * this} and {@code boundGeneration == bindGeneration} -- because a covered
-     * record points at per-pool buffers that a bulk release recycles or a different
+     * record points at per-pool buffers that a release frees or a different
      * generation may own, exactly like parquet buffers and UNLIKE the query-stable
      * address-cache arrays a plain native record uses. Stamping the pool/generation
      * lets {@link #navigateTo(int, PageFrameMemoryRecord)} take the cheap
@@ -1478,24 +1748,38 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
      * through to the normal native bind, keeping the eager flat addresses).
      */
     private boolean navigateCoveredRecord(int frameIndex, PageFrameMemoryRecord record) {
+        if (!addressCache.isFrameSingleKeyCovered(frameIndex)) {
+            return false;
+        }
+        final byte usageBit = record.getLetter() == PageFrameMemoryRecord.RECORD_A_LETTER ? RECORD_A_MASK : RECORD_B_MASK;
         // Fast-return: the record already points at THIS pool's live covered
-        // buffers for this frame. The pool/generation guard distinguishes "still
-        // ours and live" from "bound elsewhere or recycled", mirroring the parquet
-        // record arm; a bulk release (releaseParquetBuffers) bumps bindGeneration so
-        // a stale covered binding rebinds instead of reading recycled buffers.
+        // buffers for this frame, which its letter is bound to. The pool/generation
+        // guard distinguishes "still ours and live" from "bound elsewhere or
+        // released", mirroring the parquet record arm; every release and eviction
+        // bumps bindGeneration, so a stale covered binding rebinds instead of reading
+        // freed buffers.
         if (record.getFrameIndex() == frameIndex && record.getBoundPool() == this && record.getBoundGeneration() == bindGeneration) {
-            final CoveringBuffers buffers = coveringByFrame.valueAt(coveringByFrame.keyIndex(frameIndex));
-            if (buffers != null && (buffers.isFullyDecoded() || buffers.isRowFiltered)) {
+            final CoveringBuffers buffers = getCoveredBound(usageBit);
+            if (buffers != null && buffers.cacheFrameIndex == frameIndex && (buffers.isFullyDecoded() || buffers.isRowFiltered)) {
                 return true;
             }
         }
-        final CoveringBuffers buffers = decodeCoveredFrameForRecord(frameIndex);
-        if (buffers == null) {
-            return false;
+        final CoveringBuffers buffers;
+        try {
+            buffers = decodeCoveredFrameForRecord(frameIndex, usageBit);
+        } catch (Throwable th) {
+            // as the Parquet arm does: the failed decode freed the buffers, so the record must
+            // not read through its stale binding
+            record.clear();
+            throw th;
         }
+        assert buffers != null;
+        // the record leaves the Parquet buffer it was bound to, if any
+        unbind(usageBit);
         record.init(
                 frameIndex,
                 PartitionFormat.NATIVE,
+                false,
                 addressCache.getRowIdOffset(frameIndex),
                 buffers.getPageAddresses(),
                 buffers.getAuxPageAddresses(),
@@ -1597,10 +1881,12 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     }
 
     private void patchCoveredFrameMemory(int frameIndex, @Nullable IntHashSet columnIndexes) {
-        final CoveringBuffers buffers = decodeCoveredFrame(frameIndex, columnIndexes);
+        final CoveringBuffers buffers = decodeCoveredFrame(frameIndex, columnIndexes, FRAME_MEMORY_MASK);
+        frameMemory.coveringBuffers = buffers;
         if (buffers == null) {
             // Non-covered or multi-key frame: keep the eager flat addresses the
-            // NATIVE arm bound.
+            // NATIVE arm bound, and leave the covered frame the frame memory was on.
+            unbindCovered(FRAME_MEMORY_MASK);
             return;
         }
         frameMemory.currentRowGroupBuffer = null;
@@ -1641,38 +1927,15 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     }
 
     /**
-     * Frees every per-frame covered decode buffer. Called only at query
-     * boundaries ({@link #of}, {@link #clear}, {@link #close}); see
-     * {@link #coveringByFrame} for why covered buffers are query-lifetime rather
-     * than per-frame.
+     * Frees every covered frame, also those decoded ahead of a fold, and the run decode scratch.
+     * Called at query boundaries ({@link #of}, {@link #clear}, {@link #close},
+     * {@link #releaseQueryResources}).
      */
     private void releaseCoveringBuffers() {
-        if (runDecodeWorkspace != 0) {
-            runDecodeWorkspace = Unsafe.free(runDecodeWorkspace, (long) RUN_DECODE_CHUNK * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-        }
-        if (coveringByFrame.size() == 0) {
-            return;
-        }
-        // Each buffer's column buffers are freed; up to COVERING_SHELL_POOL_CAP buffers keep their
-        // address lists and metadata arrays for the next decodes, the others are freed in full.
-        // Freeing a covered frame's four address lists was most of the release's cost, a few
-        // native frees per frame over thousands of frames at the query boundary.
-        // the map's value array is an Object[] under its generic type
-        final Object[] values = coveringByFrame.getValues();
-        for (int i = 0, n = values.length; i < n; i++) {
-            if (values[i] instanceof CoveringBuffers b) {
-                if (isRetainingCoveringShells && freeCoveringShells.size() < COVERING_SHELL_POOL_CAP) {
-                    b.recycle();
-                    freeCoveringShells.add(b);
-                } else {
-                    b.close();
-                }
-            }
-        }
-        coveringByFrame.clear();
-        // Every CoveringBuffers close() or recycle() above subtracted its own allocation, so the
-        // running total must net to zero; reset defensively in case a buffer was added to the map
-        // but never decoded (no allocation, no subtraction).
+        releaseCoveredFrames(true);
+        assert coveringByFrame.size() == 0 && coveredLruHead == null;
+        // Every CoveringBuffers close() or recycle() subtracted its own allocation, so the running
+        // total must net to zero.
         assert coveredCachedBytes == 0 : "covered byte accounting leaked: " + coveredCachedBytes;
         coveredCachedBytes = 0;
     }
@@ -1880,15 +2143,20 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     }
 
     /**
-     * Per-worker decoded buffers for a single covered (posting-index sidecar)
-     * frame. It owns native column buffers and the four published address/size
-     * lists that the navigateTo covered arm rebinds the frame memory to. There is
-     * one instance PER FRAME (keyed in {@link #coveringByFrame}), retained for the
-     * whole query, because a covered frame reports NATIVE and so a record read of
-     * a covered VARCHAR/STRING is stable: zero-copy first()/last() aggregates
-     * store the raw buffer pointer for the merge phase, so the buffer must not be
-     * reused for another frame or freed mid-query. The eager production path has
-     * the same lifetime (fresh per-frame buffers, freed at cursor close).
+     * Decoded buffers for a single covered (posting-index sidecar) frame. It owns
+     * native column buffers and the four published address/size lists that the
+     * navigateTo covered arm rebinds the frame memory to. There is one instance
+     * PER FRAME (keyed in {@link #coveringByFrame}), which lives as a decoded
+     * Parquet frame's buffers do: while the frame memory or a record is bound to
+     * it, or while the cache budget has room for it, until the pool releases its
+     * decoded frames, see {@link #releaseParquetBuffers()}. A record over it is
+     * not stable, so a reader that keeps a value past the frame copies it. The
+     * eager production path of a multi-key frame keeps its own buffers, which its
+     * page frame cursor frees at close.
+     * <p>
+     * The native bytes charge the pool's per-query tracker of the time the first
+     * of them is allocated, and the free releases them from that tracker, see
+     * {@link #chargedTracker()}.
      * <p>
      * {@link #decode} opens a DETACHED covering cursor that this worker owns
      * outright (see {@code PostingIndexFwdReader#getDetachedCursor}), drains it
@@ -1905,6 +2173,21 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         private final DirectLongList auxPageSizes;
         private final DirectLongList pageAddresses;
         private final DirectLongList pageSizes;
+        // live native bytes of the column buffers, colCap + varDataCap + symCap
+        private long allocatedBytes;
+        // the frame index the pool caches the buffers under, see acquireCoveringBuffers()
+        private int cacheFrameIndex = -1;
+        // the tracker the live column buffers charge, and its covered generation at the time,
+        // see chargedTracker()
+        private long chargedGeneration;
+        private MemoryTracker chargedTracker;
+        // decoded ahead of a fold, which releases the frame, see decodeAhead()
+        private boolean isDecodedAhead;
+        // LRU links, see coveredLruHead
+        private CoveringBuffers next;
+        private CoveringBuffers prev;
+        // the holders bound to the buffers: the frame memory, record A, record B
+        private byte usageFlags;
         // Per query column primary native buffer: the fixed-width data vector, or
         // the aux (offsets/headers) vector for a var-size column. The symbol-key
         // column shares symAddr instead. 0 when unallocated. Lazily sized to the
@@ -1985,18 +2268,42 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             Misc.free(pageSizes);
             Misc.free(auxPageAddresses);
             Misc.free(auxPageSizes);
+            cacheFrameIndex = -1;
+            frameIndex = -1;
+        }
+
+        /**
+         * Frees the native memory, the column buffers and the address lists, and keeps the
+         * metadata arrays, for a decode of another frame, possibly of another query, which
+         * {@link #reopen()}s the lists, see evictCovered().
+         */
+        void park() {
+            recycle();
+            Misc.free(pageAddresses);
+            Misc.free(pageSizes);
+            Misc.free(auxPageAddresses);
+            Misc.free(auxPageSizes);
         }
 
         /**
          * Frees the column buffers and keeps the address lists and metadata arrays, for a decode
-         * of another frame, possibly of another query, see releaseCoveringBuffers().
+         * of another frame, possibly of another query, see evictCovered().
          */
         void recycle() {
             freeColumnBuffers();
+            cacheFrameIndex = -1;
             frameIndex = -1;
             rowCount = 0;
             isMetadataStale = true;
             isRowFiltered = false;
+        }
+
+        // Gives a parked shell its address lists back; does nothing for another one.
+        void reopen() {
+            pageAddresses.reopen();
+            pageSizes.reopen();
+            auxPageAddresses.reopen();
+            auxPageSizes.reopen();
         }
 
         /**
@@ -2369,16 +2676,8 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                             .put("covered var-data column too large [bytes=").put(newCapLong).put(']');
                 }
                 final int newCap = (int) newCapLong;
-                // Charge the per-query tracker at alloc so covered decode is capped by
-                // the query memory limit (a breach throws here); the matching release
-                // is deferred to MemoryTracker.reconcileCovered() at tracker teardown,
-                // NOT to the global-only free below. See growNative().
-                varDataAddr[q] = Unsafe.realloc(varDataAddr[q], varDataCap[q], newCap, MemoryTag.NATIVE_INDEX_READER, memoryTracker);
-                final long delta = (long) newCap - varDataCap[q];
-                coveredCachedBytes += delta;
-                if (memoryTracker != null) {
-                    memoryTracker.addCoveredBytes(delta);
-                }
+                // the growth is charged to the query's memory limit, whose breach throws here
+                varDataAddr[q] = reallocColumn(varDataAddr[q], varDataCap[q], newCap);
                 varDataCap[q] = newCap;
             }
             return varDataAddr[q];
@@ -2495,43 +2794,71 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             this.rowCount = rowCount;
         }
 
+        /**
+         * The tracker the live column buffers charge: the pool's tracker of the time the first of
+         * them was allocated, while its covered ledger has not been reconciled since, see
+         * {@link MemoryTracker#getCoveredGeneration()}; null otherwise, and when the pool had no
+         * tracker. A reconciled tracker has released the buffers' charge already, and may serve
+         * another query by now, so their free is then global-only. A pool frees its covered
+         * buffers while their query runs, so that the query's memory limit counts the frames it
+         * holds, not every frame it has decoded; only a pool that its owner releases after the
+         * query ends frees on global-only accounting.
+         */
+        private MemoryTracker chargedTracker() {
+            if (allocatedBytes == 0) {
+                // nothing is charged yet: the next allocation charges the pool's tracker of now
+                chargedTracker = memoryTracker;
+                chargedGeneration = memoryTracker != null ? memoryTracker.getCoveredGeneration() : 0;
+            }
+            final MemoryTracker tracker = chargedTracker;
+            return tracker != null && tracker.getCoveredGeneration() == chargedGeneration ? tracker : null;
+        }
+
         private void freeColumnBuffers() {
+            final MemoryTracker tracker = chargedTracker();
+            long freedBytes = 0;
             if (colAddr != null) {
                 for (int q = 0, n = colAddr.length; q < n; q++) {
                     if (colAddr[q] != 0) {
-                        Unsafe.free(colAddr[q], colCap[q], MemoryTag.NATIVE_INDEX_READER);
-                        coveredCachedBytes -= colCap[q];
+                        freeColumn(colAddr[q], colCap[q], tracker);
+                        freedBytes += colCap[q];
                         colAddr[q] = 0;
                         colCap[q] = 0;
                     }
                     if (varDataAddr[q] != 0) {
-                        Unsafe.free(varDataAddr[q], varDataCap[q], MemoryTag.NATIVE_INDEX_READER);
-                        coveredCachedBytes -= varDataCap[q];
+                        freeColumn(varDataAddr[q], varDataCap[q], tracker);
+                        freedBytes += varDataCap[q];
                         varDataAddr[q] = 0;
                         varDataCap[q] = 0;
                     }
                 }
             }
             if (symAddr != 0) {
-                Unsafe.free(symAddr, symCap, MemoryTag.NATIVE_INDEX_READER);
-                coveredCachedBytes -= symCap;
+                freeColumn(symAddr, symCap, tracker);
+                freedBytes += symCap;
                 symAddr = 0;
                 symCap = 0;
             }
+            assert freedBytes == allocatedBytes : "covered buffer accounting [freed=" + freedBytes + ", allocated=" + allocatedBytes + ']';
+            coveredCachedBytes -= freedBytes;
+            allocatedBytes = 0;
+            if (tracker != null) {
+                tracker.addCoveredBytes(-freedBytes);
+            }
+            chargedTracker = null;
+        }
+
+        private void freeColumn(long addr, long bytes, @Nullable MemoryTracker tracker) {
+            if (isPoisoningFreedCoveredBuffers) {
+                Vect.memset(addr, bytes, POISON_BYTE);
+            }
+            Unsafe.free(addr, bytes, MemoryTag.NATIVE_INDEX_READER, tracker);
         }
 
         // Grow a native buffer to newBytes when it is too small, preserving no
         // content (each decode rewrites every row). Reuses the existing allocation
         // when it already covers newBytes so a steady-state frame size never
         // reallocs. oldBytes == 0 means unallocated.
-        //
-        // Allocation charges the per-query MemoryTracker (enforcing the query memory
-        // limit; a breach throws), but the matching free in freeColumnBuffers() is
-        // global-only. That asymmetry is deliberate: covered buffers outlive the
-        // owning query's tracker (freed lazily by the NEXT query's clear()/of() on
-        // the shared reduce-task pool), so decrementing the tracker at free would
-        // target a recycled block. MemoryTracker.reconcileCovered() instead releases
-        // the charge from used at tracker teardown; addCoveredBytes() feeds it.
         private long growNative(long addr, long oldBytes, long newBytes) {
             if (newBytes <= 0) {
                 return addr;
@@ -2539,11 +2866,21 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             if (addr != 0 && oldBytes >= newBytes) {
                 return addr;
             }
-            final long result = Unsafe.realloc(addr, oldBytes, newBytes, MemoryTag.NATIVE_INDEX_READER, memoryTracker);
+            return reallocColumn(addr, oldBytes, newBytes);
+        }
+
+        // Reallocates a column buffer, charging the growth to the query's memory limit, whose
+        // breach throws and leaves the buffer as it was, see chargedTracker(). The charge goes to
+        // the tracker's covered ledger as well, which keeps a pooled tracker clean should the
+        // buffers outlive their query, see MemoryTracker.addCoveredBytes().
+        private long reallocColumn(long addr, long oldBytes, long newBytes) {
+            final MemoryTracker tracker = chargedTracker();
+            final long result = Unsafe.realloc(addr, oldBytes, newBytes, MemoryTag.NATIVE_INDEX_READER, tracker);
             final long delta = newBytes - oldBytes;
+            allocatedBytes += delta;
             coveredCachedBytes += delta;
-            if (memoryTracker != null) {
-                memoryTracker.addCoveredBytes(delta);
+            if (tracker != null) {
+                tracker.addCoveredBytes(delta);
             }
             return result;
         }
@@ -2683,6 +3020,8 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         private DirectLongList auxPageSizes;
         private int columnOffset;
         private DirectLongList columnTops;
+        // the buffers of the single-key covered frame the memory is bound to, or null
+        private CoveringBuffers coveringBuffers;
         private ParquetBuffers currentRowGroupBuffer;
         // The columns a late-materialized Parquet decode covered (navigateTo(int, IntHashSet)),
         // or null when every column has been decoded, including after populateRemainingColumns()
@@ -2703,6 +3042,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             pageSizes = null;
             auxPageSizes = null;
             columnTops = null;
+            coveringBuffers = null;
             currentRowGroupBuffer = null;
             decodedColumnIndexes = null;
         }
@@ -2710,6 +3050,12 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         @Override
         public long getAuxPageAddress(int columnIndex) {
             return auxPageAddresses.get(columnOffset + columnIndex);
+        }
+
+        @Override
+        public boolean isStable() {
+            // a covered frame's buffers live until the pool releases the frame
+            return frameFormat == PartitionFormat.NATIVE && coveringBuffers == null;
         }
 
         @Override
@@ -2832,8 +3178,9 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 if (!fillWithNulls || filteredRows.size() == 0) {
                     return false;
                 }
-                final CoveringBuffers buffers = coveringByFrame.valueAt(coveringByFrame.keyIndex(frameIndex));
-                return buffers != null && buffers.populateRemainingColumns(filterColumnIndexes, filteredRows);
+                // the frame memory on a covered frame is bound to its buffers
+                assert coveringBuffers != null && coveringBuffers.cacheFrameIndex == frameIndex;
+                return coveringBuffers.populateRemainingColumns(filterColumnIndexes, filteredRows);
             }
             assert frameFormat == PartitionFormat.PARQUET;
             final ParquetBuffers buffers = currentRowGroupBuffer;
