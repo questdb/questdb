@@ -24,23 +24,29 @@
 
 package io.questdb.test.cairo.view;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ResourcePoolSupervisor;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.view.NoOpViewStateStore;
 import io.questdb.cairo.view.ViewCompilerJob;
 import io.questdb.cairo.view.ViewState;
+import io.questdb.cairo.view.ViewStateStore;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.After;
@@ -55,6 +61,8 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.junit.Assert.assertEquals;
 
 public class ViewCompilerJobTest extends AbstractViewTest {
+    // DROP, RENAME or TRUNCATE of t logs this line when it waits for a view compile run
+    private static final String DDL_WAIT_LINE = "waiting for view compilation to release table [table=t]";
     private static final String PIVOT_RACE_SQL = """
             SELECT * FROM data
             PIVOT (
@@ -374,6 +382,144 @@ public class ViewCompilerJobTest extends AbstractViewTest {
         });
     }
 
+    @Test
+    public void testDdlRightAfterCreateViewWaitsForViewCompile() throws Exception {
+        // CREATE VIEW queues the compile of the new view, and the run holds the reader of the
+        // non-WAL table the view reads when a DROP, RENAME or TRUNCATE of the table locks it. The
+        // DDL waits for the run instead of failing as busy.
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, Long.MAX_VALUE);
+            final LogCapture capture = new LogCapture();
+            try {
+                createTableAndViewThenExecuteWhileViewCompileHolds(capture, "TRUNCATE TABLE t");
+                assertQuery("t")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("a\n");
+                drainViewQueue();
+                assertViewState("v");
+                assertViewColumns("v", "a");
+                execute("DROP VIEW v");
+                execute("DROP TABLE t");
+                drainWalAndViewQueues();
+
+                createTableAndViewThenExecuteWhileViewCompileHolds(capture, "DROP TABLE t");
+                assertTableAbsent("t");
+                execute("DROP VIEW v");
+                drainWalAndViewQueues();
+
+                createTableAndViewThenExecuteWhileViewCompileHolds(capture, "RENAME TABLE t TO u");
+                assertTableAbsent("t");
+                assertQuery("u")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                a
+                                1
+                                2
+                                """);
+            } finally {
+                capture.stop();
+            }
+        });
+    }
+
+    @Test
+    public void testDropWaitsForStartupViewCompile() throws Exception {
+        // The server compiles every view in one pass at startup, while it already takes
+        // statements. DROP of a non-WAL table that a view reads waits for the pass instead of
+        // failing as busy.
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, Long.MAX_VALUE);
+            execute("CREATE TABLE t (a INT)");
+            execute("INSERT INTO t VALUES (1), (2)");
+            createView("v", "SELECT * FROM t");
+
+            final LogCapture capture = new LogCapture();
+            capture.start();
+            final ViewCompileParker pass = ViewCompileParker.ofStartupPass(engine, "t", PoolListener.SRC_READER);
+            engine.setPoolListener(pass);
+            try {
+                pass.start();
+                pass.releaseAfterLogged(capture, DDL_WAIT_LINE, null);
+                execute("DROP TABLE t");
+            } finally {
+                pass.join();
+                engine.setPoolListener(null);
+                capture.stop();
+            }
+            assertTableAbsent("t");
+            drainViewQueue();
+            assertViewState("v", "table does not exist [table=t]");
+        });
+    }
+
+    @Test
+    public void testViewCompilerJobPublishesCompileRuns() throws Exception {
+        // A DDL tells a view compile run's borrow of a table from a query's by the compile runs
+        // the job publishes: one run per drain that finds tasks, and one for the startup pass.
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            createTable(TABLE2);
+            createView(VIEW1, "SELECT * FROM " + TABLE1);
+            createView(VIEW2, "SELECT * FROM " + TABLE2);
+            final ViewStateStore stateStore = engine.getViewStateStore();
+            final long idleActivity = stateStore.getCompileRunActivity();
+            Assert.assertFalse(ViewStateStore.isCompileRunRunning(idleActivity));
+            Assert.assertFalse(ViewStateStore.hasCompileRunOverlapped(idleActivity, idleActivity));
+
+            // a drain that finds no task is no run
+            drainViewQueue();
+            Assert.assertEquals(idleActivity, stateStore.getCompileRunActivity());
+
+            // one drain of two tasks is one run, and it has finished
+            engine.enqueueCompileView(engine.verifyTableName(TABLE1));
+            engine.enqueueCompileView(engine.verifyTableName(TABLE2));
+            try (ViewCompilerJob job = new ViewCompilerJob(0, engine)) {
+                job.run();
+            }
+            final long activityAfterDrain = stateStore.getCompileRunActivity();
+            Assert.assertEquals(idleActivity + (1L << 32), activityAfterDrain);
+            Assert.assertFalse(ViewStateStore.isCompileRunRunning(activityAfterDrain));
+            Assert.assertTrue(ViewStateStore.hasCompileRunOverlapped(idleActivity, activityAfterDrain));
+            assertViewState(VIEW1);
+            assertViewState(VIEW2);
+
+            // the run is running while it compiles
+            engine.enqueueCompileView(engine.verifyTableName(TABLE1));
+            final ViewCompileParker run = ViewCompileParker.ofQueueDrain(engine, TABLE1, PoolListener.SRC_READER);
+            engine.setPoolListener(run);
+            final long activityWhileCompiling;
+            try {
+                run.start();
+                activityWhileCompiling = stateStore.getCompileRunActivity();
+            } finally {
+                run.join();
+                engine.setPoolListener(null);
+            }
+            Assert.assertEquals(activityAfterDrain + (1L << 32) + 1, activityWhileCompiling);
+            Assert.assertTrue(ViewStateStore.isCompileRunRunning(activityWhileCompiling));
+            Assert.assertTrue(ViewStateStore.hasCompileRunOverlapped(activityWhileCompiling, activityWhileCompiling));
+            final long activityAfterRun = stateStore.getCompileRunActivity();
+            Assert.assertEquals(activityAfterDrain + (1L << 32), activityAfterRun);
+
+            // the startup pass over all views is one run
+            try (SqlExecutionContext executionContext = engine.createViewCompilerContext(0)) {
+                ViewCompilerJob.compileAllViews(engine, executionContext, new ObjList<>());
+            }
+            Assert.assertEquals(activityAfterRun + (1L << 32), stateStore.getCompileRunActivity());
+            assertViewState(VIEW1);
+            assertViewState(VIEW2);
+
+            // no compiler consumes the queue of the no-op store, so it never has a run
+            final ViewStateStore noOpStore = NoOpViewStateStore.INSTANCE;
+            noOpStore.startCompileRun();
+            Assert.assertEquals(0, noOpStore.getCompileRunActivity());
+            noOpStore.finishCompileRun();
+            Assert.assertEquals(0, noOpStore.getCompileRunActivity());
+        });
+    }
+
     private static void assertNothingBusy() {
         Assert.assertEquals(0, engine.getSqlCompilerPool().getBusyCount());
         Assert.assertEquals(0, engine.getBusyReaderCount());
@@ -407,6 +553,10 @@ public class ViewCompilerJobTest extends AbstractViewTest {
         TestUtils.assertContains(reason, expectedReasonFragment);
     }
 
+    private static void assertTableAbsent(String tableName) {
+        Assert.assertNull(engine.getTableTokenIfExists(tableName));
+    }
+
     private static void createPivotRaceTables() throws SqlException {
         execute("CREATE TABLE data (grp SYMBOL, cat SYMBOL, val INT)");
         execute("CREATE TABLE cats (c SYMBOL)");
@@ -438,6 +588,28 @@ public class ViewCompilerJobTest extends AbstractViewTest {
             } finally {
                 viewState.unlockAfterRead();
             }
+        }
+    }
+
+    // Creates the non-WAL table t with rows 1 and 2 and the view v over it, then runs the DDL
+    // while the compile run that CREATE VIEW queued holds t's reader. The run ends once the DDL
+    // logs that it waits for it.
+    private void createTableAndViewThenExecuteWhileViewCompileHolds(LogCapture capture, String ddl) throws Exception {
+        execute("CREATE TABLE t (a INT)");
+        execute("INSERT INTO t VALUES (1), (2)");
+        Assert.assertFalse(engine.verifyTableName("t").isWal());
+        execute("CREATE VIEW v AS (SELECT * FROM t)");
+        // a wait line of an earlier DDL would release the run before this DDL waits
+        capture.start();
+        final ViewCompileParker run = ViewCompileParker.ofQueueDrain(engine, "t", PoolListener.SRC_READER);
+        engine.setPoolListener(run);
+        try {
+            run.start();
+            run.releaseAfterLogged(capture, DDL_WAIT_LINE, null);
+            execute(ddl);
+        } finally {
+            run.join();
+            engine.setPoolListener(null);
         }
     }
 }

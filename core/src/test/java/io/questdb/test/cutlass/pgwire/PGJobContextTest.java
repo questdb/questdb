@@ -33,6 +33,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
@@ -47,6 +48,7 @@ import io.questdb.cutlass.pgwire.PGServer;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.QueryFutureUpdateListener;
 import io.questdb.griffin.QueryRegistry;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -78,10 +80,14 @@ import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.view.ReaderHoldingThread;
+import io.questdb.test.cairo.view.ViewCompileParker;
 import io.questdb.test.cutlass.NetUtils;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Before;
@@ -189,6 +195,7 @@ public class PGJobContextTest extends BasePGTest {
     private static String stringTypeName;
     private final Rnd bufferSizeRnd = TestUtils.generateRandom(LOG);
     private final boolean walEnabled;
+    private int addedColumnCount;
 
     public PGJobContextTest() {
         this.walEnabled = TestUtils.isWal();
@@ -3782,6 +3789,130 @@ if __name__ == "__main__":
                     sink.clear();
                     assertResultSet("a[INTEGER]\n", sink, rs);
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testDdlAfterTableChangedDuringViewCompileWait() throws Exception {
+        // A query holds t's reader and a view compile run over another table runs, so DROP and
+        // RENAME of t wait for the run. During the wait another session replaces t with a new
+        // table, or drops it. The DDL must not act on the new table, and must answer with an
+        // error that both the parse path (RENAME) and the execute path (DROP) report as is.
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
+            node1.setProperty(CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, Long.MAX_VALUE);
+            final LogCapture capture = new LogCapture();
+            capture.start();
+            try {
+                try (Statement statement = connection.createStatement()) {
+                    statement.execute("CREATE TABLE t2 (a INT)");
+                    statement.execute("CREATE VIEW v2 AS (SELECT * FROM t2)");
+                }
+                drainViewQueue();
+                assertDdlAfterTableChangedDuringViewCompileWait(connection, capture, "DROP TABLE t", true, "could not lock 't~' [reason='busyReader']");
+                assertDdlAfterTableChangedDuringViewCompileWait(connection, capture, "DROP TABLE IF EXISTS t", true, "could not lock 't~' [reason='busyReader']");
+                assertDdlAfterTableChangedDuringViewCompileWait(connection, capture, "RENAME TABLE t TO u", true, "table busy [reason=busyReader]");
+                assertDdlAfterTableChangedDuringViewCompileWait(connection, capture, "DROP TABLE t", false, "table does not exist [table=t]");
+                assertDdlAfterTableChangedDuringViewCompileWait(connection, capture, "DROP TABLE IF EXISTS t", false, null);
+                assertDdlAfterTableChangedDuringViewCompileWait(connection, capture, "RENAME TABLE t TO u", false, "table does not exist [table=t]");
+            } finally {
+                capture.stop();
+            }
+        });
+    }
+
+    @Test
+    public void testDdlRightAfterAlterWaitsForViewCompile() throws Exception {
+        // ALTER of a non-WAL table queues the recompile of the view over it, and DROP, RENAME and
+        // TRUNCATE of the table run while the recompile holds the table's reader. Each waits for
+        // the recompile instead of failing as busy.
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
+            node1.setProperty(CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, Long.MAX_VALUE);
+            final LogCapture capture = new LogCapture();
+            capture.start();
+            try (Statement statement = connection.createStatement()) {
+                createTableAndViewThenAddColumn(connection);
+                try (PreparedStatement rename = connection.prepareStatement("RENAME TABLE t TO u")) {
+                    executeWhileViewCompileHolds(capture, rename, null);
+                }
+                assertSql(connection, "SELECT * FROM u", """
+                        a[INTEGER],b[INTEGER]
+                        1,null
+                        2,null
+                        """);
+                statement.execute("DROP TABLE u");
+                statement.execute("DROP VIEW v");
+
+                createTableAndViewThenAddColumn(connection);
+                try (PreparedStatement truncate = connection.prepareStatement("TRUNCATE TABLE t")) {
+                    executeWhileViewCompileHolds(capture, truncate, null);
+                    // no compile runs now, the statement runs again at once
+                    truncate.execute();
+                }
+                assertSql(connection, "SELECT count() FROM t", """
+                        count[BIGINT]
+                        0
+                        """);
+
+                statement.execute("ALTER TABLE t ADD COLUMN c INT");
+                try (PreparedStatement drop = connection.prepareStatement("DROP TABLE t")) {
+                    executeWhileViewCompileHolds(capture, drop, null);
+                }
+                assertSql(connection, "SELECT table_name FROM tables() WHERE table_name = 't'", "table_name[VARCHAR]\n");
+            } finally {
+                capture.stop();
+            }
+        });
+    }
+
+    @Test
+    public void testDdlWaitingForViewCompileCompletesAfterCancelOrDisconnect() throws Exception {
+        // The wait for a view compile run does not check the circuit breaker, as the busy wait of
+        // ALTER does not. A DROP whose query is cancelled, and a TRUNCATE whose client
+        // disconnects, while they wait still complete once the run ends, and leave nothing busy.
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            node1.setProperty(CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, Long.MAX_VALUE);
+            final LogCapture capture = new LogCapture();
+            capture.start();
+            try {
+                createTableAndViewThenAddColumn(connection);
+                try (PreparedStatement drop = connection.prepareStatement("DROP TABLE t")) {
+                    executeWhileViewCompileHolds(capture, drop, () -> cancelQuery("DROP TABLE t"));
+                }
+                assertSql(connection, "SELECT table_name FROM tables() WHERE table_name = 't'", "table_name[VARCHAR]\n");
+
+                try (Statement statement = connection.createStatement()) {
+                    statement.execute("DROP VIEW v");
+                }
+                createTableAndViewThenAddColumn(connection);
+                try (
+                        Connection disconnecting = getConnection(mode, port, binary);
+                        PreparedStatement truncate = disconnecting.prepareStatement("TRUNCATE TABLE t")
+                ) {
+                    try {
+                        executeWhileViewCompileHolds(capture, truncate, () -> disconnecting.abort(Runnable::run));
+                        Assert.fail("expected the disconnect to fail the statement");
+                    } catch (SQLException e) {
+                        TestUtils.assertContains(e.getMessage(), "An I/O error occurred while sending to the backend");
+                    }
+                }
+                // the server completes the statement after the client is gone
+                TestUtils.assertEventually(() -> {
+                    try {
+                        assertSql(connection, "SELECT count() FROM t", """
+                                count[BIGINT]
+                                0
+                                """);
+                    } catch (SQLException e) {
+                        // the statement still holds the table
+                        throw new AssertionError(e);
+                    }
+                });
+                try (Connection anotherConnection = getConnection(mode, port, binary)) {
+                    assertSql(anotherConnection, "SELECT 1", "1[INTEGER]\n1\n");
+                }
+            } finally {
+                capture.stop();
             }
         });
     }
@@ -13043,6 +13174,22 @@ create table tab as (
         Assert.assertTrue(count > 0);
     }
 
+    // cancels the registered query of the statement from another session
+    private static void cancelQuery(String sql) throws SqlException {
+        try (
+                SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine);
+                SqlCompiler compiler = engine.getSqlCompiler();
+                RecordCursorFactory factory = compiler.compile(
+                        "SELECT query_id FROM query_activity() WHERE query = '" + sql + "'",
+                        executionContext
+                ).getRecordCursorFactory();
+                RecordCursor cursor = factory.getCursor(executionContext)
+        ) {
+            Assert.assertTrue("no registered query: " + sql, cursor.hasNext());
+            engine.execute("CANCEL QUERY " + cursor.getRecord().getLong(0), executionContext);
+        }
+    }
+
     private static int executeAndCancelQuery(PgConnection connection) throws SQLException, InterruptedException {
         int backendPid;
         AtomicBoolean isCancelled = new AtomicBoolean(false);
@@ -13080,6 +13227,27 @@ create table tab as (
         return backendPid;
     }
 
+    // Runs the statement while the view compile run that an ALTER of t queued holds t's reader.
+    // Once the statement logs that it waits for the run, the action runs and the run ends.
+    private static void executeWhileViewCompileHolds(
+            LogCapture capture,
+            PreparedStatement ddl,
+            @Nullable TestUtils.CheckedRunnable onWait
+    ) throws Exception {
+        // a wait line of an earlier statement would release the run before this one waits
+        capture.start();
+        final ViewCompileParker run = ViewCompileParker.ofQueueDrain(engine, "t", PoolListener.SRC_READER);
+        engine.setPoolListener(run);
+        try {
+            run.start();
+            run.releaseAfterLogged(capture, "waiting for view compilation to release table [table=t]", onWait);
+            ddl.execute();
+        } finally {
+            run.join();
+            engine.setPoolListener(null);
+        }
+    }
+
     private static int getCountStar(Connection conn) throws Exception {
         int count = -1;
         try (PreparedStatement stmt = conn.prepareStatement("SELECT COUNT(*) FROM \"table\"")) {
@@ -13103,6 +13271,62 @@ create table tab as (
             }
         }
         return count;
+    }
+
+    // A query holds t's reader and a view compile run holds t2's reader, so the DDL of t waits for
+    // the run. Once the DDL logs that it waits, the query ends, another session drops t and, when
+    // asked, creates a new t, and the run ends.
+    private void assertDdlAfterTableChangedDuringViewCompileWait(
+            Connection connection,
+            LogCapture capture,
+            String ddl,
+            boolean isRecreated,
+            @Nullable String expectedError
+    ) throws Exception {
+        try (Statement statement = connection.createStatement()) {
+            statement.execute("CREATE TABLE t (a INT)");
+            statement.execute("INSERT INTO t VALUES (1), (2)");
+            // queues the compile of v2
+            statement.execute("ALTER TABLE t2 ADD COLUMN c" + addedColumnCount++ + " INT");
+        }
+        final ReaderHoldingThread query = ReaderHoldingThread.start(engine, "t");
+        // a wait line of an earlier statement would release the run before this one waits
+        capture.start();
+        final ViewCompileParker run = ViewCompileParker.ofQueueDrain(engine, "t2", PoolListener.SRC_READER);
+        engine.setPoolListener(run);
+        try (PreparedStatement statement = connection.prepareStatement(ddl)) {
+            run.start();
+            run.releaseAfterLogged(capture, "waiting for view compilation to release table [table=t]", () -> {
+                query.close();
+                try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                    engine.execute("DROP TABLE t", executionContext);
+                    if (isRecreated) {
+                        engine.execute("CREATE TABLE t (a INT)", executionContext);
+                        engine.execute("INSERT INTO t VALUES (42)", executionContext);
+                    }
+                }
+            });
+            try {
+                statement.execute();
+                Assert.assertNull("expected to fail: " + ddl, expectedError);
+            } catch (SQLException e) {
+                Assert.assertNotNull("unexpected failure of " + ddl + ": " + e.getMessage(), expectedError);
+                TestUtils.assertContains(e.getMessage(), expectedError);
+            }
+        } finally {
+            run.join();
+            engine.setPoolListener(null);
+            query.close();
+        }
+        assertSql(connection, "SELECT table_name FROM tables() WHERE table_name = 'u'", "table_name[VARCHAR]\n");
+        if (isRecreated) {
+            assertSql(connection, "SELECT * FROM t", "a[INTEGER]\n42\n");
+            try (Statement statement = connection.createStatement()) {
+                statement.execute("DROP TABLE t");
+            }
+        } else {
+            assertSql(connection, "SELECT table_name FROM tables() WHERE table_name = 't'", "table_name[VARCHAR]\n");
+        }
     }
 
     private void assertHexScript(String script) throws Exception {
@@ -13315,6 +13539,18 @@ create table tab as (
     }
 
     @SuppressWarnings("unchecked")
+    // creates the non-WAL table t with rows 1 and 2 and the view v over it, then adds a column to
+    // t, which queues the recompile of v
+    private void createTableAndViewThenAddColumn(Connection connection) throws SQLException {
+        try (Statement statement = connection.createStatement()) {
+            statement.execute("CREATE TABLE t (a INT)");
+            statement.execute("INSERT INTO t VALUES (1), (2)");
+            statement.execute("CREATE VIEW v AS (SELECT * FROM t)");
+            drainViewQueue();
+            statement.execute("ALTER TABLE t ADD COLUMN b INT");
+        }
+    }
+
     private List<Tuple> getRows(ResultSet rs) {
         return TestUtils.unchecked(() -> {
             Field field = PgResultSet.class.getDeclaredField("rows");

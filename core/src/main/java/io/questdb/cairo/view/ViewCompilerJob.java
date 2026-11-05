@@ -93,6 +93,10 @@ public class ViewCompilerJob implements Job, QuietCloseable {
             SqlExecutionContext executionContext,
             ObjList<TableToken> tempSink
     ) {
+        // One run for the whole pass, so that a DDL that waits for compile runs to stop locks no
+        // table between two views of the pass.
+        final ViewStateStore stateStore = engine.getViewStateStore();
+        stateStore.startCompileRun();
         try {
             final ObjHashSet<TableToken> tableTokens = new ObjHashSet<>();
             engine.getTableTokens(tableTokens, false);
@@ -110,6 +114,7 @@ public class ViewCompilerJob implements Job, QuietCloseable {
             LogRecord l = e.isCritical() ? LOG.critical() : LOG.error();
             l.$safe(e.getFlyweightMessage()).$();
         } finally {
+            stateStore.finishCompileRun();
             Path.clearThreadLocals();
         }
     }
@@ -334,8 +339,19 @@ public class ViewCompilerJob implements Job, QuietCloseable {
     }
 
     private boolean processNotifications() {
-        while (stateStore.tryDequeueCompilerTask(compilerTask)) {
-            compile(compilerTask.tableToken, compilerTask.updateTimestamp);
+        if (!stateStore.tryDequeueCompilerTask(compilerTask)) {
+            return false;
+        }
+        // One run for the whole drain, so that the run stays running between the two borrows of
+        // a table that one view compile makes, and between views. A DDL that waits for compile
+        // runs to stop then never locks a table in the middle of a drain.
+        stateStore.startCompileRun();
+        try {
+            do {
+                compile(compilerTask.tableToken, compilerTask.updateTimestamp);
+            } while (stateStore.tryDequeueCompilerTask(compilerTask));
+        } finally {
+            stateStore.finishCompileRun();
         }
         return false;
     }

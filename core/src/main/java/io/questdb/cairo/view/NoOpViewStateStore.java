@@ -47,12 +47,26 @@ public class NoOpViewStateStore implements ViewStateStore {
     }
 
     @Override
+    public void finishCompileRun() {
+    }
+
+    // no compiler consumes this store's queue, so no compile run ever runs
+    @Override
+    public long getCompileRunActivity() {
+        return 0;
+    }
+
+    @Override
     public ViewState getViewState(TableToken viewToken) {
         return null;
     }
 
     @Override
     public void removeViewState(TableToken viewToken) {
+    }
+
+    @Override
+    public void startCompileRun() {
     }
 
     @Override
