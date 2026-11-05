@@ -41,7 +41,9 @@ import java.io.BufferedWriter;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.nio.file.Paths;
+import java.util.Locale;
 import java.util.function.Consumer;
+import java.util.regex.Matcher;
 
 /**
  * Shared query campaign over caller-owned tables and a quiescent writer pool.
@@ -526,7 +528,7 @@ public final class QueryFuzzDriver {
             FuzzTable table = tables.getQuick(i);
             if (table.getShadow() != null) {
                 shadowSql = shadowSql.replaceAll("\\b" + java.util.regex.Pattern.quote(table.getName()) + "\\b",
-                        java.util.regex.Matcher.quoteReplacement(table.getShadow().getName()));
+                        Matcher.quoteReplacement(table.getShadow().getName()));
             }
         }
         logPlan(engine, context, query.sql());
@@ -605,9 +607,9 @@ public final class QueryFuzzDriver {
     }
 
     private static boolean referencesTable(GeneratedQuery query, ObjList<FuzzTable> tables) {
-        String sql = query.sql().toLowerCase(java.util.Locale.ROOT);
+        String sql = query.sql().toLowerCase(Locale.ROOT);
         for (int i = 0; i < tables.size(); i++) {
-            if (sql.contains(tables.getQuick(i).getName().toLowerCase(java.util.Locale.ROOT))) {
+            if (sql.contains(tables.getQuick(i).getName().toLowerCase(Locale.ROOT))) {
                 return true;
             }
         }

@@ -3518,6 +3518,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return designatedTimestampColumnName;
     }
 
+    public CairoEngine getEngine() {
+        return engine;
+    }
+
     @Override
     public long getExpiryCleanupIntervalMicros() {
         return metadata.getExpiryCleanupIntervalMicros();
@@ -18400,7 +18404,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             final long dirTimestamp = partitionDirFmt.parse(utf8Sink.asAsciiCharSequence(), 0, txnSep, EN_LOCALE);
             final int partitionIndex = txWriter.getPartitionIndex(dirTimestamp);
-            if (partitionIndex < 0 || txWriter.getPartitionNameTxn(partitionIndex) != srcNameTxn) {
+            if (partitionIndex < 0
+                    || txWriter.getPartitionNameTxn(partitionIndex) != srcNameTxn
+                    || txWriter.isPartitionDeltaActive(partitionIndex)) {
                 stale = true;
             } else if (txWriter.isPartitionParquet(partitionIndex)) {
                 stale = txWriter.getPartitionParquetFileSize(partitionIndex) != generation;
@@ -18450,7 +18456,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     || txWriter.getPartitionNameTxn(partitionIndex) != srcNameTxn
                     || txWriter.isPartitionParquet(partitionIndex)
                     || txWriter.isPartitionParquetGenerated(partitionIndex)
-                    || txWriter.isPartitionComposite(partitionIndex);
+                    || txWriter.isPartitionComposite(partitionIndex)
+                    || txWriter.isPartitionDeltaActive(partitionIndex);
         } catch (NumericException ignore) {
             // Not a name this writer's compaction produced; leave the directory rather than guess.
             path.trimTo(pathSize);
