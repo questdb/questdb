@@ -17211,7 +17211,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 txWriter.setPartitionRemote(firstIndex, true);
             }
             if (isMergedSealStamped) {
-                // Only the writer's own conversion gets here sealed: its footer took the folder's stamp.
+                // The writer's own conversion converts a sealed folder too: its footer takes the folder's stamp, so the bit stays.
+                // The async swap refuses a sealed folder, so it never gets here sealed.
                 txWriter.setPartitionSealStamped(firstIndex, true);
             }
         } else {
