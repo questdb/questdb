@@ -299,7 +299,7 @@ that your change works.
   you call it done. Pushing is not testing, and "CI will tell" is not
   verification.
 - When the fix is done, report it at once: what you changed, the tests you ran
-  and their results, and what you could not verify locally and why. Then stop.
+  and their results, and what you could not verify locally and why.
   After a push, do not wait for its CI run.
 - When the user asks you to fix a CI failure, read the failed run's logs as the
   bug report; if the run has not failed yet, say so and stop. Reproduce the
@@ -307,7 +307,8 @@ that your change works.
   reproduce here, such as one on another platform, run what does run here and
   report what you could not verify; never wait on CI or push to see whether it
   goes green.
-- This rule overrides any skill or command that says otherwise.
+- This rule overrides any skill or command that tells you to monitor or wait
+  on CI, or to rely on it as a test.
 
 ## Git & PR Conventions
 
