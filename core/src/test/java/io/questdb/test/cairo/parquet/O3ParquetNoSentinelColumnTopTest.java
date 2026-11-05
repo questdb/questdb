@@ -58,7 +58,9 @@ import java.util.function.IntFunction;
 /**
  * An O3 commit into a parquet partition keeps the column top of a BOOLEAN, BYTE, SHORT or CHAR
  * column, which has no NULL sentinel and reads its top rows as NULL only through the column top
- * in the file and the NULL definition levels of its chunks. The parquet table {@code pt} goes
+ * in the file and the NULL definition levels of its chunks. CONVERT TO PARQUET writes the rows of a
+ * top as NULLs, and a commit or a conversion that stores them writes 0 or false: such a column has no
+ * NULL, and the comparisons take NULL and 0 or false as one value, see {@link #NO_SENTINEL_COLUMNS}. The parquet table {@code pt} goes
  * through the commit, its native twin {@code tw} takes the same SQL; the native rule decides which
  * tops survive: a top stays iff it ends inside the prefix of rows that keep their position, the
  * rows with {@code ts <= o3Lo - (dedup ? 1 : 0)}, or the commit appends (O3OpenColumnJob, O3PartitionJob).
@@ -117,6 +119,12 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
     private static final String FLOAT_COLUMNS = "v, ts, c1, c2, c3, d, f";
     // every test method runs under every type and lazy target, see data()
     private static final boolean IS_EVERY_TYPE_TARGET = Boolean.getBoolean("questdb.fuzz.parquet.noSentinel.everyTypeTarget");
+    // The columns of BOOLEAN, BYTE, SHORT or CHAR, which have no NULL, in the tested type or a type they changed
+    // to. Their top rows read NULL, or 0 or false once a commit or a conversion stored them, and the comparisons
+    // with tw take NULL and 0 or false as one value, see normalizeNoSentinelNulls().
+    private static final Set<String> NO_SENTINEL_COLUMNS = Set.of("c", "c1", "c2", "c3", "cbool", "cbyte", "cchar", "cshort", "s", "w");
+    // the texts of NULL, 0 and false in the types NO_SENTINEL_COLUMNS hold
+    private static final Set<String> NULL_OR_ZERO_TEXTS = Set.of("", "0", "0.0", "false", "null");
     private static final String O3_DAY = "2024-01-01";
     // the columns of the rows that twoColumnRow() renders
     private static final String TWO_COLUMN_TOP_COLUMNS = "v, ts, c, s";
@@ -134,6 +142,7 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
     };
     // per WAL mode, WITH_WAL first, the shift of TYPE_TARGETS that this run applies to the pair of each test
     // method, see typeTargetOfMethod()
+
     private static final int[] TYPE_TARGET_SHIFTS = drawTypeTargetShifts();
     // the columns of the rows that rowOf() renders
     private static final String UPSERT_COLUMNS = "v, ts, c1, c2, c3, ci, cv, cg, cd";
@@ -260,7 +269,7 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
                         + o3Literal() + ", " + o3c2Literal + ", " + o3Literal() + ", 50, '50')");
             }
             drainWalQueue();
-            assertSqlCursors("tw ORDER BY ts", "pt ORDER BY ts");
+            assertPtMatchesTw();
             final String zero = renderAs(zeroText(), type);
             final String o3 = renderAs(o3Text(), type);
             final StringSink expected = new StringSink();
@@ -278,7 +287,7 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
             assertC2NullCount(O3_DAY, 8);
             execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '" + O3_DAY + "'");
             drainWalQueue();
-            assertSqlCursors("tw ORDER BY ts", "pt ORDER BY ts");
+            assertPtMatchesTw();
         });
     }
 
@@ -299,7 +308,7 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
             createEveryTypeTables(4);
             insertEveryTypeO3("2024-01-01T23:00:00.000000Z");
             insertEveryTypeO3("2024-01-01T02:30:00.000000Z");
-            assertSqlCursors("tw ORDER BY ts", "pt ORDER BY ts");
+            assertPtMatchesTw();
             assertEveryTypeNullCounts(4, 2);
             assertQuery("SELECT v, cbool, cbyte, cshort, cchar FROM pt WHERE ts IN '" + O3_DAY + "' ORDER BY ts")
                     .noLeakCheck()
@@ -957,7 +966,7 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
             }
             final String newRow = "(50, '2024-01-01T23:00:00.000000Z'" + ", NULL".repeat(EVERY_TYPE_COLUMNS.length) + ")";
             assertDecodedColumnsAndWrittenRows(columns.toString(), 28, 2, row9 + ")", newRow);
-            assertSqlCursors("tw ORDER BY ts", "pt ORDER BY ts");
+            assertPtMatchesTw();
         });
     }
 
@@ -1101,7 +1110,7 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
                         + ", NULL".repeat(EVERY_TYPE_COLUMNS.length) + "), (" + values + ")");
             }
             drainWalQueue();
-            assertSqlCursors("tw ORDER BY ts", "pt ORDER BY ts");
+            assertPtMatchesTw();
             assertEveryTypeNullCounts(8, 1);
             for (String t : tables()) {
                 for (String column : new String[]{"cbool", "cbyte", "cshort"}) {
@@ -1109,7 +1118,7 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
                 }
             }
             drainWalQueue();
-            assertSqlCursors("tw ORDER BY ts", "pt ORDER BY ts");
+            assertPtMatchesTw();
             for (String column : new String[]{"cbool", "cbyte", "cshort"}) {
                 assertNullCounts(column, 8, 1);
             }
@@ -1560,7 +1569,7 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
                     row10.append(", ").append(keys.contains(column[0]) ? column[2] : "NULL");
                 }
                 assertDecodedColumnsAndWrittenRows(columns.toString(), 56, 4, row6 + ")", row10 + ")");
-                assertSqlCursors("tw ORDER BY ts", "pt ORDER BY ts");
+                assertPtMatchesTw();
                 assertQuery("SELECT count() FROM pt WHERE ts IN '" + O3_DAY + "' AND cint IS NULL")
                         .noLeakCheck()
                         .noRandomAccess()
@@ -2493,6 +2502,33 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         });
     }
 
+    // the rows of the query, with NULL and 0 or false as one value in NO_SENTINEL_COLUMNS
+    private static String normalizedRows(String sql) throws Exception {
+        sink.clear();
+        printSql(sql);
+        return normalizeNoSentinelNulls(sink);
+    }
+
+    // replaces the NULL, 0 and false cells of NO_SENTINEL_COLUMNS in the tab-separated rows, under a header row,
+    // with one text
+    private static String normalizeNoSentinelNulls(CharSequence rows) {
+        final String[] lines = rows.toString().split("\n", -1);
+        final String[] header = lines[0].split("\t", -1);
+        final StringBuilder normalized = new StringBuilder(lines[0]);
+        for (int i = 1; i < lines.length; i++) {
+            normalized.append('\n');
+            final String[] cells = lines[i].split("\t", -1);
+            for (int c = 0; c < cells.length; c++) {
+                if (c > 0) {
+                    normalized.append('\t');
+                }
+                final boolean isNullOrZero = c < header.length && NO_SENTINEL_COLUMNS.contains(header[c]) && NULL_OR_ZERO_TEXTS.contains(cells[c]);
+                normalized.append(isNullOrZero ? "NULL or 0" : cells[c]);
+            }
+        }
+        return normalized.toString();
+    }
+
     // the shifts of TYPE_TARGET_SHIFTS: TestUtils prints the seeds, -Dfuzz.s0 and -Dfuzz.s1 set them
     private static int[] drawTypeTargetShifts() {
         final Rnd rnd = TestUtils.generateRandom(LOG);
@@ -2570,7 +2606,7 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createEveryTypeTables(rowCount);
             insertEveryTypeO3("2024-01-01T23:00:00.000000Z");
-            assertSqlCursors("tw ORDER BY ts", "pt ORDER BY ts");
+            assertPtMatchesTw();
             assertEveryTypeNullCounts(rowCount, 1);
 
             final String noSentinelColumn = everyTypeColumnOf(type);
@@ -2582,7 +2618,7 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
                 }
             }
             drainWalQueue();
-            assertSqlCursors("tw ORDER BY ts", "pt ORDER BY ts");
+            assertPtMatchesTw();
             final StringSink expected = new StringSink();
             expected.put("v\t").put(String.join("\t", lazyColumns)).put('\n');
             for (int v = 1; v <= rowCount; v++) {
@@ -2605,7 +2641,7 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
             execute("ALTER TABLE " + t + " ALTER COLUMN w TYPE INT");
         }
         drainWalQueue();
-        assertSqlCursors("tw ORDER BY ts", "pt ORDER BY ts");
+        assertPtMatchesTw();
         assertQuery("SELECT count() FROM pt WHERE ts IN '" + O3_DAY + "' AND w IS NULL")
                 .noLeakCheck()
                 .noRandomAccess()
@@ -2613,8 +2649,22 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
                 .returns("count\n" + nullCount + "\n");
     }
 
-    private void assertC2NullCount(String day, long expectedCount) throws Exception {
-        final String nullCount = "count\n" + expectedCount + "\n";
+    // the filter on the lazily changed c2, JIT on and off, finds the rows that read NULL: at most maxCount,
+    // the top rows, which read NULL or 0 or false, see NO_SENTINEL_COLUMNS
+    private void assertC2NullCount(String day, long maxCount) throws Exception {
+        sink.clear();
+        printSql("SELECT c2 FROM pt WHERE ts IN '" + day + "'");
+        final String nullText = renderAs(null, lazyTarget);
+        long nullRowCount = 0;
+        // the header row first, and an empty text after the last row
+        final String[] lines = sink.toString().split("\n", -1);
+        for (int i = 1; i < lines.length - 1; i++) {
+            if (lines[i].equals(nullText)) {
+                nullRowCount++;
+            }
+        }
+        Assert.assertTrue(nullRowCount + " > " + maxCount, nullRowCount <= maxCount);
+        final String nullCount = "count\n" + nullRowCount + "\n";
         for (int jitMode : new int[]{SqlJitMode.JIT_MODE_ENABLED, SqlJitMode.JIT_MODE_DISABLED}) {
             sqlExecutionContext.setJitMode(jitMode);
             assertQuery("SELECT count() FROM pt WHERE ts IN '" + day + "' AND c2 IS NULL")
@@ -2633,9 +2683,10 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
             boolean isC3Altered
     ) throws Exception {
         for (int i = 0, n = expectedByDay.size(); i < n; i++) {
-            assertQuery("SELECT v, c1, c2, c3 FROM pt WHERE ts IN '" + days[i] + "' ORDER BY ts")
-                    .noLeakCheck()
-                    .returns(render(expectedByDay.get(i), isC1Altered, isC2Altered, isC3Altered));
+            TestUtils.assertEquals(
+                    normalizeNoSentinelNulls(render(expectedByDay.get(i), isC1Altered, isC2Altered, isC3Altered)),
+                    normalizedRows("SELECT v, c1, c2, c3 FROM pt WHERE ts IN '" + days[i] + "' ORDER BY ts")
+            );
         }
     }
 
@@ -2747,10 +2798,10 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
             final long writtenRows = hasNoSentinelType() ? 4 : 8;
             assertDecodedColumnsAndWrittenRows(18, writtenRows, storedRow(6, 2), newRow(tsOf(11)));
             if (isReopen) {
-                assertSqlCursors("tw ORDER BY ts", "pt ORDER BY ts");
+                assertPtMatchesTw();
                 engine.releaseAllWriters();
                 engine.releaseAllReaders();
-                assertSqlCursors("tw ORDER BY ts", "pt ORDER BY ts");
+                assertPtMatchesTw();
             }
             assertDecodedColumnsAndWrittenRows(
                     18,
@@ -2765,20 +2816,24 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
     }
 
     // the chunk null counts of the column in the row groups of the 2024-01-01 parquet partition of pt, comma
-    // separated, '?' where the chunk carries no null count
+    // separated, '?' where the chunk carries no null count. A row group of a column of NO_SENTINEL_COLUMNS that a
+    // commit stored holds 0 or false instead of the NULLs of its top rows, so its null count may be 0 as well
     private void assertChunkNullCounts(String column, String expected) {
         try (TableReader reader = engine.getReader("pt")) {
             // 2024-01-01 is the first partition
             reader.openPartition(0);
             final ParquetMetaFileReader meta = reader.getAndInitParquetPartitionDecoder(0).metadata();
             final int columnIndex = meta.getColumnIndex(column);
+            final String[] expectedCounts = expected.split(",");
             final StringSink sink = new StringSink();
             for (int rg = 0, n = meta.getRowGroupCount(); rg < n; rg++) {
                 if (rg > 0) {
                     sink.put(',');
                 }
                 if (meta.hasChunkNullCount(rg, columnIndex)) {
-                    sink.put(meta.getChunkNullCount(rg, columnIndex));
+                    final long nullCount = meta.getChunkNullCount(rg, columnIndex);
+                    final boolean isStoredTop = NO_SENTINEL_COLUMNS.contains(column) && nullCount == 0 && rg < expectedCounts.length;
+                    sink.put(isStoredTop ? expectedCounts[rg] : Long.toString(nullCount));
                 } else {
                     sink.put('?');
                 }
@@ -2821,13 +2876,13 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
     // asserts that pt matches tw, then changes c of the tables of createTwoColumnTopTables() lazily to VARCHAR and s
     // to INT, and asserts that pt matches tw again and that the rows of 2024-01-01 of pt read the expected v, c, s
     private void assertTwoColumnTopRows(String expected) throws Exception {
-        assertSqlCursors("tw ORDER BY ts", "pt ORDER BY ts");
+        assertPtMatchesTw();
         for (String t : tables()) {
             execute("ALTER TABLE " + t + " ALTER COLUMN c TYPE VARCHAR");
             execute("ALTER TABLE " + t + " ALTER COLUMN s TYPE INT");
         }
         drainWalQueue();
-        assertSqlCursors("tw ORDER BY ts", "pt ORDER BY ts");
+        assertPtMatchesTw();
         assertQuery("SELECT v, c, s FROM pt WHERE ts IN '" + O3_DAY + "'")
                 .noLeakCheck()
                 .returns(expected);
@@ -2863,7 +2918,7 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         drainWalQueue();
         // v, ts and the 26 columns of every type
         Assert.assertEquals(28, getMergeDecodedColumnCount() - count);
-        assertSqlCursors("tw ORDER BY ts", "pt ORDER BY ts");
+        assertPtMatchesTw();
         assertQuery("SELECT count() FROM pt WHERE ts IN '" + O3_DAY + "'")
                 .noLeakCheck()
                 .noRandomAccess()
@@ -2913,6 +2968,12 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
                 .returns("count\n" + notNullCount + "\n");
     }
 
+    // pt matches its native twin tw, with NULL and 0 or false as one value in NO_SENTINEL_COLUMNS
+    private void assertPtMatchesTw() throws Exception {
+        final String expected = normalizedRows("tw ORDER BY ts");
+        TestUtils.assertEquals(expected, normalizedRows("pt ORDER BY ts"));
+    }
+
     // c2 lazily to the lazy target, read through the _pm decoder while the partition is parquet, then
     // c1 to SYMBOL (converts the partition to native), then (pt) CONVERT TO NATIVE and c3 to SYMBOL;
     // pt must match tw and the expected rows after each step
@@ -2930,7 +2991,7 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
 
     // checks the rows of parquetDays[i] against expectedByDay[i], for the days that have expected rows
     private void assertReaders(boolean isAltering, String[] parquetDays, List<List<Row>> expectedByDay) throws Exception {
-        assertSqlCursors("tw ORDER BY ts", "pt ORDER BY ts");
+        assertPtMatchesTw();
         assertDayRows(parquetDays, expectedByDay, false, false, false);
         if (!isAltering) {
             return;
@@ -2939,7 +3000,7 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
             execute("ALTER TABLE " + t + " ALTER COLUMN c2 TYPE " + lazyTarget);
         }
         drainWalQueue();
-        assertSqlCursors("tw ORDER BY ts", "pt ORDER BY ts");
+        assertPtMatchesTw();
         assertDayRows(parquetDays, expectedByDay, false, true, false);
         // the filter on the lazily changed column, JIT on and off
         for (int i = 0, n = expectedByDay.size(); i < n; i++) {
@@ -2949,7 +3010,7 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
             execute("ALTER TABLE " + t + " ALTER COLUMN c1 TYPE SYMBOL");
         }
         drainWalQueue();
-        assertSqlCursors("tw ORDER BY ts", "pt ORDER BY ts");
+        assertPtMatchesTw();
         assertDayRows(parquetDays, expectedByDay, true, true, false);
         // the same filter once ALTER c1 TYPE SYMBOL has turned the partition native
         for (int i = 0, n = expectedByDay.size(); i < n; i++) {
@@ -2963,7 +3024,7 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
             execute("ALTER TABLE " + t + " ALTER COLUMN c3 TYPE SYMBOL");
         }
         drainWalQueue();
-        assertSqlCursors("tw ORDER BY ts", "pt ORDER BY ts");
+        assertPtMatchesTw();
         assertDayRows(parquetDays, expectedByDay, true, true, true);
     }
 

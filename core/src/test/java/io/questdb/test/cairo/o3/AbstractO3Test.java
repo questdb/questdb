@@ -55,6 +55,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.TestTimestampType;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
+import io.questdb.test.cairo.Overrides;
 import io.questdb.test.griffin.CustomisableRunnable;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -119,6 +120,11 @@ public class AbstractO3Test extends AbstractTest {
         copier = null;
         Metrics.ENABLED.clear();
         defaultSymbolIndexType = rnd.nextBoolean() ? IndexType.BITMAP : IndexType.POSTING;
+        // These tests pin NOSYNC rather than the suite's mode, but a fuzz test class runs under its own draw.
+        final String fuzzCommitMode = Overrides.getFuzzCommitMode();
+        if (fuzzCommitMode != null) {
+            commitMode = CommitMode.fromString(fuzzCommitMode);
+        }
     }
 
     @After

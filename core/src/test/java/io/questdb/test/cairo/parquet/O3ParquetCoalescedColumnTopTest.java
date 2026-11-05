@@ -124,9 +124,11 @@ public class O3ParquetCoalescedColumnTopTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testConvertToNativeKeepsColumnTop() throws Exception {
-        // the conversion to native converts one row group at a time: the column top of b, rows v 1..8 in
-        // row groups 0 and 1 and v 99 of 2024-01-02, stays NULL and the rows with a value keep it
+    public void testConvertToNativeColumnTop() throws Exception {
+        // the conversion to native converts one row group at a time. CONVERT TO PARQUET writes the rows of the
+        // top of b, v 1..8 in row groups 0 and 1, as NULLs, which the conversion to native decodes as BYTE: they
+        // hold 0, as v 9. v 99 of 2024-01-02, a native partition, keeps its top, NULL, and the rows with a value
+        // keep it
         assertMemoryLeak(() -> {
             for (String target : new String[]{"VARCHAR", "STRING"}) {
                 final String t = "pt_" + target;
@@ -146,18 +148,18 @@ public class O3ParquetCoalescedColumnTopTest extends AbstractCairoTest {
                         .noLeakCheck()
                         .returns("""
                                 v\tb
-                                1\t
-                                2\t
-                                3\t
-                                4\t
-                                5\t
-                                6\t
-                                7\t
-                                8\t
+                                1\t0
+                                2\t0
+                                3\t0
+                                4\t0
+                                5\t0
+                                6\t0
+                                7\t0
+                                8\t0
                                 9\t0
                                 10\t10
                                 """);
-                assertQuery("SELECT count() FROM " + t + " WHERE b IS NULL").noLeakCheck().noRandomAccess().expectSize().returns("count\n9\n");
+                assertQuery("SELECT count() FROM " + t + " WHERE b IS NULL").noLeakCheck().noRandomAccess().expectSize().returns("count\n1\n");
             }
         });
     }

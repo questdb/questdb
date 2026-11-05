@@ -87,7 +87,7 @@ public class BootstrapCommitModeTest extends AbstractBootstrapTest {
         );
     }
 
-    private static String readCommitMode(String propertyPath) throws Exception {
+    static String readCommitMode(String propertyPath) throws Exception {
         final Path confFile = Paths.get(root, "conf").resolve("server.conf");
         final List<String> lines = Files.readAllLines(confFile);
         String value = null;

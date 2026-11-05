@@ -106,6 +106,15 @@ public class PartitionUpdater implements QuietCloseable {
         copyRowGroupWithNullColumns(ptr, rowGroupIndex, nullColDescAddr, nullColCount);
     }
 
+    /**
+     * Keeps the identity index row map on an incremental {@code _pm} update, for a table without a symbol index: no
+     * index file refers to index rows, and an older binary rejects a footer that carries a map.
+     */
+    public void dropIndexRowMap() {
+        assert ptr != 0;
+        dropIndexRowMap(ptr);
+    }
+
     public long getResultParquetMetaFileSize() {
         assert ptr != 0;
         return getResultParquetMetaFileSize(ptr);
@@ -310,6 +319,8 @@ public class PartitionUpdater implements QuietCloseable {
     ) throws CairoException;
 
     private static native void destroy(long impl);
+
+    private static native void dropIndexRowMap(long impl) throws CairoException;
 
     private static native long getResultParquetMetaFileSize(long impl);
 

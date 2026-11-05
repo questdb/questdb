@@ -85,8 +85,10 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     public void testDedupWithRandomShiftAndStep() throws Exception {
         assertMemoryLeak(() -> {
             Rnd rnd = generateRandomAndProps();
-            boolean createAsParquet = rnd.nextBoolean();
-            boolean convertToParquet = !createAsParquet && rnd.nextBoolean();
+            final double conversionRequestProb = randomParquetConversionRequestProb(rnd);
+            // A requested conversion needs a native partition to convert.
+            boolean createAsParquet = conversionRequestProb == 0 && rnd.nextBoolean();
+            boolean convertToParquet = conversionRequestProb == 0 && !createAsParquet && rnd.nextBoolean();
             boolean isSkipMode = rnd.nextBoolean();
 
             String tableName = getTestName();
@@ -132,6 +134,9 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 );
 
                 splitTransactionInserts(transactions, 1 + rnd.nextInt(3), rnd);
+                fuzzer.setParquetConversionRequestProb(conversionRequestProb);
+                // The commits of the second batch start at from: the partition they split.
+                fuzzer.setParquetConversionRequestHint(from);
                 CommitOracle oracle = applyWithDedupModeSwitch(rnd, tableName, "ts", false, isSkipMode, transactions, firstBatchKeys);
                 validateNoTimestampDuplicates(tableName, from, delta, count, null, 1, ColumnType.NULL, oracle);
             } finally {
@@ -144,8 +149,10 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     public void testDedupWithRandomShiftAndStepAndSymbolKey() throws Exception {
         assertMemoryLeak(() -> {
             Rnd rnd = generateRandomAndProps();
-            boolean createAsParquet = rnd.nextBoolean();
-            boolean convertToParquet = !createAsParquet && rnd.nextBoolean();
+            final double conversionRequestProb = randomParquetConversionRequestProb(rnd);
+            // A requested conversion needs a native partition to convert.
+            boolean createAsParquet = conversionRequestProb == 0 && rnd.nextBoolean();
+            boolean convertToParquet = conversionRequestProb == 0 && !createAsParquet && rnd.nextBoolean();
             boolean isSkipMode = rnd.nextBoolean();
 
             String tableName = getTestName();
@@ -156,7 +163,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                             + " DEDUP " + dedupModeSql(isSkipMode) + " KEYS(ts, s)"
             );
 
-            runDedupWithShiftAndStep(rnd, tableName, ColumnType.SYMBOL, convertToParquet, isSkipMode);
+            runDedupWithShiftAndStep(rnd, tableName, ColumnType.SYMBOL, convertToParquet, isSkipMode, conversionRequestProb);
         });
     }
 
@@ -182,8 +189,10 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     public void testDedupWithRandomShiftAndStepAndVarcharKey() throws Exception {
         assertMemoryLeak(() -> {
             Rnd rnd = generateRandomAndProps();
-            boolean createAsParquet = rnd.nextBoolean();
-            boolean convertToParquet = !createAsParquet && rnd.nextBoolean();
+            final double conversionRequestProb = randomParquetConversionRequestProb(rnd);
+            // A requested conversion needs a native partition to convert.
+            boolean createAsParquet = conversionRequestProb == 0 && rnd.nextBoolean();
+            boolean convertToParquet = conversionRequestProb == 0 && !createAsParquet && rnd.nextBoolean();
             boolean isSkipMode = rnd.nextBoolean();
 
             String tableName = getTestName();
@@ -194,7 +203,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                             + " DEDUP " + dedupModeSql(isSkipMode) + " KEYS(ts, s)"
             );
 
-            runDedupWithShiftAndStep(rnd, tableName, ColumnType.VARCHAR, convertToParquet, isSkipMode);
+            runDedupWithShiftAndStep(rnd, tableName, ColumnType.VARCHAR, convertToParquet, isSkipMode, conversionRequestProb);
         });
     }
 
@@ -221,8 +230,10 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         assertMemoryLeak(() -> {
             ObjList<FuzzTransaction> transactions = new ObjList<>();
             Rnd rnd = generateRandomAndProps();
-            boolean createAsParquet = rnd.nextBoolean();
-            boolean convertToParquet = !createAsParquet && rnd.nextBoolean();
+            final double conversionRequestProb = randomParquetConversionRequestProb(rnd);
+            // A requested conversion needs a native partition to convert.
+            boolean createAsParquet = conversionRequestProb == 0 && rnd.nextBoolean();
+            boolean convertToParquet = conversionRequestProb == 0 && !createAsParquet && rnd.nextBoolean();
 
             String tableName = getTestName();
             createEmptyTable(tableName, "", createAsParquet);
@@ -268,6 +279,9 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 );
 
                 splitTransactionInserts(transactions, 1 + rnd.nextInt(3), rnd);
+                fuzzer.setParquetConversionRequestProb(conversionRequestProb);
+                // The commits of the second batch start at from: the partition they split.
+                fuzzer.setParquetConversionRequestHint(from);
                 CommitOracle oracle = applyWithDedupModeSwitch(rnd, tableName, "ts", false, isSkipMode, transactions, firstBatchKeys);
                 // SKIP keeps all pre-existing duplicates of a key, UPSERT replaces them with one row
                 validateNoTimestampDuplicates(tableName, from, delta, count, null, initialDuplicates, ColumnType.NULL, oracle);
@@ -408,10 +422,12 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     @Test
     public void testRandomDedupRepeat() throws Exception {
         Rnd rnd = generateRandomAndProps();
+        final double conversionRequestProb = randomParquetConversionRequestProb(rnd);
         // The table does not start as FORMAT PARQUET: in that format, the commit that follows an O3
         // commit into the table emptied by TRUNCATE trips the last partition assertion in
-        // TableWriter.processWalCommit(), with or without dedup.
-        boolean convertToParquet = rnd.nextBoolean();
+        // TableWriter.processWalCommit(), with or without dedup. A requested conversion needs a native
+        // partition to convert.
+        boolean convertToParquet = conversionRequestProb == 0 && rnd.nextBoolean();
         setFuzzProbabilities(
                 0,
                 rnd.nextDouble(),
@@ -445,7 +461,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 5 + rnd.nextInt(10)
         );
 
-        runFuzzWithRepeatDedup(rnd, convertToParquet, rnd.nextBoolean());
+        runFuzzWithRepeatDedup(rnd, convertToParquet, rnd.nextBoolean(), conversionRequestProb);
     }
 
     @Test
@@ -607,6 +623,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         execute("alter table " + tableName + " dedup enable " + dedupModeSql(isSkipAfterSwitch) + " keys(" + dedupKeys + ")");
         applyWal(afterSwitch, tableName, 1, rnd);
         if (twinTableName != null) {
+            // the twin stays native: no parquet conversion request while it applies
+            fuzzer.setParquetConversionRequestProb(0);
             fuzzer.applyToWal(beforeSwitch, twinTableName, 1, twinRnd);
             execute("alter table " + twinTableName + " dedup enable " + dedupModeSql(isSkipAfterSwitch) + " keys(" + dedupKeys + ")");
             applyWal(afterSwitch, twinTableName, 1, twinRnd);
@@ -1046,6 +1064,33 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         }
     }
 
+    /**
+     * Half the runs ask the compaction job to convert random partitions to parquet while WAL apply lands between a
+     * conversion's build and its swap; the caller turns the requests on for the upserts, so a swap that installs a
+     * build the upserts overwrote fails the assertions. Those runs turn merge-append off half the time, the
+     * production default: an upsert into an older partition then splits it, and a squash puts the split back in
+     * place, keeping the name txn and the row count the build saw. Half the time a small prefix splits the
+     * partition and the squash runs in the commit that split it.
+     *
+     * @return the per-apply-step request probability, 0 for a run without requests
+     */
+    private double randomParquetConversionRequestProb(Rnd rnd) {
+        if (!rnd.nextBoolean()) {
+            return 0.0;
+        }
+        if (rnd.nextBoolean()) {
+            setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+        }
+        if (rnd.nextBoolean()) {
+            // These partitions hold a few hundred rows: a split needs a prefix of a few rows, and squashes at once,
+            // in the commit that made it.
+            setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1 + rnd.nextInt(512));
+            setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_COMMITS, 0);
+            setProperty(PropertyKey.CAIRO_O3_PARTITION_MAX_SPLITS, 1);
+        }
+        return 0.5 + 0.5 * rnd.nextDouble();
+    }
+
     private CharSequence readStrValue(Record rec, int colType) {
         return switch (colType) {
             case ColumnType.SYMBOL -> rec.getSymA(2);
@@ -1277,8 +1322,10 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         assertMemoryLeak(() -> {
             ObjList<FuzzTransaction> transactions = new ObjList<>();
             Rnd rnd = generateRandomAndProps();
-            boolean createAsParquet = rnd.nextBoolean() || isParquetForced;
-            boolean convertToParquet = !createAsParquet && rnd.nextBoolean();
+            // A requested conversion needs a native partition to convert.
+            final double conversionRequestProb = isParquetForced ? 0 : randomParquetConversionRequestProb(rnd);
+            boolean createAsParquet = isParquetForced || (conversionRequestProb == 0 && rnd.nextBoolean());
+            boolean convertToParquet = conversionRequestProb == 0 && !createAsParquet && rnd.nextBoolean();
 
             boolean isSkipMode = rnd.nextBoolean();
 
@@ -1337,6 +1384,9 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
             maybeConvertToParquet(tableName, convertToParquet);
             splitTransactionInserts(transactions, 1 + rnd.nextInt(3), rnd);
+            fuzzer.setParquetConversionRequestProb(conversionRequestProb);
+            // The commits of the second batch start at from: the partition they split.
+            fuzzer.setParquetConversionRequestHint(from);
             // ts is the only dedup key, the rows of one timestamp differ in the s column
             CommitOracle oracle = applyWithDedupModeSwitch(rnd, tableName, twinTableName, twinRnd, "ts", false, isSkipMode, transactions, firstBatchKeys);
             validateNoTimestampDuplicates(tableName, from, delta, count, null, 1, ColumnType.NULL, oracle);
@@ -1350,7 +1400,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             String tableName,
             int colType,
             boolean convertToParquet,
-            boolean isSkipMode
+            boolean isSkipMode,
+            double conversionRequestProb
     ) throws SqlException {
         ObjList<FuzzTransaction> transactions = new ObjList<>();
         try {
@@ -1407,6 +1458,9 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
             transactionCount = 1 + rnd.nextInt(3);
             splitTransactionInserts(transactions, transactionCount, rnd);
+            fuzzer.setParquetConversionRequestProb(conversionRequestProb);
+            // The commits of the second batch start at from: the partition they split.
+            fuzzer.setParquetConversionRequestHint(from);
             CommitOracle oracle = applyWithDedupModeSwitch(rnd, tableName, "ts, s", true, isSkipMode, transactions, firstBatchKeys);
 
             validateNoTimestampDuplicates(tableName, from, delta, count, symbols, 1, colType, oracle);
@@ -1525,7 +1579,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         });
     }
 
-    private void runFuzzWithRepeatDedup(Rnd rnd, boolean convertToParquet, boolean isSkipMode) throws Exception {
+    private void runFuzzWithRepeatDedup(Rnd rnd, boolean convertToParquet, boolean isSkipMode, double conversionRequestProb) throws Exception {
         assertMemoryLeak(() -> {
             String tableNameBase = getTestName();
             String tableNameDedup = tableNameBase + "_wal";
@@ -1563,6 +1617,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                     try {
                         LOG.info().$("enabling dedup [table=").$(tableNameDedup).$(", mode=").$(dedupModeSql(isSkipMode)).I$();
                         execute("alter table " + tableNameDedup + " dedup " + dedupModeSql(isSkipMode) + " keys(ts)", sqlExecutionContext);
+                        fuzzer.setParquetConversionRequestProb(conversionRequestProb);
                         applyWal(transactionsWithDups, tableNameDedup, 1 + rnd.nextInt(4), rnd);
 
                         String limit = "";

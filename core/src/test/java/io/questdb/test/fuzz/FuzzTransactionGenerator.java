@@ -117,6 +117,7 @@ public class FuzzTransactionGenerator {
                 probabilityOfAddCoveringIndex,
                 0.0,
                 probabilityOfSetTableFormat,
+                0.0,
                 false
         );
     }
@@ -136,6 +137,9 @@ public class FuzzTransactionGenerator {
      * conversion stores the top of a text column from the start of its first row group with data, the
      * rows after it as NULL values, which a change to BOOLEAN, BYTE or SHORT turns into 0 or false: the
      * text to BOOLEAN, BYTE or SHORT change comes once, before any partition goes back to native.
+     * <p>
+     * A backfill is an O3 block clustered at a random point behind the run's front, cutting older days into splits
+     * and pieces. A zero {@code probabilityOfBackfill} draws nothing from {@code rnd}, keeping old runs reproducible.
      */
     public static ObjList<FuzzTransaction> generateSet(
             long initialRowCount,
@@ -173,6 +177,7 @@ public class FuzzTransactionGenerator {
             double probabilityOfAddCoveringIndex,
             double probabilityOfDropIndex,
             double probabilityOfSetTableFormat,
+            double probabilityOfBackfill,
             boolean isNoSentinelTypeChangeEnabled
     ) {
         Assert.assertFalse("no-sentinel type changes need in-order writes", isNoSentinelTypeChangeEnabled && o3);
@@ -355,13 +360,13 @@ public class FuzzTransactionGenerator {
             } else if (wantToDropPartition) {
                 generateDropPartition(transactionList, metaVersion, waitBarrierVersion++, lastTimestamp, rnd);
             } else if (wantToConvertPartitionToParquet) {
-                final long cutoffTimestamp = generateConvertPartitionToParquet(transactionList, metaVersion, waitBarrierVersion++, lastTimestamp, rnd, isNoSentinelTypeChangeEnabled);
+                final long cutoffTimestamp = generateConvertPartitionToParquet(transactionList, metaVersion, waitBarrierVersion++, minTimestamp, lastTimestamp, rnd, isNoSentinelTypeChangeEnabled);
                 // the partition of the cutoff has rows when its day is not before the first day of data
                 isTextToNoSentinelChangeDue |= !isTextToNoSentinelChangeSpent
                         && cutoffTimestamp - cutoffTimestamp % DAY_MICROS >= minTimestamp - minTimestamp % DAY_MICROS;
             } else if (wantToConvertPartitionToNative && !isTextToNoSentinelChangeDue) {
                 // waits for the due text to BOOLEAN, BYTE or SHORT change
-                generateConvertPartitionToNative(transactionList, metaVersion, waitBarrierVersion++, lastTimestamp, rnd);
+                generateConvertPartitionToNative(transactionList, metaVersion, waitBarrierVersion++, minTimestamp, lastTimestamp, rnd);
             } else if (wantToAddCoveringIndex) {
                 if (generateAddCoveringIndex(transactionList, metaVersion, waitBarrierVersion, rnd, meta)) {
                     waitBarrierVersion++;
@@ -418,6 +423,11 @@ public class FuzzTransactionGenerator {
                 final long startTs, stopTs;
                 final boolean isCollision = pendingCollisionTs != Long.MIN_VALUE;
                 final boolean isAnchored = isCollision || (probabilityOfAnchoredBlock > 0 && anchors.size() > 0 && rnd.nextDouble() < probabilityOfAnchoredBlock);
+                final boolean isBackfill = !isAnchored
+                        && o3
+                        && probabilityOfBackfill > 0
+                        && lastTimestamp > minTimestamp
+                        && rnd.nextDouble() < probabilityOfBackfill;
                 if (isCollision) {
                     // generate new rows at the previous anchor's timestamp
                     startTs = pendingCollisionTs;
@@ -446,7 +456,9 @@ public class FuzzTransactionGenerator {
                     // a small block keeps the partition's existing prefix large enough to split
                     blockRows = Math.min(blockRows, 1 + rnd.nextInt(16));
                 } else {
-                    if (o3) {
+                    if (isBackfill) {
+                        startTs = minTimestamp + rnd.nextLong(lastTimestamp - minTimestamp);
+                    } else if (o3) {
                         long offset = (long) ((maxTimestamp - minTimestamp + 1.0) / transactionCount * i);
                         long jitter = (long) ((maxTimestamp - minTimestamp + 1.0) / transactionCount * rnd.nextDouble());
                         if (rnd.nextBoolean()) {
@@ -462,6 +474,10 @@ public class FuzzTransactionGenerator {
                     if (o3) {
                         //noinspection lossy-conversions
                         step *= rnd.nextDouble();
+                    }
+                    if (isBackfill) {
+                        // A tenth of an ordinary block's width at most, so the cluster has existing rows on both sides.
+                        step = Math.max(1, step / 10);
                     }
                     stopTs = Math.min(startTs + step, maxTimestamp);
                 }
@@ -492,8 +508,11 @@ public class FuzzTransactionGenerator {
                 );
                 rowCount -= blockRows;
                 // Drop and convert partition operations use lastTimestamp as their cutoff. An anchored block
-                // revisits older data, so it only moves lastTimestamp forward.
-                lastTimestamp = isAnchored ? Math.max(lastTimestamp, stopTs) : stopTs;
+                // revisits older data, so it only moves lastTimestamp forward; a backfill does not move the front
+                // the next blocks are placed against.
+                if (!isBackfill) {
+                    lastTimestamp = isAnchored ? Math.max(lastTimestamp, stopTs) : stopTs;
+                }
                 if (probabilityOfAnchoredBlock > 0) {
                     addAnchors(transactionList.getLast(), anchors);
                 }
@@ -524,6 +543,21 @@ public class FuzzTransactionGenerator {
         }
         anchors.add(minTs);
         anchors.add(maxTs);
+    }
+
+    /**
+     * Picks the active day 4 in 10, the day before it 3 in 10, else a random older day, so conversions keep
+     * reaching days the O3 commits cut into splits and pieces.
+     */
+    private static long convertCutoffTimestamp(long minTimestamp, long lastTimestamp, Rnd rnd) {
+        final int target = rnd.nextInt(100);
+        if (target < 30) {
+            return lastTimestamp - DAY_MICROS;
+        }
+        if (target < 60 && lastTimestamp - minTimestamp > DAY_MICROS) {
+            return minTimestamp + DAY_MICROS + rnd.nextLong(lastTimestamp - minTimestamp - DAY_MICROS);
+        }
+        return lastTimestamp;
     }
 
     private static void copyColumnsExcept(RecordMetadata from, FuzzTestColumnMeta to, int columnIndex) {
@@ -658,29 +692,32 @@ public class FuzzTransactionGenerator {
 
     private static void generateConvertPartitionToNative(
             ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion,
-            long lastTimestamp, Rnd rnd
+            long minTimestamp, long lastTimestamp, Rnd rnd
     ) {
-        long cutoffTimestamp = lastTimestamp;
-        if (rnd.nextInt(100) <= 20) {
-            cutoffTimestamp -= DAY_MICROS;
-        }
         FuzzTransaction transaction = new FuzzTransaction();
-        transaction.operationList.add(new FuzzConvertPartitionToNativeOperation(cutoffTimestamp));
+        transaction.operationList.add(new FuzzConvertPartitionToNativeOperation(convertCutoffTimestamp(minTimestamp, lastTimestamp, rnd)));
         transaction.waitBarrierVersion = waitBarrierVersion;
         transaction.structureVersion = metadataVersion;
         transaction.waitAllDone = true;
         transactionList.add(transaction);
     }
 
+    /**
+     * Converts the day {@link #convertCutoffTimestamp} picks, or with {@code isBeforeLastPartition} the day before
+     * the one taking writes, two days before it one time in five, and returns the cutoff timestamp.
+     */
     private static long generateConvertPartitionToParquet(
             ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion,
-            long lastTimestamp, Rnd rnd, boolean isBeforeLastPartition
+            long minTimestamp, long lastTimestamp, Rnd rnd, boolean isBeforeLastPartition
     ) {
-        // The WHERE clause matches partition timestamps in (cutoff - 1 day, cutoff), and the tables partition
-        // by DAY: a cutoff just before the day of lastTimestamp selects the partition before the one taking writes
-        long cutoffTimestamp = isBeforeLastPartition ? lastTimestamp - lastTimestamp % DAY_MICROS - 1 : lastTimestamp;
-        if (rnd.nextInt(100) <= 20) {
-            cutoffTimestamp -= DAY_MICROS;
+        final long cutoffTimestamp;
+        if (isBeforeLastPartition) {
+            // The WHERE clause matches partition timestamps in (cutoff - 1 day, cutoff), and the tables partition
+            // by DAY: a cutoff just before the day of lastTimestamp selects the partition before the one taking writes
+            final long dayBeforeLastPartition = lastTimestamp - lastTimestamp % DAY_MICROS - 1;
+            cutoffTimestamp = rnd.nextInt(100) <= 20 ? dayBeforeLastPartition - DAY_MICROS : dayBeforeLastPartition;
+        } else {
+            cutoffTimestamp = convertCutoffTimestamp(minTimestamp, lastTimestamp, rnd);
         }
         FuzzTransaction transaction = new FuzzTransaction();
         transaction.operationList.add(new FuzzConvertPartitionToParquetOperation(cutoffTimestamp));

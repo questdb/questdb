@@ -249,6 +249,7 @@ public class FuzzDropIndexOperationTest extends AbstractCairoTest {
                 0,
                 probabilityOfDropIndex,
                 0,
+                0,
                 false
         );
     }

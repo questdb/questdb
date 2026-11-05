@@ -337,6 +337,53 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConvertAllNullRowGroupAfterDataRoundTrips() throws Exception {
+        // Row groups of 4: rows 5..8 are NULL in every nullable column, a whole row group after
+        // the first values, so the conversion back to native must write them as NULL rows
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x INT, vc VARCHAR, s STRING, i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t
+                    SELECT x::INT,
+                           CASE WHEN x BETWEEN 5 AND 8 THEN NULL ELSE 'v' || x END,
+                           CASE WHEN x BETWEEN 5 AND 8 THEN NULL ELSE 's' || x END,
+                           CASE WHEN x BETWEEN 5 AND 8 THEN NULL ELSE x::INT END,
+                           '2024-01-01'::TIMESTAMP + x * 60_000_000L
+                    FROM long_sequence(12)
+                    """);
+            execute("INSERT INTO t (x, ts) VALUES (99, '2024-01-02T00:00:00.000000Z')");
+            drainWalQueue();
+
+            final String expected = """
+                    x\tvc\ts\ti\tts
+                    1\tv1\ts1\t1\t2024-01-01T00:01:00.000000Z
+                    2\tv2\ts2\t2\t2024-01-01T00:02:00.000000Z
+                    3\tv3\ts3\t3\t2024-01-01T00:03:00.000000Z
+                    4\tv4\ts4\t4\t2024-01-01T00:04:00.000000Z
+                    5\t\t\tnull\t2024-01-01T00:05:00.000000Z
+                    6\t\t\tnull\t2024-01-01T00:06:00.000000Z
+                    7\t\t\tnull\t2024-01-01T00:07:00.000000Z
+                    8\t\t\tnull\t2024-01-01T00:08:00.000000Z
+                    9\tv9\ts9\t9\t2024-01-01T00:09:00.000000Z
+                    10\tv10\ts10\t10\t2024-01-01T00:10:00.000000Z
+                    11\tv11\ts11\t11\t2024-01-01T00:11:00.000000Z
+                    12\tv12\ts12\t12\t2024-01-01T00:12:00.000000Z
+                    """;
+            final String query = "SELECT * FROM t WHERE ts IN '2024-01-01'";
+            assertQuery(query).noLeakCheck().timestamp("ts").returns(expected);
+            for (int i = 0; i < 2; i++) {
+                execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                drainWalQueue();
+                assertQuery(query).noLeakCheck().timestamp("ts").returns(expected);
+                execute("ALTER TABLE t CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
+                drainWalQueue();
+                assertQuery(query).noLeakCheck().timestamp("ts").returns(expected);
+            }
+        });
+    }
+
+    @Test
     public void testConvertAllPartitionsToParquetAndBack() throws Exception {
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
             final String tableName = "testConvertAllPartitionsToParquetAndBack";
@@ -1528,6 +1575,89 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConvertPartitionsWithColTopSpanningRowGroupsRoundTrips() throws Exception {
+        // The top spans two whole row groups and part of a third; converting back to native must
+        // produce file rows and a column top that add up to the partition's rows.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t SELECT x::INT, '2024-01-01'::TIMESTAMP + x * 60_000_000L FROM long_sequence(10)");
+            drainWalQueue();
+            execute("ALTER TABLE t ADD COLUMN vc VARCHAR");
+            execute("ALTER TABLE t ADD COLUMN s STRING");
+            execute("ALTER TABLE t ADD COLUMN b BOOLEAN");
+            execute("ALTER TABLE t ADD COLUMN i INT");
+            execute("""
+                    INSERT INTO t
+                    SELECT (10 + x)::INT, '2024-01-01'::TIMESTAMP + (10 + x) * 60_000_000L,
+                           'v' || x, 's' || x, x % 2 = 0, x::INT
+                    FROM long_sequence(6)
+                    """);
+            execute("INSERT INTO t (x, ts) VALUES (99, '2024-01-02T00:00:00.000000Z')");
+            drainWalQueue();
+
+            final String expected = """
+                    x\tts\tvc\ts\tb\ti
+                    1\t2024-01-01T00:01:00.000000Z\t\t\tfalse\tnull
+                    2\t2024-01-01T00:02:00.000000Z\t\t\tfalse\tnull
+                    3\t2024-01-01T00:03:00.000000Z\t\t\tfalse\tnull
+                    4\t2024-01-01T00:04:00.000000Z\t\t\tfalse\tnull
+                    5\t2024-01-01T00:05:00.000000Z\t\t\tfalse\tnull
+                    6\t2024-01-01T00:06:00.000000Z\t\t\tfalse\tnull
+                    7\t2024-01-01T00:07:00.000000Z\t\t\tfalse\tnull
+                    8\t2024-01-01T00:08:00.000000Z\t\t\tfalse\tnull
+                    9\t2024-01-01T00:09:00.000000Z\t\t\tfalse\tnull
+                    10\t2024-01-01T00:10:00.000000Z\t\t\tfalse\tnull
+                    11\t2024-01-01T00:11:00.000000Z\tv1\ts1\tfalse\t1
+                    12\t2024-01-01T00:12:00.000000Z\tv2\ts2\ttrue\t2
+                    13\t2024-01-01T00:13:00.000000Z\tv3\ts3\tfalse\t3
+                    14\t2024-01-01T00:14:00.000000Z\tv4\ts4\ttrue\t4
+                    15\t2024-01-01T00:15:00.000000Z\tv5\ts5\tfalse\t5
+                    16\t2024-01-01T00:16:00.000000Z\tv6\ts6\ttrue\t6
+                    """;
+            final String query = "SELECT * FROM t WHERE ts IN '2024-01-01'";
+            assertQuery(query).noLeakCheck().timestamp("ts").returns(expected);
+
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            assertQuery(query).noLeakCheck().timestamp("ts").returns(expected);
+
+            execute("ALTER TABLE t CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
+            drainWalQueue();
+            assertQuery(query).noLeakCheck().timestamp("ts").returns(expected);
+
+            // the second conversion reads every var-size column up to the partition's last row
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            assertQuery(query).noLeakCheck().timestamp("ts").returns(expected);
+
+            execute("ALTER TABLE t CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
+            drainWalQueue();
+            assertQuery(query).noLeakCheck().timestamp("ts").returns(expected);
+        });
+    }
+
+    @Test
+    public void testConvertToNativeIndexedSymbolColTopSpanningRowGroupsBitmap() throws Exception {
+        assertConvertToNativeIndexesSymbolColTopOnce("INDEX TYPE BITMAP", true);
+    }
+
+    @Test
+    public void testConvertToNativeIndexedSymbolColTopSpanningRowGroupsBitmapNonWal() throws Exception {
+        assertConvertToNativeIndexesSymbolColTopOnce("INDEX TYPE BITMAP", false);
+    }
+
+    @Test
+    public void testConvertToNativeIndexedSymbolColTopSpanningRowGroupsPosting() throws Exception {
+        assertConvertToNativeIndexesSymbolColTopOnce("INDEX TYPE POSTING", true);
+    }
+
+    @Test
+    public void testConvertToNativeIndexedSymbolColTopSpanningRowGroupsPostingNonWal() throws Exception {
+        assertConvertToNativeIndexesSymbolColTopOnce("INDEX TYPE POSTING", false);
+    }
+
+    @Test
     public void testConvertSecondCallIgnored() throws Exception {
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
             execute(
@@ -1600,7 +1730,8 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
     @Test
     public void testConvertToNativeAlterColumnTypeTwoPartitionsColumnTops() throws Exception {
         // ALTER COLUMN TYPE SYMBOL converts both parquet partitions to native in one batch (doCommit=false):
-        // 2024-01-01 with a top of 5 of 8 rows for the a_ columns, 2024-01-02 with 9 of 12 for the b_ ones
+        // 2024-01-01 with a top of 5 of 8 rows for the a_ columns, 2024-01-02 with 9 of 12 for the b_ ones.
+        // CONVERT TO PARQUET writes the rows of the tops as NULLs, so the native partitions have no tops.
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
             execute("CREATE TABLE pt (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
@@ -1629,12 +1760,12 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             }
             assertPartitionFormat("pt", 0, PartitionFormat.NATIVE);
             assertPartitionFormat("pt", 1, PartitionFormat.NATIVE);
-            Assert.assertEquals(5, getColumnTop("pt", 0, "a_bt"));
-            Assert.assertEquals(4, getColumnTop("pt", 0, "a_st"));
-            Assert.assertEquals(4, getColumnTop("pt", 0, "a_s"));
-            Assert.assertEquals(9, getColumnTop("pt", 1, "b_bt"));
-            Assert.assertEquals(8, getColumnTop("pt", 1, "b_st"));
-            Assert.assertEquals(8, getColumnTop("pt", 1, "b_s"));
+            for (String column : new String[]{"a_bt", "a_st", "a_s"}) {
+                Assert.assertEquals(column, 0, getColumnTop("pt", 0, column));
+            }
+            for (String column : new String[]{"b_bt", "b_st", "b_s"}) {
+                Assert.assertEquals(column, 0, getColumnTop("pt", 1, column));
+            }
             assertSqlCursors("tw", "pt");
             for (String sql : new String[]{
                     "SELECT v, ts, a_s FROM {t} WHERE a_s = 's1'",
@@ -1652,7 +1783,8 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
 
     @Test
     public void testConvertToNativeColumnTopDefaultRowGroupSize() throws Exception {
-        // the server default row group size, 100_000 rows: a top of 100_002 rows spans the first row group
+        // the server default row group size, 100_000 rows: a top of 100_002 rows spans the first row group.
+        // CONVERT TO PARQUET writes the rows of the tops as NULLs, which BYTE reads as 0.
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100_000);
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
             execute("CREATE TABLE pt (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
@@ -1674,11 +1806,9 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                 execute("ALTER TABLE " + table + " ALTER COLUMN vb TYPE BYTE");
             }
             execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
-            for (String column : new String[]{"s", "d", "vc"}) {
-                Assert.assertEquals("column " + column, 100_000, getColumnTop("pt", 0, column));
+            for (String column : new String[]{"s", "d", "vc", "vb"}) {
+                Assert.assertEquals("column " + column, 0, getColumnTop("pt", 0, column));
             }
-            // BYTE has no NULL sentinel: the native top is the column top itself
-            Assert.assertEquals(100_002, getColumnTop("pt", 0, "vb"));
             assertSqlCursors("tw", "pt");
             assertQuery("SELECT v, ts, s, d, vc FROM pt WHERE s = 'x'")
                     .noLeakCheck()
@@ -1694,14 +1824,18 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                     .expectSize()
                     .returns("count\n100003\n");
             assertSqlCursors("SELECT * FROM tw WHERE s::VARCHAR IS NULL", "SELECT * FROM pt WHERE s IS NULL");
-            // the rows before ADD COLUMN read NULL in a type with a NULL sentinel; the NULL inserted after them
-            // is a BYTE 0
+            // the rows before ADD COLUMN and the NULL inserted after them are a BYTE 0, which SYMBOL reads as 0
             execute("ALTER TABLE pt ALTER COLUMN vb TYPE SYMBOL");
             assertQuery("SELECT count() FROM pt WHERE vb IS NULL")
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
-                    .returns("count\n100002\n");
+                    .returns("count\n0\n");
+            assertQuery("SELECT count() FROM pt WHERE vb = '0'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n100003\n");
             assertQuery("SELECT v, vb FROM pt WHERE v > 100_002")
                     .noLeakCheck()
                     .returns("""
@@ -1717,8 +1851,8 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
     @Test
     public void testConvertToNativeColumnTopSpansRowGroups() throws Exception {
         // Columns added after `top` of `rows` rows of partition 2024-01-01, row group size 4. CONVERT TO
-        // PARQUET zeroes a top inside the partition, but the file keeps it and the decoder skips every
-        // row group it covers. CONVERT TO NATIVE must restore the top from the first row group it decodes.
+        // PARQUET writes the rows of the tops as NULLs, so the partition CONVERT TO NATIVE writes back has
+        // no tops and reads as the native twin, which keeps them.
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
             final int[][] topsAndRows = {{3, 8}, {4, 8}, {5, 8}, {9, 12}, {8, 8}, {7, 8}};
@@ -1749,7 +1883,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                         assertCursorMatchesQuery(context + ", stale index scan", "SELECT v, ts, s1 FROM tw WHERE s1::VARCHAR IS NULL AND ts IN '2024-01-01'", nullFactory, nullCursor);
                     }
                     assertPartitionFormat("pt", 0, PartitionFormat.NATIVE);
-                    assertRowGroupTopColumnTops(context, top, rows);
+                    assertNoRowGroupTopColumnTops(context);
                     assertRowGroupTopLiterals(context, top, rows);
                     assertRowGroupTopQueriesMatchTwin(context + ", native", top < rows);
                     assertQuery("SELECT v, ts, s1 FROM pt WHERE s1 = 'x'")
@@ -1763,19 +1897,19 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                     }
                     engine.releaseAllReaders();
                     engine.releaseAllWriters();
-                    assertRowGroupTopColumnTops(context + ", reopen", top, rows);
+                    assertNoRowGroupTopColumnTops(context + ", reopen");
                     assertRowGroupTopQueriesMatchTwin(context + ", reopen", top < rows);
 
-                    // a second round trip keeps the data and the tops
+                    // a second round trip keeps the data
                     execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
                     drainWalQueue();
                     assertRowGroupTopQueriesMatchTwin(context + ", parquet again", top < rows);
                     execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
                     drainWalQueue();
-                    assertRowGroupTopColumnTops(context + ", native again", top, rows);
+                    assertNoRowGroupTopColumnTops(context + ", native again");
                     assertRowGroupTopQueriesMatchTwin(context + ", native again", top < rows);
 
-                    // rows inserted into the converted partition land after the restored tops
+                    // rows inserted into the converted partition
                     final String insert = rowGroupTopInsert("pt", top, rows, 2, "2024-01-01T23:");
                     execute(insert);
                     execute(insert.replace("INSERT INTO pt ", "INSERT INTO tw "));
@@ -1794,8 +1928,9 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
 
     @Test
     public void testConvertToNativeColumnTopSpansRowGroupsLastPartition() throws Exception {
-        // WAL table whose last partition is parquet: the writer reopens the converted partition with the
-        // restored tops and appends after them
+        // WAL table whose last partition is parquet: its file keeps the top of late, which CONVERT TO NATIVE
+        // restores from the first row group with data, and the writer appends after it. 2024-01-01, before
+        // the last partition, has its tops written as NULLs.
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
             createRowGroupTopTable("pt", "WAL", 5, 8, true);
@@ -1816,7 +1951,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             drainWalQueue();
             assertPartitionFormat("pt", 0, PartitionFormat.NATIVE);
             assertPartitionFormat("pt", 1, PartitionFormat.NATIVE);
-            assertRowGroupTopColumnTops("last partition", 5, 8);
+            assertNoRowGroupTopColumnTops("last partition");
             Assert.assertEquals(4, getColumnTop("pt", 1, "late"));
             assertRowGroupTopQueriesMatchTwin("last partition");
             assertSqlCursors("SELECT v, ts, late FROM tw", "SELECT v, ts, late FROM pt");
@@ -1848,10 +1983,11 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testConvertToNativeLazyVarToNoSentinelKeepsColumnTop() throws Exception {
+    public void testConvertToNativeLazyVarToNoSentinelColumnTop() throws Exception {
         // VARCHAR, STRING and SYMBOL columns added after `top` of `rows` rows of 2024-01-01 change lazily to
-        // BOOLEAN, BYTE, SHORT or CHAR on the parquet partition. The parquet -> native conversion has to keep
-        // their column top, which then reads as NULL after a follow-up ALTER to a type with a NULL sentinel.
+        // BOOLEAN, BYTE, SHORT or CHAR on the parquet partition. CONVERT TO PARQUET writes the rows of their
+        // top as NULLs, which the lazy type reads as false, 0 or the character 0; the parquet -> native
+        // conversion stores that value, which a follow-up ALTER to a type with a NULL sentinel keeps.
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
             final int[][] topsAndRows = {{0, 8}, {2, 8}, {4, 8}, {5, 8}, {7, 8}, {9, 12}, {8, 8}, {3, 21}};
@@ -1878,11 +2014,11 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                     }
                     if (!mode.equals("pre-pass")) {
                         assertPartitionFormat("pt", 0, PartitionFormat.NATIVE);
-                        assertNoSentinelColumnTops(context, top, rows);
+                        assertNoSentinelColumnTops(context, 0);
                         assertSqlCursors("tw", "pt");
                         engine.releaseAllReaders();
                         engine.releaseAllWriters();
-                        assertNoSentinelColumnTops(context + ", reopen", top, rows);
+                        assertNoSentinelColumnTops(context + ", reopen", 0);
                     }
                     if (mode.equals("round trip")) {
                         execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
@@ -1891,8 +2027,8 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                     }
                     alterNoSentinelColumnsToFollowUpTypes();
                     assertPartitionFormat("pt", 0, PartitionFormat.NATIVE);
-                    assertNoSentinelFollowUpLiterals(context, "pt", top, rows);
-                    assertNoSentinelFollowUpLiterals(context, "tw", top, rows);
+                    assertNoSentinelFollowUpLiterals(context, "pt", 0, top, rows);
+                    assertNoSentinelFollowUpLiterals(context, "tw", 0, top, rows);
                     assertNoSentinelQueriesMatchTwin(context);
                 }
             }
@@ -1901,23 +2037,24 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
 
     @Test
     public void testConvertToNativeLazyVarToNoSentinelLastPartition() throws Exception {
-        // the last partition of a WAL table is parquet: after CONVERT TO NATIVE the writer appends to it
-        // after the restored column tops
+        // the last partition of a WAL table is parquet and its file keeps the top of 5 rows: CONVERT TO NATIVE
+        // restores it from the first row group of 4 rows with data, the row of the top in that row group reads
+        // as a NULL in the lazy type, and the writer appends after the restored top
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
             createNoSentinelTables("WAL", 5, 8, false);
             execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
             drainWalQueue();
             assertPartitionFormat("pt", 0, PartitionFormat.NATIVE);
-            assertNoSentinelColumnTops("last partition", 5, 8);
+            assertNoSentinelColumnTops("last partition", 4);
             final String insert = noSentinelTypedInsert("pt", 5, 8, 3);
             execute(insert);
             execute(insert.replace("INSERT INTO pt ", "INSERT INTO tw "));
             drainWalQueue();
-            assertNoSentinelColumnTops("last partition, after insert", 5, 8);
+            assertNoSentinelColumnTops("last partition, after insert", 4);
             alterNoSentinelColumnsToFollowUpTypes();
-            assertNoSentinelFollowUpLiterals("last partition", "pt", 5, 11);
-            assertNoSentinelFollowUpLiterals("last partition", "tw", 5, 11);
+            assertNoSentinelFollowUpLiterals("last partition", "pt", 4, 5, 11);
+            assertNoSentinelFollowUpLiterals("last partition", "tw", 4, 5, 11);
             assertNoSentinelQueriesMatchTwin("last partition");
             assertQuery("SELECT suspended FROM wal_tables() WHERE name = 'pt'")
                     .noLeakCheck()
@@ -1929,21 +2066,21 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
     @Test
     public void testConvertToNativeLazyVarToNoSentinelCoveredColumn() throws Exception {
         // b changes lazily from VARCHAR to BYTE on the parquet partition, then the posting index of s covers it.
-        // CONVERT TO NATIVE restores the top of b, not of s; the covering index answers with b's top.
+        // CONVERT TO PARQUET writes the rows of the top of b as NULLs, which BYTE reads as 0, and CONVERT TO
+        // NATIVE stores the 0 the covering index answers with: tw copies the rows of pt, not its tops.
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
-            for (String table : new String[]{"pt", "tw"}) {
-                execute("CREATE TABLE " + table + " (v INT, s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
-                execute("INSERT INTO " + table + " SELECT x::INT, CASE WHEN x % 2 = 0 THEN 'x' ELSE 'y' END, dateadd('h', (x - 1)::INT, '2024-01-01'::TIMESTAMP)"
-                        + " FROM long_sequence(5)");
-                execute("ALTER TABLE " + table + " ADD COLUMN b VARCHAR");
-                execute("""
-                        INSERT INTO {t} VALUES
-                        (6, 'x', '2024-01-01T05:00:00.000000Z', '-7'),
-                        (7, 'y', '2024-01-01T06:00:00.000000Z', NULL),
-                        (8, 'x', '2024-01-01T07:00:00.000000Z', NULL),
-                        (99, 'x', '2024-01-02T00:00:00.000000Z', '300')""".replace("{t}", table));
-            }
+            execute("CREATE TABLE pt (v INT, s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO pt SELECT x::INT, CASE WHEN x % 2 = 0 THEN 'x' ELSE 'y' END, dateadd('h', (x - 1)::INT, '2024-01-01'::TIMESTAMP)"
+                    + " FROM long_sequence(5)");
+            execute("ALTER TABLE pt ADD COLUMN b VARCHAR");
+            execute("""
+                    INSERT INTO pt VALUES
+                    (6, 'x', '2024-01-01T05:00:00.000000Z', '-7'),
+                    (7, 'y', '2024-01-01T06:00:00.000000Z', NULL),
+                    (8, 'x', '2024-01-01T07:00:00.000000Z', NULL),
+                    (99, 'x', '2024-01-02T00:00:00.000000Z', '300')""");
+            execute("CREATE TABLE tw AS (SELECT * FROM pt) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
             execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
             for (String table : new String[]{"pt", "tw"}) {
                 execute("ALTER TABLE " + table + " ALTER COLUMN b TYPE BYTE");
@@ -1953,7 +2090,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
             assertPartitionFormat("pt", 0, PartitionFormat.NATIVE);
             Assert.assertEquals(0, getColumnTop("pt", 0, "s"));
-            Assert.assertEquals(5, getColumnTop("pt", 0, "b"));
+            Assert.assertEquals(0, getColumnTop("pt", 0, "b"));
             assertQuery("SELECT ts, b FROM pt WHERE s = 'x'")
                     .noLeakCheck()
                     .timestamp("ts")
@@ -1970,7 +2107,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                             """);
             assertSqlCursors("SELECT ts, b FROM tw WHERE s = 'x'", "SELECT ts, b FROM pt WHERE s = 'x'");
             assertSqlCursors("tw", "pt");
-            // after a change to a type with a NULL sentinel the column top reads NULL, the NULL inserted after it 0
+            // after a change to a type with a NULL sentinel the rows of the top read 0, as the NULL inserted after them
             for (String table : new String[]{"pt", "tw"}) {
                 execute("ALTER TABLE " + table + " ALTER COLUMN b TYPE INT");
             }
@@ -1979,8 +2116,8 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                     .timestamp("ts")
                     .returns("""
                             ts\tb
-                            2024-01-01T01:00:00.000000Z\tnull
-                            2024-01-01T03:00:00.000000Z\tnull
+                            2024-01-01T01:00:00.000000Z\t0
+                            2024-01-01T03:00:00.000000Z\t0
                             2024-01-01T05:00:00.000000Z\t-7
                             2024-01-01T07:00:00.000000Z\t0
                             2024-01-02T00:00:00.000000Z\t44
@@ -1995,19 +2132,19 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
         // CONVERT TO NATIVE fails on the append of the STRING column st in row group 1, after the BYTE column
         // vb, decoded before it, took its top from row group 0: through the writer pool, the command queue of
         // a writer the test holds, and the pre-pass of ALTER COLUMN TYPE. Each failure keeps the committed
-        // state of before; the last CONVERT restores the top.
+        // state of before. CONVERT TO PARQUET writes the rows of the tops as NULLs, which BYTE reads as 0: tw
+        // copies the rows of pt, not its tops.
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
         final AppendFailingFacade ff = new AppendFailingFacade();
         assertMemoryLeak(ff, () -> {
-            for (String table : new String[]{"pt", "tw"}) {
-                execute("CREATE TABLE " + table + " (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
-                execute("INSERT INTO " + table + " SELECT x::INT, dateadd('h', (x - 1)::INT, '2024-01-01'::TIMESTAMP) FROM long_sequence(2)");
-                execute("ALTER TABLE " + table + " ADD COLUMN vb VARCHAR");
-                execute("ALTER TABLE " + table + " ADD COLUMN st STRING");
-                execute("INSERT INTO " + table + " SELECT x::INT, dateadd('h', (x - 1)::INT, '2024-01-01'::TIMESTAMP), (x * 40)::VARCHAR, 's' || x"
-                        + " FROM long_sequence(8) WHERE x > 2");
-                execute("INSERT INTO " + table + " VALUES (99, '2024-01-02', '1', 's99')");
-            }
+            execute("CREATE TABLE pt (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO pt SELECT x::INT, dateadd('h', (x - 1)::INT, '2024-01-01'::TIMESTAMP) FROM long_sequence(2)");
+            execute("ALTER TABLE pt ADD COLUMN vb VARCHAR");
+            execute("ALTER TABLE pt ADD COLUMN st STRING");
+            execute("INSERT INTO pt SELECT x::INT, dateadd('h', (x - 1)::INT, '2024-01-01'::TIMESTAMP), (x * 40)::VARCHAR, 's' || x"
+                    + " FROM long_sequence(8) WHERE x > 2");
+            execute("INSERT INTO pt VALUES (99, '2024-01-02', '1', 's99')");
+            execute("CREATE TABLE tw AS (SELECT * FROM pt) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
             execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
             for (String table : new String[]{"pt", "tw"}) {
                 execute("ALTER TABLE " + table + " ALTER COLUMN vb TYPE BYTE");
@@ -2045,7 +2182,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
 
             execute(convertSql);
             assertPartitionFormat("pt", 0, PartitionFormat.NATIVE);
-            Assert.assertEquals(2, getColumnTop("pt", 0, "vb"));
+            Assert.assertEquals(0, getColumnTop("pt", 0, "vb"));
             for (String table : new String[]{"pt", "tw"}) {
                 execute("ALTER TABLE " + table + " ALTER COLUMN vb TYPE SYMBOL");
             }
@@ -2054,8 +2191,8 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                     .expectSize()
                     .returns("""
                             v\tvb\tst
-                            1\t\t
-                            2\t\t
+                            1\t0\t
+                            2\t0\t
                             3\t120\ts3
                             4\t-96\ts4
                             5\t-56\ts5
@@ -2072,21 +2209,21 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
     public void testConvertToNativeLazyVarToNoSentinelTwoPartitions() throws Exception {
         // one ALTER COLUMN TYPE converts two parquet partitions in its pre-pass: a_vb has a top of 5 of 8
         // rows in 2024-01-01 and none in 2024-01-02, b_vb has no rows in 2024-01-01 and a top of 9 of 12
-        // rows in 2024-01-02
+        // rows in 2024-01-02. CONVERT TO PARQUET writes the rows of the tops as NULLs, which BYTE and SHORT
+        // read as 0: tw copies the rows of pt, not its tops.
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
-            for (String table : new String[]{"pt", "tw"}) {
-                execute("CREATE TABLE " + table + " (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
-                execute("INSERT INTO " + table + " SELECT x::INT, dateadd('h', (x - 1)::INT, '2024-01-01'::TIMESTAMP) FROM long_sequence(5)");
-                execute("ALTER TABLE " + table + " ADD COLUMN a_vb VARCHAR");
-                execute("INSERT INTO " + table + " SELECT x::INT, dateadd('h', (x - 1)::INT, '2024-01-01'::TIMESTAMP), (x * 50)::VARCHAR"
-                        + " FROM long_sequence(8) WHERE x > 5");
-                execute("INSERT INTO " + table + " SELECT x::INT, dateadd('h', (x - 1)::INT, '2024-01-02'::TIMESTAMP), (-x)::VARCHAR FROM long_sequence(9)");
-                execute("ALTER TABLE " + table + " ADD COLUMN b_vb STRING");
-                execute("INSERT INTO " + table + " SELECT x::INT, dateadd('h', (x - 1)::INT, '2024-01-02'::TIMESTAMP), (-x)::VARCHAR, (x * 3)::STRING"
-                        + " FROM long_sequence(12) WHERE x > 9");
-                execute("INSERT INTO " + table + " VALUES (99, '2024-01-03', '1', '2')");
-            }
+            execute("CREATE TABLE pt (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO pt SELECT x::INT, dateadd('h', (x - 1)::INT, '2024-01-01'::TIMESTAMP) FROM long_sequence(5)");
+            execute("ALTER TABLE pt ADD COLUMN a_vb VARCHAR");
+            execute("INSERT INTO pt SELECT x::INT, dateadd('h', (x - 1)::INT, '2024-01-01'::TIMESTAMP), (x * 50)::VARCHAR"
+                    + " FROM long_sequence(8) WHERE x > 5");
+            execute("INSERT INTO pt SELECT x::INT, dateadd('h', (x - 1)::INT, '2024-01-02'::TIMESTAMP), (-x)::VARCHAR FROM long_sequence(9)");
+            execute("ALTER TABLE pt ADD COLUMN b_vb STRING");
+            execute("INSERT INTO pt SELECT x::INT, dateadd('h', (x - 1)::INT, '2024-01-02'::TIMESTAMP), (-x)::VARCHAR, (x * 3)::STRING"
+                    + " FROM long_sequence(12) WHERE x > 9");
+            execute("INSERT INTO pt VALUES (99, '2024-01-03', '1', '2')");
+            execute("CREATE TABLE tw AS (SELECT * FROM pt) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
             execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01', '2024-01-02'");
             for (String table : new String[]{"pt", "tw"}) {
                 execute("ALTER TABLE " + table + " ALTER COLUMN a_vb TYPE BYTE");
@@ -2098,34 +2235,33 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             }
             assertPartitionFormat("pt", 0, PartitionFormat.NATIVE);
             assertPartitionFormat("pt", 1, PartitionFormat.NATIVE);
-            Assert.assertEquals(5, getColumnTop("pt", 0, "a_vb"));
-            Assert.assertEquals(0, getColumnTop("pt", 1, "a_vb"));
-            // absent from 2024-01-01, as before CONVERT TO PARQUET
-            Assert.assertEquals(-1, getColumnTop("pt", 0, "b_vb"));
-            Assert.assertEquals(9, getColumnTop("pt", 1, "b_vb"));
+            for (String column : new String[]{"a_vb", "b_vb"}) {
+                Assert.assertEquals(column, 0, getColumnTop("pt", 0, column));
+                Assert.assertEquals(column, 0, getColumnTop("pt", 1, column));
+            }
             for (String table : new String[]{"pt", "tw"}) {
                 execute("ALTER TABLE " + table + " ALTER COLUMN a_vb TYPE SYMBOL");
                 execute("ALTER TABLE " + table + " ALTER COLUMN b_vb TYPE INT");
             }
             final String expected = """
                     v\ta_vb\tb_vb
-                    1\t\tnull
-                    2\t\tnull
-                    3\t\tnull
-                    4\t\tnull
-                    5\t\tnull
-                    6\t44\tnull
-                    7\t94\tnull
-                    8\t-112\tnull
-                    1\t-1\tnull
-                    2\t-2\tnull
-                    3\t-3\tnull
-                    4\t-4\tnull
-                    5\t-5\tnull
-                    6\t-6\tnull
-                    7\t-7\tnull
-                    8\t-8\tnull
-                    9\t-9\tnull
+                    1\t0\t0
+                    2\t0\t0
+                    3\t0\t0
+                    4\t0\t0
+                    5\t0\t0
+                    6\t44\t0
+                    7\t94\t0
+                    8\t-112\t0
+                    1\t-1\t0
+                    2\t-2\t0
+                    3\t-3\t0
+                    4\t-4\t0
+                    5\t-5\t0
+                    6\t-6\t0
+                    7\t-7\t0
+                    8\t-8\t0
+                    9\t-9\t0
                     10\t-10\t30
                     11\t-11\t33
                     12\t-12\t36
@@ -2189,25 +2325,27 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                     execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
                 }
                 assertPartitionFormat("pt", 0, PartitionFormat.NATIVE);
-                assertSqlCursors("tw", "pt");
+                assertLazyTypeChangeMatchesTwin(context + ", native", top);
+                // CONVERT TO PARQUET wrote the rows of the tops as NULLs, which CONVERT TO NATIVE stores
                 for (String[] conversion : LAZY_TYPE_CONVERSIONS) {
-                    // BOOLEAN, BYTE, SHORT and CHAR keep the column top; a type with a NULL sentinel starts
-                    // at the first row of the first row group with data
-                    final long expectedTop = ColumnType.isNoNullSentinelFixedType(ColumnType.typeOf(conversion[2])) ? top : 4L * (top / 4);
-                    Assert.assertEquals(context + ", column " + conversion[0], expectedTop, getColumnTop("pt", 0, conversion[0]));
+                    Assert.assertEquals(context + ", column " + conversion[0], 0, getColumnTop("pt", 0, conversion[0]));
                 }
                 engine.releaseAllReaders();
-                assertSqlCursors("tw", "pt");
-                // a type with a NULL sentinel reads the column top of a BOOLEAN, BYTE, SHORT or CHAR column as NULL
+                assertLazyTypeChangeMatchesTwin(context + ", reopen", top);
+                // the rows of the top of a BOOLEAN, BYTE or SHORT column hold false or 0, which SYMBOL keeps
                 for (String[] conversion : LAZY_TYPE_CONVERSIONS) {
                     if (ColumnType.isNoNullSentinelFixedType(ColumnType.typeOf(conversion[2]))) {
                         for (String table : new String[]{"pt", "tw"}) {
                             execute("ALTER TABLE " + table + " ALTER COLUMN " + conversion[0] + " TYPE SYMBOL");
                         }
-                        // a CHAR NULL is the character 0, which SYMBOL reads as NULL; rows with v % 4 = 2 hold NULL
-                        long nullCount = top;
-                        for (int v = top + 1; v <= rows && ColumnType.typeOf(conversion[2]) == ColumnType.CHAR; v++) {
-                            nullCount += v % 4 == 2 ? 1 : 0;
+                        // a CHAR NULL is the character 0, which SYMBOL reads as NULL: the rows of the top and the
+                        // rows with v % 4 = 2 hold NULL
+                        long nullCount = 0;
+                        if (ColumnType.typeOf(conversion[2]) == ColumnType.CHAR) {
+                            nullCount = top;
+                            for (int v = top + 1; v <= rows; v++) {
+                                nullCount += v % 4 == 2 ? 1 : 0;
+                            }
                         }
                         assertQuery("SELECT count() FROM pt WHERE ts IN '2024-01-01' AND " + conversion[0] + " IS NULL")
                                 .noLeakCheck()
@@ -2216,9 +2354,22 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                                 .returns("count\n" + nullCount + "\n");
                     }
                 }
-                assertSqlCursors("tw", "pt");
+                assertLazyTypeChangeMatchesTwin(context + ", symbol", top);
             }
         });
+    }
+
+    /**
+     * pt reads as its twin tw, except in the rows of the top of 2024-01-01 of a column of
+     * {@link #LAZY_TYPE_CONVERSIONS} that is or was BOOLEAN, BYTE, SHORT or CHAR: CONVERT TO PARQUET writes the
+     * rows of the top as NULLs, which these types do not have, so such a row reads NULL or false/0.
+     */
+    private static void assertLazyTypeChangeMatchesTwin(String context, int top) throws Exception {
+        try {
+            TestUtils.assertEquals(lazyTypeChangeRows("tw", top), lazyTypeChangeRows("pt", top));
+        } catch (AssertionError e) {
+            throw new AssertionError(context, e);
+        }
     }
 
     private static void alterNoSentinelColumnsToFollowUpTypes() throws Exception {
@@ -2231,21 +2382,22 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
     }
 
     /**
-     * The native column tops of the BOOLEAN, BYTE, SHORT and CHAR columns of {@link #NO_SENTINEL_CONVERSIONS}:
-     * the column top itself, or the row count for a column without rows.
+     * The native column tops in 2024-01-01 of pt of the BOOLEAN, BYTE, SHORT and CHAR columns of
+     * {@link #NO_SENTINEL_CONVERSIONS}.
      */
-    private static void assertNoSentinelColumnTops(String context, int top, int rows) {
+    private static void assertNoSentinelColumnTops(String context, long expectedTop) {
         for (String[] conversion : NO_SENTINEL_CONVERSIONS) {
-            Assert.assertEquals(context + ", column " + conversion[0], Math.min(top, rows), getColumnTop("pt", 0, conversion[0]));
+            Assert.assertEquals(context + ", column " + conversion[0], expectedTop, getColumnTop("pt", 0, conversion[0]));
         }
     }
 
     /**
      * The rows of 2024-01-01 after the follow-up ALTER of every column of {@link #NO_SENTINEL_CONVERSIONS}, from
-     * the inserted text cast by hand: NULL in the column top, then {@link #noSentinelValue(int, String)} in the
-     * follow-up type.
+     * the inserted text cast by hand: NULL in the native column top of {@code nativeTop} rows, then
+     * {@link #noSentinelValue(int, String)} in the follow-up type, of a NULL in the rest of the {@code top}
+     * rows CONVERT TO PARQUET wrote as NULLs.
      */
-    private void assertNoSentinelFollowUpLiterals(String context, String table, int top, int rows) throws Exception {
+    private void assertNoSentinelFollowUpLiterals(String context, String table, int nativeTop, int top, int rows) throws Exception {
         final StringSink expected = new StringSink();
         final StringSink select = new StringSink();
         expected.put('v');
@@ -2259,7 +2411,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
         for (int row = 0; row < rows; row++) {
             expected.put(row + 1);
             for (String[] conversion : NO_SENTINEL_CONVERSIONS) {
-                String text = row < top ? null : noSentinelValue(row - top, conversion[2]);
+                String text = row < nativeTop ? null : noSentinelValue(Math.max(0, row - top), conversion[2]);
                 if (text != null && conversion[3].equals("DOUBLE")) {
                     text += ".0";
                 }
@@ -2336,15 +2488,13 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
     }
 
     /**
-     * The tops CONVERT TO NATIVE derives from the decoded row groups of 4 rows: the first row of the first
-     * row group with data for a type with a NULL sentinel, the column top itself for BOOLEAN, BYTE, SHORT
-     * and CHAR, and the row count for a column without rows.
+     * No column of {@link #ROW_GROUP_TOP_COLUMNS} has a top in 2024-01-01 of pt: CONVERT TO PARQUET writes the
+     * rows of the tops of a partition before the last as NULLs, and CONVERT TO NATIVE stores them.
      */
-    private static void assertRowGroupTopColumnTops(String context, int top, int rows) {
-        for (int c = 0; c < ROW_GROUP_TOP_COLUMNS.length; c++) {
-            final String column = ROW_GROUP_TOP_COLUMNS[c].substring(0, ROW_GROUP_TOP_COLUMNS[c].indexOf(' '));
-            final long expectedTop = top >= rows ? rows : c < ROW_GROUP_TOP_NO_SENTINEL_COLUMNS ? top : 4L * (top / 4);
-            Assert.assertEquals(context + ", column " + column, expectedTop, getColumnTop("pt", 0, column));
+    private static void assertNoRowGroupTopColumnTops(String context) {
+        for (String columnDefinition : ROW_GROUP_TOP_COLUMNS) {
+            final String column = columnDefinition.substring(0, columnDefinition.indexOf(' '));
+            Assert.assertEquals(context + ", column " + column, 0, getColumnTop("pt", 0, column));
         }
     }
 
@@ -2437,14 +2587,21 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
      * rows in 2024-01-01, one per hour, the columns of {@link #NO_SENTINEL_CONVERSIONS} after the first
      * {@code top} of them and, when {@code hasNextPartition}, a row in 2024-01-02. CONVERT TO PARQUET turns
      * 2024-01-01 of pt to parquet, then both tables change the columns to BOOLEAN, BYTE, SHORT or CHAR.
+     * <p>
+     * CONVERT TO PARQUET writes the rows of the top of a partition before the last as NULLs. The last
+     * partition of a WAL table keeps the top in its file, and CONVERT TO NATIVE restores it from the first
+     * row group of 4 rows with data. tw keeps the top CONVERT TO NATIVE restores and holds NULLs in the
+     * other rows of the top of pt.
      */
     private static void createNoSentinelTables(String walMode, int top, int rows, boolean hasNextPartition) throws Exception {
+        final int twinTop = hasNextPartition ? 0 : 4 * (top / 4);
         for (String table : new String[]{"pt", "tw"}) {
             final boolean isPt = table.equals("pt");
+            final int columnTop = isPt ? top : twinTop;
             execute("DROP TABLE IF EXISTS " + table);
             execute("CREATE TABLE " + table + " (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY " + (isPt ? walMode : "BYPASS WAL"));
-            if (top > 0) {
-                execute("INSERT INTO " + table + " SELECT x::INT, dateadd('h', (x - 1)::INT, '2024-01-01'::TIMESTAMP) FROM long_sequence(" + top + ")");
+            if (columnTop > 0) {
+                execute("INSERT INTO " + table + " SELECT x::INT, dateadd('h', (x - 1)::INT, '2024-01-01'::TIMESTAMP) FROM long_sequence(" + columnTop + ")");
             }
             // one column per statement: a WAL table takes one structure change per ALTER
             for (String[] conversion : NO_SENTINEL_CONVERSIONS) {
@@ -2452,6 +2609,10 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                 if (isPt && conversion[4] != null) {
                     execute("ALTER TABLE " + table + " ALTER COLUMN " + conversion[0] + " " + conversion[4]);
                 }
+            }
+            if (top > columnTop) {
+                execute("INSERT INTO " + table + " (v, ts) SELECT x::INT, dateadd('h', (x - 1)::INT, '2024-01-01'::TIMESTAMP) FROM long_sequence(" + top + ")"
+                        + " WHERE x > " + columnTop);
             }
             if (rows > top) {
                 execute(noSentinelInsert(table, top, top, rows - top));
@@ -2478,6 +2639,41 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             final int columnIndex = reader.getMetadata().getWriterIndex(reader.getMetadata().getColumnIndex(columnName));
             return reader.getColumnVersionReader().getColumnTop(reader.getPartitionTimestampByIndex(partitionIndex), columnIndex);
         }
+    }
+
+    // the rows of the table, with NULL and false/0 as one value in the rows of the top of the columns
+    // assertLazyTypeChangeMatchesTwin() describes
+    private static String lazyTypeChangeRows(String table, int top) throws Exception {
+        sink.clear();
+        printSql(table);
+        final String[] lines = sink.toString().split("\n", -1);
+        final String[] header = lines[0].split("\t", -1);
+        final boolean[] isNoSentinelColumn = new boolean[header.length];
+        for (String[] conversion : LAZY_TYPE_CONVERSIONS) {
+            if (ColumnType.isNoNullSentinelFixedType(ColumnType.typeOf(conversion[1]))
+                    || ColumnType.isNoNullSentinelFixedType(ColumnType.typeOf(conversion[2]))) {
+                isNoSentinelColumn[Arrays.asList(header).indexOf(conversion[0])] = true;
+            }
+        }
+        final StringSink rows = new StringSink();
+        rows.put(lines[0]);
+        for (int i = 1; i < lines.length; i++) {
+            rows.put('\n');
+            final String[] cells = lines[i].split("\t", -1);
+            for (int c = 0; c < cells.length; c++) {
+                if (c > 0) {
+                    rows.put('\t');
+                }
+                final boolean isNullOrZero = switch (cells[c]) {
+                    case "", "0", "false", "null" -> true;
+                    default -> false;
+                };
+                // line i holds row i - 1
+                final boolean isTopRow = i <= top;
+                rows.put(isTopRow && c < header.length && isNoSentinelColumn[c] && isNullOrZero ? "NULL or 0" : cells[c]);
+            }
+        }
+        return rows.toString();
     }
 
     /**
@@ -2645,6 +2841,70 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    private void assertConvertToNativeIndexesSymbolColTopOnce(String indexClause, boolean isWal) throws Exception {
+        // Back to native, the skipped leading row groups become the column top again, for which index
+        // readers synthesize NULL rows, so the native index must not also hold them.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY " + (isWal ? "WAL" : "BYPASS WAL"));
+            execute("INSERT INTO t SELECT x::INT, '2024-01-01'::TIMESTAMP + x * 60_000_000L FROM long_sequence(10)");
+            drainWalQueue();
+            execute("ALTER TABLE t ADD COLUMN s SYMBOL " + indexClause);
+            execute("""
+                    INSERT INTO t
+                    SELECT (10 + x)::INT, '2024-01-01'::TIMESTAMP + (10 + x) * 60_000_000L,
+                           CASE WHEN x % 3 = 1 THEN 'aa' WHEN x % 3 = 2 THEN 'bb' END
+                    FROM long_sequence(6)
+                    """);
+            execute("INSERT INTO t (x, ts) VALUES (99, '2024-01-02T00:00:00.000000Z')");
+            drainWalQueue();
+
+            final String expectedNull = """
+                    x\tts\ts
+                    1\t2024-01-01T00:01:00.000000Z\t
+                    2\t2024-01-01T00:02:00.000000Z\t
+                    3\t2024-01-01T00:03:00.000000Z\t
+                    4\t2024-01-01T00:04:00.000000Z\t
+                    5\t2024-01-01T00:05:00.000000Z\t
+                    6\t2024-01-01T00:06:00.000000Z\t
+                    7\t2024-01-01T00:07:00.000000Z\t
+                    8\t2024-01-01T00:08:00.000000Z\t
+                    9\t2024-01-01T00:09:00.000000Z\t
+                    10\t2024-01-01T00:10:00.000000Z\t
+                    13\t2024-01-01T00:13:00.000000Z\t
+                    16\t2024-01-01T00:16:00.000000Z\t
+                    """;
+            final String expectedAa = """
+                    x\tts\ts
+                    11\t2024-01-01T00:11:00.000000Z\taa
+                    14\t2024-01-01T00:14:00.000000Z\taa
+                    """;
+            // the second round trip converts the column top and index the first one wrote
+            for (int i = 0; i < 2; i++) {
+                execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                drainWalQueue();
+                assertIndexQueryMatchesTruth("s IS NULL", "s::STRING IS NULL", expectedNull);
+                assertIndexQueryMatchesTruth("s = 'aa'", "s::STRING = 'aa'", expectedAa);
+                execute("ALTER TABLE t CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
+                drainWalQueue();
+                assertIndexQueryMatchesTruth("s IS NULL", "s::STRING IS NULL", expectedNull);
+                assertIndexQueryMatchesTruth("s = 'aa'", "s::STRING = 'aa'", expectedAa);
+            }
+        });
+    }
+
+    private void assertIndexQueryMatchesTruth(String indexFilter, String truthFilter, String expected) throws Exception {
+        final String partitionFilter = " FROM t WHERE ts IN '2024-01-01' AND ";
+        // the cast keeps the truth query off the index
+        assertQuery("SELECT x, ts, s" + partitionFilter + truthFilter).noLeakCheck().timestamp("ts").returns(expected);
+        final String indexQuery = "SELECT x, ts, s" + partitionFilter + indexFilter;
+        assertQuery(indexQuery).noLeakCheck().assertsPlanContaining("on: s");
+        sink.clear();
+        printSql(indexQuery, sink);
+        TestUtils.assertEquals(expected, sink);
+        assertQuery(indexQuery).noLeakCheck().timestamp("ts").returns(expected);
     }
 
     private void assertPartitionExists(String tableName, String partition) {

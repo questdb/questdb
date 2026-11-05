@@ -2191,9 +2191,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         long newParquetSize;
         long newParquetMetaFileSize;
         boolean isRewrite = false;
-        // Whether the update moves the index of an indexed SYMBOL column to a new column version,
-        // see updateParquetIndexes(). The flags word of the partition update sink publishes it.
-        boolean isIndexVersioned = false;
         // Whether the merge opened its output, a new partition directory for a rewrite or the parquet
         // file and _pm of the partition for an in-place update. A SKIP commit that writes no row leaves
         // it closed, see isSkipMode below.
@@ -2210,6 +2207,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final ParquetMetaFileReader parquetMetaReader = ctx.getParquetMetaReader();
         final PartitionUpdater partitionUpdater = ctx.getPartitionUpdater();
         long parquetSize = parquetFileSize;
+        // Index rows the committed indexes cover; an in-place update appends from here.
+        long prevIndexRowCount = 0;
         try {
             int parquetNameLen = path.size();
             int partitionDirLen = parquetNameLen - TableUtils.PARQUET_PARTITION_NAME.length() - 1;
@@ -2222,6 +2221,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         .put(", parquetFileSize=").put(parquetFileSize).put(']');
             }
             parquetSize = parquetMetaReader.getParquetFileSize();
+            prevIndexRowCount = parquetMetaReader.getIndexRowCount();
             path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_PARTITION_NAME).$();
 
             long parquetAddr = 0;
@@ -2340,7 +2340,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         || rowGroupCount == 1
                         || hasCoalescableTie
                         || (parquetSize > 0 && (double) unusedBytes / parquetSize > cairoConfiguration.getPartitionEncoderParquetO3RewriteUnusedRatio())
-                        || unusedBytes > cairoConfiguration.getPartitionEncoderParquetO3RewriteUnusedMaxBytes();
+                        || unusedBytes > cairoConfiguration.getPartitionEncoderParquetO3RewriteUnusedMaxBytes()
+                        || hasLiveIndexUnderColumnTop(tableWriter, tableWriterMetadata, ff, path, partitionTimestamp, oldPartitionSize);
 
                 // Build row group bounds for merge strategy computation.
                 // Use the parquet-side column index (not the table-side index)
@@ -2373,12 +2374,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     partitionMaxTimestamp = Math.max(partitionMaxTimestamp, rgMax);
                 }
                 parquetColumns.clear();
-
-                // Whether every O3 row lands after the existing rows, so that each existing row keeps
-                // its row id. The comparison is strict: an O3 row at the max timestamp can join a row
-                // group that is not the last one (several row groups may end on that timestamp), and
-                // under dedup it can replace the values of an existing row.
-                final boolean isAppendOnly = getTimestampIndexValue(sortedTimestampsAddr, srcOooLo) > partitionMaxTimestamp;
 
                 // Compute merge actions (scratch lists are reused across calls within the same partition)
                 final ObjList<O3ParquetMergeStrategy.MergeAction> actionsBuf = ctx.getActionsBuf();
@@ -2819,21 +2814,14 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // In rewrite mode, the new file is in a txn-named directory.
                 final long txnName = isRewrite ? txn : srcNameTxn;
                 path.of(pathToTable);
-                setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, txnName);
-                // Set before the call: when the index update fails part way, TableWriter removes the
-                // files of the new column version it may have left behind.
-                isIndexVersioned = !isRewrite
-                        && hasParquetIndexMovingToNewVersion(tableWriter, tableWriterMetadata, ff, path, partitionTimestamp, oldPartitionSize, isAppendOnly);
-                path.of(pathToTable);
                 setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, txnName);
                 updateParquetIndexes(
                         partitionBy,
                         partitionTimestamp,
                         tableWriter,
                         txnName,
-                        txn,
-                        oldPartitionSize,
-                        isIndexVersioned,
+                        !isRewrite,
+                        prevIndexRowCount,
                         o3Basket,
                         newPartitionSize,
                         newParquetSize,
@@ -2845,7 +2833,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         tableWriterMetadata,
                         parquetColumns,
                         rowGroupBuffers,
-                        isRewrite
+                        ctx.getRowGroupOrder(),
+                        ctx.getRowGroupIndexRowLos()
                 );
 
                 // Data before metadata: fsync the parquet data file before the
@@ -2983,7 +2972,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 Unsafe.putLong(partitionUpdateSinkAddr + 4 * Long.BYTES, Numbers.encodeLowHighInts(isRewrite ? 0 : 1, COVERING_INDEX_REBUILD));
                 Unsafe.putLong(partitionUpdateSinkAddr + 5 * Long.BYTES, 0); // o3SplitPartitionSize
                 Unsafe.putLong(partitionUpdateSinkAddr + 7 * Long.BYTES, fileSize); // update parquet partition file size
-                Unsafe.putLong(partitionUpdateSinkAddr + 9 * Long.BYTES, isIndexVersioned ? 1 : 0);
             } else {
                 // No file of the partition changed, as the native merge does when dedup drops every
                 // O3 row: o3ConsumePartitionUpdateSink() leaves the partition as it is.
@@ -3191,7 +3179,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     .$(", unusedBytes=").$size(resultUnusedBytes)
                     .$(", fullyMaterialized=").$(isFullyMaterialized)
                     .I$();
-            command.setResult(newParquetSize, isFullyMaterialized);
+            // The copy uses the identity index row map; index files built over another map do not describe it.
+            command.setResult(newParquetSize, isFullyMaterialized, parquetMeta.hasIndexRowMap());
             isBuilt = true;
         } finally {
             if (parquetAddr != 0) {
@@ -4200,36 +4189,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         );
     }
 
-    /**
-     * The column version that case C of updateParquetIndexes() builds the index into: the commit
-     * {@code txn}, or the name above the live one when ATTACH pinned a version copied from another
-     * table, named at or above the txn. Names in a partition directory then only grow, so the new
-     * version never reuses the live name or the name of a replaced version a purge may still remove.
-     */
-    static long getParquetIndexVersionNameTxn(long liveColumnNameTxn, long txn) {
-        return Math.max(txn, liveColumnNameTxn + 1);
-    }
-
-    /**
-     * Whether the update in place of a parquet partition with {@code oldPartitionSize} committed rows
-     * would change index files that a reader of the previous txn reads. A column with no data in the
-     * committed rows (top -1: absent, or top at or past the row count) has no index a reader uses.
-     * TableWriter evaluates the same predicate to find the columns whose index moved to a new version:
-     * when the update versions the partition's index, it versions the index of every such column.
-     */
-    static boolean isParquetIndexLiveForReaders(long columnTop, long oldPartitionSize) {
-        return columnTop > -1 && columnTop < oldPartitionSize;
-    }
-
-    /**
-     * The columns whose index updateParquetIndexes() maintains in a parquet partition.
-     */
-    static boolean isParquetIndexedSymbol(TableRecordMetadata metadata, int columnIndex) {
-        return metadata.getColumnType(columnIndex) == ColumnType.SYMBOL
-                && metadata.isColumnIndexed(columnIndex)
-                && metadata.getIndexValueBlockCapacity(columnIndex) >= 0;
-    }
-
     private static long calculateMinDataTimestampAfterReplacement(
             long srcDataTimestampAddr,
             long o3TimestampsAddr,
@@ -4844,6 +4803,56 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         return false;
     }
 
+    /**
+     * Whether {@link #updateParquetIndexes} has an index to maintain; without one, no index file refers to index rows.
+     */
+    private static boolean hasIndexedSymbolColumn(TableRecordMetadata metadata) {
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            if (metadata.getColumnType(i) == ColumnType.SYMBOL && metadata.isColumnIndexed(i)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Whether a reader of the committed txn reads the index of an indexed SYMBOL column of the parquet partition
+     * under a column top inside the partition, which QuestDB 10.0.1 and older left behind. Such an index holds no
+     * row of the top, and the update zeroes the top: {@link #updateParquetIndexes} can only rebuild the index under
+     * the live file names, which that reader reads. A rewrite builds it in a new partition directory instead.
+     * {@code parquetPath} names data.parquet of the partition and keeps its length.
+     */
+    private static boolean hasLiveIndexUnderColumnTop(
+            TableWriter tableWriter,
+            TableRecordMetadata metadata,
+            FilesFacade ff,
+            Path parquetPath,
+            long partitionTimestamp,
+            long oldPartitionSize
+    ) {
+        final int parquetPathLen = parquetPath.size();
+        final int partitionDirLen = parquetPathLen - TableUtils.PARQUET_PARTITION_NAME.length() - 1;
+        try {
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                if (metadata.getColumnType(i) != ColumnType.SYMBOL || !metadata.isColumnIndexed(i)) {
+                    continue;
+                }
+                final long columnTop = tableWriter.columnVersionReader().getColumnTop(partitionTimestamp, i);
+                if (columnTop > 0 && columnTop < oldPartitionSize && ff.exists(IndexFactory.keyFileName(
+                        metadata.getColumnIndexType(i),
+                        parquetPath.trimTo(partitionDirLen),
+                        metadata.getColumnName(i),
+                        tableWriter.getColumnNameTxn(partitionTimestamp, i)
+                ))) {
+                    return true;
+                }
+            }
+            return false;
+        } finally {
+            parquetPath.trimTo(partitionDirLen).concat(TableUtils.PARQUET_PARTITION_NAME).$();
+        }
+    }
+
     // Detects a legacy parquet file that stores BOOLEAN/BYTE/SHORT/CHAR/SYMBOL as Required (max def
     // level 0, no definition-level stream). Such a file predates the convention that these
     // no-null-sentinel columns are Optional. Rewriting it migrates the footer to Optional while
@@ -4900,98 +4909,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             }
         }
         return false;
-    }
-
-    // Whether the update in place moves the index of the partition's indexed SYMBOL columns that readers of the
-    // previous txn read (see isParquetIndexLiveForReaders()) to a new column version (see
-    // getParquetIndexVersionNameTxn()). The update zeroes every column top, because the updated file holds every
-    // column from row 0. A merge moves rows, so it versions any live index. An append keeps the row ids, and extends
-    // a live index in place, unless the column has a top: readers of the previous txn take the rows below it as
-    // implicit NULLs that the index lacks, and a reader with top 0 needs them in the index. An append also versions
-    // a live index whose key file, of the current index type, is missing from the directory partitionPath names:
-    // ATTACH does not build an index added, or changed, while the partition was detached. Building it under
-    // a new version never leaves a partly built file under the live name, which a later append would extend.
-    private static boolean hasParquetIndexMovingToNewVersion(
-            TableWriter tableWriter,
-            TableRecordMetadata metadata,
-            FilesFacade ff,
-            Path partitionPath,
-            long partitionTimestamp,
-            long oldPartitionSize,
-            boolean isAppendOnly
-    ) {
-        final int partitionPathLen = partitionPath.size();
-        for (int columnIndex = 0, n = metadata.getColumnCount(); columnIndex < n; columnIndex++) {
-            if (isParquetIndexedSymbol(metadata, columnIndex)) {
-                final long columnTop = tableWriter.columnVersionReader().getColumnTop(partitionTimestamp, columnIndex);
-                if (isParquetIndexLiveForReaders(columnTop, oldPartitionSize)) {
-                    if (!isAppendOnly || columnTop > 0) {
-                        return true;
-                    }
-                    final boolean isLiveKeyFilePresent = ff.exists(IndexFactory.keyFileName(
-                            metadata.getColumnIndexType(columnIndex),
-                            partitionPath.trimTo(partitionPathLen),
-                            metadata.getColumnName(columnIndex),
-                            tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex)
-                    ));
-                    partitionPath.trimTo(partitionPathLen);
-                    if (!isLiveKeyFilePresent) {
-                        return true;
-                    }
-                }
-            }
-        }
-        return false;
-    }
-
-    // Adds the rows from indexLo of the SYMBOL column at parquetColumnIndex of the decoder's parquet file to the
-    // index. A method of its own: compiled inside the large updateParquetIndexes(), the same per-row loop ran
-    // about 15% slower in ParquetIndexedO3CommitBenchmark.merge. C2 keeps the call out of line, because the
-    // caller already exceeds DesiredMethodLimit.
-    private static void indexParquetSymbolColumn(
-            ParquetPartitionDecoder partitionDecoder,
-            RowGroupBuffers rowGroupBuffers,
-            DirectIntList parquetColumns,
-            int parquetColumnIndex,
-            IndexWriter indexWriter,
-            long indexLo
-    ) {
-        parquetColumns.clear();
-        parquetColumns.add(parquetColumnIndex);
-        parquetColumns.add(ColumnType.SYMBOL);
-
-        final ParquetMetaFileReader parquetMetadata = partitionDecoder.metadata();
-        long rowCount = 0;
-        final int rowGroupCount = parquetMetadata.getRowGroupCount();
-        for (int rowGroupIndex = 0; rowGroupIndex < rowGroupCount; rowGroupIndex++) {
-            assert parquetMetadata.getRowGroupSize(rowGroupIndex) <= Integer.MAX_VALUE;
-            final int rowGroupSize = (int) parquetMetadata.getRowGroupSize(rowGroupIndex);
-            if (rowCount + rowGroupSize <= indexLo) {
-                rowCount += rowGroupSize;
-                continue;
-            }
-
-            partitionDecoder.decodeRowGroup(
-                    rowGroupBuffers,
-                    parquetColumns,
-                    rowGroupIndex,
-                    (int) Math.max(0, indexLo - rowCount),
-                    rowGroupSize
-            );
-
-            long rowId = Math.max(rowCount, indexLo);
-            final long addr = rowGroupBuffers.getChunkDataPtr(0);
-            final long size = rowGroupBuffers.getChunkDataSize(0);
-            if (size == 0) {
-                BitmapIndexUtils.addNullEntries(indexWriter, rowId, rowCount + rowGroupSize);
-            } else {
-                for (long p = addr, lim = addr + size; p < lim; p += 4, rowId++) {
-                    indexWriter.add(TableUtils.toIndexKey(Unsafe.getInt(p)), rowId);
-                }
-            }
-
-            rowCount += rowGroupSize;
-        }
     }
 
     // Whether the type has no NULL value: BOOLEAN, BYTE and SHORT. A column top in a parquet file reads NULL where the
@@ -5988,6 +5905,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 parquetFileSize, // existing parquet data-file size (gates first-time vs incremental)
                 seqTxn
         );
+        if (!hasIndexedSymbolColumn(tableWriter.getMetadata())) {
+            // The index row map only serves symbol indexes, and an older binary rejects a footer that
+            // carries one: a table without an index keeps the identity map.
+            partitionUpdater.dropIndexRowMap();
+        }
         partitionUpdater.setColumnTopRowLimit(columnTopRowLimit);
 
         if (hasSchemaChange || forceFullReencode) {
@@ -7012,32 +6934,15 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     }
 
     /**
-     * Rebuilds or extends the index of every indexed SYMBOL column of a parquet partition. A rewrite
-     * ({@code isRewrite}) or a fresh partition builds the index from row 0 in its own new directory. An
-     * update in place keeps the directory a reader of the previous txn reads, and leaves a file that
-     * holds every column from row 0: TableWriter zeroes the column tops in _cv. Each column takes one
-     * of three cases:
-     * <ul>
-     *     <li>A: no reader reads the live index files ({@link #isParquetIndexLiveForReaders} is false):
-     *     rebuild them from row 0 under the live name;</li>
-     *     <li>B: not {@code isIndexVersioned}, an append into a partition whose live columns have top 0
-     *     and live index files (see hasParquetIndexMovingToNewVersion()): every existing row keeps its row
-     *     id, append the new rows to the live files, as a native append does under readers that bound their
-     *     scans by their own row count;</li>
-     *     <li>C: {@code isIndexVersioned}, rows move, a live column loses its top, or an append finds no live
-     *     key file: build the index from row 0 into the column version {@link #getParquetIndexVersionNameTxn}
-     *     names. TableWriter commits that version in _cv and purges the previous one once no reader uses
-     *     it.</li>
-     * </ul>
+     * Syncs symbol indexes with the new parquet file: append past {@code prevIndexRowCount}, or rebuild.
      */
     private static void updateParquetIndexes(
             int partitionBy,
             long partitionTimestamp,
             TableWriter tableWriter,
             long srcNameTxn,
-            long txn,
-            long oldPartitionSize,
-            boolean isIndexVersioned,
+            boolean isInPlaceUpdate,
+            long prevIndexRowCount,
             O3Basket o3Basket,
             long newPartitionSize,
             long newParquetSize,
@@ -7049,7 +6954,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             TableRecordMetadata tableWriterMetadata,
             DirectIntList parquetColumns,
             RowGroupBuffers rowGroupBuffers,
-            boolean isRewrite
+            IntList rowGroupOrder,
+            LongList rowGroupIndexRowLos
     ) {
         long parquetAddr = 0;
         long parquetMetaAddr = 0;
@@ -7090,8 +6996,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             IndexWriter indexWriter;
             final int columnCount = tableWriterMetadata.getColumnCount();
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-                if (isParquetIndexedSymbol(tableWriterMetadata, columnIndex)) {
+                if (tableWriterMetadata.getColumnType(columnIndex) == ColumnType.SYMBOL && tableWriterMetadata.isColumnIndexed(columnIndex)) {
                     final int indexBlockCapacity = tableWriterMetadata.getIndexValueBlockCapacity(columnIndex);
+                    if (indexBlockCapacity < 0) {
+                        continue;
+                    }
 
                     final CharSequence columnName = tableWriterMetadata.getColumnName(columnIndex);
                     final long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
@@ -7116,10 +7025,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             }
                         }
                         if (parquetColumnIndex == -1) {
-                            // A column missing from the parquet file forces a rewrite, so an update in
-                            // place never skips a column: TableWriter would move a skipped column to a
-                            // new column version without index files.
-                            assert isRewrite;
                             path.trimTo(pLen);
                             LOG.error().$("could not find symbol column for indexing in parquet, skipping [path=").$(path)
                                     .$(", columnIndex=").$(columnIndex)
@@ -7127,35 +7032,15 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             continue;
                         }
 
-                        // The written file holds the column from row 0 in both modes: the Rust
-                        // encoder fills a column missing from a rewritten file with NULLs, and an
-                        // update in place zeroes column_top. The committed _cv top tells which index
-                        // files readers of the previous txn read.
-                        final boolean isLiveForReaders = !isRewrite
-                                && isParquetIndexLiveForReaders(tableWriter.columnVersionReader().getColumnTop(partitionTimestamp, columnIndex), oldPartitionSize);
-                        final boolean isLiveIndexExtended = isLiveForReaders && !isIndexVersioned;
-                        // the first row indexParquetSymbolColumn() indexes
-                        final long indexLo;
-                        if (isLiveIndexExtended) {
-                            // hasParquetIndexMovingToNewVersion() versions a partition with a live top, or
-                            // without the live key file
-                            assert tableWriter.columnVersionReader().getColumnTop(partitionTimestamp, columnIndex) == 0;
-                            // open the live index without truncating it; drop the entries a failed
-                            // earlier attempt may have appended past the committed rows
-                            indexWriter.setCurrentTableTxn(tableWriter.getTxn());
-                            indexWriter.of(path.trimTo(pLen), columnName, columnNameTxn, 0);
-                            indexLo = oldPartitionSize;
+                        // Appending needs the committed index to hold every index row below prevIndexRowCount, true
+                        // only under a zero column top; an index built under a nonzero top holds none of its rows.
+                        final boolean isAppend = isInPlaceUpdate
+                                && tableWriter.columnVersionReader().getColumnTop(partitionTimestamp, columnIndex) == 0
+                                && ff.exists(IndexFactory.keyFileName(indexType, path.trimTo(pLen), columnName, columnNameTxn));
+                        if (isAppend) {
+                            indexWriter.of(path.trimTo(pLen), columnName, columnNameTxn, false);
                         } else {
-                            final long indexNameTxn;
-                            if (isLiveForReaders) {
-                                // TableWriter.rollback() restores _cv to the committed _txn, so a retry at
-                                // the same txn builds the same version name
-                                indexNameTxn = getParquetIndexVersionNameTxn(columnNameTxn, txn);
-                            } else {
-                                indexNameTxn = columnNameTxn;
-                            }
-                            indexWriter.of(path.trimTo(pLen), columnName, indexNameTxn, indexBlockCapacity);
-                            indexLo = 0;
+                            indexWriter.of(path.trimTo(pLen), columnName, columnNameTxn, indexBlockCapacity);
                         }
                         // The 4-arg of(...) above does not carry the partition
                         // identity, but a deferred seal-purge needs it to find the
@@ -7163,21 +7048,58 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         // name-txn (the new txn dir in rewrite mode, srcNameTxn in
                         // update-in-place mode).
                         indexWriter.setPartitionContext(partitionTimestamp, srcNameTxn);
-                        if (isLiveIndexExtended) {
-                            indexWriter.rollbackConditionally(oldPartitionSize);
-                        }
 
-                        // the update adds at least one row, and indexLo is 0 or the committed row count
-                        assert newPartitionSize > indexLo;
-                        indexParquetSymbolColumn(
-                                partitionDecoder,
-                                rowGroupBuffers,
-                                parquetColumns,
-                                parquetColumnIndex,
-                                indexWriter,
-                                indexLo
-                        );
-                        indexWriter.setMaxValue(newPartitionSize - 1);
+                        // The column is present in the parquet file (looked up above), and
+                        // the Rust updater zeros every file-level column_top in both rewrite
+                        // and in-place mode, so the index must cover all rows from row 0.
+                        // The column top in _cv may still be stale here: in-place mode only
+                        // zeros it when the partition update is committed, and an O3 merge
+                        // can place values below that old top.
+                        if (newPartitionSize > 0) {
+                            // A failed attempt at this commit may have left entries at or above appendLo;
+                            // rollbackValues() trims them even when the max value did not move.
+                            final long appendLo = isAppend ? prevIndexRowCount : 0;
+                            if (isAppend) {
+                                // Tag the rollback's reseal with the upcoming txn so committed readers never pick it.
+                                indexWriter.setNextTxnAtSeal(tableWriter.getTxn() + 1L);
+                                indexWriter.rollbackValues(appendLo - 1);
+                            }
+
+                            parquetColumns.clear();
+                            parquetColumns.add(parquetColumnIndex);
+                            parquetColumns.add(ColumnType.SYMBOL);
+
+                            // Index values grow per key; kept row groups sit below appendLo and are skipped.
+                            parquetMetadata.collectRowGroupsInIndexRowOrder(rowGroupOrder, rowGroupIndexRowLos);
+                            for (int i = 0, n = rowGroupOrder.size(); i < n; i++) {
+                                final int rowGroupIndex = rowGroupOrder.getQuick(i);
+                                final long indexRowLo = rowGroupIndexRowLos.getQuick(rowGroupIndex);
+                                if (indexRowLo < appendLo) {
+                                    continue;
+                                }
+                                assert parquetMetadata.getRowGroupSize(rowGroupIndex) <= Integer.MAX_VALUE;
+                                final int rowGroupSize = (int) parquetMetadata.getRowGroupSize(rowGroupIndex);
+                                partitionDecoder.decodeRowGroup(
+                                        rowGroupBuffers,
+                                        parquetColumns,
+                                        rowGroupIndex,
+                                        0,
+                                        rowGroupSize
+                                );
+
+                                long rowId = indexRowLo;
+                                final long addr = rowGroupBuffers.getChunkDataPtr(0);
+                                final long size = rowGroupBuffers.getChunkDataSize(0);
+                                if (size == 0) {
+                                    BitmapIndexUtils.addNullEntries(indexWriter, rowId, indexRowLo + rowGroupSize);
+                                } else {
+                                    for (long p = addr, lim = addr + size; p < lim; p += 4, rowId++) {
+                                        indexWriter.add(TableUtils.toIndexKey(Unsafe.getInt(p)), rowId);
+                                    }
+                                }
+                            }
+                            indexWriter.setMaxValue(parquetMetadata.getIndexRowCount() - 1);
+                        }
 
                         // Tag the chain entry with the upcoming txn so that if
                         // the surrounding O3 / parquet-rewrite path crashes
@@ -7209,7 +7131,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             // txn so the seal's getTxn()+1 entry is treated as
                             // finite-future.
                             try {
-                                indexWriter.commitDense();
+                                if (isAppend) {
+                                    // A dense commit would rewrite the index the committed snapshot reads.
+                                    indexWriter.commit();
+                                } else {
+                                    indexWriter.commitDense();
+                                }
                             } finally {
                                 tableWriter.deferParquetPostingSealPurges(indexWriter, tableWriter.getTxn());
                             }
@@ -7434,9 +7361,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     partitionTimestamp,
                     tableWriter,
                     partitionNameTxn,
-                    txn,
-                    0,
                     false,
+                    0,
                     o3Basket,
                     partitionRowCount,
                     parquetFileSize,
@@ -7448,7 +7374,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     metadata,
                     ctx.getParquetColumns(),
                     ctx.getRowGroupBuffers(),
-                    true
+                    ctx.getRowGroupOrder(),
+                    ctx.getRowGroupIndexRowLos()
             );
 
             // Hand off to the consumer via the partition update sink. The
