@@ -688,7 +688,6 @@ public class TableSnapshotRestore implements QuietCloseable {
             int parquetColumnIndex,
             long partitionTimestamp,
             long partitionNameTxn,
-            long partitionRowCount,
             long currentTableTxn
     ) {
         final int writerIndex = metadata.getWriterIndex(columnIndex);
@@ -716,14 +715,15 @@ public class TableSnapshotRestore implements QuietCloseable {
                     rowGroupBuffers,
                     decodeColumns,
                     coveredColumnAccumulator,
+                    new IntList(),
+                    new LongList(),
                     indexer,
                     metadata,
                     columnVersionReader,
                     columnIndex,
                     parquetColumnIndex,
                     columnTop,
-                    partitionTimestamp,
-                    partitionRowCount
+                    partitionTimestamp
             );
         } catch (CairoException e) {
             LOG.error().$("could not rebuild covering index for parquet partition [path=").$(path.trimTo(partitionPathLen))
@@ -1874,9 +1874,14 @@ public class TableSnapshotRestore implements QuietCloseable {
                 columnTops.add(columnVersionReader.getColumnTop(partitionTimestamp, writerIndex));
             }
 
-            long rowCount = 0;
-            for (int rowGroupIndex = 0; rowGroupIndex < rowGroupCount; rowGroupIndex++) {
+            // Index values grow per key: add row groups in index row order. An index row map implies zero tops.
+            final IntList rowGroupOrder = new IntList(rowGroupCount);
+            final LongList rowGroupIndexRowLos = new LongList(rowGroupCount);
+            parquetMetadata.collectRowGroupsInIndexRowOrder(rowGroupOrder, rowGroupIndexRowLos);
+            for (int g = 0; g < rowGroupCount; g++) {
+                final int rowGroupIndex = rowGroupOrder.getQuick(g);
                 final long rowGroupSize = parquetMetadata.getRowGroupSize(rowGroupIndex);
+                final long rowCount = rowGroupIndexRowLos.getQuick(rowGroupIndex);
 
                 // Check if any column needs data from this row group
                 boolean needsDecode = false;
@@ -1888,7 +1893,6 @@ public class TableSnapshotRestore implements QuietCloseable {
                 }
 
                 if (!needsDecode) {
-                    rowCount += rowGroupSize;
                     continue;
                 }
 
@@ -1926,8 +1930,6 @@ public class TableSnapshotRestore implements QuietCloseable {
                         }
                     }
                 }
-
-                rowCount += rowGroupSize;
             }
 
             // Finalize each writer. POSTING calls seal() to produce sealed
@@ -1942,7 +1944,7 @@ public class TableSnapshotRestore implements QuietCloseable {
                     w.setNextTxnAtSeal(currentTableTxn);
                     w.seal();
                 } else {
-                    w.setMaxValue(partitionRowCount - 1);
+                    w.setMaxValue(parquetMetadata.getIndexRowCount() - 1);
                     w.commit();
                 }
             }
@@ -1978,7 +1980,6 @@ public class TableSnapshotRestore implements QuietCloseable {
                     parquetColumnIndex,
                     partitionTimestamp,
                     partitionNameTxn,
-                    partitionRowCount,
                     currentTableTxn
             );
             indexedColumnCount++;

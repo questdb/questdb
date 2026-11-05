@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.MessageBus;
 import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.idx.IndexWriter;
+import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -37,6 +38,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.O3CopyTask;
 import io.questdb.tasks.O3OpenColumnTask;
@@ -2581,7 +2583,11 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
 
             if (indexBlockCapacity > -1 && !indexWriter.isOpen()) {
                 byte indexType = indexWriter.getIndexType();
+                // The merge writes a new partition directory, which may still hold index files a failed compaction
+                // swap hard-linked to the live partition's. Unlink them so the merge writes fresh files instead of
+                // rewriting the index the live partition's readers use.
                 if (IndexType.isPosting(indexType)) {
+                    removeStalePostingIndexFiles(ff, pathToNewPartition, pNewLen, columnName, columnNameTxn);
                     indexWriter.setO3PathContext(
                             pathToNewPartition.trimTo(pNewLen),
                             columnName,
@@ -2589,7 +2595,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                             tableWriter.getTxn() + 1L
                     );
                 } else {
+                    removeStaleIndexFile(ff, IndexFactory.keyFileName(indexType, pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn));
                     dstKFd = openRW(ff, IndexFactory.keyFileName(indexType, pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
+                    removeStaleIndexFile(ff, IndexFactory.valueFileName(indexType, pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn, columnNameTxn));
                     dstVFd = openRW(ff, IndexFactory.valueFileName(indexType, pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
                 }
             }
@@ -3304,6 +3312,30 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 partitionUpdateSinkAddr
         );
         tableWriter.getO3CopyPubSeq().done(cursor);
+    }
+
+    private static void removeStaleIndexFile(FilesFacade ff, LPSZ file) {
+        if (!ff.removeQuiet(file)) {
+            final int errno = ff.errno();
+            if (ff.exists(file)) {
+                throw CairoException.critical(errno).put("cannot remove stale index file [path=").put(file).put(']');
+            }
+        }
+    }
+
+    private static void removeStalePostingIndexFiles(
+            FilesFacade ff,
+            Path partitionPath,
+            int partitionPathLen,
+            CharSequence columnName,
+            long columnNameTxn
+    ) {
+        if (PostingIndexUtils.removeAllSealedFiles(ff, partitionPath, partitionPathLen, columnName, columnNameTxn)) {
+            throw CairoException.critical(ff.errno()).put("cannot remove stale index files [path=")
+                    .put(partitionPath.trimTo(partitionPathLen)).put(", column=").put(columnName).put(']');
+        }
+        removeStaleIndexFile(ff, PostingIndexUtils.keyFileName(partitionPath.trimTo(partitionPathLen), columnName, columnNameTxn));
+        partitionPath.trimTo(partitionPathLen);
     }
 
     @Override
