@@ -54,7 +54,9 @@ import java.util.Comparator;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
-/** Compiles view definitions with independent wildcard holders, without timing definition-file writes. */
+/**
+ * Compiles view definitions with independent wildcard holders, without timing definition-file writes.
+ */
 @State(Scope.Thread)
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.MILLISECONDS)
