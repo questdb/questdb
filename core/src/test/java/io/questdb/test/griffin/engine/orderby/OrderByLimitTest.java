@@ -25,15 +25,27 @@
 package io.questdb.test.griffin.engine.orderby;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.EntityColumnFilter;
+import io.questdb.cairo.ListColumnFilter;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.RecordSinkFactory;
+import io.questdb.cairo.RecordSinkSPI;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.functions.constants.LongConstant;
 import io.questdb.griffin.engine.orderby.EncodedSortLimitedLightRecordCursorFactory;
+import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.HashSet;
 
 public class OrderByLimitTest extends AbstractCairoTest {
     // The second branch comes first, so input order differs from id order and ties show it.
@@ -665,6 +677,22 @@ public class OrderByLimitTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyingTopKSinkSeesOnlyBaseRecords() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE seq AS (
+                                SELECT x v, x * 2_654_435_761 % 60_000 r, ('s' || x)::VARCHAR s FROM long_sequence(60_000)
+                            )"""
+            );
+            // Rows that arrive best first move their tail forward without compacting the buffer.
+            Assert.assertEquals(0, assertSinkSeesOnlyBaseRecords(0));
+            // Rows in no order compact the buffer and re-store the survivors.
+            Assert.assertTrue(assertSinkSeesOnlyBaseRecords(1) > 0);
+        });
+    }
+
+    @Test
     public void testCopyingTopKStopsEarlyAlongScan() throws Exception {
         assertMemoryLeak(() -> {
             createGroupTable();
@@ -884,6 +912,49 @@ public class OrderByLimitTest extends AbstractCairoTest {
                 }
                 Assert.assertEquals(sql, expected, topK.getCompactionCount() - compactions);
             }
+        }
+    }
+
+    private long assertSinkSeesOnlyBaseRecords(int sortColumnIndex) throws Exception {
+        final RecordCursorFactory base = select("SELECT * FROM seq WHERE v <= 30_000 UNION ALL SELECT * FROM seq WHERE v > 30_000");
+        final EntityColumnFilter columnFilter = new EntityColumnFilter();
+        columnFilter.of(base.getMetadata().getColumnCount());
+        final RecordSink delegate = RecordSinkFactory.getInstance(configuration, new BytecodeAssembler(), base.getMetadata(), columnFilter);
+        final HashSet<Class<?>> recordTypes = new HashSet<>();
+        final RecordSink sink = new RecordSink() {
+            @Override
+            public void copy(Record r, RecordSinkSPI w) {
+                recordTypes.add(r.getClass());
+                delegate.copy(r, w);
+            }
+
+            @Override
+            public void setFunctions(ObjList<Function> keyFunctions) {
+                delegate.setFunctions(keyFunctions);
+            }
+        };
+        final ListColumnFilter sortColumnFilter = new ListColumnFilter();
+        sortColumnFilter.add(-sortColumnIndex - 1);
+        try (
+                EncodedSortLimitedLightRecordCursorFactory factory = new EncodedSortLimitedLightRecordCursorFactory(
+                        configuration,
+                        base.getMetadata(),
+                        base,
+                        new LongConstant(10),
+                        null,
+                        sortColumnFilter,
+                        -1,
+                        sink
+                );
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
+            long rows = 0;
+            while (cursor.hasNext()) {
+                rows++;
+            }
+            Assert.assertEquals(10, rows);
+            Assert.assertEquals(recordTypes.toString(), 1, recordTypes.size());
+            return factory.getCompactionCount();
         }
     }
 

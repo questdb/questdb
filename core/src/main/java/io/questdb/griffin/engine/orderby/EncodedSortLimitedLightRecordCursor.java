@@ -352,15 +352,13 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
      * yet, so its row comes from the base record.
      */
     private void compactRecords(long pendingRowId) {
-        final Record source = records.getRecordB();
         for (long addr = entries.getAddress() + rowIdOffset, hi = addr + entries.getCount() * entrySize; addr < hi; addr += entrySize) {
             circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             final long rowId = Unsafe.getLong(addr);
             if (rowId == pendingRowId) {
                 spareRecords.put(baseRecord);
             } else {
-                records.recordAtRowIndex(source, rowId);
-                spareRecords.put(source);
+                spareRecords.putRow(records, rowId);
             }
         }
         entries.renumberRowIds();
@@ -404,11 +402,9 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
     }
 
     private void copyRows(RecordArray source, long from, RecordArray target) {
-        final Record record = source.getRecordB();
         for (long i = from, n = source.size(); i < n; i++) {
             circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
-            source.recordAtRowIndex(record, i);
-            target.put(record);
+            target.putRow(source, i);
         }
     }
 

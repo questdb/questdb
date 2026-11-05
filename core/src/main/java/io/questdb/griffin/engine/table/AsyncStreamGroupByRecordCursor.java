@@ -170,28 +170,8 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
 
     @Override
     public boolean hasNext() {
-        if (segmentMap != null) {
-            return hasNextSegment();
-        }
-        if (done) {
-            return false;
-        }
-        circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
-        boolean found = false;
-        while (nextPartial()) {
-            source.of(results.getAddress() + resultOffset * Long.BYTES);
-            if (!found) {
-                value.copyFrom(source);
-                found = true;
-            } else if (isIntKey ? value.getInt(keyIndex) == source.getInt(keyIndex) : value.getLong(keyIndex) == source.getLong(keyIndex)) {
-                frameSequence.getAtom().getUpdater(-1).merge(value, source);
-            } else {
-                return true;
-            }
-            resultOffset += stride;
-        }
-        done = true;
-        return found;
+        // Stays small so that a caller's compiled loop can inline it.
+        return segmentMap != null ? hasNextSegment() : hasNextNotKeyed();
     }
 
     @Override
@@ -353,6 +333,28 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
         }
         results = null;
         resultRecords = null;
+    }
+
+    private boolean hasNextNotKeyed() {
+        if (done) {
+            return false;
+        }
+        circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+        boolean found = false;
+        while (nextPartial()) {
+            source.of(results.getAddress() + resultOffset * Long.BYTES);
+            if (!found) {
+                value.copyFrom(source);
+                found = true;
+            } else if (isIntKey ? value.getInt(keyIndex) == source.getInt(keyIndex) : value.getLong(keyIndex) == source.getLong(keyIndex)) {
+                frameSequence.getAtom().getUpdater(-1).merge(value, source);
+            } else {
+                return true;
+            }
+            resultOffset += stride;
+        }
+        done = true;
+        return found;
     }
 
     private boolean hasNextSegment() {
