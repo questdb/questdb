@@ -183,15 +183,22 @@ records that code as a snapshot commit and reviews it as a range, so every later
 step runs as it does for `--range`. `--local` and `--range` both name the code to
 review: when both are given, ask which one the user means.
 
-Find the PR. Without a PR number, take the branch's PR when its `state` is `OPEN`;
-when `gh` finds none, or fails, review without a PR and say why. A PR number must
-name the branch's PR: when the command below names another PR or none, stop and ask
-the user to check that PR out (`gh pr checkout <number>`) or to leave the number out.
+Find the PR. Without a PR number, take the branch's PR when its `state` is `OPEN`.
+Review without a PR, and say why, only when HEAD is detached, the PR it finds is not
+`OPEN`, or `gh` reports `no pull requests found for branch`. Any other failure of
+`gh`, such as a rate limit, a network error or a missing login, says nothing about
+the PR: stop, show the error and ask whether to review without the PR. Such a review
+skips Step 2 and the PR's earlier review threads (Step 2.5f), so it can raise again
+what the author declined, and it takes `$BASE` from the default branch instead of
+the PR's base. A PR number must name the branch's PR: when the command below names
+another PR or none, stop and ask the user to check that PR out
+(`gh pr checkout <number>`) or to leave the number out; when `gh` fails otherwise,
+stop and ask as above.
 
 ```bash
 cd "$(git rev-parse --show-toplevel)"
 git branch --show-current
-gh pr view --json number,state,baseRefName,headRefOid   # the branch's PR; fails when it has none
+gh pr view --json number,state,baseRefName,headRefOid   # the branch's PR
 ```
 
 Set `$BASE` to the commit where the branch leaves its base branch: the PR's
