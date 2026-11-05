@@ -1924,7 +1924,11 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                         }
                     } catch (ArithmeticException e) {
                         if (expected2 == null && protocolVersion == PROTOCOL_VERSION_V1) {
-                            TestUtils.assertContains(e.getMessage(), "long overflow");
+                            // Once the client's overflow site runs hot, C2 throws a preallocated
+                            // ArithmeticException that carries no message
+                            if (e.getMessage() != null) {
+                                TestUtils.assertContains(e.getMessage(), "long overflow");
+                            }
                         } else {
                             throw e;
                         }

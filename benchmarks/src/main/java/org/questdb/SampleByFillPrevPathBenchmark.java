@@ -38,6 +38,7 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.groupby.SampleByFillPrevNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByFillPrevRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByFillRecordCursorFactory;
+import io.questdb.griffin.engine.groupby.SampleByInterpolateRecordCursorFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.mp.WorkerPoolUtils;
@@ -74,6 +75,14 @@ import java.util.concurrent.TimeUnit;
  * <p>
  * Params:
  * <ul>
+ *   <li>{@code fill}: {@code PREV} (default) over {@code aggFunc(d)}, or
+ *       {@code LINEAR_INT} and {@code LINEAR_LONG}, FILL(LINEAR) over
+ *       {@code first(i)} of an INT column and {@code first(l)} of a LONG
+ *       column, a quarter of each NULL, so interpolation meets NULL
+ *       endpoints. FILL(LINEAR) compiles to
+ *       {@link SampleByInterpolateRecordCursorFactory} under either
+ *       alignment, so {@code path} does not change its routing. Pass
+ *       {@code -p fill=LINEAR_INT,LINEAR_LONG} to run them.</li>
  *   <li>{@code path}: {@code FAST_PATH} or {@code LEGACY}.</li>
  *   <li>{@code isKeyed}: {@code false} (default; non-keyed SAMPLE BY,
  *       legacy uses {@link SampleByFillPrevNotKeyedRecordCursorFactory})
@@ -163,6 +172,10 @@ public class SampleByFillPrevPathBenchmark {
     @Param({"avg"})
     public String aggFunc;
 
+    // FILL(PREV) by default; LINEAR_INT and LINEAR_LONG run FILL(LINEAR) (see the class comment).
+    @Param({"PREV"})
+    public String fill;
+
     // Default false: a plain JMH run benchmarks non-keyed SAMPLE BY 1m FILL(PREV).
     // Pass -p isKeyed=true (or -p isKeyed=true,false) to opt into keyed runs.
     // Keyed runs use sym1 as the key; non-keyed runs omit it from the projection
@@ -232,7 +245,9 @@ public class SampleByFillPrevPathBenchmark {
     public void run(Blackhole bh) throws SqlException {
         try (RecordCursor cursor = factory.getCursor(ctx)) {
             final Record record = cursor.getRecord();
-            if (isKeyed) {
+            if (!"PREV".equals(fill)) {
+                consumeLinear(cursor, record, bh);
+            } else if (isKeyed) {
                 while (cursor.hasNext()) {
                     bh.consume(record.getSymA(0));
                     bh.consume(record.getDouble(1));
@@ -317,7 +332,9 @@ public class SampleByFillPrevPathBenchmark {
 
     private void assertRouting(RecordCursorFactory root) {
         final Class<?> expected;
-        if ("FAST_PATH".equals(path)) {
+        if (!"PREV".equals(fill)) {
+            expected = SampleByInterpolateRecordCursorFactory.class;
+        } else if ("FAST_PATH".equals(path)) {
             expected = SampleByFillRecordCursorFactory.class;
         } else {
             expected = isKeyed
@@ -339,6 +356,7 @@ public class SampleByFillPrevPathBenchmark {
         throw new IllegalStateException(
                 "routing drift: expected " + expected.getSimpleName()
                         + " in factory chain but did not find it. path=" + path
+                        + " fill=" + fill
                         + " isKeyed=" + isKeyed
                         + " scenario=" + scenario
                         + " root=" + root.getClass().getSimpleName()
@@ -347,10 +365,31 @@ public class SampleByFillPrevPathBenchmark {
 
     private String buildSql() {
         final String alignment = "FAST_PATH".equals(path) ? "CALENDAR" : "FIRST OBSERVATION";
+        if (!"PREV".equals(fill)) {
+            final String value = "first(" + ("LINEAR_INT".equals(fill) ? "i" : "l") + ")";
+            final String projection = isKeyed ? "sym1, " + value + ", ts" : value + ", ts";
+            return "SELECT " + projection + " FROM tab SAMPLE BY " + BUCKET + " FILL(LINEAR) ALIGN TO " + alignment;
+        }
         final String projection = isKeyed
                 ? "sym1, " + aggFunc + "(d), ts"
                 : aggFunc + "(d), ts";
         return "SELECT " + projection + " FROM tab SAMPLE BY " + BUCKET + " FILL(PREV) ALIGN TO " + alignment;
+    }
+
+    private void consumeLinear(RecordCursor cursor, Record record, Blackhole bh) {
+        final int valueIndex = isKeyed ? 1 : 0;
+        final boolean isInt = "LINEAR_INT".equals(fill);
+        while (cursor.hasNext()) {
+            if (isKeyed) {
+                bh.consume(record.getSymA(0));
+            }
+            if (isInt) {
+                bh.consume(record.getInt(valueIndex));
+            } else {
+                bh.consume(record.getLong(valueIndex));
+            }
+            bh.consume(record.getTimestamp(valueIndex + 1));
+        }
     }
 
     private int resolveWorkerCount() {
@@ -362,6 +401,8 @@ public class SampleByFillPrevPathBenchmark {
                 "CREATE TABLE tab ("
                         + "sym1 SYMBOL CAPACITY " + SYMBOL_CAPACITY + ","
                         + "d DOUBLE,"
+                        + "i INT,"
+                        + "l LONG,"
                         + "ts TIMESTAMP"
                         + ") TIMESTAMP(ts) PARTITION BY DAY",
                 ctx
@@ -383,6 +424,8 @@ public class SampleByFillPrevPathBenchmark {
                     + "SELECT "
                     + "((x * " + WORST_CASE_KEY_MULTIPLIER + ") % " + WORST_CASE_UNIQUE_KEYS + ")::SYMBOL AS sym1, "
                     + "rnd_double() AS d, "
+                    + "rnd_int(0, 1_000_000, 4) AS i, "
+                    + "rnd_long(0, 1_000_000, 4) AS l, "
                     + "timestamp_sequence('" + START_TS + "'::timestamp, " + step + ") AS ts "
                     + "FROM long_sequence(" + rowCount + ")";
         } else if ("BEST_CASE".equals(scenario)) {
@@ -397,6 +440,8 @@ public class SampleByFillPrevPathBenchmark {
                     + "SELECT "
                     + "(x % " + BEST_CASE_UNIQUE_KEYS + ")::SYMBOL AS sym1, "
                     + "rnd_double() AS d, "
+                    + "rnd_int(0, 1_000_000, 4) AS i, "
+                    + "rnd_long(0, 1_000_000, 4) AS l, "
                     + "timestamp_sequence('" + START_TS + "'::timestamp, " + stepMicros + ") AS ts "
                     + "FROM long_sequence(" + rowCount + ")";
         } else {
@@ -416,6 +461,8 @@ public class SampleByFillPrevPathBenchmark {
                     + "SELECT "
                     + "(x % " + POSITIVE_CASE_UNIQUE_KEYS + ")::SYMBOL AS sym1, "
                     + "rnd_double() AS d, "
+                    + "rnd_int(0, 1_000_000, 4) AS i, "
+                    + "rnd_long(0, 1_000_000, 4) AS l, "
                     + "timestamp_sequence('" + START_TS + "'::timestamp, " + step + ") AS ts "
                     + "FROM long_sequence(" + rowCount + ")";
         }

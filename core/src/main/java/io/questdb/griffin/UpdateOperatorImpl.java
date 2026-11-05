@@ -31,6 +31,7 @@ import io.questdb.cairo.ColumnTypeDriver;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.IndexBuilder;
 import io.questdb.cairo.IndexType;
+import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
@@ -62,6 +63,7 @@ import io.questdb.std.QuietCloseable;
 import io.questdb.std.Rows;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.ColumnType.isVarSize;
 import static io.questdb.cairo.TableUtils.dFile;
@@ -69,6 +71,8 @@ import static io.questdb.cairo.TableUtils.iFile;
 
 public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
     private static final Log LOG = LogFactory.getLog(UpdateOperatorImpl.class);
+    // the opcode of a column type appendRowUpdate() cannot write; it rejects the update at the first row
+    private static final int UPDATE_NONE = -1;
     // The indexed columns whose COVERING index the partition being updated must rebuild, see rebuildIndexes().
     private final IntList coveringIndexColumns = new IntList();
     private final long dataAppendPageSize;
@@ -81,6 +85,10 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
     private final ObjList<MemoryCMR> srcColumns = new ObjList<>();
     private final TableWriter tableWriter;
     private final IntList updateColumnIndexes = new IntList();
+    // per affected column: the updateOpcode() of the table column type
+    private final IntList updateColumnOpcodes = new IntList();
+    // per affected column: getTimestampType() of the value column, read by the TIMESTAMP arm
+    private final IntList updateColumnTimestampTypes = new IntList();
     private IndexBuilder indexBuilder;
 
     public UpdateOperatorImpl(
@@ -98,6 +106,14 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
         this.fileOpenOpts = configuration.getWriterFileOpenOpts();
         this.ff = configuration.getFilesFacade();
         this.path = path;
+    }
+
+    /**
+     * Exposes {@code updateOpcode} to TypeRelationGoldenTest, which checks it for every type.
+     */
+    @TestOnly
+    public static int updateOpcodeForTesting(int columnType) {
+        return updateOpcode(columnType);
     }
 
     @Override
@@ -142,11 +158,15 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
 
                 // Build index column map from table to update to values returned from the update statement row cursors
                 updateColumnIndexes.clear();
+                updateColumnOpcodes.clear();
+                updateColumnTimestampTypes.clear();
                 for (int i = 0; i < affectedColumnCount; i++) {
                     CharSequence columnName = updateMetadata.getColumnName(i);
                     int tableColumnIndex = tableMetadata.getColumnIndex(columnName);
                     assert tableColumnIndex >= 0;
                     updateColumnIndexes.add(tableColumnIndex);
+                    updateColumnOpcodes.add(updateOpcode(tableMetadata.getColumnType(tableColumnIndex)));
+                    updateColumnTimestampTypes.add(ColumnType.getTimestampType(updateMetadata.getColumnType(i)));
                 }
 
                 // Create update memory list of all columns to be updated
@@ -215,7 +235,6 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                                 affectedColumnCount,
                                 prevRow,
                                 currentRow,
-                                factory.getMetadata(),
                                 masterRecord,
                                 minRow
                         );
@@ -346,12 +365,27 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
             }
         } else {
             final long rowCount = toRow - fromRow;
-            TableUtils.setNull(
-                    columnType,
-                    dstAuxMem.appendAddressFor(rowCount << shl),
-                    rowCount
-            );
+            ColumnType.getTypeDriver(columnType).setNull(dstAuxMem.appendAddressFor(rowCount << shl), rowCount);
         }
+        // validity batch site: a column with a validity bitmap would mark these rows NULL here
+    }
+
+    /**
+     * The arm of {@link #appendRowUpdate} for a table column of this type: its accessor family's
+     * opcode ({@link PhysicalDescriptor.Accessor#opcode()}), or {@link #UPDATE_NONE} for a type
+     * UPDATE does not write.
+     */
+    private static int updateOpcode(int columnType) {
+        final PhysicalDescriptor.Accessor accessor = PhysicalDescriptor.accessorOf(columnType);
+        if (accessor == null) {
+            return UPDATE_NONE;
+        }
+        return switch (accessor) {
+            case INT, IPv4, FLOAT, LONG, TIMESTAMP, DATE, DOUBLE, SHORT, CHAR, BYTE, BOOLEAN, GEOBYTE, GEOSHORT, GEOINT,
+                 GEOLONG, SYMBOL, STRING, VARCHAR, BINARY, LONG128, UUID, ARRAY, DECIMAL8, DECIMAL16, DECIMAL32,
+                 DECIMAL64, DECIMAL128, DECIMAL256 -> accessor.opcode();
+            case LONG256, INTERVAL -> UPDATE_NONE;
+        };
     }
 
     private static void updateEffectiveColumnTops(
@@ -379,7 +413,6 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
             int affectedColumnCount,
             long prevRow,
             long currentRow,
-            RecordMetadata metadata,
             Record masterRecord,
             long firstUpdatedRowId
     ) {
@@ -409,7 +442,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                         toType
                 );
             }
-            switch (ColumnType.tagOf(toType)) {
+            switch (updateColumnOpcodes.get(i)) {
                 case ColumnType.INT:
                     dstFixMem.putInt(masterRecord.getInt(i));
                     break;
@@ -424,7 +457,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                     break;
                 case ColumnType.TIMESTAMP:
                     TimestampDriver driver = ColumnType.getTimestampDriver(toType);
-                    dstFixMem.putLong(driver.from(masterRecord.getTimestamp(i), ColumnType.getTimestampType(metadata.getColumnType(i))));
+                    dstFixMem.putLong(driver.from(masterRecord.getTimestamp(i), updateColumnTimestampTypes.getQuick(i)));
                     break;
                 case ColumnType.DATE:
                     dstFixMem.putLong(masterRecord.getDate(i));
@@ -512,10 +545,12 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                     );
                     break;
                 }
-                default:
+                case UPDATE_NONE:
                     throw CairoException.nonCritical()
                             .put("Column type ").put(ColumnType.nameOf(toType))
                             .put(" not supported for updates");
+                default:
+                    throw new IllegalStateException("no update arm [type=" + ColumnType.nameOf(toType) + "]");
             }
         }
     }

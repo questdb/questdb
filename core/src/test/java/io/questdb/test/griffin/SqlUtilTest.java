@@ -681,6 +681,13 @@ public class SqlUtilTest {
     }
 
     @Test
+    public void testImplicitCastCharAsGeoHashNull() {
+        // a NULL CHAR is the NULL geohash, whatever the width
+        Assert.assertEquals(GeoHashes.BYTE_NULL, SqlUtil.implicitCastCharAsGeoHash(Numbers.CHAR_NULL, ColumnType.getGeoHashTypeWithBits(5)));
+        Assert.assertEquals(GeoHashes.BYTE_NULL, SqlUtil.implicitCastCharAsGeoHash(Numbers.CHAR_NULL, ColumnType.getGeoHashTypeWithBits(3)));
+    }
+
+    @Test
     public void testImplicitCastCharAsGeoHashWidening() {
         int bits = 4;
         long hash = SqlUtil.implicitCastCharAsGeoHash('c', ColumnType.getGeoHashTypeWithBits(bits));

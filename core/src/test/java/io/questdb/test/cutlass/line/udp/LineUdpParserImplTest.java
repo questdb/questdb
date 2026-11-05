@@ -795,6 +795,16 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInfinityIntoSymbolColumnDoubleDefault() throws Exception {
+        testInfinityIntoSymbolColumn(ColumnType.DOUBLE);
+    }
+
+    @Test
+    public void testInfinityIntoSymbolColumnFloatDefault() throws Exception {
+        testInfinityIntoSymbolColumn(ColumnType.FLOAT);
+    }
+
+    @Test
     public void testInvalidTableName() throws Exception {
         String lines = """
                 ..\\/db,a=b event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1.2,int1=23i,date1=1465839830102i,byte1=-7i 1465839830102800000
@@ -1358,5 +1368,35 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
         try (TableReader reader = newOffPoolReader(configuration, "tab")) {
             Assert.assertEquals(colType, reader.getMetadata().getColumnType("f5"));
         }
+    }
+
+    private void testInfinityIntoSymbolColumn(short floatType) throws Exception {
+        // earlier versions typed an Infinity field as SYMBOL, so a column may be SYMBOL; the field is
+        // a float of the configured default type now, and each spelling still goes into that column
+        // as text; a finite float into a SYMBOL column drops its line, as before
+        TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
+                .col("v", ColumnType.SYMBOL)
+                .col("n", ColumnType.LONG)
+                .timestamp();
+        AbstractCairoTest.create(model);
+
+        final String lines = """
+                x v=Infinity,n=1i 1000000000
+                x v=-Infinity,n=2i 2000000000
+                x v=+Infinity,n=3i 3000000000
+                x v=1.5,n=4i 4000000000
+                """;
+        final String expected = """
+                v\tn\ttimestamp
+                Infinity\t1\t1970-01-01T00:00:01.000000Z
+                -Infinity\t2\t1970-01-01T00:00:02.000000Z
+                +Infinity\t3\t1970-01-01T00:00:03.000000Z
+                """;
+        assertThat(expected, lines, "x", configuration, new DefaultLineUdpReceiverConfiguration() {
+            @Override
+            public short getDefaultColumnTypeForFloat() {
+                return floatType;
+            }
+        });
     }
 }

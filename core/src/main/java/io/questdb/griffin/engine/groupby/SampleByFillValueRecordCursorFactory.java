@@ -28,7 +28,9 @@ import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ListColumnFilter;
+import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.TypeDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -157,26 +159,38 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
             int type,
             ExpressionNode fillNode
     ) throws SqlException {
+        final TypeDriver driver = PhysicalDescriptor.storedTypeDriverOf(type);
+        // pseudo types and VARCHAR_SLICE never name an aggregate column
+        if (driver == null) {
+            throw SqlException.$(recordFunctionPositions.getQuick(index), "Unsupported type: ").put(ColumnType.nameOf(type));
+        }
+        // a type unlike its family's namesake would parse and fill as the namesake's value; the
+        // calling factory's constructor frees what it holds on the throw
+        final PhysicalDescriptor.Accessor accessor = PhysicalDescriptor.familyArmOf(driver, "SAMPLE BY FILL(value)");
         final CharSequence fillValue = toFillValue(fillNode);
+        // parse the fill value as the type of the column's accessor family: the fill cursor reads
+        // the constant through that family's getter
         try {
-            return switch (ColumnType.tagOf(type)) {
-                case ColumnType.INT -> IntConstant.newInstance(Numbers.parseInt(fillValue));
-                case ColumnType.IPv4 -> IPv4Constant.newInstance(Numbers.parseIPv4(fillValue));
-                case ColumnType.LONG -> LongConstant.newInstance(Numbers.parseLong(fillValue));
-                case ColumnType.FLOAT -> FloatConstant.newInstance(Numbers.parseFloat(fillValue));
-                case ColumnType.DOUBLE -> DoubleConstant.newInstance(Numbers.parseDouble(fillValue));
-                case ColumnType.SHORT -> ShortConstant.newInstance((short) Numbers.parseInt(fillValue));
-                case ColumnType.BYTE -> ByteConstant.newInstance((byte) Numbers.parseInt(fillValue));
+            return switch (accessor) {
+                case INT -> IntConstant.newInstance(Numbers.parseInt(fillValue));
+                case IPv4 -> IPv4Constant.newInstance(Numbers.parseIPv4(fillValue));
+                case LONG -> LongConstant.newInstance(Numbers.parseLong(fillValue));
+                case FLOAT -> FloatConstant.newInstance(Numbers.parseFloat(fillValue));
+                case DOUBLE -> DoubleConstant.newInstance(Numbers.parseDouble(fillValue));
+                case SHORT -> ShortConstant.newInstance((short) Numbers.parseInt(fillValue));
+                case BYTE -> ByteConstant.newInstance((byte) Numbers.parseInt(fillValue));
                 // A negated literal is not a quoted timestamp, so this arm reads the raw token and
                 // rejects FILL(-1) at the minus sign, as the GROUP BY path does.
-                case ColumnType.TIMESTAMP -> {
+                case TIMESTAMP -> {
                     if (!Chars.isQuoted(fillNode.token)) {
                         throw SqlException.position(fillNode.position).put("Invalid fill value: '").put(fillNode.token)
                                 .put("'. Timestamp fill value must be in quotes. Example: '2019-01-01T00:00:00.000Z'");
                     }
                     yield TimestampConstant.newInstance(timestampDriver.parseQuotedLiteral(fillNode.token), type);
                 }
-                default ->
+                case BOOLEAN, CHAR, DATE, STRING, SYMBOL, LONG256, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY, UUID,
+                     LONG128, VARCHAR, ARRAY, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256,
+                     INTERVAL ->
                         throw SqlException.$(recordFunctionPositions.getQuick(index), "Unsupported type: ").put(ColumnType.nameOf(type));
             };
         } catch (NumericException e) {

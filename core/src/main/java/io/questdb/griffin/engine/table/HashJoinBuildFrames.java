@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.cairo.vm.NullMemoryCMR;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.PageFrame;
@@ -132,8 +133,8 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCl
     // Build scan column of each payload column, in payload order.
     private final int[] payloadColumns;
     private final boolean[] payloadSymbols;
-    // Column type tag of each payload column, in payload order.
-    private final int[] payloadTypes;
+    // Accessor opcode of each payload column (PhysicalDescriptor.accessorOpcodeOf), in payload order.
+    private final int[] payloadOpcodes;
     // The most probe readers that one execution reads through, which share the Parquet decode cache budget.
     private final int readerCount;
     // The copied payload of this execution, or zero while readers read the columns where they live.
@@ -178,7 +179,7 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCl
         final int n = payloadColumns.size();
         this.payloadColumns = new int[n];
         this.payloadSymbols = new boolean[n];
-        this.payloadTypes = new int[n];
+        this.payloadOpcodes = new int[n];
         final int[] offsets = new int[n];
         boolean isCopyable = n > 0;
         int decodedRowSize = 0;
@@ -187,13 +188,12 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCl
         for (int i = 0; i < n; i++) {
             final int column = payloadColumns.getQuick(i);
             final int columnType = buildMetadata.getColumnType(column);
-            final int type = ColumnType.tagOf(columnType);
             this.payloadColumns[i] = column;
-            this.payloadSymbols[i] = type == ColumnType.SYMBOL;
-            this.payloadTypes[i] = type;
+            this.payloadSymbols[i] = ColumnType.isSymbol(columnType);
+            this.payloadOpcodes[i] = PhysicalDescriptor.accessorOpcodeOf(columnType);
             payloadColumnSet.add(column);
             decodedRowSize += Math.max(ColumnType.sizeOf(columnType), 0);
-            final int size = getCopySize(type);
+            final int size = getCopySize(columnType);
             if (size < 0) {
                 isCopyable = false;
             } else {
@@ -467,26 +467,30 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCl
 
     /**
      * Bytes that a copied value of this column type takes, or -1 for a type the copy cannot hold.
+     * {@link #copyRow} has an arm for the accessor opcode of every type sized here.
      */
-    private static int getCopySize(int type) {
-        return switch (type) {
-            case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.GEOBYTE, ColumnType.DECIMAL8 -> 1;
-            case ColumnType.SHORT, ColumnType.CHAR, ColumnType.GEOSHORT, ColumnType.DECIMAL16 -> 2;
-            case ColumnType.INT, ColumnType.FLOAT, ColumnType.SYMBOL, ColumnType.IPv4,
-                 ColumnType.GEOINT, ColumnType.DECIMAL32 -> 4;
-            case ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.DOUBLE,
-                 ColumnType.GEOLONG, ColumnType.DECIMAL64 -> 8;
-            case ColumnType.UUID, ColumnType.DECIMAL128 -> 16;
-            case ColumnType.LONG256, ColumnType.DECIMAL256 -> 32;
-            default -> -1;
+    private static int getCopySize(int columnType) {
+        final PhysicalDescriptor.Accessor accessor = PhysicalDescriptor.accessorOf(columnType);
+        // a pseudo type and VARCHAR_SLICE have no stored accessor
+        if (accessor == null) {
+            return -1;
+        }
+        return switch (accessor) {
+            case BOOLEAN, BYTE, GEOBYTE, DECIMAL8 -> 1;
+            case SHORT, CHAR, GEOSHORT, DECIMAL16 -> 2;
+            case INT, FLOAT, SYMBOL, IPv4, GEOINT, DECIMAL32 -> 4;
+            case LONG, DATE, TIMESTAMP, DOUBLE, GEOLONG, DECIMAL64 -> 8;
+            case UUID, DECIMAL128 -> 16;
+            case LONG256, DECIMAL256 -> 32;
+            case STRING, VARCHAR, BINARY, ARRAY, LONG128, INTERVAL -> -1;
         };
     }
 
     // Copies the payload columns of the row the reader is positioned at, which reads them where they live.
     private void copyRow(Reader reader, long row) {
-        for (int col = 0, n = payloadTypes.length; col < n; col++) {
+        for (int col = 0, n = payloadOpcodes.length; col < n; col++) {
             final long dest = row + copyOffsets[col];
-            switch (payloadTypes[col]) {
+            switch (payloadOpcodes[col]) {
                 case ColumnType.BOOLEAN -> Unsafe.putByte(dest, (byte) (reader.getBool(col) ? 1 : 0));
                 case ColumnType.BYTE -> Unsafe.putByte(dest, reader.getByte(col));
                 case ColumnType.SHORT -> Unsafe.putShort(dest, reader.getShort(col));
@@ -530,7 +534,7 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCl
                     Decimal256.put(reader.decimal256, dest);
                 }
                 default ->
-                        throw new AssertionError("uncopyable hash join payload type: " + ColumnType.nameOf(payloadTypes[col]));
+                        throw new AssertionError("uncopyable hash join payload type: " + ColumnType.nameOf(payloadOpcodes[col]));
             }
         }
     }
@@ -575,13 +579,13 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCl
 
         private Reader(long cacheSize) {
             pool = new PageFrameMemoryPool(configuration, cacheSize);
-            final int n = payloadTypes.length;
+            final int n = payloadOpcodes.length;
             long256A = new Long256Impl[n];
             long256B = new Long256Impl[n];
             boolean hasDecimal128 = false;
             boolean hasDecimal256 = false;
             for (int i = 0; i < n; i++) {
-                switch (payloadTypes[i]) {
+                switch (payloadOpcodes[i]) {
                     case ColumnType.LONG256 -> {
                         long256A[i] = new Long256Impl();
                         long256B[i] = new Long256Impl();

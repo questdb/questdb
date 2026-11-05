@@ -492,8 +492,8 @@ public class PGResultFormatCodesTest extends BasePGTest {
     public void testGeoHashIPv4AndNullInBinaryFormatAreNotDroppedFromTheRow() throws Exception {
         // pgwire advertises IPv4, every geohash width and a NULL-typed column as PG_VARCHAR, so a
         // driver that asks for binary on the types it can decode asks for binary here. Each of
-        // these needs its own BINARY_TYPE_* label in outRecord(): without one the arm falls to
-        // "default" and emits no bytes for a field the DataRow header still counts.
+        // these needs its own arm in PGPipelineEntry.outColumnOpcode(): a tag it sends to
+        // outRecord()'s default arm fails the query instead of writing the field.
         assertWithPgServerExtendedBinaryOnly((connection, binary, mode, port) -> {
             execute("""
                     CREATE TABLE geo AS (
@@ -739,7 +739,7 @@ public class PGResultFormatCodesTest extends BasePGTest {
     public void testSingleBinaryFormatCodeAppliesToEveryColumn() throws Exception {
         // One format code covers all columns (getPgResultSetColumnFormatCode() reads codes.get(0)
         // when the count is <= 1), which is the shape libpq-style binary clients send. It reaches
-        // the same BINARY_TYPE_* labels as per-column codes, so it needs its own case.
+        // the same outColumnOpcode() arms as per-column codes, so it needs its own case.
         assertWithPgServerExtendedBinaryOnly((connection, binary, mode, port) -> {
             execute("""
                     CREATE TABLE geo1 AS (

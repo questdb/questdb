@@ -1444,7 +1444,7 @@ public class MemoryPARWImpl implements MemoryARW {
                 putLong256Null();
                 appendPointer += Long256.BYTES;
             } else {
-                putLong256(hexString, 2, len);
+                putLong256(hexString, hexDigitsLo(hexString, len), len);
             }
         }
 
@@ -1454,7 +1454,8 @@ public class MemoryPARWImpl implements MemoryARW {
                 putLong256Null();
                 appendPointer += Long256.BYTES;
             } else {
-                putLong256(hexString.asAsciiCharSequence(), 2, size);
+                final CharSequence text = hexString.asAsciiCharSequence();
+                putLong256(text, hexDigitsLo(text, size), size);
             }
         }
 
@@ -1477,7 +1478,7 @@ public class MemoryPARWImpl implements MemoryARW {
                 putLong128Slow(Long256Impl.NULL_LONG256.getLong0(), Long256Impl.NULL_LONG256.getLong1());
                 putLong128Slow(Long256Impl.NULL_LONG256.getLong2(), Long256Impl.NULL_LONG256.getLong3());
             } else {
-                putLong256(hexString, 2, len);
+                putLong256(hexString, hexDigitsLo(hexString, len), len);
             }
         }
 
@@ -1491,7 +1492,8 @@ public class MemoryPARWImpl implements MemoryARW {
                 putLong128Slow(Long256Impl.NULL_LONG256.getLong0(), Long256Impl.NULL_LONG256.getLong1());
                 putLong128Slow(Long256Impl.NULL_LONG256.getLong2(), Long256Impl.NULL_LONG256.getLong3());
             } else {
-                putLong256(hexString.asAsciiCharSequence(), 2, size);
+                final CharSequence text = hexString.asAsciiCharSequence();
+                putLong256(text, hexDigitsLo(text, size), size);
             }
         }
     }

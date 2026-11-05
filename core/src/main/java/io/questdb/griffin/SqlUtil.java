@@ -1197,6 +1197,9 @@ public class SqlUtil {
     @SuppressWarnings("unused")
     // used by copier bytecode assembler
     public static byte implicitCastCharAsGeoHash(char value, int toType) {
+        if (value == Numbers.CHAR_NULL) {
+            return GeoHashes.BYTE_NULL;
+        }
         int v;
         // '0' .. '9' and 'A-Z', excl 'A', 'I', 'L', 'O'
         if ((value >= '0' && value <= '9') || ((v = value | 32) > 'a' && v <= 'z' && v != 'i' && v != 'l' && v != 'o')) {
@@ -1562,19 +1565,16 @@ public class SqlUtil {
         if (value == null || value.isEmpty()) {
             return Long256NullConstant.INSTANCE;
         }
-        int start = 0;
-        int end = value.length();
-        if (end > 2 && value.charAt(start) == '0' && (value.charAt(start + 1) | 32) == 'x') {
-            start += 2;
-        }
+        final int len = value.length();
         Long256ConstantFactory factory = LONG256_FACTORY.get();
-        Long256FromCharSequenceDecoder.decode(value, start, end, factory);
+        Long256FromCharSequenceDecoder.decode(value, Long256FromCharSequenceDecoder.hexDigitsLo(value, len), len, factory);
         return factory.pop();
     }
 
     public static void implicitCastStrAsLong256(CharSequence value, Long256Acceptor long256Acceptor) {
-        if (value != null) {
-            Long256FromCharSequenceDecoder.decode(value, 0, value.length(), long256Acceptor);
+        final int len;
+        if (value != null && (len = value.length()) > 0) {
+            Long256FromCharSequenceDecoder.decode(value, Long256FromCharSequenceDecoder.hexDigitsLo(value, len), len, long256Acceptor);
         } else {
             long256Acceptor.setAll(
                     Long256Impl.NULL_LONG256.getLong0(),

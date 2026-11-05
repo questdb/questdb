@@ -316,6 +316,10 @@ pub fn array_to_page(
 
     let definition_levels_byte_length = buffer.len() - repetition_levels_byte_length;
 
+    #[allow(
+        clippy::wildcard_enum_match_arm,
+        reason = "not a tag match: parquet2 Encoding; the encodings not named are unsupported here"
+    )]
     match encoding {
         Encoding::Plain => {
             encode_data_plain_streaming(aux, &parser, &mut buffer);
@@ -454,6 +458,10 @@ pub fn array_to_raw_page(
 
     let definition_levels_byte_length = buffer.len();
 
+    #[allow(
+        clippy::wildcard_enum_match_arm,
+        reason = "not a tag match: parquet2 Encoding; the encodings not named are unsupported here"
+    )]
     match encoding {
         Encoding::Plain => {
             encode_raw_plain_streaming(aux, &raw_parser, &mut buffer);

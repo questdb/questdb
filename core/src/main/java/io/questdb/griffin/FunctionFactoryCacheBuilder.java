@@ -1,6 +1,7 @@
 package io.questdb.griffin;
 
 import io.questdb.log.Log;
+import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
@@ -9,11 +10,17 @@ import java.util.ArrayList;
 public class FunctionFactoryCacheBuilder {
     private static ArrayList<FunctionFactory> functionFactoriesCache;
     private static final String FUNCTION_LIST_FILE_NAME = "function_list.txt";
+    private final ObjList<String> droppedClassNames = new ObjList<>();
     ArrayList<FunctionFactory> functionFactories;
 
     @TestOnly
     public static void clearCache() {
         functionFactoriesCache = null;
+    }
+
+    @TestOnly
+    public ObjList<String> getDroppedClassNames() {
+        return droppedClassNames;
     }
 
     public FunctionFactoryCacheBuilder scan(@Nullable Log log) {
@@ -29,7 +36,7 @@ public class FunctionFactoryCacheBuilder {
             functionFactories = new ArrayList<>();
         }
 
-        FunctionFactoryScanner.scan(functionFactories, packageName, functionListFileName, clazz, moduleName, log);
+        FunctionFactoryScanner.scan(functionFactories, packageName, functionListFileName, clazz, moduleName, log, droppedClassNames);
         return this;
     }
 
