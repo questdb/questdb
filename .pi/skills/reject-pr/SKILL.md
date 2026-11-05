@@ -50,6 +50,26 @@ echo "Rejecting PR #$PR by @$AUTHOR"
 State one line to the user: which PR (`#number — title`) and author you are about
 to reject, then proceed.
 
+## Step 1b: Check a review of local changes against the PR
+
+Skip this step unless the review lists a local snapshot as its head
+(`review-pr --local`). Such a review covered the code on disk, which can differ
+from the PR's code, so its findings may not hold for the PR. Post it only when
+the PR's head on GitHub has the snapshot's tree:
+
+```bash
+SNAP='<the local snapshot the review lists as its head>'
+NUM=$(gh pr view "$PR" --json number -q .number)
+HEAD_OID=$(gh pr view "$PR" --json headRefOid -q .headRefOid)
+git fetch --quiet origin "pull/$NUM/head"
+A=$(git rev-parse --verify --quiet "$HEAD_OID^{tree}") &&
+  B=$(git rev-parse --verify --quiet "$SNAP^{tree}") && [ "$A" = "$B" ] && echo SAME || echo DIFFERENT
+```
+
+On `DIFFERENT`, STOP and tell the user that the PR doesn't hold the reviewed code:
+push exactly the reviewed changes and run this skill again, or review the PR's
+head with `/skill:review-pr` first.
+
 ## Step 2: Write the review body to a file
 
 Write the review body to `/tmp/reject-pr-$PR.md` using the `write` tool (never

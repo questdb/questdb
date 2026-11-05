@@ -1,16 +1,16 @@
 ---
 name: review-pr
-description: Review a GitHub pull request, a local Git range, or a PR's local commits against QuestDB coding standards. Use when asked to review a PR, given a PR number or URL, given --range=<base>..<head>, or given both, optionally with a review level 0..3. Performs an adversarial, blocking, evidence-gated code review.
+description: Review a GitHub pull request, a local Git range, a PR's local commits, or the checked-out branch with its unpushed and uncommitted changes (--local) against QuestDB coding standards. Use when asked to review a PR, given a PR number or URL, given --range=<base>..<head>, given both, or given --local, optionally with a review level 0..3. Performs an adversarial, blocking, evidence-gated code review.
 allowed-tools: bash read subagent
 metadata:
-  argument-hint: "[PR number or URL] [--range=<base>..<head>] [--level=0..3] [--block-at=critical|high|medium|low] [--body=<file>] [--prior=<file>,...]"
+  argument-hint: "[PR number or URL] [--range=<base>..<head> | --local] [--level=0..3] [--block-at=critical|high|medium|low] [--body=<file>] [--prior=<file>,...]"
 ---
 
 # Review a QuestDB pull request
 
-**Version 4.0.** Each PR that changes this file raises it.
+**Version 4.1.** Each PR that changes this file raises it.
 
-**Usage:** `/review-pr [PR number or URL] [--range=<base>..<head>] [--level=0..3] [--block-at=critical|high|medium|low] [--body=<file>] [--prior=<file>,...]`
+**Usage:** `/review-pr [PR number or URL] [--range=<base>..<head> | --local] [--level=0..3] [--block-at=critical|high|medium|low] [--body=<file>] [--prior=<file>,...]`
 
 Review the PR or local range identified by the invocation arguments. When this skill
 is run as `/skill:review-pr <args>`, the `<args>` are appended as a `User:` message;
@@ -18,9 +18,13 @@ treat that text as `$ARGUMENTS`. The review target is a PR number/URL,
 `--range=<base>..<head>`, or both. The range head may be omitted (`--range=<base>..`)
 to review the working tree, including uncommitted changes. Both together review a
 PR's local commits, which may not be pushed yet, as `fix-pr` does: the PR supplies
-the title, body, labels and comments, and the range supplies the code (Step 1). If
-neither is supplied, ask for one.
+the title, body, labels and comments, and the range supplies the code (Step 1).
+`--local` reviews the checked-out branch as it is on disk, with its PR when it has
+one. If no target is supplied, ask for one.
 
+- `--local`: review the checked-out branch as it is on disk: its commits, pushed or
+  not, its uncommitted changes and its new files (Step 1). Opt-in: without it, a PR
+  review reads the PR's pushed head and ignores local changes.
 - `--body=<file>`: Step 2 checks this file as the PR body instead of the published
   one, such as a draft that covers commits not pushed yet.
 - `--prior=<file>,...`: reports or finding lists from earlier reviews of the change.
@@ -71,7 +75,7 @@ You are a senior QuestDB engineer performing a blocking code review. QuestDB is 
 
 ## Review level
 
-Parse `$ARGUMENTS` for a level token: `--level=N`, `-lN`, or a bare single digit `0`-`3`. **If no level is given, default to 0.** Strip the level token and any `--range=`, `--block-at=`, `--body=` and `--prior=` tokens before feeding the remainder (PR number or URL) to `gh` commands.
+Parse `$ARGUMENTS` for a level token: `--level=N`, `-lN`, or a bare single digit `0`-`3`. **If no level is given, default to 0.** Strip the level token, the `--local` flag and any `--range=`, `--block-at=`, `--body=` and `--prior=` tokens before feeding the remainder (PR number or URL) to `gh` commands.
 
 The level controls how much of the review below actually runs. Lower levels keep the same review *spirit* — adversarial, blocking, no praise — but cut the breadth of the analysis. Higher levels have significantly higher token cost; reserve level 3 for high-stakes PRs (replication, JNI boundary changes, on-disk format, public API, security/ACL).
 
@@ -82,7 +86,7 @@ The level controls how much of the review below actually runs. Lower levels keep
 | **2** | Full Step 2.5, with 2.5b restricted to `public`/`protected` symbols. Run Agent 1 plus at most **four** change-relevant roles from Agents 2-8 and 11-13. Run an independent falsification task for each surviving atomic candidate. |
 | **3** | Full Step 2.5 and the complete admission protocol. Select at most **six** applicable discovery roles from Agents 1-14: Agent 1 always; Agent 9 for changed symbols with out-of-diff callers; Agents 2-8 and 11 only when their domain is touched; Agents 12-14 only for changed tests or a fix claim; Agent 10 only when a distinct adversarial pass is warranted. Depth comes from producer/reachability evidence and independent falsification, not agent count. |
 
-State the chosen level, the model running the review and the version of this skill, given under its title, in one line at the start of the review so the user knows what they're getting (e.g., "Reviewing PR #1234 at level 2 with <provider>/<model>, thinking <level>, review-pr <version>"). Take the model from pi, never from memory: models misstate their own name and version.
+State the chosen level, the model running the review and the version of this skill, given under its title, in one line at the start of the review so the user knows what they're getting (e.g., "Reviewing PR #1234 at level 2 with <provider>/<model>, thinking <level>, review-pr <version>"). With `--local`, the target is the local changes: "Reviewing local changes of PR #1234 at level 2 with ...", or "of branch `<branch>`" when it has no PR. Take the model from pi, never from memory: models misstate their own name and version.
 
 ```bash
 printf '%s/%s, thinking %s\n' "$PI_PROVIDER" "$PI_MODEL" "$PI_REASONING_LEVEL"
@@ -171,9 +175,87 @@ rubric. Restricting the
 review to the changed files would disable the out-of-diff breakage analysis that
 is the most valuable part of this skill.
 
+### Local changes (`--local`)
+
+`--local` reviews the checked-out branch as it is on disk: its commits, pushed or
+not, its uncommitted changes and the untracked files that belong to them. Step 1
+records that code as a snapshot commit and reviews it as a range, so every later
+step runs as it does for `--range`. `--local` and `--range` both name the code to
+review: when both are given, ask which one the user means.
+
+Find the PR. Without a PR number, take the branch's PR when its `state` is `OPEN`;
+when `gh` finds none, or fails, review without a PR and say why. A PR number must
+name the branch's PR: when the command below names another PR or none, stop and ask
+the user to check that PR out (`gh pr checkout <number>`) or to leave the number out.
+
+```bash
+cd "$(git rev-parse --show-toplevel)"
+git branch --show-current
+gh pr view --json number,state,baseRefName,headRefOid   # the branch's PR; fails when it has none
+```
+
+Set `$BASE` to the commit where the branch leaves its base branch: the PR's
+`baseRefName`, or the default branch without a PR, as `fix-pr` does.
+
+```bash
+BASE_REF='<baseRefName of the PR>'
+# Without a PR: BASE_REF=$(git symbolic-ref --short refs/remotes/origin/HEAD | sed 's|^origin/||')
+git fetch --quiet origin "$BASE_REF" || echo "fetch failed: using the local origin/$BASE_REF"
+BASE=$(git merge-base HEAD "origin/$BASE_REF")
+```
+
+List the untracked files and choose those that belong to the change, such as new
+sources, tests and resources. Leave out the rest, such as scratch notes, logs, dumps
+and data directories, and name them in the report as not reviewed.
+
+```bash
+git --no-optional-locks status --porcelain | sed -n 's/^?? //p'
+```
+
+Take the snapshot in one command, as written: the subshell stops at the first
+error, and every `git` command in it uses the temporary index. When it fails, fix
+what it reports, such as a mistyped path, and take it again. The snapshot writes
+only to Git's object store: no ref moves, and the user's index and working tree
+stay as they are. It holds each file as it is on disk, staged or not, and the
+commit each submodule has checked out, but not changes left uncommitted inside a
+submodule: name such a submodule in the report as not reviewed beyond its commit.
+
+```bash
+REV=$(
+  set -eu
+  cd "$(git rev-parse --show-toplevel)"
+  IDX=$(mktemp /tmp/review-pr-index-XXXXXX)
+  trap 'rm -f "$IDX"' EXIT
+  cp "$(git rev-parse --git-path index)" "$IDX"
+  export GIT_INDEX_FILE="$IDX"
+  git add -u
+  git add -- <the untracked paths that belong to the change>   # drop this line when none do
+  TREE=$(git write-tree)
+  git -c user.name=review-pr -c user.email=review-pr@localhost \
+    commit-tree -p HEAD -m 'review-pr --local snapshot' "$TREE"
+)
+echo "REV=${REV:?the snapshot failed}"
+git diff --quiet "$BASE" "$REV" && echo "NOTHING TO REVIEW"
+```
+
+On `NOTHING TO REVIEW`, say so and stop. Otherwise continue as
+`--range=$BASE..$REV`: under "PR with a local range" when there is a PR, else under
+"Local range". `$REV` is the reviewed revision wherever a step names the head: Step
+2.4 lists pointer moves in `$BASE...$REV`, Step 2.6 builds its worktree at `$REV`,
+and Steps 3b and 3c give `$REV` as the head. The review reads files in the working
+tree, so tell the user that it covers the snapshot and to leave the working tree as
+it is until the review ends.
+
+The report lists as its head the local snapshot `$REV`, the branch and its HEAD
+commit, and with a PR, the PR's head on GitHub (`headRefOid`). When the branch does
+not contain that head (`git merge-base --is-ancestor <headRefOid> HEAD` fails), say
+so: the branch lacks commits pushed to the PR, or was rebased. `approve-pr` and
+`reject-pr` look for the snapshot there, and post a review of local changes only
+when the PR's head has the same tree.
+
 ## Step 2: PR title and description
 
-**Skipped in `--range` mode without a PR** — a local range has no PR metadata. State that it was skipped and continue at Step 2.4.
+**Skipped in `--range` or `--local` mode without a PR** — a local range has no PR metadata. State that it was skipped and continue at Step 2.4.
 
 Check the title, body and labels against CLAUDE.md "Git & PR Conventions". With `--body=<file>`, check that file as the body. Read the title as a QuestDB user scanning the release notes, who never sees the code, and the body as a reviewer who has not opened the diff yet.
 
@@ -202,6 +284,7 @@ A changed submodule pointer is not automatically a change this PR makes. Before 
 List the pointer moves, then for each one resolve the submodule's default branch and test whether the new commit is already on it:
 
 ```bash
+# With --local, use $REV (Step 1) in place of HEAD: it holds uncommitted pointer moves.
 git diff "$BASE...HEAD" --submodule=short | grep -E '^(diff --git|[+-]Subproject commit)'
 
 cd <submodule path>
@@ -319,6 +402,7 @@ WT="$TMP/src"
 # REV is the reviewed revision:
 #   PR:           git fetch origin "pull/<number>/head" "<baseRefName>"; REV=<headRefOid>
 #   range:        REV=<head> (also with a PR)
+#   --local:      REV=<the snapshot of Step 1; it already holds the change's untracked files>
 #   working tree: REV=$(git stash create); REV=${REV:-HEAD}
 #                 (a snapshot of the tracked changes; once the worktree exists,
 #                 copy the change's untracked files from Step 1 into it)
@@ -934,7 +1018,7 @@ Net impact: Ingestion stalls after ~1k failed commits.
 Evidence: WalLeakTest red at abc123, green at base def456.
 ```
 
-Open the report with the line from "Review level" that names the target, the level, the model and the skill version, followed by the revisions reviewed: the head, `$BASE`, and the new commit of each submodule pointer the PR moves, such as a tandem PR's head. PR bodies leave commit hashes out (CLAUDE.md), so the review carries them.
+Open the report with the line from "Review level" that names the target, the level, the model and the skill version, followed by the revisions reviewed: the head, `$BASE`, and the new commit of each submodule pointer the PR moves, such as a tandem PR's head. PR bodies leave commit hashes out (CLAUDE.md), so the review carries them. With `--local`, list the head as Step 1 describes.
 
 Structure as:
 
@@ -996,7 +1080,7 @@ If a behavioral candidate cannot name and execute a supported trigger with one o
 Do not inflate and do not deflate. Filing a real user-visible defect as Moderate is a review failure; so is filing a bounded compile-time micro-cost as Critical. Where two readings are defensible, pick the one you can evidence.
 
 ### Title and description
-Follow the opening line with the Step 2 result: the title, then the body and labels, each `OK` or its problems with the ready-to-paste replacement. In `--range` mode without a PR, write "Skipped: no PR". These are not findings: they skip Step 3b, sit outside the severity rubric and the proportionality budget, and never affect the verdict. Never list one under Blocking, Deferred, Moderate or Minor, a body that misdescribes the change included.
+Follow the opening line with the Step 2 result: the title, then the body and labels, each `OK` or its problems with the ready-to-paste replacement. In `--range` or `--local` mode without a PR, write "Skipped: no PR". These are not findings: they skip Step 3b, sit outside the severity rubric and the proportionality budget, and never affect the verdict. Never list one under Blocking, Deferred, Moderate or Minor, a body that misdescribes the change included.
 
 ### Blocking
 Findings that hold up this PR, introduced or exposed by it: the Critical findings that Step 3c rates at or above `--block-at`, and those that block by rule. Order them by risk, then by user impact, and number them B1, B2, ... Each must include:
