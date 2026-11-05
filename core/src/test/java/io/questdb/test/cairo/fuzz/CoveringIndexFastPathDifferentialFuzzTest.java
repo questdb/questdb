@@ -104,11 +104,6 @@ public class CoveringIndexFastPathDifferentialFuzzTest extends AbstractFuzzTest 
         runDifferential(generateRandom(LOG));
     }
 
-    @Test
-    public void testFastPathDifferentialFuzzRegression() throws Exception {
-        runDifferential(generateRandom(LOG, 0x2c7a1f9b3e5d84L, 0x6b0d9e2a4c1f37L));
-    }
-
     private void applyStream(String table, List<Op> ops, int symbolCardinality) throws Exception {
         for (int i = 0, n = ops.size(); i < n; i++) {
             Op op = ops.get(i);

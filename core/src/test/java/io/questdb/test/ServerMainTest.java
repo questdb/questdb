@@ -1477,6 +1477,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                             "qwp.max.rows.per.table\tQDB_QWP_MAX_ROWS_PER_TABLE\t1000000\tdefault\tfalse\tfalse\n" +
                                             "qwp.max.tables.per.connection\tQDB_QWP_MAX_TABLES_PER_CONNECTION\t10000\tdefault\tfalse\tfalse\n" +
                                             "qwp.max.uncommitted.rows\tQDB_QWP_MAX_UNCOMMITTED_ROWS\t1000000\tdefault\tfalse\tfalse\n" +
+                                            "qwp.min.idle.ms.before.writer.release\tQDB_QWP_MIN_IDLE_MS_BEFORE_WRITER_RELEASE\t30000\tdefault\tfalse\tfalse\n" +
                                             "qwp.udp.bind.to\tQDB_QWP_UDP_BIND_TO\t0.0.0.0:9007\tdefault\tfalse\tfalse\n" +
                                             "qwp.udp.commit.interval\tQDB_QWP_UDP_COMMIT_INTERVAL\t2000\tdefault\tfalse\tfalse\n" +
                                             "qwp.udp.enabled\tQDB_QWP_UDP_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
@@ -1597,6 +1598,9 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                             "cairo.checkpoint.recovery.threadpool.max\tQDB_CAIRO_CHECKPOINT_RECOVERY_THREADPOOL_MAX\t12\tdefault\tfalse\tfalse\n" +
                                             "cairo.partition.encoder.parquet.min.compression.ratio\tQDB_CAIRO_PARTITION_ENCODER_PARQUET_MIN_COMPRESSION_RATIO\t1.2\tdefault\tfalse\tfalse\n" +
                                             "cairo.partition.encoder.parquet.o3.rewrite.unused.max.bytes\tQDB_CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES\t1073741824\tdefault\tfalse\tfalse\n" +
+                                            "cairo.mat.view.row.expiry.cleanup.enabled\tQDB_CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                            "cairo.mat.view.row.expiry.cleanup.max.cached.partitions\tQDB_CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MAX_CACHED_PARTITIONS\t16384\tdefault\tfalse\tfalse\n" +
+                                            "cairo.mat.view.row.expiry.cleanup.min.expired.fraction\tQDB_CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MIN_EXPIRED_FRACTION\t0.5\tdefault\tfalse\tfalse\n" +
                                             "cairo.partition.encoder.parquet.o3.rewrite.unused.ratio\tQDB_CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO\t0.5\tdefault\tfalse\tfalse\n" +
                                             "cairo.wal.apply.suspended.write.denied\tQDB_CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED\tfalse\tdefault\tfalse\ttrue\n" +
                                             "cairo.wal.apply.suspended.tables\tQDB_CAIRO_WAL_APPLY_SUSPENDED_TABLES\t\tdefault\tfalse\ttrue\n" +
