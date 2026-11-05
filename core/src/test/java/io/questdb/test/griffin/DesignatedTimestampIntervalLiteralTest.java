@@ -334,10 +334,16 @@ public class DesignatedTimestampIntervalLiteralTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRangeBoundNegativeDoubleLiteralIsInvalidDate() throws Exception {
+    public void testRangeBoundNegativeDoubleRunsAsFilter() throws Exception {
+        // A folded fractional bound compares as a number, like ts < 1.5, so it cannot narrow the scan. The row of x
+        // is in 2014, 1.389e15 microseconds after the epoch. A bound that reads a column still has to be a timestamp.
         assertMemoryLeak(() -> {
             createTables();
-            assertError("SELECT * FROM x WHERE ts <= -1.5", 28, "Invalid date");
+            assertQuery("SELECT v FROM x WHERE ts <= -1.5").noLeakCheck().withPlanContaining("Frame forward scan on: x").returns("v\n");
+            assertQuery("SELECT v FROM x WHERE ts > -1.5").noLeakCheck().withPlanContaining("Frame forward scan on: x").returns("v\n1\n");
+            assertQuery("SELECT v FROM x WHERE ts < 1.5 * 1e15").noLeakCheck().withPlanContaining("Frame forward scan on: x").returns("v\n1\n");
+            assertQuery("SELECT v FROM x WHERE ts > 1.5 * 1e15").noLeakCheck().withPlanContaining("Frame forward scan on: x").returns("v\n");
+            assertError("SELECT * FROM x WHERE ts <= v * 1.5", 30, "Invalid date");
         });
     }
 

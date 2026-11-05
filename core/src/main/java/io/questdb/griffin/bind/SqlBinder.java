@@ -88,12 +88,14 @@ import io.questdb.std.Chars;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
+import io.questdb.std.IntLongHashMap;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
+import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.griffin.bind.BindContext.*;
 import static io.questdb.griffin.bind.OrderBinder.*;
@@ -194,6 +196,15 @@ public final class SqlBinder implements Mutable {
     public BoundExpression bindExpression(ExpressionNode expression, OutputSchema scope, int preferredType, SqlExecutionContext executionContext)
             throws SqlException {
         return ctx.functionBinder.bind(expression, scope, null, preferredType, executionContext);
+    }
+
+    public void setBareNoArgCallSink(@Nullable ObjList<String> names, @Nullable IntList positions) {
+        ctx.bareNoArgCallNames = names;
+        ctx.bareNoArgCallPositions = positions;
+    }
+
+    public void setPendingExpiryReadVersions(IntLongHashMap pendingExpiryReadVersions) {
+        ctx.pendingExpiryReadVersions = pendingExpiryReadVersions;
     }
 
     @Override
@@ -462,6 +473,55 @@ public final class SqlBinder implements Mutable {
         return predicate;
     }
 
+    /**
+     * The table read under LATEST ON over a read that the parser wrapped for a scalar EXPIRE ROWS policy: its filter
+     * over the scan, without the projections that only pass the columns of the table through. LATEST ON then reads the
+     * table directly, which keeps its designated timestamp and index paths, so that the policy leaves valid queries
+     * over the view compiling. A read that declares another timestamp, or projects anything else, stays as it is, as
+     * do reads without a policy.
+     */
+    private LogicalPlan hoistExpiringLatestRead(LogicalPlan sourcePlan, QueryModel source) {
+        if (source.getLatestBy().size() == 0 || isLatestOverLeadingInput(source) || source.isExplicitTimestamp()
+                || source.getExpiryViewNameExpr() == null || source.isExpiryStructuralPolicy()
+                || !configuration.isSqlLatestOnHoistEnabled()) {
+            return sourcePlan;
+        }
+        LogicalPlan plan = sourcePlan;
+        while (plan instanceof ProjectPlan project) {
+            if (!isPassThroughProjection(project)) {
+                return sourcePlan;
+            }
+            plan = project.getChild();
+        }
+        final ScanPlan scan = LogicalPlans.scanThroughFilter(plan);
+        return scan == null || scan.getTableToken().isLiveView()
+                || plan.getOutput().getTimestampColumnId() != scan.getNativeTimestampColumnId()
+                || latestColumnId(plan.getOutput(), source) != scan.getNativeTimestampColumnId() ? sourcePlan : plan;
+    }
+
+    private int latestColumnId(OutputSchema output, QueryModel source) {
+        final int index = source.getTimestamp() == null ? -1 : getColumnIndexQuiet(output, source.getTimestamp().token);
+        return index < 0 ? output.getTimestampColumnId() : output.getColumnId(index);
+    }
+
+    private static boolean isPassThroughProjection(ProjectPlan project) {
+        final OutputSchema output = project.getOutput();
+        final OutputSchema input = project.getChild().getOutput();
+        final int columnCount = output.getColumnCount();
+        if (columnCount != input.getColumnCount() || output.getTimestampIndex() != input.getTimestampIndex()
+                || project.hasUpdateConversions()) {
+            return false;
+        }
+        for (int i = 0; i < columnCount; i++) {
+            if (!(project.getExpressions().getQuick(i) instanceof ColumnExpression column) || !column.isDirectReference()
+                    || column.getColumnId() != input.getColumnId(i)
+                    || !Chars.equalsIgnoreCase(output.getColumnName(i), input.getColumnName(i))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private LogicalPlan bindFunctionSource(ExpressionNode expression, SqlExecutionContext executionContext) throws SqlException {
         return ctx.functionSources.bind(expression, executionContext);
     }
@@ -473,6 +533,9 @@ public final class SqlBinder implements Mutable {
         final ExpressionNode originatingView = model.getOriginatingViewNameExpr();
         final int previousRequirementPosition = originatingView == null ? -1
                 : functionParser.getFunctionResolver().enterExecutionRequirementPosition(originatingView.position);
+        if (originatingView != null) {
+            ctx.viewTextDepth++;
+        }
         final ExpressionNode view = model.getViewNameExpr();
         final SqlExecutionContext.TableFunctionView previousView = executionContext.getTableFunctionView();
         scope.currentHints = mergeHints(model, scope.currentHints);
@@ -486,6 +549,7 @@ public final class SqlBinder implements Mutable {
             scope.currentHints = previousHints;
             executionContext.setTableFunctionView(previousView);
             if (originatingView != null) {
+                ctx.viewTextDepth--;
                 functionParser.getFunctionResolver().restoreExecutionRequirementPosition(previousRequirementPosition);
             }
         }
@@ -541,10 +605,13 @@ public final class SqlBinder implements Mutable {
         if (isHorizonJoin) {
             sourcePlan = temporalJoinBinder.bindHorizonJoin(model, source, where, executionContext);
             where = null;
-            ctx.promoteNoArgFunctions(model, sourcePlan.getOutput(), null);
+            ctx.promoteNoArgFunctions(model, sourcePlan.getOutput(), null, executionContext);
         } else {
             sourcePlan = bindBlockSource(model, source, where, executionContext);
         }
+        final LogicalPlan hoistedPlan = hoistExpiringLatestRead(sourcePlan, source);
+        final boolean isLatestHoisted = hoistedPlan != sourcePlan;
+        sourcePlan = hoistedPlan;
         if (source.getSampleBy() != null) {
             ctx.retainImplicitTimestamp(sourcePlan);
         }
@@ -557,6 +624,9 @@ public final class SqlBinder implements Mutable {
         bindScope.projectionAliasIndexes.clear();
 
         final LatestByPlan latest = bindSourceLatestBy(sourcePlan, source);
+        if (isLatestHoisted) {
+            latest.setTimestampOrderInherited(false);
+        }
         if (where != null && latest != null && sourcePlan instanceof ScanPlan && configuration.useWithinLatestByOptimisation()) {
             bindScope.hasWithin = false;
             validateWithin(where, sourcePlan.getOutput(), sourceAlias(source), executionContext);
@@ -889,6 +959,7 @@ public final class SqlBinder implements Mutable {
             } else {
                 assert !token.isView();
                 final PlanTable table = ctx.planTables.acquire(token, tableName.position, executionContext);
+                ctx.checkExpiryReadVersion(table.getTableToken().getTableId(), table.getMetadataVersion());
                 scan = bindScan(source, tableName, table.getTableToken(), table.getMetadataVersion());
                 for (int i = 0, n = table.getColumnCount(); i < n; i++) {
                     bindScanColumn(scan, i, table.getColumnName(i), table.getColumnType(i), table.isSymbolTableStatic(i),
@@ -944,6 +1015,10 @@ public final class SqlBinder implements Mutable {
             // SQL can designate another timestamp. Partition intervals still use
             // the table's native timestamp, retained separately on the scan.
             output.setTimestampIndex(index);
+            return input;
+        }
+        // LATEST ON names the column it reads and keeps the order of its input; only a SAMPLE BY of the block buckets on it.
+        if (source.getLatestBy().size() > 0 && !source.isExplicitTimestamp() && source.getSampleBy() == null) {
             return input;
         }
         // A declaration changes metadata and observes the subquery's order, so a projection marks that boundary.
@@ -1436,7 +1511,7 @@ public final class SqlBinder implements Mutable {
         } finally {
             scope.namedWindowScope = previousWindowScope;
         }
-        ctx.promoteNoArgFunctions(model, sourcePlan.getOutput(), hasJoins ? null : sourceAlias(source));
+        ctx.promoteNoArgFunctions(model, sourcePlan.getOutput(), hasJoins ? null : sourceAlias(source), executionContext);
         return sourcePlan;
     }
 
@@ -1450,14 +1525,15 @@ public final class SqlBinder implements Mutable {
 
     LatestByPlan bindLatestBy(LogicalPlan input, QueryModel source) throws SqlException {
         final OutputSchema output = input.getOutput();
+        final int timestampId = latestColumnId(output, source);
         if (input instanceof ScanPlan scan) {
-            if (output.getTimestampColumnId() != scan.getNativeTimestampColumnId()) {
+            if (timestampId != scan.getNativeTimestampColumnId()) {
                 throw SqlException.$(source.getTimestamp().position, "latest by over a table requires designated TIMESTAMP");
             }
-        } else if (output.getTimestampColumnId() < 0) {
+        } else if (timestampId < 0) {
             throw SqlException.$(source.getModelPosition(), "latest by query does not provide dedicated TIMESTAMP column");
         }
-        final LatestByPlan latest = ctx.planNodes.latestByPlans.next().of(input, output.getTimestampColumnId(), source.getModelPosition());
+        final LatestByPlan latest = ctx.planNodes.latestByPlans.next().of(input, timestampId, source.getModelPosition());
         latest.setTimestampOrderInherited(source.getNestedModel() != null);
         for (int i = 0, n = source.getLatestBy().size(); i < n; i++) {
             final ExpressionNode key = source.getLatestBy().getQuick(i);

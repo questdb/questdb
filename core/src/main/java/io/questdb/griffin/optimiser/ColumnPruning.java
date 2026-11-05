@@ -188,8 +188,34 @@ final class ColumnPruning implements OptimiserPass {
         }
         sourceIndexes.clear();
         sourceIndexes.addAll(retainedColumnIndexes);
+        deriveOutputsAbove(scan, top);
+        if (windowJoin != null) {
+            rebuildWindowJoinSchemas(windowJoin);
+        }
+    }
+
+    /**
+     * A LATEST BY reads its input by column id and keeps its layout, so a projection that only reorders the rows of a
+     * LATEST BY over a scan reorders the column projections beneath it instead. The scan aligns with them, which leaves
+     * the outer projection nothing to do.
+     */
+    private void alignLatestByInput(ProjectPlan project) {
+        LogicalPlan input = project.getChild();
+        boolean hasLatestBy = false;
+        while (input instanceof FilterPlan || input instanceof SortPlan || input instanceof LimitPlan || input instanceof LatestByPlan
+                || input instanceof ProjectPlan inner && LogicalPlans.isColumnProjection(inner)) {
+            hasLatestBy |= input instanceof LatestByPlan;
+            input = input.inputAt(0);
+        }
+        if (hasLatestBy && (input instanceof ScanPlan || input instanceof FunctionSourcePlan source && source.isProjectable())
+                && isColumnPermutation(project)) {
+            permuteColumnsBelow(project);
+        }
+    }
+
+    private void deriveOutputsAbove(LogicalPlan bottom, LogicalPlan top) {
         alignedPath.clear();
-        for (input = top; input != scan; input = input.inputAt(0)) {
+        for (LogicalPlan input = top; input != bottom; input = input.inputAt(0)) {
             alignedPath.add(input);
         }
         for (int k = alignedPath.size() - 1; k >= 0; k--) {
@@ -201,9 +227,6 @@ final class ColumnPruning implements OptimiserPass {
             }
         }
         alignedPath.clear();
-        if (windowJoin != null) {
-            rebuildWindowJoinSchemas(windowJoin);
-        }
     }
 
     private boolean hasRequiredColumn(OutputSchema output) {
@@ -213,6 +236,21 @@ final class ColumnPruning implements OptimiserPass {
             }
         }
         return false;
+    }
+
+    private boolean isColumnPermutation(ProjectPlan project) {
+        final OutputSchema input = project.getChild().getOutput();
+        final int count = project.getExpressions().size();
+        if (count != input.getColumnCount() || !LogicalPlans.isColumnProjection(project)
+                || LogicalPlans.hasRepeatedColumn(project, retainedProjectOutputIds)) {
+            return false;
+        }
+        for (int i = 0; i < count; i++) {
+            if (input.getColumnIndexById(((ColumnExpression) project.getExpressions().getQuick(i)).getColumnId()) < 0) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private boolean isJoinSource() {
@@ -232,6 +270,29 @@ final class ColumnPruning implements OptimiserPass {
         }
         final int depth = pruneAncestors.size();
         return source == joinInputPlan || depth > 1 && pruneAncestors.getQuick(depth - 2) instanceof FilterPlan;
+    }
+
+    private void permuteColumnsBelow(ProjectPlan project) {
+        LogicalPlan input = project.getChild();
+        while (input instanceof FilterPlan || input instanceof SortPlan || input instanceof LimitPlan || input instanceof LatestByPlan) {
+            input = input.inputAt(0);
+        }
+        if (input instanceof ProjectPlan inner) {
+            final OutputSchema output = inner.getOutput();
+            retainedColumnIndexes.clear();
+            for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
+                retainedColumnIndexes.add(output.getColumnIndexById(((ColumnExpression) project.getExpressions().getQuick(i)).getColumnId()));
+            }
+            permuteProjection(inner);
+            if (isColumnPermutation(inner)) {
+                permuteColumnsBelow(inner);
+            } else {
+                alignScanColumns(inner);
+            }
+            deriveOutputsAbove(inner, project.getChild());
+        } else {
+            alignScanColumns(project);
+        }
     }
 
     private void permuteProjection(ProjectPlan project) {
@@ -405,6 +466,7 @@ final class ColumnPruning implements OptimiserPass {
                     pruneColumns(projectInput);
                 }
                 alignScanColumns(project);
+                alignLatestByInput(project);
                 final OutputSchema input = project.getChild().getOutput();
                 if (!project.hasTimestampDeclaration() && project.getOutput().getTimestampIndex() < 0 && input.getTimestampIndex() >= 0
                         && (timestampId >= 0 || inputTimestampId != input.getTimestampColumnId())) {

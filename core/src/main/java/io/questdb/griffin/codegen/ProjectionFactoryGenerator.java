@@ -87,13 +87,14 @@ final class ProjectionFactoryGenerator {
 
     /**
      * Whether the plan's answer to the identity of the column projection must match the generator's: everywhere but
-     * over a join of several inputs, directly or through nodes that forward its columns, whose factories name its
-     * columns qualifier.name, which the plan does not model; no planner decision reads that answer differently.
+     * over a join of several inputs, directly or through nodes that forward its columns or projections that pass them
+     * through, whose factories name its columns qualifier.name, which the plan does not model; no planner decision
+     * reads that answer differently.
      */
     private static boolean isPlannedIdentityChecked(ProjectPlan project) {
         LogicalPlan input = project.getChild();
-        while (input instanceof ForwardingPlan forwarding) {
-            input = forwarding.getChild();
+        while (input instanceof ForwardingPlan || input instanceof ProjectPlan inner && PlanToFactoryRules.isIdentityProjection(inner)) {
+            input = input.inputAt(0);
         }
         return !LogicalPlans.isComputedProjection(project) && !(input instanceof JoinPlan join && join.getOrderedInputs().size() > 1);
     }

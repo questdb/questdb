@@ -35,7 +35,10 @@ public final class HorizonJoinSlave implements PlanFactSource {
     private final ObjectPool<JoinKey> keyPool = new ObjectPool<>(JoinKey.FACTORY, 1, 1);
     private final ObjList<JoinKey> keys = new ObjList<>();
     private CharSequence alias;
+    private CharSequence expiryViewName;
+    private int expiryViewPosition;
     private LogicalPlan input;
+    private boolean isExpiryStructuralPolicy;
     private BoundExpression keyCheck;
     private int position;
 
@@ -48,13 +51,28 @@ public final class HorizonJoinSlave implements PlanFactSource {
         keys.clear();
         keyPool.clear();
         alias = null;
+        expiryViewName = null;
+        expiryViewPosition = 0;
         input = null;
+        isExpiryStructuralPolicy = false;
         keyCheck = null;
         position = 0;
     }
 
     public CharSequence getAlias() {
         return alias;
+    }
+
+    /**
+     * The materialized view this slave reads through its EXPIRE ROWS policy, as the caller wrote it; null for any other
+     * slave.
+     */
+    public CharSequence getExpiryViewName() {
+        return expiryViewName;
+    }
+
+    public int getExpiryViewPosition() {
+        return expiryViewPosition;
     }
 
     public LogicalPlan getInput() {
@@ -76,11 +94,25 @@ public final class HorizonJoinSlave implements PlanFactSource {
         return position;
     }
 
+    /**
+     * True when the EXPIRE ROWS policy of {@link #getExpiryViewName()} is a KEEP or window-function policy, which has
+     * no per-row filter that the join could take off the read and apply on its own.
+     */
+    public boolean isExpiryStructuralPolicy() {
+        return isExpiryStructuralPolicy;
+    }
+
     public HorizonJoinSlave of(LogicalPlan input, CharSequence alias, int position) {
         this.input = Objects.requireNonNull(input);
         this.alias = alias;
         this.position = position;
         return this;
+    }
+
+    public void setExpiryView(CharSequence expiryViewName, int expiryViewPosition, boolean isExpiryStructuralPolicy) {
+        this.expiryViewName = expiryViewName;
+        this.expiryViewPosition = expiryViewPosition;
+        this.isExpiryStructuralPolicy = isExpiryStructuralPolicy;
     }
 
     public void setKeyCheck(BoundExpression keyCheck) {

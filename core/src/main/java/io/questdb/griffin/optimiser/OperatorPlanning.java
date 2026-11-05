@@ -802,8 +802,10 @@ final class OperatorPlanning implements Mutable {
         final LogicalPlan input = latest.getChild();
         final LogicalPlan base = PlanToFactoryRules.latestByBase(latest);
         boolean isAscending = false;
-        if (latest.isTimestampOrderInherited() && input.getOutput().getColumnIndexById(latest.getTimestampColumnId())
-                == PhysicalProperties.timestampIndex(base)) {
+        final boolean isOrderDeclaredOnly = base instanceof ProjectPlan project && project.hasTimestampDeclaration()
+                && PhysicalProperties.timestampSource(project) < 0;
+        if (latest.isTimestampOrderInherited() && !isOrderDeclaredOnly
+                && input.getOutput().getColumnIndexById(latest.getTimestampColumnId()) == PhysicalProperties.timestampIndex(base)) {
             readOrder(base, false, true);
             isAscending = PhysicalProperties.scanDirection(base) == PhysicalProperties.ScanDirection.FORWARD;
         }
@@ -1092,6 +1094,11 @@ final class OperatorPlanning implements Mutable {
             final boolean isParallel = executionContext.isParallelWindowJoinEnabled() && (hasPageFrames || isFilterStolen)
                     && isParallelWindowJoinStep(step);
             if (!isParallel && !isKnownYes(PhysicalProperties.supportsTimeFrameCursor(step.getSlave()))) {
+                if (step.getExpiryViewName() != null) {
+                    throw SqlException.position(step.getExpiryViewPosition())
+                            .put("right side of window join cannot be materialized view '").put(step.getExpiryViewName())
+                            .put("' because its EXPIRE ROWS policy is not a cutoff on the designated timestamp");
+                }
                 throw SqlException.position(step.getPosition()).put("right side of window join must be a table, not sub-query");
             }
             step.setAlgorithm(!isParallel ? WindowJoinStep.Algorithm.SERIAL
@@ -1391,6 +1398,14 @@ final class OperatorPlanning implements Mutable {
         for (int i = 0, n = slaves.size(); i < n; i++) {
             final HorizonJoinSlave slave = slaves.getQuick(i);
             if (!isKnownYes(PhysicalProperties.supportsHorizonSlaveTimeFrameCursor(slave.getInput()))) {
+                if (slave.getExpiryViewName() != null) {
+                    // A join that takes a per-row filter off its right-hand side accepts a value WHEN policy, so the
+                    // cause it reports is a KEEP or window-function policy, which has no per-row filter to take.
+                    throw SqlException.position(slave.getExpiryViewPosition())
+                            .put("right-hand side of HORIZON JOIN cannot be materialized view '").put(slave.getExpiryViewName())
+                            .put("' because its EXPIRE ROWS policy ")
+                            .put(slave.isExpiryStructuralPolicy() ? "uses KEEP or a window function" : "is not a cutoff on the designated timestamp");
+                }
                 throw SqlException.$(slave.getPosition(), "right-hand side of HORIZON JOIN can only be a table with an optional filter");
             }
         }
@@ -1429,6 +1444,9 @@ final class OperatorPlanning implements Mutable {
             throw SqlException.$(position, "left side of time series join has no timestamp");
         }
         readJoinOrder(join, inputCount, false, true);
+        if (PhysicalProperties.masterTimestampIndex(join, inputCount) == -1) {
+            throw SqlException.$(position, "left side of time series join has no timestamp");
+        }
         if (validatedDirection(PhysicalProperties.masterScanDirection(join, inputCount)) != PhysicalProperties.ScanDirection.FORWARD) {
             throw SqlException.$(position, "left side of time series join doesn't have ASC timestamp order");
         }

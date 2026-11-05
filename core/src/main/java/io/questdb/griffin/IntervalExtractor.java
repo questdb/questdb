@@ -317,8 +317,8 @@ public final class IntervalExtractor implements Mutable {
 
     // A literal bound must parse as a date; a computed bound must cast to TIMESTAMP.
     private static void validateRangeBound(BoundExpression bound) throws SqlException {
-        if (bound instanceof ConstantExpression constant && constant.getSource() == null) {
-            if (constant.getLiteralText() != null) {
+        if (bound instanceof ConstantExpression constant) {
+            if (constant.getSource() == null && constant.getLiteralText() != null) {
                 throw SqlException.invalidDate(constant.getLiteralText(), bound.getPosition());
             }
             return;

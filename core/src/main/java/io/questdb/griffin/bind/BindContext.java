@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.CharacterStore;
 import io.questdb.griffin.CharacterStoreEntry;
 import io.questdb.griffin.CompilerTemporaries;
+import io.questdb.griffin.ExpiryPolicyVersionChangedException;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.FunctionInstantiator;
 import io.questdb.griffin.FunctionParser;
@@ -36,6 +37,7 @@ import io.questdb.griffin.PostOrderTreeTraversalAlgo;
 import io.questdb.griffin.PreparedFunctions;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.TableFunctionSources;
@@ -61,6 +63,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
+import io.questdb.std.IntLongHashMap;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.Mutable;
@@ -81,6 +84,15 @@ final class BindContext implements Mutable {
     final BoundExpressionRewriter expressionRewriter;
     final FunctionBinder functionBinder;
     final FunctionFactoryCache functionFactoryCache;
+    // While non-null, promoteNoArgFunctions() records the name and position of each bare name of the query's own text
+    // that it reads as a call. clear() leaves the sink as it is: the caller that arms it disarms it.
+    ObjList<String> bareNoArgCallNames;
+    IntList bareNoArgCallPositions;
+    // Shared with the parser: for each table, the metadata version it read an EXPIRE ROWS policy at while a policy
+    // change was in flight, see checkExpiryReadVersion().
+    IntLongHashMap pendingExpiryReadVersions;
+    // The models binding now that a regular view inlined into the query, see promoteNoArgFunctions().
+    int viewTextDepth;
     final FunctionInstantiator functionInstantiator;
     final TableFunctionSources functionSources;
     final PlanNodePools planNodes;
@@ -146,6 +158,7 @@ final class BindContext implements Mutable {
 
     @Override
     public void clear() {
+        viewTextDepth = 0;
         functionBinder.clear();
         syntheticNodes.clear();
         windowSyntax.clear();
@@ -487,7 +500,31 @@ final class BindContext implements Mutable {
         return preparedFunctions.root(entry);
     }
 
-    void promoteNoArgFunctions(QueryModel model, OutputSchema scope, CharSequence alias) {
+    /**
+     * The metadata version the parser read an EXPIRE ROWS policy of the table at, while a policy change was in flight,
+     * must be the version binding reads: the policy epoch can read the same value before and after the change, while
+     * the metadata version cannot. A table it moved past has a stale keep-filter, so the statement parses again.
+     */
+    void checkExpiryReadVersion(int tableId, long metadataVersion) {
+        if (pendingExpiryReadVersions != null && pendingExpiryReadVersions.size() > 0) {
+            final long parsedMetadataVersion = pendingExpiryReadVersions.get(tableId);
+            if (parsedMetadataVersion != -1 && parsedMetadataVersion != metadataVersion) {
+                throw ExpiryPolicyVersionChangedException.INSTANCE;
+            }
+        }
+    }
+
+    /**
+     * A bare name of a select list that no column matches reads as a call to the zero-argument function of that name
+     * in the SQL of a regular view inlined into the query, so that the view means the same wherever it is read. In the
+     * query's own text it does only while the context allows it, and stays a column reference otherwise, which fails to
+     * resolve. The sink records each bare name of the query's own text that reads as a call.
+     */
+    void promoteNoArgFunctions(QueryModel model, OutputSchema scope, CharSequence alias, SqlExecutionContext executionContext) {
+        final boolean isOwnText = viewTextDepth == 0;
+        if (isOwnText && !executionContext.allowBareNoArgFunctionCalls()) {
+            return;
+        }
         for (int i = 0, n = model.getColumns().size(); i < n; i++) {
             final ExpressionNode expression = model.getColumns().getQuick(i).getAst();
             if (expression.type == ExpressionNode.LITERAL && !expression.isWildcard()
@@ -495,6 +532,10 @@ final class BindContext implements Mutable {
                     && functionFactoryCache.isValidNoArgFunction(expression)
                     && !functionBinder.isOuterScopeColumn(expression)) {
                 expression.type = ExpressionNode.FUNCTION;
+                if (isOwnText && bareNoArgCallPositions != null) {
+                    bareNoArgCallNames.add(Chars.toString(expression.token));
+                    bareNoArgCallPositions.add(expression.position);
+                }
             }
         }
     }

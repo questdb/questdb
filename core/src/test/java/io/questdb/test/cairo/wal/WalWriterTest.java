@@ -1210,12 +1210,12 @@ public class WalWriterTest extends AbstractCairoTest {
                         try {
                             execute("alter table alter_rename0 alter column s symbol capacity 1024");
                         } catch (SqlException e) {
-                            if (!e.isTableDoesNotExist()) {
+                            if (!e.isTableDoesNotExist() || stop.get()) {
                                 throw e;
                             }
                             i--;
                         } catch (CairoException e) {
-                            if (!e.isTableDoesNotExist()) {
+                            if (!e.isTableDoesNotExist() || stop.get()) {
                                 throw e;
                             }
                             i--;
@@ -5525,7 +5525,8 @@ public class WalWriterTest extends AbstractCairoTest {
                         startTxn + 2,
                         TableWriterPressureControl.EMPTY,
                         Long.MAX_VALUE,
-                        Long.MIN_VALUE
+                        Long.MIN_VALUE,
+                        false
                 );
 
                 assertEquals(2, blockSize);

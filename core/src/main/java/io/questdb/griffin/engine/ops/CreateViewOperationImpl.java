@@ -220,7 +220,7 @@ public class CreateViewOperationImpl implements CreateViewOperation {
     public void validateAndUpdateMetadataFromColumns(@Transient OutputSchema metadata, @Transient IntList positions) throws SqlException {
         assert metadata.getColumnCount() > 0;
         assert positions.size() == metadata.getColumnCount();
-        final CreateTableColumnModel timestampModel = createTableOperation.initColumnModels(createColumnModelMap, metadata, positions);
+        final CreateTableColumnModel timestampModel = createTableOperation.initColumnModels(createColumnModelMap, metadata, positions, createTableOperation.getAugmentedColumnMetadata());
         if (timestampModel != null) {
             timestampModel.setIsDedupKey(); // set dedup for timestamp column
         }

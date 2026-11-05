@@ -27,8 +27,10 @@ package io.questdb.cairo.pool;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.BatchCallback;
 import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.ExpiryValidationResult;
 import io.questdb.griffin.ExpressionParserListener;
 import io.questdb.griffin.QueryBuilder;
 import io.questdb.griffin.SqlCompiler;
@@ -41,6 +43,8 @@ import io.questdb.griffin.model.QueryModel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
@@ -171,6 +175,16 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         }
 
         @Override
+        public long expiryTimestampThreshold(SqlExecutionContext executionContext, RecordMetadata metadata, CharSequence predicate, CharSequence timestampColumn) {
+            return delegate.expiryTimestampThreshold(executionContext, metadata, predicate, timestampColumn);
+        }
+
+        @Override
+        public boolean isExpiryCleanupReclaiming(SqlExecutionContext executionContext, RecordMetadata metadata, CharSequence predicate) {
+            return delegate.isExpiryCleanupReclaiming(executionContext, metadata, predicate);
+        }
+
+        @Override
         public ExecutionModel generateExecutionModel(CharSequence sqlText, SqlExecutionContext executionContext) throws SqlException {
             return delegate.generateExecutionModel(sqlText, executionContext);
         }
@@ -182,6 +196,15 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
                 boolean generateProgressLogger
         ) throws SqlException {
             return delegate.generateSelectWithRetries(queryModel, executionContext, generateProgressLogger);
+        }
+
+        @Override
+        public ExecutionModel generateViewExecutionModel(
+                CharSequence viewSql,
+                SqlExecutionContext executionContext,
+                LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> outDependencies
+        ) throws SqlException {
+            return delegate.generateViewExecutionModel(viewSql, executionContext, outDependencies);
         }
 
         @Override
@@ -232,6 +255,11 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         @Override
         public QueryBuilder query() {
             return delegate.query();
+        }
+
+        @Override
+        public ExpiryValidationResult validateExpiryPredicateOnMetadata(SqlExecutionContext executionContext, RecordMetadata metadata, CharSequence predicate, int position) throws SqlException {
+            return delegate.validateExpiryPredicateOnMetadata(executionContext, metadata, predicate, position);
         }
 
         @Override

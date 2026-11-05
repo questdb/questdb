@@ -18566,6 +18566,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence_ns(0, 100000000000000) ts") +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day")
+                .expectSize()
                 .returns("""
                         author\tsym\tcommits\trk
                         user1\tETH\t3\t1

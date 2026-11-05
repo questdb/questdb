@@ -147,13 +147,16 @@ public class QueryModel implements Mutable, ExecutionModel, Sinkable {
     // The model the declaration of a declared sub-query parsed: this model itself, or the one it copies.
     private QueryModel declaredQuery;
     private boolean distinct = false;
+    private ExpressionNode expiryViewNameExpr;
     private boolean explicitTimestamp;
     private boolean isCommaJoin;
     private boolean isCteModel;
+    private boolean isExpiryStructuralPolicy;
     private boolean isUpdateModel;
     private ExpressionNode joinCriteria;
     private int joinKeywordPosition;
     private int joinType = JOIN_NONE;
+    private ExpressionNode lateralCountCoalesceGuard;
     private int latestByType = LATEST_BY_NONE;
     private ExpressionNode limitHi;
     private ExpressionNode limitLo;
@@ -320,6 +323,8 @@ public class QueryModel implements Mutable, ExecutionModel, Sinkable {
         isUpdateModel = false;
         isCommaJoin = false;
         isCteModel = false;
+        isExpiryStructuralPolicy = false;
+        expiryViewNameExpr = null;
         modelType = ExecutionModel.QUERY;
         standaloneUnnest = false;
         unnestColumnAliases.clear();
@@ -414,6 +419,16 @@ public class QueryModel implements Mutable, ExecutionModel, Sinkable {
 
     public LowerCaseCharSequenceObjHashMap<ExpressionNode> getDecls() {
         return decls;
+    }
+
+    /**
+     * The materialized view this model reads through its EXPIRE ROWS policy, as the caller wrote it: the view name at
+     * the position of its reference. The parser sets it on the model that held the reference when it rewrites that
+     * reference into the keep-filter sub-query, so that planning can name the view when the rewritten read cannot
+     * serve an operator that needs a plain table. Null for any other model.
+     */
+    public ExpressionNode getExpiryViewNameExpr() {
+        return expiryViewNameExpr;
     }
 
     public ObjList<ExpressionNode> getExpressionModels() {
@@ -703,6 +718,15 @@ public class QueryModel implements Mutable, ExecutionModel, Sinkable {
         return explicitTimestamp;
     }
 
+    /**
+     * True on the model that carries {@link #getExpiryViewNameExpr()} when the view's EXPIRE ROWS policy is a KEEP or
+     * window-function policy (see {@code RowExpiryUtil.isStructuralPolicy}). Such a policy decides each row against
+     * the other rows of the view, so its read has no per-row filter that a join could take off and apply on its own.
+     */
+    public boolean isExpiryStructuralPolicy() {
+        return isExpiryStructuralPolicy;
+    }
+
     public boolean isNestedModelIsSubQuery() {
         return nestedModelIsSubQuery;
     }
@@ -802,6 +826,14 @@ public class QueryModel implements Mutable, ExecutionModel, Sinkable {
 
     public void setExplicitTimestamp(boolean explicitTimestamp) {
         this.explicitTimestamp = explicitTimestamp;
+    }
+
+    public void setExpiryStructuralPolicy(boolean isExpiryStructuralPolicy) {
+        this.isExpiryStructuralPolicy = isExpiryStructuralPolicy;
+    }
+
+    public void setExpiryViewNameExpr(ExpressionNode expiryViewNameExpr) {
+        this.expiryViewNameExpr = expiryViewNameExpr;
     }
 
     public void setIsCommaJoin(boolean isCommaJoin) {

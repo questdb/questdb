@@ -85,6 +85,8 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     private long batchO3MaxLag;
     private long batchSize;
     private int defaultSymbolCapacity = -1;
+    private long expiryCleanupIntervalMicros;
+    private String expiryPredicate;
     private boolean ignoreIfExists;
     private String likeTableName;
     // position of the "like" table name in the SQL text, for error reporting
@@ -177,6 +179,8 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             int maxUncommittedRows,
             int ttlHoursOrMonths,
             int ttlPosition,
+            String expiryPredicate,
+            long expiryCleanupIntervalMicros,
             int tableFormat,
             boolean walEnabled,
             boolean autoIncludeTimestamp
@@ -221,6 +225,8 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.maxUncommittedRows = maxUncommittedRows;
         this.ttlHoursOrMonths = ttlHoursOrMonths;
         this.ttlPosition = ttlPosition;
+        this.expiryPredicate = expiryPredicate;
+        this.expiryCleanupIntervalMicros = expiryCleanupIntervalMicros;
         this.walEnabled = walEnabled;
 
         this.selectText = null;
@@ -272,6 +278,8 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             int volumePosition,
             int ttlHoursOrMonths,
             int ttlPosition,
+            String expiryPredicate,
+            long expiryCleanupIntervalMicros,
             int tableFormat,
             boolean walEnabled,
             int defaultSymbolCapacity,
@@ -298,6 +306,8 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.timestampColumnNamePosition = timestampColumnNamePosition;
         this.ttlHoursOrMonths = ttlHoursOrMonths;
         this.ttlPosition = ttlPosition;
+        this.expiryPredicate = expiryPredicate;
+        this.expiryCleanupIntervalMicros = expiryCleanupIntervalMicros;
         this.tableFormat = tableFormat;
         this.defaultSymbolCapacity = defaultSymbolCapacity;
         this.batchSize = batchSize;
@@ -360,12 +370,26 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         return reporter;
     }
 
+    public LowerCaseCharSequenceObjHashMap<TableColumnMetadata> getAugmentedColumnMetadata() {
+        return augmentedColumnMetadata;
+    }
+
     @Override
     public IntList getCoveringColumnIndices(int index) {
         if (index < coveringColumnIndicesList.size()) {
             return coveringColumnIndicesList.getQuick(index);
         }
         return null;
+    }
+
+    @Override
+    public long getExpiryCleanupIntervalMicros() {
+        return expiryCleanupIntervalMicros;
+    }
+
+    @Override
+    public String getExpiryPredicate() {
+        return expiryPredicate;
     }
 
     @Override
@@ -500,9 +524,14 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     }
 
     public void initColumnMetadata(@Transient LowerCaseCharSequenceObjHashMap<CreateTableColumnModel> createColumnModelMap) {
-        assert columnNames.size() == 0;
-        assert columnBits.size() == 0;
-
+        // Only a create-as-select op scrapes its columns from the query. A CREATE MATERIALIZED VIEW retry
+        // calls this again after validateAndUpdateMetadataFromSelect() has filled the column lists for
+        // the discarded pass.
+        assert selectText != null;
+        columnNames.clear();
+        columnBits.clear();
+        coveringColumnIndicesList.clear();
+        parquetEncodingConfigs.clear();
         colNameToDedupClausePos.clear();
         colNameToIndexClausePos.clear();
         colNameToCastClausePos.clear();
@@ -614,6 +643,10 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.timestampIndex = likeTableMetadata.getTimestampIndex();
         this.walEnabled = likeTableMetadata.isWalEnabled();
         this.ttlHoursOrMonths = likeTableMetadata.getTtlHoursOrMonths();
+        // Deliberately DO NOT inherit an EXPIRE ROWS policy: EXPIRE is materialized-view-only and CREATE
+        // TABLE (LIKE ...) always creates a plain table. Copying it would put a policy on a plain table that
+        // the read filter and cleanup job would then apply -- silently hiding and physically deleting rows on
+        // a table type the feature forbids. Leave expiryPredicate/expiryCleanupIntervalMicros at their default.
         this.tableFormat = likeTableMetadata.getTableFormat();
         columnNames.clear();
         columnBits.clear();
@@ -941,6 +974,10 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         }
     }
 
+    int getTimestampColumnNamePosition() {
+        return timestampColumnNamePosition;
+    }
+
     String getTimestampColumnName() {
         return timestampColumnName;
     }
@@ -952,13 +989,14 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     /**
      * Fills {@code createColumnModelMap} with a model per column of {@code columns}, the view's output named at
      * {@code positions}: typed by the SELECT the statement generates later, indexed as the statement's INDEX
-     * clauses say. Returns the model of the TIMESTAMP clause's column, which must be one of them, or null without
-     * the clause.
+     * clauses in {@code declaredColumnMetadata} say. Returns the model of the TIMESTAMP clause's column, which must be
+     * one of them, or null without the clause.
      */
     CreateTableColumnModel initColumnModels(
             LowerCaseCharSequenceObjHashMap<CreateTableColumnModel> createColumnModelMap,
             @Transient OutputSchema columns,
-            @Transient IntList positions
+            @Transient IntList positions,
+            LowerCaseCharSequenceObjHashMap<TableColumnMetadata> declaredColumnMetadata
     ) throws SqlException {
         createColumnModelMap.clear();
         for (int i = 0, n = columns.getColumnCount(); i < n; i++) {
@@ -967,9 +1005,9 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             final CreateTableColumnModel model = CreateTableColumnModel.FACTORY.newInstance();
             model.setColumnNamePos(position);
             model.setColumnType(ColumnType.UNDEFINED);
-            final TableColumnMetadata augColumnMetadata = augmentedColumnMetadata.get(columnName);
-            if (augColumnMetadata != null && augColumnMetadata.isIndexed()) {
-                model.setIndexType(augColumnMetadata.getIndexType(), position, augColumnMetadata.getIndexValueBlockCapacity());
+            final TableColumnMetadata declaredMetadata = declaredColumnMetadata.get(columnName);
+            if (declaredMetadata != null && declaredMetadata.isIndexed()) {
+                model.setIndexType(declaredMetadata.getIndexType(), position, declaredMetadata.getIndexValueBlockCapacity());
             }
             createColumnModelMap.put(columnName, model);
         }

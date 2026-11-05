@@ -72,6 +72,7 @@ import io.questdb.mp.SCSequence;
 import io.questdb.std.Chars;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.IntList;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -107,8 +108,16 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     private final int baseTableNamePosition;
     private final CairoConfiguration configuration;
     private final LowerCaseCharSequenceObjHashMap<CreateTableColumnModel> createColumnModelMap = new LowerCaseCharSequenceObjHashMap<>();
+    // Index definitions the CREATE statement declares. initColumnMetadata() replaces the create-table
+    // operation's augmented metadata with each pass's derived columns, which include indexes inherited
+    // from the base table, so validateAndUpdateMetadataFromModel() reads the declarations from here.
+    private final LowerCaseCharSequenceObjHashMap<TableColumnMetadata> declaredColumnMetadata = new LowerCaseCharSequenceObjHashMap<>();
+    // PARTITION BY the CREATE statement declares, or NONE. updateMatViewTablePartitionBy() writes the
+    // derived partitioning into the create-table operation, so each pass restores this value first.
+    private final int declaredPartitionBy;
     private final boolean deferred;
     private final ObjList<GroupingPlan> nestedSampleBys = new ObjList<>();
+    private final LowerCaseCharSequenceHashSet passthroughTimestampColumnNames = new LowerCaseCharSequenceHashSet();
     private final int periodDelay;
     private final char periodDelayUnit;
     private final int refreshType;
@@ -119,6 +128,11 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     private int baseTableTimestampType;
     private CreateTableOperationImpl createTableOperation;
     private int nonConstantAlignmentPosition = -1;
+    // The SQL the view definition stores, when it differs from the text the user wrote: a passthrough
+    // view's query with its top-level wildcard expanded into the view's columns, and bare zero-argument
+    // function names written as calls. Null stores the text.
+    private String matViewSql;
+    private boolean passthrough;
     private int periodLength;
     private char periodLengthUnit;
     private long samplingInterval;
@@ -149,6 +163,8 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         this.configuration = configuration;
         this.sqlText = sqlText;
         this.createTableOperation = createTableOperation;
+        declaredColumnMetadata.putAll(createTableOperation.getAugmentedColumnMetadata());
+        this.declaredPartitionBy = createTableOperation.getPartitionBy();
         this.refreshType = refreshType;
         this.deferred = deferred;
         this.baseTableName = baseTableName;
@@ -197,8 +213,27 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     }
 
     @Override
+    public IntList getCoveringColumnIndices(int columnIndex) {
+        return createTableOperation.getCoveringColumnIndices(columnIndex);
+    }
+
+    @Override
     public CreateTableOperation getCreateTableOperation() {
         return createTableOperation;
+    }
+
+    // The row-expiry policy is parsed onto the underlying CreateTableOperation (mirroring TTL).
+    // It must be exposed on the TableStructure that CairoEngine.createMatView() hands to the _meta
+    // serializer, so delegate here exactly like getTtlHoursOrMonths(); otherwise CREATE MAT VIEW
+    // ... EXPIRE ROWS would silently drop the policy at create time.
+    @Override
+    public long getExpiryCleanupIntervalMicros() {
+        return createTableOperation.getExpiryCleanupIntervalMicros();
+    }
+
+    @Override
+    public String getExpiryPredicate() {
+        return createTableOperation.getExpiryPredicate();
     }
 
     @Override
@@ -303,7 +338,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                 deferred,
                 baseTableTimestampType,
                 matViewToken,
-                createTableOperation.getSelectText(),
+                matViewSql != null ? matViewSql : createTableOperation.getSelectText(),
                 baseTableName,
                 samplingInterval,
                 samplingIntervalUnit,
@@ -317,7 +352,8 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                 periodLength,
                 periodLengthUnit,
                 periodDelay,
-                periodDelayUnit
+                periodDelayUnit,
+                passthrough
         );
     }
 
@@ -332,14 +368,29 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     }
 
     @Override
+    public boolean isCovering(int index) {
+        return createTableOperation.isCovering(index);
+    }
+
+    @Override
     public boolean isMatView() {
         return true;
+    }
+
+    @Override
+    public boolean isPassthrough() {
+        return passthrough;
     }
 
     @Override
     public boolean isWalEnabled() {
         assert createTableOperation.isWalEnabled();
         return true;
+    }
+
+    @Override
+    public void setMatViewSql(@Nullable String matViewSql) {
+        this.matViewSql = matViewSql;
     }
 
     /**
@@ -362,7 +413,10 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         assert columns.getColumnCount() > 0;
         // We do not know types of columns at this stage.
         // Compiler must put table together using query metadata.
-        createTableOperation.initColumnModels(createColumnModelMap, columns, positions);
+        passthroughTimestampColumnNames.clear();
+        passthrough = false;
+        createTableOperation.setPartitionBy(declaredPartitionBy);
+        createTableOperation.initColumnModels(createColumnModelMap, columns, positions, declaredColumnMetadata);
         final String timestamp = createTableOperation.getTimestampColumnName();
         final int selectTextPosition = createTableOperation.getSelectTextPosition();
 
@@ -450,21 +504,31 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             intervalPos = interval.getPosition();
         }
 
-        // We haven't found timestamp_floor() in SELECT.
+        // No SAMPLE BY and no timestamp_floor(): treat as a non-aggregating "passthrough" view
+        // (e.g. SELECT * FROM base) when the query has no aggregates/joins. Such a view copies base
+        // rows 1:1; samplingInterval becomes the granularity of refresh ranges (set later in
+        // validateAndUpdateMetadataFromSelect), not an aggregation bucket.
         if (sampleBy == null && intervalExpr == null) {
-            if (timestamp != null) {
+            if (isPassthrough(root, baseTableToken)) {
+                passthrough = true;
+            } else if (timestamp != null) {
                 // The designated timestamp column was already confirmed present in the select
-                // list above, but the query has neither a SAMPLE BY nor a GROUP BY
-                // timestamp_floor(...), so no sampling interval could be inferred. Point the
-                // user at the two supported forms instead of claiming the column is missing.
+                // list above, but the query is not a passthrough view and has neither a SAMPLE BY
+                // nor a GROUP BY timestamp_floor(...), so no sampling interval could be inferred.
+                // Point the user at the two supported forms instead of claiming the column is missing.
                 throw SqlException.position(selectTextPosition)
                         .put("materialized view query requires a sampling interval, use SAMPLE BY or GROUP BY timestamp_floor() [name=")
                         .put(timestamp).put(']');
+            } else {
+                throw SqlException.$(selectTextPosition, "TIMESTAMP column is not present in select list");
             }
-            throw SqlException.$(selectTextPosition, "TIMESTAMP column is not present in select list");
         }
 
-        if (floor != null) {
+        if (passthrough) {
+            if (periodLength != 0) {
+                throw SqlException.$(selectTextPosition, "PERIOD is not supported for non-aggregating (passthrough) materialized views");
+            }
+        } else if (floor != null) {
             final CharSequence interval = GenericLexer.unquote(intervalExpr);
             samplingInterval = TimestampSamplerFactory.parsePeriodStride(interval, intervalPos);
             samplingIntervalUnit = interval.charAt(TimestampSamplerFactory.periodUnitIndex(interval));
@@ -476,6 +540,22 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
 
         CairoEngine engine = sqlExecutionContext.getCairoEngine();
         try (TableMetadata baseTableMetadata = engine.getTableMetadata(baseTableToken)) {
+            final ObjList<String> passthroughColumnNames = new ObjList<>(baseTableMetadata.getColumnCount());
+            if (passthrough) {
+                passthroughColumnNames.setPos(baseTableMetadata.getColumnCount());
+                for (int i = 0, n = columns.getColumnCount(); i < n; i++) {
+                    final int baseColumnIndex = baseColumnIndex(root, columns.getColumnId(i), baseTableToken, baseTableMetadata);
+                    if (baseColumnIndex > -1) {
+                        final String columnName = Chars.toString(columns.getColumnName(i));
+                        if (passthroughColumnNames.getQuick(baseColumnIndex) == null) {
+                            passthroughColumnNames.setQuick(baseColumnIndex, columnName);
+                        }
+                        if (baseColumnIndex == baseTableMetadata.getTimestampIndex()) {
+                            passthroughTimestampColumnNames.add(columnName);
+                        }
+                    }
+                }
+            }
             for (int i = 0, n = columns.getColumnCount(); i < n; i++) {
                 if (!readsAggregate(root, columns.getColumnId(i))) {
                     final CharSequence columnName = columns.getColumnName(i);
@@ -484,6 +564,21 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                         throw SqlException.$(0, "missing column [name=").put(columnName).put(']');
                     }
                     copyBaseTableSymbolColumnCapacity(root, columns.getColumnId(i), columnModel, baseTableToken, baseTableMetadata);
+                    if (passthrough) {
+                        // A passthrough view (e.g. SELECT * FROM base, as used by EXPIRE ROWS retention
+                        // views) copies base rows 1:1, so a pass-through symbol column inherits the base
+                        // table's index - otherwise the view silently drops it, forcing full scans for
+                        // indexed/LATEST ON reads that could use an index seek. Passthrough-only: an
+                        // aggregating view's rows are not base rows, so it never inherits.
+                        inheritBaseSymbolColumnIndex(
+                                baseColumnIndex(root, columns.getColumnId(i), baseTableToken, baseTableMetadata),
+                                positions.getQuick(i),
+                                columnModel,
+                                columnName,
+                                baseTableMetadata,
+                                passthroughColumnNames
+                        );
+                    }
                 }
             }
         }
@@ -520,7 +615,22 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                     .put("materialized view query is required to have designated timestamp");
         }
         createTableOperation.validateAndUpdateMetadataFromSelect(selectMetadata, scanDirection);
-        updateMatViewTablePartitionBy(createTableOperation.getTimestampType());
+        if (passthrough) {
+            // Refresh uses base-table intervals as output replacement ranges, so the designated
+            // timestamp must pass through unchanged, including through aliases and nested selects.
+            final String timestampName = createTableOperation.getTimestampColumnName() != null
+                    ? createTableOperation.getTimestampColumnName()
+                    : selectMetadata.getColumnName(selectMetadata.getTimestampIndex());
+            if (!passthroughTimestampColumnNames.contains(timestampName)) {
+                final int timestampPosition = createTableOperation.getTimestampColumnName() != null
+                        ? createTableOperation.getTimestampColumnNamePosition()
+                        : selectTextPosition + createColumnModelMap.get(timestampName).getColumnNamePos();
+                throw SqlException.$(timestampPosition,
+                        "passthrough materialized view timestamp must reference the base table designated timestamp without transformation");
+            }
+            setPassthroughChunkInterval();
+        }
+        updateMatViewTablePartitionBy(createTableOperation.getTimestampType(), baseTableMetadata.getPartitionBy());
         this.baseTableTimestampType = baseTableMetadata.getTimestampType();
     }
 
@@ -919,6 +1029,23 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         }
     }
 
+    /**
+     * The base table column that root column {@code columnId} copies, without a transformation or cast; -1 when it
+     * copies none.
+     */
+    private int baseColumnIndex(
+            @NotNull LogicalPlan root,
+            int columnId,
+            @NotNull TableToken baseTableToken,
+            @NotNull TableMetadata baseTableMetadata
+    ) {
+        final ScanPlan scan = columnScan(root, columnId, null);
+        if (scan == null || !scan.getTableToken().equals(baseTableToken)) {
+            return -1;
+        }
+        return baseTableMetadata.getColumnIndexQuiet(scan.getOutput().getColumnName(scan.getOutput().getColumnIndexById(scanColumnId)));
+    }
+
     private void copyBaseTableSymbolColumnCapacity(
             @NotNull LogicalPlan root,
             int columnId,
@@ -926,11 +1053,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             @NotNull TableToken baseTableToken,
             @NotNull TableMetadata baseTableMetadata
     ) {
-        final ScanPlan scan = columnScan(root, columnId, null);
-        if (scan == null || !scan.getTableToken().equals(baseTableToken)) {
-            return;
-        }
-        final int columnIndex = baseTableMetadata.getColumnIndexQuiet(scan.getOutput().getColumnName(scan.getOutput().getColumnIndexById(scanColumnId)));
+        final int columnIndex = baseColumnIndex(root, columnId, baseTableToken, baseTableMetadata);
         if (columnIndex > -1) {
             final TableColumnMetadata baseTableColumnMetadata = baseTableMetadata.getColumnMetadata(columnIndex);
             if (baseTableColumnMetadata.getColumnType() == ColumnType.SYMBOL) {
@@ -988,6 +1111,96 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         } finally {
             nestedSampleBys.clear();
         }
+    }
+
+    /**
+     * Inherits the base table's SYMBOL index (type, value block capacity, and available covering columns) into
+     * {@code columnModel} when the output column copies an indexed SYMBOL column of the base table. An index the
+     * CREATE statement declared explicitly is kept as-is.
+     */
+    private static void inheritBaseSymbolColumnIndex(
+            int columnIndex,
+            int position,
+            @NotNull CreateTableColumnModel columnModel,
+            @NotNull CharSequence outputColumnName,
+            @NotNull TableMetadata baseTableMetadata,
+            @NotNull ObjList<String> passthroughColumnNames
+    ) {
+        if (columnIndex < 0
+                || columnModel.isIndexed()
+                || !ColumnType.isSymbol(baseTableMetadata.getColumnType(columnIndex))
+                || !baseTableMetadata.isColumnIndexed(columnIndex)) {
+            return;
+        }
+        // One index per indexed base column, on the output column that passthroughColumnNames holds for it.
+        // A view may project the same base column more than once (SELECT k, k AS k2 ...), and the index
+        // belongs to the first of those projections. A covering list resolves its column names through the
+        // same map, so both halves of an inherited index describe one projection.
+        if (!Chars.equalsNc(outputColumnName, passthroughColumnNames.getQuick(columnIndex))) {
+            return;
+        }
+
+        final TableColumnMetadata baseColumnMetadata = baseTableMetadata.getColumnMetadata(columnIndex);
+        columnModel.setIndexType(
+                baseColumnMetadata.getIndexType(),
+                position,
+                baseTableMetadata.getIndexValueBlockCapacity(columnIndex)
+        );
+        final IntList coveringColumnWriterIndices = baseColumnMetadata.getCoveringColumnIndices();
+        if (coveringColumnWriterIndices != null) {
+            for (int i = 0, n = coveringColumnWriterIndices.size(); i < n; i++) {
+                final int coveringColumnIndex = resolveDenseColumnIndex(
+                        baseTableMetadata,
+                        coveringColumnWriterIndices.getQuick(i)
+                );
+                if (coveringColumnIndex > -1) {
+                    final String coveringOutputColumnName = passthroughColumnNames.getQuick(coveringColumnIndex);
+                    if (coveringOutputColumnName != null) {
+                        columnModel.addCoveringColumnName(coveringOutputColumnName, position);
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Whether the query reads rows of the base table 1:1 or fewer: plain select levels, filters, a sort and a limit
+     * over a scan of that table, with no level that aggregates, joins, deduplicates, picks the latest rows, or sets
+     * operands together. A view of anything else holds rows that are not base rows, so EXPIRE ROWS physical cleanup
+     * must never run on it. The caller has already established there is no SAMPLE BY or timestamp_floor().
+     */
+    private static boolean isPassthrough(LogicalPlan root, TableToken baseTableToken) {
+        LogicalPlan plan = root;
+        while (true) {
+            switch (plan) {
+                case ScanPlan scan -> {
+                    return scan.getTableToken().equals(baseTableToken);
+                }
+                case ProjectPlan _, FilterPlan _, SortPlan _, LimitPlan _ -> plan = plan.inputAt(0);
+                default -> {
+                    return false;
+                }
+            }
+        }
+    }
+
+    private static int resolveDenseColumnIndex(TableMetadata metadata, int writerIndex) {
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            if (metadata.getWriterIndex(i) == writerIndex) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private void setPassthroughChunkInterval() {
+        // Refresh range granularity for a passthrough view. It is not an aggregation bucket: incremental
+        // refresh rounds the timestamp ranges the new base transactions touched out to this granularity
+        // and replaces each rounded range in the view. At one microsecond the rounded range matches the
+        // touched range to the microsecond, so a refresh rewrites only the view rows inside it. The
+        // rows-per-query estimate sizes each query step, independently of this granularity.
+        samplingInterval = 1;
+        samplingIntervalUnit = 'U';
     }
 
     /**
@@ -1081,10 +1294,21 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         return null;
     }
 
-    private void updateMatViewTablePartitionBy(int timestampType) throws SqlException {
+    private void updateMatViewTablePartitionBy(int timestampType, int basePartitionBy) throws SqlException {
         // Check if PARTITION BY wasn't specified in SQL, so that we need
         // to assign it based on the sampling interval.
         if (createTableOperation.getPartitionBy() == PartitionBy.NONE) {
+            if (passthrough) {
+                // Mirror the base table's partitioning so refresh REPLACE_RANGE and expiry DROP/REPLACE
+                // align to base partitions and per-partition row counts match the base.
+                final int viewPartitionBy = basePartitionBy != PartitionBy.NONE ? basePartitionBy : PartitionBy.DAY;
+                createTableOperation.setPartitionBy(viewPartitionBy);
+                final int ttlHoursOrMonths = createTableOperation.getTtlHoursOrMonths();
+                if (ttlHoursOrMonths != 0) {
+                    PartitionBy.validateTtlGranularity(viewPartitionBy, ttlHoursOrMonths, createTableOperation.getTtlPosition());
+                }
+                return;
+            }
             TimestampDriver timestampDriver = ColumnType.getTimestampDriver(timestampType);
             final TimestampSampler timestampSampler = TimestampSamplerFactory.getInstance(
                     timestampDriver,

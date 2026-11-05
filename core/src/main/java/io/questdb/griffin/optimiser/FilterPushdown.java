@@ -63,6 +63,7 @@ import io.questdb.griffin.plan.logical.TreeWalk;
 import io.questdb.griffin.plan.logical.TypeExpression;
 import io.questdb.griffin.plan.logical.UnaryPlan;
 import io.questdb.griffin.plan.logical.WindowPlan;
+import io.questdb.griffin.plan.logical.WindowSpec;
 import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -330,6 +331,20 @@ final class FilterPushdown implements OptimiserPass {
             case FilterPlan _, ProjectPlan _, SortPlan _ -> isSetBranchSelectionBarrier(plan.inputAt(0));
             default -> false;
         };
+    }
+
+    private static boolean isPartitionKeyOfEverySpec(ObjList<WindowSpec> specs, int columnId) {
+        for (int i = 1, n = specs.size(); i < n; i++) {
+            final ObjList<BoundExpression> keys = specs.getQuick(i).getPartitionBy();
+            boolean isKey = false;
+            for (int k = 0, m = keys.size(); k < m && !isKey; k++) {
+                isKey = keys.getQuick(k) instanceof ColumnExpression column && column.isDirectReference() && column.getColumnId() == columnId;
+            }
+            if (!isKey) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static boolean isSingleKeySelector(BoundExpression selector) {
@@ -865,6 +880,28 @@ final class FilterPushdown implements OptimiserPass {
         return columnMap.size() > 0;
     }
 
+    /**
+     * Maps the columns that every function of the window partitions by, unless one of them marks the rows a SUBSAMPLE
+     * keeps, which it decides over rows beyond a partition.
+     */
+    private boolean mapPartitionKeys(WindowPlan window) {
+        columnMap.clear();
+        final ObjList<WindowSpec> specs = window.getSpecs();
+        for (int i = 0, n = specs.size(); i < n; i++) {
+            if (specs.getQuick(i).isSubsampleKeepFlag()) {
+                return false;
+            }
+        }
+        final ObjList<BoundExpression> keys = specs.getQuick(0).getPartitionBy();
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            if (keys.getQuick(i) instanceof ColumnExpression column && column.isDirectReference()
+                    && isPartitionKeyOfEverySpec(specs, column.getColumnId())) {
+                columnMap.put(column.getColumnId(), column.getColumnId());
+            }
+        }
+        return columnMap.size() > 0;
+    }
+
     private LogicalPlan pushDownFilter(FilterPlan filter) throws SqlException {
         LogicalPlan result = filter;
         UnaryPlan parent = null;
@@ -981,6 +1018,21 @@ final class FilterPushdown implements OptimiserPass {
                 final FilterPlan pushed = filters.next().of(fillInput, movable, movable.getPosition());
                 input.replaceInput(0, pushDownFilter(pushed));
                 return spliceResidual(result, parent, filter, input, residual);
+            } else if (input instanceof WindowPlan window) {
+                // A conjunct over keys that every function of the window partitions by drops whole partitions, so what
+                // the window computes over the rows it keeps stays the same.
+                if (!mapPartitionKeys(window) || isUnstable(filter.getPredicate())) {
+                    return result;
+                }
+                context.getRewriter().splitConjuncts(filter.getPredicate(), keyConjuncts, conjunctSplit);
+                final BoundExpression movable = conjunctSplit.getMatched();
+                if (movable == null) {
+                    return result;
+                }
+                final BoundExpression residual = conjunctSplit.getRemainder();
+                final FilterPlan pushed = filters.next().of(window.getChild(), movable, movable.getPosition());
+                window.replaceInput(0, pushDownScopedFilter(pushed));
+                return spliceResidual(result, parent, filter, window, residual);
             } else if (input instanceof LatestByPlan latest) {
                 final BoundExpression selector = isOrderCrossed ? null : latestKeySelector(latest, filter, result);
                 if (selector == null) {

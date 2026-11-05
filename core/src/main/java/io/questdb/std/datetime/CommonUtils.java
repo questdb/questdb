@@ -300,6 +300,98 @@ public class CommonUtils {
     }
 
     /**
+     * Find the end of the interval token in the input string. The interval token is expected to be an optional sign,
+     * followed by a number, followed by a single letter qualifier. Supports negative and zero values.
+     *
+     * @param cs       input string
+     * @param position position in SQL text to report error against
+     * @return index of the first character after the numeric part (the unit qualifier position)
+     * @throws SqlException when input string is not a valid interval token
+     */
+    public static int findIntervalEndIndex(CharSequence cs, int position) throws SqlException {
+        if (cs == null) {
+            throw SqlException.$(position, "missing interval");
+        }
+
+        final int len = cs.length();
+        if (len == 0) {
+            throw SqlException.$(position, "expected interval qualifier");
+        }
+
+        // Handle optional leading sign
+        int start = 0;
+        if (cs.charAt(0) == '-' || cs.charAt(0) == '+') {
+            start = 1;
+            if (len == 1) {
+                throw SqlException.$(position, "expected interval qualifier");
+            }
+        }
+
+        final int k = digitRunEnd(cs, start, '9');
+        if (k == start) {
+            throw SqlException.$(position, "expected numeric value");
+        }
+
+        if (k == len) {
+            // Allow unitless zero ("0", "+0", "-0") as a special case.
+            // Return -1 as a sentinel value; the caller must handle this.
+            if (len - start == 1 && cs.charAt(start) == '0') {
+                return -1;
+            }
+            throw SqlException.$(position + len, "expected interval qualifier");
+        }
+
+        // expect 1 letter qualifier
+        if (k + 1 < len) {
+            throw SqlException.$(position + k, "expected single letter qualifier");
+        }
+
+        return k;
+    }
+
+    /**
+     * Find the end of the interval token in the input string. The interval token is expected to be a number followed by
+     * a single letter qualifier. The number may separate its digits with underscores, which
+     * {@link #parsePositiveInterval} validates as {@link Numbers#parseInt} does.
+     *
+     * @param cs       input string
+     * @param position position in SQL text to report error against
+     * @param kind     kind of an interval we are parsing, used for error reporting
+     * @return index of the first character after the interval token
+     * @throws SqlException when input string is not a valid interval token
+     */
+    public static int findPositiveIntervalEndIndex(CharSequence cs, int position, CharSequence kind) throws SqlException {
+        if (cs == null) {
+            throw SqlException.$(position, "missing interval");
+        }
+
+        final int len = cs.length();
+        if (len == 0) {
+            throw SqlException.$(position, "expected interval qualifier");
+        }
+
+        final int k = digitRunEnd(cs, 0, '9');
+        if (k == 0 && cs.charAt(0) == '-') {
+            throw SqlException.$(position, "negative interval is not allowed");
+        }
+
+        if (k > 0 && digitRunEnd(cs, 0, '0') == k) {
+            throw SqlException.$(position, "zero is not a valid ").put(kind).put(" value");
+        }
+
+        if (k == len) {
+            throw SqlException.$(position + len, "expected interval qualifier");
+        }
+
+        // expect 1 letter qualifier
+        if (k + 1 < len) {
+            throw SqlException.$(position + k, "expected single letter qualifier");
+        }
+
+        return k;
+    }
+
+    /**
      * Days in a given month. This method expects you to know if month is in leap year.
      *
      * @param m    month from 1 to 12
@@ -423,6 +515,66 @@ public class CommonUtils {
         asm.invokeStatic(parseIntIndex);
     }
 
+    /**
+     * Parse interval value from string. Expected to be called after {@link #findIntervalEndIndex(CharSequence, int)}
+     * has been called and returned a valid index. Supports negative and zero values.
+     *
+     * @param cs          token to parse interval from
+     * @param intervalEnd end of interval token, exclusive
+     * @param position    position in SQL text to report error against
+     * @return parsed interval value
+     * @throws SqlException when input string is invalid
+     */
+    public static long parseInterval(CharSequence cs, int intervalEnd, int position) throws SqlException {
+        try {
+            // Skip leading '+' sign as Numbers.parseLong doesn't support it
+            int start = 0;
+            if (intervalEnd > 0 && cs.charAt(0) == '+') {
+                start = 1;
+            }
+            return Numbers.parseLong(cs, start, intervalEnd);
+        } catch (NumericException e) {
+            throw SqlException.$(position, "invalid interval value [value=").put(cs).put(']');
+        }
+    }
+
+    /**
+     * Parse positive interval value from string. Expected to be called after {@link #findPositiveIntervalEndIndex(CharSequence, int, CharSequence)}
+     * has been called and returned a valid index. Behavior is undefined if called with invalid index.
+     *
+     * @param cs          token to parse interval from
+     * @param intervalEnd end of interval token, exclusive
+     * @param position    position in SQL text to report error against
+     * @param kind        kind of an interval we are parsing, used for error reporting
+     * @param maxValue    maximum value for the interval, used for error reporting
+     * @param unit        unit qualifier, used for error reporting
+     * @return parsed interval value
+     * @throws SqlException when input string is invalid
+     */
+    public static long parsePositiveInterval(CharSequence cs, int intervalEnd, int position, String kind, int maxValue, char unit) throws SqlException {
+        if (intervalEnd == 0) {
+            // 'SAMPLE BY m' is the same as 'SAMPLE BY 1m' etc.
+            return 1;
+        }
+        try {
+            int n = Numbers.parseInt(cs, 0, intervalEnd);
+            if (n == 0) {
+                throw SqlException.$(position, "zero is not a valid ").put(kind).put(" value");
+            }
+            if (maxValue != Numbers.INT_NULL && n > maxValue) {
+                throw SqlException.$(position, kind).put(" value too high for given units [value=").put(cs).put(", maximum=").put(maxValue).put(unit).put(']');
+            }
+            return n;
+        } catch (NumericException e) {
+            SqlException ex = SqlException.$(position, "invalid ").put(kind).put(" value [value=").put(cs);
+            if (maxValue != Numbers.INT_NULL) {
+                ex.put(", maximum=").put(maxValue).put(unit);
+            }
+            ex.put(']');
+            throw ex;
+        }
+    }
+
     public static int parseSign(char c) throws NumericException {
         return switch (c) {
             case '+' -> -1;
@@ -500,6 +652,21 @@ public class CommonUtils {
         }
         final char next = sequence.charAt(p + 1);
         return next >= '0' && next <= '9';
+    }
+
+    /**
+     * The end, exclusive, of the run of digits from '0' to {@code maxDigit} that starts at {@code lo}, where an
+     * underscore after a digit of the run continues it; {@code lo} when no such digit is at {@code lo}.
+     */
+    private static int digitRunEnd(CharSequence cs, int lo, char maxDigit) {
+        final int len = cs.length();
+        for (int i = lo; i < len; i++) {
+            final char c = cs.charAt(i);
+            if ((c < '0' || c > maxDigit) && (c != '_' || i == lo)) {
+                return i;
+            }
+        }
+        return len;
     }
 
     @FunctionalInterface

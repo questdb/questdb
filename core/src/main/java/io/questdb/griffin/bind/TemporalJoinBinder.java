@@ -29,7 +29,6 @@ import io.questdb.cairo.TimestampDriver;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
-import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.griffin.engine.window.WindowContextImpl;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.HorizonJoinContext;
@@ -61,6 +60,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 
 import static io.questdb.griffin.bind.BindContext.*;
+import io.questdb.std.datetime.CommonUtils;
 
 final class TemporalJoinBinder {
     private final AggregateBinder aggregateBinder;
@@ -183,12 +183,12 @@ final class TemporalJoinBinder {
     }
 
     private static long horizonTimeValue(CharSequence token, int position, TimestampDriver timestampDriver) throws SqlException {
-        final int unitIndex = TimestampSamplerFactory.findIntervalEndIndex(token, position);
+        final int unitIndex = CommonUtils.findIntervalEndIndex(token, position);
         if (unitIndex == -1) {
             return 0;
         }
         final char unit = token.charAt(unitIndex);
-        final long value = TimestampSamplerFactory.parseInterval(token, unitIndex, position);
+        final long value = CommonUtils.parseInterval(token, unitIndex, position);
         try {
             return switch (unit) {
                 case 'n' -> timestampDriver.fromNanos(value);
@@ -861,6 +861,9 @@ final class TemporalJoinBinder {
             final CharSequence slaveAlias = sourceAlias(occurrence);
             final LogicalPlan slave = binder.bindSource(occurrence, executionContext);
             final HorizonJoinSlave step = ctx.planNodes.horizonJoinSlaves.next().of(slave, slaveAlias, occurrence.getJoinKeywordPosition());
+            if (occurrence.getExpiryViewNameExpr() != null) {
+                step.setExpiryView(occurrence.getExpiryViewNameExpr().token, occurrence.getExpiryViewNameExpr().position, occurrence.isExpiryStructuralPolicy());
+            }
             plan.getSlaves().add(step);
             final OutputSchema slaveOutput = slave.getOutput();
             JoinBinder.validateTimeSeriesTimestamps(step.getPosition(), masterOutput.getColumnId(masterTimestampIndex), slave);
@@ -958,6 +961,9 @@ final class TemporalJoinBinder {
                     occurrence.getWindowJoinContext().isIncludePrevailing(), occurrence.getJoinKeywordPosition());
             step.setTableSource(occurrence.getNestedModel() == null && occurrence.getTableNameExpr() != null
                     && occurrence.getTableNameExpr().type == ExpressionNode.LITERAL);
+            if (occurrence.getExpiryViewNameExpr() != null) {
+                step.setExpiryView(occurrence.getExpiryViewNameExpr().token, occurrence.getExpiryViewNameExpr().position);
+            }
             plan.getSteps().add(step);
         }
         final ObjList<PivotForColumn> forColumns = model.getPivotForColumns();
@@ -976,7 +982,7 @@ final class TemporalJoinBinder {
             }
         }
         plan.setEmpty(isEmpty);
-        ctx.promoteNoArgFunctions(model, master.getOutput(), masterAlias);
+        ctx.promoteNoArgFunctions(model, master.getOutput(), masterAlias, executionContext);
         final OutputSchema output = plan.getOutput();
         final OutputSchema masterOutput = master.getOutput();
         output.addColumnsFrom(masterOutput, masterAlias);

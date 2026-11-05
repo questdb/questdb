@@ -33,7 +33,6 @@ import io.questdb.griffin.OperatorExpression;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlHints;
-import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.plan.logical.BoundExpression;
@@ -59,6 +58,7 @@ import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 
 import static io.questdb.griffin.bind.BindContext.*;
+import io.questdb.std.datetime.CommonUtils;
 
 final class JoinBinder implements Mutable {
     private final SqlBinder binder;
@@ -341,12 +341,12 @@ final class JoinBinder implements Mutable {
     }
 
     private static long tolerance(CharSequence token, int position, int leftTimestampType, int rightTimestampType) throws SqlException {
-        final int k = TimestampSamplerFactory.findPositiveIntervalEndIndex(token, position, "tolerance");
+        final int k = CommonUtils.findPositiveIntervalEndIndex(token, position, "tolerance");
         assert token.length() > k;
         final char unit = token.charAt(k);
         final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(ColumnType.getHigherPrecisionTimestampType(leftTimestampType, rightTimestampType));
         if (unit == 'n') {
-            return timestampDriver.fromNanos(TimestampSamplerFactory.parsePositiveInterval(token, k, position, "tolerance", Integer.MAX_VALUE, unit));
+            return timestampDriver.fromNanos(CommonUtils.parsePositiveInterval(token, k, position, "tolerance", Integer.MAX_VALUE, unit));
         }
         final long multiplier = switch (unit) {
             case 'U' -> timestampDriver.fromMicros(1);
@@ -359,7 +359,7 @@ final class JoinBinder implements Mutable {
             default -> throw SqlException.$(position, "unsupported TOLERANCE unit [unit=").put(unit).put(']');
         };
         final int maxValue = (int) Math.min(Long.MAX_VALUE / multiplier, Integer.MAX_VALUE);
-        return TimestampSamplerFactory.parsePositiveInterval(token, k, position, "tolerance", maxValue, unit) * multiplier;
+        return CommonUtils.parsePositiveInterval(token, k, position, "tolerance", maxValue, unit) * multiplier;
     }
 
     /**
