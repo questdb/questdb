@@ -25,7 +25,9 @@
 package io.questdb.test.cutlass.qwp.e2e;
 
 import io.questdb.client.Sender;
+import io.questdb.client.cutlass.line.LineSenderException;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketSender;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -39,7 +41,8 @@ import java.time.temporal.ChronoUnit;
  * give every row a new symbol, so each frame carries a symbol-dictionary
  * delta and a lost, duplicated or reordered frame shows up as a wrong or NULL
  * symbol, not only as a wrong row count. The auto-flush tests cover the
- * {@code ws::} auto-flush settings that ship with the same client change.
+ * {@code ws::} auto-flush settings that ship with the same client change:
+ * the time-based trigger can be turned off, auto-flush as a whole cannot.
  */
 public class QwpSenderBatchedSendE2ETest extends AbstractQwpWebSocketTest {
     private static final long BASE_TS_MICROS = 1_700_000_000_000_000L;
@@ -70,15 +73,26 @@ public class QwpSenderBatchedSendE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
-    public void testAutoFlushOffPublishesOnlyOnFlushAndClose() throws Exception {
+    public void testAutoFlushOffRejected() {
+        // Only the time-based trigger can be turned off on ws::; disabling
+        // auto-flush entirely is rejected before the sender connects.
+        try (Sender ignored = Sender.fromConfig("ws::addr=localhost:1;auto_flush=off;")) {
+            Assert.fail("auto_flush=off must be rejected on ws::");
+        } catch (LineSenderException e) {
+            TestUtils.assertContains(e.getMessage(), "disabling auto-flush is not supported for WebSocket protocol");
+        }
+    }
+
+    @Test
+    public void testAutoFlushRowsAndIntervalOffPublishOnlyOnFlushAndClose() throws Exception {
         runInContext((port) -> {
-            try (QwpWebSocketSender sender = connect(port, "auto_flush=off;")) {
+            try (QwpWebSocketSender sender = connect(port, "auto_flush_rows=off;auto_flush_interval=off;")) {
                 for (int i = 0; i < 100; i++) {
                     sender.table("auto_flush_off")
                             .longColumn("id", i)
                             .at(BASE_TS_MICROS + i, ChronoUnit.MICROS);
                 }
-                // Outlast the 100 ms default interval: with auto-flush on, the
+                // Outlast the 100 ms default interval: with the interval on, the
                 // next row would publish the batch on its own.
                 Thread.sleep(250);
                 sender.table("auto_flush_off")
