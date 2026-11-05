@@ -551,6 +551,34 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         Misc.free(compileViewContext);
     }
 
+    /**
+     * {@inheritDoc}
+     * <p>
+     * Parses the SQL as the view's refresh does, so that the SQL may read no view with a row-expiry policy, and
+     * walks the parsed query, see {@link MatViewBareSelectNames}.
+     */
+    @Override
+    public void collectMatViewBareSelectNames(
+            MatViewDefinition viewDefinition,
+            SqlExecutionContext executionContext,
+            LowerCaseCharSequenceHashSet sink
+    ) throws SqlException {
+        final ExpiryReadPolicy previousExpiryReadPolicy = executionContext.getExpiryReadPolicy();
+        final CharSequence previousMaterializingViewName = executionContext.getExpiryMaterializingViewName();
+        executionContext.setExpiryReadPolicy(ExpiryReadPolicy.REJECT, viewDefinition.getMatViewToken().getTableName());
+        try {
+            clear();
+            lexer.of(viewDefinition.getMatViewSql());
+            final ExecutionModel model = parser.parse(lexer, executionContext, this);
+            if (model.getModelType() == ExecutionModel.QUERY) {
+                MatViewBareSelectNames.collect((IQueryModel) model, sink);
+            }
+        } finally {
+            executionContext.setExpiryReadPolicy(previousExpiryReadPolicy, previousMaterializingViewName);
+            clear();
+        }
+    }
+
     @Override
     @NotNull
     public CompiledQuery compile(@NotNull CharSequence sqlText, @NotNull SqlExecutionContext executionContext) throws SqlException {

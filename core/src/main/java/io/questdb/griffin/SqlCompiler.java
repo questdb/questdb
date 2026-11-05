@@ -64,6 +64,23 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
             SqlExecutionContext executionContext
     );
 
+    /**
+     * Adds the bare select-list names of a materialized view's own SQL text to the sink: the unqualified column
+     * references in the select lists of the text, which the view's refresh reads as calls to the zero-argument
+     * functions of the same names when no column of that name exists. The models of a regular view that the SQL
+     * reads are not part of the text, and the method skips them. It only parses the SQL.
+     *
+     * @param viewDefinition   the definition of the view
+     * @param executionContext the context to parse the SQL with, which the method leaves as it found it
+     * @param sink             receives the names
+     * @throws SqlException when the SQL does not parse
+     */
+    void collectMatViewBareSelectNames(
+            MatViewDefinition viewDefinition,
+            SqlExecutionContext executionContext,
+            LowerCaseCharSequenceHashSet sink
+    ) throws SqlException;
+
     CompiledQuery compile(CharSequence sqlText, SqlExecutionContext ctx) throws SqlException;
 
     void compileBatch(CharSequence batchText, SqlExecutionContext sqlExecutionContext, BatchCallback batchCallback) throws Exception;

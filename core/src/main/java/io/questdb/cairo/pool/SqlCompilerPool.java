@@ -144,6 +144,15 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         }
 
         @Override
+        public void collectMatViewBareSelectNames(
+                MatViewDefinition viewDefinition,
+                SqlExecutionContext executionContext,
+                LowerCaseCharSequenceHashSet sink
+        ) throws SqlException {
+            delegate.collectMatViewBareSelectNames(viewDefinition, executionContext, sink);
+        }
+
+        @Override
         public void close() {
             // revert any debug flags
             setFullFatJoins(false);

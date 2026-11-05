@@ -307,6 +307,21 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         activeExtraStrInfo = directExtraStrInfo;
     }
 
+    @Override
+    public CharSequence getChangedColumnName(int index) {
+        assert index > -1 && index < getChangedColumnNameCount();
+        // ADD and DROP COLUMN store the column names, RENAME COLUMN the old and the new name of each column
+        return activeExtraStrInfo.getStrA(index);
+    }
+
+    @Override
+    public int getChangedColumnNameCount() {
+        return switch (command) {
+            case ADD_COLUMN, DROP_COLUMN, RENAME_COLUMN -> activeExtraStrInfo.size();
+            default -> 0;
+        };
+    }
+
     public short getCommand() {
         return command;
     }
@@ -353,10 +368,11 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         }
         // Table rename is not in the list since it's handled by the engine directly. That's because the invalidation
         // looks up dependent views by table name which has already changed at this point, not directory name.
+        // DROP, RENAME and CHANGE COLUMN TYPE invalidate no mat view: the view's next refresh that recomputes rows
+        // compiles its SQL, which fails, and so invalidates the view, only when the SQL reads the changed column.
+        // The WAL apply job guards the one case that the compile cannot catch, a bare name that a column change
+        // switches between a column and a call to a zero-argument function, see getChangedColumnNameCount().
         return switch (command) {
-            case DROP_COLUMN -> "drop column operation";
-            case RENAME_COLUMN -> "rename column operation";
-            case CHANGE_COLUMN_TYPE -> "change column type operation";
             case DROP_PARTITION -> "drop partition operation";
             case DETACH_PARTITION -> "detach partition operation";
             case ATTACH_PARTITION -> "attach partition operation";

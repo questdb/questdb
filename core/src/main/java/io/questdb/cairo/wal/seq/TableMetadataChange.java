@@ -32,6 +32,26 @@ public interface TableMetadataChange {
     long apply(MetadataService svc, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException;
 
     /**
+     * Returns a column name that the change adds, removes or renames, see {@link #getChangedColumnNameCount()}. The
+     * returned sequence may be a flyweight that the next call reuses.
+     *
+     * @param index from 0 to {@link #getChangedColumnNameCount()} - 1
+     */
+    default CharSequence getChangedColumnName(int index) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Returns how many column names the change adds, removes or renames: the names an ADD COLUMN adds and a DROP
+     * COLUMN removes, and both the old and the new name of a RENAME COLUMN. A base column change under such a name
+     * can switch a bare select-list name of a dependent materialized view between a column and a call to a
+     * zero-argument function, which the WAL apply job guards against before it applies the change.
+     */
+    default int getChangedColumnNameCount() {
+        return 0;
+    }
+
+    /**
      * Returns a non-null reason when the operation on the base table may remove or retype a column that a dependent
      * live view reads. The WAL apply job then invalidates, with this reason, each live view on the base that reads
      * a column missing from the base's metadata after the change. The WAL apply job reads this reason apart from

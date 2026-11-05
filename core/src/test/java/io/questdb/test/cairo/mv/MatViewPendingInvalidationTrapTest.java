@@ -628,23 +628,32 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             final MatViewState state = fixture.state();
 
             // Pins the post-release handoff's isInvalid early-return: a deferral lands mid-hold AND the
-            // holding refresh itself fails. The seam marks the view pending, then drops a base column the view
-            // SQL needs, so insertAsSelect's recompile fails and refreshFailState marks the view invalid with
-            // the compile error. finalize then sees the view already invalid and must return early: the
-            // counting store must observe zero invalidation wakes, proving no re-enqueued INVALIDATE
-            // overwrote the fail reason, and the marker must survive untouched.
+            // holding refresh itself fails. The seam drops a base column the view SQL needs, so
+            // insertAsSelect's recompile fails and refreshFailState marks the view invalid with the compile
+            // error. The marker lands after that failure and before the release: a refresh that finds the
+            // marker once it has fixed its base reader ends without writing, and would not fail. finalize
+            // then sees the view already invalid and must return early: the counting store must observe zero
+            // invalidation wakes, proving no re-enqueued INVALIDATE overwrote the fail reason, and the marker
+            // must survive untouched.
             final CountingStateStore countingStore = new CountingStateStore(engine.getMatViewStateStore(), true, true, 0, 0);
             final AtomicBoolean hasFired = new AtomicBoolean();
+            final AtomicBoolean hasMarked = new AtomicBoolean();
+            final AtomicBoolean isInvalidAtMark = new AtomicBoolean();
             try (MatViewRefreshJob job = new MatViewRefreshJob(engine, 1, countingStore)) {
                 job.setOnHoldingLockForTesting(() -> {
                     if (hasFired.compareAndSet(false, true)) {
-                        state.markAsPendingInvalidation("update operation");
                         try {
                             execute("alter table base_price drop column price");
                         } catch (Exception e) {
                             throw new RuntimeException(e);
                         }
                         drainWalQueue();
+                        // fires at the release of this refresh's hold, after the refresh failed
+                        state.setOnBeforeUnlockForTesting(() -> {
+                            isInvalidAtMark.set(state.isInvalid());
+                            state.markAsPendingInvalidation("update operation");
+                            hasMarked.set(true);
+                        });
                     }
                 });
 
@@ -655,6 +664,8 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             }
 
             Assert.assertTrue("the seam must have fired during a refresh", hasFired.get());
+            Assert.assertTrue("the marker must land before the release", hasMarked.get());
+            Assert.assertTrue("the marker must land after the refresh failed", isInvalidAtMark.get());
             Assert.assertTrue("the failed refresh must mark the view invalid", state.isInvalid());
             Assert.assertTrue("finalize must not clear the marker on an already-invalid view", state.isPendingInvalidation());
             Assert.assertEquals("update operation", state.getPendingInvalidationReason());
@@ -1049,22 +1060,31 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
 
             final MatViewState state = fixture.state();
 
-            // Build the zombie: a provenance-free reason marker retained on an invalid view. The seam
-            // publishes the marker mid-hold (as a losing apply-time INVALIDATE would), then breaks the
-            // view SQL so the holding refresh fails into invalid state. finalize's isInvalid gate skips
-            // the wake without clearing the facet, and invalidateView's entry gate never consumes a
-            // marker on an invalid view -- only a successful REFRESH FULL can now consume it.
+            // Build the zombie: a provenance-free reason marker retained on an invalid view. The seam breaks
+            // the view SQL so the holding refresh fails into invalid state, and the marker lands mid-hold
+            // after that failure (as a losing apply-time INVALIDATE would), before the release: a refresh
+            // that finds the marker once it has fixed its base reader ends without writing, and would not
+            // fail. finalize's isInvalid gate skips the wake without clearing the facet, and invalidateView's
+            // entry gate never consumes a marker on an invalid view -- only a successful REFRESH FULL can now
+            // consume it.
             final AtomicBoolean hasFired = new AtomicBoolean();
+            final AtomicBoolean hasMarked = new AtomicBoolean();
+            final AtomicBoolean isInvalidAtMark = new AtomicBoolean();
             try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
                 job.setOnHoldingLockForTesting(() -> {
                     if (hasFired.compareAndSet(false, true)) {
-                        state.markAsPendingInvalidation("update operation");
                         try {
                             execute("alter table base_price drop column price");
                         } catch (Exception e) {
                             throw new RuntimeException(e);
                         }
                         drainWalQueue();
+                        // fires at the release of this refresh's hold, after the refresh failed
+                        state.setOnBeforeUnlockForTesting(() -> {
+                            isInvalidAtMark.set(state.isInvalid());
+                            state.markAsPendingInvalidation("update operation");
+                            hasMarked.set(true);
+                        });
                     }
                 });
                 execute("insert into base_price (sym, price, ts) values('gbpusd', 1.500, '2024-09-10T14:00')");
@@ -1073,6 +1093,8 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                 drainWalQueue();
             }
             Assert.assertTrue("the seam must have fired during a refresh", hasFired.get());
+            Assert.assertTrue("the marker must land before the release", hasMarked.get());
+            Assert.assertTrue("the marker must land after the refresh failed", isInvalidAtMark.get());
             Assert.assertTrue("the zombie setup needs an invalid view", state.isInvalid());
             Assert.assertTrue("the zombie setup needs a retained reason marker", state.isPendingInvalidation());
 

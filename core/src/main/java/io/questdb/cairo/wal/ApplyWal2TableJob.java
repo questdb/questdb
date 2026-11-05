@@ -42,6 +42,7 @@ import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.mv.MatViewRefreshTask;
 import io.questdb.cairo.mv.MatViewBackfillValidator;
+import io.questdb.cairo.mv.MatViewBareNameGuard;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateReader;
@@ -100,6 +101,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private final BlockFileWriter blockFileWriter;
     private final CairoConfiguration config;
     private final CairoEngine engine;
+    private final MatViewBareNameGuard matViewBareNameGuard;
     // Reader + reusable state reader for the backfill-frontier read-modify-write of the _mv.s
     // state file (preserves the existing refresh state + invalidation reason while bumping the
     // persisted frozen-zone frontier). Lazily allocated on first backfill persist.
@@ -140,6 +142,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         config = engine.getConfiguration();
         blockFileWriter = new BlockFileWriter(config.getFilesFacade(), engine.getResolvedCommitMode());
         matViewStateBlockReader = new BlockFileReader(config);
+        matViewBareNameGuard = new MatViewBareNameGuard(engine);
     }
 
     @Override
@@ -153,6 +156,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         Misc.free(walEventReader);
         Misc.free(blockFileWriter);
         Misc.free(matViewStateBlockReader);
+        Misc.free(matViewBareNameGuard);
     }
 
     @Override
@@ -522,6 +526,11 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                     writer.setSeqTxn(seqTxn);
                                     try {
                                         final TableMetadataChange metadataChangeOp = structuralChangeCursor.next();
+                                        // A column change under the name of a zero-argument function can switch a
+                                        // dependent mat view's bare name between a column and a call. The guard
+                                        // publishes such a view's invalidation before the change applies, so no
+                                        // refresh whose base reader sees the change compiles the switched reading.
+                                        matViewBareNameGuard.beforeColumnChange(writer.getTableToken(), metadataChangeOp, seqTxn);
                                         metadataChangeOp.apply(writer, true);
                                         final String matViewInvalidationReason = metadataChangeOp.matViewInvalidationReason();
                                         if (matViewInvalidationReason != null) {

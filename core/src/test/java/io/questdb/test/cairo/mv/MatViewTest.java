@@ -2347,7 +2347,9 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testBaseTableInvalidateOnChangeColumnType() throws Exception {
-        testBaseTableInvalidateOnOperation("alter table base_price alter column amount type long;", "change column type operation");
+        // A base column change invalidates no view when it applies: the view's next refresh that recomputes rows
+        // decides, and the view does not read amount.
+        testBaseTableKeepsViewValidOnOperation("alter table base_price alter column amount type long;");
     }
 
     @Test
@@ -2399,7 +2401,9 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testBaseTableInvalidateOnDropColumn() throws Exception {
-        testBaseTableInvalidateOnOperation("alter table base_price drop column amount;", "drop column operation");
+        // A base column change invalidates no view when it applies: the view's next refresh that recomputes rows
+        // decides, and the view does not read amount.
+        testBaseTableKeepsViewValidOnOperation("alter table base_price drop column amount;");
     }
 
     @Test
@@ -2414,7 +2418,9 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testBaseTableInvalidateOnRenameColumn() throws Exception {
-        testBaseTableInvalidateOnOperation("alter table base_price rename column amount to amount2;", "rename column operation");
+        // A base column change invalidates no view when it applies: the view's next refresh that recomputes rows
+        // decides, and the view does not read amount.
+        testBaseTableKeepsViewValidOnOperation("alter table base_price rename column amount to amount2;");
     }
 
     @Test
@@ -3081,8 +3087,10 @@ public class MatViewTest extends AbstractCairoTest {
                             price_1h\tbase_price\tvalid
                             """);
 
-            execute("alter table base_price drop column amount;");
-            execute("insert into base_price (sym, price, ts) values('gbpusd', 1.330, '2024-09-15T12:01')");
+            // A base DROP COLUMN invalidates no view when it applies. The view reads price, so the refresh
+            // after the insert fails to compile its SQL and invalidates the view.
+            execute("alter table base_price drop column price;");
+            execute("insert into base_price (sym, ts) values('gbpusd', '2024-09-15T12:01')");
 
             drainQueues();
 
@@ -3091,7 +3099,7 @@ public class MatViewTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("""
                             view_name\tbase_table_name\tview_status\tinvalidation_reason
-                            price_1h\tbase_price\tinvalid\tdrop column operation
+                            price_1h\tbase_price\tinvalid\t[17]: Invalid column: price
                             """);
 
             try (Path path = new Path()) {
@@ -3729,12 +3737,14 @@ public class MatViewTest extends AbstractCairoTest {
             execute("alter table base_price drop column extra_col");
             drainQueues();
 
+            // The view does not read extra_col, so the DROP leaves it valid, and the refresh that the DROP's own
+            // commit triggers moves its refresh position past the DROP.
             assertQuery(matViewsSql)
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn
-                            price_1h\timmediate\tbase_price\t2024-01-01T01:01:01.842574Z\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tinvalid\t1\t2
+                            price_1h\timmediate\tbase_price\t2024-01-01T01:01:01.842574Z\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tvalid\t2\t2
                             """);
 
             execute("refresh materialized view price_1h full");
@@ -4116,26 +4126,35 @@ public class MatViewTest extends AbstractCairoTest {
             execute("alter table base_price drop column sym;");
             drainQueues();
 
+            // The DROP invalidates no view when it applies, and the refresh that its own commit triggers has
+            // no rows to recompute, so it moves the refresh position past the DROP without compiling the SQL.
             assertQuery(matViewsSql)
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn
-                            price_1h\timmediate\tbase_price\t2024-01-01T01:01:01.842574Z\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tinvalid\t1\t2
+                            price_1h\timmediate\tbase_price\t2024-01-01T01:01:01.842574Z\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tvalid\t2\t2
                             """);
 
             execute("refresh materialized view price_1h full;");
             drainQueues();
 
-            // The full refresh cannot recompile the stored SQL, so it must leave the view exactly as
-            // it found it: still invalid, still holding the rows it was refreshed with, and still
-            // claiming the base txn those rows came from (not -1, which would deny it ever refreshed).
+            // The full refresh cannot recompile the stored SQL, so it fails before the truncate: the view
+            // goes invalid with the compile error, still holding the rows it was refreshed with, and still
+            // claiming the base txn its last refresh moved it to (not -1, which would deny it ever refreshed).
             assertQuery(matViewsSql)
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn
-                            price_1h\timmediate\tbase_price\t2024-01-01T01:01:01.842574Z\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tinvalid\t1\t2
+                            price_1h\timmediate\tbase_price\t2024-01-01T01:01:01.842574Z\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tinvalid\t2\t2
+                            """);
+            assertQuery("select invalidation_reason from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            invalidation_reason
+                            [7]: Invalid column: sym
                             """);
             assertQuery("price_1h order by sym")
                     .expectSize()
@@ -4212,25 +4231,34 @@ public class MatViewTest extends AbstractCairoTest {
             execute("alter table base_price drop column price");
             drainQueues();
 
+            // The DROP invalidates no view when it applies, and the refresh that its own commit triggers has
+            // no rows to recompute, so it moves the refresh position past the DROP without compiling the SQL.
             assertQuery(matViewsSql)
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn
-                            price_1h\timmediate\tbase_price\t2001-01-01T01:01:01.000000Z\t2001-01-01T01:01:01.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tinvalid\t1\t2
+                            price_1h\timmediate\tbase_price\t2001-01-01T01:01:01.000000Z\t2001-01-01T01:01:01.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tvalid\t2\t2
                             """);
 
             execute("refresh materialized view price_1h full");
             drainQueues();
 
-            // The view is expected to be still invalid, and to still hold the row it was refreshed
-            // with: the stored SQL no longer compiles, so nothing may be destroyed.
+            // The view is expected to go invalid with the compile error, and to still hold the row it was
+            // refreshed with: the stored SQL no longer compiles, so nothing may be destroyed.
             assertQuery(matViewsSql)
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn
-                            price_1h\timmediate\tbase_price\t2001-01-01T01:01:01.000000Z\t2001-01-01T01:01:01.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tinvalid\t1\t2
+                            price_1h\timmediate\tbase_price\t2001-01-01T01:01:01.000000Z\t2001-01-01T01:01:01.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tinvalid\t2\t2
+                            """);
+            assertQuery("select invalidation_reason from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            invalidation_reason
+                            [17]: Invalid column: price
                             """);
             assertQuery("price_1h order by sym")
                     .expectSize()
@@ -4452,8 +4480,10 @@ public class MatViewTest extends AbstractCairoTest {
         //
         // It cannot fail, for the same reason as the sibling test above: both compiles enumerate the
         // base table's columns from the one fixed, detached reader, so neither sees the dropped
-        // column. The rebuild completes from the snapshot and the rows survive; the DDL's own
-        // invalidation then marks the view invalid, which is correct -- the view is stale, not empty.
+        // column. The rebuild completes from the snapshot and the rows survive. The DDL invalidates
+        // no view when it applies, so the rebuilt view stays valid; the next refresh that recomputes
+        // rows, after a base insert, recompiles the SQL against the changed base and invalidates the
+        // view with the compile error, keeping its rows -- the view is stale, not empty.
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
                     "create table base_price (" +
@@ -4501,14 +4531,32 @@ public class MatViewTest extends AbstractCairoTest {
                             sym\tprice\tts
                             gbpusd\t1.32\t2024-09-10T12:00:00.000000Z
                             """));
-            // ... and the concurrent DDL is reported as what it is.
+            // ... and the concurrent DDL leaves the rebuilt view valid ...
             assertQuery("select view_name, view_status, invalidation_reason from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             view_name\tview_status\tinvalidation_reason
-                            price_1h\tinvalid\tdrop column operation
+                            price_1h\tvalid\t
                             """);
+
+            // ... until a base insert makes the next refresh compile the SQL against the changed base.
+            execute("insert into base_price(sym, ts) values('gbpusd', '2024-09-10T12:05');");
+            drainQueues();
+            assertQuery("select view_name, view_status, invalidation_reason from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_status\tinvalidation_reason
+                            price_1h\tinvalid\t[17]: Invalid column: price
+                            """);
+            assertQuery("price_1h order by sym")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            gbpusd\t1.32\t2024-09-10T12:00:00.000000Z
+                            """));
         });
     }
 
@@ -14430,8 +14478,10 @@ public class MatViewTest extends AbstractCairoTest {
 
             execute("ALTER TABLE base_price ALTER COLUMN at TYPE " + type);
             drainQueues();
+            // A base column type change invalidates no view when it applies; the next refresh that recomputes
+            // rows casts the changed column to the view column.
             assertQuery("SELECT view_status FROM materialized_views")
-                    .noRandomAccess().noLeakCheck().returns("view_status\ninvalid\n");
+                    .noRandomAccess().noLeakCheck().returns("view_status\nvalid\n");
             if (isRehydrated) {
                 rehydrateTimestampMatViewForTypeChange();
             }
@@ -14908,10 +14958,24 @@ public class MatViewTest extends AbstractCairoTest {
         testBaseTableInvalidateOnOperation(null, operationSql, invalidationReason);
     }
 
+    private void testBaseTableKeepsViewValidOnOperation(String operationSql) throws Exception {
+        testBaseTableOperation(null, operationSql, "view_name\tbase_table_name\tview_status\tinvalidation_reason\n" +
+                "price_1h\tbase_price\tvalid\t\n");
+    }
+
     private void testBaseTableInvalidateOnOperation(
             @Nullable TestUtils.LeakProneCode runBeforeMatViewCreate,
             String operationSql,
             String invalidationReason
+    ) throws Exception {
+        testBaseTableOperation(runBeforeMatViewCreate, operationSql, "view_name\tbase_table_name\tview_status\tinvalidation_reason\n" +
+                "price_1h\tbase_price\tinvalid\t" + invalidationReason + "\n");
+    }
+
+    private void testBaseTableOperation(
+            @Nullable TestUtils.LeakProneCode runBeforeMatViewCreate,
+            String operationSql,
+            String expectedStatus
     ) throws Exception {
         assertMemoryLeak(() -> {
             execute(
@@ -14950,8 +15014,7 @@ public class MatViewTest extends AbstractCairoTest {
             assertQuery("select view_name, base_table_name, view_status, invalidation_reason from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
-                    .returns("view_name\tbase_table_name\tview_status\tinvalidation_reason\n" +
-                            "price_1h\tbase_price\tinvalid\t" + invalidationReason + "\n");
+                    .returns(expectedStatus);
         });
     }
 

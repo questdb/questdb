@@ -124,6 +124,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     @TestOnly
     private volatile Runnable onBatchCommittedForTesting;
     @TestOnly
+    private volatile Runnable onBeforeCompileForTesting;
+    @TestOnly
     private volatile Runnable onBeforeRefreshLockForTesting;
     @TestOnly
     private volatile Runnable onFullRefreshTerminalFailureForTesting;
@@ -282,6 +284,17 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     @TestOnly
     public void setOnBatchCommittedForTesting(Runnable onBatchCommittedForTesting) {
         this.onBatchCommittedForTesting = onBatchCommittedForTesting;
+    }
+
+    /**
+     * Test seam: runs when insertAsSelect() is about to compile the view's SQL, after the refresh fixed its base
+     * reader and before it checks for a pending invalidation. A test can apply a base column change here, as the
+     * WAL apply job would between the reader's snapshot and the compile. Persistent: fires on every pass until
+     * reset.
+     */
+    @TestOnly
+    public void setOnBeforeCompileForTesting(Runnable onBeforeCompileForTesting) {
+        this.onBeforeCompileForTesting = onBeforeCompileForTesting;
     }
 
     /**
@@ -590,6 +603,23 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             intervals.add(lo, hi);
             IntervalUtils.intersectInPlace(intervals, intervals.size() - 2);
         }
+    }
+
+    // A refresh that fixed its base reader, or is about to compile the view's SQL, stops without writing when an
+    // invalidation is pending. The bare-name guard publishes it before the base column change it guards against
+    // applies, so a reader that sees the change, and the compile that reads the base through it, would read a bare
+    // name of the view's SQL the other way than the rows the view holds. A refresh whose reader predates the change
+    // could still write correct rows, but it stops too, as the view goes invalid anyway. The release of the view
+    // lock wakes the invalidation, which marks the view invalid.
+    private static boolean isInvalidationPublished(MatViewState viewState, boolean isCompiling) {
+        if (viewState.hasPendingInvalidationReason()) {
+            LOG.info().$("materialized view invalidation is pending, ending refresh without writing [view=")
+                    .$(viewState.getViewDefinition().getMatViewToken())
+                    .$(", stage=").$(isCompiling ? "compile" : "reader")
+                    .I$();
+            return true;
+        }
+        return false;
     }
 
     // Recognizes the "table is suspended" refusal that CairoEngine.getWalWriter raises for a hard-suspended
@@ -1443,13 +1473,17 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     runHoldingLockSeamForTesting();
 
                     final RefreshContext refreshContext = findRefreshIntervals(baseTableReader, viewDefinition, viewState, walWriter, Numbers.LONG_NULL);
+                    // FULL rebuilds every row under one reading of the view's SQL, so it does not stop on an
+                    // invalidation that the bare-name guard published during the rebuild: the invalidation
+                    // stays pending, and the release wakes it unless the rebuild's snapshot covered it.
                     final boolean refreshed = insertAsSelect(
                             viewDefinition,
                             viewState,
                             walWriter,
                             refreshContext,
                             refreshTriggerTimestamp,
-                            refreshTask
+                            refreshTask,
+                            false
                     );
                     if (refreshContext.requestDeferred) {
                         refreshFailState(
@@ -1912,7 +1946,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             @NotNull WalWriter walWriter,
             @NotNull RefreshContext refreshContext,
             long refreshTriggerTimestamp,
-            MatViewRefreshTask refreshTask
+            MatViewRefreshTask refreshTask,
+            boolean isStoppingOnPendingInvalidation
     ) throws SqlException {
         assert viewState.isLocked();
 
@@ -1969,6 +2004,14 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 refreshSqlExecutionContext.setMemoryTracker(memoryTracker);
                 try {
                     if (factory == null) {
+                        runBeforeCompileSeamForTesting();
+                        // The bare-name guard publishes the view's invalidation before the base column change it
+                        // guards against applies. Once the invalidation is pending, no compile of this refresh may
+                        // read the view's SQL, which the change can switch to another reading of a bare name.
+                        if (isStoppingOnPendingInvalidation && isInvalidationPublished(viewState, true)) {
+                            viewState.setLastRefreshStartTimestampUs(prevRefreshStartTimestamp);
+                            return false;
+                        }
                         final String viewSql = viewDefinition.getMatViewSql();
                         try (SqlCompiler compiler = engine.getSqlCompiler()) {
                             LOG.info().$("compiling materialized view [view=").$(viewTableToken).$(", attempt=").$(i).I$();
@@ -2942,6 +2985,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             }
 
             try (TableReader baseTableReader = engine.getReader(baseTableToken)) {
+                if (isInvalidationPublished(viewState, false)) {
+                    return false;
+                }
                 // Operate SQL on a fixed reader that has known max transaction visible. The reader
                 // is used to initialize base table readers returned from the refreshExecutionContext.getReader()
                 // call, so that all of them are at the same txn.
@@ -2960,7 +3006,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                             rangeFrom,
                             rangeTo
                     );
-                    insertAsSelect(viewDefinition, viewState, walWriter, refreshContext, refreshTriggerTimestamp, refreshTask);
+                    insertAsSelect(viewDefinition, viewState, walWriter, refreshContext, refreshTriggerTimestamp, refreshTask, true);
                     // Refresh completed without a retriable failure; clear any accumulated retry
                     // backoff and counter so a future transient error starts from a fresh budget.
                     viewState.resetRefreshRetry();
@@ -3363,6 +3409,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         try (TableReader baseTableReader = engine.getReader(baseTableToken)) {
             final long fromBaseTxn = viewState.getLastRefreshBaseTxn();
             final long toBaseTxn = baseTableReader.getSeqTxn();
+            if (isInvalidationPublished(viewState, false)) {
+                return toBaseTxn << 1;
+            }
             if (fromBaseTxn > toBaseTxn) {
                 final TableToken viewToken = viewDefinition.getMatViewToken();
                 throw CairoException.nonCritical().put("unexpected txn numbers, base table may have been renamed [view=").put(viewToken.getTableName())
@@ -3385,7 +3434,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     return toBaseTxn << 1;
                 }
                 final RefreshContext refreshContext = findRefreshIntervals(baseTableReader, viewDefinition, viewState, walWriter, fromBaseTxn);
-                final boolean refreshed = insertAsSelect(viewDefinition, viewState, walWriter, refreshContext, refreshTriggerTimestamp, refreshTask);
+                final boolean refreshed = insertAsSelect(viewDefinition, viewState, walWriter, refreshContext, refreshTriggerTimestamp, refreshTask, true);
                 // Reached only when the refresh completed without a retriable failure; clear any
                 // accumulated retry backoff and counter so a future transient error starts fresh.
                 viewState.resetRefreshRetry();
@@ -3523,6 +3572,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
     private void runBatchCommittedSeamForTesting() {
         final Runnable seam = onBatchCommittedForTesting;
+        if (seam != null) {
+            seam.run();
+        }
+    }
+
+    private void runBeforeCompileSeamForTesting() {
+        final Runnable seam = onBeforeCompileForTesting;
         if (seam != null) {
             seam.run();
         }
