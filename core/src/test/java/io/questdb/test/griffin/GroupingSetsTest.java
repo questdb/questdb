@@ -603,6 +603,79 @@ public class GroupingSetsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEmptyGroupingSetWildcardWithAllSourceColumnsGrouped() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, b INT, v INT, ts TIMESTAMP)");
+            execute("INSERT INTO t VALUES (1, 2, 3, 1000)");
+            execute("CREATE TABLE t2 (a INT)");
+            execute("INSERT INTO t2 VALUES (1)");
+            execute("CREATE TABLE t3 (b INT)");
+            execute("INSERT INTO t3 VALUES (1)");
+
+            for (int i = 0; i < 2; i++) {
+                sqlExecutionContext.setParallelGroupByEnabled(i == 1);
+                assertQuery("SELECT * FROM t GROUP BY ROLLUP(a, b, v, ts) ORDER BY a, b, v, ts")
+                        .withContext(sqlExecutionContext)
+                        .expectSize()
+                        .returns("a\tb\tv\tts\nnull\tnull\tnull\t\n1\tnull\tnull\t\n1\t2\tnull\t\n1\t2\t3\t\n1\t2\t3\t1970-01-01T00:00:00.001000Z\n");
+                assertQuery("SELECT * FROM t GROUP BY CUBE(a, b, v, ts) ORDER BY a, b, v, ts")
+                        .withContext(sqlExecutionContext)
+                        .expectSize()
+                        .returns("a\tb\tv\tts\n" +
+                                "null\tnull\tnull\t\n" +
+                                "null\tnull\tnull\t1970-01-01T00:00:00.001000Z\n" +
+                                "null\tnull\t3\t\n" +
+                                "null\tnull\t3\t1970-01-01T00:00:00.001000Z\n" +
+                                "null\t2\tnull\t\n" +
+                                "null\t2\tnull\t1970-01-01T00:00:00.001000Z\n" +
+                                "null\t2\t3\t\n" +
+                                "null\t2\t3\t1970-01-01T00:00:00.001000Z\n" +
+                                "1\tnull\tnull\t\n" +
+                                "1\tnull\tnull\t1970-01-01T00:00:00.001000Z\n" +
+                                "1\tnull\t3\t\n" +
+                                "1\tnull\t3\t1970-01-01T00:00:00.001000Z\n" +
+                                "1\t2\tnull\t\n" +
+                                "1\t2\tnull\t1970-01-01T00:00:00.001000Z\n" +
+                                "1\t2\t3\t\n" +
+                                "1\t2\t3\t1970-01-01T00:00:00.001000Z\n");
+                assertQuery("SELECT * FROM t GROUP BY GROUPING SETS ((a, b, v, ts), ()) ORDER BY a, b, v, ts")
+                        .withContext(sqlExecutionContext)
+                        .expectSize()
+                        .returns("a\tb\tv\tts\nnull\tnull\tnull\t\n1\t2\t3\t1970-01-01T00:00:00.001000Z\n");
+                assertQuery("SELECT * FROM t2 GROUP BY ROLLUP(a) ORDER BY a")
+                        .withContext(sqlExecutionContext)
+                        .expectSize()
+                        .returns("a\nnull\n1\n");
+                assertQuery("SELECT * FROM t2 JOIN t3 ON t2.a = t3.b GROUP BY ROLLUP(a, b) ORDER BY a, b")
+                        .withContext(sqlExecutionContext)
+                        .expectSize()
+                        .returns("a\tb\nnull\tnull\n1\tnull\n1\t1\n");
+
+                String insufficientKeysQuery = "SELECT * FROM t GROUP BY ROLLUP(a)";
+                assertQuery(insufficientKeysQuery)
+                        .withContext(sqlExecutionContext)
+                        .fails(insufficientKeysQuery.indexOf('*'), "column must appear in GROUP BY clause or aggregate function");
+
+                String insufficientJoinKeysQuery = "SELECT * FROM t2 JOIN t3 ON t2.a = t3.b GROUP BY ROLLUP(a)";
+                assertQuery(insufficientJoinKeysQuery)
+                        .withContext(sqlExecutionContext)
+                        .fails(insufficientJoinKeysQuery.indexOf('*'), "column must appear in GROUP BY clause or aggregate function");
+            }
+        });
+    }
+
+    @Test
+    public void testEmptyGroupingSetWithWindowJoinFailsWithoutCrashing() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP) TIMESTAMP(ts)");
+            String query = "SELECT t.ts FROM t WINDOW JOIN t t2 RANGE BETWEEN 1 SECOND PRECEDING " +
+                    "AND 1 SECOND FOLLOWING GROUP BY GROUPING SETS (())";
+            assertQuery(query)
+                    .fails(query.indexOf("GROUP BY"), "GROUP BY cannot be used with WINDOW JOIN");
+        });
+    }
+
+    @Test
     public void testEmptyGroupingSetsConstantProjection() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (a INT, v INT, ts TIMESTAMP) TIMESTAMP(ts)");
@@ -758,79 +831,6 @@ public class GroupingSetsTest extends AbstractCairoTest {
                         .withContext(sqlExecutionContext)
                         .fails(query.indexOf("t GROUP"), "column must appear in GROUP BY clause or aggregate function");
             }
-        });
-    }
-
-    @Test
-    public void testEmptyGroupingSetWildcardWithAllSourceColumnsGrouped() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (a INT, b INT, v INT, ts TIMESTAMP)");
-            execute("INSERT INTO t VALUES (1, 2, 3, 1000)");
-            execute("CREATE TABLE t2 (a INT)");
-            execute("INSERT INTO t2 VALUES (1)");
-            execute("CREATE TABLE t3 (b INT)");
-            execute("INSERT INTO t3 VALUES (1)");
-
-            for (int i = 0; i < 2; i++) {
-                sqlExecutionContext.setParallelGroupByEnabled(i == 1);
-                assertQuery("SELECT * FROM t GROUP BY ROLLUP(a, b, v, ts) ORDER BY a, b, v, ts")
-                        .withContext(sqlExecutionContext)
-                        .expectSize()
-                        .returns("a\tb\tv\tts\nnull\tnull\tnull\t\n1\tnull\tnull\t\n1\t2\tnull\t\n1\t2\t3\t\n1\t2\t3\t1970-01-01T00:00:00.001000Z\n");
-                assertQuery("SELECT * FROM t GROUP BY CUBE(a, b, v, ts) ORDER BY a, b, v, ts")
-                        .withContext(sqlExecutionContext)
-                        .expectSize()
-                        .returns("a\tb\tv\tts\n" +
-                                "null\tnull\tnull\t\n" +
-                                "null\tnull\tnull\t1970-01-01T00:00:00.001000Z\n" +
-                                "null\tnull\t3\t\n" +
-                                "null\tnull\t3\t1970-01-01T00:00:00.001000Z\n" +
-                                "null\t2\tnull\t\n" +
-                                "null\t2\tnull\t1970-01-01T00:00:00.001000Z\n" +
-                                "null\t2\t3\t\n" +
-                                "null\t2\t3\t1970-01-01T00:00:00.001000Z\n" +
-                                "1\tnull\tnull\t\n" +
-                                "1\tnull\tnull\t1970-01-01T00:00:00.001000Z\n" +
-                                "1\tnull\t3\t\n" +
-                                "1\tnull\t3\t1970-01-01T00:00:00.001000Z\n" +
-                                "1\t2\tnull\t\n" +
-                                "1\t2\tnull\t1970-01-01T00:00:00.001000Z\n" +
-                                "1\t2\t3\t\n" +
-                                "1\t2\t3\t1970-01-01T00:00:00.001000Z\n");
-                assertQuery("SELECT * FROM t GROUP BY GROUPING SETS ((a, b, v, ts), ()) ORDER BY a, b, v, ts")
-                        .withContext(sqlExecutionContext)
-                        .expectSize()
-                        .returns("a\tb\tv\tts\nnull\tnull\tnull\t\n1\t2\t3\t1970-01-01T00:00:00.001000Z\n");
-                assertQuery("SELECT * FROM t2 GROUP BY ROLLUP(a) ORDER BY a")
-                        .withContext(sqlExecutionContext)
-                        .expectSize()
-                        .returns("a\nnull\n1\n");
-                assertQuery("SELECT * FROM t2 JOIN t3 ON t2.a = t3.b GROUP BY ROLLUP(a, b) ORDER BY a, b")
-                        .withContext(sqlExecutionContext)
-                        .expectSize()
-                        .returns("a\tb\nnull\tnull\n1\tnull\n1\t1\n");
-
-                String insufficientKeysQuery = "SELECT * FROM t GROUP BY ROLLUP(a)";
-                assertQuery(insufficientKeysQuery)
-                        .withContext(sqlExecutionContext)
-                        .fails(insufficientKeysQuery.indexOf('*'), "column must appear in GROUP BY clause or aggregate function");
-
-                String insufficientJoinKeysQuery = "SELECT * FROM t2 JOIN t3 ON t2.a = t3.b GROUP BY ROLLUP(a)";
-                assertQuery(insufficientJoinKeysQuery)
-                        .withContext(sqlExecutionContext)
-                        .fails(insufficientJoinKeysQuery.indexOf('*'), "column must appear in GROUP BY clause or aggregate function");
-            }
-        });
-    }
-
-    @Test
-    public void testEmptyGroupingSetWithWindowJoinFailsWithoutCrashing() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (ts TIMESTAMP) TIMESTAMP(ts)");
-            String query = "SELECT t.ts FROM t WINDOW JOIN t t2 RANGE BETWEEN 1 SECOND PRECEDING " +
-                    "AND 1 SECOND FOLLOWING GROUP BY GROUPING SETS (())";
-            assertQuery(query)
-                    .fails(query.indexOf("GROUP BY"), "GROUP BY cannot be used with WINDOW JOIN");
         });
     }
 
