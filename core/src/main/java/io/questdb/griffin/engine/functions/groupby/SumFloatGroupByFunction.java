@@ -40,10 +40,10 @@ import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 public class SumFloatGroupByFunction extends FloatFunction implements GroupByFunction, UnaryFunction {
-    // A group without a value holds this NaN. Any other NaN is the sum of Infinity and -Infinity, which later values
-    // must not replace: a group's result would then depend on how the parallel plan split its rows.
-    private static final int NO_VALUE_BITS = 0x7FC0_0001;
-    private static final float NO_VALUE = Float.intBitsToFloat(NO_VALUE_BITS);
+    // A group holds this NaN once Infinity and -Infinity meet. A plain NaN means no value yet, which later values replace.
+    // They must not replace this one: a group's result would then depend on how the parallel plan split its rows.
+    private static final float INVALID_SUM = Float.intBitsToFloat(0x7FC0_0001);
+    private static final int NO_VALUE_BITS = Float.floatToRawIntBits(Float.NaN);
     private final Function arg;
     private final int argColumnIndex;
     private int valueIndex;
@@ -68,7 +68,7 @@ public class SumFloatGroupByFunction extends FloatFunction implements GroupByFun
             }
             if (hasValue) {
                 final float existing = mapValue.getFloat(valueIndex);
-                mapValue.putFloat(valueIndex, isNoValue(existing) ? acc : existing + acc);
+                mapValue.putFloat(valueIndex, add(existing, acc));
             }
         }
     }
@@ -76,7 +76,7 @@ public class SumFloatGroupByFunction extends FloatFunction implements GroupByFun
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final float value = arg.getFloat(record);
-        mapValue.putFloat(valueIndex, Float.isNaN(value) ? NO_VALUE : value);
+        mapValue.putFloat(valueIndex, Float.isNaN(value) ? Float.NaN : value);
     }
 
     @Override
@@ -100,7 +100,7 @@ public class SumFloatGroupByFunction extends FloatFunction implements GroupByFun
                 if (!Float.isNaN(value)) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     final float current = Unsafe.getFloat(addr);
-                    Unsafe.putFloat(addr, isNoValue(current) ? value : current + value);
+                    Unsafe.putFloat(addr, add(current, value));
                 }
             }
         } else {
@@ -111,7 +111,7 @@ public class SumFloatGroupByFunction extends FloatFunction implements GroupByFun
                 if (!Float.isNaN(value)) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     final float current = Unsafe.getFloat(addr);
-                    Unsafe.putFloat(addr, isNoValue(current) ? value : current + value);
+                    Unsafe.putFloat(addr, add(current, value));
                 }
             }
         }
@@ -122,7 +122,7 @@ public class SumFloatGroupByFunction extends FloatFunction implements GroupByFun
         final float value = arg.getFloat(record);
         if (!Float.isNaN(value)) {
             final float sum = mapValue.getFloat(valueIndex);
-            mapValue.putFloat(valueIndex, isNoValue(sum) ? value : sum + value);
+            mapValue.putFloat(valueIndex, add(sum, value));
         }
     }
 
@@ -178,7 +178,7 @@ public class SumFloatGroupByFunction extends FloatFunction implements GroupByFun
         final float srcSum = srcValue.getFloat(valueIndex);
         if (!isNoValue(srcSum)) {
             final float destSum = destValue.getFloat(valueIndex);
-            destValue.putFloat(valueIndex, isNoValue(destSum) ? srcSum : destSum + srcSum);
+            destValue.putFloat(valueIndex, add(destSum, srcSum));
         }
     }
 
@@ -189,7 +189,7 @@ public class SumFloatGroupByFunction extends FloatFunction implements GroupByFun
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putFloat(valueIndex, NO_VALUE);
+        mapValue.putFloat(valueIndex, Float.NaN);
     }
 
     @Override
@@ -205,6 +205,14 @@ public class SumFloatGroupByFunction extends FloatFunction implements GroupByFun
     @Override
     public boolean isStateSelfContained() {
         return true;
+    }
+
+    private static float add(float sum, float value) {
+        final float result = sum + value;
+        if (Float.isNaN(result)) {
+            return isNoValue(sum) && !Float.isNaN(value) ? value : INVALID_SUM;
+        }
+        return result;
     }
 
     private static boolean isNoValue(float sum) {
