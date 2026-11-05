@@ -41,7 +41,9 @@ import java.io.BufferedWriter;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.nio.file.Paths;
+import java.util.Locale;
 import java.util.function.Consumer;
+import java.util.regex.Matcher;
 
 /**
  * Shared query campaign over caller-owned tables and a quiescent writer pool.
@@ -164,7 +166,7 @@ public final class QueryFuzzDriver {
                 boolean injectFaultFn = faultType == FaultType.FUNCTION;
                 long preGenS0 = rnd.getSeed0();
                 long preGenS1 = rnd.getSeed1();
-                GeneratedQuery query = QueryGenerator.generate(rnd, tables, null, injectFaultFn, config.isWindowEnabled(), config.isLatestOnEnabled(), config.isHorizonJoinEnabled(), config.isWindowJoinEnabled(), config.isHashJoinEnabled());
+                GeneratedQuery query = QueryGenerator.generate(rnd, tables, null, injectFaultFn, config.isWindowEnabled(), config.isLatestOnEnabled(), config.isHorizonJoinEnabled(), config.isWindowJoinEnabled(), config.isHashJoinEnabled(), config.isGroupingSetsEnabled());
                 QueryRunner.Result result;
                 if (faultType != null) {
                     // Fault queries use a crash-and-recover oracle, not the
@@ -224,7 +226,7 @@ public final class QueryFuzzDriver {
                         long bindS1 = rnd.nextLong();
                         rnd.reset(preGenS0, preGenS1);
                         BindContext ctx = new BindContext(new Rnd(bindS0, bindS1), CONSTANT_BIND_PROBABILITY_PCT);
-                        GeneratedQuery bindForm = QueryGenerator.generate(rnd, tables, ctx, injectFaultFn, config.isWindowEnabled(), config.isLatestOnEnabled(), config.isHorizonJoinEnabled(), config.isWindowJoinEnabled(), config.isHashJoinEnabled());
+                        GeneratedQuery bindForm = QueryGenerator.generate(rnd, tables, ctx, injectFaultFn, config.isWindowEnabled(), config.isLatestOnEnabled(), config.isHorizonJoinEnabled(), config.isWindowJoinEnabled(), config.isHashJoinEnabled(), config.isGroupingSetsEnabled());
                         if (ctx.getBindValues().size() > 0) {
                             query = query.withBind(bindForm.sql(), ctx.getBindNames(), ctx.getBindValues());
                             bindGen++;
@@ -303,6 +305,9 @@ public final class QueryFuzzDriver {
                 .$(runner.getBuildChoiceRuns()).$(" runs picked the build per execution")
                 .$();
         LOG.info().$("fuzz map page axis: ").$(runner.getMapPageAxisRuns()).$(" comparisons").$();
+        LOG.info().$("fuzz reference axis: ").$(runner.getReferenceAxisRuns()).$(" comparisons across ")
+                .$(generatedByShape[QueryShape.GROUPING_SETS.ordinal()]).$(" grouping sets queries")
+                .$();
 
         if (failures.size() > 0) {
             throw buildFailure(failures);
@@ -386,6 +391,17 @@ public final class QueryFuzzDriver {
                         isFusedShareImplausible(fusedSelected, fusedCompleted)
                 );
             }
+        }
+        // Guard the reference axis against going vacuous. It compares only when a grouping sets
+        // query and its UNION ALL rewrite both run, so a rewrite that stops compiling would leave
+        // every grouping sets query unchecked against it while the shape still counts as accepted.
+        final int groupingSetsGenerated = generatedByShape[QueryShape.GROUPING_SETS.ordinal()];
+        if (groupingSetsGenerated >= MIN_SHAPE_QUERIES_FOR_ACCEPT_FLOOR) {
+            Assert.assertTrue(
+                    "the reference axis compared none of the " + groupingSetsGenerated
+                            + " grouping sets queries; the UNION ALL rewrite looks out of step with the engine",
+                    runner.getReferenceAxisRuns() > 0
+            );
         }
         // Guard the fault injector against a silent disarm. It has several ways to stop biting while
         // the run stays green and tests nothing but the happy path: dev mode off (test_fault() folds
@@ -494,6 +510,9 @@ public final class QueryFuzzDriver {
     private static String describeUngeneratableShape(QueryShape shape, FuzzConfig config, ObjList<FuzzTable> tables) {
         return switch (shape) {
             case GROUP_BY, SAMPLE_BY, SIMPLE -> null;
+            case GROUPING_SETS -> config.isGroupingSetsEnabled()
+                    ? null
+                    : "-D" + FuzzConfig.GROUPING_SETS_PROP + "=false";
             case HASH_JOIN_GROUP_BY -> config.isHashJoinEnabled()
                     ? describeMissingJoinTables(tables)
                     : "-D" + FuzzConfig.HASH_JOIN_PROP + "=false";
@@ -526,7 +545,7 @@ public final class QueryFuzzDriver {
             FuzzTable table = tables.getQuick(i);
             if (table.getShadow() != null) {
                 shadowSql = shadowSql.replaceAll("\\b" + java.util.regex.Pattern.quote(table.getName()) + "\\b",
-                        java.util.regex.Matcher.quoteReplacement(table.getShadow().getName()));
+                        Matcher.quoteReplacement(table.getShadow().getName()));
             }
         }
         logPlan(engine, context, query.sql());
@@ -605,9 +624,9 @@ public final class QueryFuzzDriver {
     }
 
     private static boolean referencesTable(GeneratedQuery query, ObjList<FuzzTable> tables) {
-        String sql = query.sql().toLowerCase(java.util.Locale.ROOT);
+        String sql = query.sql().toLowerCase(Locale.ROOT);
         for (int i = 0; i < tables.size(); i++) {
-            if (sql.contains(tables.getQuick(i).getName().toLowerCase(java.util.Locale.ROOT))) {
+            if (sql.contains(tables.getQuick(i).getName().toLowerCase(Locale.ROOT))) {
                 return true;
             }
         }

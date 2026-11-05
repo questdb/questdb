@@ -197,9 +197,11 @@ and its partition versions are kept until the next save point overwrites it (sec
   since the last one, after a backwards clock step, or when one is owed. Skipped when the writer is not in
   `adaptive` mode, on a replica, and when the interval is negative and nothing is owed.
 - **Inline**, right after an operation that changes table files outside the ordinary apply
-  (`TableWriter.advanceDurableEpochAfter`): ALTER COLUMN TYPE, CONVERT PARTITION TO PARQUET and TO NATIVE, the
-  native-to-Parquet partition switch (Enterprise cold storage), ATTACH and DETACH PARTITION, the attach at the end
-  of a parallel COPY into an existing table, a forced change outside the WAL, and `RESUME WAL`. Physical conversions
+  (`TableWriter.advanceDurableEpochAfter`): ALTER COLUMN TYPE, CONVERT PARTITION TO PARQUET and TO NATIVE, ATTACH
+  and DETACH PARTITION, the attach at the end of a parallel COPY into an existing table, a forced change outside the
+  WAL, and `RESUME WAL`. The partition compaction job's swaps, including the Parquet conversion and Parquet copy it
+  runs for Enterprise cold storage, take none: a crash before the next save point rewinds to one that still names
+  the source partition, whose files the purge keeps until no save point names them. Physical conversions
   and WAL ATTACH remain best effort: a failure logs a critical message and marks the save point owed. DETACH,
   RESUME, and direct logical partition changes require synchronous completion (`completeDurableEpochAfter`):
   every selectable generation must cover the effect before completion, taking another save point if needed.

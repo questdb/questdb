@@ -271,7 +271,7 @@ public class DataSyncFailureModePolicyTest extends AbstractCairoTest {
                         + "WalEventWriter.java, WalPurgeJob.java, WalUtils.java, WalWriter.java, WalWriterBase.java]"
                         + (hasEnterpriseSources() ?
                         "+[ColdStorageTaskJob.java, EntCairoEngine.java, EntPropServerConfiguration.java, PrimaryRoleState.java, "
-                        + "StoragePolicyJob.java, StoragePolicyWriterCommand.java, StoragePolicyWriterImpl.java, WalEvents.java]"
+                        + "StoragePolicyWriterCommand.java, StoragePolicyWriterImpl.java, WalEvents.java]"
                         : ""),
                 filesUsing(Pattern.compile("getCommitMode\\(\\)"), null)
         );

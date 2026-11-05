@@ -11,6 +11,8 @@ pub use file::{
     DEFAULT_ROW_GROUP_SIZE,
 };
 #[cfg(feature = "jni-exports")]
+pub(crate) mod frames;
+#[cfg(feature = "jni-exports")]
 mod jni;
 pub mod schema;
 pub mod simd;
