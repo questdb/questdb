@@ -106,6 +106,16 @@ public interface MetadataServiceStub extends MetadataService {
     }
 
     @Override
+    default long getExpiryCleanupIntervalMicros() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    default String getExpiryPredicate() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     default int getMetaMaxUncommittedRows() {
         throw new UnsupportedOperationException();
     }
@@ -163,6 +173,11 @@ public interface MetadataServiceStub extends MetadataService {
     @Override
     default void setMatViewRefreshTimer(long startUs, int interval, char unit) {
         throw CairoException.critical(0).put("change of materialized view refresh timer does not update sequencer metadata");
+    }
+
+    @Override
+    default void setMetaExpiry(String predicate, long cleanupIntervalMicros) {
+        throw CairoException.critical(0).put("change of row-expiry policy does not update sequencer metadata");
     }
 
     @Override
