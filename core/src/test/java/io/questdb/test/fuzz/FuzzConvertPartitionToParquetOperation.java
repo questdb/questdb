@@ -37,7 +37,6 @@ import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.std.Chars;
 import io.questdb.std.LongList;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.test.tools.TestUtils;
 
 public class FuzzConvertPartitionToParquetOperation implements FuzzTransactionOperation {
@@ -58,14 +57,8 @@ public class FuzzConvertPartitionToParquetOperation implements FuzzTransactionOp
         ) {
             context.with(AllowAllSecurityContext.INSTANCE);
             TableRecordMetadata metadata = wApi.getMetadata();
-            String tsColumnName = metadata.getColumnName(metadata.getTimestampIndex());
-            String sql = String.format("ALTER TABLE %s CONVERT PARTITION TO PARQUET WHERE %s > '%s' AND %s < '%s'",
-                    TestUtils.randomiseCase(tempRnd, wApi.getTableToken().getTableName()),
-                    tsColumnName,
-                    Micros.toUSecString(cutoffTimestamp - 86_400_000_000L),
-                    tsColumnName,
-                    Micros.toUSecString(cutoffTimestamp)
-            );
+            String sql = "ALTER TABLE " + TestUtils.randomiseCase(tempRnd, wApi.getTableToken().getTableName())
+                    + " CONVERT PARTITION TO PARQUET WHERE " + FuzzTransactionOperation.partitionDayBeforeFilter(metadata, cutoffTimestamp);
 
             try {
                 CompiledQuery query = sqlCompiler.compile(sql, context);

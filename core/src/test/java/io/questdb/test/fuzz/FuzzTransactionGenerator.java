@@ -28,6 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
@@ -39,12 +40,14 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import org.junit.Assert;
 
-import static io.questdb.std.datetime.microtime.Micros.DAY_MICROS;
-
 public class FuzzTransactionGenerator {
     private static final int MAX_ANCHORS = 32;
     private static final int MAX_COLUMNS = 200;
 
+    /**
+     * Generates fuzz transactions. <code>minTimestamp</code> and <code>maxTimestamp</code>
+     * are in the native unit of the table's designated timestamp (micros or nanos).
+     */
     public static ObjList<FuzzTransaction> generateSet(
             long initialRowCount,
             TableRecordMetadata sequencerMetadata,
@@ -167,6 +170,12 @@ public class FuzzTransactionGenerator {
         ObjList<FuzzTransaction> transactionList = new ObjList<>();
         int waitBarrierVersion = 0;
         RecordMetadata meta = deepMetadataCopyOf(sequencerMetadata, tableMetadata);
+        final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(
+                sequencerMetadata != null ? sequencerMetadata.getTimestampType() : ColumnType.TIMESTAMP_MICRO
+        );
+        final long oneDay = timestampDriver.fromDays(1);
+        // Replace range is widened on both sides to cover up to 2 partitions more
+        final long replaceRangePadding = timestampDriver.fromMicros((long) Math.exp(24));
 
         long lastTimestamp = minTimestamp;
 
@@ -340,11 +349,11 @@ public class FuzzTransactionGenerator {
             } else if (wantToTruncateTable) {
                 generateTruncateTable(transactionList, metaVersion, waitBarrierVersion++);
             } else if (wantToDropPartition) {
-                generateDropPartition(transactionList, metaVersion, waitBarrierVersion++, lastTimestamp, rnd);
+                generateDropPartition(transactionList, metaVersion, waitBarrierVersion++, lastTimestamp, oneDay, rnd);
             } else if (wantToConvertPartitionToParquet) {
-                generateConvertPartitionToParquet(transactionList, metaVersion, waitBarrierVersion++, minTimestamp, lastTimestamp, rnd);
+                generateConvertPartitionToParquet(transactionList, metaVersion, waitBarrierVersion++, minTimestamp, lastTimestamp, oneDay, rnd);
             } else if (wantToConvertPartitionToNative) {
-                generateConvertPartitionToNative(transactionList, metaVersion, waitBarrierVersion++, minTimestamp, lastTimestamp, rnd);
+                generateConvertPartitionToNative(transactionList, metaVersion, waitBarrierVersion++, minTimestamp, lastTimestamp, oneDay, rnd);
             } else if (wantToAddCoveringIndex) {
                 if (generateAddCoveringIndex(transactionList, metaVersion, waitBarrierVersion, rnd, meta)) {
                     waitBarrierVersion++;
@@ -470,7 +479,8 @@ public class FuzzTransactionGenerator {
                         maxStrLenForStrColumns,
                         symbols,
                         probabilityOfSameTimestamp,
-                        replaceInsert
+                        replaceInsert,
+                        replaceRangePadding
                 );
                 rowCount -= blockRows;
                 // Drop and convert partition operations use lastTimestamp as their cutoff. An anchored block
@@ -515,13 +525,13 @@ public class FuzzTransactionGenerator {
      * Picks the active day 4 in 10, the day before it 3 in 10, else a random older day, so conversions keep
      * reaching days the O3 commits cut into splits and pieces.
      */
-    private static long convertCutoffTimestamp(long minTimestamp, long lastTimestamp, Rnd rnd) {
+    private static long convertCutoffTimestamp(long minTimestamp, long lastTimestamp, long oneDay, Rnd rnd) {
         final int target = rnd.nextInt(100);
         if (target < 30) {
-            return lastTimestamp - DAY_MICROS;
+            return lastTimestamp - oneDay;
         }
-        if (target < 60 && lastTimestamp - minTimestamp > DAY_MICROS) {
-            return minTimestamp + DAY_MICROS + rnd.nextLong(lastTimestamp - minTimestamp - DAY_MICROS);
+        if (target < 60 && lastTimestamp - minTimestamp > oneDay) {
+            return minTimestamp + oneDay + rnd.nextLong(lastTimestamp - minTimestamp - oneDay);
         }
         return lastTimestamp;
     }
@@ -621,10 +631,10 @@ public class FuzzTransactionGenerator {
 
     private static void generateConvertPartitionToNative(
             ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion,
-            long minTimestamp, long lastTimestamp, Rnd rnd
+            long minTimestamp, long lastTimestamp, long oneDay, Rnd rnd
     ) {
         FuzzTransaction transaction = new FuzzTransaction();
-        transaction.operationList.add(new FuzzConvertPartitionToNativeOperation(convertCutoffTimestamp(minTimestamp, lastTimestamp, rnd)));
+        transaction.operationList.add(new FuzzConvertPartitionToNativeOperation(convertCutoffTimestamp(minTimestamp, lastTimestamp, oneDay, rnd)));
         transaction.waitBarrierVersion = waitBarrierVersion;
         transaction.structureVersion = metadataVersion;
         transaction.waitAllDone = true;
@@ -633,10 +643,10 @@ public class FuzzTransactionGenerator {
 
     private static void generateConvertPartitionToParquet(
             ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion,
-            long minTimestamp, long lastTimestamp, Rnd rnd
+            long minTimestamp, long lastTimestamp, long oneDay, Rnd rnd
     ) {
         FuzzTransaction transaction = new FuzzTransaction();
-        transaction.operationList.add(new FuzzConvertPartitionToParquetOperation(convertCutoffTimestamp(minTimestamp, lastTimestamp, rnd)));
+        transaction.operationList.add(new FuzzConvertPartitionToParquetOperation(convertCutoffTimestamp(minTimestamp, lastTimestamp, oneDay, rnd)));
         transaction.waitBarrierVersion = waitBarrierVersion;
         transaction.structureVersion = metadataVersion;
         transaction.waitAllDone = true;
@@ -646,11 +656,11 @@ public class FuzzTransactionGenerator {
 
     private static void generateDropPartition(
             ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion,
-            long lastTimestamp, Rnd rnd
+            long lastTimestamp, long oneDay, Rnd rnd
     ) {
         long cutoffTimestamp = lastTimestamp;
         if (rnd.nextInt(100) <= 20) {
-            cutoffTimestamp -= DAY_MICROS;
+            cutoffTimestamp -= oneDay;
         }
         FuzzTransaction transaction = new FuzzTransaction();
         transaction.operationList.add(new FuzzDropPartitionOperation(cutoffTimestamp));
@@ -906,7 +916,8 @@ public class FuzzTransactionGenerator {
             int strLen,
             String[] symbols,
             double probabilityOfRowsSameTimestamp,
-            boolean replaceInsert
+            boolean replaceInsert,
+            long replaceRangePadding
     ) {
         FuzzTransaction transaction = new FuzzTransaction();
         long timestamp = startTs;
@@ -936,8 +947,8 @@ public class FuzzTransactionGenerator {
         transactionList.add(transaction);
 
         if (replaceInsert) {
-            minTs = minTs - (long) Math.exp(24);
-            maxTs = maxTs + (long) Math.exp(24);
+            minTs = minTs - replaceRangePadding;
+            maxTs = maxTs + replaceRangePadding;
             if (!transaction.rollback) {
                 // Add up to 2 partition to the range from each side to make things more interesting
                 transaction.setReplaceRange(minTs, maxTs);
