@@ -373,6 +373,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // cumulative since the writer opened; tests assert the columns that parquet O3 row group merges decode, the
     // UPSERT identity check included, see O3PartitionJob.mergeRowGroupDecode()
     private final LongAdder parquetMergeDecodedColumnCount = new LongAdder();
+    // cumulative since the writer opened; tests assert that a parquet O3 merge decodes the designated timestamp of
+    // each row group it merges once, see O3PartitionJob.mergeRowGroupPrepare()
+    private final LongAdder parquetMergeTimestampDecodeCount = new LongAdder();
     private final ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader();
     private final LongList parquetRowGroupIndexRowLos = new LongList();
     private final IntList parquetRowGroupOrder = new IntList();
@@ -1186,6 +1189,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public void addParquetMergeDecodedColumns(long count) {
         parquetMergeDecodedColumnCount.add(count);
+    }
+
+    public void addParquetMergeTimestampDecodes(long rowGroupCount) {
+        parquetMergeTimestampDecodeCount.add(rowGroupCount);
     }
 
     public void addPhysicallyWrittenRows(long rows) {
@@ -3388,6 +3395,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     @TestOnly
     public long getParquetMergeDecodedColumnCount() {
         return parquetMergeDecodedColumnCount.sum();
+    }
+
+    @TestOnly
+    public long getParquetMergeTimestampDecodeCount() {
+        return parquetMergeTimestampDecodeCount.sum();
     }
 
     @Override
