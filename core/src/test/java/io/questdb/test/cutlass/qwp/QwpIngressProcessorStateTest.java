@@ -60,6 +60,7 @@ import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
 import io.questdb.cutlass.qwp.server.QwpIngressProcessorState;
 import io.questdb.cutlass.qwp.server.QwpStreamingDecoder;
 import io.questdb.cutlass.qwp.server.QwpTudCache;
+import io.questdb.griffin.SqlException;
 import io.questdb.std.CharSequenceLongHashMap;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.datetime.MicrosecondClock;
@@ -83,6 +84,7 @@ import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.lang.ref.WeakReference;
 import java.lang.reflect.Field;
 import java.lang.reflect.Proxy;
 import java.util.HashMap;
@@ -906,6 +908,66 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                     }
                     execute("DROP TABLE IF EXISTS gone");
                     drainWalQueue();
+                }
+            }
+        });
+    }
+
+    /**
+     * reset() and the distressed clear() free every table entry and leave none of them
+     * reachable, nor the writer of an entry whose writer close threw.
+     */
+    @Test
+    public void testResetAndDistressedClearReleaseFreedEntries() throws Exception {
+        // Closing a WAL writer msyncs its column files only when the commit mode is not NOSYNC,
+        // and the suite runs either mode, so pin one whose msync failure does not stop the engine.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "async");
+        final AtomicBoolean isMsyncFailing = new AtomicBoolean();
+        final AtomicInteger failedMsyncCount = new AtomicInteger();
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public void msync(long addr, long len, boolean async) {
+                if (isMsyncFailing.get()) {
+                    failedMsyncCount.incrementAndGet();
+                    throw CairoException.critical(5).put("could not msync");
+                }
+                super.msync(addr, len, async);
+            }
+        };
+        assertMemoryLeak(() -> {
+            final DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration));
+            // The 16th lookup grows the table map, and the 17th lands in the grown map.
+            final int tableCount = 17;
+            for (int t = 0; t < tableCount; t++) {
+                execute("CREATE TABLE s_t" + t + " (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            }
+            for (boolean isDistressedClear : new boolean[]{false, true}) {
+                for (boolean isWriterCloseFailing : new boolean[]{false, true}) {
+                    final String row = (isDistressedClear ? "distressed clear" : "reset")
+                            + (isWriterCloseFailing ? ", writer close fails" : ", writer close succeeds");
+                    // A failing row drops tables of its own: the free closes the writer of a dropped
+                    // table instead of returning it to the pool.
+                    final String prefix = isWriterCloseFailing ? (isDistressedClear ? "fc_t" : "fr_t") : "s_t";
+                    if (isWriterCloseFailing) {
+                        for (int t = 0; t < tableCount; t++) {
+                            execute("CREATE TABLE " + prefix + t + " (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                        }
+                    }
+                    try (QwpTudCache cache = new QwpTudCache(engine, true, false, defaultColumnTypes, PartitionBy.DAY)) {
+                        final ObjList<WeakReference<Object>> freed = openAndFreeAll(
+                                row, cache, prefix, tableCount, isDistressedClear, isWriterCloseFailing, isMsyncFailing, failedMsyncCount);
+                        assertUnreachable(row + ": freed entries (and closed writers) still reachable", freed);
+
+                        // The cache goes on serving tables. Using it here also keeps it reachable
+                        // through the collection above.
+                        if (isWriterCloseFailing) {
+                            execute("CREATE TABLE " + prefix + "0 (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                        }
+                        Assert.assertNotNull(row, cache.getTableUpdateDetails(
+                                AllowAllSecurityContext.INSTANCE, new Utf8String(prefix + 0), null, null, 1_000));
+                        Assert.assertEquals(row, 1, cache.size());
+                    }
                 }
             }
         });
@@ -7063,6 +7125,86 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
             }
         }
         return seq;
+    }
+
+    // Collects garbage until no referent is reachable, then asserts that none is. A full
+    // collection, which System.gc() runs under the suite's ParallelGC, clears the weak
+    // reference of every unreachable object; the retries cover a request the JVM skipped.
+    private static void assertUnreachable(String what, ObjList<WeakReference<Object>> refs) {
+        int reachableCount = refs.size();
+        for (int attempt = 0; attempt < 20 && reachableCount > 0; attempt++) {
+            System.gc();
+            reachableCount = 0;
+            for (int i = 0, n = refs.size(); i < n; i++) {
+                if (refs.getQuick(i).get() != null) {
+                    reachableCount++;
+                }
+            }
+        }
+        Assert.assertEquals(what, 0, reachableCount);
+    }
+
+    // Opens an entry for each table, then frees them all with reset() or the distressed
+    // clear(). When the writer close fails, each table first commits a row through its
+    // entry and is dropped, so that the free closes the writer, and msync fails during the
+    // free. Returns weak references to the freed entries, and to their writers when the
+    // close fails, and nothing else: no frame of the caller keeps them.
+    private static ObjList<WeakReference<Object>> openAndFreeAll(
+            String row,
+            QwpTudCache cache,
+            String prefix,
+            int tableCount,
+            boolean isDistressedClear,
+            boolean isWriterCloseFailing,
+            AtomicBoolean isMsyncFailing,
+            AtomicInteger failedMsyncCount
+    ) throws SqlException {
+        final ObjList<WalTableUpdateDetails> tuds = new ObjList<>();
+        final ObjList<WeakReference<Object>> refs = new ObjList<>();
+        for (int t = 0; t < tableCount; t++) {
+            final WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                    AllowAllSecurityContext.INSTANCE, new Utf8String(prefix + t), null, null, 1_000);
+            Assert.assertNotNull(row, tud);
+            tuds.add(tud);
+            refs.add(new WeakReference<>(tud));
+            if (isWriterCloseFailing) {
+                refs.add(new WeakReference<>(tud.getWriter()));
+                appendRow(tud);
+                tud.getWriter().commit();
+            }
+        }
+        Assert.assertEquals(row, tableCount, cache.size());
+        if (isWriterCloseFailing) {
+            drainWalQueue();
+            for (int t = 0; t < tableCount; t++) {
+                execute("DROP TABLE " + prefix + t);
+            }
+            drainWalQueue();
+            failedMsyncCount.set(0);
+            isMsyncFailing.set(true);
+        }
+        try {
+            if (isDistressedClear) {
+                cache.setDistressed();
+                cache.clear();
+            } else {
+                cache.reset();
+            }
+        } finally {
+            isMsyncFailing.set(false);
+        }
+        Assert.assertEquals(row, 0, cache.size());
+        for (int t = 0; t < tableCount; t++) {
+            Assert.assertNull(row, cache.getCachedTableUpdateDetails(new Utf8String(prefix + t)));
+        }
+        if (isWriterCloseFailing) {
+            Assert.assertTrue(row + ": the writer close must fail", failedMsyncCount.get() > 0);
+            for (int t = 0; t < tableCount; t++) {
+                // closeNoLock() keeps the writer when closing it throws.
+                Assert.assertNotNull(row + ": the writer close of " + prefix + t + " must fail", tuds.getQuick(t).getWriter());
+            }
+        }
+        return refs;
     }
 
     // Asserts that th is the failure that the test's files facade throws from msync.
