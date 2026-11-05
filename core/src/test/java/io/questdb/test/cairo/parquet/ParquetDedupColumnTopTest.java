@@ -129,6 +129,23 @@ public class ParquetDedupColumnTopTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReplayAcrossMultiPageColumnTops() throws Exception {
+        assertMemoryLeak(() -> {
+            for (int version = 1; version <= 2; version++) {
+                for (int kind : new int[]{0, 2}) {
+                    // PLAIN with 1 KiB pages splits even BOOLEAN keys across multiple pages.
+                    configure(4_096, version, 1_024, false);
+                    try (ReplayScenario scenario = new ReplayScenario(engine, sqlExecutionContext, keyType, 4_096, 3, Shape.TOP, false, false)) {
+                        scenario.prepare(keyType.firstKey(), "plain");
+                        scenario.replay(kind, false);
+                        Assert.assertEquals(kind == 0 ? 12_291 : 12_292, scenario.rows.size());
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testReplayAcrossNonPrefixColumnTops() throws Exception {
         assertMemoryLeak(() -> {
             for (int groupSize : new int[]{4, 5}) {
