@@ -24,10 +24,12 @@
 
 package io.questdb.test.fuzz;
 
+import io.questdb.MessageBus;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.mp.Sequence;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
@@ -150,6 +152,46 @@ public class FuzzVacuumOperationTest extends AbstractCairoTest {
                 TestUtils.assertContains(exception.getFlyweightMessage(), "cannot vacuum while checkpoint is in progress");
             } finally {
                 execute("checkpoint release");
+            }
+        });
+    }
+
+    @Test
+    public void testApplyRetriesWhenColumnPurgeQueueIsFull() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, val DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO t VALUES ('2024-01-01', 1.0), ('2024-01-02', 2.0)");
+            try (RecordCursorFactory factory = select("SELECT val FROM t");
+                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                // The open reader pins the pre-UPDATE column version, so VACUUM must queue its purge.
+                Assert.assertTrue(cursor.hasNext());
+                execute("UPDATE t SET val = val + 100");
+
+                final MessageBus messageBus = engine.getMessageBus();
+                final Sequence pubSeq = messageBus.getColumnPurgePubSeq();
+                long lastQueued = -1;
+                long queueCursor;
+                while ((queueCursor = pubSeq.next()) != -1) {
+                    if (queueCursor > -1) {
+                        pubSeq.done(queueCursor);
+                        lastQueued = queueCursor;
+                    }
+                }
+                final long filledUpTo = lastQueued;
+
+                // Default test configuration runs no ColumnPurgeJob, so this thread is the only consumer.
+                final Thread consumer = new Thread(() -> {
+                    Os.sleep(100);
+                    messageBus.getColumnPurgeSubSeq().clear();
+                });
+                consumer.start();
+                try (TableWriterAPI writer = getWriter("t")) {
+                    Assert.assertFalse(new FuzzVacuumOperation().apply(new Rnd(), engine, writer, -1, null));
+                } finally {
+                    consumer.join();
+                }
+                Assert.assertTrue("VACUUM must queue its purge after the queue drains", pubSeq.current() > filledUpTo);
             }
         });
     }

@@ -33,12 +33,17 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.std.Chars;
 import io.questdb.std.LongList;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.test.cairo.fuzz.FailureFileFacade;
 
 // VACUUM reads the applied table, independently of this writer's WAL position.
 public class FuzzVacuumOperation implements FuzzTransactionOperation {
+    private static final long COLUMN_PURGE_QUEUE_FULL_TIMEOUT_NANOS = 30_000_000_000L;
+    private static final String COLUMN_PURGE_QUEUE_FULL_MESSAGE = "failed to schedule column version purge, queue is full";
+
     @Override
     public boolean apply(Rnd rnd, CairoEngine engine, TableWriterAPI tableWriter, int virtualTimestampIndex, LongList excludedTsIntervals) {
         final FailureFileFacade failureFileFacade = engine.getConfiguration().getFilesFacade() instanceof FailureFileFacade facade ? facade : null;
@@ -50,7 +55,7 @@ public class FuzzVacuumOperation implements FuzzTransactionOperation {
             // A single-writer WAL run queues every operation before it starts applying WAL. Drain discovery
             // here too, so frequent VACUUM does not exhaust its queue while the apply worker has not started.
             purgeJob.drain(0);
-            compiler.compile("VACUUM TABLE \"" + tableWriter.getTableToken().getTableName().replace("\"", "\"\"") + "\"", context);
+            vacuum(compiler, context, "VACUUM TABLE \"" + tableWriter.getTableToken().getTableName().replace("\"", "\"\"") + "\"");
             purgeJob.drain(0);
         } catch (SqlException e) {
             if (failureFileFacade != null && failureFileFacade.failureGenerated() > failuresObserved || e.isTableDoesNotExist()) {
@@ -67,5 +72,23 @@ public class FuzzVacuumOperation implements FuzzTransactionOperation {
             throw th;
         }
         return false;
+    }
+
+    // VACUUM rejects work while ColumnPurgeJob's input queue is full and asks the caller to retry. With VACUUM
+    // before every transaction from several writer threads, the purge worker can fall behind on a loaded host.
+    // Retrying is safe: VACUUM rescans the table directory and re-discovers every stale column version.
+    private static void vacuum(SqlCompiler compiler, SqlExecutionContext context, String sql) throws SqlException {
+        final long deadline = System.nanoTime() + COLUMN_PURGE_QUEUE_FULL_TIMEOUT_NANOS;
+        while (true) {
+            try {
+                compiler.compile(sql, context);
+                return;
+            } catch (CairoException e) {
+                if (!Chars.contains(e.getFlyweightMessage(), COLUMN_PURGE_QUEUE_FULL_MESSAGE) || System.nanoTime() > deadline) {
+                    throw e;
+                }
+                Os.sleep(1);
+            }
+        }
     }
 }
