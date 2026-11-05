@@ -1527,8 +1527,11 @@ public interface CairoConfiguration {
 
     /**
      * Whether a live view may shorten its checkpoint duration cadence from observed out-of-order
-     * depth, within {@link #getLiveViewCheckpointMaxDurationMicros()} and its {@code FLUSH EVERY}
-     * interval.
+     * depth. Only a view whose seals image incrementally - it has an ANCHOR window and every
+     * stateful window function is anchorable - shortens it, and never below the longer of its
+     * {@code FLUSH EVERY} interval and one minute. Every other view records the correction depth
+     * but keeps {@link #getLiveViewCheckpointMaxDurationMicros()}, so a shallow late row does not
+     * make it seal and retain several times the checkpoint roots.
      */
     boolean isLiveViewCheckpointAdaptiveCadenceEnabled();
 

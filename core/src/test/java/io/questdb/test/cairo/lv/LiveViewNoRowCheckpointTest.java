@@ -790,12 +790,20 @@ public class LiveViewNoRowCheckpointTest extends AbstractLiveViewTest {
 
     @Test
     public void testNoRowPublicationFollowsTheAdaptiveCadence() throws Exception {
-        assertNoRowPublicationCadenceAfterACorrection(true);
+        // An anchored view's seals image incrementally, so a correction tightens its cadence.
+        assertNoRowPublicationCadenceAfterACorrection(true, true);
+    }
+
+    @Test
+    public void testNoRowPublicationKeepsConfiguredCadenceForUnanchoredViews() throws Exception {
+        // An unanchored view images its whole map per seal: it records the correction but keeps
+        // the configured cadence, so its head stays at the repair's seqTxn until the hour.
+        assertNoRowPublicationCadenceAfterACorrection(true, false);
     }
 
     @Test
     public void testNoRowPublicationFollowsTheConfiguredCadenceWithoutAdaptation() throws Exception {
-        assertNoRowPublicationCadenceAfterACorrection(false);
+        assertNoRowPublicationCadenceAfterACorrection(false, false);
     }
 
     @Test
@@ -1522,22 +1530,38 @@ public class LiveViewNoRowCheckpointTest extends AbstractLiveViewTest {
      * a five-minute cadence under the hour configured. Cycles without rows follow whichever
      * cadence is in force.
      */
-    private void assertNoRowPublicationCadenceAfterACorrection(boolean isAdaptive) throws Exception {
+    private void assertNoRowPublicationCadenceAfterACorrection(boolean isAdaptive, boolean isAnchored) throws Exception {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ADAPTIVE_CADENCE_ENABLED, String.valueOf(isAdaptive));
         configureCadence(60 * Micros.MINUTE_MICROS);
+        // Only an anchored view's seals image incrementally, so only it is tightened. An unanchored
+        // view images its whole key map per seal, so it records the correction but keeps the ceiling.
+        final boolean tightens = isAdaptive && isAnchored;
         assertMemoryLeak(() -> {
-            createFilteredView();
+            if (isAnchored) {
+                createAnchoredFilteredView();
+            } else {
+                createFilteredView();
+            }
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 setCurrentMicros(START_MICROS);
                 commit(job, minute(0), "a", 1.0);
                 commit(job, minute(20), "a", 2.0);
                 commit(job, minute(10), "a", 3.0);
                 final LiveViewInstance instance = instance();
-                if (isAdaptive) {
+                if (tightens) {
+                    // depth 10 min halves to 5 min, above the one-minute floor.
                     Assert.assertEquals(
                             5 * Micros.MINUTE_MICROS,
                             instance.getEffectiveCheckpointDurationMicros(60 * Micros.MINUTE_MICROS)
                     );
+                } else if (isAdaptive) {
+                    // The correction is recorded, but the unanchored view stays at the ceiling.
+                    Assert.assertEquals(
+                            60 * Micros.MINUTE_MICROS,
+                            instance.getEffectiveCheckpointDurationMicros(60 * Micros.MINUTE_MICROS)
+                    );
+                    Assert.assertEquals(1, instance.getAdaptiveCheckpointCorrectionCount());
+                    Assert.assertEquals(10 * Micros.MINUTE_MICROS, instance.getAdaptiveCheckpointLastCorrectionDepthMicros());
                 }
                 final long repairedBase = instance.getHeadCheckpointBaseSeqTxn();
                 Assert.assertEquals(3, repairedBase);
@@ -1547,16 +1571,35 @@ public class LiveViewNoRowCheckpointTest extends AbstractLiveViewTest {
                     commit(job, minute(i), "a", -1.0, Micros.MINUTE_MICROS);
                 }
                 Assert.assertEquals(repairedBase, instance.getHeadCheckpointBaseSeqTxn());
-                // The fifth minute: due under the learned cadence alone.
+                // The fifth minute: due under the learned 5-minute cadence alone.
                 commit(job, minute(25), "a", -1.0, Micros.MINUTE_MICROS);
-                Assert.assertEquals(isAdaptive ? 8 : repairedBase, instance.getHeadCheckpointBaseSeqTxn());
+                Assert.assertEquals(tightens ? 8 : repairedBase, instance.getHeadCheckpointBaseSeqTxn());
                 // An hour on: due under either.
                 setCurrentMicros(currentMicros + 60 * Micros.MINUTE_MICROS);
                 commit(job, minute(26), "a", -1.0);
                 Assert.assertEquals(9, instance.getHeadCheckpointBaseSeqTxn());
-                assertViewMatchesRecompute();
+                if (isAnchored) {
+                    assertAnchoredFilteredViewMatchesRecompute();
+                } else {
+                    assertViewMatchesRecompute();
+                }
             }
         });
+    }
+
+    private void assertAnchoredFilteredViewMatchesRecompute() throws Exception {
+        // Every test row sits in the 2026-01-01 anchor bucket, so ANCHOR DAILY equals an
+        // unbounded-preceding cumulative sum partitioned by sym.
+        TestUtils.assertSqlCursors(
+                engine,
+                sqlExecutionContext,
+                "SELECT ts, sym, x, sum(x) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) s "
+                        + "FROM base WHERE x > 0 ORDER BY ts, sym",
+                "(lv) ORDER BY ts, sym",
+                LOG,
+                true
+        );
+        assertNoRefreshFaults("lv");
     }
 
     private void assertRejectedStretchAdvancedTheHead(LiveViewInstance instance) throws Exception {
@@ -1681,6 +1724,13 @@ public class LiveViewNoRowCheckpointTest extends AbstractLiveViewTest {
         // The DECIMAL sum keeps a root of its own beside the window's, fused or not.
         execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " +
                 "SELECT ts, sym, sum(amount) OVER w AS s, sum(fee) OVER w AS f FROM base WHERE amount > 0 " +
+                "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')");
+    }
+
+    private void createAnchoredFilteredView() throws Exception {
+        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " +
+                "SELECT ts, sym, x, sum(x) OVER w s FROM base WHERE x > 0 " +
                 "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')");
     }
 

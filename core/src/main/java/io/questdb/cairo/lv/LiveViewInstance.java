@@ -39,6 +39,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.datetime.microtime.Micros;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -93,6 +94,11 @@ public class LiveViewInstance implements QuietCloseable {
     public static final int REPAIR_PLAN_RANGE = 1;
     public static final int REPAIR_PLAN_ROWS = 2;
     public static final int REPAIR_PLAN_UNKNOWN = -1;
+    // The shortest duration cadence an eligible view may learn from a correction,
+    // whatever its FLUSH EVERY. A seal keeps a checkpoint root for the life of the
+    // history epoch, so the floor bounds the retained roots a shallow late row can
+    // cause to one per minute at most. See recordAdaptiveCheckpointCorrection.
+    static final long ADAPTIVE_CHECKPOINT_MIN_DURATION_MICROS = Micros.MINUTE_MICROS;
     private static final int HEAD_CHECKPOINT_BASE_SEQ_TXN = 3;
     private static final int HEAD_CHECKPOINT_LV_SEQ_TXN = 0;
     private static final int HEAD_CHECKPOINT_MAX_TS = 1;
@@ -513,12 +519,17 @@ public class LiveViewInstance implements QuietCloseable {
     // Per-view duration cadence learned from out-of-order arrivals. The latest
     // correction depth is halved so a similarly late next row has a complete
     // checkpoint interval below it rather than landing on the newest boundary.
-    // Tightening is immediate; upward relaxation is capped at 25% per step so
-    // one deep correction cannot abruptly discard a cadence that recent shallow
-    // corrections proved useful. Two inputs relax it: a shallower correction
-    // sample, and each seal that a real write stamped
-    // (relaxAdaptiveCheckpointCadenceOnSeal) - without the latter, one late row
-    // would pin the tightened cadence for the life of the process. All three
+    // Only an eligible view tightens: it has an ANCHOR window and every stateful
+    // window function is anchorable, so a seal images just the keys a correction
+    // touched. Such a view floors at max(FLUSH EVERY, 1 minute); every other view
+    // keeps the configured cadence, since its seal images its whole key map and
+    // keeps a root for the life of the history epoch (see
+    // recordAdaptiveCheckpointCorrection). Tightening is immediate; upward
+    // relaxation is capped at 25% per step so one deep correction cannot abruptly
+    // discard a cadence that recent shallow corrections proved useful. Two inputs
+    // relax it: a shallower correction sample, and each seal that a real write
+    // stamped (relaxAdaptiveCheckpointCadenceOnSeal) - without the latter, one late
+    // row would pin the tightened cadence for the life of the process. All three
     // fields are in-memory observability and reset on restart. Mutated by the
     // refresh worker under the refresh latch; volatile for live_views().
     private volatile long adaptiveCheckpointCorrectionCount;
@@ -1006,14 +1017,30 @@ public class LiveViewInstance implements QuietCloseable {
 
     /**
      * Learns a duration cadence from one observed out-of-order correction depth.
-     * The configured duration stays the ceiling, while {@code minDurationMicros}
-     * (normally the view's FLUSH EVERY interval) prevents a target the refresh
-     * cycle cannot physically realize.
+     * The configured duration stays the ceiling. The floor depends on whether this
+     * view's seals image incrementally: an eligible view - one with an ANCHOR
+     * window whose stateful window functions are all anchorable, so a seal images
+     * only the keys the interval touched - learns down to
+     * {@code max(flushEveryMicros, 1 minute)}, while every other view keeps the
+     * configured cadence ({@code isSealIncremental == false} floors at the ceiling,
+     * so {@code desired} is the ceiling and nothing tightens). An ineligible view's
+     * seal images its whole key map and keeps a root for the life of the history
+     * epoch, so a sub-minute cadence would make a shallow late row seal and retain
+     * many times the configured rate; the one-minute floor bounds that even for an
+     * eligible view, whose roots the same epoch keeps.
+     * <p>
+     * The correction depth and count are recorded for every view, eligible or not,
+     * so {@code live_views()} still surfaces the out-of-order depth a user tunes
+     * {@code cairo.live.view.checkpoint.max.duration.micros} against.
+     *
+     * @param isSealIncremental whether every seal of this view images only the keys
+     *                          a correction touched; only such a view is tightened
      */
     public void recordAdaptiveCheckpointCorrection(
             long correctionDepthMicros,
             long configuredDurationMicros,
-            long minDurationMicros
+            long flushEveryMicros,
+            boolean isSealIncremental
     ) {
         if (correctionDepthMicros <= 0) {
             return;
@@ -1030,7 +1057,11 @@ public class LiveViewInstance implements QuietCloseable {
         }
 
         final long halfDepth = correctionDepthMicros / 2 + correctionDepthMicros % 2;
-        final long floor = Math.max(1, minDurationMicros);
+        // An ineligible view floors at the ceiling, so desired == ceiling and its
+        // cadence never tightens; an eligible one floors at max(FLUSH EVERY, 1 min).
+        final long floor = isSealIncremental
+                ? Math.max(ADAPTIVE_CHECKPOINT_MIN_DURATION_MICROS, flushEveryMicros)
+                : configuredDurationMicros;
         final long desired = Math.min(configuredDurationMicros, Math.max(floor, halfDepth));
         final long current = adaptiveCheckpointDurationMicros;
         if (current == Numbers.LONG_NULL || desired <= current) {
@@ -3661,8 +3692,9 @@ public class LiveViewInstance implements QuietCloseable {
      * Absence of corrections is otherwise not an input:
      * {@link #recordAdaptiveCheckpointCorrection} relaxes only on a further, and
      * shallower, sample, so a single late row would hold the tightened cadence -
-     * up to 300x the seal rate at the shipped defaults - for the life of the
-     * process. Charging one step per seal makes the tightening pay for itself:
+     * up to 5x the seal rate at the shipped defaults (a 5-minute ceiling over the
+     * 1-minute floor) - for the life of the process. Charging one step per seal
+     * makes the tightening pay for itself:
      * the tighter the cadence, the faster the seals it causes retire it, while a
      * view that keeps taking late rows keeps re-tightening on every correction.
      */

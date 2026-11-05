@@ -7035,6 +7035,50 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
+     * Whether every window function of {@code instance} that keeps checkpoint state is one its
+     * ANCHOR window dispatches {@code markPartitionAlive} to, so a seal images only the keys a
+     * correction touched rather than the whole key map. Only such a view may tighten its
+     * checkpoint duration cadence below the configured one (see
+     * {@link LiveViewInstance#recordAdaptiveCheckpointCorrection}). A view with a stateful bounded
+     * ROWS/RANGE function - or none under an ANCHOR window at all - images its whole map on every
+     * seal, because only {@link io.questdb.cairo.lv.LiveViewWindow} builds the dirty sets a seal
+     * images less from, so a tightened cadence there turns directly into retained roots and refresh
+     * CPU. A stateless CURRENT ROW function images nothing, so it does not keep an otherwise
+     * eligible view off the gate.
+     */
+    private static boolean isEveryStatefulWindowFunctionAnchored(
+            LiveViewInstance instance,
+            WindowRecordCursorFactory windowFactory
+    ) {
+        if (instance.getAnchorWindow() == null) {
+            return false;
+        }
+        final ObjList<WindowFunction> functions = windowFactory.getWindowFunctions();
+        final ObjList<WindowFunction> anchorable = windowFactory.getAnchorableWindowFunctions();
+        // An ANCHOR window guarantees a non-null, non-empty anchorable set: the compiler builds the
+        // window from that set and rejects an empty one, so a null here would be a compile invariant
+        // already broken.
+        assert anchorable != null;
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            final WindowFunction function = functions.getQuick(i);
+            if (function.isCheckpointStateless()) {
+                continue;
+            }
+            boolean anchored = false;
+            for (int j = 0, m = anchorable.size(); j < m; j++) {
+                if (anchorable.getQuick(j) == function) {
+                    anchored = true;
+                    break;
+                }
+            }
+            if (!anchored) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
      * Plans and executes O3 repair against one pinned applied-base snapshot after the
      * forward draft rolls back. A covering checkpoint permits resume; otherwise replay
      * rebuilds from the planned floor. The caller retains the reader unless repair parks.
@@ -7186,7 +7230,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 instance.recordAdaptiveCheckpointCorrection(
                         correctionDepthMicros,
                         engine.getConfiguration().getLiveViewCheckpointMaxDurationMicros(),
-                        instance.getDefinition().getFlushEveryMicros()
+                        instance.getDefinition().getFlushEveryMicros(),
+                        isEveryStatefulWindowFunctionAnchored(instance, windowFactory)
                 );
             }
         }
