@@ -138,7 +138,7 @@ Report these as Category E (non-test failures) in the final output. Common cases
 
 - **All passed + summary shows 0 failures** — report success, stop.
 - **Some failed** — proceed to Step 2 with failed checks. Report summary: "24 test failures across 14 runs out of 279K tests."
-- **All pending, none failed** — report "CI still running, no failures yet. Re-run this command later or use `/loop 2m /fix-ci $PR` to monitor."
+- **All pending, none failed** — report "CI still running, no failures yet." and stop. Never wait for the run, poll it or suggest looping this command (CLAUDE.md "Never monitor CI").
 - **Mix of pending + failed** — proceed with failed checks immediately. Don't wait for the full run.
 - **Only non-Azure checks failed** (e.g., Danger, build) — report those directly, skip Steps 2-3.
 
@@ -372,12 +372,24 @@ The heuristic: "Did the PR replace the functionality, or just remove the gate?" 
 
 4. **Update the expected value** to match the actual output. Use the Edit tool.
 
-5. **Report** what was changed:
+5. **Run the fixed test locally** (CLAUDE.md "Running Tests"):
+   ```bash
+   python3 ci/incremental_compile.py -- test -Dtest='FooTest#testBar'
+   ```
+   It must pass; if it fails, undo the edit and report the test under Behavior
+   Precision (Category B) with the local failure. Skip the run only when CI
+   failed the test on a platform this machine is not, such as Windows while you
+   run Linux, and the test does not run here; say so in the report. A test that
+   runs here runs even when CI failed it elsewhere: its new expected value must
+   hold here too. Never wait on CI to check the fix.
+
+6. **Report** what was changed:
    ```
    Auto-fixed: FooTest#testBar
    - Updated expected output: [brief description of what changed]
    - Reason: PR changed [behavior X], test expected old output
    - Platforms affected: mac-griffin, windows-griffin, linux-griffin
+   - Local run: passed | not run: [reason, e.g. the test runs only on Windows, this machine runs Linux]
    ```
 
 ### For Categories B-E (discuss with user):
@@ -390,7 +402,7 @@ Present a structured report. Group by category, within each category group by si
 Analyzed N failed jobs across M platforms.
 
 ### Auto-fixed (if any)
-- `FooTest#testBar`: updated expected output — [description]
+- `FooTest#testBar`: updated expected output — [description]; local run: passed | not run: [reason]
 
 ### Needs Discussion
 

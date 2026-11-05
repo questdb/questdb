@@ -303,8 +303,10 @@ that your change works.
   After a push, do not wait for its CI run.
 - When the user asks you to fix a CI failure, read the failed run's logs as the
   bug report; if the run has not failed yet, say so and stop. Reproduce the
-  failure locally, fix it and verify the fix locally. When you cannot
-  reproduce it, say so instead of pushing to see whether CI goes green.
+  failure locally, fix it and verify the fix locally. When the failure does not
+  reproduce here, such as one on another platform, run what does run here and
+  report what you could not verify; never wait on CI or push to see whether it
+  goes green.
 - This rule overrides any skill or command that says otherwise.
 
 ## Git & PR Conventions
