@@ -275,9 +275,10 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     @Test
     public void testConvertPartitionTypeChangeColumnTopsFuzz() throws Exception {
         // As testConvertPartitionColumnTopsFuzz, with frequent type changes, one of them from STRING, SYMBOL
-        // or VARCHAR to BOOLEAN, BYTE or SHORT lazily on a parquet partition, and changes back to text, see
-        // FuzzTransactionGenerator.generateSet(). The column must keep its top through CONVERT TO NATIVE and
-        // the ALTER COLUMN TYPE pre-pass, so that the change back reads the top as NULL, as the non-WAL twin.
+        // or VARCHAR to BOOLEAN, BYTE or SHORT lazily on a parquet partition, see
+        // FuzzTransactionGenerator.generateSet(). The rows of the top, which CONVERT TO PARQUET writes as
+        // NULLs, must read 0 or false through CONVERT TO NATIVE and the ALTER COLUMN TYPE pre-pass, as the
+        // column top of the non-WAL twin.
         Rnd rnd = generateRandom(LOG);
         setTestParams(rnd);
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 50 + rnd.nextInt(151));
@@ -547,10 +548,10 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         // its files, and the check after VACUUM TABLE proves VACUUM removes them. The fuzz test drew the
         // default symbol index type from other seeds. The fuzz plants no IO failure: one that hit the purge
         // job would lose the purge log, and the check before VACUUM TABLE would skip.
-        runTxnZeroCoveredSymbolRandomFuzz(generateRandom(LOG, 816863342044703L, 1854985519383L), "POSTING DELTA", null, 0);
+        runTxnZeroCoveredSymbolRandomFuzz(generateRandom(LOG, 101024978098573L, 9175392298475L), "POSTING DELTA", null, 0);
         Assert.assertEquals(txnZeroRunPurgeTasksConsumed, txnZeroRunPurgeTasksLogged);
-        // instance 0 of sym0 in partition 2022-02-24 (name txn 1) of the non-WAL table, whose index DROP
-        // INDEX dropped before DROP PARTITION of 2022-02-25
+        // instance 0 of sym0 in partition 2022-02-26 (name txn 53) of the non-WAL table, whose index DROP
+        // INDEX dropped before DROP PARTITION of 2022-02-27
         final TableToken tableToken = engine.verifyTableName(getTestName() + "_nonwal");
         final int timestampType;
         try (TableReader reader = getReader(tableToken.getTableName())) {
@@ -558,8 +559,8 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         }
         final String sym0Key = refusedPurgeKey(
                 tableToken.getDirName(),
-                ColumnType.getTimestampDriver(timestampType).parseFloorLiteral("2022-02-24"),
-                1,
+                ColumnType.getTimestampDriver(timestampType).parseFloorLiteral("2022-02-26"),
+                53,
                 "sym0",
                 0
         );

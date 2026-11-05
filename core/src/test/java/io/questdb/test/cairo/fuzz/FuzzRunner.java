@@ -912,8 +912,8 @@ public class FuzzRunner {
 
     /**
      * Makes the generator change a STRING, SYMBOL or VARCHAR column to BOOLEAN, BYTE or SHORT on a parquet
-     * partition and those types back to text, with in-order writes only, see
-     * FuzzTransactionGenerator.generateSet(). The parallel WAL apply needs one WAL writer to keep the order.
+     * partition, with in-order writes only, see FuzzTransactionGenerator.generateSet(). The parallel WAL apply
+     * needs one WAL writer to keep the order.
      */
     public void setNoSentinelTypeChangeEnabled(boolean isNoSentinelTypeChangeEnabled) {
         this.isNoSentinelTypeChangeEnabled = isNoSentinelTypeChangeEnabled;

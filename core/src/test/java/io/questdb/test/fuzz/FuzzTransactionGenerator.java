@@ -127,19 +127,15 @@ public class FuzzTransactionGenerator {
 
     /**
      * {@code isNoSentinelTypeChangeEnabled} makes the first column type change after the first CONVERT TO
-     * PARQUET change a STRING, SYMBOL or VARCHAR column to BOOLEAN, BYTE or SHORT, lazily on the parquet
-     * partition, and lets BOOLEAN, BYTE and SHORT columns change to text. Those types read their column
-     * top as 0 or false; the change back to text shows whether CONVERT TO NATIVE and the ALTER COLUMN TYPE
-     * pre-pass kept the top, as the non-WAL twin does.
+     * PARQUET change a STRING, SYMBOL or VARCHAR column to BOOLEAN, BYTE or SHORT, once and before any
+     * partition goes back to native, so that the WAL tables apply it lazily on the parquet partition. Those
+     * types read the column top of the non-WAL twin, and the NULLs that CONVERT TO PARQUET writes for the rows
+     * of a top, as 0 or false. The generator changes no column of these types to a type with NULL: the twin
+     * would read NULL where the WAL tables read the stored 0 or false.
      * <p>
-     * That change back also shows every other place where the WAL tables and the twin hold the top rows
-     * differently, so the generator keeps those out. A native O3 merge and an in-place parquet update
-     * write the top rows of these types as 0 or false at points that differ between the tables: the
-     * generator writes every row in order and converts to parquet only the partitions before the one taking
-     * writes, and the caller applies the WAL with one writer, which keeps that order. A parquet to native
-     * conversion stores the top of a text column from the start of its first row group with data, the
-     * rows after it as NULL values, which a change to BOOLEAN, BYTE or SHORT turns into 0 or false: the
-     * text to BOOLEAN, BYTE or SHORT change comes once, before any partition goes back to native.
+     * The generator writes every row in order and converts to parquet only the partitions before the one taking
+     * writes, and the caller applies the WAL with one writer, which keeps that order: the change reads the NULLs
+     * that CONVERT TO PARQUET wrote for the rows of the tops, in row groups that no late row rewrote.
      * <p>
      * A backfill is an O3 block clustered at a random point behind the run's front, cutting older days into splits
      * and pieces. A zero {@code probabilityOfBackfill} draws nothing from {@code rnd}, keeping old runs reproducible.
@@ -414,7 +410,7 @@ public class FuzzTransactionGenerator {
                         )) {
                     // a symbol capacity change takes 20% of the others; if it was not generated, generate a
                     // column type change
-                    meta = FuzzChangeColumnTypeOperation.generateColumnTypeChange(transactionList, estimatedTotalRows, metaVersion++, waitBarrierVersion++, rnd, meta, isNoSentinelTypeChangeEnabled);
+                    meta = FuzzChangeColumnTypeOperation.generateColumnTypeChange(transactionList, estimatedTotalRows, metaVersion++, waitBarrierVersion++, rnd, meta);
                 }
             } else if (wantToValidateSymbolAccess) {
                 FuzzTransaction transaction = new FuzzTransaction();
