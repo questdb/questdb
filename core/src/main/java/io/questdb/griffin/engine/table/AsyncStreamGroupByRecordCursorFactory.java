@@ -255,7 +255,9 @@ public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorF
                 long sampleStartOffset = 0;
                 boolean isChainReserved = false;
                 for (long lo = 0, hi = rowCount; lo < hi; segmentCount++) {
-                    circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+                    if ((segmentCount & StreamGroupByMap.BREAKER_CHECK_MASK) == 0) {
+                        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+                    }
                     final long key = getKey(record, rows, keyFunction, isDescending ? hi - 1 : lo);
                     final long start = isDescending ? findGroupStart(record, rows, keyFunction, key, lo, hi) : lo;
                     final long end = isDescending ? hi : findGroupEnd(record, rows, keyFunction, key, lo, hi);
@@ -313,7 +315,9 @@ public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorF
             final DirectLongList results = atom.getResultValues(task);
             long firstKey = 0;
             for (long lo = 0, hi = rowCount, groups = 0; lo < hi; groups++) {
-                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+                if ((groups & StreamGroupByMap.BREAKER_CHECK_MASK) == 0) {
+                    circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+                }
                 if (groups == GROUP_SAMPLE_SIZE) {
                     final long rowsLeft = hi - lo;
                     final long nextKey = getKey(record, rows, keyFunction, isDescending ? hi - 1 : lo);
@@ -349,7 +353,6 @@ public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorF
                                                               + firstRow * ColumnType.sizeOf(function.getComputeBatchArgType());
                         function.computeBatch(value, address, (int) (end - start), baseRowId + firstRow);
                     } else if (isBatch && rows != null) {
-                        circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                         if (!isEncoded) {
                             encodeBatch(rows, start, end);
                             isEncoded = true;
@@ -359,7 +362,9 @@ public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorF
                         record.setFilteredRowIndex(firstRow, start);
                         function.computeFirst(value, record, baseRowId + firstRow);
                         for (long r = start + 1; r < end; r++) {
-                            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+                            if (((r - start) & StreamGroupByMap.BREAKER_CHECK_MASK) == 0) {
+                                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+                            }
                             final long rowIndex = rows == null ? r : rows.get(r);
                             record.setFilteredRowIndex(rowIndex, r);
                             function.computeNext(value, record, baseRowId + rowIndex);

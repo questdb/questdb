@@ -63,7 +63,8 @@ import static io.questdb.griffin.engine.table.GroupByMapFragment.NUM_SHARDS;
 import static io.questdb.griffin.engine.table.GroupByMapFragment.NUM_SHARDS_SHR;
 
 public final class StreamGroupByMap implements QuietCloseable {
-    private static final int SHARDED_BREAKER_CHECK_MASK = 4095;
+    // A reduce task re-arms its breaker, so a count-throttled check there probes the client connection once per frame.
+    public static final int BREAKER_CHECK_MASK = 4095;
     private static final long SHARD_PAGE_SIZE = 4 * 1024;
     // clear() shrinks the map once its capacity exceeds this many slots per key the finished segment needed.
     private static final int SHRINK_RATIO = 8;
@@ -239,8 +240,10 @@ public final class StreamGroupByMap implements QuietCloseable {
     public long appendTo(RecordChain chain, long previous, SqlExecutionCircuitBreaker circuitBreaker) {
         final MapRecordCursor cursor = map.getCursor();
         final MapRecord record = cursor.getRecord();
-        while (cursor.hasNext()) {
-            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+        for (long i = 1; cursor.hasNext(); i++) {
+            if ((i & BREAKER_CHECK_MASK) == 0) {
+                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+            }
             previous = chain.beginRecord(previous);
             stateSink.copy(record, chain);
             if (segmentType == ColumnType.INT) {
@@ -460,7 +463,7 @@ public final class StreamGroupByMap implements QuietCloseable {
         reservedKeys = Math.max(reservedKeys, Math.min(hi - lo, batchSize));
         for (long start = lo; start < hi; start += batchSize) {
             if (start > lo) {
-                // The caller checks the breaker once per segment, so only the later batches check it here.
+                // The caller checks the breaker between segments, so only the later batches check it here.
                 circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
             }
             final long end = Math.min(start + batchSize, hi);
@@ -476,7 +479,9 @@ public final class StreamGroupByMap implements QuietCloseable {
 
     private long aggregateRows(PageFrameMemoryRecord record, DirectLongList rows, long lo, long hi, long baseRowId, SqlExecutionCircuitBreaker circuitBreaker) {
         for (long row = lo; row < hi; row++) {
-            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+            if (((row - lo) & BREAKER_CHECK_MASK) == BREAKER_CHECK_MASK) {
+                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+            }
             final long rowIndex = rows == null ? row : rows.get(row);
             record.setFilteredRowIndex(rowIndex, row);
             update(record, baseRowId + rowIndex);
@@ -493,7 +498,7 @@ public final class StreamGroupByMap implements QuietCloseable {
         final Map lookupShard = shards.getQuick(0);
         for (long row = lo; row < hi; row++) {
             // A per-row check costs high-cardinality buckets up to 16%, since it does not inline here.
-            if (((row - lo) & SHARDED_BREAKER_CHECK_MASK) == SHARDED_BREAKER_CHECK_MASK) {
+            if (((row - lo) & BREAKER_CHECK_MASK) == BREAKER_CHECK_MASK) {
                 circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
             }
             final long rowIndex = rows == null ? row : rows.get(row);

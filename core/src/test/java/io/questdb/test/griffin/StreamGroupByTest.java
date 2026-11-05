@@ -45,21 +45,26 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory;
+import io.questdb.griffin.engine.groupby.StreamGroupByMap;
 import io.questdb.griffin.engine.groupby.StreamGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncStreamGroupByAtom;
 import io.questdb.griffin.engine.table.AsyncStreamGroupByRecordCursorFactory;
 import io.questdb.jit.JitUtil;
+import io.questdb.network.NetworkFacade;
+import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.MemoryTrackerWorkload;
 import io.questdb.std.Os;
+import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.QueryAssertion;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.CountingSqlExecutionCircuitBreaker;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Before;
@@ -70,6 +75,7 @@ import org.junit.runners.Parameterized;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 @RunWith(Parameterized.class)
@@ -1880,6 +1886,114 @@ public class StreamGroupByTest extends AbstractCairoTest {
                 }
             } finally {
                 impl.with(breaker);
+            }
+        });
+    }
+
+    @Test
+    public void testFramesDoNotEachProbeConnection() throws Exception {
+        Assume.assumeTrue(parallel);
+        final int rows = 10_000;
+        final int frames = 100;
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, rows / frames);
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, rows / frames);
+        final AtomicInteger probes = new AtomicInteger();
+        circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
+            @Override
+            public long getCircuitBreakerConnectionCheckThrottle() {
+                return Dates.HOUR_MILLIS;
+            }
+
+            @Override
+            public int getCircuitBreakerThrottle() {
+                return 2_000_000;
+            }
+
+            @Override
+            public @NotNull NetworkFacade getNetworkFacade() {
+                return new NetworkFacadeImpl() {
+                    @Override
+                    public boolean testConnection(long fd, long buffer, int bufferSize) {
+                        probes.incrementAndGet();
+                        return false;
+                    }
+                };
+            }
+        };
+        try {
+            run((engine, compiler, context) -> {
+                engine.execute("CREATE TABLE t AS (SELECT (x * 10_000L)::TIMESTAMP ts, x % 3 k, x v, x::DOUBLE d FROM long_sequence(" + rows + ")) "
+                        + "TIMESTAMP(ts) PARTITION BY YEAR", context);
+                engine.execute("CREATE TABLE trades AS (SELECT timestamp_sequence('2024-01-01', 8_000_000L) ts, x % 3 k, x v FROM long_sequence(" + rows + ")) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY", context);
+                engine.execute("INSERT INTO trades VALUES ('2024-01-02T12:00', 1, 1)", context);
+                convertToParquet(engine, context, "2024-01-01");
+                final SqlExecutionContextImpl impl = (SqlExecutionContextImpl) context;
+                final SqlExecutionCircuitBreaker previous = impl.getCircuitBreaker();
+                try (NetworkSqlExecutionCircuitBreaker breaker = new NetworkSqlExecutionCircuitBreaker(engine, circuitBreakerConfiguration)) {
+                    breaker.of(1);
+                    breaker.setTimeout(Long.MAX_VALUE);
+                    breaker.resetTimer();
+                    impl.with(breaker);
+                    for (String sql : new String[]{
+                            "SELECT ts, count() c, sum(v) s FROM t SAMPLE BY 1s",
+                            "SELECT ts, count() c, sum(v) s FROM t WHERE v % 2 = 0 SAMPLE BY 1s",
+                            "SELECT ts, avg(d * 2) a FROM t SAMPLE BY 1s",
+                            "SELECT ts, k, count() c, sum(v) s FROM t SAMPLE BY 1s",
+                            "SELECT ts, k, count() c, sum(v) s FROM t WHERE v % 2 = 0 SAMPLE BY 1s",
+                            "SELECT ts, count() c, sum(v) s FROM trades WHERE v % 97 = 0 SAMPLE BY 1m",
+                            "SELECT ts, k, count() c, sum(v) s FROM trades WHERE v % 97 = 0 SAMPLE BY 1m"
+                    }) {
+                        try (RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory();
+                             RecordCursor cursor = factory.getCursor(context)) {
+                            assertStream(factory, true);
+                            probes.set(0);
+                            long count = 0;
+                            while (cursor.hasNext()) {
+                                count++;
+                            }
+                            Assert.assertTrue(sql, count > 0);
+                            Assert.assertTrue(sql + ": " + probes.get() + " probes", probes.get() < frames / 2);
+                        }
+                    }
+                } finally {
+                    impl.with(previous);
+                }
+            });
+        } finally {
+            circuitBreakerConfiguration = null;
+        }
+    }
+
+    @Test
+    public void testRowLoopChecksBreakerEvery4kRows() throws Exception {
+        Assume.assumeTrue(parallel && workers == 0);
+        final int rows = 100_000;
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, rows);
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, rows);
+        run((engine, compiler, context) -> {
+            engine.execute("CREATE TABLE t AS (SELECT (x - 1)::TIMESTAMP ts, x::DOUBLE d, x u FROM long_sequence(" + rows + ")) "
+                    + "TIMESTAMP(ts) PARTITION BY YEAR", context);
+            engine.execute("CREATE TABLE trades AS (SELECT ('2024-01-01'::TIMESTAMP + x - 1)::TIMESTAMP ts, x % 7 k, x v FROM long_sequence(" + rows + ")) "
+                    + "TIMESTAMP(ts) PARTITION BY DAY", context);
+            engine.execute("INSERT INTO trades VALUES ('2024-01-02T12:00', 1, 1)", context);
+            convertToParquet(engine, context, "2024-01-01");
+            final CountingSqlExecutionCircuitBreaker breaker = new CountingSqlExecutionCircuitBreaker(SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+            try (SqlExecutionContextImpl counted = new SqlExecutionContextImpl(engine, 1).with(context.getSecurityContext(), null, null, -1, breaker)) {
+                for (Object[] query : new Object[][]{
+                        {"SELECT timestamp_floor('1h', ts) ts, avg(d * 2) a FROM t", rows, rows / 2},
+                        {"SELECT timestamp_floor('20T', ts) ts, u, count() c FROM t", rows, rows},
+                        {"SELECT timestamp_floor('1d', ts) ts, k, count() c, sum(v) s FROM trades WHERE v % 2 = 0", rows / 2, rows / 4}
+                }) {
+                    try (RecordCursorFactory factory = compiler.compile((String) query[0], counted).getRecordCursorFactory()) {
+                        assertStream(factory, true);
+                        final long before = breaker.getCheckCount();
+                        Assert.assertFalse(read(factory, counted).isEmpty());
+                        final long checks = breaker.getCheckCount() - before;
+                        final int minChecks = (int) query[1] / (StreamGroupByMap.BREAKER_CHECK_MASK + 1);
+                        Assert.assertTrue(query[0] + ": " + checks + " checks", checks >= minChecks && checks < (int) query[2]);
+                    }
+                }
             }
         });
     }
