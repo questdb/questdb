@@ -724,7 +724,7 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
             ObjList<byte[]> sent = ingestInOnePass(
                     processor,
                     httpConfig,
-                    denyCommitTo("b"),
+                    denyCommitAfterJoinTo("b"),
                     createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 100L, 1_000_000L)),
                     createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 200L, 2_000_000L)),
                     createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 300L, 3_000_000L))
@@ -1555,7 +1555,7 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
             try (Connection connection = new Connection(
                     engine,
                     httpConfig,
-                    denyCommitTo("tab"),
+                    denyCommitAfterJoinTo("tab"),
                     false,
                     createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(100L, 1_000_000L)),
                     createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(200L, 2_000_000L)),
@@ -1623,14 +1623,12 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     }
 
     /**
-     * Three tables interleave in one batch, frames a0 b1 c2 a3 b4 c5, and one table's
-     * insert permission is refused. The batch commit checks every table's permission
-     * before it commits any, so wherever the refused table sits, no table publishes a
-     * transaction, nothing is acked, and the NACK names the batch's first frame: the
-     * client's replay sends no row twice.
+     * Three tables interleave in one pass, frames a0 b1 c2 a3 b4 c5, and one table's insert
+     * permission is refused. The refused table's first frame ends the batch: the frames
+     * before it commit, once per table, and are acked, and that frame is NACKed.
      */
     @Test
-    public void testPermissionRefusalOfAnyTableCommitsNoTable() throws Exception {
+    public void testPermissionRefusalNacksRefusedTablesFirstFrame() throws Exception {
         assertMemoryLeak(() -> {
             for (int deniedTable = 0; deniedTable < 3; deniedTable++) {
                 final String[] tables = {"a" + deniedTable, "b" + deniedTable, "c" + deniedTable};
@@ -1654,18 +1652,67 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
                         frames
                 );
                 drainWalQueue();
+                // The frames before the refused one hold one row each of the tables before it.
                 for (int t = 0; t < tables.length; t++) {
-                    assertQuery("SELECT count() FROM " + tables[t]).noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
-                    Assert.assertEquals("no table commits [denied=" + deniedTable + ", table=" + t + ']',
-                            txnBefore[t], engine.getTableSequencerAPI().lastTxn(engine.verifyTableName(tables[t])));
+                    final boolean isBeforeRefusal = t < deniedTable;
+                    assertQuery("SELECT v FROM " + tables[t]).noLeakCheck().expectSize()
+                            .returns(isBeforeRefusal ? "v\n" + (t + 1) * 100 + "\n" : "v\n");
+                    Assert.assertEquals("each table before the refusal commits once [denied=" + deniedTable + ", table=" + t + ']',
+                            txnBefore[t] + (isBeforeRefusal ? 1 : 0),
+                            engine.getTableSequencerAPI().lastTxn(engine.verifyTableName(tables[t])));
                 }
-                Assert.assertEquals("nothing is acked [denied=" + deniedTable + ']', -1, maxCumulativeOkAck(sent));
-                Assert.assertEquals("the NACK names the batch's first frame [denied=" + deniedTable + ']',
-                        QwpConstants.STATUS_WRITE_ERROR, errorStatusForSeq(sent, 0));
-                for (int seq = 1; seq < frames.length; seq++) {
-                    Assert.assertFalse(hasErrorResponseForSeq(sent, seq));
+                Assert.assertEquals("the ack covers the frames before the refused table's first [denied=" + deniedTable + ']',
+                        deniedTable - 1, maxCumulativeOkAck(sent));
+                Assert.assertEquals("the NACK names the refused table's first frame [denied=" + deniedTable + ']',
+                        QwpConstants.STATUS_WRITE_ERROR, errorStatusForSeq(sent, deniedTable));
+                for (int seq = 0; seq < frames.length; seq++) {
+                    if (seq != deniedTable) {
+                        Assert.assertFalse(hasErrorResponseForSeq(sent, seq));
+                    }
                 }
             }
+        });
+    }
+
+    /**
+     * The refused table's first rows come in a frame's second block, after the first block
+     * appended to a batch table. The redo commits the frames before it, and the frame is
+     * NACKed with its first block's row rolled back.
+     */
+    @Test
+    public void testPermissionRefusalOfSecondBlockCommitsFramesBefore() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("CREATE TABLE a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE b (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE c (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final long aBefore = lastTxn(engine, "a");
+            final long bBefore = lastTxn(engine, "b");
+            final long cBefore = lastTxn(engine, "c");
+            final ObjList<byte[]> sent = ingestInOnePass(
+                    new QwpIngressUpgradeProcessor(engine, httpConfig),
+                    httpConfig,
+                    denyCommitTo("c"),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 100L, 1_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 200L, 2_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, qwpMessage(
+                            tableBlock("a", 300L, 3_000_000L),
+                            tableBlock("c", 400L, 3_000_001L)
+                    ))
+            );
+            drainWalQueue();
+            assertQuery("SELECT v FROM a").noLeakCheck().expectSize().returns("v\n100\n");
+            assertQuery("SELECT v FROM b").noLeakCheck().expectSize().returns("v\n200\n");
+            assertQuery("SELECT v FROM c").noLeakCheck().expectSize().returns("v\n");
+            Assert.assertEquals("a commits once", aBefore + 1, lastTxn(engine, "a"));
+            Assert.assertEquals("b commits once", bBefore + 1, lastTxn(engine, "b"));
+            Assert.assertEquals("c commits nothing", cBefore, lastTxn(engine, "c"));
+            Assert.assertEquals(1, maxCumulativeOkAck(sent));
+            Assert.assertEquals(QwpConstants.STATUS_WRITE_ERROR, errorStatusForSeq(sent, 2));
+            Assert.assertFalse(hasErrorResponseForSeq(sent, 0));
+            Assert.assertFalse(hasErrorResponseForSeq(sent, 1));
+            Assert.assertTrue("the ack must precede the NACK",
+                    indexOfBinaryFrame(sent, QwpConstants.STATUS_OK, 1) < indexOfErrorResponse(sent, 2));
         });
     }
 
@@ -1770,7 +1817,7 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
             try (Connection connection = new Connection(
                     engine,
                     httpConfig,
-                    denyCommitTo("tab"),
+                    denyCommitAfterJoinTo("tab"),
                     false,
                     createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(100L, 1_000_000L)),
                     createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(200L, 2_000_000L)),
@@ -2462,7 +2509,7 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
             final ObjList<byte[]> sent = ingestInOnePass(
                     new QwpIngressUpgradeProcessor(engine, httpConfig),
                     httpConfig,
-                    denyCommitTo("b"),
+                    denyCommitAfterJoinTo("b"),
                     createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 100L, 1_000_000L)),
                     createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 200L, 2_000_000L)),
                     createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 300L, 3_000_000L)),
@@ -2569,7 +2616,7 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
             final ObjList<byte[]> sent = ingestInOnePass(
                     new QwpIngressUpgradeProcessor(engine, httpConfig),
                     httpConfig,
-                    denyCommitTo("a"),
+                    denyCommitAfterJoinTo("a"),
                     oneRowFramesThen("a", 10, createMaskedFrame(WebSocketOpcode.BINARY, oneRowVarcharMessage("b", "not-a-long", 11_000_000L)))
             );
             drainWalQueue();
@@ -2671,8 +2718,8 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
 
     // Another session renames b between the passes.
     @Test
-    public void testRenamedTableRefusesWholeBatch() throws Exception {
-        assertTableChangeBetweenPassesRefusesWholeBatch(
+    public void testRenamedTableNacksItsFirstFrame() throws Exception {
+        assertTableChangeBetweenPassesNacksItsFirstFrame(
                 "RENAME TABLE b TO b2",
                 null,
                 QwpConstants.STATUS_INTERNAL_ERROR
@@ -2746,9 +2793,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
 
     // An operator suspends b's WAL between the passes, while suspended tables deny writes.
     @Test
-    public void testSuspendedTableRefusesWholeBatch() throws Exception {
+    public void testSuspendedTableNacksItsFirstFrame() throws Exception {
         setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
-        assertTableChangeBetweenPassesRefusesWholeBatch(
+        assertTableChangeBetweenPassesNacksItsFirstFrame(
                 "ALTER TABLE b SUSPEND WAL",
                 "ALTER TABLE b RESUME WAL",
                 QwpConstants.STATUS_WRITE_ERROR
@@ -3038,8 +3085,24 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         return count;
     }
 
+    private static SecurityContext denyCommitAfterJoinTo(String tableName) {
+        // Models a refusal that lands after the table joined: passes the check as the table
+        // joins a commit batch, outside the role-switch read lock, and refuses the ones under
+        // it, in the batch's checks and the table's own commit.
+        return new AllowAllSecurityContext() {
+            @Override
+            public void authorizeInsert(TableToken tableToken) {
+                if (tableToken.getTableName().equals(tableName) && engine.getRoleSwitchReadLockCount() > 0) {
+                    throw CairoException.nonCritical().put("test: commit denied for ").put(tableName);
+                }
+            }
+        };
+    }
+
     private static SecurityContext denyCommitTo(String tableName) {
-        // On the QWP path authorizeInsert runs only at commit (TableUpdateDetails.authorizeCommit).
+        // On the QWP path authorizeInsert runs for rows to commit: when a table joins a commit
+        // batch, in the batch's checks before any table commits, and in each table's commit
+        // (TableUpdateDetails.authorizeCommit).
         return new AllowAllSecurityContext() {
             @Override
             public void authorizeInsert(TableToken tableToken) {
@@ -3052,8 +3115,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
 
     private static SecurityContext denyCommitsAfterFirst(String tableName) {
         // Denies the table's inserts once it has committed a transaction after this call.
-        // On the QWP path authorizeInsert runs only for commits with rows: in a commit
-        // batch's checks before any table commits, and in each table's commit.
+        // On the QWP path authorizeInsert runs only for rows to commit: when a table joins a
+        // commit batch, in the batch's checks before any table commits, and in each table's
+        // commit.
         final long txnBefore = engine.getTableSequencerAPI().lastTxn(engine.verifyTableName(tableName));
         return new AllowAllSecurityContext() {
             @Override
@@ -3092,15 +3156,15 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     }
 
     private static SecurityContext failCommitAfterBatchChecks(String tableName) {
-        // Passes the table's insert check in a commit batch's checks, which run before any
-        // table commits, and refuses the one in the table's own commit: a commit that
-        // fails after the batch's checks passed, as a storage fault does.
+        // Passes the table's insert checks as it joins a commit batch and in the batch's
+        // checks, which run before any table commits, and refuses the one in the table's own
+        // commit: a commit that fails after the batch's checks passed, as a storage fault does.
         return new AllowAllSecurityContext() {
             private int checks;
 
             @Override
             public void authorizeInsert(TableToken tableToken) {
-                if (tableToken.getTableName().equals(tableName) && ++checks > 1) {
+                if (tableToken.getTableName().equals(tableName) && ++checks > 2) {
                     throw CairoException.nonCritical().put("test: commit failed for ").put(tableName);
                 }
             }
@@ -3597,7 +3661,7 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
             try (Connection connection = new Connection(
                     engine,
                     httpConfig,
-                    denyCommitTo("a"),
+                    denyCommitAfterJoinTo("a"),
                     false,
                     clientEncodedFrame(1, "a"),
                     clientEncodedFrame(2, "b")
@@ -4019,7 +4083,7 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
             final long cBefore = engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("c"));
             HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
             ObjList<byte[]> sent = ingestInOnePass(new QwpIngressUpgradeProcessor(engine, httpConfig),
-                    httpConfig, denyCommitTo("a"), clientEncodedFrame(1, "a"), clientEncodedFrame(1, tables));
+                    httpConfig, denyCommitAfterJoinTo("a"), clientEncodedFrame(1, "a"), clientEncodedFrame(1, tables));
             drainWalQueue();
             try (TableReader a = engine.getReader("a"); TableReader b = engine.getReader("b"); TableReader c = engine.getReader("c")) {
                 Assert.assertEquals(0, a.size() + b.size() + c.size());
@@ -4141,12 +4205,12 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
 
     /**
      * Pass 1 opens a and b on a connection, {@code ddl} then changes b from another
-     * session, and pass 2 interleaves a, b, a, b. b's commit would be refused, so the
-     * batch is refused before a commits: nothing of pass 2 is acked or committed, and the
-     * NACK names pass 2's first frame. After {@code ddlBeforeReplay}, the client replays
-     * every frame above its ack on a new connection, and a holds each of its rows once.
+     * session, and pass 2 interleaves a, b, a, b. b is refused as it joins the batch: a's
+     * frame before it commits and is acked, and b's frame is NACKed. After
+     * {@code ddlBeforeReplay}, the client replays every frame above its ack on a new
+     * connection, and a holds each of its rows once.
      */
-    private void assertTableChangeBetweenPassesRefusesWholeBatch(
+    private void assertTableChangeBetweenPassesNacksItsFirstFrame(
             String ddl,
             String ddlBeforeReplay,
             byte refusalStatus
@@ -4167,12 +4231,14 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
                 connection.deliverFrames(4);
                 sent = connection.sentFrames();
             }
-            Assert.assertEquals("a must not publish a WAL transaction", aTxnBefore,
+            Assert.assertEquals("a commits the frame before b's once", aTxnBefore + 1,
                     engine.getTableSequencerAPI().lastTxn(aToken));
-            Assert.assertEquals("nothing of pass 2 is acked", 1, maxCumulativeOkAck(sent));
-            Assert.assertEquals("the NACK names pass 2's first frame", refusalStatus, errorStatusForSeq(sent, 2));
-            for (int seq = 3; seq < 6; seq++) {
-                Assert.assertFalse(hasErrorResponseForSeq(sent, seq));
+            Assert.assertEquals("pass 2's frame before b's is acked", 2, maxCumulativeOkAck(sent));
+            Assert.assertEquals("the NACK names b's first frame of pass 2", refusalStatus, errorStatusForSeq(sent, 3));
+            for (int seq = 0; seq < 6; seq++) {
+                if (seq != 3) {
+                    Assert.assertFalse(hasErrorResponseForSeq(sent, seq));
+                }
             }
 
             if (ddlBeforeReplay != null) {
@@ -4183,10 +4249,10 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
                     httpConfig,
                     AllowAllSecurityContext.INSTANCE,
                     false,
-                    Arrays.copyOfRange(frames, 2, frames.length)
+                    Arrays.copyOfRange(frames, 3, frames.length)
             )) {
-                replay.deliverFrames(4);
-                Assert.assertEquals("the replay is acked", 3, maxCumulativeOkAck(replay.sentFrames()));
+                replay.deliverFrames(3);
+                Assert.assertEquals("the replay is acked", 2, maxCumulativeOkAck(replay.sentFrames()));
             }
             drainWalQueue();
             assertQuery("SELECT v FROM a").noLeakCheck().expectSize().returns("v\n100\n300\n500\n");

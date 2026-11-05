@@ -354,13 +354,15 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     // read lock held across all of them, and only after every table passed the checks a
     // commit can refuse on: the node is writable, each table's insert permission holds,
     // and its sequencer would take the commit (the table was not dropped, renamed or
-    // re-created, nor hard-suspended while suspended tables deny writes). A refusal there
-    // refuses the whole batch, with nothing committed. When a commit still fails -- a
-    // storage fault, or a DROP, RENAME or SUSPEND WAL that lands between the checks and
-    // the table's commit -- the frames before the failed table's first frame hold rows
-    // of tables that committed and nothing else, so the watermark covers them, and the
-    // client replays the rest: rows that those later frames added to the committed
-    // tables arrive a second time.
+    // re-created, nor hard-suspended while suspended tables deny writes). A table is also
+    // checked as it joins: a refused table never joins, so its first frame ends the batch,
+    // the frames before it commit, and that frame gets the refusal. A refusal that lands
+    // while the table is in the batch refuses the whole batch, with nothing committed.
+    // When a commit still fails -- a storage fault, or a DROP, RENAME or SUSPEND WAL that
+    // lands between the checks and the table's commit -- the frames before the failed
+    // table's first frame hold rows of tables that committed and nothing else, so the
+    // watermark covers them, and the client replays the rest: rows that those later
+    // frames added to the committed tables arrive a second time.
     //
     // A frame that fails or cannot join ends the batch, which commits before the frame is
     // answered while it can commit as it stands. It cannot once the frame appended rows
@@ -718,9 +720,10 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
      * A block cannot join when its table's batch rows changed under it, another
      * connection altered or dropped the table, the block needs a new column, or its
      * rows would reach the table's max-uncommitted-rows cap, at which the appender
-     * would commit on its own. Nor can a frame that failed in its preparation, one that
-     * closes a deferred group, or one whose symbol dictionary redefines ids while a batch
-     * is pending.
+     * would commit on its own. A table new to the batch whose commit would be refused does
+     * not join either: the frame fails with the refusal. Nor can a frame that failed in
+     * its preparation, one that closes a deferred group, or one whose symbol dictionary
+     * redefines ids while a batch is pending.
      *
      * @return {@link #COMMIT_BATCH_JOINED} when every block joined;
      * {@link #COMMIT_BATCH_BOUNDARY} when this frame cannot join, the batch can commit as
@@ -801,6 +804,13 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
                         // The lookup refuses non-WAL tables, and every uncommitted row of the
                         // connection belongs to the batch, so a table outside it holds none.
                         final WalWriter walWriter = (WalWriter) tud.getWriter();
+                        // Checked again before the batch commits, for a refusal that lands later.
+                        try {
+                            throwIfCommitRefused(tud, walWriter);
+                        } catch (Throwable th) {
+                            rejectCommitError(th);
+                            return cannotJoin(hasAppended);
+                        }
                         assert walWriter.getUncommittedRowCount() == 0 : "a table outside the commit batch holds uncommitted rows";
                         appendingWriter = walWriter;
                         appendingWriterRows = 0;
@@ -2190,8 +2200,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
                             .put("dropped table discarded buffered rows, cannot acknowledge: ")
                             .put(entry.tud.getTableNameUtf8());
                 }
-                engine.getTableSequencerAPI().throwIfCommitRefused(entry.writer.getTableToken());
-                entry.tud.authorizeCommit();
+                throwIfCommitRefused(entry.tud, entry.writer);
             }
         } catch (Throwable th) {
             LOG.error().$('[').$(fd).$("] commit batch refused before any commit [firstSeq=").$(firstCommitBatchSequence)
@@ -2286,6 +2295,13 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
             setHighestProcessedSequence(failed.firstSequence - 1);
         }
         return false;
+    }
+
+    // Throws what the table's commit would refuse with before appending a transaction: the
+    // sequencer's refusals and this connection's insert permission.
+    private void throwIfCommitRefused(WalTableUpdateDetails tud, WalWriter writer) {
+        engine.getTableSequencerAPI().throwIfCommitRefused(writer.getTableToken());
+        tud.authorizeCommit();
     }
 
     private boolean isLiveWriteAllowed() {
