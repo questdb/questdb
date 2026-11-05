@@ -1109,6 +1109,72 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReplaceAppliedAloneOverParquetRecoversLikeNative() throws Exception {
+        // The post-crash-truncation shape: a replace that a later transaction would have superseded is, after a crash
+        // truncates the sequencer log, applied ALONE over the Parquet partition it targets. It must not suspend and
+        // must land on exactly the state an all-native table reaches from the same rows and the same replace. The
+        // oracle is the independent all-native table, compared with assertSqlCursors (not this table's own replay), so
+        // a Parquet-apply divergence fails the test instead of hiding behind matching replay output.
+        assertMemoryLeak(() -> {
+            execute("create table rg (id long, ts timestamp, v long) timestamp(ts) partition by DAY WAL");
+            execute("create table rg_native (id long, ts timestamp, v long) timestamp(ts) partition by DAY WAL");
+            final TableToken parquetToken = engine.verifyTableName("rg");
+            final TableToken nativeToken = engine.verifyTableName("rg_native");
+
+            final String seed = " values" +
+                    " (1, '2024-01-01T01:00:00.000000Z', 10)," +
+                    " (2, '2024-01-01T06:00:00.000000Z', 20)," +
+                    " (3, '2024-01-01T12:00:00.000000Z', 30)," +
+                    " (4, '2024-01-01T18:00:00.000000Z', 40)," +
+                    " (5, '2024-01-02T06:00:00.000000Z', 50)," +
+                    " (6, '2024-01-02T18:00:00.000000Z', 60)";
+            execute("insert into rg" + seed);
+            execute("insert into rg_native" + seed);
+            drainWalQueue();
+
+            // Convert the older day of rg to Parquet; rg_native stays all-native, the oracle.
+            execute("ALTER TABLE rg CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            assertNotSuspended(parquetToken);
+            assertQuery("SELECT name, isParquet FROM table_partitions('rg')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            name\tisParquet
+                            2024-01-01\ttrue
+                            2024-01-02\tfalse
+                            """);
+
+            // The same superseded replace, applied ALONE on both tables: drop the 06:00 and 12:00 rows of the Parquet
+            // day, add one at 08:00.
+            applyAloneReplaceOverParquetDay(parquetToken);
+            applyAloneReplaceOverParquetDay(nativeToken);
+            drainWalQueue();
+            assertNotSuspended(parquetToken);
+            assertNotSuspended(nativeToken);
+
+            // The replace rewrites the Parquet partition; it stays Parquet rather than reverting to native.
+            assertQuery("SELECT name, isParquet FROM table_partitions('rg')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            name\tisParquet
+                            2024-01-01\ttrue
+                            2024-01-02\tfalse
+                            """);
+
+            // Independent oracle: the Parquet table must match the all-native twin row for row.
+            assertSqlCursors("rg_native", "rg");
+            assertSqlCursors(
+                    "select count(*), min(ts), max(ts) from rg_native",
+                    "select count(*), min(ts), max(ts) from rg"
+            );
+        });
+    }
+
+    @Test
     public void testReplaceRangeParquetPartition() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table rg (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
@@ -2960,6 +3026,17 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
         row.putLong(0, id);
         row.putLong(2, v);
         row.append();
+    }
+
+    // A REPLACE_RANGE over [05:00, 15:00) of 2024-01-01: removes the 06:00 and 12:00 rows and adds one at 08:00,
+    // leaving 01:00 and 18:00. Applied standalone to model the superseded replace a crash leaves alone over Parquet.
+    private static void applyAloneReplaceOverParquetDay(TableToken token) throws NumericException {
+        final long lo = MicrosTimestampDriver.floor("2024-01-01T05:00");
+        final long hi = MicrosTimestampDriver.floor("2024-01-01T15:00");
+        try (WalWriter ww = engine.getWalWriter(token)) {
+            appendRow(ww, MicrosTimestampDriver.floor("2024-01-01T08:00"), 100, 999);
+            ww.commitWithParams(lo, hi, WAL_DEDUP_MODE_REPLACE_RANGE);
+        }
     }
 
     private static void assertAlterIsStructural(String alterSql, boolean expectedStructural) throws SqlException {
