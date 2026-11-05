@@ -67,10 +67,10 @@ import java.util.regex.Pattern;
  * catalogue, and stays valid after a change that breaks it (#7792).
  */
 public class ViewOverNonWalTableTest extends AbstractViewTest {
-    // 2025-06-19T10:00:00.000000Z
-    private static final long CREATE_MICROS = 1_750_327_200_000_000L;
     // 2025-06-19T11:00:00.000000Z
     private static final long ALTER_MICROS = 1_750_330_800_000_000L;
+    // 2025-06-19T10:00:00.000000Z
+    private static final long CREATE_MICROS = 1_750_327_200_000_000L;
     // a DROP, RENAME or TRUNCATE of t logs this line when it waits for a view compile run
     private static final String WAIT_LINE = "waiting for view compilation to release table [table=t]";
     private static final LogCapture capture = new LogCapture();

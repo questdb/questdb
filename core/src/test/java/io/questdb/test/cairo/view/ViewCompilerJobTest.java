@@ -526,6 +526,10 @@ public class ViewCompilerJobTest extends AbstractViewTest {
         Assert.assertEquals(0, engine.getBusyWriterCount());
     }
 
+    private static void assertTableAbsent(String tableName) {
+        Assert.assertNull(engine.getTableTokenIfExists(tableName));
+    }
+
     private static void assertViewColumns(String viewName, String expectedColumns) {
         final StringSink sink = new StringSink();
         try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName(viewName))) {
@@ -551,10 +555,6 @@ public class ViewCompilerJobTest extends AbstractViewTest {
             viewState.unlockAfterRead();
         }
         TestUtils.assertContains(reason, expectedReasonFragment);
-    }
-
-    private static void assertTableAbsent(String tableName) {
-        Assert.assertNull(engine.getTableTokenIfExists(tableName));
     }
 
     private static void createPivotRaceTables() throws SqlException {

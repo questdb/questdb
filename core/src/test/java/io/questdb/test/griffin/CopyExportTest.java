@@ -5428,6 +5428,26 @@ public class CopyExportTest extends AbstractCairoTest {
         makeFirstPartitionComposite();
     }
 
+    private void createTableNeedingQuotes() throws Exception {
+        execute("CREATE TABLE \"src ct\" AS (SELECT x::INT i," +
+                " timestamp_sequence('2024-01-01', 1_000_000L) ts FROM long_sequence(2000))" +
+                " TIMESTAMP(ts) PARTITION BY DAY WAL");
+        // A later, plain day, so 2024-01-01 is never the active partition and the backfill is O3.
+        execute("INSERT INTO \"src ct\" VALUES (999_999, '2024-01-03T00:00:00.000000Z')");
+        drainWalQueue();
+    }
+
+    // t holds one day of rows, so every route of an export of t writes the single file again.parquet.
+    private void createTableToCopyAgain(String walMode) throws Exception {
+        execute("CREATE TABLE t (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY " + walMode);
+        execute("""
+                INSERT INTO t VALUES
+                (1, '2024-01-01T00:00:00.000000Z'),
+                (2, '2024-01-01T01:00:00.000000Z')
+                """);
+        drainWalQueue();
+    }
+
     /**
      * Creates the table {@code tableName}, and the view {@code <tableName>_v} over it, with the columns, PARQUET(...)
      * settings and rows of {@link #createTableWithParquetSettingsAndConvertedColumn} but without a Parquet partition
@@ -5471,26 +5491,6 @@ public class CopyExportTest extends AbstractCairoTest {
         }
     }
 
-    private void createTableNeedingQuotes() throws Exception {
-        execute("CREATE TABLE \"src ct\" AS (SELECT x::INT i," +
-                " timestamp_sequence('2024-01-01', 1_000_000L) ts FROM long_sequence(2000))" +
-                " TIMESTAMP(ts) PARTITION BY DAY WAL");
-        // A later, plain day, so 2024-01-01 is never the active partition and the backfill is O3.
-        execute("INSERT INTO \"src ct\" VALUES (999_999, '2024-01-03T00:00:00.000000Z')");
-        drainWalQueue();
-    }
-
-    // t holds one day of rows, so every route of an export of t writes the single file again.parquet.
-    private void createTableToCopyAgain(String walMode) throws Exception {
-        execute("CREATE TABLE t (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY " + walMode);
-        execute("""
-                INSERT INTO t VALUES
-                (1, '2024-01-01T00:00:00.000000Z'),
-                (2, '2024-01-01T01:00:00.000000Z')
-                """);
-        drainWalQueue();
-    }
-
     private void makeFirstPartitionComposite() throws Exception {
         // Lands only inside 2024-01-01 and makes it composite.
         execute("INSERT INTO \"src ct\" SELECT x::INT + 70_000 i," +
@@ -5511,6 +5511,14 @@ public class CopyExportTest extends AbstractCairoTest {
         TestUtils.assertEquals(expectedSink, actualSink);
     }
 
+    private boolean exportFileExists(String fileName) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        try (Path path = new Path()) {
+            path.of(exportRoot).concat(fileName).put(".parquet").$();
+            return ff.exists(path.$());
+        }
+    }
+
     private long parquetFileSize(String fileName) {
         try (Path path = new Path()) {
             path.of(parquetPath(fileName)).$();
@@ -5520,14 +5528,6 @@ public class CopyExportTest extends AbstractCairoTest {
 
     private String parquetPath(String fileName) {
         return exportRoot + File.separator + fileName + ".parquet";
-    }
-
-    private boolean exportFileExists(String fileName) {
-        final FilesFacade ff = configuration.getFilesFacade();
-        try (Path path = new Path()) {
-            path.of(exportRoot).concat(fileName).put(".parquet").$();
-            return ff.exists(path.$());
-        }
     }
 
     private void waitForActiveExport() throws Exception {

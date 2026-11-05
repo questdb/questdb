@@ -4401,6 +4401,59 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIncrementalRefreshPeriodAndRefreshLimitLeaveNoIntervals() throws Exception {
+        // Regression test for #7772. The period cuts off the txn interval of the row in the incomplete period, and
+        // the refresh limit cuts off the txn interval of the older row, so the refresh interval iterator yields no
+        // intervals even though the refresh range is not empty. The refresh used to leak the view's query factory
+        // and never advance the watermark, leaving the view 'refreshing'.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (price double, ts #TIMESTAMP) timestamp(ts) partition by DAY WAL"
+            );
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T11:30:00.000000Z");
+            execute(
+                    "create materialized view price_1h refresh immediate period (length 1h) as " +
+                            "select ts, last(price) as price from base_price sample by 1h"
+            );
+            execute("alter materialized view price_1h set refresh limit 2h");
+            execute("insert into base_price(price, ts) values (1.0, '2024-09-10T10:01')");
+            final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            final String expected = replaceExpectedTimestamp("""
+                    ts\tprice
+                    2024-09-10T10:00:00.000000Z\t1.0
+                    """);
+            assertQuery("price_1h")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
+
+            // a row older than the refresh limit and a row in the incomplete period, in two transactions
+            execute("insert into base_price(price, ts) values (2.0, '2024-09-10T08:01')");
+            execute("insert into base_price(price, ts) values (3.0, '2024-09-10T11:10')");
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T11:40:00.000000Z");
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            assertQuery("price_1h")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("select view_name, view_status, last_refresh_start_timestamp, last_refresh_finish_timestamp, " + txnColumns() + " from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_status\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\trefresh_base_table_txn\tbase_table_txn
+                            price_1h\tvalid\t2024-09-10T11:40:00.000000Z\t2024-09-10T11:40:00.000000Z\t3\t3
+                            """);
+        });
+    }
+
+    @Test
     public void testIncrementalRefreshPeriodEndsWithBatchCommit() throws Exception {
         // Regression test for #8072. The period cuts off the txn interval of the row in the incomplete period, so
         // the last step group of the refresh interval iterator holds no txn interval. With a one-row batch size,
@@ -4453,7 +4506,8 @@ public class MatViewTest extends AbstractCairoTest {
                             price_1h\tvalid\t2024-09-10T11:40:00.000000Z\t2024-09-10T11:40:00.000000Z\t3\t3
                             """);
 
-            // another row in the incomplete period: the refresh has nothing to write, but advances the watermark
+            // another row in the incomplete period: the view's rows stay the same, but the refresh advances
+            // the watermark
             execute("insert into base_price(price, ts) values (4.0, '2024-09-10T11:20')");
             currentMicros = parseFloorPartialTimestamp("2024-09-10T11:45:00.000000Z");
             drainMatViewTimerQueue(timerJob);
@@ -4493,59 +4547,6 @@ public class MatViewTest extends AbstractCairoTest {
                     .returns("""
                             view_name\tview_status\trefresh_base_table_txn\tbase_table_txn
                             price_1h\tvalid\t4\t4
-                            """);
-        });
-    }
-
-    @Test
-    public void testIncrementalRefreshPeriodAndRefreshLimitLeaveNoIntervals() throws Exception {
-        // Regression test for #7772. The period cuts off the txn interval of the row in the incomplete period, and
-        // the refresh limit cuts off the txn interval of the older row, so the refresh interval iterator yields no
-        // intervals even though the refresh range is not empty. The refresh used to leak the view's query factory
-        // and never advance the watermark, leaving the view 'refreshing'.
-        assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp(
-                    "create table base_price (price double, ts #TIMESTAMP) timestamp(ts) partition by DAY WAL"
-            );
-            currentMicros = parseFloorPartialTimestamp("2024-09-10T11:30:00.000000Z");
-            execute(
-                    "create materialized view price_1h refresh immediate period (length 1h) as " +
-                            "select ts, last(price) as price from base_price sample by 1h"
-            );
-            execute("alter materialized view price_1h set refresh limit 2h");
-            execute("insert into base_price(price, ts) values (1.0, '2024-09-10T10:01')");
-            final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
-            drainMatViewTimerQueue(timerJob);
-            drainQueues();
-
-            final String expected = replaceExpectedTimestamp("""
-                    ts\tprice
-                    2024-09-10T10:00:00.000000Z\t1.0
-                    """);
-            assertQuery("price_1h")
-                    .timestamp("ts")
-                    .expectSize()
-                    .noLeakCheck()
-                    .returns(expected);
-
-            // a row older than the refresh limit and a row in the incomplete period, in two transactions
-            execute("insert into base_price(price, ts) values (2.0, '2024-09-10T08:01')");
-            execute("insert into base_price(price, ts) values (3.0, '2024-09-10T11:10')");
-            currentMicros = parseFloorPartialTimestamp("2024-09-10T11:40:00.000000Z");
-            drainMatViewTimerQueue(timerJob);
-            drainQueues();
-
-            assertQuery("price_1h")
-                    .timestamp("ts")
-                    .expectSize()
-                    .noLeakCheck()
-                    .returns(expected);
-            assertQuery("select view_name, view_status, last_refresh_start_timestamp, last_refresh_finish_timestamp, " + txnColumns() + " from materialized_views")
-                    .noRandomAccess()
-                    .noLeakCheck()
-                    .returns("""
-                            view_name\tview_status\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\trefresh_base_table_txn\tbase_table_txn
-                            price_1h\tvalid\t2024-09-10T11:40:00.000000Z\t2024-09-10T11:40:00.000000Z\t3\t3
                             """);
         });
     }

@@ -13163,17 +13163,6 @@ create table tab as (
         });
     }
 
-    private static void consume(ResultSet stmt) throws SQLException {
-        int count = 0;
-        try (ResultSet ignore = stmt) {
-            while (ignore.next()) {
-                // ignore
-                count++;
-            }
-        }
-        Assert.assertTrue(count > 0);
-    }
-
     // cancels the registered query of the statement from another session
     private static void cancelQuery(String sql) throws SqlException {
         try (
@@ -13188,6 +13177,17 @@ create table tab as (
             Assert.assertTrue("no registered query: " + sql, cursor.hasNext());
             engine.execute("CANCEL QUERY " + cursor.getRecord().getLong(0), executionContext);
         }
+    }
+
+    private static void consume(ResultSet stmt) throws SQLException {
+        int count = 0;
+        try (ResultSet ignore = stmt) {
+            while (ignore.next()) {
+                // ignore
+                count++;
+            }
+        }
+        Assert.assertTrue(count > 0);
     }
 
     private static int executeAndCancelQuery(PgConnection connection) throws SQLException, InterruptedException {
@@ -13538,7 +13538,6 @@ create table tab as (
         };
     }
 
-    @SuppressWarnings("unchecked")
     // creates the non-WAL table t with rows 1 and 2 and the view v over it, then adds a column to
     // t, which queues the recompile of v
     private void createTableAndViewThenAddColumn(Connection connection) throws SQLException {
@@ -13551,6 +13550,7 @@ create table tab as (
         }
     }
 
+    @SuppressWarnings("unchecked")
     private List<Tuple> getRows(ResultSet rs) {
         return TestUtils.unchecked(() -> {
             Field field = PgResultSet.class.getDeclaredField("rows");
