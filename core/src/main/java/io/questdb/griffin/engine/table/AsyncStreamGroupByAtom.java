@@ -308,6 +308,15 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner,
     }
 
     @TestOnly
+    public long getShardMergeKeyCapacity() {
+        long capacity = 0;
+        for (int i = 0, n = destShards.size(); i < n; i++) {
+            capacity += destShards.getQuick(i).getKeyCapacity();
+        }
+        return capacity;
+    }
+
+    @TestOnly
     public int getShardMergeCount() {
         return shardMergeCount;
     }
@@ -384,9 +393,10 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner,
     public void mergeShard(int slotId, int shardIndex) {
         final Map dest = destShards.getQuick(shardIndex);
         dest.clear();
+        // The frames of a bucket often repeat their keys, so the sum of the sources would reserve far too much.
         long size = 0;
         for (int i = 0, n = mergeSources.size(); i < n; i++) {
-            size += mergeSources.getQuick(i).getShards().getQuick(shardIndex).size();
+            size = Math.max(size, mergeSources.getQuick(i).getShards().getQuick(shardIndex).size());
         }
         if (size > dest.getKeyCapacity()) {
             dest.setKeyCapacity((int) Math.min(size, Integer.MAX_VALUE));

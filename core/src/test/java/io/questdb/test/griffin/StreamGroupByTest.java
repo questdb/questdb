@@ -1877,6 +1877,33 @@ public class StreamGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testShardMergeReservesForLargestSource() throws Exception {
+        Assume.assumeTrue(parallel && workers > 1);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 100);
+        final int keys = 40_000;
+        final int frames = 16;
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, keys);
+        run((engine, compiler, context) -> {
+            engine.execute("CREATE TABLE t AS (SELECT (x - 1)::TIMESTAMP ts, x % " + keys + " k, x v FROM long_sequence(" + keys * frames + ")) "
+                    + "TIMESTAMP(ts) PARTITION BY YEAR", context);
+            try (RecordCursorFactory factory = compiler.compile("SELECT timestamp_floor('1d', ts) ts, k, count() c FROM t", context).getRecordCursorFactory();
+                 RecordCursor cursor = factory.getCursor(context)) {
+                assertStream(factory, true);
+                long count = 0;
+                while (cursor.hasNext()) {
+                    count++;
+                }
+                Assert.assertEquals(keys, count);
+                final AsyncStreamGroupByAtom atom = ((AsyncStreamGroupByRecordCursorFactory) getGroupBy(factory)).getAtom();
+                Assert.assertTrue(atom.getShardMergeCount() > 0);
+                // Every frame holds all the keys, so a shard needs room for its keys however many sources merge.
+                final long capacity = atom.getShardMergeKeyCapacity();
+                Assert.assertTrue(capacity + " slots", capacity <= 4L * keys);
+            }
+        });
+    }
+
+    @Test
     public void testShardedBucketChecksBreakerEvery4kRows() throws Exception {
         // Only parallel execution shards a bucket.
         Assume.assumeTrue(parallel);
