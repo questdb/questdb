@@ -482,6 +482,49 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     }
 
     /**
+     * A demote requested during a's commit lands only once no role-switch read hold remains,
+     * as a role switch's write lock does. The batch holds the lock across every table, so
+     * b commits too, one ack covers the pass, and the next frame gets the CLOSE.
+     */
+    @Test
+    public void testDemoteRequestedDuringBatchCommitLandsAfterLastTable() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("CREATE TABLE a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE b (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try (DemotableEngine demotableEngine = new DemotableEngine()) {
+                // The batch commit's own hold is the first acquisition, a's commit the second.
+                demotableEngine.requestDemoteAtCommit(2);
+                try (Connection connection = new Connection(
+                        demotableEngine,
+                        httpConfig,
+                        AllowAllSecurityContext.INSTANCE,
+                        false,
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 100L, 1_000_000L)),
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 200L, 2_000_000L)),
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 300L, 3_000_000L)),
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 400L, 4_000_000L))
+                )) {
+                    Assert.assertFalse(connection.deliverFrames(3));
+                    Assert.assertTrue("test setup: the demote must land once the batch commit ends", demotableEngine.isReadOnlyMode());
+                    final ObjList<byte[]> sent = connection.sentFrames();
+                    Assert.assertEquals("one ack covers the pass", 2, maxCumulativeOkAck(sent));
+                    Assert.assertEquals("no CLOSE within the pass", -1, indexOfCloseFrame(sent));
+                    Assert.assertFalse(hasErrorResponseForSeq(sent, 1));
+                    final int sentBefore = sent.size();
+                    connection.deliverFrames(1);
+                    Assert.assertEquals("the next frame gets only the CLOSE", sentBefore + 1, sent.size());
+                    Assert.assertEquals(sentBefore, indexOfCloseFrame(sent));
+                    Assert.assertEquals(WebSocketCloseCode.NORMAL_CLOSURE, closeCode(sent.getQuick(sentBefore)));
+                }
+                drainWalQueue(demotableEngine);
+                assertHookQuery(demotableEngine, "SELECT v FROM a").expectSize().returns("v\n100\n300\n");
+                assertHookQuery(demotableEngine, "SELECT v FROM b").expectSize().returns("v\n200\n");
+            }
+        });
+    }
+
+    /**
      * Another connection drops a table while the batch holds rows of it. The batch
      * commit checks every table before it commits any, so it refuses the whole batch:
      * no table publishes a transaction, nothing is acked, and the NACK names the
@@ -4632,6 +4675,8 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     private static final class DemotableEngine extends CairoEngine {
         // Commits left before the one the demote lands at; 0 when no demote is armed.
         private final AtomicInteger commitsUntilDemote = new AtomicInteger();
+        // Commits left before the one that requests a demote, see requestDemoteAtCommit().
+        private final AtomicInteger commitsUntilDemoteRequest = new AtomicInteger();
         private final AtomicBoolean isReadOnly = new AtomicBoolean();
         private final DurableAckRegistry laggingRegistry = new DurableAckRegistry() {
             @Override
@@ -4690,8 +4735,20 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
             demoteAtCommit(1);
         }
 
+        /**
+         * Requests a demote at the {@code commit}-th acquisition of the role-switch read
+         * lock. Unlike {@link #demoteAtCommit}, it lands as a role switch's write lock would:
+         * once no read hold remains.
+         */
+        void requestDemoteAtCommit(int commit) {
+            commitsUntilDemoteRequest.set(commit);
+        }
+
         private final class DemotingLock implements Lock {
             private final Lock delegate;
+            // Read holds currently open; the connection takes them all on the test thread.
+            private int holdCount;
+            private boolean isDemoteRequested;
 
             DemotingLock(Lock delegate) {
                 this.delegate = delegate;
@@ -4735,11 +4792,19 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
             @Override
             public void unlock() {
                 delegate.unlock();
+                if (--holdCount == 0 && isDemoteRequested) {
+                    isDemoteRequested = false;
+                    isReadOnly.set(true);
+                }
             }
 
             private void onAcquired() {
+                holdCount++;
                 if (commitsUntilDemote.get() > 0 && commitsUntilDemote.decrementAndGet() == 0) {
                     isReadOnly.set(true);
+                }
+                if (commitsUntilDemoteRequest.get() > 0 && commitsUntilDemoteRequest.decrementAndGet() == 0) {
+                    isDemoteRequested = true;
                 }
             }
         }
