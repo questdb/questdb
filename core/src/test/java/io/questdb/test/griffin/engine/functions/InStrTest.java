@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.bool.StaticSymbolKeys;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
@@ -347,6 +348,56 @@ public class InStrTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCastSymbolResolvesKeysOncePerDictionary() throws Exception {
+        assertMemoryLeak(() -> {
+            final String[][] cases = {
+                    {"s::STRING IN ('b', 'd', 'e')", "v\n2\n4\n", "v\n5\n7\n", "v\n5\n7\n9\n"},
+                    {"s::STRING <> ALL ('{b,d,e}'::text[])", "v\n1\n3\n", "v\n6\n8\n", "v\n6\n8\n"}
+            };
+            StaticSymbolKeys.isResolutionCounterEnabled = true;
+            try {
+                // A WAL TRUNCATE reopens the pooled reader in place, so only the generation tells the dictionaries apart.
+                for (String walMode : new String[]{"BYPASS WAL", "WAL"}) {
+                    for (boolean isParallel : new boolean[]{true, false}) {
+                        sqlExecutionContext.setParallelFilterEnabled(isParallel);
+                        for (String[] c : cases) {
+                            execute("DROP TABLE IF EXISTS x");
+                            execute("CREATE TABLE x (s SYMBOL, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY " + walMode);
+                            executeAndApply("INSERT INTO x VALUES ('a', 1, 1), ('b', 2, 2), ('c', 3, 3), ('d', 4, 4)");
+                            try (RecordCursorFactory factory = select("SELECT v FROM x WHERE " + c[0])) {
+                                StaticSymbolKeys.testResolutions.set(0);
+                                assertFactoryRows(c[1], factory);
+                                assertFactoryRows(c[1], factory);
+                                Assert.assertEquals(walMode + ", parallel=" + isParallel + ": " + c[0], 1, StaticSymbolKeys.testResolutions.get());
+
+                                executeAndApply("TRUNCATE TABLE x");
+                                executeAndApply("INSERT INTO x VALUES ('d', 5, 5), ('c', 6, 6), ('b', 7, 7), ('a', 8, 8)");
+                                assertFactoryRows(c[2], factory);
+                                assertFactoryRows(c[2], factory);
+                                Assert.assertEquals(walMode + ", parallel=" + isParallel + ": " + c[0], 2, StaticSymbolKeys.testResolutions.get());
+
+                                executeAndApply("INSERT INTO x VALUES ('e', 9, 9)");
+                                assertFactoryRows(c[3], factory);
+                                Assert.assertEquals(walMode + ", parallel=" + isParallel + ": " + c[0], 3, StaticSymbolKeys.testResolutions.get());
+                            }
+                        }
+                        bindVariableService.clear();
+                        bindVariableService.setStr("p", "d");
+                        try (RecordCursorFactory factory = select("SELECT v FROM x WHERE s::STRING IN ('b', :p)")) {
+                            assertFactoryRows("v\n5\n7\n", factory);
+                            bindVariableService.setStr("p", "c");
+                            assertFactoryRows("v\n6\n7\n", factory);
+                        }
+                    }
+                }
+            } finally {
+                StaticSymbolKeys.isResolutionCounterEnabled = false;
+                sqlExecutionContext.setParallelFilterEnabled(true);
+            }
+        });
+    }
+
+    @Test
     public void testCastSymbolReusedFactoryResolvesKeysPerExecution() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (s SYMBOL, v INT)");
@@ -466,6 +517,11 @@ public class InStrTest extends AbstractCairoTest {
                 TestUtils.assertContains(e.getFlyweightMessage(), message);
             }
         }
+    }
+
+    private void executeAndApply(String sql) throws SqlException {
+        execute(sql);
+        drainWalQueue();
     }
 
     private static void assertCastSymbolMatchesTextComparison(CairoEngine engine, SqlExecutionContext context) throws SqlException {

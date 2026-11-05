@@ -366,29 +366,36 @@ public class SymbolMapTest extends AbstractCairoTest {
                     MemoryR chars = source.getSymbolValuesColumn();
                     DirectString view = new DirectString();
                     int[] loadingKey = {0};
+                    int[] symbolCount = {3};
                     long[] publishedAddress = {0};
                     int[] copies = {0};
                     try (SymbolMapSegments segments = new SymbolMapSegments(budget) {
                         @Override
-                        protected void onCopied() {
+                        protected void publish(long slotAddress, long slot) {
                             copies[0]++;
                             Assert.assertNull(get(loadingKey[0], view));
                             if (publishedAddress[0] != 0) {
                                 Assert.assertEquals(publishedAddress[0], address(get(0, view)));
                             }
                             Assert.assertEquals(NOT_LOADED, load(loadingKey[0], keys, offsets, chars));
+                            super.publish(slotAddress, slot);
+                            for (int k = 0; k < symbolCount[0]; k++) {
+                                TestUtils.assertEquals(source.valueOf(k), get(k, view));
+                            }
                         }
                     }) {
-                        Assert.assertEquals(SymbolMapSegments.LOADED, segments.load(0, 3, offsets, chars));
+                        Assert.assertEquals(SymbolMapSegments.LOADED, segments.load(0, symbolCount[0], offsets, chars));
                         Assert.assertEquals(1, copies[0]);
                         publishedAddress[0] = address(segments.get(0, view));
                         loadingKey[0] = 5;
-                        Assert.assertEquals(SymbolMapSegments.LOADED, segments.load(5, 6, offsets, chars));
+                        symbolCount[0] = 6;
+                        Assert.assertEquals(SymbolMapSegments.LOADED, segments.load(5, symbolCount[0], offsets, chars));
                         Assert.assertEquals(2, copies[0]);
                         Assert.assertEquals(publishedAddress[0], address(segments.get(0, view)));
                         TestUtils.assertEquals("v5", segments.get(5, view));
                         loadingKey[0] = 200;
-                        Assert.assertEquals(SymbolMapSegments.LOADED, segments.load(200, keys, offsets, chars));
+                        symbolCount[0] = keys;
+                        Assert.assertEquals(SymbolMapSegments.LOADED, segments.load(200, symbolCount[0], offsets, chars));
                         Assert.assertEquals(3, copies[0]);
                         Assert.assertNotEquals(publishedAddress[0], address(segments.get(0, view)));
                         TestUtils.assertEquals("v200", segments.get(200, view));

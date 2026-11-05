@@ -381,7 +381,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         final SymbolMapSegments segments = entry.getSegments();
         final String reason = segments.getStopReason() == SymbolMapSegments.STOP_OOM ? "oom" : "budget";
         LOG.info().$("symbol cache stopped admitting new values [table=").$(path)
-                .$(", column=").$(columnNameSink).$(", reason=").$(reason)
+                .$(", column=").$safe(columnNameSink).$(", reason=").$(reason)
                 .$(", cachedKeys=").$(segments.size()).$(", cacheBytes=").$(segments.allocatedBytes())
                 .$(", budgetUsed=").$(budget.getUsedBytes()).$(", budgetLimit=").$(budget.getLimit()).I$();
     }

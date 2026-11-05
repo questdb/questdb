@@ -1188,11 +1188,13 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         }
 
         // These functions compare symbol keys directly, so the cast would only add per-row text hashing.
+        CastSymbolToStrFunctionFactory.Func elidedCast = null;
         if (
                 isSymbolKeyFunction(node.token)
                         && argCount > 0
                         && args.getQuick(0) instanceof CastSymbolToStrFunctionFactory.Func cast
         ) {
+            elidedCast = cast;
             args.setQuick(0, cast.getArg());
         }
 
@@ -1420,6 +1422,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         }
 
         if (candidate == null) {
+            if (elidedCast != null) {
+                // Errors name the type the user wrote; a retry below elides the cast again.
+                args.setQuick(0, elidedCast);
+            }
             // no signature match. A CURSOR argument may be a scalar boolean sub-query used in
             // boolean context (e.g. "a and (select b from x)"); coerce such arguments to
             // BOOLEAN and retry once. Coerced arguments are no longer CURSOR-typed, so the

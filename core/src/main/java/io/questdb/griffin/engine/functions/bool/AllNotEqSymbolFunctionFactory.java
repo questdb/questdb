@@ -41,7 +41,6 @@ import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.CharSequenceHashSet;
-import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -81,7 +80,7 @@ public class AllNotEqSymbolFunctionFactory implements FunctionFactory {
 
     private static class Func extends BooleanFunction implements UnaryFunction {
         private final SymbolFunction arg;
-        private final IntHashSet keys = new IntHashSet();
+        private final StaticSymbolKeys keys = new StaticSymbolKeys();
         private final CharSequenceHashSet set;
         private boolean isKeyed;
 
@@ -110,12 +109,15 @@ public class AllNotEqSymbolFunctionFactory implements FunctionFactory {
             arg.init(symbolTableSource, executionContext);
             final StaticSymbolTable symbolTable = arg.getStaticSymbolTable();
             isKeyed = symbolTable != null;
-            if (isKeyed) {
-                keys.clear();
-                for (int i = 0, n = set.size(); i < n; i++) {
-                    keys.add(symbolTable.keyOf(set.get(i)));
-                }
+            keys.of(symbolTable, set);
+        }
+
+        @Override
+        public void offerStateTo(Function that) {
+            if (isKeyed && that instanceof Func thatFunc) {
+                keys.offerTo(thatFunc.keys);
             }
+            UnaryFunction.super.offerStateTo(that);
         }
 
         @Override

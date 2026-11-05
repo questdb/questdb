@@ -195,9 +195,7 @@ public class SymbolMapSegments implements QuietCloseable {
             }
             Vect.memcpy(segment + SEGMENT_CHARS + used, chars.addressOf(charLo), charBytes);
             Unsafe.putInt(segment + USED_OFFSET, (int) (used + charBytes));
-            onCopied();
-            // Publishes the offsets and the chars copied above.
-            Unsafe.putLongVolatile(slotAddress, ((long) (hiKey - firstKey) << COUNT_SHIFT) | segment);
+            publish(slotAddress, ((long) (hiKey - firstKey) << COUNT_SHIFT) | segment);
             size += hiKey - loKey;
             return LOADED;
         } finally {
@@ -209,8 +207,10 @@ public class SymbolMapSegments implements QuietCloseable {
         return size;
     }
 
-    // Test hook.
-    protected void onCopied() {
+    // Publishes every offset and char of the segment, including those newSegment() copied. Tests
+    // override it to read the segment on both sides of the store.
+    protected void publish(long slotAddress, long slot) {
+        Unsafe.putLongVolatile(slotAddress, slot);
     }
 
     private static DirectString record(long segment, int offset, DirectString view) {

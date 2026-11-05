@@ -133,16 +133,22 @@ public class AllNotEqStrFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSymbolConstant() throws Exception {
+    public void testSymbolCastWithWrongArgumentNamesString() throws Exception {
         assertMemoryLeak(() -> {
-            assertQuery("SELECT 'aaa'::SYMBOL <> ALL('{abc}'::text[]) a, 'aaa'::SYMBOL <> ALL('{aaa}'::text[]) b, NULL::SYMBOL <> ALL('{abc}'::text[]) c")
-                    .noLeakCheck()
-                    .expectSize()
-                    .returns("""
-                            a\tb\tc
-                            true\tfalse\tfalse
-                            """);
+            execute("CREATE TABLE tab (s SYMBOL, str STRING)");
+            assertExceptionNoLeakCheck("SELECT * FROM tab WHERE str <> ALL ('b')", 28, "there is no matching function `<>all` with the argument types: (STRING, CHAR)");
+            assertExceptionNoLeakCheck("SELECT * FROM tab WHERE s::STRING <> ALL ('b')", 34, "there is no matching function `<>all` with the argument types: (STRING, CHAR)");
         });
+    }
+
+    @Test
+    public void testSymbolConstant() throws Exception {
+        assertQuery("SELECT 'aaa'::SYMBOL <> ALL('{abc}'::text[]) a, 'aaa'::SYMBOL <> ALL('{aaa}'::text[]) b, NULL::SYMBOL <> ALL('{abc}'::text[]) c")
+                .expectSize()
+                .returns("""
+                        a\tb\tc
+                        true\tfalse\tfalse
+                        """);
     }
 
     @Test
