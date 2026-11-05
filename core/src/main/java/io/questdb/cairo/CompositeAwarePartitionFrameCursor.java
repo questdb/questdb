@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.cairo.sql.PartitionFrameCursor;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import org.jetbrains.annotations.Nullable;
@@ -36,7 +37,8 @@ import org.jetbrains.annotations.TestOnly;
 
 /**
  * Wraps a {@link PartitionFrameCursor}, translating each delegate frame's directory-cumulative {@code [rowLo, rowHi)}
- * into one or more physical, file-row-space sub-frames.
+ * into one or more physical, file-row-space sub-frames. A parquet partition with an index row map gets one sub-frame
+ * per run of row groups with contiguous index rows, in index rows.
  */
 public class CompositeAwarePartitionFrameCursor implements PartitionFrameCursor {
     private final CompositePartitionFrame frame = new CompositePartitionFrame();
@@ -44,8 +46,11 @@ public class CompositeAwarePartitionFrameCursor implements PartitionFrameCursor 
     private boolean descending;
     private long pendingCumHi;
     private long pendingCumLo;
+    // Set while the pending range is a parquet partition with an index row map, null otherwise.
+    private ParquetPartitionDecoder pendingParquetDecoder;
     private int pendingPartitionIndex = -1;
     private int pendingPieceOrdinal;
+    private long pendingRowGroupStartRow;
 
     @Override
     public void calculateSize(RecordCursor.Counter counter) {
@@ -81,7 +86,7 @@ public class CompositeAwarePartitionFrameCursor implements PartitionFrameCursor 
     @Override
     public @Nullable PartitionFrame next(long skipTarget) {
         if (pendingPartitionIndex >= 0) {
-            final PartitionFrame piece = nextPiece();
+            final PartitionFrame piece = pendingParquetDecoder != null ? nextRowGroup() : nextPiece();
             if (piece != null) {
                 return piece;
             }
@@ -92,8 +97,21 @@ public class CompositeAwarePartitionFrameCursor implements PartitionFrameCursor 
                 return null;
             }
             if (delegateFrame.getPartitionFormat() != PartitionFormat.NATIVE) {
-                // A parquet partition is materialized whole and is never composite.
-                return delegateFrame;
+                // Never composite, but an index row map makes its index rows differ from partition rows.
+                final ParquetPartitionDecoder decoder = delegateFrame.getParquetMetaDecoder();
+                if (decoder == null || !decoder.metadata().hasIndexRowMap()) {
+                    return delegateFrame;
+                }
+                pendingPartitionIndex = delegateFrame.getPartitionIndex();
+                pendingCumLo = delegateFrame.getRowLo();
+                pendingCumHi = delegateFrame.getRowHi();
+                pendingParquetDecoder = decoder;
+                findRowGroup(decoder.metadata(), descending ? pendingCumHi - 1 : pendingCumLo);
+                final PartitionFrame piece = nextRowGroup();
+                if (piece != null) {
+                    return piece;
+                }
+                continue;
             }
             final int partitionIndex = delegateFrame.getPartitionIndex();
             if (!getTableReader().getTxFile().isPartitionComposite(partitionIndex)) {
@@ -158,6 +176,21 @@ public class CompositeAwarePartitionFrameCursor implements PartitionFrameCursor 
 
     private void clearPending() {
         pendingPartitionIndex = -1;
+        pendingParquetDecoder = null;
+    }
+
+    private void findRowGroup(ParquetMetaFileReader metadata, long row) {
+        long rowGroupStartRow = 0;
+        int rowGroup = 0;
+        for (int n = metadata.getRowGroupCount() - 1; rowGroup < n; rowGroup++) {
+            final long rowGroupEndRow = rowGroupStartRow + metadata.getRowGroupSize(rowGroup);
+            if (row < rowGroupEndRow) {
+                break;
+            }
+            rowGroupStartRow = rowGroupEndRow;
+        }
+        pendingPieceOrdinal = rowGroup;
+        pendingRowGroupStartRow = rowGroupStartRow;
     }
 
     /**
@@ -177,6 +210,7 @@ public class CompositeAwarePartitionFrameCursor implements PartitionFrameCursor 
                 break;
             }
             frame.format = PartitionFormat.NATIVE;
+            frame.parquetDecoder = null;
             frame.partitionIndex = pendingPartitionIndex;
             frame.rowLo = subCumLo + shift;
             frame.rowHi = subCumHi + shift;
@@ -196,11 +230,79 @@ public class CompositeAwarePartitionFrameCursor implements PartitionFrameCursor 
         return null;
     }
 
+    /**
+     * Emits the part of the pending run of row groups the range covers, in index rows, and advances past it. A run is
+     * the longest sequence of consecutive row groups sharing one shift (index row minus partition row): their index
+     * rows are contiguous, so one frame covers them all. Row groups an in-place update did not move share a shift, so
+     * a partition yields a few frames rather than one per row group.
+     */
+    private @Nullable PartitionFrame nextRowGroup() {
+        final ParquetMetaFileReader metadata = pendingParquetDecoder.metadata();
+        final int rowGroupCount = metadata.getRowGroupCount();
+        while (pendingCumLo < pendingCumHi && pendingPieceOrdinal >= 0 && pendingPieceOrdinal < rowGroupCount) {
+            int rowGroup = pendingPieceOrdinal;
+            long runStartRow = pendingRowGroupStartRow;
+            long runEndRow = runStartRow + metadata.getRowGroupSize(rowGroup);
+            final long shift = metadata.getRowGroupIndexRowLo(rowGroup, runStartRow) - runStartRow;
+            if (descending) {
+                while (runStartRow > pendingCumLo && rowGroup > 0) {
+                    final long prevStartRow = runStartRow - metadata.getRowGroupSize(rowGroup - 1);
+                    if (metadata.getRowGroupIndexRowLo(rowGroup - 1, prevStartRow) - prevStartRow != shift) {
+                        break;
+                    }
+                    rowGroup--;
+                    runStartRow = prevStartRow;
+                }
+            } else {
+                while (runEndRow < pendingCumHi && rowGroup < rowGroupCount - 1) {
+                    if (metadata.getRowGroupIndexRowLo(rowGroup + 1, runEndRow) - runEndRow != shift) {
+                        break;
+                    }
+                    rowGroup++;
+                    runEndRow += metadata.getRowGroupSize(rowGroup);
+                }
+            }
+            final long subCumLo = Math.max(pendingCumLo, runStartRow);
+            final long subCumHi = Math.min(pendingCumHi, runEndRow);
+            if (subCumLo >= subCumHi) {
+                break;
+            }
+            frame.format = PartitionFormat.PARQUET;
+            frame.parquetDecoder = pendingParquetDecoder;
+            frame.partitionIndex = pendingPartitionIndex;
+            frame.rowLo = subCumLo + shift;
+            frame.rowHi = subCumHi + shift;
+            if (descending) {
+                pendingCumHi = subCumLo;
+                pendingPieceOrdinal = rowGroup - 1;
+                if (pendingPieceOrdinal >= 0) {
+                    pendingRowGroupStartRow = runStartRow - metadata.getRowGroupSize(pendingPieceOrdinal);
+                }
+            } else {
+                pendingCumLo = subCumHi;
+                pendingPieceOrdinal = rowGroup + 1;
+                pendingRowGroupStartRow = runEndRow;
+            }
+            if (pendingCumLo >= pendingCumHi) {
+                clearPending();
+            }
+            return frame;
+        }
+        clearPending();
+        return null;
+    }
+
     private static class CompositePartitionFrame implements PartitionFrame {
         private byte format;
+        private ParquetPartitionDecoder parquetDecoder;
         private int partitionIndex;
         private long rowHi;
         private long rowLo;
+
+        @Override
+        public ParquetPartitionDecoder getParquetMetaDecoder() {
+            return parquetDecoder;
+        }
 
         @Override
         public byte getPartitionFormat() {

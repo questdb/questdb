@@ -143,9 +143,8 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     private final IntList sourceColumnTypes;
     private ParquetDecoder activeDecoder;
     private PageFrameAddressCache addressCache;
-    // Bumped whenever the pool closes buffers that bound records may still alias
-    // (failed decode, bulk release). Records capture it on bind; a mismatch fails
-    // the navigateTo() fast path and forces a safe rebind.
+    // Bumped whenever buffers bound records may alias are closed or reused; a mismatch
+    // fails the navigateTo() fast path and forces a rebind.
     private long bindGeneration;
     // Tracks which cached buffer currently holds each usage bit. Used to clear
     // the previous pin in O(1) without scanning every cached entry.
@@ -868,6 +867,8 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 }
                 // In-place reuse keeps the victim's native memory (and thus its
                 // retainedBytes accounting); only the logical state resets.
+                // init(PageFrameMemory) can bind a record to the victim without pinning it.
+                bindGeneration++;
                 byFrameIndex.remove(victim.frameIndex);
                 lruUnlink(victim);
                 victim.frameIndex = frameIndex;
@@ -1059,6 +1060,8 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     }
 
     private void evictAndClose(ParquetBuffers buffers) {
+        // A record may alias the buffer without pinning it, see acquireBuffer().
+        bindGeneration++;
         cachedBytes -= buffers.retainedBytes;
         if (buffers.frameIndex >= 0) {
             byFrameIndex.remove(buffers.frameIndex);
