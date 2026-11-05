@@ -2,3 +2,5 @@ interface:
   display_name: "QuestDB PR Fix"
   short_description: "Validate and fix QuestDB PR findings"
   default_prompt: "Use $fix-pr to validate and fix pasted QuestDB pull-request review findings."
+policy:
+  allow_implicit_invocation: false
