@@ -12,6 +12,7 @@ pub(crate) mod decimal;
 pub(crate) mod encode;
 pub(crate) mod encoders;
 pub(crate) mod file;
+pub(crate) mod frames;
 pub use file::ParquetWriter;
 mod jni;
 pub mod schema;

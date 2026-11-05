@@ -172,6 +172,8 @@ pub struct ParquetUpdater {
     /// timing-sensitive wall-clock assertion.
     hybrid_copied_column_chunks: u64,
     hybrid_encoded_column_chunks: u64,
+    /// Set by [`Self::drop_index_row_map`]: an incremental `_pm` update keeps the identity index row map.
+    is_index_row_map_dropped: bool,
 }
 
 fn publish_parquet_meta_with_sync<S>(
@@ -477,7 +479,14 @@ impl ParquetUpdater {
             varchar_all_ascii,
             hybrid_copied_column_chunks: 0,
             hybrid_encoded_column_chunks: 0,
+            is_index_row_map_dropped: false,
         })
+    }
+
+    /// Keeps the identity index row map on an incremental `_pm` update, for a table without a symbol index: no
+    /// index file refers to index rows, and an older binary rejects a footer that carries a map.
+    pub fn drop_index_row_map(&mut self) {
+        self.is_index_row_map_dropped = true;
     }
 
     /// Inspect VARCHAR aux for any column whose flag is still `true` in
@@ -1539,6 +1548,7 @@ impl ParquetUpdater {
                     bloom_bitsets,
                     self.result_unused_bytes,
                     self.seq_txn,
+                    self.is_index_row_map_dropped,
                 )?;
 
                 // Write the new snapshot at the append base. The header still
