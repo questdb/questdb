@@ -59,6 +59,8 @@ import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.TestOnly;
 
+import java.util.concurrent.locks.Lock;
+
 /**
  * State management for QWP v1 processing.
  */
@@ -346,10 +348,14 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     // rows (isCommitBatchEntryIntact), not a report from every path that might commit
     // or discard rows, decides whether the batch may be acknowledged.
     //
-    // The tables commit one at a time, in the order they joined. When one fails, the
-    // frames before its first frame hold rows of tables that committed and nothing
-    // else, so the watermark covers them, and the client replays the rest: rows that
-    // those later frames added to the committed tables arrive a second time.
+    // The tables commit one at a time, in the order they joined, under the role-switch
+    // read lock held across all of them, and only after every table passed the checks a
+    // commit can refuse on: the node is writable, no table was dropped, and each table's
+    // insert permission holds. A refusal there refuses the whole batch, with nothing
+    // committed. When a commit still fails, as on a storage fault, the frames before the
+    // failed table's first frame hold rows of tables that committed and nothing else, so
+    // the watermark covers them, and the client replays the rest: rows that those later
+    // frames added to the committed tables arrive a second time.
     //
     // A frame that fails or cannot join ends the batch, which commits before the frame is
     // answered while it can commit as it stands. It cannot once the frame appended rows
@@ -602,6 +608,14 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
      * only while the table cache is healthy and the table's writer holds exactly its
      * batch rows.
      * <p>
+     * QuestDB commits each table on its own, so a table that fails after an earlier one
+     * committed leaves rows the client replays twice. Before the first commit, under the
+     * role-switch read lock held across every table's commit, the batch is therefore
+     * refused as a whole, with nothing committed, when the node is read-only, a batch
+     * table was dropped, or a table's insert permission is refused: a demote cannot land
+     * between two tables' commits. What can still fail between tables is a commit that
+     * hits a storage fault.
+     * <p>
      * On success the watermark is past the batch. On a failure the commits stop, and:
      * this state is in error, with {@code roleChangeClosePending} set for a read-only
      * refusal; the watermark is past the frames before the failed table's first frame,
@@ -612,25 +626,16 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
      * and arrive a second time.
      */
     public boolean commitBatch() {
-        for (int i = 0, n = commitBatchEntries.size(); i < n; i++) {
-            final CommitBatchEntry entry = commitBatchEntries.getQuick(i);
-            if (!isCommitBatchEntryIntact(entry)) {
-                LOG.error().$('[').$(fd).$("] commit batch rows are not intact [table=").$(entry.tud.getTableToken())
-                        .$(", cacheDistressed=").$(tudCache.isDistressed())
-                        .$(", firstSeq=").$(entry.firstSequence)
-                        .$(", lastSeq=").$(lastCommitBatchSequence).I$();
-                reject(Status.INTERNAL_ERROR, "commit batch rows are not intact, cannot acknowledge", fd);
-                return onCommitBatchFailed(entry);
-            }
+        final int n = commitBatchEntries.size();
+        if (n > 0) {
+            final Lock roleSwitchLock = engine.getRoleSwitchReadLock();
+            roleSwitchLock.lock();
             try {
-                tudCache.commitBatch(entry.tud, committedTxnConsumer);
-            } catch (Throwable th) {
-                tudCache.setDistressed();
-                LOG.error().$('[').$(fd).$("] commit batch error [table=").$(entry.tud.getTableToken())
-                        .$(", firstSeq=").$(entry.firstSequence)
-                        .$("]: ").$(th).$();
-                rejectCommitError(th);
-                return onCommitBatchFailed(entry);
+                if (!commitBatchEntries(n)) {
+                    return false;
+                }
+            } finally {
+                roleSwitchLock.unlock();
             }
         }
         final long lastSeq = lastCommitBatchSequence;
@@ -2147,6 +2152,57 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     // distressed the table cache, which commits nothing.
     private int cannotJoin(boolean isBatchInDoubt) {
         return isBatchInDoubt || preparedTableBlock == null || tudCache.isDistressed() ? COMMIT_BATCH_REDO : COMMIT_BATCH_BOUNDARY;
+    }
+
+    // commitBatch() under the role-switch read lock: refuses the whole batch before the
+    // first commit when any table would refuse its own, then commits table by table.
+    private boolean commitBatchEntries(int n) {
+        try {
+            if (engine.isReadOnlyMode()) {
+                throw CairoException.readOnlyAccess();
+            }
+            for (int i = 0; i < n; i++) {
+                final CommitBatchEntry entry = commitBatchEntries.getQuick(i);
+                if (entry.tracker == null) {
+                    entry.tracker = engine.getTableSequencerAPI().getTxnTracker(entry.tud.getTableToken());
+                }
+                if (entry.tracker.isDropped()) {
+                    entry.tud.setIsDropped();
+                    throw CairoException.nonCritical()
+                            .put("dropped table discarded buffered rows, cannot acknowledge: ")
+                            .put(entry.tud.getTableNameUtf8());
+                }
+                entry.tud.authorizeCommit();
+            }
+        } catch (Throwable th) {
+            LOG.error().$('[').$(fd).$("] commit batch refused before any commit [firstSeq=").$(firstCommitBatchSequence)
+                    .$(", lastSeq=").$(lastCommitBatchSequence)
+                    .$("]: ").$(th).$();
+            rejectCommitError(th);
+            return onCommitBatchFailed(commitBatchEntries.getQuick(0));
+        }
+        for (int i = 0; i < n; i++) {
+            final CommitBatchEntry entry = commitBatchEntries.getQuick(i);
+            if (!isCommitBatchEntryIntact(entry)) {
+                LOG.error().$('[').$(fd).$("] commit batch rows are not intact [table=").$(entry.tud.getTableToken())
+                        .$(", cacheDistressed=").$(tudCache.isDistressed())
+                        .$(", firstSeq=").$(entry.firstSequence)
+                        .$(", lastSeq=").$(lastCommitBatchSequence).I$();
+                reject(Status.INTERNAL_ERROR, "commit batch rows are not intact, cannot acknowledge", fd);
+                return onCommitBatchFailed(entry);
+            }
+            try {
+                tudCache.commitBatch(entry.tud, committedTxnConsumer);
+            } catch (Throwable th) {
+                tudCache.setDistressed();
+                LOG.error().$('[').$(fd).$("] commit batch error [table=").$(entry.tud.getTableToken())
+                        .$(", firstSeq=").$(entry.firstSequence)
+                        .$("]: ").$(th).$();
+                rejectCommitError(th);
+                return onCommitBatchFailed(entry);
+            }
+        }
+        return true;
     }
 
     // The batch entry of the named table, or null when the table is not in the batch.

@@ -101,9 +101,14 @@ public class QwpIngressUpgradeProcessorResumeRecvTest extends AbstractCairoTest 
             try (TestableContext context = new TestableContext(config, nf, socket, recv, RECV_BUFFER_SIZE)) {
                 QwpIngressProcessorState state = setupState(config, context);
                 state.of(-1, new AllowAllSecurityContext() {
+                    private int boundaryBChecks;
+
+                    // Passes boundary_b's check in the batch's checks, which run before any
+                    // table commits, and refuses the one in its own commit: boundary_a
+                    // commits first, as on a storage fault in boundary_b's commit.
                     @Override
                     public void authorizeInsert(TableToken token) {
-                        if ("boundary_b".equals(token.getTableName())) {
+                        if ("boundary_b".equals(token.getTableName()) && ++boundaryBChecks > 1) {
                             throw CairoException.authorization().put("refused boundary prefix");
                         }
                     }
