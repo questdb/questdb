@@ -4724,7 +4724,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         assert columnType >= 0;
                         if (tableWriterMetadata.isDedupKey(columnIndex) && columnIndex != timestampIndex) {
                             final int columnSize = !ColumnType.isVarSize(columnType) ? ColumnType.sizeOf(columnType) : -1;
-                            final long columnTop = parquetDedupColumnTop(decoder, rowGroupBuffers, tableToParquetIdx, columnIndex, columnType, decodeIdx, rowGroupSize);
+                            final long columnTop = parquetDedupColumnTop(rowGroupBuffers, columnType, decodeIdx, rowGroupSize);
                             long addr = DedupColumnCommitAddresses.setColValues(
                                     dedupColSinkAddr,
                                     dedupColumnIndex++,
@@ -5051,15 +5051,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
      *     <li>A column the file does not carry is NULL throughout.</li>
      *     <li>A decoded column holds every row of the row group, with NULL sentinels where the file stores NULLs, or
      *     a NULL-filled source buffer for an all-NULL chunk, so no top applies.</li>
-     *     <li>BOOLEAN, BYTE, SHORT and CHAR have no NULL sentinel: their decoded NULLs read as 0/false. Their only
-     *     NULLs are the leading column-top rows, which the decoder surfaces from the chunk's null count.</li>
+     *     <li>Materialized BOOLEAN, BYTE, SHORT and CHAR NULLs read as 0/false, matching the comparer's default.
+     *     Coalesced row groups can have non-prefix NULLs: their summed null count must not hide materialized values.
+     *     Only an all-NULL chunk with no data buffer needs a full-range top.</li>
      * </ul>
      */
     private static long parquetDedupColumnTop(
-            ParquetPartitionDecoder decoder,
             RowGroupBuffers rowGroupBuffers,
-            IntList tableToParquetIdx,
-            int columnIndex,
             int columnType,
             int decodeIdx,
             int rowGroupSize
@@ -5074,8 +5072,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             // all-NULL chunk
             return rowGroupSize;
         }
-        final int sourceType = decoder.metadata().getColumnType(tableToParquetIdx.getQuick(columnIndex));
-        return ColumnType.isNoNullSentinelFixedType(sourceType) ? rowGroupBuffers.getChunkColumnTop(decodeIdx) : 0;
+        return 0;
     }
 
     /**
