@@ -871,6 +871,27 @@ public class TickExprTest {
     }
 
     @Test
+    public void testCompiledTickExprDurationInvalidUnit() {
+        assertCompileTickExprError("$today;1x", "Invalid duration unit");
+        assertCompileTickExprError("$today;1D", "Invalid duration unit");
+        assertCompileTickExprError("$todayT10:00;1x", "Invalid duration unit");
+    }
+
+    @Test
+    public void testCompiledTickExprInvalidOffsetUnit() {
+        assertCompileTickExprError("$today + 1x", "Invalid time unit");
+        assertCompileTickExprError("$today..$today + 1x", "Invalid time unit");
+        assertCompileTickExprError("$now - 1z", "Invalid time unit");
+    }
+
+    @Test
+    public void testCompiledTickExprValidDayOffsetUnits() throws SqlException {
+        assertCompiledTickExpr("$today + 1d");
+        assertCompiledTickExpr("$today + 1D");
+        assertCompiledTickExpr("$today + 1bd");
+    }
+
+    @Test
     public void testCompiledTickExprDurationWithUnderscore() throws SqlException {
         assertCompiledTickExpr("$today;1_000s");
     }
