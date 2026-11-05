@@ -3764,18 +3764,18 @@ public final class IntervalUtils {
      * Supports per-element timezones: [09:00@Asia/Tokyo,08:00@Europe/London]
      * If no per-element timezone, falls back to global timezone if provided.
      *
-     * @param timestampDriver        timestamp driver for parsing
-     * @param seq                    the full input string
-     * @param bracketStart           position of the opening '['
-     * @param bracketEnd             position of the closing ']'
-     * @param fullLim                end of entire string (including duration suffix)
-     * @param errorPos               position for error reporting
-     * @param out                    output list for parsed intervals
-     * @param sink                   reusable StringSink containing the prefix (e.g., "2024-01-15T")
-     * @param sinkPrefixLen          length of prefix to preserve in sink
-     * @param globalTzSeq            original sequence containing timezone (for applying global TZ)
-     * @param globalTzLo             start of global timezone in globalTzSeq (-1 if none)
-     * @param globalTzHi             end of global timezone in globalTzSeq (-1 if none)
+     * @param timestampDriver timestamp driver for parsing
+     * @param seq             the full input string
+     * @param bracketStart    position of the opening '['
+     * @param bracketEnd      position of the closing ']'
+     * @param fullLim         end of entire string (including duration suffix)
+     * @param errorPos        position for error reporting
+     * @param out             output list for parsed intervals
+     * @param sink            reusable StringSink containing the prefix (e.g., "2024-01-15T")
+     * @param sinkPrefixLen   length of prefix to preserve in sink
+     * @param globalTzSeq     original sequence containing timezone (for applying global TZ)
+     * @param globalTzLo      start of global timezone in globalTzSeq (-1 if none)
+     * @param globalTzHi      end of global timezone in globalTzSeq (-1 if none)
      */
     private static void expandTimeListBracket(
             TimestampDriver timestampDriver,
