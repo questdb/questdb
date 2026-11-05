@@ -279,15 +279,20 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 LineHttpProcessorConfiguration config = new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
                 try (QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, config)) {
                     state.of(1, AllowAllSecurityContext.INSTANCE);
-                    // The first rounds create each table's writer, caches and batch entry.
-                    long seq = ingestInterleaved(state, messages, messageSizes, 0, 300);
+                    // The first rounds create each table's writer, caches and batch entry,
+                    // grow the batch's frame record to its full size and let the JIT compile
+                    // the frame path.
+                    long seq = ingestInterleaved(state, messages, messageSizes, 0, 3_000);
                     try (TestUtils.ThreadMetricsScope<com.sun.management.ThreadMXBean> scope = TestUtils.threadAllocationScope()) {
                         final com.sun.management.ThreadMXBean threadMXBean = scope.getBean();
                         final long threadId = Thread.currentThread().threadId();
                         final long before = threadMXBean.getThreadAllocatedBytes(threadId);
-                        seq = ingestInterleaved(state, messages, messageSizes, seq, 3_000);
+                        // HotSpot charges one-off JIT work to this thread: queueing a method for
+                        // C2 resolves its class's string constants. The bound absorbs that, while
+                        // one 16-byte object per frame adds 480,000 bytes over 30,000 frames.
+                        seq = ingestInterleaved(state, messages, messageSizes, seq, 30_000);
                         final long allocated = threadMXBean.getThreadAllocatedBytes(threadId) - before;
-                        Assert.assertTrue("3,000 interleaved frames allocated " + allocated + " bytes", allocated < 64 * 1024);
+                        Assert.assertTrue("30,000 interleaved frames allocated " + allocated + " bytes", allocated < 64 * 1024);
                     }
                     Assert.assertEquals(seq - 1, state.getHighestProcessedSequence());
                 }
@@ -300,7 +305,7 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
             }
             drainWalQueue();
             for (String table : tables) {
-                assertQuery("SELECT count() FROM " + table).noLeakCheck().noRandomAccess().expectSize().returns("count\n1100\n");
+                assertQuery("SELECT count() FROM " + table).noLeakCheck().noRandomAccess().expectSize().returns("count\n11000\n");
             }
         });
     }
@@ -7106,7 +7111,9 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
     }
 
     // Feeds frameCount frames that cycle through the given messages, each joining the
-    // commit batch, and commits the batch every 30 frames, like a receive pass would.
+    // commit batch, and commits the batch every 300 frames, like a receive pass would.
+    // Under the ADAPTIVE commit mode every table commit fdatasyncs, so the number of
+    // commits, not of frames, sets the test's duration.
     private static long ingestInterleaved(
             QwpIngressProcessorState state,
             long[] messages,
@@ -7120,7 +7127,7 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
             state.prepareMessage();
             Assert.assertEquals(QwpIngressProcessorState.COMMIT_BATCH_JOINED, state.joinCommitBatch(seq, 0, 0));
             state.clearMessageState();
-            if ((i + 1) % 30 == 0) {
+            if ((i + 1) % 300 == 0) {
                 Assert.assertTrue(state.commitBatch());
             }
         }
