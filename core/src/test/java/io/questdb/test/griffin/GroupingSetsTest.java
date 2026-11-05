@@ -326,6 +326,11 @@ public class GroupingSetsTest extends AbstractCairoTest {
             assertException(query, query.indexOf("SELECT 1"), "literal expected");
             query = "SELECT a, count() FROM t GROUP BY ROLLUP((SELECT 1))";
             assertException(query, query.indexOf("SELECT 1"), "literal expected");
+            // Plain keys combine with ROLLUP and CUBE only.
+            query = "SELECT a, c1, count() FROM t GROUP BY a, GROUPING SETS ((c1), ())";
+            assertException(query, query.indexOf("GROUPING"), "GROUPING SETS must be the only GROUP BY item, list the other keys in each set");
+            query = "SELECT a, c1, count() FROM t GROUP BY a, c1, grouping sets ((c2))";
+            assertException(query, query.indexOf("grouping"), "GROUPING SETS must be the only GROUP BY item, list the other keys in each set");
         });
     }
 
@@ -455,13 +460,12 @@ public class GroupingSetsTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCubeSetCountCapApplied() throws Exception {
-        // CUBE(16 columns) would produce 2^16 = 65536 sets, exceeding the default 4096
+    public void testCubeSixteenColumnsRejected() throws Exception {
+        // CUBE takes at most 15 columns, whatever cairo.sql.max.grouping.sets allows.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (c1 INT, c2 INT, c3 INT, c4 INT, c5 INT," +
                     " c6 INT, c7 INT, c8 INT, c9 INT, c10 INT," +
                     " c11 INT, c12 INT, c13 INT, c14 INT, c15 INT, c16 INT, v INT)");
-            // CUBE supports at most 15 columns
             assertException(
                     "SELECT * FROM t GROUP BY CUBE(c1,c2,c3,c4,c5,c6,c7,c8,c9,c10,c11,c12,c13,c14,c15,c16)",
                     25,
@@ -521,8 +525,7 @@ public class GroupingSetsTest extends AbstractCairoTest {
 
     @Test
     public void testCursorReuse() throws Exception {
-        // Test that the cursor works correctly on repeated execution
-        // (toTop after partial iteration)
+        // Compiling and running the same query twice gives the same rows.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (a SYMBOL, v DOUBLE)");
             execute("INSERT INTO t VALUES ('x', 10.0), ('y', 20.0)");
@@ -532,7 +535,6 @@ public class GroupingSetsTest extends AbstractCairoTest {
                             "x\t10.0\n" +
                             "y\t20.0\n";
             String query = "SELECT a, SUM(v) FROM t GROUP BY ROLLUP(a) ORDER BY a";
-            // Execute twice to trigger toTop/reuse
             assertGroupingSetsQuery(expected, query);
             assertGroupingSetsQuery(expected, query);
         });
@@ -4979,6 +4981,19 @@ public class GroupingSetsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByRollupWithoutDesignatedTimestamp() throws Exception {
+        // The table has a TIMESTAMP column but no designated timestamp, so SAMPLE BY reports that,
+        // as it does without grouping sets, and points at the table.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE nd (a INT, v LONG, ts TIMESTAMP)");
+            for (String grouping : new String[]{"ROLLUP(a)", "CUBE(a)", "GROUPING SETS ((a), ())", "ROLLUP(a) FILL(NULL)"}) {
+                final String query = "SELECT ts, a, sum(v) FROM nd SAMPLE BY 1h " + grouping;
+                assertException(query, query.indexOf("nd"), "base query does not provide designated TIMESTAMP column");
+            }
+        });
+    }
+
+    @Test
     public void testTrailingGroupingItemsAfterCompositeCubeRejected() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (a INT, b INT, c INT, v INT)");
@@ -5300,6 +5315,45 @@ public class GroupingSetsTest extends AbstractCairoTest {
                                     rows++;
                                 }
                                 Assert.assertEquals(33, rows);
+                            }
+                        }
+                    }
+                }, configuration, LOG);
+            }
+        });
+    }
+
+    @Test
+    public void testWorkerPoolGroupingSetsParallelSetBudget() throws Exception {
+        // Every worker and the owner keep one map per set, so the parallel factory runs only while
+        // sets * (workers + 1) <= 256. Past that, the query runs serially. With 4 workers the
+        // boundary is 51 sets.
+        assertMemoryLeak(() -> {
+            try (WorkerPool pool = new TestWorkerPool(4)) {
+                TestUtils.execute(pool, (engine, compiler, executionContext) -> {
+                    execute(compiler, "CREATE TABLE t (a INT, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", executionContext);
+                    execute(compiler, "INSERT INTO t SELECT (x % 3)::INT, x, (x * 1_000_000L)::TIMESTAMP FROM long_sequence(100)", executionContext);
+                    executionContext.setParallelGroupByEnabled(true);
+                    Assert.assertEquals(4, executionContext.getSharedQueryWorkerCount());
+                    for (int setCount : new int[]{51, 52}) {
+                        final StringBuilder sets = new StringBuilder();
+                        for (int i = 0; i < setCount; i++) {
+                            sets.append(i == 0 ? "(a)" : ", (a)");
+                        }
+                        final String query = "SELECT a, sum(v) s FROM t GROUP BY GROUPING SETS (" + sets + ")";
+                        try (RecordCursorFactory factory = compiler.compile(query, executionContext).getRecordCursorFactory()) {
+                            Assert.assertEquals(
+                                    "sets: " + setCount,
+                                    setCount == 51,
+                                    factory.getBaseFactory() instanceof AsyncGroupingSetsRecordCursorFactory
+                            );
+                            // 3 values of a, once per set.
+                            try (RecordCursor cursor = factory.getCursor(executionContext)) {
+                                int rows = 0;
+                                while (cursor.hasNext()) {
+                                    rows++;
+                                }
+                                Assert.assertEquals(3 * setCount, rows);
                             }
                         }
                     }

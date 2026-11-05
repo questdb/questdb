@@ -5930,6 +5930,12 @@ public class SqlParser {
             boolean isFirstPlainToken = firstPlainTokenLookedAhead;
             firstPlainTokenLookedAhead = false;
             boolean compositeLookedAhead = false;
+            if (!isFirstPlainToken && isGroupingCandidate) {
+                compositeLookedAhead = true;
+                if (hasGroupingSyntaxLookahead(lexer, tok, kwPos, "SETS")) {
+                    throw SqlException.$(kwPos, "GROUPING SETS must be the only GROUP BY item, list the other keys in each set");
+                }
+            }
             if (!isFirstPlainToken && (isCompositeRollup || isCompositeCube)) {
                 compositeLookedAhead = true;
                 if (hasGroupingSyntaxLookahead(lexer, tok, kwPos, "(")) {

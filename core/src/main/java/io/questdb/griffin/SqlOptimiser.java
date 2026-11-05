@@ -11087,6 +11087,15 @@ public class SqlOptimiser implements Mutable {
             if (sampleBy != null && nested.hasGroupingSets() && timestamp == null && nested.getTableName() == null && nested.getNestedModel() != null) {
                 timestamp = inferGroupingSetsSampleByTimestamp(nested);
             }
+            // Only this rewrite runs SAMPLE BY with grouping sets, and it needs the designated
+            // timestamp. Without the check, the projection check fails later with an unrelated error.
+            if (sampleBy != null && nested.hasGroupingSets() && timestamp == null) {
+                final ExpressionNode tableNameExpr = nested.getTableNameExpr();
+                throw SqlException.$(
+                        tableNameExpr != null ? tableNameExpr.position : nested.getModelPosition(),
+                        "base query does not provide designated TIMESTAMP column"
+                );
+            }
 
             // Day-or-larger stride + non-UTC TIME ZONE: DST makes UTC bucket widths
             // vary (e.g. Berlin "1d" spans 23h on spring-forward, 25h on fall-back),

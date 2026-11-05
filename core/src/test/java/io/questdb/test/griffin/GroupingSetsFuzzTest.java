@@ -364,7 +364,8 @@ public class GroupingSetsFuzzTest extends AbstractCairoTest {
             printSql(query2, result2);
 
             TestUtils.assertEquals(result1, result2);
-        } catch (Exception e) {
+        } catch (Exception | AssertionError e) {
+            // A result mismatch is an AssertionError; it needs the queries as much as an exception does.
             String msg = "Iteration " + iteration +
                     (context != null ? " (" + context + ")" : "") +
                     " failed.\nQuery 1: " + query1 +
