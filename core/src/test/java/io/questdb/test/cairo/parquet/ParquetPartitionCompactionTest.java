@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.O3PartitionJob;
 import io.questdb.cairo.PartitionCompactionScanJob;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableSnapshotRestore;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
@@ -359,6 +360,46 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
             runSweepPastTheIdleTimeout();
             Assert.assertEquals("the schema trigger did not clear, so the sweep rewrites the partition every interval", nameTxnAfter, parquetPartitionNameTxn(tableToken));
             assertCleanParquetDataIntact("dc");
+        });
+    }
+
+    @Test
+    public void testRestoredPostingIndexSurvivesParquetCompaction() throws Exception {
+        setUpSmallRowGroupsNoAutoRewrite();
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, "0");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "60m");
+        assertMemoryLeak(() -> {
+            createCleanParquetPartition("t");
+            execute("ALTER TABLE t ALTER COLUMN s ADD INDEX TYPE POSTING INCLUDE (a)");
+            drainWalQueue();
+            final TableToken token = engine.verifyTableName("t");
+            final File valueFile;
+            try (TableReader reader = engine.getReader(token); Path partitionPath = new Path().of(configuration.getDbRoot()).concat(token)) {
+                final int partitionIndex = findParquetPartitionIndex(reader);
+                TableUtils.setPathForNativePartition(partitionPath, reader.getMetadata().getTimestampType(), reader.getPartitionedBy(),
+                        reader.getTxFile().getPartitionTimestampByIndex(partitionIndex), reader.getTxFile().getPartitionNameTxn(partitionIndex));
+                valueFile = new File(partitionPath.toString(), "s.pv.0");
+            }
+            engine.clear();
+            Assert.assertTrue(valueFile.delete());
+            try (
+                    Path tablePath = new Path().of(configuration.getDbRoot()).concat(token).slash();
+                    TableSnapshotRestore restore = new TableSnapshotRestore(configuration)
+            ) {
+                restore.rebuildTableFiles(tablePath, new AtomicInteger(), false);
+            }
+            assertQuery("SELECT count(), sum(a) FROM t WHERE s = 'k1'")
+                    .noRandomAccess().expectSize().withPlanContaining("CoveringIndex on: s")
+                    .returns("count\tsum\n3\t103\n");
+            execute("ALTER TABLE t DROP COLUMN b");
+            drainWalQueue();
+            engine.releaseInactive();
+            final long nameTxnBefore = parquetPartitionNameTxn(token);
+            runSweepPastTheIdleTimeout();
+            Assert.assertNotEquals("compaction must rebuild the restored index", nameTxnBefore, parquetPartitionNameTxn(token));
+            assertQuery("SELECT count(), sum(a) FROM t WHERE s = 'k1'")
+                    .noRandomAccess().expectSize().withPlanContaining("CoveringIndex on: s")
+                    .returns("count\tsum\n3\t103\n");
         });
     }
 

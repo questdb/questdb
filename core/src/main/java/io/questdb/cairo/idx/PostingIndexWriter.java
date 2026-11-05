@@ -1455,7 +1455,7 @@ public class PostingIndexWriter implements IndexWriter {
                 LPSZ pvName = PostingIndexUtils.valueFileName(path.trimTo(plen), name, postingColumnNameTxn, this.sealTxn);
                 long pvActual = ff.length(pvName);
                 if (valueMemSize > pvActual) {
-                    throw CairoException.critical(0)
+                    throw CairoException.critical(CairoException.FILE_TOO_SMALL)
                             .put("posting index value file too short [expected=").put(valueMemSize)
                             .put(", actual=").put(pvActual).put(", path=").put(pvName).put(']');
                 }

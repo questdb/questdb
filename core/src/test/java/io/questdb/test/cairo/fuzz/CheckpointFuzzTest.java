@@ -345,6 +345,9 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
         boolean testHardLinkCheckpoint = rnd.nextBoolean();
 
         assertMemoryLeak(() -> {
+            final boolean isMergeAppendEnabled = rnd.nextBoolean();
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, isMergeAppendEnabled);
+            LOG.info().$("checkpoint merge-append [enabled=").$(isMergeAppendEnabled).I$();
             if (testHardLinkCheckpoint) {
                 node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "100G");
             }
