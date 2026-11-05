@@ -1292,6 +1292,27 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         });
     }
 
+    // An append to an entry marked dropped appends nothing.
+    @Test
+    public void testAppendToDroppedEntryAppendsNothing() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE dropped_entry (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            LineHttpProcessorConfiguration lineConfig = new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            try (
+                    QwpTudCache cache = new QwpTudCache(engine, true, true, new DefaultColumnTypes(lineConfig), PartitionBy.DAY);
+                    QwpWalAppender appender = new QwpWalAppender(true, 127, 50);
+                    QwpStreamingDecoder decoder = new QwpStreamingDecoder()
+            ) {
+                decoder.setSchemaCache(cache);
+                final WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("dropped_entry"), null, null, 10);
+                tud.setIsDropped();
+                appendOneRow(decoder, appender, tud, "dropped_entry", null, true);
+                Assert.assertEquals(0, tud.getWriter().getUncommittedRowCount());
+            }
+        });
+    }
+
     /**
      * A schema is settled for a table once Phase 1 resolved it onto that table's
      * writer, and stays settled while other tables resolve theirs, until the table's

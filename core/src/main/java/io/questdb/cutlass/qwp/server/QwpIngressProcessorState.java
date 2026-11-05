@@ -770,12 +770,15 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
                 CommitBatchEntry entry = findCommitBatchEntry(block.getTableNameUtf8());
                 if (entry != null) {
                     if (blockRows > 0) {
-                        if (!isCommitBatchEntryJoinable(entry, block, blockRows)) {
+                        if (!isCommitBatchEntryJoinable(entry, blockRows)) {
                             return cannotJoin(hasAppended);
                         }
                         appendingWriter = entry.writer;
                         appendingWriterRows = entry.rows;
-                        walAppender.appendToWalStreaming(securityContext, block, entry.tud, false);
+                        // A block may not create a column while its table holds batch rows.
+                        if (!walAppender.appendToWalStreaming(securityContext, block, entry.tud, false)) {
+                            return cannotJoin(hasAppended);
+                        }
                         appendingWriter = null;
                         hasAppended = true;
                         messageAppendedRows = true;
@@ -2254,11 +2257,10 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
 
     // Whether a block of a table already in the batch can join it: appending it can
     // touch nothing but the table's batch rows. The structure-version check cuts the
-    // batch at another connection's ALTER, RENAME or DROP, the settled-schema check
-    // rules out column creation, and the row cap keeps the appender from committing
-    // the batch rows on its own. Checks identity only: it acquires, refreshes and
-    // evicts nothing.
-    private boolean isCommitBatchEntryJoinable(CommitBatchEntry entry, QwpTableBlockCursor block, int blockRows) {
+    // batch at another connection's ALTER, RENAME or DROP, and the row cap keeps the
+    // appender from committing the batch rows on its own. Checks identity only: it
+    // acquires, refreshes and evicts nothing.
+    private boolean isCommitBatchEntryJoinable(CommitBatchEntry entry, int blockRows) {
         // Between joins nothing touches a batch table's writer, and a frame that
         // distresses the cache ends the batch before the next frame joins.
         assert !tudCache.isDistressed() && entry.writer.getUncommittedRowCount() == entry.rows;
@@ -2267,7 +2269,6 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         }
         return entry.tracker.getStructureVersion() == entry.writer.getMetadataVersion()
                 && !entry.tracker.isDropped()
-                && walAppender.isSchemaSettled(block.getSchema(), entry.tud)
                 && entry.rows + blockRows < entry.tud.getMetaMaxUncommittedRows();
     }
 

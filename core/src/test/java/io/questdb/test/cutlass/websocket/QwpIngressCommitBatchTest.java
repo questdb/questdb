@@ -149,6 +149,13 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
      * must not complete the handshake, whether it directly follows the refused batch
      * or sits behind another frame.
      */
+    // QuestDB table names are case-insensitive, but a client may buffer each spelling apart
+    // and send two blocks of one table, with different columns, in every frame.
+    @Test
+    public void testCaseVariantBlocksWithDifferentColumnsJoinCommitBatch() throws Exception {
+        assertBlocksWithDifferentColumnsJoinCommitBatch("WEATHER");
+    }
+
     @Test
     public void testClientClosePipelinedBeforeRoleChangeCloseIsNotTheEcho() throws Exception {
         assertPipelinedClientCloseIsNotTheEcho(clientCloseFrame());
@@ -2781,6 +2788,11 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSameTableBlocksWithDifferentColumnsJoinCommitBatch() throws Exception {
+        assertBlocksWithDifferentColumnsJoinCommitBatch("weather");
+    }
+
+    @Test
     public void testSingleBlockFramesRetainOneCommit() throws Exception {
         assertCommitsPerTable(1, 3,
                 clientEncodedFrame(1, "a"), clientEncodedFrame(1, "a"), clientEncodedFrame(1, "a"));
@@ -3446,6 +3458,45 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
             assertQuery("SELECT v FROM tab").noLeakCheck().expectSize().returns("v\n100\n200\n");
             Assert.assertEquals("the frames before the bad one must be acked ahead of the CLOSE", 1, maxCumulativeOkAck(sent));
             Assert.assertTrue("the ack must precede the CLOSE", indexOfBinaryFrame(sent, QwpConstants.STATUS_OK, 1) < closeIndex);
+        });
+    }
+
+    /**
+     * Each frame carries two blocks of table weather: one named weather with column v, one
+     * named {@code secondName} with v and h, which the table has. Both join the batch: the
+     * pass commits weather once, and one ack covers every frame.
+     */
+    private void assertBlocksWithDifferentColumnsJoinCommitBatch(String secondName) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE weather (v LONG, h LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final long txnBefore = lastTxn(engine, "weather");
+            final byte[][] frames = new byte[5][];
+            for (int f = 0; f < frames.length; f++) {
+                final long ts = (f + 1) * 1_000_000L;
+                frames[f] = createMaskedFrame(WebSocketOpcode.BINARY, qwpMessage(
+                        tableBlock("weather", f * 10L, ts),
+                        tableBlockWithColumn(secondName, f * 10L + 1, "h", f, ts + 1)
+                ));
+            }
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            final ObjList<byte[]> sent = ingestInOnePass(new QwpIngressUpgradeProcessor(engine, httpConfig), httpConfig, frames);
+            Assert.assertEquals("the pass commits weather once", txnBefore + 1, lastTxn(engine, "weather"));
+            Assert.assertEquals(frames.length - 1, maxCumulativeOkAck(sent));
+            Assert.assertEquals("one ack after the batch commit", 1, countOkAcks(sent));
+            drainWalQueue();
+            assertQuery("SELECT v, h FROM weather").noLeakCheck().expectSize().returns("""
+                    v\th
+                    0\tnull
+                    1\t0
+                    10\tnull
+                    11\t1
+                    20\tnull
+                    21\t2
+                    30\tnull
+                    31\t3
+                    40\tnull
+                    41\t4
+                    """);
         });
     }
 
