@@ -367,6 +367,18 @@ final class ScalarCompensation implements Mutable {
         return value;
     }
 
+    private LogicalPlan endCompensation(ProjectPlan project, IntIntHashMap hoistedColumnIds) {
+        compensatedIds.clear();
+        compensatedNames.clear();
+        compensations.clear();
+        final BoundExpression hoisted = pendingConjuncts;
+        pendingConjuncts = null;
+        if (hoisted == null) {
+            return project;
+        }
+        return planNodes.filters.next().of(project, context.getRewriter().remapColumns(hoisted, hoistedColumnIds), hoisted.getPosition());
+    }
+
     private BoundExpression guarded(BoundExpression condition, BoundExpression value, OutputSchema input, int position) throws SqlException {
         return ctx.caseWhen(condition, value, planNodes.constants.next().ofNull(position), input, position);
     }
@@ -774,14 +786,7 @@ final class ScalarCompensation implements Mutable {
         for (int i = 0, n = expressions.size(); i < n; i++) {
             expressions.setQuick(i, context.getRewriter().substituteColumns(expressions.getQuick(i), compensatedIds, compensations));
         }
-        compensatedIds.clear();
-        compensatedNames.clear();
-        compensations.clear();
-        pendingConjuncts = null;
-        if (hoisted == null) {
-            return project;
-        }
-        return planNodes.filters.next().of(project, context.getRewriter().remapColumns(hoisted, substitution), hoisted.getPosition());
+        return endCompensation(project, substitution);
     }
 
     /**
@@ -889,15 +894,7 @@ final class ScalarCompensation implements Mutable {
             }
         }
         project.getOutput().setTimestampIndex(output.getTimestampIndex());
-        compensatedIds.clear();
-        compensatedNames.clear();
-        compensations.clear();
-        final BoundExpression hoisted = pendingConjuncts;
-        pendingConjuncts = null;
-        if (hoisted == null) {
-            return project;
-        }
-        return planNodes.filters.next().of(project, context.getRewriter().remapColumns(hoisted, consumerRemap), hoisted.getPosition());
+        return endCompensation(project, consumerRemap);
     }
 
     /**

@@ -229,12 +229,8 @@ final class OrderBinder implements Mutable {
         if (expression.type == ExpressionNode.LITERAL) {
             return orderAliasIndex(expression, input, project, visibleCount, false) >= 0;
         }
-        if (expression.paramCount < 3) {
-            return hasOrderAliasReference(expression.lhs, input, project, visibleCount)
-                    || hasOrderAliasReference(expression.rhs, input, project, visibleCount);
-        }
-        for (int i = 0, n = expression.args.size(); i < n; i++) {
-            if (hasOrderAliasReference(expression.args.getQuick(i), input, project, visibleCount)) {
+        for (int i = 0, n = expression.operandCount(); i < n; i++) {
+            if (hasOrderAliasReference(expression.operandAt(i), input, project, visibleCount)) {
                 return true;
             }
         }
@@ -560,13 +556,8 @@ final class OrderBinder implements Mutable {
             scope.substitutionColumns.add(ctx.planNodes.columns.next().of(output.getColumnId(index), output.getColumnType(index), expression.position));
             return;
         }
-        if (expression.paramCount < 3) {
-            collectOrderSubstitutions(expression.lhs, input, scopeAlias, project, visibleCount, isAliasPreferred, selected, source);
-            collectOrderSubstitutions(expression.rhs, input, scopeAlias, project, visibleCount, isAliasPreferred, selected, source);
-        } else {
-            for (int i = 0, n = expression.args.size(); i < n; i++) {
-                collectOrderSubstitutions(expression.args.getQuick(i), input, scopeAlias, project, visibleCount, isAliasPreferred, selected, source);
-            }
+        for (int i = 0, n = expression.operandCount(); i < n; i++) {
+            collectOrderSubstitutions(expression.operandAt(i), input, scopeAlias, project, visibleCount, isAliasPreferred, selected, source);
         }
     }
 

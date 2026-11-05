@@ -96,6 +96,10 @@ public final class FunctionExpression extends BoundExpression {
         return overload.isAnd();
     }
 
+    public boolean isEquality() {
+        return overload.isEquality();
+    }
+
     public boolean isNot() {
         return overload.isNot();
     }

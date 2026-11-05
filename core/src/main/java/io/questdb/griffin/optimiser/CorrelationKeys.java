@@ -243,7 +243,7 @@ final class CorrelationKeys implements Mutable {
     }
 
     private boolean isDroppedEquality(BoundExpression predicate) {
-        return predicate instanceof FunctionExpression call && call.getArgumentCount() == 2 && "=".equals(call.getName())
+        return predicate instanceof FunctionExpression call && call.isEquality()
                 && (isDroppedEquality(call.argumentAt(0), call.argumentAt(1)) || isDroppedEquality(call.argumentAt(1), call.argumentAt(0)));
     }
 
@@ -286,7 +286,7 @@ final class CorrelationKeys implements Mutable {
         conjuncts.clear();
         LogicalPlans.collectConjuncts(predicate, conjuncts);
         for (int i = 0, n = conjuncts.size(); i < n; i++) {
-            if (conjuncts.getQuick(i) instanceof FunctionExpression call && call.getArgumentCount() == 2 && "=".equals(call.getName())) {
+            if (conjuncts.getQuick(i) instanceof FunctionExpression call && call.isEquality()) {
                 final BoundExpression left = call.argumentAt(0);
                 final BoundExpression right = call.argumentAt(1);
                 if (left instanceof ColumnExpression column && right instanceof OuterColumnExpression outer) {
@@ -319,7 +319,7 @@ final class CorrelationKeys implements Mutable {
         conjuncts.clear();
         LogicalPlans.collectConjuncts(predicate, conjuncts);
         for (int i = 0, n = conjuncts.size(); i < n; i++) {
-            if (conjuncts.getQuick(i) instanceof FunctionExpression call && call.getArgumentCount() == 2 && "=".equals(call.getName())) {
+            if (conjuncts.getQuick(i) instanceof FunctionExpression call && call.isEquality()) {
                 collectOuterAlias(call.argumentAt(0), call.argumentAt(1), join, index);
             }
         }

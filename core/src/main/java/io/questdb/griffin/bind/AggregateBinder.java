@@ -636,13 +636,8 @@ final class AggregateBinder implements Mutable {
                 throw orderNotSelected(expression);
             }
         }
-        if (expression.paramCount < 3) {
-            collectAggregateOrderSubstitutions(expression.lhs, source, aggregate, project, visibleCount);
-            collectAggregateOrderSubstitutions(expression.rhs, source, aggregate, project, visibleCount);
-        } else {
-            for (int i = 0, n = expression.args.size(); i < n; i++) {
-                collectAggregateOrderSubstitutions(expression.args.getQuick(i), source, aggregate, project, visibleCount);
-            }
+        for (int i = 0, n = expression.operandCount(); i < n; i++) {
+            collectAggregateOrderSubstitutions(expression.operandAt(i), source, aggregate, project, visibleCount);
         }
     }
 
@@ -711,12 +706,9 @@ final class AggregateBinder implements Mutable {
                 addGroupingExpression(expression, null, !isNested && expression.type == ExpressionNode.LITERAL
                         && FunctionBinder.qualifierEnd(expression, aggregate.getChild().getOutput()) > -1, model, source, aggregate, context);
             }
-        } else if (expression.paramCount < 3) {
-            collectGroupingExpressions(expression.lhs, model, source, aggregate, context, true);
-            collectGroupingExpressions(expression.rhs, model, source, aggregate, context, true);
         } else {
-            for (int i = 0, n = expression.args.size(); i < n; i++) {
-                collectGroupingExpressions(expression.args.getQuick(i), model, source, aggregate, context, true);
+            for (int i = 0, n = expression.operandCount(); i < n; i++) {
+                collectGroupingExpressions(expression.operandAt(i), model, source, aggregate, context, true);
             }
         }
     }
@@ -777,12 +769,9 @@ final class AggregateBinder implements Mutable {
             if (!sampleByBinder.referencesSampleByTimestamp(expression, aggregate.getChild().getOutput(), source)) {
                 addGroupingExpression(expression, model, source, aggregate, context);
             }
-        } else if (expression.paramCount < 3) {
-            collectSampleByDependencies(expression.lhs, model, source, aggregate, context);
-            collectSampleByDependencies(expression.rhs, model, source, aggregate, context);
         } else {
-            for (int i = 0, n = expression.args.size(); i < n; i++) {
-                collectSampleByDependencies(expression.args.getQuick(i), model, source, aggregate, context);
+            for (int i = 0, n = expression.operandCount(); i < n; i++) {
+                collectSampleByDependencies(expression.operandAt(i), model, source, aggregate, context);
             }
         }
     }
@@ -877,11 +866,8 @@ final class AggregateBinder implements Mutable {
         if (left.type == ExpressionNode.CONSTANT ? !Chars.equals(left.token, right.token) : !Chars.equalsIgnoreCase(left.token, right.token)) {
             return false;
         }
-        if (left.paramCount < 3) {
-            return equalGroupingExpressions(left.lhs, right.lhs, source, input) && equalGroupingExpressions(left.rhs, right.rhs, source, input);
-        }
-        for (int i = 0; i < left.paramCount; i++) {
-            if (!equalGroupingExpressions(left.args.getQuick(i), right.args.getQuick(i), source, input)) {
+        for (int i = 0, n = left.operandCount(); i < n; i++) {
+            if (!equalGroupingExpressions(left.operandAt(i), right.operandAt(i), source, input)) {
                 return false;
             }
         }
@@ -1024,12 +1010,8 @@ final class AggregateBinder implements Mutable {
         if (expression.type == ExpressionNode.LITERAL) {
             return false;
         }
-        if (expression.paramCount < 3) {
-            return isAggregateOrderAvailable(expression.lhs, model, source, aggregate, hasSelectAliases)
-                    && isAggregateOrderAvailable(expression.rhs, model, source, aggregate, hasSelectAliases);
-        }
-        for (int i = 0, n = expression.args.size(); i < n; i++) {
-            if (!isAggregateOrderAvailable(expression.args.getQuick(i), model, source, aggregate, hasSelectAliases)) {
+        for (int i = 0, n = expression.operandCount(); i < n; i++) {
+            if (!isAggregateOrderAvailable(expression.operandAt(i), model, source, aggregate, hasSelectAliases)) {
                 return false;
             }
         }
@@ -1429,13 +1411,8 @@ final class AggregateBinder implements Mutable {
             }
             return;
         }
-        if (node.paramCount < 3) {
-            validateDistinctOrder(node.lhs, model, source, input, isGroupingSelected);
-            validateDistinctOrder(node.rhs, model, source, input, isGroupingSelected);
-        } else {
-            for (int i = 0, n = node.args.size(); i < n; i++) {
-                validateDistinctOrder(node.args.getQuick(i), model, source, input, isGroupingSelected);
-            }
+        for (int i = 0, n = node.operandCount(); i < n; i++) {
+            validateDistinctOrder(node.operandAt(i), model, source, input, isGroupingSelected);
         }
     }
 

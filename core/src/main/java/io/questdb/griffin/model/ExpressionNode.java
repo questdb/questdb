@@ -333,6 +333,23 @@ public class ExpressionNode implements Mutable, Sinkable {
     }
 
     /**
+     * An operand of this call or operator, for {@code index} below {@link #operandCount()}: the left operand for 0 and
+     * the right one for 1 below three parameters, otherwise the argument {@code index} places from the last, as the
+     * parser stores them; null where the node has no left or right operand.
+     */
+    public ExpressionNode operandAt(int index) {
+        return paramCount < 3 ? (index == 0 ? lhs : rhs) : args.getQuick(index);
+    }
+
+    /**
+     * The number of operands of this call or operator: its left and right operand below three parameters, otherwise
+     * its arguments.
+     */
+    public int operandCount() {
+        return paramCount < 3 ? 2 : args.size();
+    }
+
+    /**
      * Walks this expression tree bottom-up and regroups adjacent constant
      * operands of associative (and, where needed, commutative) binary operators
      * so that constant folding can collapse them into a single constant.

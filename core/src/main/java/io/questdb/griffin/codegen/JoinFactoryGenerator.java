@@ -199,7 +199,7 @@ final class JoinFactoryGenerator {
             final FunctionExpression left = findWindowJoinSymbolEquality(call.argumentAt(0), scope, metadata, splitIndex);
             return left != null ? left : findWindowJoinSymbolEquality(call.argumentAt(1), scope, metadata, splitIndex);
         }
-        if (!"=".equals(call.getName()) || call.getArgumentCount() != 2
+        if (!call.isEquality()
                 || !(call.argumentAt(0) instanceof ColumnExpression left) || !(call.argumentAt(1) instanceof ColumnExpression right)) {
             return null;
         }

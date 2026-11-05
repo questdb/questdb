@@ -297,11 +297,8 @@ public final class SqlBinder implements Mutable {
         if (node.type == ExpressionNode.BIND_VARIABLE) {
             return FunctionBinder.definedBindVariable(node.token, bindVariables) == null;
         }
-        if (node.paramCount < 3) {
-            return hasUndefinedBindVariable(node.lhs, bindVariables) || hasUndefinedBindVariable(node.rhs, bindVariables);
-        }
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            if (hasUndefinedBindVariable(node.args.getQuick(i), bindVariables)) {
+        for (int i = 0, n = node.operandCount(); i < n; i++) {
+            if (hasUndefinedBindVariable(node.operandAt(i), bindVariables)) {
                 return true;
             }
         }
@@ -327,23 +324,6 @@ public final class SqlBinder implements Mutable {
         final ExpressionNode view = source.getViewNameExpr();
         return executionContext.getSecurityContext().isTableVisible(token)
                 || view != null && TableUtils.getTableFunctionView(view, executionContext).isDependency(token, executionContext.getCairoEngine());
-    }
-
-    /**
-     * An operand of the call or operator {@code node}, for {@code i} below {@link #operandCount}: the left operand for 0
-     * and the right one for 1 below three parameters, otherwise the argument {@code i} places from the last, as the
-     * parser stores them; null where the node has no left or right operand.
-     */
-    private static ExpressionNode operandAt(ExpressionNode node, int i) {
-        return node.paramCount < 3 ? (i == 0 ? node.lhs : node.rhs) : node.args.getQuick(i);
-    }
-
-    /**
-     * The number of operands of the call or operator {@code node}: its left and right operand below three
-     * parameters, otherwise its arguments.
-     */
-    private static int operandCount(ExpressionNode node) {
-        return node.paramCount < 3 ? 2 : node.args.size();
     }
 
     /**
@@ -1075,8 +1055,8 @@ public final class SqlBinder implements Mutable {
      */
     private boolean hasInstantArgument(ExpressionNode call, boolean isTextExact, SqlExecutionContext executionContext) {
         boolean hasInstant = false;
-        for (int i = 0, n = operandCount(call); i < n; i++) {
-            final ExpressionNode argument = operandAt(call, i);
+        for (int i = 0, n = call.operandCount(); i < n; i++) {
+            final ExpressionNode argument = call.operandAt(i);
             if (argument != null) {
                 if (isInstant(argument, isTextExact, executionContext)) {
                     hasInstant = true;
@@ -1135,13 +1115,13 @@ public final class SqlBinder implements Mutable {
         if (node.type != ExpressionNode.FUNCTION && node.type != ExpressionNode.OPERATION) {
             return true;
         }
-        final int operandCount = operandCount(node);
+        final int operandCount = node.operandCount();
         if (ComparisonOperator.of(Chars.toString(node.token)) != null || SqlKeywords.isInKeyword(node.token)
                 || SqlKeywords.isBetweenKeyword(node.token)) {
             boolean isInstantCompared = false;
             boolean isTimestampCompared = true;
             for (int i = 0; i < operandCount; i++) {
-                final ExpressionNode operand = operandAt(node, i);
+                final ExpressionNode operand = node.operandAt(i);
                 if (operand != null) {
                     if (isInstant(operand, isTextExact, executionContext)) {
                         isInstantCompared = true;
@@ -1158,7 +1138,7 @@ public final class SqlBinder implements Mutable {
             return hasInstantArgument(node, isTextExact, executionContext);
         }
         for (int i = 0; i < operandCount; i++) {
-            if (!isPrecisionExact(operandAt(node, i), isTextExact, executionContext)) {
+            if (!isPrecisionExact(node.operandAt(i), isTextExact, executionContext)) {
                 return false;
             }
         }
@@ -1244,11 +1224,8 @@ public final class SqlBinder implements Mutable {
             case ExpressionNode.LITERAL -> FunctionBinder.findColumn(expression, output, alias) == index;
             case ExpressionNode.QUERY -> false;
             default -> {
-                if (expression.paramCount < 3) {
-                    yield referencesOnlyColumn(expression.lhs, output, alias, index) && referencesOnlyColumn(expression.rhs, output, alias, index);
-                }
-                for (int i = 0, n = expression.args.size(); i < n; i++) {
-                    if (!referencesOnlyColumn(expression.args.getQuick(i), output, alias, index)) {
+                for (int i = 0, n = expression.operandCount(); i < n; i++) {
+                    if (!referencesOnlyColumn(expression.operandAt(i), output, alias, index)) {
                         yield false;
                     }
                 }

@@ -1058,11 +1058,8 @@ final class SampleByBinder {
         if (expression.type == ExpressionNode.LITERAL) {
             return ctx.bindColumnIndex(expression, input, source) == sampleByTimestampIndex(input);
         }
-        if (expression.paramCount < 3) {
-            return referencesSampleByTimestamp(expression.lhs, input, source) || referencesSampleByTimestamp(expression.rhs, input, source);
-        }
-        for (int i = 0, n = expression.args.size(); i < n; i++) {
-            if (referencesSampleByTimestamp(expression.args.getQuick(i), input, source)) {
+        for (int i = 0, n = expression.operandCount(); i < n; i++) {
+            if (referencesSampleByTimestamp(expression.operandAt(i), input, source)) {
                 return true;
             }
         }

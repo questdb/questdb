@@ -229,11 +229,8 @@ final class JoinBinder implements Mutable {
         if (expression.type != ExpressionNode.OPERATION) {
             return false;
         }
-        if (expression.paramCount < 3) {
-            return isCompileTimeJoinConstant(expression.lhs) && isCompileTimeJoinConstant(expression.rhs);
-        }
-        for (int i = 0, n = expression.args.size(); i < n; i++) {
-            if (!isCompileTimeJoinConstant(expression.args.getQuick(i))) {
+        for (int i = 0, n = expression.operandCount(); i < n; i++) {
+            if (!isCompileTimeJoinConstant(expression.operandAt(i))) {
                 return false;
             }
         }

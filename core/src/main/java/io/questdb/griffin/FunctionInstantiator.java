@@ -385,33 +385,11 @@ public final class FunctionInstantiator implements Mutable {
             int workerCount,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        if (isThreadSafe(owners)) {
-            return null;
-        }
-        final ObjList<ObjList<GroupByFunction>> workers = new ObjList<>(workerCount);
-        beginWorkerClones();
-        try {
-            for (int w = 0; w < workerCount; w++) {
-                final PerWorkerFunctionList<GroupByFunction> functions = new PerWorkerFunctionList<>(owners.size());
-                workers.add(functions);
-                for (int i = 0, n = owners.size(); i < n; i++) {
-                    final GroupByFunction owner = owners.getQuick(i);
-                    if (owner.isThreadSafe()) {
-                        functions.add(owner, false);
-                    } else {
-                        final GroupByFunction function = (GroupByFunction) instantiateAggregate(expressions.getQuick(i), input, metadata, executionContext);
-                        functions.add(function, true);
-                        function.initValueIndex(owner.getValueIndex());
-                    }
-                }
-            }
-            return workers;
-        } catch (Throwable th) {
-            closeWorkers(workers, th);
-            throw th;
-        } finally {
-            endWorkerClones();
-        }
+        return instantiateWorkerLists(owners, workerCount, (index, owner) -> {
+            final GroupByFunction function = (GroupByFunction) instantiateAggregate(expressions.getQuick(index), input, metadata, executionContext);
+            function.initValueIndex(owner.getValueIndex());
+            return function;
+        });
     }
 
     /**
@@ -427,31 +405,11 @@ public final class FunctionInstantiator implements Mutable {
             int workerCount,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        if (isThreadSafe(owners)) {
-            return null;
-        }
-        final ObjList<ObjList<Function>> workers = new ObjList<>(workerCount);
-        beginWorkerClones();
-        try {
-            for (int w = 0; w < workerCount; w++) {
-                final PerWorkerFunctionList<Function> functions = new PerWorkerFunctionList<>(owners.size());
-                workers.add(functions);
-                for (int i = 0, n = owners.size(); i < n; i++) {
-                    final Function owner = owners.getQuick(i);
-                    if (owner.isThreadSafe()) {
-                        functions.add(owner, false);
-                    } else {
-                        functions.add(instantiate(expressions.getQuick(i), input, metadata, executionContext), true);
-                    }
-                }
-            }
-            return workers;
-        } catch (Throwable th) {
-            closeWorkers(workers, th);
-            throw th;
-        } finally {
-            endWorkerClones();
-        }
+        return instantiateWorkerLists(
+                owners,
+                workerCount,
+                (index, owner) -> instantiate(expressions.getQuick(index), input, metadata, executionContext)
+        );
     }
 
     /**
@@ -821,6 +779,38 @@ public final class FunctionInstantiator implements Mutable {
         }
     }
 
+    private <F extends Function> ObjList<ObjList<F>> instantiateWorkerLists(
+            ObjList<F> owners,
+            int workerCount,
+            WorkerClone<F> clone
+    ) throws SqlException {
+        if (isThreadSafe(owners)) {
+            return null;
+        }
+        final ObjList<ObjList<F>> workers = new ObjList<>(workerCount);
+        beginWorkerClones();
+        try {
+            for (int w = 0; w < workerCount; w++) {
+                final PerWorkerFunctionList<F> functions = new PerWorkerFunctionList<>(owners.size());
+                workers.add(functions);
+                for (int i = 0, n = owners.size(); i < n; i++) {
+                    final F owner = owners.getQuick(i);
+                    if (owner.isThreadSafe()) {
+                        functions.add(owner, false);
+                    } else {
+                        functions.add(clone.of(i, owner), true);
+                    }
+                }
+            }
+            return workers;
+        } catch (Throwable th) {
+            closeWorkers(workers, th);
+            throw th;
+        } finally {
+            endWorkerClones();
+        }
+    }
+
     private boolean isPreparationCompatible(PreparedFunctions.Entry entry, OutputSchema input, RecordMetadata metadata) {
         final BoundExpression expression = entry.getExpression();
         return !hasArrayColumnLayoutDependency(expression)
@@ -902,5 +892,10 @@ public final class FunctionInstantiator implements Mutable {
             functions.clear();
             positions.clear();
         }
+    }
+
+    @FunctionalInterface
+    private interface WorkerClone<F extends Function> {
+        F of(int index, F owner) throws SqlException;
     }
 }

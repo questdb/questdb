@@ -163,12 +163,8 @@ final class BindContext implements Mutable {
         if (expression == null || expression.type == ExpressionNode.LITERAL) {
             return expression;
         }
-        if (expression.paramCount < 3) {
-            final ExpressionNode left = firstColumnReference(expression.lhs);
-            return left != null ? left : firstColumnReference(expression.rhs);
-        }
-        for (int i = 0, n = expression.args.size(); i < n; i++) {
-            final ExpressionNode column = firstColumnReference(expression.args.getQuick(i));
+        for (int i = 0, n = expression.operandCount(); i < n; i++) {
+            final ExpressionNode column = firstColumnReference(expression.operandAt(i));
             if (column != null) {
                 return column;
             }
@@ -411,11 +407,8 @@ final class BindContext implements Mutable {
         if (isAggregate(expression)) {
             return true;
         }
-        if (expression.paramCount < 3) {
-            return hasAggregate(expression.lhs) || hasAggregate(expression.rhs);
-        }
-        for (int i = 0, n = expression.args.size(); i < n; i++) {
-            if (hasAggregate(expression.args.getQuick(i))) {
+        for (int i = 0, n = expression.operandCount(); i < n; i++) {
+            if (hasAggregate(expression.operandAt(i))) {
                 return true;
             }
         }

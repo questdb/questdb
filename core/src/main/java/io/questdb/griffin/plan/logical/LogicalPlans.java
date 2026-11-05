@@ -1281,7 +1281,7 @@ public final class LogicalPlans {
      * An equality between the direct reference to the column and a key literal.
      */
     private static boolean isKeyEquality(BoundExpression expression, int columnId) {
-        return expression instanceof FunctionExpression call && "=".equals(call.getName()) && call.getArgumentCount() == 2
+        return expression instanceof FunctionExpression call && call.isEquality()
                 && (isKeyColumn(call.argumentAt(0), columnId) && SymbolKeyExtractor.isKeyConstant(call.argumentAt(1))
                 || isKeyColumn(call.argumentAt(1), columnId) && SymbolKeyExtractor.isKeyConstant(call.argumentAt(0)));
     }

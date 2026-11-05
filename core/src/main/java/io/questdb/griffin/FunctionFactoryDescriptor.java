@@ -54,6 +54,7 @@ public class FunctionFactoryDescriptor {
     private final boolean isArrayColumnLayoutSensitive;
     private final boolean isArrayElementWiseScalar;
     private final boolean isCase;
+    private final boolean isEquality;
     private final boolean isListed;
     private final boolean isNot;
     private final boolean isOr;
@@ -138,6 +139,7 @@ public class FunctionFactoryDescriptor {
         }
         this.argTypes = types;
         this.sigArgCount = typeCount;
+        this.isEquality = sigArgCount == 2 && "=".equals(name);
     }
 
     public static short getArgTypeTag(char c) {
@@ -341,6 +343,10 @@ public class FunctionFactoryDescriptor {
 
     public boolean isCase() {
         return isCase;
+    }
+
+    public boolean isEquality() {
+        return isEquality;
     }
 
     /**

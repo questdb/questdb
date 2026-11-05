@@ -224,8 +224,7 @@ final class FilterPushdown implements OptimiserPass {
     }
 
     private static boolean isColumnConstantComparison(BoundExpression predicate) {
-        if (!(predicate instanceof FunctionExpression call) || call.getArgumentCount() != 2
-                || !"=".equals(call.getName())) {
+        if (!(predicate instanceof FunctionExpression call) || !call.isEquality()) {
             return false;
         }
         final ColumnExpression column = transitiveFilterColumn(predicate);
@@ -237,8 +236,7 @@ final class FilterPushdown implements OptimiserPass {
     }
 
     private static boolean isColumnValueComparison(BoundExpression predicate) {
-        if (!(predicate instanceof FunctionExpression call) || call.getArgumentCount() != 2
-                || !"=".equals(call.getName())) {
+        if (!(predicate instanceof FunctionExpression call) || !call.isEquality()) {
             return false;
         }
         final ColumnExpression column = transitiveFilterColumn(predicate);
@@ -281,8 +279,8 @@ final class FilterPushdown implements OptimiserPass {
     }
 
     private static boolean isLatestKeyParameter(BoundExpression expression, int keyId, ScanPlan scan) {
-        if (!(expression instanceof FunctionExpression call) || !"=".equals(call.getName())
-                || call.getArgumentCount() != 2 || scan.getIndexedColumnIds().indexOf(keyId, 0, scan.getIndexedColumnIds().size()) >= 0) {
+        if (!(expression instanceof FunctionExpression call) || !call.isEquality()
+                || scan.getIndexedColumnIds().indexOf(keyId, 0, scan.getIndexedColumnIds().size()) >= 0) {
             return false;
         }
         final BoundExpression value = LogicalPlans.isKeyColumn(call.argumentAt(0), keyId) ? call.argumentAt(1)
@@ -336,8 +334,7 @@ final class FilterPushdown implements OptimiserPass {
 
     private static boolean isSingleKeySelector(BoundExpression selector) {
         final FunctionExpression call = (FunctionExpression) selector;
-        final String name = call.getName();
-        return "=".equals(name) || "in".equals(name) && call.getArgumentCount() == 2;
+        return call.isEquality() || "in".equals(call.getName()) && call.getArgumentCount() == 2;
     }
 
     private static boolean isSubsampleKeepFilter(FilterPlan filter) {
@@ -516,7 +513,7 @@ final class FilterPushdown implements OptimiserPass {
             if (call.argumentAt(0) instanceof ColumnExpression column && column.isDirectReference()) {
                 return column;
             }
-            if ("=".equals(call.getName())
+            if (call.isEquality()
                     && call.argumentAt(1) instanceof ColumnExpression column && column.isDirectReference()) {
                 return column;
             }
@@ -665,7 +662,7 @@ final class FilterPushdown implements OptimiserPass {
         if (call.isAnd()) {
             deriveTransitiveFiltersFromPushedPredicate(join, call.argumentAt(0), isMasterNulled);
             deriveTransitiveFiltersFromPushedPredicate(join, call.argumentAt(1), isMasterNulled);
-        } else if ("=".equals(call.getName()) && isColumnConstantComparison(call)) {
+        } else if (isColumnConstantComparison(call)) {
             final int source = joinSourceOrdinal(call, join);
             if (source >= 0 && isTransitiveFactSafe(join, source, isMasterNulled, predicate, -1)) {
                 deriveTransitiveFilters(join, predicate);

@@ -100,12 +100,7 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
 
     @Override
     public void clear() {
-        copiedInputs.clear();
-        copiedProducers.clear();
-        copiedReads.clear();
-        originalInputs.clear();
-        originalProducers.clear();
-        sharingCopies.clear();
+        clearCopies();
         remappedIds = null;
     }
 
@@ -156,6 +151,15 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
         }
         assignColumnIds(plan.getOutput());
         return TreeWalk.CONTINUE;
+    }
+
+    private void clearCopies() {
+        copiedInputs.clear();
+        copiedProducers.clear();
+        copiedReads.clear();
+        originalInputs.clear();
+        originalProducers.clear();
+        sharingCopies.clear();
     }
 
     private AggregatePlan cloneAggregate(AggregatePlan aggregate) {
@@ -457,12 +461,7 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
      */
     LogicalPlan copy(LogicalPlan plan) {
         columnIds.clear();
-        copiedInputs.clear();
-        copiedProducers.clear();
-        copiedReads.clear();
-        originalInputs.clear();
-        originalProducers.clear();
-        sharingCopies.clear();
+        clearCopies();
         if (sourceFacts != null) {
             sourceFacts.rename(columnIds);
         }
