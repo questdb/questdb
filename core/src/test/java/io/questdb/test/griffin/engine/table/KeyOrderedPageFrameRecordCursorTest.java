@@ -2147,6 +2147,66 @@ public class KeyOrderedPageFrameRecordCursorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testKeyOrderedReadOfInPlaceUpdatedPartitionMatchesSort() throws Exception {
+        // an in-place update moves row groups to other index rows, so the index rows of the frames are not their rows
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "1.0");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, Long.MAX_VALUE);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL INDEX, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t
+                    SELECT ('k' || (x % 5))::SYMBOL, x::INT, '2024-01-01T01:00:00.000000Z'::TIMESTAMP + x * 60_000_000
+                    FROM long_sequence(40)
+                    """);
+            execute("INSERT INTO t VALUES ('k0', 99, '2024-01-02T00:00:00.000000Z')");
+            drainWalQueue();
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            execute("""
+                    INSERT INTO t VALUES
+                    ('k1', 100, '2024-01-01T00:30:00.000000Z'),
+                    ('k0', 101, '2024-01-01T01:10:30.000000Z'),
+                    ('k3', 102, '2024-01-01T01:30:30.000000Z')
+                    """);
+            drainWalQueue();
+            try (TableReader reader = getReader("t")) {
+                reader.openPartition(0);
+                Assert.assertTrue(reader.getAndInitParquetPartitionDecoder(0).metadata().hasIndexRowMap());
+            }
+            final String[] tails = {
+                    "s, v, ts FROM t WHERE ts IN '2024-01-01' AND s IN ('k0', 'k1', 'k2', 'k3', 'k4') ORDER BY s, ts",
+                    "s, v, ts FROM t WHERE ts IN '2024-01-01' AND s IN ('k0', 'k1', 'k2', 'k3', 'k4') AND v % 3 != 0 ORDER BY s, ts",
+                    "s, v, ts FROM t WHERE ts IN '2024-01-01' AND s IN ('k0', 'k3') ORDER BY s DESC, ts DESC"
+            };
+            final StringSink expected = new StringSink();
+            final StringSink actual = new StringSink();
+            for (long cacheBytes : new long[]{256 * 1024 * 1024L, 1024}) {
+                node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, cacheBytes);
+                for (String tail : tails) {
+                    printSql("SELECT /*+ no_index(t) */ " + tail, expected);
+                    final String expectedRows = expected.toString();
+                    assertQuery("SELECT " + tail).noLeakCheck().withPlanContaining("FilterOnValues").sizeMayVary().returns(expectedRows);
+                    try (RecordCursorFactory factory = select("SELECT " + tail); RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        final LongList rowIds = new LongList();
+                        assertRowIds(expectedRows, factory, cursor, rowIds, -1, 0);
+                        cursor.toTop();
+                        TestUtils.assertCursor(expectedRows, cursor, factory.getMetadata(), true, actual);
+                        assertRecordAt(expectedRows, factory, cursor, rowIds);
+                    }
+                    for (String limit : new String[]{" LIMIT -3", " LIMIT 5, 10"}) {
+                        printSql("SELECT /*+ no_index(t) */ " + tail + limit, expected);
+                        final String expectedPage = expected.toString();
+                        try (RecordCursorFactory factory = select("SELECT " + tail + limit); RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            TestUtils.assertCursor(expectedPage, cursor, factory.getMetadata(), true, actual);
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testKeysOfColumnAddedAfterRowsMatchNonIndexedRead() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
         assertMemoryLeak(() -> {

@@ -35,6 +35,7 @@ import io.questdb.cairo.LoopingRecordSink;
 import io.questdb.cairo.RecordChain;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkSPI;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.idx.BitmapIndexFwdReader;
@@ -907,7 +908,7 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
         PageFrame frame;
         while ((frame = frameCursor.next(Long.MAX_VALUE)) != null) {
             circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
-            final long frameRowCount = isCompositePartition(frame) ? -1
+            final long frameRowCount = hasVaryingIndexShift(frame) ? -1
                     : keyOrderedFactory.getIndexRowCount(frame, keyLo, keyHi, frame.getPartitionLo(), frame.getPartitionHi() - 1, Long.MAX_VALUE);
             if (frameRowCount < 0) {
                 return -1;
@@ -1665,13 +1666,24 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
         return true;
     }
 
-    private boolean isBackward() {
-        return keyOrderedFactory.getIndexDirection() == IndexReader.DIR_BACKWARD;
+    /**
+     * Whether no one index shift describes the rows of the partition of the page frame: a composite partition shifts each
+     * of its pieces, and an in-place update moves row groups to other index rows. A read counts and seeks the rows of such
+     * a partition frame by frame, since a frame of the whole partition has no shift to read the index with.
+     */
+    private boolean hasVaryingIndexShift(PageFrame frame) {
+        if (!(frameCursor instanceof TablePageFrameCursor tableCursor)) {
+            return false;
+        }
+        final TableReader reader = tableCursor.getTableReader();
+        final int partitionIndex = frame.getPartitionIndex();
+        return reader.getTxFile().isPartitionComposite(partitionIndex)
+                || frame.getFormat() == PartitionFormat.PARQUET
+                && reader.getAndInitParquetPartitionDecoder(partitionIndex).metadata().hasIndexRowMap();
     }
 
-    private boolean isCompositePartition(PageFrame frame) {
-        return frameCursor instanceof TablePageFrameCursor tableCursor
-                && tableCursor.getTableReader().getTxFile().isPartitionComposite(frame.getPartitionIndex());
+    private boolean isBackward() {
+        return keyOrderedFactory.getIndexDirection() == IndexReader.DIR_BACKWARD;
     }
 
     /**
@@ -2110,7 +2122,7 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
      * intervals as whole partition frames, so an absent key reads one page frame and probes once per interval.
      */
     private @Nullable PageFrame nextKeyFrame(PageFrame frame) {
-        if (isCompositePartition(frame)) {
+        if (hasVaryingIndexShift(frame)) {
             return nextFrame();
         }
         final long restRowCount = frameCursor.getRemainingRowsInInterval();
@@ -2141,7 +2153,7 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
             circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
             final long rowLo = partitionFrame.getPartitionLo();
             final long rowHi = partitionFrame.getPartitionHi() - 1;
-            final long count = isCompositePartition(partitionFrame) ? -1
+            final long count = hasVaryingIndexShift(partitionFrame) ? -1
                     : keyOrderedFactory.getRowCount(partitionFrame, keyLo, keyHi, rowLo, rowHi, 0);
             if (count != 0) {
                 final int partitionIndex = partitionFrame.getPartitionIndex();
@@ -2188,7 +2200,7 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
         PageFrame frame;
         while ((frame = frameCursor.next()) != null) {
             final int frameIndex = addFrame(frame);
-            if (isCompositePartition(frame)
+            if (hasVaryingIndexShift(frame)
                     || keyOrderedFactory.getIndexRowCount(frame, collectedKey, collectedKey + 1, frame.getPartitionLo(), frame.getPartitionHi() - 1, 0) != 0) {
                 final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
                 recordA.init(frameMemory);
@@ -2365,8 +2377,8 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
     /**
      * Caches every page frame of the scan and splits them into runs of page frames of a partition whose rows follow each
      * other in the index direction, each with the readers of the index of its partition, see scanRuns. Reports whether
-     * the index reads the runs: it does not when a partition is composite or its index cannot count rows, which leaves
-     * no run.
+     * the index reads the runs: it does not when a partition has no one index shift or its index cannot count rows, which
+     * leaves no run.
      */
     private boolean prepareScanRuns() {
         final int columnIndex = keyOrderedFactory.getColumnIndex();
@@ -2382,7 +2394,7 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
             PageFrame frame;
             while ((frame = frameCursor.next()) != null) {
                 addFrame(frame);
-                if (isCompositePartition(frame) || !(frame.getIndexReader(columnIndex, IndexReader.DIR_FORWARD) instanceof BitmapIndexFwdReader counter)) {
+                if (hasVaryingIndexShift(frame) || !(frame.getIndexReader(columnIndex, IndexReader.DIR_FORWARD) instanceof BitmapIndexFwdReader counter)) {
                     scanRuns.clear();
                     scanRunCounters.clear();
                     scanRunReaders.clear();
@@ -2755,7 +2767,7 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
             scanFrameCount = 0;
             return false;
         }
-        if (isCompositePartition(frame)) {
+        if (hasVaryingIndexShift(frame)) {
             return skipPassFrames(frame, rowCount);
         }
         final long restRowCount = frameCursor.getRemainingRowsInInterval();
@@ -2782,7 +2794,7 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
             partitionFrameCount++;
             final long rowLo = frame.getPartitionLo();
             final long rowHi = frame.getPartitionHi() - 1;
-            final long count = isCompositePartition(frame) ? -1
+            final long count = hasVaryingIndexShift(frame) ? -1
                     : keyOrderedFactory.getRowCount(frame, keyLo, keyHi, rowLo, rowHi, rowCount.get());
             if (count >= 0 && count <= rowCount.get()) {
                 rowCount.dec(count);
