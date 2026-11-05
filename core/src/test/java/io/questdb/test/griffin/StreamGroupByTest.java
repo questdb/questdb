@@ -271,6 +271,24 @@ public class StreamGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupingSetsDoNotStream() throws Exception {
+        run((engine, compiler, context) -> {
+            engine.execute("CREATE TABLE t AS (SELECT timestamp_sequence('2024-01-01', 600_000_000L) ts, (x % 3)::SYMBOL sym, x v FROM long_sequence(100)) "
+                    + "TIMESTAMP(ts) PARTITION BY DAY", context);
+            for (String fill : new String[]{"", " FILL(NULL)"}) {
+                final String rollup = "SELECT ts, sym, sum(v) s FROM t SAMPLE BY 1h ROLLUP(sym)" + fill + " ORDER BY ts, sym";
+                final String reference = "SELECT * FROM (SELECT ts, sym, sum(v) s FROM t SAMPLE BY 1h" + fill
+                        + " UNION ALL SELECT ts, NULL::SYMBOL sym, sum(v) s FROM t SAMPLE BY 1h" + fill + ") ORDER BY ts, sym";
+                try (RecordCursorFactory actual = compiler.compile(rollup, context).getRecordCursorFactory();
+                     RecordCursorFactory expected = compiler.compile(reference, context).getRecordCursorFactory()) {
+                    assertStream(actual, false);
+                    TestUtils.assertEquals(read(expected, context), read(actual, context));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testHighCardinalityBucketsEndInsideFrames() throws Exception {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 100);
         run((engine, compiler, context) -> {

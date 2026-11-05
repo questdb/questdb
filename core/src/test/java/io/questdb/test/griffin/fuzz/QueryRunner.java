@@ -119,6 +119,13 @@ import java.util.regex.Pattern;
  *       address into a map across a call that can grow it, such as the RIGHT
  *       and FULL hash joins that iterated a stale map cursor over their
  *       unmatched build rows after the probe grew the key map.</li>
+ *   <li>the reference axis runs a query's {@link GeneratedQuery#referenceSql()}, an
+ *       independent rewrite that must return the same rows, on the primary at JIT-off and
+ *       compares it with the pivot. {@code GroupingSetsClause} writes one for every grouping
+ *       sets query: the UNION ALL of one plain GROUP BY per grouping set. The axis compares only
+ *       when both queries run: the rewrite exists to check the rows grouping sets return, not
+ *       which queries they accept. Catches wrong subtotals, a lost or duplicated grouping set and
+ *       a wrong GROUPING_ID, which every other axis would reproduce on both of its sides.</li>
  * </ul>
  * The two modes share a pivot: {@code primary @ JIT-off}. With both
  * enabled, three runs per query are required (primary @ JIT-on,
@@ -233,6 +240,8 @@ public final class QueryRunner {
     private final TextPlanSink planSink = new TextPlanSink();
     private final boolean primaryHasAnyParquet;
     private final Pattern[] primaryPatterns;
+    // Comparisons the reference axis ran, i.e. queries whose rewrite and pivot both ran.
+    private int referenceAxisRuns;
     // Worker-thread name prefix of the query pool, used to scope a parallel FILE
     // fault to the query execution (test thread + query workers). See runFault.
     private final String queryWorkerNamePrefix;
@@ -242,6 +251,7 @@ public final class QueryRunner {
     private final StringSink rowsD = new StringSink();
     private final StringSink rowsE = new StringSink();
     private final StringSink rowsF = new StringSink();
+    private final StringSink rowsG = new StringSink();
     // Scratch sink for the toTop() re-iteration pass; compared against the
     // first pass to confirm the cursor reproduces its result set on rewind.
     private final StringSink rowsToTop = new StringSink();
@@ -363,6 +373,14 @@ public final class QueryRunner {
      */
     public int getMapPageAxisRuns() {
         return mapPageAxisRuns;
+    }
+
+    /**
+     * Comparisons the reference axis ran: queries with a reference rewrite whose pivot and
+     * rewrite both ran to completion.
+     */
+    public int getReferenceAxisRuns() {
+        return referenceAxisRuns;
     }
 
     /**
@@ -1764,7 +1782,8 @@ public final class QueryRunner {
 
     private Result runQuery(GeneratedQuery query) {
         String sql = query.sql();
-        if (!diffJit && !diffShadow && !diffStream && !isFusedAxisApplicable(query) && mapPageOverrides == null && !query.hasBind()) {
+        if (!diffJit && !diffShadow && !diffStream && !isFusedAxisApplicable(query) && mapPageOverrides == null && !query.hasBind()
+                && query.referenceSql() == null) {
             Outcome outcome = runOnce(sql, rowsA, primaryHasAnyParquet, query.deterministic());
             return toResult(sql, outcome);
         }
@@ -1839,6 +1858,13 @@ public final class QueryRunner {
                 Result streamResult = runStreamVariant(query, bJ);
                 if (streamResult.isFailed()) {
                     return streamResult;
+                }
+            }
+
+            if (query.referenceSql() != null) {
+                Result referenceResult = runReferenceVariant(query, bJ);
+                if (referenceResult != null && referenceResult.isFailed()) {
+                    return referenceResult;
                 }
             }
 
@@ -1932,6 +1958,32 @@ public final class QueryRunner {
             String msg = t.getMessage();
             return Outcome.error(t, msg == null ? "" : msg, false);
         }
+    }
+
+    /**
+     * Runs the query's reference rewrite on the primary at JIT-off into {@code rowsG} and
+     * reconciles it against the pivot {@code bJ}. Returns null when either side failed: the
+     * rewrite can reject a query that grouping sets accept, or the other way round, and neither
+     * says anything about the rows.
+     */
+    private Result runReferenceVariant(GeneratedQuery query, Outcome bJ) {
+        executionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+        Outcome reference = runOnce(query.referenceSql(), rowsG, primaryHasAnyParquet, query.deterministic());
+        if (bJ.failure != null || reference.failure != null) {
+            return null;
+        }
+        referenceAxisRuns++;
+        return reconcilePair(
+                query.sql(),
+                bJ,
+                reference,
+                rowsB,
+                rowsG,
+                query.deterministic(),
+                "grouping sets reference divergence",
+                "grouping sets",
+                "union all    "
+        );
     }
 
     private static final class CursorCheckException extends RuntimeException {

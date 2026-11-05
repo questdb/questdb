@@ -803,6 +803,9 @@ public class QueryFuzzTest extends AbstractCairoTest {
     private static String describeUngeneratableShape(QueryShape shape, FuzzConfig config, ObjList<FuzzTable> tables) {
         return switch (shape) {
             case GROUP_BY, SAMPLE_BY, SIMPLE -> null;
+            case GROUPING_SETS -> config.isGroupingSetsEnabled()
+                    ? null
+                    : "-D" + FuzzConfig.GROUPING_SETS_PROP + "=false";
             case HASH_JOIN_GROUP_BY -> config.isHashJoinEnabled()
                     ? describeMissingJoinTables(tables)
                     : "-D" + FuzzConfig.HASH_JOIN_PROP + "=false";
@@ -1017,7 +1020,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 boolean injectFaultFn = faultType == FaultType.FUNCTION;
                 long preGenS0 = rnd.getSeed0();
                 long preGenS1 = rnd.getSeed1();
-                GeneratedQuery query = QueryGenerator.generate(rnd, tables, null, injectFaultFn, config.isWindowEnabled(), config.isLatestOnEnabled(), config.isHorizonJoinEnabled(), config.isWindowJoinEnabled(), config.isHashJoinEnabled());
+                GeneratedQuery query = QueryGenerator.generate(rnd, tables, null, injectFaultFn, config.isWindowEnabled(), config.isLatestOnEnabled(), config.isHorizonJoinEnabled(), config.isWindowJoinEnabled(), config.isHashJoinEnabled(), config.isGroupingSetsEnabled());
                 QueryRunner.Result result;
                 if (faultType != null) {
                     // Fault queries use a crash-and-recover oracle, not the
@@ -1080,7 +1083,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                         long bindS1 = rnd.nextLong();
                         rnd.reset(preGenS0, preGenS1);
                         BindContext ctx = new BindContext(new Rnd(bindS0, bindS1), CONSTANT_BIND_PROBABILITY_PCT);
-                        GeneratedQuery bindForm = QueryGenerator.generate(rnd, tables, ctx, injectFaultFn, config.isWindowEnabled(), config.isLatestOnEnabled(), config.isHorizonJoinEnabled(), config.isWindowJoinEnabled(), config.isHashJoinEnabled());
+                        GeneratedQuery bindForm = QueryGenerator.generate(rnd, tables, ctx, injectFaultFn, config.isWindowEnabled(), config.isLatestOnEnabled(), config.isHorizonJoinEnabled(), config.isWindowJoinEnabled(), config.isHashJoinEnabled(), config.isGroupingSetsEnabled());
                         if (ctx.getBindValues().size() > 0) {
                             query = query.withBind(bindForm.sql(), ctx.getBindNames(), ctx.getBindValues());
                             bindGen++;
@@ -1160,6 +1163,9 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 .$();
         LOG.info().$("fuzz stream axis: ").$(runner.getStreamAxisRuns()).$(" comparisons against the hash GROUP BY").$();
         LOG.info().$("fuzz map page axis: ").$(runner.getMapPageAxisRuns()).$(" comparisons").$();
+        LOG.info().$("fuzz reference axis: ").$(runner.getReferenceAxisRuns()).$(" comparisons across ")
+                .$(generatedByShape[QueryShape.GROUPING_SETS.ordinal()]).$(" grouping sets queries")
+                .$();
 
         if (failures.size() > 0) {
             throw buildFailure(failures);
@@ -1247,6 +1253,17 @@ public class QueryFuzzTest extends AbstractCairoTest {
             Assert.assertTrue(
                     "no SAMPLE BY of " + generatedByShape[QueryShape.SAMPLE_BY.ordinal()] + " used the stream GROUP BY; the stream on/off axis looks vacuous",
                     runner.getStreamAxisRuns() > 0
+            );
+        }
+        // Guard the reference axis against going vacuous. It compares only when a grouping sets
+        // query and its UNION ALL rewrite both run, so a rewrite that stops compiling would leave
+        // every grouping sets query unchecked against it while the shape still counts as accepted.
+        final int groupingSetsGenerated = generatedByShape[QueryShape.GROUPING_SETS.ordinal()];
+        if (groupingSetsGenerated >= MIN_SHAPE_QUERIES_FOR_ACCEPT_FLOOR) {
+            Assert.assertTrue(
+                    "the reference axis compared none of the " + groupingSetsGenerated
+                            + " grouping sets queries; the UNION ALL rewrite looks out of step with the engine",
+                    runner.getReferenceAxisRuns() > 0
             );
         }
         // Guard the fault injector against a silent disarm. It has several ways to stop biting while
