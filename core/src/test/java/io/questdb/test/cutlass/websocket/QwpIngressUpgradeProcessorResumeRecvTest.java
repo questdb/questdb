@@ -1681,10 +1681,10 @@ public class QwpIngressUpgradeProcessorResumeRecvTest extends AbstractCairoTest 
     }
 
     /**
-     * A frame appends to the commit batch and then cannot join, so the batch is redone
-     * frame by frame and the frame fails on its own. Its NACK finds the send blocked:
-     * the ack for the redone frames is parked, the NACK queued behind it, and resuming
-     * the send delivers both in that order without processing any frame again.
+     * A frame appends to the commit batch and then cannot join, so the batch's frames are
+     * re-joined and committed, and the frame fails on its own. Its NACK finds the send
+     * blocked: the ack for the re-joined frames is parked, the NACK queued behind it, and
+     * resuming the send delivers both in that order without processing any frame again.
      */
     @Test
     public void testRedoNackBehindBlockedAckResumesInOrder() throws Exception {

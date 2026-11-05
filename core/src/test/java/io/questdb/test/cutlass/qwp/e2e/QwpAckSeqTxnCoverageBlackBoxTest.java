@@ -275,10 +275,10 @@ public class QwpAckSeqTxnCoverageBlackBoxTest extends AbstractQwpBootstrapTest {
     }
 
     /**
-     * A frame that joins a commit batch and fails on its own value is NACKed only
-     * after the batch's earlier frames are committed and acked: the server rolls the
-     * batch back with the bad frame, redoes the earlier frames one by one, each with
-     * its own commit, and then answers the bad frame with its own status.
+     * A frame that would join a commit batch and fails on its own value is NACKed only
+     * after the batch's earlier frames are committed and acked: the appender cancels the
+     * bad frame's block, the batch commits as it stands, once, and the server then
+     * answers the bad frame with its own status.
      */
     @Test
     public void testBadValueInCommitBatchIsNackedAfterEarlierFramesAreAcked() throws Exception {
@@ -328,8 +328,8 @@ public class QwpAckSeqTxnCoverageBlackBoxTest extends AbstractQwpBootstrapTest {
                         "SELECT count() FROM wal_tables() WHERE writerTxn < sequencerTxn", "count\n0\n"));
                 server.assertSql("SELECT id FROM u",
                         "id\n11111111-1111-1111-1111-111111111111\n22222222-2222-2222-2222-222222222222\n");
-                // One commit each: the redo commits the batch's frames one by one.
-                server.assertSql("SELECT sequencerTxn FROM wal_tables() WHERE name = 'u'", "sequencerTxn\n2\n");
+                // One commit: the batch of the first two frames commits once.
+                server.assertSql("SELECT sequencerTxn FROM wal_tables() WHERE name = 'u'", "sequencerTxn\n1\n");
             }
         });
     }

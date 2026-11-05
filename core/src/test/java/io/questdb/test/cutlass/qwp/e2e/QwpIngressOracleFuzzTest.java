@@ -445,7 +445,10 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
      * several tables and its frames interleave them, and the server batches their
      * commits across tables. The server bounces mid-stream: the client replays from
      * its acked watermark, sending again rows the server committed before it could ack
-     * them, which the tables' DEDUP keys absorb. Every table must end up holding
+     * them, which the tables' DEDUP keys absorb. Halfway through their rows, the even
+     * producers add a column to one table, so their flushes carry that table's block with
+     * a column the table lacks behind blocks of other tables, which cannot join the
+     * server's commit batch once those blocks joined it. Every table must end up holding
      * exactly its rows. A batch commit that fails on one table after others committed
      * is covered by QwpIngressCommitBatchTest: nothing here fails a commit.
      * <p>
@@ -482,7 +485,9 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
             LOG.info().$("multi-table test sf_max_segment_bytes=").$(sfMaxSegmentBytes).$();
 
             // Row r of every producer goes to table (r + producer) % tableCount, so the tables
-            // interleave within every flush. ids and timestamps are globally unique.
+            // interleave within every flush. ids and timestamps are globally unique. From its
+            // middle row on, an even producer writes column mid_p<producer> to table
+            // producer % tableCount, the table its rows r = 0, tableCount, ... go to.
             long baseTsMicros = 1_700_000_000_000_000L;
             QwpRow[][] perProducerRows = new QwpRow[producerCount][rowsPerProducer];
             int[] batchSizes = new int[producerCount];
@@ -497,6 +502,9 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
                 Rnd genRnd = new Rnd(master.nextLong(), master.nextLong());
                 for (int r = 0; r < rowsPerProducer; r++) {
                     QwpRow row = generateRow(genRnd, globalIdx, baseTsMicros + globalIdx);
+                    if (p % 2 == 0 && r >= rowsPerProducer / 2 && r % tableNames.length == 0) {
+                        row.setLong("mid_p" + p, globalIdx);
+                    }
                     perProducerRows[p][r] = row;
                     oracles[(r + p) % tableNames.length].addRow(row);
                     globalIdx++;

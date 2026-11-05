@@ -64,8 +64,8 @@ import org.jetbrains.annotations.TestOnly;
  */
 public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware {
     /**
-     * {@link #joinCommitBatch}: the frame cannot join the commit batch, and nothing of
-     * it touched the batch's writers.
+     * {@link #joinCommitBatch}: the frame cannot join, and the batch can commit as it
+     * stands: no row of the frame is in a writer, and the table cache is healthy.
      */
     public static final int COMMIT_BATCH_BOUNDARY = 1;
     /**
@@ -73,8 +73,10 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
      */
     public static final int COMMIT_BATCH_JOINED = 0;
     /**
-     * {@link #joinCommitBatch}: the frame appended rows next to the batch's and then
-     * failed or could not join; the batch must be rolled back and its frames redone.
+     * {@link #joinCommitBatch}: the frame failed or cannot join, and rows of the frame sit
+     * next to the batch's, the frame left the table cache distressed or a batch writer mid
+     * columnar write, or it consumed its first block: the batch is rolled back and its
+     * frames join again.
      */
     public static final int COMMIT_BATCH_REDO = 2;
     static final int SEND_STATE_READY = 0;
@@ -349,11 +351,13 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     // else, so the watermark covers them, and the client replays the rest: rows that
     // those later frames added to the committed tables arrive a second time.
     //
-    // A frame that appended rows next to the batch's and then fails, or cannot join,
-    // leaves rows no writer can drop without dropping the batch's too. The upgrade
-    // processor then rolls everything back and redoes the batch's frames one at a time
-    // (commitBatchFrames), each committed on its own: they are still in its receive
-    // buffer, because a batch never outlives the receive pass.
+    // A frame that fails or cannot join ends the batch, which commits before the frame is
+    // answered while it can commit as it stands. It cannot once the frame appended rows
+    // next to the batch's, which no writer can drop without dropping the batch's too,
+    // distressed the table cache, left a batch writer mid columnar write, or consumed its
+    // first block. The upgrade processor then rolls everything back and joins the batch's
+    // frames again (commitBatchFrames), committing each table once: the frames are still
+    // in its receive buffer, because a batch never outlives the receive pass.
     private long failedCommitBatchSequence = -1;
     private long firstCommitBatchSequence = -1;
     private long lastCommitBatchSequence = -1;
@@ -695,24 +699,36 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
      * A block cannot join when its table's batch rows changed under it, another
      * connection altered or dropped the table, the block needs a new column, or its
      * rows would reach the table's max-uncommitted-rows cap, at which the appender
-     * would commit on its own. Nor can a frame that closes a deferred group, or one
-     * whose symbol dictionary redefines ids while a batch is pending.
+     * would commit on its own. Nor can a frame that failed in its preparation, one that
+     * closes a deferred group, or one whose symbol dictionary redefines ids while a batch
+     * is pending.
      *
      * @return {@link #COMMIT_BATCH_JOINED} when every block joined;
-     * {@link #COMMIT_BATCH_BOUNDARY} when the first block cannot join or this frame
-     * failed before appending anything, so that nothing of this frame touched a
-     * writer -- this state is then in error if the frame failed, and the first block
-     * is still prepared for the normal path; {@link #COMMIT_BATCH_REDO} when this frame
-     * appended rows and then failed, or then met a block that cannot join -- this
-     * state is in error only if the frame failed
+     * {@link #COMMIT_BATCH_BOUNDARY} when this frame cannot join, the batch can commit as
+     * it stands, and the first block is still prepared for the normal path: the frame
+     * failed in its preparation, or in its first block's lookup or append, without
+     * distressing the table cache, or its first block cannot join. A frame whose symbol
+     * dictionary redefines ids while a batch is pending is a boundary too, failed or not:
+     * the batch cannot join again. This state is then in error if the frame failed;
+     * {@link #COMMIT_BATCH_REDO} when this frame failed or cannot join, and appended rows,
+     * distressed the table cache, left a batch writer mid columnar write, or consumed its
+     * first block -- this state is in error only if the frame failed
      */
     public int joinCommitBatch(long seq, long payload, int length) {
-        assert isOk() && !isDeferCommit();
+        assert !isDeferCommit();
         final boolean isPending = isCommitBatchPending();
-        if (preparedMessageCursor == null
-                || uncommittedDeferredRows
-                || firstRowlessDeferredSequence != -1
-                || (isPending && preparedMessageCursor.isSymbolDictRedefined())) {
+        // A frame whose symbol dictionary redefined ids while a batch is pending ends the
+        // batch as it stands, failed or not: joined again, the batch's frames would decode
+        // with the new strings.
+        if (isPending && preparedMessageCursor != null && preparedMessageCursor.isSymbolDictRedefined()) {
+            return COMMIT_BATCH_BOUNDARY;
+        }
+        if (!isOk()) {
+            // Failed in its preparation, before touching a writer: refused by the live gate,
+            // or malformed. A distressed cache commits nothing, so the batch joins again.
+            return tudCache.isDistressed() ? COMMIT_BATCH_REDO : COMMIT_BATCH_BOUNDARY;
+        }
+        if (preparedMessageCursor == null || uncommittedDeferredRows || firstRowlessDeferredSequence != -1) {
             return COMMIT_BATCH_BOUNDARY;
         }
         // A boundary commit may separate preparation from engine access, as on the
@@ -721,8 +737,11 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
             return COMMIT_BATCH_BOUNDARY;
         }
         QwpTableBlockCursor block = preparedTableBlock;
-        // Set before the first append starts: a block that failed mid-append counts.
+        // Set once the append of a block with rows returned: its rows sit next to the batch's.
         boolean hasAppended = false;
+        // The writer of the append in flight, and the uncommitted rows it held before it.
+        WalWriter appendingWriter = null;
+        long appendingWriterRows = 0;
         try {
             while (block != null) {
                 final int blockRows = block.getRowCount();
@@ -732,8 +751,11 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
                         if (!isCommitBatchEntryJoinable(entry, block, blockRows)) {
                             return cannotJoin(hasAppended);
                         }
-                        hasAppended = true;
+                        appendingWriter = entry.writer;
+                        appendingWriterRows = entry.rows;
                         walAppender.appendToWalStreaming(securityContext, block, entry.tud, false);
+                        appendingWriter = null;
+                        hasAppended = true;
                         messageAppendedRows = true;
                         entry.rows += blockRows;
                         assert entry.writer.getUncommittedRowCount() == entry.rows : "a joining block committed or lost batch rows";
@@ -761,8 +783,11 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
                         // connection belongs to the batch, so a table outside it holds none.
                         final WalWriter walWriter = (WalWriter) tud.getWriter();
                         assert walWriter.getUncommittedRowCount() == 0 : "a table outside the commit batch holds uncommitted rows";
-                        hasAppended = true;
+                        appendingWriter = walWriter;
+                        appendingWriterRows = 0;
                         walAppender.appendToWalStreaming(securityContext, block, tud);
+                        appendingWriter = null;
+                        hasAppended = true;
                         messageAppendedRows = true;
                         assert walWriter.getUncommittedRowCount() == blockRows : "a block joining a new table committed or lost rows";
                         addCommitBatchEntry(tud, walWriter, seq, blockRows);
@@ -777,7 +802,11 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
             }
         } catch (Throwable e) {
             rejectMessageError(e);
-            return cannotJoin(hasAppended);
+            // A failed append cancelled its block: its writer keeps the rows it had, and is
+            // left mid columnar write only when the cancel itself failed.
+            assert appendingWriter == null || appendingWriter.getUncommittedRowCount() == appendingWriterRows
+                    : "a failed append left rows in its writer";
+            return cannotJoin(hasAppended || (appendingWriter != null && appendingWriter.isInColumnarWrite()));
         }
         if (firstCommitBatchSequence == -1) {
             firstCommitBatchSequence = seq;
@@ -1797,6 +1826,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
             if (preparedMessageCursor.isSymbolDictRedefined()) {
                 symbolCache.clear();
             }
+            onSymbolDictApplied();
 
             preparedTableBlock = preparedMessageCursor.hasNextTable() ? preparedMessageCursor.nextTable() : null;
         } catch (Throwable e) {
@@ -2020,6 +2050,15 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     }
 
     /**
+     * Test hook: {@link #prepareMessage()} calls it once the decode has applied the frame's
+     * delta symbol dictionary, before it parses the frame's first table header. No engine
+     * call sits between the two, so a test overrides this method to fail a frame whose
+     * dictionary delta already took effect. Production code does not override it.
+     */
+    protected void onSymbolDictApplied() {
+    }
+
+    /**
      * Maps a parse failure to the wire status a client classifies on. Extracted so the
      * routing is unit-testable without driving a whole connection.
      */
@@ -2101,11 +2140,13 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         commitBatchEntries.add(entry);
     }
 
-    // What joinCommitBatch answers for a frame that cannot join: a boundary while the
-    // normal path can still take the frame from its first block, untouched; a redo once
-    // the frame appended rows or consumed its first block.
-    private int cannotJoin(boolean hasAppended) {
-        return hasAppended || preparedTableBlock == null ? COMMIT_BATCH_REDO : COMMIT_BATCH_BOUNDARY;
+    // What joinCommitBatch answers for a frame that cannot join: a boundary while the batch
+    // can commit as it stands and the normal path can still take the frame from its first
+    // block; a redo once rows of the frame sit next to the batch's or a batch writer is left
+    // in doubt (isBatchInDoubt), the frame consumed its first block, or the frame's failure
+    // distressed the table cache, which commits nothing.
+    private int cannotJoin(boolean isBatchInDoubt) {
+        return isBatchInDoubt || preparedTableBlock == null || tudCache.isDistressed() ? COMMIT_BATCH_REDO : COMMIT_BATCH_BOUNDARY;
     }
 
     // The batch entry of the named table, or null when the table is not in the batch.
@@ -2150,10 +2191,12 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     // writer holds exactly its batch rows, so nothing but the batch commit committed or
     // discarded them. A positive check rather than a report from every path that could:
     // the commit is what the ack vouches for. The cache distresses when a frame fails in
-    // a way that leaves writers in doubt, such as an unexpected error looking up a table
-    // new to the batch. A table's entry and writer stay the same while it is in the
-    // batch: nothing evicts a batch table's entry, and a writer changes only when its
-    // entry is freed.
+    // a way that leaves writers in doubt, and joinCommitBatch then has the batch join
+    // again, except after a frame that redefined symbol dictionary ids and then failed
+    // unexpectedly in its preparation: that batch cannot join again, and this check
+    // refuses it. A table's entry and writer stay the same while it is in the batch:
+    // nothing evicts a batch table's entry, and a writer changes only when its entry is
+    // freed.
     private boolean isCommitBatchEntryIntact(CommitBatchEntry entry) {
         assert entry.tud.getWriter() == entry.writer && tudCache.isCachedEntry(entry.tud);
         return !tudCache.isDistressed() && entry.writer.getUncommittedRowCount() == entry.rows;

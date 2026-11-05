@@ -1757,8 +1757,9 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         // True when this frame's rows joined or opened the commit batch: no ack
         // until the batch commits.
         boolean isBatched = false;
-        // True when this frame appended rows next to the batch's and then failed or
-        // could not join: the batch and this frame are redone one frame at a time.
+        // True when this frame ended the batch in a way the batch cannot commit as it
+        // stands (joinCommitBatch): the batch's frames join again, then this frame is
+        // answered.
         boolean isRedoNeeded = false;
         // Set once the redo is prepared, after the last statement that may throw.
         boolean isRedo = false;
@@ -1784,11 +1785,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
 
             boolean isNormalPath = true;
             if (isBatchPending) {
-                // A frame that failed before touching the engine (refused by the live
-                // gate or malformed) cannot join: no writer holds anything of it.
-                final int joinResult = state.isOk()
-                        ? state.joinCommitBatch(seq, payload, length)
-                        : QwpIngressProcessorState.COMMIT_BATCH_BOUNDARY;
+                final int joinResult = state.joinCommitBatch(seq, payload, length);
                 if (joinResult == QwpIngressProcessorState.COMMIT_BATCH_JOINED) {
                     isNormalPath = false;
                     isBatched = true;
@@ -2047,19 +2044,24 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
     }
 
     /**
-     * Redoes the commit batch frame by frame after the frame at {@code seq} appended
-     * rows next to the batch's and then failed or could not join. No writer can drop
-     * that frame's rows without dropping the batch's, so the caller's {@code clear()}
-     * rolled back both; the batch's frames, still in the receive buffer, are processed
-     * again one at a time, each committed and covered by the watermark on its own, as
-     * without batching. Then the frame gets the answer it would get without a batch:
-     * its own failure, or, when it only could not join, its normal processing.
+     * Redoes the commit batch after the frame at {@code seq} ended it in a way the batch
+     * cannot commit as it stands: the frame appended rows next to the batch's, distressed
+     * the table cache, left a batch writer mid columnar write, or consumed its first block
+     * (see {@link QwpIngressProcessorState#joinCommitBatch}). The caller's {@code clear()}
+     * rolled everything back. The batch's frames, still in the receive buffer, join a
+     * batch again and commit once per table. They all joined before, so only a concurrent
+     * change or a fault keeps one from joining now. Then the frames before it commit, the
+     * frame goes on its own, and the frames after it join a new batch; and when the frame's
+     * failure leaves the batch unable to commit as it stands, the batch rolls back and the
+     * frames before the frame join again first. Last, the frame at {@code seq} gets the
+     * answer it would get without a batch: its own failure, or, when it only could not
+     * join, its normal processing.
      * <p>
-     * The redo sends nothing until a frame fails, so a blocked send cannot strand the
-     * frames still to redo: the ack for the redone frames goes out with the failure
-     * response, or at the end of the receive pass. A redone frame that fails is
-     * answered like any failed frame, and the pipeline breaks there, so the frames
-     * after it are not processed; the client replays them.
+     * The redo sends nothing until a commit or a frame fails, so a blocked send cannot
+     * strand the frames still to redo: the ack for the redone frames goes out with the
+     * failure response, or at the end of the receive pass. A failure is answered like any
+     * other, and the pipeline breaks there, so the frames after it are not processed; the
+     * client replays them.
      */
     private void redoCommitBatch(
             HttpConnectionContext context,
@@ -2072,22 +2074,56 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             byte frameStatus,
             String frameError
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
-        LOG.info().$("WebSocket commit batch redone frame by frame [fd=").$(context.getFd())
-                .$(", frames=").$(redoFrames.size() / 3)
+        final int frameCount = redoFrames.size() / 3;
+        LOG.info().$("WebSocket commit batch redone [fd=").$(context.getFd())
+                .$(", frames=").$(frameCount)
                 .$(", seq=").$(seq)
                 .$(", frameFailed=").$(isFrameFailed).I$();
-        for (int i = 0, n = redoFrames.size(); i < n; i += 3) {
-            if (!redoFrame(context, state, redoFrames.getQuick(i + 2), redoFrames.getQuick(i), (int) redoFrames.getQuick(i + 1))) {
+        // The frames [first, end) join one batch; the frame at end, when there is one,
+        // then goes on its own.
+        int first = 0;
+        int end = frameCount;
+        while (true) {
+            int joinResult = QwpIngressProcessorState.COMMIT_BATCH_JOINED;
+            int i = first;
+            for (; i < end; i++) {
+                final long framePayload = redoFrames.getQuick(3 * i);
+                final int frameLength = (int) redoFrames.getQuick(3 * i + 1);
+                state.addData(framePayload, framePayload + frameLength);
+                state.prepareMessage();
+                joinResult = state.joinCommitBatch(redoFrames.getQuick(3 * i + 2), framePayload, frameLength);
+                if (joinResult != QwpIngressProcessorState.COMMIT_BATCH_JOINED) {
+                    break;
+                }
+                // Keeps the frame's rows, as handleBinaryMessage's finally does.
+                state.clearMessageState();
+            }
+            if (i < end) {
+                end = i;
+                if (joinResult == QwpIngressProcessorState.COMMIT_BATCH_REDO) {
+                    // The frame left the batch unable to commit as it stands: roll it back,
+                    // and let the frames before the frame join again.
+                    state.clear();
+                    continue;
+                }
+                // A boundary: the batch commits as it stands, without the frame's prepared
+                // state and error.
+                state.clearMessageState();
+            }
+            if (state.isCommitBatchPending() && !commitPendingBatch(context, state)) {
                 return;
             }
+            if (end == frameCount) {
+                break;
+            }
+            if (!redoFrame(context, state, redoFrames.getQuick(3 * end + 2), redoFrames.getQuick(3 * end), (int) redoFrames.getQuick(3 * end + 1))) {
+                return;
+            }
+            first = end + 1;
+            end = frameCount;
         }
         if (isFrameFailed) {
-            if (isFrameRoleChangeClose) {
-                state.markSequenceUnresolved(seq);
-                roleChangeCloseWithUploadGrace(context, state, frameError);
-            } else {
-                rejectFrame(context, state, seq, frameStatus, frameError);
-            }
+            rejectRedoneFrame(context, state, seq, isFrameRoleChangeClose, frameStatus, frameError);
             return;
         }
         redoFrame(context, state, seq, payload, length);
@@ -2095,9 +2131,10 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
 
     /**
      * Processes one frame of a {@link #redoCommitBatch redo} the normal way and commits
-     * it on its own. On success the watermark covers the frame, and nothing is sent. On
-     * failure the frame is answered, and false is returned. The state's steps record
-     * their own failures, so none throws.
+     * it on its own: a frame that no longer joins the redo's batch, or the frame that set
+     * off the redo when it only could not join. On success the watermark covers the frame,
+     * and nothing is sent. On failure the frame is answered, and false is returned. The
+     * state's steps record their own failures, so none throws.
      */
     private boolean redoFrame(HttpConnectionContext context, QwpIngressProcessorState state, long seq, long payload, int length)
             throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
@@ -2120,14 +2157,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 .$(", error=").$safe(errorMessage).I$();
         // Rolls back what the failed frame appended.
         state.clear();
-        if (isRoleChangeClose) {
-            // No error response goes out: the refusal is transient, and the client
-            // replays from its acked watermark after the reconnect-eligible close.
-            state.markSequenceUnresolved(seq);
-            roleChangeCloseWithUploadGrace(context, state, errorMessage);
-        } else {
-            rejectFrame(context, state, seq, status, errorMessage);
-        }
+        rejectRedoneFrame(context, state, seq, isRoleChangeClose, status, errorMessage);
         return false;
     }
 
@@ -2146,6 +2176,26 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             }
         }
         sendErrorResponse(context, state, seq, status, errorMessage);
+    }
+
+    // Answers a frame of a redo that failed: a read-only refusal with the role-change
+    // CLOSE, any other failure with the frame's error response.
+    private void rejectRedoneFrame(
+            HttpConnectionContext context,
+            QwpIngressProcessorState state,
+            long seq,
+            boolean isRoleChangeClose,
+            byte status,
+            String errorMessage
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+        if (isRoleChangeClose) {
+            // No error response goes out: the refusal is transient, and the client
+            // replays from its acked watermark after the reconnect-eligible close.
+            state.markSequenceUnresolved(seq);
+            roleChangeCloseWithUploadGrace(context, state, errorMessage);
+        } else {
+            rejectFrame(context, state, seq, status, errorMessage);
+        }
     }
 
     private void handleClose(HttpConnectionContext context, QwpIngressProcessorState state, long payload, int length)

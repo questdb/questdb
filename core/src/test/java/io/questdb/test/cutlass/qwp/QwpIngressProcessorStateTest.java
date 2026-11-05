@@ -144,13 +144,15 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 Assert.assertEquals(QwpIngressProcessorState.COMMIT_BATCH_JOINED, state.joinCommitBatch(2, 0, 0));
                 state.clearMessageState();
                 prepareArrayBlock(state, column -> column.addDoubleArray(new double[][]{{9.0, 10.0}, {11.0, 12.0}}), 4_000_000L);
-                // The block appended next to the batch's rows: only a redo can drop it.
-                Assert.assertEquals(QwpIngressProcessorState.COMMIT_BATCH_REDO, state.joinCommitBatch(3, 0, 0));
+                // Phase 1 refuses the block before it writes a row, so the batch can commit as it stands.
+                Assert.assertEquals(QwpIngressProcessorState.COMMIT_BATCH_BOUNDARY, state.joinCommitBatch(3, 0, 0));
                 Assert.assertEquals(QwpIngressProcessorState.Status.SCHEMA_MISMATCH, state.getStatus());
                 TestUtils.assertContains(state.getErrorText(), "array dimensionality mismatch");
-                // The redo starts by rolling back the batch with the failed frame.
+                Assert.assertTrue(state.isCommitBatchPending());
+                state.clearFrameErrorForBatchCommit();
+                Assert.assertTrue(state.commitBatch());
+                Assert.assertEquals(2, state.getHighestProcessedSequence());
                 state.clear();
-                Assert.assertFalse(state.isCommitBatchPending());
             }
             drainWalQueue();
             assertQuery("SELECT arr, ts FROM arrays")
@@ -160,6 +162,7 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                     .returns("""
                             arr\tts
                             [1.0,2.0]\t1970-01-01T00:00:01.000000Z
+                            [7.0,8.0]\t1970-01-01T00:00:03.000000Z
                             """);
         });
     }
@@ -226,6 +229,184 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
             drainWalQueue();
             assertQuery("SELECT count() FROM first_t").noLeakCheck().noRandomAccess().expectSize().returns("count\n2\n");
             assertQuery("SELECT count() FROM second_t").noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
+        });
+    }
+
+    /**
+     * A frame that fails on its first block's append leaves the batch as it stands: the
+     * appender cancelled the block, and nothing of the frame is in a writer. The frame is
+     * a boundary, whether its table is in the batch or new to it, as is a frame without a
+     * payload, and the batch then commits. A frame that fails after its first block is a
+     * redo, whether that block appended rows or had none: the normal path can no longer
+     * take the frame from its first block.
+     */
+    @Test
+    public void testFailedFirstBlockAppendIsCommitBatchBoundary() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE b (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            LineHttpProcessorConfiguration config = new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            try (QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, config)) {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                prepareVarcharBlocks(state, "a", "1");
+                Assert.assertEquals(QwpIngressProcessorState.COMMIT_BATCH_JOINED, state.joinCommitBatch(0, 0, 0));
+                state.clearMessageState();
+                prepareVarcharBlocks(state, "a", "2");
+                Assert.assertEquals(QwpIngressProcessorState.COMMIT_BATCH_JOINED, state.joinCommitBatch(1, 0, 0));
+                state.clearMessageState();
+
+                prepareVarcharBlocks(state, "a", "not-a-long");
+                Assert.assertEquals("a batch table's block that fails on a value",
+                        QwpIngressProcessorState.COMMIT_BATCH_BOUNDARY, state.joinCommitBatch(2, 0, 0));
+                Assert.assertEquals(QwpIngressProcessorState.Status.SCHEMA_MISMATCH, state.getStatus());
+                Assert.assertTrue(state.isCommitBatchPending());
+                state.clearMessageState();
+                prepareVarcharBlocks(state, "b", "not-a-long");
+                Assert.assertEquals("a new table's block that fails on a value",
+                        QwpIngressProcessorState.COMMIT_BATCH_BOUNDARY, state.joinCommitBatch(3, 0, 0));
+                Assert.assertEquals(QwpIngressProcessorState.Status.SCHEMA_MISMATCH, state.getStatus());
+                Assert.assertTrue(state.isCommitBatchPending());
+                state.clearMessageState();
+                state.prepareMessage();
+                Assert.assertEquals("a frame without a payload",
+                        QwpIngressProcessorState.COMMIT_BATCH_BOUNDARY, state.joinCommitBatch(4, 0, 0));
+                Assert.assertTrue(state.getErrorText(), state.isOk());
+                Assert.assertTrue(state.commitBatch());
+                Assert.assertEquals("the watermark covers the batch", 1, state.getHighestProcessedSequence());
+                state.clearMessageState();
+
+                prepareVarcharBlocks(state, "a", "3");
+                Assert.assertEquals(QwpIngressProcessorState.COMMIT_BATCH_JOINED, state.joinCommitBatch(5, 0, 0));
+                state.clearMessageState();
+                prepareVarcharBlocks(state, "a", "4", "b", "not-a-long");
+                Assert.assertEquals("a block that fails after the frame's first block appended",
+                        QwpIngressProcessorState.COMMIT_BATCH_REDO, state.joinCommitBatch(6, 0, 0));
+                Assert.assertEquals(QwpIngressProcessorState.Status.SCHEMA_MISMATCH, state.getStatus());
+                state.clear();
+                Assert.assertFalse(state.isCommitBatchPending());
+
+                prepareVarcharBlocks(state, "a", "5");
+                Assert.assertEquals(QwpIngressProcessorState.COMMIT_BATCH_JOINED, state.joinCommitBatch(7, 0, 0));
+                state.clearMessageState();
+                prepareVarcharBlocks(state, "a", null, "b", "not-a-long");
+                Assert.assertEquals("a block that fails after the frame's first block, which had no rows",
+                        QwpIngressProcessorState.COMMIT_BATCH_REDO, state.joinCommitBatch(8, 0, 0));
+                Assert.assertEquals(QwpIngressProcessorState.Status.SCHEMA_MISMATCH, state.getStatus());
+                state.clear();
+                Assert.assertFalse(state.isCommitBatchPending());
+            }
+            drainWalQueue();
+            assertQuery("SELECT val FROM a").noLeakCheck().expectSize().returns("val\n1\n2\n");
+            assertQuery("SELECT val FROM b").noLeakCheck().expectSize().returns("val\n");
+        });
+    }
+
+    /**
+     * How a failed frame meets a pending batch of a symbol table. A failure that distresses
+     * the table cache, which then commits nothing, makes it a redo, whether the frame got
+     * to its first block's lookup or failed in its preparation. A failure that leaves the
+     * cache healthy and touched no writer makes it a boundary, whether the decode failed
+     * outright or after it applied a dictionary delta that only adds ids. So does a frame
+     * that redefines a dictionary id, failed or not, here one that is fine.
+     */
+    @Test
+    public void testFailedFrameInDistressedCacheIsRedo() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE s (s SYMBOL, val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE b (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final AtomicBoolean isLookupFailing = new AtomicBoolean();
+            final AtomicBoolean isGateFailing = new AtomicBoolean();
+            try (CairoEngine hookEngine = new CairoEngine(new DefaultTestCairoConfiguration(root)) {
+                @Override
+                public WalWriter getWalWriter(TableToken tableToken) {
+                    if (isLookupFailing.get() && tableToken.getTableName().equals("b")) {
+                        throw new IllegalStateException("test: unexpected writer failure");
+                    }
+                    return super.getWalWriter(tableToken);
+                }
+
+                @Override
+                public boolean isReadOnlyMode() {
+                    if (isGateFailing.compareAndSet(true, false)) {
+                        throw new IllegalStateException("test: unexpected live gate failure");
+                    }
+                    return false;
+                }
+            }) {
+                LineHttpProcessorConfiguration config = new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+                try (QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, hookEngine, config)) {
+                    state.of(1, AllowAllSecurityContext.INSTANCE);
+                    final GlobalSymbolDictionary dict = new GlobalSymbolDictionary();
+                    prepareSymbolBlock(state, dict, -1, "x");
+                    Assert.assertEquals(QwpIngressProcessorState.COMMIT_BATCH_JOINED, state.joinCommitBatch(0, 0, 0));
+                    state.clearMessageState();
+
+                    isLookupFailing.set(true);
+                    prepareLongBlocks(state, 1, "b");
+                    Assert.assertEquals("an unexpected error in the first block's lookup",
+                            QwpIngressProcessorState.COMMIT_BATCH_REDO, state.joinCommitBatch(1, 0, 0));
+                    Assert.assertEquals(QwpIngressProcessorState.Status.INTERNAL_ERROR, state.getStatus());
+                    state.clear();
+                    Assert.assertFalse(state.isCommitBatchPending());
+
+                    prepareSymbolBlock(state, dict, 0, "x");
+                    Assert.assertEquals(QwpIngressProcessorState.COMMIT_BATCH_JOINED, state.joinCommitBatch(2, 0, 0));
+                    state.clearMessageState();
+                    isGateFailing.set(true);
+                    prepareSymbolBlock(state, dict, 0, "x");
+                    Assert.assertEquals(QwpIngressProcessorState.Status.INTERNAL_ERROR, state.getStatus());
+                    Assert.assertEquals("an unexpected error in the preparation, before the decode",
+                            QwpIngressProcessorState.COMMIT_BATCH_REDO, state.joinCommitBatch(3, 0, 0));
+                    state.clear();
+
+                    prepareSymbolBlock(state, dict, 0, "x");
+                    Assert.assertEquals(QwpIngressProcessorState.COMMIT_BATCH_JOINED, state.joinCommitBatch(4, 0, 0));
+                    state.clearMessageState();
+                    addNativeData(state, new byte[]{'Q', 'W', 'P'});
+                    state.prepareMessage();
+                    Assert.assertEquals(QwpIngressProcessorState.Status.PARSE_ERROR, state.getStatus());
+                    Assert.assertEquals("a malformed frame",
+                            QwpIngressProcessorState.COMMIT_BATCH_BOUNDARY, state.joinCommitBatch(5, 0, 0));
+                    state.clearMessageState();
+
+                    final GlobalSymbolDictionary otherDict = new GlobalSymbolDictionary();
+                    prepareSymbolBlock(state, otherDict, -1, "y");
+                    Assert.assertTrue(state.getErrorText(), state.isOk());
+                    Assert.assertEquals("a frame that redefines id 0",
+                            QwpIngressProcessorState.COMMIT_BATCH_BOUNDARY, state.joinCommitBatch(6, 0, 0));
+                    state.clearMessageState();
+
+                    // Adds id 1 and then fails in its first table header: the table name's
+                    // length runs past the frame.
+                    final int zId = otherDict.getOrAddSymbol("z");
+                    try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
+                         QwpTableBuffer table = new QwpTableBuffer("s")) {
+                        table.getOrCreateColumn("s", QwpConstants.TYPE_SYMBOL, false).addSymbolWithGlobalId("z", zId);
+                        table.getOrCreateColumn("val", QwpConstants.TYPE_LONG, false).addLong(7);
+                        table.getOrCreateDesignatedTimestampColumn(QwpConstants.TYPE_TIMESTAMP).addLong(7_000_000L);
+                        table.nextRow();
+                        encoder.beginMessage(1, otherDict, 0, zId);
+                        encoder.addTable(table);
+                        final int length = encoder.finishMessage();
+                        final long address = encoder.getBuffer().getBufferPtr();
+                        Unsafe.putByte(address + encoder.getDeltaEntriesStart() + encoder.getDeltaEntriesLen(), (byte) 0x7F);
+                        state.addData(address, address + length);
+                    }
+                    state.prepareMessage();
+                    Assert.assertEquals(QwpIngressProcessorState.Status.PARSE_ERROR, state.getStatus());
+                    Assert.assertEquals("a frame that fails in its first table header after a delta that adds ids",
+                            QwpIngressProcessorState.COMMIT_BATCH_BOUNDARY, state.joinCommitBatch(7, 0, 0));
+                    Assert.assertTrue(state.isCommitBatchPending());
+                    state.clearFrameErrorForBatchCommit();
+                    Assert.assertTrue(state.commitBatch());
+                    Assert.assertEquals(4, state.getHighestProcessedSequence());
+                    state.clear();
+                }
+                drainWalQueue(hookEngine);
+                try (TableReader reader = hookEngine.getReader("s")) {
+                    Assert.assertEquals("frame 4's row", 1, reader.size());
+                }
+            }
         });
     }
 
@@ -7308,6 +7489,50 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
             }
             int length = encoder.finishMessage();
             long address = encoder.getBuffer().getBufferPtr();
+            state.addData(address, address + length);
+        }
+        state.prepareMessage();
+        Assert.assertTrue(state.getErrorText(), state.isOk());
+    }
+
+    // Prepares a frame with one block of table s: s SYMBOL, in delta-dictionary mode, and val
+    // LONG. It ships the dictionary's entries above confirmedMaxId. Asserts nothing.
+    private static void prepareSymbolBlock(QwpIngressProcessorState state, GlobalSymbolDictionary dict, int confirmedMaxId, String symbol) {
+        final int symbolId = dict.getOrAddSymbol(symbol);
+        try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
+             QwpTableBuffer table = new QwpTableBuffer("s")) {
+            table.getOrCreateColumn("s", QwpConstants.TYPE_SYMBOL, false).addSymbolWithGlobalId(symbol, symbolId);
+            table.getOrCreateColumn("val", QwpConstants.TYPE_LONG, false).addLong(1);
+            table.getOrCreateDesignatedTimestampColumn(QwpConstants.TYPE_TIMESTAMP).addLong(1_000_000L);
+            table.nextRow();
+            encoder.beginMessage(1, dict, confirmedMaxId, dict.size() - 1);
+            encoder.addTable(table);
+            final int length = encoder.finishMessage();
+            final long address = encoder.getBuffer().getBufferPtr();
+            state.addData(address, address + length);
+        }
+        state.prepareMessage();
+    }
+
+    // Prepares a frame with one block per (table, value) pair: val written as a VARCHAR,
+    // which the table's LONG column parses, in one row, or no row when the value is null.
+    private static void prepareVarcharBlocks(QwpIngressProcessorState state, String... tableValuePairs) {
+        try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
+            encoder.beginMessage(tableValuePairs.length / 2, new GlobalSymbolDictionary(), -1, -1);
+            for (int i = 0; i < tableValuePairs.length; i += 2) {
+                try (QwpTableBuffer table = new QwpTableBuffer(tableValuePairs[i])) {
+                    final QwpTableBuffer.ColumnBuffer value = table.getOrCreateColumn("val", QwpConstants.TYPE_VARCHAR, false);
+                    final QwpTableBuffer.ColumnBuffer timestamp = table.getOrCreateDesignatedTimestampColumn(QwpConstants.TYPE_TIMESTAMP);
+                    if (tableValuePairs[i + 1] != null) {
+                        value.addString(tableValuePairs[i + 1]);
+                        timestamp.addLong(1_000_000L);
+                        table.nextRow();
+                    }
+                    encoder.addTable(table);
+                }
+            }
+            final int length = encoder.finishMessage();
+            final long address = encoder.getBuffer().getBufferPtr();
             state.addData(address, address + length);
         }
         state.prepareMessage();

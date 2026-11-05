@@ -396,13 +396,15 @@ final class QwpIngressWireHarness {
     }
 
     /**
-     * One-row table block with schema [{@code v} LONG, {@code w} LONG, {@code ""}
-     * TIMESTAMP (designated)]: {@link #tableBlock} with one more column.
+     * One-row table block with schema [{@code v} LONG, {@code column} LONG, {@code ""}
+     * TIMESTAMP (designated)]: {@link #tableBlock} with one more column, which holds
+     * {@code value}.
      */
-    static byte[] tableBlockWithExtraColumn(String table, long v, long w, long tsMicros) {
+    static byte[] tableBlockWithColumn(String table, long v, String column, long value, long tsMicros) {
         final byte[] name = table.getBytes(StandardCharsets.UTF_8);
-        assert name.length < 128;
-        byte[] block = new byte[1 + name.length + 10 + 3 * 9];
+        final byte[] columnName = column.getBytes(StandardCharsets.UTF_8);
+        assert name.length < 128 && columnName.length < 128;
+        byte[] block = new byte[1 + name.length + 9 + columnName.length + 3 * 9];
         int i = 0;
         block[i++] = (byte) name.length;
         System.arraycopy(name, 0, block, i, name.length);
@@ -412,19 +414,28 @@ final class QwpIngressWireHarness {
         block[i++] = 1; // column name length
         block[i++] = 'v';
         block[i++] = QwpConstants.TYPE_LONG;
-        block[i++] = 1; // column name length
-        block[i++] = 'w';
+        block[i++] = (byte) columnName.length;
+        System.arraycopy(columnName, 0, block, i, columnName.length);
+        i += columnName.length;
         block[i++] = QwpConstants.TYPE_LONG;
         block[i++] = 0; // empty name = designated timestamp
         block[i++] = QwpConstants.TYPE_TIMESTAMP;
         block[i++] = 0; // no null bitmap
         i = writeLeLong(block, i, v);
         block[i++] = 0;
-        i = writeLeLong(block, i, w);
+        i = writeLeLong(block, i, value);
         block[i++] = 0;
         i = writeLeLong(block, i, tsMicros);
         assert i == block.length;
         return block;
+    }
+
+    /**
+     * One-row table block with schema [{@code v} LONG, {@code w} LONG, {@code ""}
+     * TIMESTAMP (designated)]: {@link #tableBlock} with one more column.
+     */
+    static byte[] tableBlockWithExtraColumn(String table, long v, long w, long tsMicros) {
+        return tableBlockWithColumn(table, v, "w", w, tsMicros);
     }
 
     /**
