@@ -644,6 +644,29 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     }
 
     /**
+     * A batch of frames that name no table holds no table to commit: its commit takes no
+     * lock and checks nothing, and the ack covers every frame.
+     */
+    @Test
+    public void testEmptyFramesAloneAreAcked() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            final ObjList<byte[]> sent = ingestInOnePass(
+                    new QwpIngressUpgradeProcessor(engine, httpConfig),
+                    httpConfig,
+                    clientEncodedFrame(0),
+                    clientEncodedFrame(0),
+                    clientEncodedFrame(0)
+            );
+            Assert.assertEquals(2, maxCumulativeOkAck(sent));
+            Assert.assertEquals("one ack after the batch commit", 1, countOkAcks(sent));
+            for (int seq = 0; seq < 3; seq++) {
+                Assert.assertFalse(hasErrorResponseForSeq(sent, seq));
+            }
+        });
+    }
+
+    /**
      * A failed batch commit is NACKed at the batch's first frame: nothing from it
      * on is committed, and it is the frame the client replays first, so a
      * deterministic failure keeps striking the same frame.
