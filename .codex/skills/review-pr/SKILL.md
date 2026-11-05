@@ -5,6 +5,8 @@ description: Review GitHub pull requests or local Git ranges against QuestDB cod
 
 # QuestDB PR Review
 
+**Version 4.0.** Each PR that changes this file raises it.
+
 **Usage:** `/review-pr [PR number or URL | --range=<base>..<head>] [--level=0..3]`
 
 Review the PR or local range identified by the invocation arguments. When this skill
@@ -64,7 +66,7 @@ The level controls how much of the review below actually runs. Lower levels keep
 | **2** | Full Step 2.5, with 2.5b restricted to `public`/`protected` symbols. Run Agent 1 plus at most **four** change-relevant roles from Agents 2-8 and 11-13. Run an independent falsification task for each surviving atomic candidate. |
 | **3** | Full Step 2.5 and the complete admission protocol. Select at most **six** applicable discovery roles from Agents 1-14: Agent 1 always; Agent 9 for changed symbols with out-of-diff callers; Agents 2-8 and 11 only when their domain is touched; Agents 12-14 only for changed tests or a fix claim; Agent 10 only when a distinct adversarial pass is warranted. Depth comes from producer/reachability evidence and independent falsification, not agent count. |
 
-State the chosen level and the model running the review in one line at the start of the review so the user knows what they're getting (e.g., "Reviewing PR #1234 at level 2 with <model>, effort <effort>"). Take the model from this session's rollout file, never from memory: models misstate their own name and version.
+State the chosen level, the model running the review and the version of this skill, given under its title, in one line at the start of the review so the user knows what they're getting (e.g., "Reviewing PR #1234 at level 2 with <model>, effort <effort>, review-pr <version>"). Take the model from this session's rollout file, never from memory: models misstate their own name and version.
 
 ```bash
 f=$(find "${CODEX_HOME:-$HOME/.codex}/sessions" -name "rollout-*-$CODEX_THREAD_ID.jsonl" | head -1)
@@ -818,7 +820,7 @@ Net impact: Ingestion stalls after ~1k failed commits.
 Evidence: WalLeakTest red at abc123, green at base def456.
 ```
 
-Open the report with the line from "Review level" that names the target, the level and the model, followed by the revisions reviewed: the head, `$BASE`, and the new commit of each submodule pointer the PR moves, such as a tandem PR's head. PR bodies leave commit hashes out (CLAUDE.md), so the review carries them.
+Open the report with the line from "Review level" that names the target, the level, the model and the skill version, followed by the revisions reviewed: the head, `$BASE`, and the new commit of each submodule pointer the PR moves, such as a tandem PR's head. PR bodies leave commit hashes out (CLAUDE.md), so the review carries them.
 
 Structure as:
 
