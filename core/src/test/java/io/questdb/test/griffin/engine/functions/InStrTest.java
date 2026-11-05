@@ -559,6 +559,9 @@ public class InStrTest extends AbstractCairoTest {
                 "SELECT ts, count_distinct(s::STRING) c FROM t SAMPLE BY 1d",
                 "SELECT count_distinct(coalesce(s, 'x')::STRING) c FROM t",
                 "SELECT count_distinct(nullif(s, 'a')::STRING) c FROM t",
+                "SELECT t.k, count_distinct(u.s::STRING) c FROM t WINDOW JOIN u RANGE BETWEEN 2 HOUR PRECEDING AND 2 HOUR FOLLOWING",
+                "SELECT t.k, string_distinct_agg(u.s::STRING, ',') v FROM t WINDOW JOIN u RANGE BETWEEN 2 HOUR PRECEDING AND 2 HOUR FOLLOWING",
+                "SELECT t.k, count_distinct(u.s::STRING) c FROM t WINDOW JOIN u ON (t.s = u.s) RANGE BETWEEN 4 HOUR PRECEDING AND 4 HOUR FOLLOWING",
         };
         for (int run = 0; run < 2; run++) {
             for (String query : queries) {

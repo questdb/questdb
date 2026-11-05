@@ -413,7 +413,7 @@ public class SyncWindowJoinMemoryTrackerTest extends AbstractCairoTest {
                         createTrades(engine, sqlExecutionContext, 100, 8);
                         createPrices(engine, sqlExecutionContext, 1_000, 8);
                         try (RecordCursorFactory f = compiler.compile(
-                                "SELECT t.ts, string_distinct_agg(p.sym::string, ',') FROM trades t WINDOW JOIN prices p " +
+                                "SELECT t.ts, string_distinct_agg(p.price::string, ',') FROM trades t WINDOW JOIN prices p " +
                                         "RANGE BETWEEN 2 seconds PRECEDING AND 2 seconds FOLLOWING",
                                 sqlExecutionContext).getRecordCursorFactory()) {
                             assertInTree(f, WindowJoinRecordCursorFactory.class);
@@ -425,7 +425,7 @@ public class SyncWindowJoinMemoryTrackerTest extends AbstractCairoTest {
                             assertDrainsRenderingAggregate(f, sqlExecutionContext, 100);
                         }
                         try (RecordCursorFactory f = compiler.compile(
-                                "SELECT t.ts, string_distinct_agg(p.sym::string, ',') FROM trades t WINDOW JOIN prices p ON t.sym = p.sym " +
+                                "SELECT t.ts, string_distinct_agg(p.price::string, ',') FROM trades t WINDOW JOIN prices p ON t.sym = p.sym " +
                                         "RANGE BETWEEN 2 seconds PRECEDING AND 2 seconds FOLLOWING",
                                 sqlExecutionContext).getRecordCursorFactory()) {
                             assertInTree(f, WindowJoinFastRecordCursorFactory.class);

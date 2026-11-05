@@ -4104,9 +4104,9 @@ public class WindowJoinTest extends AbstractCairoTest {
                     """;
             final String[] aggregates = {
                     "string_agg(p.sym::string, ',')",
-                    "string_distinct_agg(p.sym::string, ',')",
+                    "string_distinct_agg(p.price::string, ',')",
                     "approx_percentile(p.price, 0.5)",
-                    "count_distinct(p.sym::string)"
+                    "count_distinct(p.price::string)"
             };
             for (String aggregate : aggregates) {
                 for (String onClause : new String[]{"", "ON (t.sym = p.sym)"}) {
