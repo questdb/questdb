@@ -2403,6 +2403,49 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     }
 
     /**
+     * Two connections in turn redo a batch of 100 frames through one processor: the second
+     * redo copies the batch's frame record into the array the first one grew.
+     */
+    @Test
+    public void testRedoReusesItsFrameRecord() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("CREATE TABLE a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE b (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+            final int batchFrames = 100;
+            int recordCapacity = -1;
+            for (int pass = 0; pass < 2; pass++) {
+                // Frame i writes v = pass * 1,000 + i, to a when i is even and to b when it is odd.
+                final byte[][] frames = new byte[batchFrames + 1][];
+                for (int i = 0; i < batchFrames; i++) {
+                    final long v = pass * 1_000L + i;
+                    frames[i] = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(i % 2 == 0 ? "a" : "b", v, 1_000_000L + v));
+                }
+                frames[batchFrames] = createMaskedFrame(WebSocketOpcode.BINARY, qwpMessage(
+                        tableBlock("a", pass * 1_000L + batchFrames, 2_000_000L),
+                        varcharTableBlock("b", "not-a-long", 2_000_000L)
+                ));
+                final ObjList<byte[]> sent = new ObjList<>();
+                ingestInOnePass(engine, processor, httpConfig, AllowAllSecurityContext.INSTANCE, false, 64 * 1024, sent, frames);
+                Assert.assertEquals("the redo commits and acks the batch [pass=" + pass + ']', batchFrames - 1, maxCumulativeOkAck(sent));
+                Assert.assertEquals(QwpConstants.STATUS_SCHEMA_MISMATCH, errorStatusForSeq(sent, batchFrames));
+                if (pass == 0) {
+                    recordCapacity = processor.getRedoFramesCapacity();
+                    Assert.assertTrue("the redo keeps the record it grew to: " + recordCapacity, recordCapacity >= 3 * batchFrames);
+                } else {
+                    Assert.assertEquals("the second redo reuses the record", recordCapacity, processor.getRedoFramesCapacity());
+                }
+            }
+            drainWalQueue();
+            assertQuery("SELECT count(), min(v), max(v) FROM a").noLeakCheck().noRandomAccess().expectSize()
+                    .returns("count\tmin\tmax\n100\t0\t1098\n");
+            assertQuery("SELECT count(), min(v), max(v) FROM b").noLeakCheck().noRandomAccess().expectSize()
+                    .returns("count\tmin\tmax\n100\t1\t1099\n");
+        });
+    }
+
+    /**
      * The redo's batch commit is refused at the batch's first table: the NACK names the
      * batch's first frame with the commit's status, nothing is committed, and the frames
      * after it get no response.

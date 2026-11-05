@@ -186,6 +186,8 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
     // handshake flush flags on QwpProcessorState instead and never touch
     // this LocalValue.
     private static final LocalValue<RejectFlushTracker> REJECT_FLUSH = new LocalValue<>();
+    // Largest frame record kept between redos: 1,024 frames, three longs each.
+    private static final int REDO_FRAMES_MAX_RETAINED_CAPACITY = 3 * 1_024;
     private static final byte[] UPGRADE_REQUIRED_RESPONSE =
             ("""
                     HTTP/1.1 426 Upgrade Required\r
@@ -2086,9 +2088,12 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         try {
             redoCommitBatch0(context, state, seq, payload, length, isFrameFailed, isFrameRoleChangeClose, frameStatus, frameError);
         } finally {
-            // Scratch of this redo only: a large receive pass must not leave this worker's
-            // processor holding its per-frame record.
-            redoFrames.restoreInitialCapacity();
+            // Give back a large record; keep a small one for the next redo.
+            if (redoFrames.capacity() > REDO_FRAMES_MAX_RETAINED_CAPACITY) {
+                redoFrames.restoreInitialCapacity();
+            } else {
+                redoFrames.clear();
+            }
         }
     }
 
