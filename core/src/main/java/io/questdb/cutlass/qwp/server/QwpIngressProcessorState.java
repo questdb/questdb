@@ -352,12 +352,15 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     //
     // The tables commit one at a time, in the order they joined, under the role-switch
     // read lock held across all of them, and only after every table passed the checks a
-    // commit can refuse on: the node is writable, no table was dropped, and each table's
-    // insert permission holds. A refusal there refuses the whole batch, with nothing
-    // committed. When a commit still fails, as on a storage fault, the frames before the
-    // failed table's first frame hold rows of tables that committed and nothing else, so
-    // the watermark covers them, and the client replays the rest: rows that those later
-    // frames added to the committed tables arrive a second time.
+    // commit can refuse on: the node is writable, each table's insert permission holds,
+    // and its sequencer would take the commit (the table was not dropped, renamed or
+    // re-created, nor hard-suspended while suspended tables deny writes). A refusal there
+    // refuses the whole batch, with nothing committed. When a commit still fails -- a
+    // storage fault, or a DROP, RENAME or SUSPEND WAL that lands between the checks and
+    // the table's commit -- the frames before the failed table's first frame hold rows
+    // of tables that committed and nothing else, so the watermark covers them, and the
+    // client replays the rest: rows that those later frames added to the committed
+    // tables arrive a second time.
     //
     // A frame that fails or cannot join ends the batch, which commits before the frame is
     // answered while it can commit as it stands. It cannot once the frame appended rows
@@ -613,10 +616,11 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
      * QuestDB commits each table on its own, so a table that fails after an earlier one
      * committed leaves rows the client replays twice. Before the first commit, under the
      * role-switch read lock held across every table's commit, the batch is therefore
-     * refused as a whole, with nothing committed, when the node is read-only, a batch
-     * table was dropped, or a table's insert permission is refused: a demote cannot land
-     * between two tables' commits. What can still fail between tables is a commit that
-     * hits a storage fault.
+     * refused as a whole, with nothing committed, when the node is read-only, a table's
+     * insert permission is refused, or a table's sequencer would refuse its commit
+     * ({@link io.questdb.cairo.wal.seq.TableSequencerAPI#throwIfCommitRefused}): a demote
+     * cannot land between two tables' commits. A later table's commit can still fail on a
+     * storage fault, or on a DROP, RENAME or SUSPEND WAL that lands after the checks.
      * <p>
      * On success the watermark is past the batch. On a failure the commits stop, and:
      * this state is in error, with {@code roleChangeClosePending} set for a read-only
@@ -2186,6 +2190,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
                             .put("dropped table discarded buffered rows, cannot acknowledge: ")
                             .put(entry.tud.getTableNameUtf8());
                 }
+                engine.getTableSequencerAPI().throwIfCommitRefused(entry.writer.getTableToken());
                 entry.tud.authorizeCommit();
             }
         } catch (Throwable th) {

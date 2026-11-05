@@ -2525,6 +2525,76 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         assertRenameWindowMidBatchAcksNothing(true);
     }
 
+    /**
+     * A RENAME of b reaches b's sequencer while the batch holds rows of a and b, and the
+     * table registry still names b by its old token, as it does until the rename
+     * finishes. b's commit would fail on the sequencer's token, so the batch is refused
+     * before a commits, and the NACK names the batch's first frame.
+     */
+    @Test
+    public void testRenameWindowOfLaterTableRefusesWholeBatch() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("CREATE TABLE a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE b (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final AtomicBoolean isFrozen = new AtomicBoolean();
+            final AtomicReference<QwpIngressProcessorState> stateRef = new AtomicReference<>();
+            try (CairoEngine hookEngine = new CairoEngine(new DefaultTestCairoConfiguration(root)) {
+                @Override
+                public boolean isReadOnlyMode() {
+                    // Frame 2's preparation is the first gate check with both tables in the batch.
+                    final QwpIngressProcessorState state = stateRef.get();
+                    if (!isFrozen.get() && state != null && state.getCommitBatchTableCount() == 2) {
+                        isFrozen.set(true);
+                        try (WalWriter w = getWalWriter(verifyTableName("b"))) {
+                            w.renameTable("b", "b_new", AllowAllSecurityContext.INSTANCE);
+                        }
+                    }
+                    return false;
+                }
+            }) {
+                final TableToken aToken = hookEngine.verifyTableName("a");
+                final long aTxnBefore = hookEngine.getTableSequencerAPI().lastTxn(aToken);
+                final ObjList<byte[]> sent;
+                try (Connection connection = new Connection(
+                        hookEngine,
+                        httpConfig,
+                        AllowAllSecurityContext.INSTANCE,
+                        false,
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 100L, 1_000_000L)),
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 200L, 2_000_000L)),
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 300L, 3_000_000L))
+                )) {
+                    stateRef.set(connection.getState());
+                    connection.deliverFrames(3);
+                    sent = connection.sentFrames();
+                }
+                Assert.assertTrue("test setup: the rename window must have been frozen", isFrozen.get());
+                Assert.assertEquals("test setup: the registry must still name b by its old token",
+                        "b", hookEngine.verifyTableName("b").getTableName());
+                Assert.assertEquals("a must not publish a WAL transaction", aTxnBefore,
+                        hookEngine.getTableSequencerAPI().lastTxn(aToken));
+                Assert.assertEquals("nothing is acked", -1, maxCumulativeOkAck(sent));
+                Assert.assertEquals("the NACK names the batch's first frame",
+                        QwpConstants.STATUS_INTERNAL_ERROR, errorStatusForSeq(sent, 0));
+                Assert.assertFalse(hasErrorResponseForSeq(sent, 1));
+                Assert.assertFalse(hasErrorResponseForSeq(sent, 2));
+            }
+        });
+    }
+
+    // Another session renames b between the passes.
+    @Test
+    public void testRenamedTableRefusesWholeBatch() throws Exception {
+        assertTableChangeBetweenPassesRefusesWholeBatch(
+                "RENAME TABLE b TO b2",
+                null,
+                QwpConstants.STATUS_INTERNAL_ERROR
+        );
+        assertQuery("SELECT v FROM b2").expectSize().returns("v\n200\n");
+        assertQuery("SELECT v FROM b").expectSize().returns("v\n400\n600\n");
+    }
+
     @Test
     public void testRepeatedBlockFrameJoinsCommitBatch() throws Exception {
         assertCommitsPerTable(1, 4,
@@ -2586,6 +2656,49 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     @Test
     public void testStandaloneFrameCapFailureIsNackedAfterBoundaryAck() throws Exception {
         assertStandaloneFrameCapFailure(false);
+    }
+
+    // An operator suspends b's WAL between the passes, while suspended tables deny writes.
+    @Test
+    public void testSuspendedTableRefusesWholeBatch() throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertTableChangeBetweenPassesRefusesWholeBatch(
+                "ALTER TABLE b SUSPEND WAL",
+                "ALTER TABLE b RESUME WAL",
+                QwpConstants.STATUS_WRITE_ERROR
+        );
+        assertQuery("SELECT v FROM b").expectSize().returns("v\n200\n400\n600\n");
+    }
+
+    // By default a suspended table still takes writes, so the batch commits.
+    @Test
+    public void testSuspendedTableWithWritesAllowedCommitsBatch() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("CREATE TABLE a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE b (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final ObjList<byte[]> sent;
+            try (Connection connection = new Connection(
+                    engine,
+                    httpConfig,
+                    AllowAllSecurityContext.INSTANCE,
+                    false,
+                    tableChangeBetweenPassesFrames()
+            )) {
+                connection.deliverFrames(2);
+                execute("ALTER TABLE b SUSPEND WAL");
+                connection.deliverFrames(4);
+                sent = connection.sentFrames();
+            }
+            Assert.assertEquals("the whole pass is acked", 5, maxCumulativeOkAck(sent));
+            for (int seq = 0; seq < 6; seq++) {
+                Assert.assertFalse(hasErrorResponseForSeq(sent, seq));
+            }
+            execute("ALTER TABLE b RESUME WAL");
+            drainWalQueue();
+            assertQuery("SELECT v FROM a").noLeakCheck().expectSize().returns("v\n100\n300\n500\n");
+            assertQuery("SELECT v FROM b").noLeakCheck().expectSize().returns("v\n200\n400\n600\n");
+        });
     }
 
     /**
@@ -3074,6 +3187,18 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
             }
             return encodedFrame(encoder, encoder.finishMessage());
         }
+    }
+
+    // Pass 1 (seq 0, 1) opens a and b; pass 2 (seq 2-5) interleaves them.
+    private static byte[][] tableChangeBetweenPassesFrames() {
+        return new byte[][]{
+                createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 100L, 1_000_000L)),
+                createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 200L, 2_000_000L)),
+                createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 300L, 3_000_000L)),
+                createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 400L, 4_000_000L)),
+                createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 500L, 5_000_000L)),
+                createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 600L, 6_000_000L))
+        };
     }
 
     private static byte[][] toArray(ObjList<byte[]> frames) {
@@ -3925,6 +4050,60 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
             if (isDurableAck) {
                 Assert.assertTrue("the prefix ack must name the boundary commit", okAckSeqTxn(sent, 0, "b") > txnBefore);
             }
+        });
+    }
+
+    /**
+     * Pass 1 opens a and b on a connection, {@code ddl} then changes b from another
+     * session, and pass 2 interleaves a, b, a, b. b's commit would be refused, so the
+     * batch is refused before a commits: nothing of pass 2 is acked or committed, and the
+     * NACK names pass 2's first frame. After {@code ddlBeforeReplay}, the client replays
+     * every frame above its ack on a new connection, and a holds each of its rows once.
+     */
+    private void assertTableChangeBetweenPassesRefusesWholeBatch(
+            String ddl,
+            String ddlBeforeReplay,
+            byte refusalStatus
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("CREATE TABLE a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE b (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final byte[][] frames = tableChangeBetweenPassesFrames();
+            final TableToken aToken = engine.verifyTableName("a");
+            final long aTxnBefore;
+            final ObjList<byte[]> sent;
+            try (Connection connection = new Connection(engine, httpConfig, AllowAllSecurityContext.INSTANCE, false, frames)) {
+                connection.deliverFrames(2);
+                Assert.assertEquals("test setup: pass 1 commits", 1, maxCumulativeOkAck(connection.sentFrames()));
+                aTxnBefore = engine.getTableSequencerAPI().lastTxn(aToken);
+                execute(ddl);
+                connection.deliverFrames(4);
+                sent = connection.sentFrames();
+            }
+            Assert.assertEquals("a must not publish a WAL transaction", aTxnBefore,
+                    engine.getTableSequencerAPI().lastTxn(aToken));
+            Assert.assertEquals("nothing of pass 2 is acked", 1, maxCumulativeOkAck(sent));
+            Assert.assertEquals("the NACK names pass 2's first frame", refusalStatus, errorStatusForSeq(sent, 2));
+            for (int seq = 3; seq < 6; seq++) {
+                Assert.assertFalse(hasErrorResponseForSeq(sent, seq));
+            }
+
+            if (ddlBeforeReplay != null) {
+                execute(ddlBeforeReplay);
+            }
+            try (Connection replay = new Connection(
+                    engine,
+                    httpConfig,
+                    AllowAllSecurityContext.INSTANCE,
+                    false,
+                    Arrays.copyOfRange(frames, 2, frames.length)
+            )) {
+                replay.deliverFrames(4);
+                Assert.assertEquals("the replay is acked", 3, maxCumulativeOkAck(replay.sentFrames()));
+            }
+            drainWalQueue();
+            assertQuery("SELECT v FROM a").noLeakCheck().expectSize().returns("v\n100\n300\n500\n");
         });
     }
 
