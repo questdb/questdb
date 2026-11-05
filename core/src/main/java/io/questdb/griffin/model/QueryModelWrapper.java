@@ -393,6 +393,21 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public int getGroupByPosition() {
+        return delegate.getGroupByPosition();
+    }
+
+    @Override
+    public ObjList<CharSequence> getGroupingKeyAliases() {
+        return delegate.getGroupingKeyAliases();
+    }
+
+    @Override
+    public ObjList<IntList> getGroupingSets() {
+        return delegate.getGroupingSets();
+    }
+
+    @Override
     public LowerCaseCharSequenceObjHashMap<CharSequence> getHints() {
         return delegate.getHints();
     }
@@ -832,6 +847,11 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public boolean hasGroupingSets() {
+        return delegate.hasGroupingSets();
+    }
+
+    @Override
     public boolean hasSharedRefs() {
         return false;
     }
@@ -1249,6 +1269,11 @@ public class QueryModelWrapper implements IQueryModel {
 
     @Override
     public void setLimitPosition(int limitPosition) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void setGroupByPosition(int groupByPosition) {
         throw new UnsupportedOperationException();
     }
 

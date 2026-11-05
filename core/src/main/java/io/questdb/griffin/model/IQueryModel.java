@@ -312,6 +312,12 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     ObjList<ExpressionNode> getGroupBy();
 
+    int getGroupByPosition();
+
+    ObjList<CharSequence> getGroupingKeyAliases();
+
+    ObjList<IntList> getGroupingSets();
+
     LowerCaseCharSequenceObjHashMap<CharSequence> getHints();
 
     HorizonJoinContext getHorizonJoinContext();
@@ -489,6 +495,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     boolean hasExplicitTimestamp();
 
+    boolean hasGroupingSets();
+
     boolean hasSharedRefs();
 
     boolean hasTimestampOffset();
@@ -654,6 +662,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
     void setFillValues(ObjList<ExpressionNode> fillValues);
 
     void setForceBackwardScan(boolean forceBackwardScan);
+
+    void setGroupByPosition(int groupByPosition);
 
     void setIsCteModel(boolean isCteModel);
 
