@@ -227,7 +227,8 @@ public class IndexGroupByChoiceBenchmark {
                 case "keyed" -> "SELECT " + column + ", count(), sum(a) FROM t WHERE " + column + " = 'k2'";
                 case "in2" -> "SELECT count(), sum(a) FROM t WHERE " + column + " IN ('k2', 'k3')";
                 case "rows", "covrows" -> "SELECT ts, a FROM t WHERE " + column + " = 'k2'";
-                case "covperkey" -> "SELECT " + column + ", count() c, max(a) m FROM t WHERE " + column + " IN ('k2', 'k3')";
+                case "covperkey" ->
+                        "SELECT " + column + ", count() c, max(a) m FROM t WHERE " + column + " IN ('k2', 'k3')";
                 default -> throw new IllegalArgumentException(cell);
             };
         }
