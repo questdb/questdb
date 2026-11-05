@@ -5552,7 +5552,8 @@ public class WalWriterTest extends AbstractCairoTest {
                         startTxn + 2,
                         TableWriterPressureControl.EMPTY,
                         Long.MAX_VALUE,
-                        Long.MIN_VALUE
+                        Long.MIN_VALUE,
+                        false
                 );
 
                 assertEquals(2, blockSize);
