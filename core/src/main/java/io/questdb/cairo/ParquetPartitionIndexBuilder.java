@@ -38,6 +38,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.QuietCloseable;
@@ -63,7 +64,10 @@ final class ParquetPartitionIndexBuilder implements QuietCloseable {
     private final FilesFacade ff;
     private final ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader();
     private final RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER, true);
+    private final LongList rowGroupIndexRowLos = new LongList();
+    private final IntList rowGroupOrder = new IntList();
     private final PostingSupersededFileRemover supersededFileRemover;
+    private int commitMode = CommitMode.NOSYNC;
     private DirectIntList decodeColumns;
     private SymbolColumnIndexer indexer;
     private byte indexerType = -1;
@@ -86,6 +90,8 @@ final class ParquetPartitionIndexBuilder implements QuietCloseable {
      * @param columnVersions    column versions of the same snapshot, for the column name txns
      * @param partitionRowCount the partition's row count
      * @param tableTxn          the table txn the caller built off; tags the posting chain entries
+     * @param commitMode        the commit mode the caller writes the partition's data under; the index files are
+     *                          flushed as the writer flushes its column files under it
      */
     void buildIndexes(
             Path partitionDir,
@@ -94,8 +100,10 @@ final class ParquetPartitionIndexBuilder implements QuietCloseable {
             ColumnVersionReader columnVersions,
             long partitionTimestamp,
             long partitionRowCount,
-            long tableTxn
+            long tableTxn,
+            int commitMode
     ) {
+        this.commitMode = commitMode;
         final int dirLen = partitionDir.size();
         long parquetAddr = 0;
         long parquetSize = 0;
@@ -258,15 +266,21 @@ final class ParquetPartitionIndexBuilder implements QuietCloseable {
                     rowGroupBuffers,
                     decodeColumns,
                     coveredColumnAccumulator,
+                    rowGroupOrder,
+                    rowGroupIndexRowLos,
                     indexer,
                     metadata,
                     columnVersions,
                     columnIndex,
                     parquetIndex,
                     0,
-                    partitionTimestamp,
-                    partitionRowCount
+                    partitionTimestamp
             );
+            // Flushed as the writer flushes its column files at commit: under SYNC and ASYNC. Under ADAPTIVE the save
+            // point flushes them, under NOSYNC nothing does. The swap that names the directory follows.
+            if (CommitMode.appliesColumnSync(commitMode)) {
+                indexer.sync(commitMode == CommitMode.ASYNC);
+            }
         } finally {
             indexer.clear();
             partitionDir.trimTo(dirLen);
@@ -289,6 +303,10 @@ final class ParquetPartitionIndexBuilder implements QuietCloseable {
             try {
                 ddlMem.smallFile(ff, partitionDir.$(), MemoryTag.MMAP_TABLE_WRITER);
                 IndexFactory.initKeyMemory(indexType, ddlMem, indexValueBlockCapacity);
+                // An empty index is published as written here.
+                if (CommitMode.appliesColumnSync(commitMode)) {
+                    ddlMem.sync(commitMode == CommitMode.ASYNC);
+                }
             } finally {
                 ddlMem.close();
             }
@@ -309,6 +327,8 @@ final class ParquetPartitionIndexBuilder implements QuietCloseable {
      *
      * @param decodeColumns            scratch list of the columns to decode, cleared on entry
      * @param coveredColumnAccumulator stages the covered values; its scratch files are released on every exit path
+     * @param rowGroupOrder            scratch list for the row groups in the order of their index rows
+     * @param rowGroupIndexRowLos      scratch list for each row group's first index row
      */
     static void indexColumn(
             CairoConfiguration configuration,
@@ -319,14 +339,15 @@ final class ParquetPartitionIndexBuilder implements QuietCloseable {
             RowGroupBuffers rowGroupBuffers,
             DirectIntList decodeColumns,
             ParquetCoveredColumnAccumulator coveredColumnAccumulator,
+            IntList rowGroupOrder,
+            LongList rowGroupIndexRowLos,
             SymbolColumnIndexer indexer,
             RecordMetadata metadata,
             ColumnVersionReader columnVersions,
             int columnIndex,
             int parquetColumnIndex,
             long columnTop,
-            long partitionTimestamp,
-            long partitionRowCount
+            long partitionTimestamp
     ) {
         final ParquetMetaFileReader parquetMetadata = decoder.metadata();
         final IntList coveredWriterIndices = metadata.getColumnMetadata(columnIndex).getCoveringColumnIndices();
@@ -335,47 +356,55 @@ final class ParquetPartitionIndexBuilder implements QuietCloseable {
             decodeColumns.clear();
             decodeColumns.add(parquetColumnIndex);
             decodeColumns.add(ColumnType.SYMBOL);
+            // The covered scratch files hold one entry per index row.
+            final long indexRowCount = parquetMetadata.getIndexRowCount();
             int decodedCoveredCount = 0;
             if (hasCovering) {
                 addCoveredSlots(coveredColumnAccumulator, metadata, parquetMetadata, coveredWriterIndices, columnVersions, partitionTimestamp);
                 decodedCoveredCount = coveredColumnAccumulator.openScratchFiles(
-                        configuration, ff, partitionDir, dirLen, parquetMetadata, partitionRowCount, decodeColumns);
+                        configuration, ff, partitionDir, dirLen, parquetMetadata, indexRowCount, decodeColumns);
             }
 
             final IndexWriter indexWriter = indexer.getWriter();
-            long rowCount = 0;
-            for (int rowGroup = 0, n = parquetMetadata.getRowGroupCount(); rowGroup < n; rowGroup++) {
+            // Index values grow per key, so the row groups go in the order of their index rows.
+            parquetMetadata.collectRowGroupsInIndexRowOrder(rowGroupOrder, rowGroupIndexRowLos);
+            long nextIndexRow = 0;
+            for (int i = 0, n = rowGroupOrder.size(); i < n; i++) {
+                final int rowGroup = rowGroupOrder.getQuick(i);
                 final long rowGroupSize = parquetMetadata.getRowGroupSize(rowGroup);
-                final boolean isBelowColumnTop = rowCount + rowGroupSize <= columnTop;
+                final long indexRowLo = rowGroupIndexRowLos.getQuick(rowGroup);
+                final boolean isBelowColumnTop = indexRowLo + rowGroupSize <= columnTop;
                 if (isBelowColumnTop && decodedCoveredCount == 0) {
-                    rowCount += rowGroupSize;
+                    nextIndexRow = indexRowLo + rowGroupSize;
                     continue;
                 }
                 assert rowGroupSize <= Integer.MAX_VALUE;
                 decoder.decodeRowGroup(rowGroupBuffers, decodeColumns, rowGroup, 0, (int) rowGroupSize);
                 if (decodedCoveredCount > 0) {
-                    coveredColumnAccumulator.accumulate(rowGroupBuffers, rowGroup, rowGroupSize);
+                    // Index rows of replaced row groups: no entry points at them.
+                    coveredColumnAccumulator.accumulateNulls(indexRowLo - nextIndexRow);
+                    coveredColumnAccumulator.accumulate(rowGroupBuffers, rowGroupSize);
                 }
+                nextIndexRow = indexRowLo + rowGroupSize;
                 if (!isBelowColumnTop) {
-                    final long startOffset = Math.max(0, columnTop - rowCount);
-                    long rowId = rowCount + startOffset;
+                    final long startOffset = Math.max(0, columnTop - indexRowLo);
+                    long rowId = indexRowLo + startOffset;
                     final long addr = rowGroupBuffers.getChunkDataPtr(0);
                     final long size = rowGroupBuffers.getChunkDataSize(0);
                     if (size == 0) {
-                        BitmapIndexUtils.addNullEntries(indexWriter, rowId, rowCount + rowGroupSize);
+                        BitmapIndexUtils.addNullEntries(indexWriter, rowId, indexRowLo + rowGroupSize);
                     } else {
                         for (long p = addr + startOffset * Integer.BYTES, lim = addr + size; p < lim; p += Integer.BYTES, rowId++) {
                             indexWriter.add(TableUtils.toIndexKey(Unsafe.getInt(p)), rowId);
                         }
                     }
                 }
-                rowCount += rowGroupSize;
             }
             if (hasCovering) {
                 final int timestampIndex = metadata.getTimestampIndex();
                 coveredColumnAccumulator.configureCovering(indexer, timestampIndex < 0 ? -1 : metadata.getWriterIndex(timestampIndex));
             }
-            indexWriter.setMaxValue(partitionRowCount - 1);
+            indexWriter.setMaxValue(indexRowCount - 1);
             indexer.seal();
         } finally {
             if (hasCovering) {
