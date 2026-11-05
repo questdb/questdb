@@ -76,6 +76,49 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
     };
 
     @Test
+    public void testChunkedSinkFunctionKeysAllSupportedTypes() {
+        // 700 INT column keys push the estimated bytecode over DEFAULT_METHOD_SIZE_LIMIT, so
+        // getInstance() takes the chunked generator, whose main copy() method emits the
+        // key-function arms. Each key function type must load as a chunked class, not fall back
+        // to LoopingRecordSink, and copy the same values the single-method sink copies.
+        final int columnCount = 700;
+        ArrayColumnTypes columnTypes = new ArrayColumnTypes();
+        ListColumnFilter columnFilter = new ListColumnFilter();
+        for (int i = 0; i < columnCount; i++) {
+            columnTypes.add(ColumnType.INT);
+            columnFilter.add(i + 1);
+        }
+
+        ObjList<Function> allKeyFunctions = allKeyFunctionTypes();
+        for (int f = 0, n = allKeyFunctions.size(); f < n; f++) {
+            TestFunction func = (TestFunction) allKeyFunctions.getQuick(f);
+            ObjList<Function> keyFunctions = new ObjList<>();
+            keyFunctions.add(func);
+
+            IntList expectedPutTypes = new IntList();
+            for (int i = 0; i < columnCount; i++) {
+                expectedPutTypes.add(ColumnType.INT);
+            }
+            BitSet writeSymbolAsString = new BitSet();
+            writeSymbolAsString.set(0);
+            prepareExpectedPutType(0, func.type, expectedPutTypes, writeSymbolAsString);
+
+            final String typeName = ColumnType.nameOf(func.type);
+            final RecordSink sink;
+            try {
+                sink = RecordSinkFactory.getInstance(configuration, new BytecodeAssembler(), columnTypes, columnFilter, keyFunctions, null);
+            } catch (AssertionError e) {
+                throw new AssertionError("chunked sink class does not load for key function type " + typeName, e);
+            }
+            Assert.assertFalse(typeName, sink instanceof LoopingRecordSink);
+
+            TestRecordSink testRecordSink = new TestRecordSink();
+            sink.copy(new TestRecord(), testRecordSink);
+            Assert.assertEquals(typeName, expectedPutTypes, testRecordSink.recordedTypes);
+        }
+    }
+
+    @Test
     public void testColumnKeysAllSupportedTypes() {
         testColumnKeysAllSupportedTypes(null);
     }
