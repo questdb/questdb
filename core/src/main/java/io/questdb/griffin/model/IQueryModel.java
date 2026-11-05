@@ -304,6 +304,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     int getGroupByPosition();
 
+    ObjList<CharSequence> getGroupingKeyAliases();
+
     ObjList<IntList> getGroupingSets();
 
     LowerCaseCharSequenceObjHashMap<CharSequence> getHints();

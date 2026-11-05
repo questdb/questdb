@@ -62,6 +62,7 @@ import io.questdb.griffin.engine.functions.catalogue.ShowTransactionIsolationLev
 import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.griffin.engine.functions.date.TimestampFloorFromOffsetUtcFunctionFactory;
 import io.questdb.griffin.engine.functions.date.ToUTCTimestampFunctionFactory;
+import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.engine.join.NullRecordFactory;
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
 import io.questdb.griffin.engine.table.ShowPartitionsRecordCursorFactory;
@@ -6229,18 +6230,14 @@ public class SqlOptimiser implements Mutable {
             if (column == null) {
                 return false;
             }
-            IQueryModel chooseModel = model.getNestedModel();
-            while (chooseModel != null
-                    && chooseModel.getSelectModelType() != IQueryModel.SELECT_MODEL_CHOOSE
-                    && chooseModel.getSelectModelType() != IQueryModel.SELECT_MODEL_NONE) {
-                chooseModel = chooseModel.getNestedModel();
-            }
-            ObjList<ExpressionNode> keys = model.getGroupBy();
-            for (int k = 0, n = keys.size(); k < n; k++) {
-                ExpressionNode key = keys.getQuick(k);
-                // Match by expression only. An output alias can be spelled like a key it does not
-                // read, as in SELECT b AS a ... GROUP BY ROLLUP(b), a, where a filter on a reads b.
-                if (ExpressionNode.compareNodesGroupBy(key, column.getAst(), chooseModel)) {
+            // Map keys to columns as the code generator does. The column a filter names can be
+            // spelled like a key it does not read, as in SELECT b AS a ... GROUP BY ROLLUP(b), a,
+            // where a filter on a reads b. A column that several keys share is safe to filter
+            // only when none of them rolls up.
+            boolean isKey = false;
+            for (int k = 0, n = model.getGroupBy().size(); k < n; k++) {
+                int columnIndex = GroupByUtils.findGroupingKeyColumnIndex(model, k);
+                if (columnIndex > -1 && model.getColumns().getQuick(columnIndex) == column) {
                     // A rolled key gains NULL rows, so filtering its input changes the result.
                     ObjList<IntList> sets = model.getGroupingSets();
                     for (int s = 0, sn = sets.size(); s < sn; s++) {
@@ -6248,10 +6245,10 @@ public class SqlOptimiser implements Mutable {
                             return false;
                         }
                     }
-                    return true;
+                    isKey = true;
                 }
             }
-            return false;
+            return isKey;
         }
         for (int i = 0, n = node.args.size(); i < n; i++) {
             if (!isGroupingSetsPushdownSafe(model, node.args.getQuick(i), aliases)) {
@@ -13690,6 +13687,12 @@ public class SqlOptimiser implements Mutable {
                     n--;
                 }
             }
+            if (groupByModel.hasGroupingSets()) {
+                // The loop above adds one alias per surviving key, in key order.
+                assert groupByAliases.size() == groupBy.size();
+                groupByModel.getGroupingKeyAliases().clear();
+                groupByModel.getGroupingKeyAliases().addAll(groupByAliases);
+            }
         }
 
         // Validate HORIZON JOIN GROUP BY clause matches non-aggregate SELECT columns.
@@ -14924,6 +14927,9 @@ public class SqlOptimiser implements Mutable {
                         && model.getJoinModels().size() == 1
                         && model.getWhereClause() == null
                         && model.getLatestBy().size() == 0
+                        // rewriteSampleBy keeps SAMPLE BY FILL on this model, which has no table
+                        // when grouping sets sample a sub-query, and generateFill looks for it here.
+                        && !hasNonNoneRewrittenFill(model)
         ) {
             model = model.getNestedModel();
         }

@@ -531,6 +531,9 @@ public class AsyncGroupingSetsRecordCursorFactory extends AbstractRecordCursorFa
                 for (int worker = 0; worker < atom.getWorkerCount(); worker++) {
                     Map workerMap = atom.getMapIfExists(worker, setIndex);
                     if (workerMap != null && workerMap.isOpen()) {
+                        // The owner merges every set on its own, so a cancel must not wait for all
+                        // of them. A trip leaves the remaining maps to atom.clear().
+                        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
                         ownerMap.merge(workerMap, updater);
                         workerMap.close();
                     }

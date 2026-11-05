@@ -5010,11 +5010,14 @@ public class SqlParser {
                 model.setShowKind(showKind);
             }
         } else {
+            // The implied SELECT * reads the table named here.
+            final int starPosition = lexer.lastTokenPosition();
             lexer.unparseLast();
             SqlUtil.addSelectStar(
                     model,
                     queryColumnPool,
-                    expressionNodePool
+                    expressionNodePool,
+                    starPosition
             );
         }
 
@@ -5238,6 +5241,9 @@ public class SqlParser {
                                     && target.getNestedModel() == null
                                     && target.getSampleBy() == null
                                     && target.getGroupBy().size() == 0
+                                    // GROUPING SETS (()) has no GROUP BY key, so the shorthand
+                                    // "(t GROUP BY GROUPING SETS (()))" must keep its sub-query too
+                                    && !target.hasGroupingSets()
                                     // SUBSAMPLE lives on the sub-query model; collapsing would discard it
                                     // silently, so the shorthand "(t SUBSAMPLE ...)" must keep its sub-query
                                     && target.getSubsample() == null

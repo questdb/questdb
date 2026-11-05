@@ -388,6 +388,11 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public ObjList<CharSequence> getGroupingKeyAliases() {
+        return delegate.getGroupingKeyAliases();
+    }
+
+    @Override
     public ObjList<IntList> getGroupingSets() {
         return delegate.getGroupingSets();
     }

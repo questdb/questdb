@@ -433,7 +433,6 @@ public class GroupByUtils {
             IntList projectionFunctionFlags
     ) throws SqlException {
         IntList keyColumnIndices = new IntList(model.getGroupBy().size());
-        IQueryModel chooseModel = findChooseModel(model);
         boolean hasGroupingFunction = false;
         for (int i = 0, n = innerProjectionFunctions.size(); i < n; i++) {
             if (innerProjectionFunctions.getQuick(i) instanceof GroupingFunction) {
@@ -443,34 +442,26 @@ public class GroupByUtils {
         }
         for (int k = 0, n = model.getGroupBy().size(); k < n; k++) {
             ExpressionNode key = model.getGroupBy().getQuick(k);
-            boolean isFound = false;
-            for (int i = 0, m = model.getColumns().size(); i < m; i++) {
-                QueryColumn column = model.getColumns().getQuick(i);
-                if (ExpressionNode.compareNodesGroupBy(key, column.getAst(), chooseModel)) {
-                    int baseColumnIndex = findColumnKeyIndex(
-                            column.getAst(),
-                            innerProjectionFunctions.getQuick(i),
-                            baseMetadata,
-                            true
-                    );
-                    if (baseColumnIndex < 0) {
-                        for (int s = 0, sn = model.getGroupingSets().size(); s < sn; s++) {
-                            if (!model.getGroupingSets().getQuick(s).contains(k)) {
-                                throw SqlException.$(key.position, EXPRESSION_GROUPING_KEY_MESSAGE);
-                            }
-                        }
+            int i = findGroupingKeyColumnIndex(model, k);
+            assert i > -1 : "grouping key has no column: " + key.token;
+            QueryColumn column = model.getColumns().getQuick(i);
+            int baseColumnIndex = findColumnKeyIndex(
+                    column.getAst(),
+                    innerProjectionFunctions.getQuick(i),
+                    baseMetadata,
+                    true
+            );
+            if (baseColumnIndex < 0) {
+                for (int s = 0, sn = model.getGroupingSets().size(); s < sn; s++) {
+                    if (!model.getGroupingSets().getQuick(s).contains(k)) {
+                        throw SqlException.$(key.position, EXPRESSION_GROUPING_KEY_MESSAGE);
                     }
-                    if (hasGroupingFunction && key.type == LITERAL && baseColumnIndex >= 0 && keyColumnIndices.contains(baseColumnIndex)) {
-                        baseColumnIndex = k;
-                    }
-                    keyColumnIndices.add(baseColumnIndex);
-                    isFound = true;
-                    break;
                 }
             }
-            // The optimiser replaces GROUP BY aliases and positions with the projected
-            // expressions, so every key matches a column of the group-by model.
-            assert isFound : "grouping key does not match a key expression: " + key.token;
+            if (hasGroupingFunction && key.type == LITERAL && baseColumnIndex >= 0 && keyColumnIndices.contains(baseColumnIndex)) {
+                baseColumnIndex = k;
+            }
+            keyColumnIndices.add(baseColumnIndex);
         }
         // Only the model's own columns: SqlCodeGenerator.addGroupingSetFillKey appends a hidden
         // GROUPING_ID() whose key positions it has already set.
@@ -657,18 +648,33 @@ public class GroupByUtils {
      * while the column reads the name the nested select-choose model projects.
      */
     public static ExpressionNode findGroupingKeyColumnAst(IQueryModel model, int keyIndex) {
-        final ExpressionNode key = model.getGroupBy().getQuick(keyIndex);
-        final IQueryModel chooseModel = findChooseModel(model);
+        final int columnIndex = findGroupingKeyColumnIndex(model, keyIndex);
+        assert columnIndex > -1 : "grouping key has no column: " + model.getGroupBy().getQuick(keyIndex).token;
+        return model.getColumns().getQuick(columnIndex).getAst();
+    }
+
+    /**
+     * Returns the index of the group-by model column that carries the GROUP BY key at the given
+     * index, or -1 when no column matches. The key and the column AST can name the same input in
+     * different namespaces: in {@code SELECT x, a ... FROM (SELECT a, a AS x FROM t)} key a reads
+     * the sub-query's a while column x translates to a too, and in
+     * {@code SELECT b AS a, a AS b ... GROUP BY ROLLUP(a, b)} key b reads the table's b while column
+     * b reads the projected a. So the alias that SqlOptimiser.rewriteSelectClause0 records for each
+     * key decides, not the expressions.
+     */
+    public static int findGroupingKeyColumnIndex(IQueryModel model, int keyIndex) {
+        final ObjList<CharSequence> keyAliases = model.getGroupingKeyAliases();
+        assert keyAliases.size() == model.getGroupBy().size() : "grouping key aliases are not recorded";
+        final CharSequence alias = keyAliases.getQuick(keyIndex);
         final ObjList<QueryColumn> columns = model.getColumns();
-        for (int i = 0; ; i++) {
-            // The optimiser replaces GROUP BY aliases and positions with the projected expressions,
-            // so every key matches a column of the group-by model.
-            assert i < columns.size() : "grouping key does not match a key expression: " + key.token;
-            final ExpressionNode ast = columns.getQuick(i).getAst();
-            if (ExpressionNode.compareNodesGroupBy(key, ast, chooseModel)) {
-                return ast;
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            if (Chars.equalsIgnoreCase(columns.getQuick(i).getAlias(), alias)) {
+                return i;
             }
         }
+        // rewriteSelectClause0 records the alias of a column it adds to this model.
+        assert false : "grouping key alias is not a column: " + alias;
+        return -1;
     }
 
     /**
@@ -942,18 +948,6 @@ public class GroupByUtils {
         }
 
         return false;
-    }
-
-    // The select-choose model under a group-by model resolves table-qualified GROUP BY keys,
-    // such as q.c over a join, to the column names the group-by model reads.
-    private static IQueryModel findChooseModel(IQueryModel model) {
-        IQueryModel chooseModel = model;
-        while (chooseModel != null
-                && chooseModel.getSelectModelType() != IQueryModel.SELECT_MODEL_CHOOSE
-                && chooseModel.getSelectModelType() != IQueryModel.SELECT_MODEL_NONE) {
-            chooseModel = chooseModel.getNestedModel();
-        }
-        return chooseModel;
     }
 
     /**

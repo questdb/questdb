@@ -54,6 +54,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class GroupingSetsTest extends AbstractCairoTest {
 
@@ -738,6 +739,23 @@ public class GroupingSetsTest extends AbstractCairoTest {
                 }
             }
             Assert.assertEquals(unexpectedQueries.toString(), 0, unexpectedSuccesses);
+        });
+    }
+
+    @Test
+    public void testEmptyGroupingSetsShorthandSubquery() throws Exception {
+        // The shorthand (t ...) selects every column of t, as SELECT * FROM t ... does, so it
+        // fails the same way and does not fold into a plain read of t.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, v INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO t VALUES (1, 10, 1000), (2, 20, 2000)");
+            for (int i = 0; i < 2; i++) {
+                sqlExecutionContext.setParallelGroupByEnabled(i == 1);
+                final String query = "SELECT * FROM (t GROUP BY GROUPING SETS (()))";
+                assertQuery(query)
+                        .withContext(sqlExecutionContext)
+                        .fails(query.indexOf("t GROUP"), "column must appear in GROUP BY clause or aggregate function");
+            }
         });
     }
 
@@ -2303,10 +2321,7 @@ public class GroupingSetsTest extends AbstractCairoTest {
             for (int mode = 0; mode < 2; mode++) {
                 sqlExecutionContext.setParallelGroupByEnabled(mode == 1);
                 final String query = "SELECT c, sum(n) s FROM (" + inner + ") GROUP BY ROLLUP(c) ORDER BY c";
-                printSql("EXPLAIN " + query);
-                final String plan = sink.toString();
-                Assert.assertFalse(plan, plan.contains("grouping("));
-                Assert.assertFalse(plan, plan.contains("SelectedRecord"));
+                assertQuery(query).withContext(sqlExecutionContext).assertsPlanNotContaining("grouping(", "SelectedRecord");
                 assertSqlCursors(
                         "SELECT * FROM (SELECT c, sum(n) s FROM (" + inner + ") GROUP BY c " +
                                 "UNION ALL SELECT NULL::INT c, sum(n) s FROM (" + inner + ")) ORDER BY c",
@@ -2667,6 +2682,50 @@ public class GroupingSetsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRollupFilterBindVariableReusesFactory() throws Exception {
+        // A prepared statement runs one compiled factory with new bind values. The parallel
+        // grouping sets factory owns the filter, so each run must read the current value.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL, a INT, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('x', 1, 10, '2024-01-01'), ('x', 2, 20, '2024-01-01'), ('y', 1, 5, '2024-01-02')");
+            final String expectedX = """
+                    a\ts
+                    null\t30
+                    1\t10
+                    2\t20
+                    """;
+            final String expectedY = """
+                    a\ts
+                    null\t5
+                    1\t5
+                    """;
+            final int callerJitMode = sqlExecutionContext.getJitMode();
+            try {
+                for (int jitMode : new int[]{SqlJitMode.JIT_MODE_ENABLED, SqlJitMode.JIT_MODE_DISABLED}) {
+                    sqlExecutionContext.setJitMode(jitMode);
+                    sqlExecutionContext.setParallelGroupByEnabled(true);
+                    bindVariableService.clear();
+                    bindVariableService.setStr(0, "x");
+                    final String query = "SELECT a, sum(v) s FROM t WHERE sym = $1 GROUP BY ROLLUP(a) ORDER BY a";
+                    assertQuery(query).withContext(sqlExecutionContext)
+                            .assertsPlanContaining(jitMode == SqlJitMode.JIT_MODE_ENABLED ? "Async JIT Group By" : "Async Group By", "groupingSets: true", "filter: ");
+                    try (RecordCursorFactory factory = select(query)) {
+                        for (String sym : new String[]{"x", "y", "x"}) {
+                            bindVariableService.setStr(0, sym);
+                            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                sink.clear();
+                                TestUtils.assertCursor(sym.equals("x") ? expectedX : expectedY, cursor, factory.getMetadata(), true, sink);
+                            }
+                        }
+                    }
+                }
+            } finally {
+                sqlExecutionContext.setJitMode(callerJitMode);
+            }
+        });
+    }
+
+    @Test
     public void testRollupFilterRunsInParallel() throws Exception {
         // The parallel grouping sets factory takes over the filter of a filtered scan, so a WHERE
         // clause keeps the aggregation on the page-frame workers. The reference is one plain
@@ -2709,12 +2768,11 @@ public class GroupingSetsTest extends AbstractCairoTest {
                         for (String sym : new String[]{"x", "y"}) {
                             bindVariableService.clear();
                             bindVariableService.setStr(0, sym);
-                            printSql("EXPLAIN " + query);
-                            final String plan = sink.toString();
-                            Assert.assertTrue(plan, plan.contains("groupingSets: true"));
-                            Assert.assertTrue(plan, plan.contains("filter: "));
-                            Assert.assertFalse(plan, plan.contains("Filter workers"));
-                            Assert.assertEquals(plan, jitMode == SqlJitMode.JIT_MODE_ENABLED, plan.contains("Async JIT Group By"));
+                            final String groupBy = jitMode == SqlJitMode.JIT_MODE_ENABLED ? "Async JIT Group By" : "Async Group By";
+                            assertQuery(query).withContext(sqlExecutionContext)
+                                    .assertsPlanContaining(groupBy, "groupingSets: true", "filter: ");
+                            assertQuery(query).withContext(sqlExecutionContext)
+                                    .assertsPlanNotContaining("Filter workers");
                             assertSqlCursors(reference, query);
                         }
                     }
@@ -2969,18 +3027,14 @@ public class GroupingSetsTest extends AbstractCairoTest {
             for (int mode = 0; mode < 2; mode++) {
                 sqlExecutionContext.setParallelGroupByEnabled(mode == 1);
                 final String rolledUpFilter = "SELECT * FROM (" + inner + ") WHERE a = 1 ORDER BY k";
-                printSql("EXPLAIN " + rolledUpFilter);
-                Assert.assertFalse(sink.toString(), sink.toString().contains("filter: b=1"));
-                assertQuery(rolledUpFilter).withContext(sqlExecutionContext).returns("""
+                assertQuery(rolledUpFilter).withContext(sqlExecutionContext).withPlanNotContaining("filter: b=1").returns("""
                         a\tk\ts
                         1\t1\t10.0
                         1\t2\t20.0
                         """);
                 // A filter on the kept key still runs below the grouping sets.
                 final String keptKeyFilter = "SELECT * FROM (" + inner + ") WHERE k = 2 ORDER BY a";
-                printSql("EXPLAIN " + keptKeyFilter);
-                Assert.assertTrue(sink.toString(), sink.toString().contains("filter: a=2"));
-                assertQuery(keptKeyFilter).withContext(sqlExecutionContext).expectSize().returns("""
+                assertQuery(keptKeyFilter).withContext(sqlExecutionContext).withPlanContaining("filter: a=2").expectSize().returns("""
                         a\tk\ts
                         null\t2\t20.0
                         1\t2\t20.0
@@ -3342,6 +3396,96 @@ public class GroupingSetsTest extends AbstractCairoTest {
                                 2024-01-02T00:00:00.000000Z\t2\t5.0
                                 2024-01-02T00:00:00.000000Z\t2\t5.0
                                 """);
+            }
+        });
+    }
+
+    @Test
+    public void testRollupOverSubqueryColumnsReadingSameColumn() throws Exception {
+        // The subquery exposes column a under two names, so x and a are distinct grouping keys
+        // that read the same table column. Each key must roll up on its own.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT)");
+            execute("INSERT INTO t VALUES (1), (2)");
+            final String sub = "(SELECT a, a AS x FROM t)";
+            final String rollupXA = "SELECT * FROM (" +
+                    "SELECT x, a, count() c FROM " + sub + " GROUP BY x, a " +
+                    "UNION ALL SELECT x, NULL::INT a, count() c FROM " + sub + " GROUP BY x " +
+                    "UNION ALL SELECT NULL::INT x, NULL::INT a, count() c FROM " + sub +
+                    ") ORDER BY x, a";
+            final String rollupAX = "SELECT * FROM (" +
+                    "SELECT x, a, count() c FROM " + sub + " GROUP BY x, a " +
+                    "UNION ALL SELECT NULL::INT x, a, count() c FROM " + sub + " GROUP BY a " +
+                    "UNION ALL SELECT NULL::INT x, NULL::INT a, count() c FROM " + sub +
+                    ") ORDER BY x, a";
+            for (int mode = 0; mode < 2; mode++) {
+                sqlExecutionContext.setParallelGroupByEnabled(mode == 1);
+                assertQuery("SELECT x, a, count() c FROM " + sub + " GROUP BY ROLLUP(x, a) ORDER BY x, a")
+                        .withContext(sqlExecutionContext)
+                        .expectSize()
+                        .returns("""
+                                x\ta\tc
+                                null\tnull\t2
+                                1\tnull\t1
+                                1\t1\t1
+                                2\tnull\t1
+                                2\t2\t1
+                                """);
+                assertSqlCursors(rollupXA, "SELECT x, a, count() c FROM " + sub + " GROUP BY ROLLUP(x, a) ORDER BY x, a");
+                assertSqlCursors(rollupXA, "SELECT x, a, c FROM (SELECT a, x, count() c FROM " + sub + " GROUP BY ROLLUP(x, a)) ORDER BY x, a");
+                assertSqlCursors(rollupAX, "SELECT x, a, count() c FROM " + sub + " GROUP BY ROLLUP(a, x) ORDER BY x, a");
+                assertSqlCursors(rollupAX, "SELECT x, a, c FROM (SELECT a, x, count() c FROM " + sub + " GROUP BY ROLLUP(a, x)) ORDER BY x, a");
+
+                // x is rolled up, so a filter on x stays above the grouping sets, while a filter on
+                // the kept key a still runs below them.
+                final String inner = "SELECT x, a, count() c FROM " + sub + " GROUP BY a, ROLLUP(x)";
+                assertQuery("SELECT * FROM (" + inner + ") WHERE x = 1")
+                        .withContext(sqlExecutionContext)
+                        .withPlanNotContaining("filter: a=1")
+                        .noRandomAccess()
+                        .returns("""
+                                x\ta\tc
+                                1\t1\t1
+                                """);
+                assertQuery("SELECT * FROM (" + inner + ") WHERE a = 1 ORDER BY x")
+                        .withContext(sqlExecutionContext)
+                        .withPlanContaining("filter: a=1")
+                        .expectSize()
+                        .returns("""
+                                x\ta\tc
+                                null\t1\t1
+                                1\t1\t1
+                                """);
+            }
+
+            // Here the sub-query's a reads the table's b, and x reads the table's a.
+            execute("CREATE TABLE u (ts TIMESTAMP, a INT, b INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO u VALUES ('2024-01-01', 1, 10), ('2024-01-03', 2, 20)");
+            // The same values with x stored as a column of its own.
+            execute("CREATE TABLE v AS (SELECT ts, a AS x, b AS a FROM u) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE w AS (SELECT ts, a, a AS x FROM u) TIMESTAMP(ts) PARTITION BY DAY");
+            for (int mode = 0; mode < 2; mode++) {
+                sqlExecutionContext.setParallelGroupByEnabled(mode == 1);
+                assertQuery("SELECT x, a, count() c FROM (SELECT b AS a, a AS x FROM u) GROUP BY ROLLUP(x, a) ORDER BY x, a")
+                        .withContext(sqlExecutionContext)
+                        .expectSize()
+                        .returns("""
+                                x\ta\tc
+                                null\tnull\t2
+                                1\tnull\t1
+                                1\t10\t1
+                                2\tnull\t1
+                                2\t20\t1
+                                """);
+                // The hidden fill key of SAMPLE BY FILL reads the same key-to-column mapping.
+                assertSqlCursors(
+                        "SELECT ts, x, a, count() c FROM v SAMPLE BY 1d ROLLUP(x, a) FILL(NULL) ORDER BY ts, x, a",
+                        "SELECT ts, x, a, count() c FROM (SELECT ts, b AS a, a AS x FROM u) SAMPLE BY 1d ROLLUP(x, a) FILL(NULL) ORDER BY ts, x, a"
+                );
+                assertSqlCursors(
+                        "SELECT ts, x, a, count() c FROM w SAMPLE BY 1d ROLLUP(x, a) FILL(NULL) ORDER BY ts, x, a",
+                        "SELECT ts, x, a, count() c FROM (SELECT ts, a, a AS x FROM u) SAMPLE BY 1d ROLLUP(x, a) FILL(NULL) ORDER BY ts, x, a"
+                );
             }
         });
     }
@@ -4138,6 +4282,47 @@ public class GroupingSetsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByRollupFillEmptyInput() throws Exception {
+        // FILL fills each key combination the input produced, as keyed SAMPLE BY FILL does, so
+        // empty input yields no rows even with FROM and TO: there is no combination to fill,
+        // not even the grand total of ROLLUP's empty set.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES (1, 10, '2024-01-01T00:00:00.000000Z')");
+            for (int i = 0; i < 2; i++) {
+                sqlExecutionContext.setParallelGroupByEnabled(i == 1);
+                assertQuery("SELECT ts, a, count() c FROM t WHERE v < 0 SAMPLE BY 1d FROM '2024-01-01' TO '2024-01-04' FILL(NULL)")
+                        .withContext(sqlExecutionContext)
+                        .inferRandomAccess()
+                        .inferTimestamp()
+                        .sizeMayVary()
+                        .returns("ts\ta\tc\n");
+                assertQuery("SELECT ts, a, count() c FROM t WHERE v < 0 SAMPLE BY 1d ROLLUP(a) FROM '2024-01-01' TO '2024-01-04' FILL(NULL)")
+                        .withContext(sqlExecutionContext)
+                        .inferRandomAccess()
+                        .inferTimestamp()
+                        .sizeMayVary()
+                        .returns("ts\ta\tc\n");
+                // One matching row is enough to fill both series over the whole range.
+                assertQuery("SELECT ts, a, count() c FROM t WHERE v > 0 SAMPLE BY 1d ROLLUP(a) FROM '2024-01-01' TO '2024-01-04' FILL(NULL) ORDER BY ts, a")
+                        .withContext(sqlExecutionContext)
+                        .inferRandomAccess()
+                        .inferTimestamp()
+                        .sizeMayVary()
+                        .returns("""
+                                ts\ta\tc
+                                2024-01-01T00:00:00.000000Z\tnull\t1
+                                2024-01-01T00:00:00.000000Z\t1\t1
+                                2024-01-02T00:00:00.000000Z\tnull\tnull
+                                2024-01-02T00:00:00.000000Z\t1\tnull
+                                2024-01-03T00:00:00.000000Z\tnull\tnull
+                                2024-01-03T00:00:00.000000Z\t1\tnull
+                                """);
+            }
+        });
+    }
+
+    @Test
     public void testSampleByRollupFillGroupingBeforeArrayAggregate() throws Exception {
         // first() over an array takes FILL(NULL) but not a constant. With GROUPING() ahead of it,
         // its fill value is still the first one: GROUPING() is a fill key and takes no fill value.
@@ -4493,6 +4678,22 @@ public class GroupingSetsTest extends AbstractCairoTest {
                         .inferTimestamp()
                         .sizeMayVary()
                         .returns(expected.replace("ts\t", "k\t"));
+                // FILL survives the sub-query: a = 2 has no row on 2024-01-02.
+                final String expectedFill = expected + "2024-01-02T00:00:00.000000Z\t2\tnull\n";
+                assertQuery("SELECT ts, a, sum(v) FROM (SELECT * FROM t) SAMPLE BY 1d ROLLUP(a) FILL(NULL) ORDER BY ts, a")
+                        .withContext(sqlExecutionContext)
+                        .withPlanContaining("Sample By Fill")
+                        .inferRandomAccess()
+                        .inferTimestamp()
+                        .sizeMayVary()
+                        .returns(expectedFill);
+                assertQuery("WITH s AS (SELECT ts, a, v FROM t) SELECT ts, a, sum(v) FROM s SAMPLE BY 1d ROLLUP(a) FILL(NULL) ORDER BY ts, a")
+                        .withContext(sqlExecutionContext)
+                        .withPlanContaining("Sample By Fill")
+                        .inferRandomAccess()
+                        .inferTimestamp()
+                        .sizeMayVary()
+                        .returns(expectedFill);
 
                 // Without a designated timestamp the subquery is rejected, also where it has
                 // the timestamp column but loses its order
@@ -5027,6 +5228,80 @@ public class GroupingSetsTest extends AbstractCairoTest {
                         );
                     } finally {
                         TestLatchedCounterFunctionFactory.reset(null);
+                    }
+                }, configuration, LOG);
+            }
+        });
+    }
+
+    @Test
+    public void testWorkerPoolGroupingSetsOwnerMergeObservesCancellation() throws Exception {
+        // The owner merges every worker map of every set. The breaker cancels at the first
+        // check of that merge, buildMap's second check after the one before dispatch, and the
+        // query must stop there, release its maps and leave the factory reusable.
+        assertMemoryLeak(() -> {
+            try (WorkerPool pool = new TestWorkerPool(4)) {
+                TestUtils.execute(pool, (engine, compiler, executionContext) -> {
+                    execute(compiler,
+                            "CREATE TABLE t (a INT, b INT, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                            executionContext);
+                    execute(compiler,
+                            "INSERT INTO t SELECT (x % 4)::INT, (x % 7)::INT, x, ((x - 1) / 700 * 86_400_000_000L)::TIMESTAMP FROM long_sequence(2_800)",
+                            executionContext);
+
+                    SqlExecutionContextImpl context = (SqlExecutionContextImpl) executionContext;
+                    SqlExecutionCircuitBreakerConfiguration breakerConfiguration =
+                            new DefaultSqlExecutionCircuitBreakerConfiguration();
+                    final AtomicInteger buildMapChecks = new AtomicInteger();
+                    final AtomicBoolean isCancelling = new AtomicBoolean(true);
+                    try (NetworkSqlExecutionCircuitBreaker breaker = new NetworkSqlExecutionCircuitBreaker(engine, breakerConfiguration) {
+                        @Override
+                        public void statefulThrowExceptionIfTrippedTimeThrottledOrYield() {
+                            final boolean isBuildMapCheck = StackWalker.getInstance().walk(frames -> frames.skip(1).findFirst()
+                                    .map(f -> f.getClassName().endsWith("AsyncGroupingSetsCursor") && f.getMethodName().equals("buildMap"))
+                                    .orElse(false));
+                            if (isCancelling.get() && isBuildMapCheck && buildMapChecks.incrementAndGet() == 2) {
+                                cancel();
+                                statefulThrowExceptionIfTrippedNoThrottle();
+                            }
+                            super.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+                        }
+                    }) {
+                        context.with(
+                                context.getSecurityContext(),
+                                context.getBindVariableService(),
+                                context.getRandom(),
+                                context.getRequestFd(),
+                                breaker
+                        );
+                        context.setParallelGroupByEnabled(true);
+                        context.changePageFrameSizes(1, 1);
+                        String query = "SELECT a, b, sum(v) s FROM t GROUP BY GROUPING SETS ((a, b), (a), ())";
+                        try (RecordCursorFactory factory = compiler.compile(query, context).getRecordCursorFactory()) {
+                            Assert.assertTrue(factory.getBaseFactory() instanceof AsyncGroupingSetsRecordCursorFactory);
+                            try (RecordCursor cursor = factory.getCursor(context)) {
+                                try {
+                                    cursor.hasNext();
+                                    Assert.fail("expected cancellation during the owner merge");
+                                } catch (CairoException e) {
+                                    TestUtils.assertContains(e.getFlyweightMessage(), "cancelled by user");
+                                    Assert.assertTrue(e.isCancellation());
+                                }
+                            }
+                            Assert.assertEquals(2, buildMapChecks.get());
+
+                            // 28 (a, b) pairs, since 4 and 7 are coprime, 4 values of a and the total.
+                            isCancelling.set(false);
+                            breaker.clear();
+                            breaker.clearCancelSentinel();
+                            try (RecordCursor cursor = factory.getCursor(context)) {
+                                int rows = 0;
+                                while (cursor.hasNext()) {
+                                    rows++;
+                                }
+                                Assert.assertEquals(33, rows);
+                            }
+                        }
                     }
                 }, configuration, LOG);
             }
