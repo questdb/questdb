@@ -262,6 +262,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(32, configuration.getCairoConfiguration().getSqlUnorderedMapMaxEntrySize());
         Assert.assertEquals(1024, configuration.getCairoConfiguration().getSqlModelPoolCapacity());
         Assert.assertEquals(10_000, configuration.getCairoConfiguration().getSqlMaxNegativeLimit());
+        Assert.assertEquals(4096, configuration.getCairoConfiguration().getSqlMaxGroupingSets());
         Assert.assertEquals(128 * 1024, configuration.getCairoConfiguration().getSqlSortKeyPageSize());
         Assert.assertEquals(Long.MAX_VALUE, configuration.getCairoConfiguration().getSqlSortKeyMaxBytes());
         Assert.assertEquals(128 * 1024, configuration.getCairoConfiguration().getSqlSortLightValuePageSize());
