@@ -6025,8 +6025,8 @@ public class SqlParser {
         LowerCaseCharSequenceIntHashMap columnIndex = new LowerCaseCharSequenceIntHashMap();
 
         do {
-            // Like PostgreSQL, the list holds at least one set and no trailing comma, so
-            // every element starts with '('. The empty set is written "()".
+            // As in PostgreSQL, the list holds at least one set and no trailing comma. Unlike
+            // PostgreSQL, every element is parenthesized: (a), not a. The empty set is "()".
             // Use tokIncludingLocalBrace to avoid subQueryMode swallowing ')'
             CharSequence tok = tokIncludingLocalBrace(lexer, "'('");
             expectTok(tok, lexer.lastTokenPosition(), '(');

@@ -1838,7 +1838,8 @@ public class GroupingSetsTest extends AbstractCairoTest {
 
     @Test
     public void testGroupingSetsListSyntaxErrors() throws Exception {
-        // Like PostgreSQL, a GROUPING SETS list holds at least one set and no trailing comma.
+        // As in PostgreSQL, a GROUPING SETS list holds at least one set and no trailing comma.
+        // Unlike PostgreSQL, every element is parenthesized: (a), not a.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (a INT, v INT, ts TIMESTAMP) TIMESTAMP(ts)");
             for (String prefix : new String[]{
@@ -1855,6 +1856,8 @@ public class GroupingSetsTest extends AbstractCairoTest {
                 assertException(query, query.length(), "',' or ')' expected");
                 query = prefix + "GROUPING SETS ((a) (a))";
                 assertException(query, query.indexOf("(a))"), "',' expected");
+                query = prefix + "GROUPING SETS (a, ())";
+                assertException(query, query.indexOf("a, ())"), "'(' expected");
             }
         });
     }
@@ -2679,6 +2682,41 @@ public class GroupingSetsTest extends AbstractCairoTest {
                         21\t20\t0\t4.0
                         21\tnull\t1\t4.0
                         """);
+            }
+        });
+    }
+
+    @Test
+    public void testRollupFactoryReuseAcrossInsertAndTruncate() throws Exception {
+        // A cached statement runs one compiled factory as the data changes. Each run must read the
+        // table as it is then: only the grand total when empty, every level after the INSERT.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, b INT, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            final String empty = """
+                    a\tb\tg\tc\ts
+                    null\tnull\t3\t0\tnull
+                    """;
+            final String filled = """
+                    a\tb\tg\tc\ts
+                    1\t1\t0\t1\t10
+                    1\t2\t0\t1\t20
+                    2\t1\t0\t1\t30
+                    1\tnull\t1\t2\t30
+                    2\tnull\t1\t1\t30
+                    null\tnull\t3\t3\t60
+                    """;
+            final String query = "SELECT a, b, grouping_id(a, b) g, count() c, sum(v) s FROM t GROUP BY ROLLUP(a, b) ORDER BY g, a, b";
+            for (int mode = 0; mode < 2; mode++) {
+                sqlExecutionContext.setParallelGroupByEnabled(mode == 1);
+                assertQuery(query).withContext(sqlExecutionContext)
+                        .assertsPlanContaining(mode == 1 ? "Async Group By" : "GroupBy vectorized: false");
+                try (RecordCursorFactory factory = select(query)) {
+                    assertFactoryRows(factory, empty);
+                    execute("INSERT INTO t VALUES (1, 1, 10, '2024-01-01'), (1, 2, 20, '2024-01-01'), (2, 1, 30, '2024-01-02')");
+                    assertFactoryRows(factory, filled);
+                    execute("TRUNCATE TABLE t");
+                    assertFactoryRows(factory, empty);
+                }
             }
         });
     }
@@ -5459,6 +5497,13 @@ public class GroupingSetsTest extends AbstractCairoTest {
         execute("CREATE TABLE prices (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
         execute("INSERT INTO trades VALUES ('A', 1, '2024-01-01T00:00:05'), ('B', 2, '2024-01-01T00:00:06')");
         execute("INSERT INTO prices VALUES ('A', 10, '2024-01-01T00:00:04'), ('B', 20, '2024-01-01T00:00:05')");
+    }
+
+    private void assertFactoryRows(RecordCursorFactory factory, String expected) throws Exception {
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            sink.clear();
+            TestUtils.assertCursor(expected, cursor, factory.getMetadata(), true, sink);
+        }
     }
 
     private void assertGroupingSetsQuery(String expected, String query) throws Exception {
