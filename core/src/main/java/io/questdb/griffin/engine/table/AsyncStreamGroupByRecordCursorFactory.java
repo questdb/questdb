@@ -373,7 +373,7 @@ public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorF
                 if (filterContext == null) {
                     task.releaseFrameMemory();
                 } else {
-                    filterContext.getMemoryPool(slot).reuseParquetBuffers();
+                    filterContext.getMemoryPool(slot).releaseParquetBuffers();
                 }
             } finally {
                 atom.release(slot);

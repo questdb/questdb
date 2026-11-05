@@ -51,11 +51,9 @@ import io.questdb.griffin.engine.table.AsyncStreamGroupByAtom;
 import io.questdb.griffin.engine.table.AsyncStreamGroupByRecordCursorFactory;
 import io.questdb.jit.JitUtil;
 import io.questdb.std.DirectLongList;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.MemoryTrackerWorkload;
 import io.questdb.std.Os;
-import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.QueryAssertion;
@@ -695,30 +693,7 @@ public class StreamGroupByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFilteredParquetFramesKeepDecodeBuffersUntilQueryEnds() throws Exception {
-        Assume.assumeTrue(parallel);
-        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
-        run((engine, compiler, context) -> {
-            engine.execute("CREATE TABLE trades AS (SELECT timestamp_sequence('2024-01-01', 60_000_000L) ts, x v, "
-                    + "(x % 7)::SYMBOL sym FROM long_sequence(3_000)) TIMESTAMP(ts) PARTITION BY DAY", context);
-            convertToParquet(engine, context, "2024-01-01");
-            final long before = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
-            try (RecordCursorFactory factory = compiler.compile("SELECT ts, sum(v) s FROM trades WHERE v % 2 = 0 SAMPLE BY 1h", context).getRecordCursorFactory()) {
-                try (RecordCursor cursor = factory.getCursor(context)) {
-                    long rows = 0;
-                    while (cursor.hasNext()) {
-                        rows++;
-                    }
-                    Assert.assertTrue(rows > 0);
-                    Assert.assertTrue(Unsafe.getMemUsedByTag(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER) > before);
-                }
-                Assert.assertEquals(before, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER));
-            }
-        });
-    }
-
-    @Test
-    public void testFilteredParquetFramesReuseDecodeBuffers() throws Exception {
+    public void testFilteredParquetFramesMatchHash() throws Exception {
         setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
         run((engine, compiler, context) -> {
             for (String table : new String[]{"trades", "hash_input"}) {
@@ -1898,8 +1873,11 @@ public class StreamGroupByTest extends AbstractCairoTest {
                     count++;
                 }
                 Assert.assertEquals(rows, count);
-                // Every key is new, so a check per row would add 100k checks.
-                Assert.assertTrue("checks " + counting.getCheckCount(), counting.getCheckCount() < rows / 2);
+                // With workers, the owner also polls the breaker for as long as it waits for them.
+                if (workers == 0) {
+                    // Every key is new, so a check per row would add 100k checks.
+                    Assert.assertTrue("checks " + counting.getCheckCount(), counting.getCheckCount() < rows / 2);
+                }
             } finally {
                 impl.with(breaker);
             }
