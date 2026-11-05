@@ -35,6 +35,7 @@ import io.questdb.test.cairo.types.TypeConformanceValues;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 
 import java.util.Arrays;
@@ -90,6 +91,11 @@ public class FunctionReachTest extends AbstractCairoTest {
 
     @Test
     public void testLaterTypesReachNoOtherTypesFunction() throws Exception {
+        boolean hasLaterType = false;
+        for (int i = 0, n = TypeConformanceTypes.ALL.size(); i < n && !hasLaterType; i++) {
+            hasLaterType = TypeConformanceTypes.ALL.getQuick(i).isLater();
+        }
+        Assume.assumeTrue("no type is registered later", hasLaterType);
         assertMemoryLeak(() -> {
             final StringBuilder gaps = new StringBuilder();
             for (int i = 0, n = TypeConformanceTypes.ALL.size(); i < n; i++) {
@@ -100,8 +106,7 @@ public class FunctionReachTest extends AbstractCairoTest {
                     }
                 }
             }
-            // no kit type is registered later, so nothing reaches; a new type lists its reaches
-            // here
+            // a type registered later lists here the reaches it states as meant
             TestUtils.assertEquals("", gaps);
         });
     }
