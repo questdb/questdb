@@ -216,6 +216,10 @@ public class TableWriterSegmentFileCache {
         // its data memory only after it read the aux column, which can fail. Until then no
         // memory owns it.
         long untakenDataFd = -1;
+        // The data memory that will adopt untakenDataFd. configureDataMemOM hands it the fd only
+        // after it reads the aux column, so until then its getFd() stays -1. Once it owns the fd
+        // closeWalFiles() closes it through the memory. Valid (non-null) whenever untakenDataFd != -1.
+        MemoryCMOR untakenDataMem = null;
 
         try {
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
@@ -234,6 +238,7 @@ public class TableWriterSegmentFileCache {
                         final long dataFd = fds != null ? fds.get(file++) : -1;
                         final long auxFd = fds != null ? fds.get(file++) : -1;
                         untakenDataFd = dataFd;
+                        untakenDataMem = dataMem;
 
                         final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
 
@@ -313,7 +318,11 @@ public class TableWriterSegmentFileCache {
                 // closeWalFiles() drops the cached list without closing it: close the fds no
                 // memory owns, or they leak.
                 final FilesFacade ff = configuration.getFilesFacade();
-                if (untakenDataFd != -1) {
+                // Close the data fd only while its data memory has not adopted it yet. Once dataMem
+                // owns it (its mapLazy asserted under -ea right after adoption), closeWalFiles()
+                // closes it through the memory; closing it here too would double-close it, and
+                // Files.close() then throws "fd already closed", aborting the rest of the cleanup.
+                if (untakenDataFd != -1 && untakenDataMem.getFd() != untakenDataFd) {
                     ff.close(untakenDataFd);
                 }
                 for (int i = file, n = fds.size(); i < n; i++) {
