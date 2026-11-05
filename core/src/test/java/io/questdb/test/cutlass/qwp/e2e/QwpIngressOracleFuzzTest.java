@@ -912,9 +912,11 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
      * protocol switch in {@code resumeSend} after the framework's park-on-write
      * resumes the residual flush.
      * <p>
-     * Both the master {@link Rnd} seed AND the fragmentation chunks are pinned so
-     * this regression case is bit-for-bit reproducible -- changing the chunks back
-     * to wide (or symmetric) values would mask the bug. The asymmetry
+     * The test pins the fragmentation chunks and takes the master {@link Rnd} from
+     * {@link TestUtils#generateRandom}, so each run varies the producer, row and
+     * bounce counts but always exercises the fragmented 101 response; the logged
+     * seeds reproduce a failing run. Changing the chunks back to wide (or
+     * symmetric) values would mask the bug. The asymmetry
      * ({@code recvChunk=460}, {@code sendChunk=125}) is the load-bearing detail:
      * symmetric fragmentation at the same chunk doesn't always hit the second-send
      * branch.
@@ -928,7 +930,7 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
         // Frozen like the chunks, the dedup mode keeps the regression bit-for-bit reproducible.
         dedupMode = "UPSERT";
         assertMemoryLeak(() -> {
-            Rnd master = TestUtils.generateRandom(LOG, 1951343273690333L, 1779330804963L);
+            Rnd master = TestUtils.generateRandom(LOG);
             createTargetTable();
             int port = RestartableQwpServer.pickFreePort();
 

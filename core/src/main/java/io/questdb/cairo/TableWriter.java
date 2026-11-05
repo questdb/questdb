@@ -72,6 +72,7 @@ import io.questdb.cairo.wal.SymbolMapDiffEntry;
 import io.questdb.cairo.wal.TableWriterPressureControl;
 import io.questdb.cairo.wal.WalBlockBudget;
 import io.questdb.cairo.wal.WalTxnDetails;
+import io.questdb.cairo.wal.WalTxnType;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WriterRowUtils;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
@@ -467,6 +468,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private long attachPartitionTimestamp;
     private TxReader attachTxReader;
     private long avgRecordSize;
+    // Whether avgRecordSize was measured from WAL rows, sampled before the first block or staged by an apply
+    private boolean avgRecordSizeFromWal;
+    // Whether setAppendPosition() measured avgRecordSize from the last partition's column files. Until it does - always
+    // on a parquet last partition, which has none - the WAL apply measures it from the rows it applies.
+    private boolean avgRecordSizeMeasured;
     private boolean avoidIndexOnCommit = false;
     private BlockFileWriter blockFileWriter;
     private int columnCount;
@@ -2053,6 +2059,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         hasTtlEvictedPartitionsSinceLastCommit = false;
         txWriter.beginPartitionSizeUpdate();
         long commitToTimestamp = walTxnDetails.getCommitToTimestamp(seqTxn);
+        if (!avgRecordSizeMeasured && !avgRecordSizeFromWal) {
+            sampleWalRecordSize(walPath, seqTxn);
+        }
         int transactionBlock = calculateInsertTransactionBlock(seqTxn, pressureControl);
         // Read before the apply changes the lag: with lag pending, calculateInsertTransactionBlock() returns 1
         // without walking the transactions, and the flag is the previous block's.
@@ -6830,6 +6839,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 pressureControl,
                 getWalMaxBlockRows(),
                 inOrderMinTimestamp,
+                isCommitDedupMode(),
                 blockSize > 0 ? walBlockBudget.of(blockSize) : null
         );
     }
@@ -12263,6 +12273,29 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    /**
+     * Bytes per row of the rows {@code [lo, hi)} in {@code o3Columns}, data and aux vectors, the same measure
+     * {@link #setAppendPosition(long, boolean)} takes of the column files. The designated timestamp counts its 8 bytes
+     * on disk, not the 16 of the merge index.
+     */
+    private long measureO3RecordSize(long lo, long hi) {
+        final long rowCount = hi - lo;
+        long size = 0;
+        for (int i = 0; i < columnCount; i++) {
+            final int columnType = metadata.getColumnType(i);
+            if (columnType > 0) {
+                if (ColumnType.isVarSize(columnType)) {
+                    final ColumnTypeDriver driver = ColumnType.getDriver(columnType);
+                    final long auxAddr = o3Columns.getQuick(getSecondaryColumnIndex(i)).addressOf(0);
+                    size += driver.getDataVectorSize(auxAddr, lo, hi - 1) + driver.auxRowsToBytes(rowCount);
+                } else {
+                    size += rowCount << ColumnType.pow2SizeOf(columnType);
+                }
+            }
+        }
+        return Math.max(1, size / rowCount);
+    }
+
     private int moveTailCut(LongList bounds, O3CompositeMergeStrategy.Plan plan, long futureFloor) {
         return O3CompositeMergeStrategy.moveTailCut(
                 bounds,
@@ -15196,6 +15229,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .$(", maxTs=").$ts(timestampDriver, maxTs)
                     .I$();
 
+            // calculateInsertTransactionBlock() caps every block that reaches this sort to fit the sort key
+            assert !WalTxnDetails.isTxnBlockSortKeyOverflow(minTs, maxTs, segmentCopyInfo.getTxnCount());
             long indexFormat = Vect.radixSortManySegmentsIndexAsc(
                     timestampAddr,
                     o3TimestampMemCpy.addressOf(0),
@@ -15833,6 +15868,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         txWriter.setLagMaxTimestamp(Long.MIN_VALUE);
 
         o3RowCount = o3Hi - o3Lo + walLagRowCount;
+        if (!avgRecordSizeMeasured && o3Hi > o3Lo) {
+            // Without it, a var-size column counts as ESTIMATED_VAR_COL_SIZE bytes, and on wide rows the next WAL
+            // apply block, sized by bytes, comes out orders of magnitude too many rows long
+            avgRecordSize = measureO3RecordSize(o3Lo, o3Hi);
+            avgRecordSizeFromWal = true;
+        }
 
         // Real data writing into table happens here.
         // Everything above it is to figure out how much data to write now,
@@ -18832,6 +18873,72 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    /**
+     * Measures avgRecordSize from the WAL segment of the first transaction to apply, so that the first block is not
+     * sized from the estimate. The sample is the rows of the loaded data transactions in that segment, read the way
+     * {@link #measureO3RecordSize(long, long)} reads staged rows: two aux entries of each var-size column give its
+     * data bytes. On a missing or unreadable file the estimate stays.
+     */
+    private void sampleWalRecordSize(@Transient Path walPath, long seqTxn) {
+        final long walSegment = walTxnDetails.getWalSegment(seqTxn);
+        final long rowLo = walTxnDetails.getSegmentRowLo(seqTxn);
+        long rowHi = rowLo;
+        for (long txn = seqTxn, lastTxn = walTxnDetails.getLastSeqTxn();
+             txn <= lastTxn
+                     && walTxnDetails.getWalSegment(txn) == walSegment
+                     && WalTxnType.isDataType(walTxnDetails.getWalTxnType(txn));
+             txn++) {
+            rowHi = Math.max(rowHi, walTxnDetails.getSegmentRowHi(txn));
+        }
+        final long rowCount = rowHi - rowLo;
+        if (rowCount <= 0) {
+            return;
+        }
+
+        final int walPathLen = walPath.size();
+        // A replica replaces WAL files outside the fd cache's knowledge, a cached fd could read a stale file
+        final boolean bypassFdCache = configuration.getBypassWalFdCache();
+        long size = 0;
+        try {
+            for (int i = 0; i < columnCount; i++) {
+                final int columnType = metadata.getColumnType(i);
+                if (columnType > 0) {
+                    if (ColumnType.isVarSize(columnType)) {
+                        final LPSZ auxFile = iFile(walPath.trimTo(walPathLen), metadata.getColumnName(i));
+                        final long auxFd = bypassFdCache ? ff.openRONoCache(auxFile) : ff.openRO(auxFile);
+                        if (auxFd < 0) {
+                            final int errno = ff.errno();
+                            LOG.info().$("could not sample WAL record size [table=").$(tableToken)
+                                    .$(", path=").$(walPath)
+                                    .$(", errno=").$(errno)
+                                    .I$();
+                            return;
+                        }
+                        try {
+                            final ColumnTypeDriver driver = ColumnType.getDriver(columnType);
+                            size += driver.getDataVectorSizeAtFromFd(ff, auxFd, rowHi - 1)
+                                    - driver.getDataVectorSizeAtFromFd(ff, auxFd, rowLo - 1)
+                                    + driver.auxRowsToBytes(rowCount);
+                        } finally {
+                            ff.close(auxFd);
+                        }
+                    } else {
+                        size += rowCount << ColumnType.pow2SizeOf(columnType);
+                    }
+                }
+            }
+        } catch (CairoException e) {
+            LOG.info().$("could not sample WAL record size [table=").$(tableToken)
+                    .$(", msg=").$safe(e.getFlyweightMessage())
+                    .I$();
+            return;
+        } finally {
+            walPath.trimTo(walPathLen);
+        }
+        avgRecordSize = Math.max(1, size / rowCount);
+        avgRecordSizeFromWal = true;
+    }
+
     private void scaleSymbolCapacities() {
         if (configuration.autoScaleSymbolCapacity()) {
             for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
@@ -19230,7 +19337,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         for (int i = 0; i < columnCount; i++) {
             recordLength += setColumnAppendPosition(i, rowCount, doubleAllocate);
         }
-        avgRecordSize = rowCount > 0 ? recordLength / rowCount : Math.max(avgRecordSize, recordLength);
+        if (rowCount > 0) {
+            avgRecordSize = recordLength / rowCount;
+            avgRecordSizeMeasured = true;
+        } else {
+            avgRecordSize = Math.max(avgRecordSize, recordLength);
+        }
     }
 
     private long setColumnAppendPosition(int columnIndex, long size, boolean doubleAllocate) {
