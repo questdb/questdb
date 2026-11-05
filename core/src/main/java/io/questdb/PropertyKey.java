@@ -88,6 +88,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_UNORDERED_MAP_MAX_ENTRY_SIZE("cairo.sql.unordered.map.max.entry.size"),
     CAIRO_MODEL_POOL_CAPACITY("cairo.model.pool.capacity"),
     CAIRO_SQL_MAX_NEGATIVE_LIMIT("cairo.sql.max.negative.limit"),
+    CAIRO_SQL_MAX_GROUPING_SETS("cairo.sql.max.grouping.sets"),
     CAIRO_SQL_SORT_KEY_PAGE_SIZE("cairo.sql.sort.key.page.size"),
     CAIRO_SQL_SORT_KEY_MAX_PAGES("cairo.sql.sort.key.max.pages"), // deprecated, use CAIRO_SQL_SORT_KEY_MAX_BYTES
     CAIRO_SQL_SORT_KEY_MAX_BYTES("cairo.sql.sort.key.max.bytes"),
@@ -231,6 +232,9 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_O3_MIN_LAG("cairo.o3.min.lag"),
     CAIRO_SQL_MAX_RECOMPILE_ATTEMPTS("cairo.sql.max.recompile.attempts"),
     CAIRO_MAT_VIEW_ENABLED("cairo.mat.view.enabled"),
+    CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_ENABLED("cairo.mat.view.row.expiry.cleanup.enabled"),
+    CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MAX_CACHED_PARTITIONS("cairo.mat.view.row.expiry.cleanup.max.cached.partitions"),
+    CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MIN_EXPIRED_FRACTION("cairo.mat.view.row.expiry.cleanup.min.expired.fraction"),
     CAIRO_MAT_VIEW_MIN_REFRESH_INTERVAL("cairo.mat.view.min.refresh.interval"),
     CAIRO_MAT_VIEW_MAX_REFRESH_RETRIES("cairo.mat.view.max.refresh.retries"),
     CAIRO_MAT_VIEW_REFRESH_BUSY_RETRY_TIMEOUT("cairo.mat.view.refresh.busy.retry.timeout"),
