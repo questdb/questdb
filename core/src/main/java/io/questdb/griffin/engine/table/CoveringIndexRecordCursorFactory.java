@@ -43,6 +43,7 @@ import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.idx.AbstractPostingIndexReader;
 import io.questdb.cairo.idx.CoveringRowCursor;
 import io.questdb.cairo.idx.IndexReader;
+import io.questdb.cairo.map.Map;
 import io.questdb.cairo.sql.ColumnMapping;
 import io.questdb.cairo.sql.CoveredColumnDecoder;
 import io.questdb.cairo.sql.DataSource;
@@ -134,7 +135,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     // linear scan wins for the small IN-lists it usually serves. See
     // MultiKeyCoveringCursor and effectiveHeapMergeMinKeys().
     static final int HEAP_MERGE_MIN_KEYS = 16;
-    // Strict upper bound on the page frames a per-key execution may emit.
+    // Strict upper bound on the page frames one covering execution may emit, in every frame mode.
     //
     // PageFrameMemoryRecord.getRowId() packs the frame's index within the
     // PageFrameSequence into Rows.toRowID(frameIndex, rowIndex) = (frameIndex << 44) + rowIndex,
@@ -142,19 +143,32 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     // no cap of its own. Past frame index 2^19 the shifted value overflows into the sign bit, and
     // AT exactly 2^19 it equals Long.MIN_VALUE == Numbers.LONG_NULL -- which first()/last() and
     // their siblings use as the "accumulator is empty" sentinel. Both mechanisms turn a signed
-    // row-id comparison into a silently wrong aggregate, so the count must stay strictly below
+    // row-id comparison into a silently wrong aggregate; past 2^20 the index no longer fits at
+    // all, and recordAt() reads a row of another frame. So the count must stay strictly below
     // Rows.MAX_SAFE_PARTITION_INDEX. Strictly below, not at it: live views already reserve the
     // top index as a slot sentinel (LiveViewPageFrameCursor.SLOT_PARTITION_INDEX,
     // LiveViewRecordCursor.SLOT_FRAME_INDEX), leaving 0 .. MAX_SAFE_PARTITION_INDEX - 1 usable.
     //
-    // Merged mode reaches the same ceiling in principle, but only through the partition frames
-    // (one per partition, per `ts IN` window intersecting a partition, and per composite-partition
-    // piece, each split by the row cap), whereas per-key multiplies them by the key count -- which
-    // is what brings ordinary shapes into range: 30 symbols over two years of hourly partitions is
-    // 525,600 (key, partition) pairs, and 1,024 symbols over 520 daily windows is 532,480. This is
-    // a correctness invariant derived from the row-id encoding, NOT a tuned constant, so it
-    // carries no test override; nextImplPerKey() asserts it.
-    static final int MAX_PER_KEY_PAGE_FRAMES = Rows.MAX_SAFE_PARTITION_INDEX;
+    // Every mode reaches it through its row cap: a scan emits one frame per cap's worth of each
+    // (key, partition frame) pair's rows, so 2^19 frames of the default 65,536 rows are 34B rows,
+    // and a lowered cairo.sql.parallel.covering.frame.rows reaches it with far fewer. Per-key mode
+    // also reaches it through its pairs, the key count times the partition frames: 30 symbols over
+    // two years of hourly partitions is 525,600 (key, partition) pairs, and 1,024 symbols over 520
+    // daily windows is 532,480. Three mechanisms hold it: admitsPerKeyMode() takes per-key mode
+    // only for shapes whose frame bound is below it; CoveringPageFrameCursor.widenFramesUnderLimit()
+    // grows the row cap of a scan that has emitted FRAME_BUDGET_CHECK_FRAMES frames so that the
+    // rest of it fits; and CoveringPageFrameCursor.finalizeFrame() fails the query rather than emit
+    // a frame at the limit, which only a scan whose partition frames leave the widening no room,
+    // or one of trillions of rows, can reach. This is a correctness invariant derived from the
+    // row-id encoding, NOT a tuned constant, so it carries no test override.
+    static final int MAX_PAGE_FRAMES = Rows.MAX_SAFE_PARTITION_INDEX;
+    // The frames a covering execution emits before it checks that the rest of its scan fits
+    // under MAX_PAGE_FRAMES, see CoveringPageFrameCursor.widenFramesUnderLimit(): an eighth of the
+    // limit. An execution emits at most one frame per partition frame plus one per row cap's worth
+    // of its rows, so one that emits fewer, which at the default 65,536 rows per frame takes billions
+    // of selected rows, never computes the bound and keeps its configured frames; one that emits
+    // more leaves at least 7/8 of the limit to the rest of its scan.
+    static final int FRAME_BUDGET_CHECK_FRAMES = MAX_PAGE_FRAMES >> 3;
     // The density below which per-key mode is a pessimisation, in rows per
     // (key, partition-frame) pair, PER PASS THE CONSUMER MAKES OVER EACH FRAME.
     //
@@ -205,7 +219,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     // own headline max() benchmark. 32, the value before that, is this base divided by 2 and was
     // wrong in the other direction on every shape.
     //
-    // Unlike MAX_PER_KEY_PAGE_FRAMES this IS a tuned constant: getting it wrong costs speed,
+    // Unlike MAX_PAGE_FRAMES this IS a tuned constant: getting it wrong costs speed,
     // never correctness. That is exactly why it carries a test override and the ceiling does
     // not, and why the two are separate gates rather than one predicate -- a correctness
     // invariant must not be able to move when someone retunes a benchmark number. It is also
@@ -1409,12 +1423,15 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
      * Pick this execution's frame mode and record it on the cursor. Merged is the answer
      * whenever the permission was never granted, and the answer in every ambiguous case:
      * it is the mode that exists today, the one whose ordering matches what the factory
-     * advertises, and the one that is correct at any size.
+     * advertises, and the one that is correct at any size: its frames are at most one per
+     * partition frame plus the row cap's split, and the cursor widens the split to fit, see
+     * {@code CoveringPageFrameCursor.widenFramesUnderLimit()}.
      * <p>
      * The ceiling below is a CORRECTNESS invariant, not a tuning knob. Per-key mode emits one
      * frame per non-empty (key, partition-frame) pair, so its frame count is the key count
-     * MULTIPLIED by the partition-frame count -- and the frame index is packed into the top 20
-     * bits of every row id the async GROUP BY compares. See {@link #MAX_PER_KEY_PAGE_FRAMES}.
+     * MULTIPLIED by the partition-frame count, which no row cap can shrink -- and the frame index
+     * is packed into the top 20 bits of every row id the async GROUP BY compares. See
+     * {@link #MAX_PAGE_FRAMES}.
      * <p>
      * The bound is
      * <pre>frames &lt;= K * P_upper + rowsUpper / maxRowsPerFrame</pre>
@@ -1519,7 +1536,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 .putAscii(", keys=").put(keyCount)
                 .putAscii(", partitionsUpper=").put(partitionUpperBound)
                 .putAscii(", framesUpper=").put(frameUpperBound)
-                .putAscii(", frameCeiling=").put(MAX_PER_KEY_PAGE_FRAMES)
+                .putAscii(", frameCeiling=").put(MAX_PAGE_FRAMES)
                 .putAscii(", rowsPerPair=").put(rowsPerPair)
                 .putAscii(", crossover=").put(minRowsPerPair)
                 .putAscii(']');
@@ -1560,7 +1577,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         final long frameUpperBound = pairUpperBound > Long.MAX_VALUE - splitTerm
                 ? Long.MAX_VALUE
                 : pairUpperBound + splitTerm;
-        if (frameUpperBound >= MAX_PER_KEY_PAGE_FRAMES) {
+        if (frameUpperBound >= MAX_PAGE_FRAMES) {
             // The correctness ceiling. Checked FIRST, and entirely from O(1) metadata, so the
             // shapes with the most (key, partition) pairs -- the ones whose density probe would
             // cost the most -- never pay for one.
@@ -2372,7 +2389,14 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     }
 
     private static abstract class CoveringPageFrameCursor implements TablePageFrameCursor {
+        // Frames past the bound widenFramesUnderLimit() computes: the backward lean scan's first
+        // chunks, which double from SingleKeyCoveringPageFrameCursor.DESC_LEAN_FIRST_CHUNK_ROWS up
+        // to the row cap, are at most log2(MAX_FRAME_ROWS / 1024) = 14 smaller frames.
+        private static final int FRAME_BUDGET_SLACK = 64;
         private static final int INITIAL_CAPACITY = 4096;
+        // The most rows a frame may hold: the batched GROUP BY packs frame-relative row indexes
+        // into 24 bits, see NativeFrameBoundaries.calculatePageFrameRowLimit().
+        private static final int MAX_FRAME_ROWS = Map.BATCH_ROW_INDEX_MASK + 1;
         private static final int[] NO_KEYS = new int[0];
         // Identity sentinel returned by fillFrameForKeyCheap to mean "this layout is
         // MIXED / not metadata-resolvable -- fall back to the traverse", as distinct
@@ -2397,7 +2421,13 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         @TestOnly
         static volatile long keyDrainResumesForTesting;
         private static int maxRowsPerFrameOverride = -1;
+        // The row cap of this execution's next frame: the configured one, or more once
+        // widenFramesUnderLimit() raised it.
         protected int maxRowsPerFrame;
+        // The row cap this execution opened with, which toTop() restores.
+        private int configuredMaxRowsPerFrame;
+        // Frames this execution emitted since the last open or toTop(), see finalizeFrame().
+        private int framesEmitted;
         // Tracks all native allocations as (addr, size) pairs for bulk cleanup.
         // Each fillFrameForKey() call allocates fresh buffers so that
         // PageFrameAddressCache can hold addresses from multiple frames
@@ -2623,6 +2653,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             isExhausted = false;
             resetIterationState();
             freeBuffers();
+            // the scan starts over, so it emits its frames again, from the configured cap
+            maxRowsPerFrame = configuredMaxRowsPerFrame;
+            framesEmitted = 0;
         }
 
         protected long allocBuffer(long bytes) {
@@ -3237,8 +3270,19 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
          * arm ({@link PageFrameMemoryPool#patchCoveredFrameMemory}) decodes the
          * values and overrides these addresses. The non-address metadata below is
          * set identically in both cases.
+         * <p>
+         * Every frame of every mode passes here, so this is where the frame count is held below
+         * {@link #MAX_PAGE_FRAMES}: the scan's frames widen once it has emitted
+         * {@link #FRAME_BUDGET_CHECK_FRAMES} of them, see {@link #widenFramesUnderLimit()}, and a
+         * frame at the limit fails the query, which a wrong row id would otherwise answer.
          */
         protected PageFrame finalizeFrame(int count, int partitionIndex, int rawSymbolKey, long rowLo, long rowHi, boolean materialized) {
+            if (++framesEmitted >= MAX_PAGE_FRAMES) {
+                throw frameLimitExceeded();
+            }
+            if (framesEmitted == FRAME_BUDGET_CHECK_FRAMES) {
+                widenFramesUnderLimit();
+            }
             long symAddr = frameAddrs[queryColCount];
             for (int q = 0; q < queryColCount; q++) {
                 int includeIdx = queryColToIncludeIdx[q];
@@ -3428,6 +3472,24 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             return maxRowsPerFrameOverride >= 0 ? maxRowsPerFrameOverride : configMaxRows;
         }
 
+        // the error of a scan at the frame limit, out of finalizeFrame(), which every frame runs
+        private CairoException frameLimitExceeded() {
+            return CairoException.nonCritical()
+                    .put("covering index scan exceeds the page frames one query can address [table=")
+                    .put(tableReader.getTableToken().getTableName())
+                    .put(", limit=").put(MAX_PAGE_FRAMES)
+                    .put("], query fewer partitions or time intervals at a time");
+        }
+
+        /**
+         * The frames one partition frame takes besides the row cap's split of its rows, see
+         * {@link #widenFramesUnderLimit()}: one for a single key, and one for the merge, which holds
+         * every listed key's rows of a partition frame in the same frames.
+         */
+        long framesPerPartitionFrame() {
+            return 1;
+        }
+
         void of(
                 PartitionFrameCursor frameCursor,
                 int configMaxRows,
@@ -3444,6 +3506,8 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             this.frameCursor = frameCursor;
             this.tableReader = frameCursor.getTableReader();
             this.maxRowsPerFrame = effectiveMaxRowsPerFrame(configMaxRows);
+            this.configuredMaxRowsPerFrame = maxRowsPerFrame;
+            this.framesEmitted = 0;
             this.descending = descending;
             this.isExhausted = false;
             columnMapping.clear();
@@ -3453,6 +3517,54 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         }
 
         abstract void resetIterationState();
+
+        /**
+         * Raises the row cap of a scan that has emitted {@link #FRAME_BUDGET_CHECK_FRAMES} frames to
+         * the fewest rows per frame that keep all of its frames below {@link #MAX_PAGE_FRAMES}.
+         * <p>
+         * The rest of the scan emits at most one frame per (key, partition frame) pair it holds
+         * rows of, plus one per row cap's worth of those rows: {@code ceil(a / m) <= 1 + floor(a / m)}
+         * for {@code a >= 1}, and the floors sum to at most the floor of the sum. Bounding the pairs
+         * by the whole scan's, the frame cursor's {@code getFrameCountUpperBound()} times
+         * {@link #framesPerPartitionFrame()}, and the rows by the whole scan's, the cursor's size or
+         * the table's, over-counts, which is the safe direction; so does the slack, for the
+         * backward lean scan's first, smaller chunks. So with {@code m} the fewest rows for which
+         * {@code rows / m} is below what the limit leaves past the frames emitted, the pairs and
+         * the slack, the scan ends below the limit. The cap only grows, to at most
+         * {@link #MAX_FRAME_ROWS}. A scan whose frame cursor has no bound, or whose pairs alone use
+         * up the limit, keeps its cap, and {@link #finalizeFrame} fails it at the limit.
+         * <p>
+         * Once per execution, on the query's thread, before the frames go to the workers: the frames
+         * emitted before keep their rows, and the scan's later frames read the raised cap.
+         */
+        private void widenFramesUnderLimit() {
+            final long partitionFrameUpperBound = frameCursor.getFrameCountUpperBound();
+            // every cursor this factory opens answers, see admitsPerKeyMode()
+            assert partitionFrameUpperBound >= 0 : "frame cursor offers no frame-count upper bound";
+            if (partitionFrameUpperBound < 0 || partitionFrameUpperBound >= MAX_PAGE_FRAMES) {
+                // no bound, or the partition frames alone may fill the limit
+                return;
+            }
+            // fewer than 2^19 partition frames times at most 2^31 keys: no overflow
+            final long pairUpperBound = framesPerPartitionFrame() * partitionFrameUpperBound;
+            final long splitBudget = MAX_PAGE_FRAMES - framesEmitted - FRAME_BUDGET_SLACK - pairUpperBound;
+            if (splitBudget <= 0) {
+                return;
+            }
+            final long scanRows = frameCursor.size();
+            final long rowsUpperBound = scanRows >= 0 ? scanRows : tableReader.size();
+            final long rows = Math.min(rowsUpperBound / splitBudget + 1, MAX_FRAME_ROWS);
+            if (rows > maxRowsPerFrame) {
+                LOG.debug().$("covering scan widens its frames [table=").$(tableReader.getTableToken())
+                        .$(", framesEmitted=").$(framesEmitted)
+                        .$(", partitionFramesUpper=").$(partitionFrameUpperBound)
+                        .$(", rowsUpper=").$(rowsUpperBound)
+                        .$(", rows=").$(maxRowsPerFrame)
+                        .$(", widenedRows=").$(rows)
+                        .I$();
+                maxRowsPerFrame = (int) rows;
+            }
+        }
 
         void setLeanProduction(boolean leanProduction) {
             this.leanProduction = leanProduction;
@@ -4191,9 +4303,6 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         private int perKeyPartitionIndex = -1;
         private long perKeyRowHi;
         private long perKeyRowLo;
-        // Frames nextImplPerKey() emitted since the last open or toTop(), checked against the
-        // ceiling admitsPerKeyMode() bounds them by.
-        private int perKeyFramesEmitted;
         // The MODE this execution runs in, as distinct from the factory's plan-stable
         // PERMISSION (CoveringIndexRecordCursorFactory.unorderedFramesPermitted). Set on
         // every open by getPageFrameCursor(); merged (true) is the default and the answer
@@ -4221,6 +4330,13 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         public void close() {
             closeMergeCursors();
             super.close();
+        }
+
+        // per-key mode emits each key's rows of a partition frame in frames of their own, the merge
+        // all keys' rows in the same frames
+        @Override
+        long framesPerPartitionFrame() {
+            return tsOrderedFrames ? 1 : Math.max(1, multiKeys.size());
         }
 
         @Override
@@ -4258,7 +4374,6 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             closeMergeCursors();
             perKeyPartitionIndex = -1;
             perKeyIdx = 0;
-            perKeyFramesEmitted = 0;
         }
 
         /**
@@ -4300,10 +4415,8 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                         }
                         if (result != null) {
                             // admitsPerKeyMode() admitted this execution only under a frame bound
-                            // below the ceiling, which the walk cannot exceed.
-                            perKeyFramesEmitted++;
-                            assert perKeyFramesEmitted < MAX_PER_KEY_PAGE_FRAMES
-                                    : "per-key scan emitted " + perKeyFramesEmitted + " frames, at the row-id ceiling";
+                            // below the ceiling, which the walk cannot exceed; finalizeFrame()
+                            // enforces it.
                             return result;
                         }
                     }

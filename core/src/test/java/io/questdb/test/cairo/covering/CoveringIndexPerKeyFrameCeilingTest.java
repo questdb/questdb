@@ -61,8 +61,8 @@ import org.junit.Test;
  * than 524,287 frames. Per-key emits one frame per non-empty (key, partition frame) pair, so
  * the product of the key count and the partition frames must clear the ceiling and the table
  * must hold at least one row per pair. {@code setMaxRowsPerFrameForTesting} cannot supply a
- * cheaper shape, because shrinking the row cap inflates the MERGED frame count by exactly the
- * same factor and would corrupt the fallback too. The free choice is only how to split the
+ * cheaper shape, because shrinking the row cap raises the bound's split term, which then decides
+ * the mode in place of the pairs this class is about. The free choice is only how to split the
  * product: {@link #KEYS} x {@link #PARTITIONS} keeps the partition count (the expensive axis
  * to create) low while the IN-list stays a few kilobytes of SQL. The mode choice itself needs
  * no such fixture: the frame bound counts (window, partition) pairs whether or not they hold
