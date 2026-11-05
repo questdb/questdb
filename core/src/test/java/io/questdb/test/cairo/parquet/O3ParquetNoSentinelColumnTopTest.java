@@ -1483,6 +1483,54 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDedupUpsertIdenticalKeptTopFailureThenRetryKeepsTop() throws Exception {
+        // top 2 that the parquet file records, 12 rows: the replay of row 4 in row group 0, whose NULLs are the rows of
+        // the kept top, and the change of row 11: the identity check keeps what it decoded of row group 2 while the job asks the partition
+        // updater about row group 0, and the commit fails as the output opens or at its first write, the merge of
+        // row group 2 in place or the copy of row group 0 in a rewrite. Nothing that the check decoded leaks. Once
+        // the table resumes, the commit applies
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(4);
+        final AtomicBoolean isFailing = new AtomicBoolean();
+        final AtomicBoolean isWriteFailure = new AtomicBoolean();
+        ff = newParquetOpenFailureFacade(isFailing, isWriteFailure);
+        assertMemoryLeak(ff, () -> assertFailedCommitThenRetry(
+                isFailing,
+                isWriteFailure,
+                12,
+                new String[]{storedRow(4, 2), newRow(tsOf(11))},
+                topRows(12, 2, 11, null, true),
+                true
+        ));
+    }
+
+    @Test
+    public void testDedupUpsertIdenticalKeptTopFirstMergeLeavesRowGroupUnchanged() throws Exception {
+        // top 2 that the parquet file records, 12 rows: the replays of row 4 (row group 0, which holds the top rows 1,
+        // 2) and row 6 (row group 1) pass the identity check, the change of row 11 fails the check of row group 2. The
+        // top ends inside the prefix of rows 1..3 and stays: the NULLs of c1..c3 in row group 0 are its rows, which a
+        // merge writes as NULLs, so the update leaves row groups 0 and 1 in place, and merges row group 2 from what
+        // the check decoded: 3 x 9 columns in the check, none in the merge. CHAR: the check does not run, the merge
+        // decodes and writes the three row groups. testDedupUpsertIdenticalKeptTopFirstMergeRewritesRowGroup converts
+        // the partition before the last: the file records no top, and the merge rewrites row group 0
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(4);
+        assertMemoryLeak(() -> {
+            createFileTopShapeTables(" DEDUP UPSERT KEYS(ts)", 2, 12);
+            final boolean isChecked = hasNoSentinelType();
+            assertDecodedColumnsAndWrittenRows(
+                    27,
+                    isChecked ? 4 : 12,
+                    storedRow(4, 2),
+                    storedRow(6, 2),
+                    newRow(tsOf(11))
+            );
+            assertChunkNullCounts("c2", "2,0,0");
+            assertReaders(topRows(12, 2, 11, null, true));
+        });
+    }
+
+    @Test
     public void testDedupUpsertIdenticalKeptTopFirstMergeRewritesRowGroup() throws Exception {
         // top 2, 12 rows: the replays of row 4 (row group 0, which holds the top rows 1, 2) and row 6 (row group 1)
         // pass the identity check, the change of row 11 fails the check of row group 2. Row group 0 holds NULL in
@@ -1503,6 +1551,189 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
             );
             assertChunkNullCounts("c2", "2,0,0");
             assertReaders(topRows(12, 2, 11, null, true));
+        });
+    }
+
+    @Test
+    public void testDedupUpsertIdenticalKeptTopFirstMergeTwiceLeavesRowGroupUnchanged() throws Exception {
+        // top 2 that the parquet file records, 12 rows: two commits replay row 4 in row group 0, whose NULLs are the
+        // rows of the kept top, and change row 11. The update leaves row group 0 in place, so the NULLs stay for the second commit, and merges
+        // row group 2 from what the check decoded: 2 x 9 columns in the check of each commit, none in the merge.
+        // CHAR: the check does not run, the merge decodes and writes both row groups
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(4);
+        assertMemoryLeak(() -> {
+            createFileTopShapeTables(" DEDUP UPSERT KEYS(ts)", 2, 12);
+            final long writtenRows = hasNoSentinelType() ? 4 : 8;
+            assertDecodedColumnsAndWrittenRows(18, writtenRows, storedRow(4, 2), newRow(tsOf(11)));
+            assertChunkNullCounts("c2", "2,0,0");
+            assertDecodedColumnsAndWrittenRows(
+                    18,
+                    writtenRows,
+                    storedRow(4, 2),
+                    rowOf(51, tsOf(11), o3Literal(), "51", "'51'", "#s", "5.5m")
+            );
+            assertChunkNullCounts("c2", "2,0,0");
+            final List<Row> expected = topRows(12, 2, 11, null, true);
+            expected.set(10, new Row(51, tsOf(11), Kind.O3));
+            assertReaders(expected);
+        });
+    }
+
+    @Test
+    public void testDedupUpsertIdenticalKeptTopInSecondRowGroupLeavesRowGroupUnchanged() throws Exception {
+        // top 6 that the parquet file records runs from row group 0 into row group 1: the replay of row 8 in row group 1
+        // and the change of row 11. The
+        // top ends inside the prefix of rows 1..7 and stays: the NULLs of rows 5, 6 in row group 1, the first MERGE,
+        // which starts at row 5, are its rows. The update leaves row groups 0 and 1 in place and merges row group 2
+        // from what the check decoded: 2 x 9 columns in the check, none in the merge
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(4);
+        assertMemoryLeak(() -> {
+            createFileTopShapeTables(" DEDUP UPSERT KEYS(ts)", 6, 12);
+            if (hasNoSentinelType()) {
+                assertChunkNullCounts("c2", "4,2,0");
+            }
+            assertDecodedColumnsAndWrittenRows(18, hasNoSentinelType() ? 4 : 8, storedRow(8, 6), newRow(tsOf(11)));
+            if (hasNoSentinelType()) {
+                assertChunkNullCounts("c2", "4,2,0");
+            }
+            assertReaders(topRows(12, 6, 11, null, true));
+        });
+    }
+
+    @Test
+    public void testDedupUpsertIdenticalKeptTopLargeRowGroupMergesRowGroup() throws Exception {
+        // top 2 that the parquet file records, 16 rows in row groups of 8, then a row group size of 4: the replay of row
+        // 4 and the change of row 15.
+        // The merge of row group 0, 8 rows, writes two row groups of 4, which the partition updater does not answer
+        // for, so the merge loop merges row group 0, and then row group 1 from the start: 2 x 9 columns in the check,
+        // 2 x 9 in the merge
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(8);
+        assertMemoryLeak(() -> {
+            createFileTopShapeTables(" DEDUP UPSERT KEYS(ts)", 2, 16);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+            assertDecodedColumnsAndWrittenRows(hasNoSentinelType() ? 36 : 18, 16, storedRow(4, 2), newRow(tsOf(15)));
+            assertChunkNullCounts("c2", "2,0,0,0");
+            assertReaders(topRows(16, 2, 15, null, true));
+        });
+    }
+
+    @Test
+    public void testDedupUpsertIdenticalKeptTopMaterializedRewriteMergesRowGroup() throws Exception {
+        // the commit of testDedupUpsertIdenticalKeptTopFirstMergeTwiceLeavesRowGroupUnchanged after ci changed type:
+        // the rewrite would copy row group 0 through the materializer, which re-encodes it as a merge does, so the
+        // merge loop merges it, and then row group 2 from the start: 2 x 9 columns in the check, 2 x 9 in the merge
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(4);
+        assertMemoryLeak(() -> {
+            createFileTopShapeTables(" DEDUP UPSERT KEYS(ts)", 2, 12);
+            changeControlColumnType();
+            assertDecodedColumnsAndWrittenRows(hasNoSentinelType() ? 36 : 18, 12, storedRow(4, 2), newRow(tsOf(11)));
+            assertChunkNullCounts("c2", "2,0,0");
+            assertReaders(topRows(12, 2, 11, null, true));
+        });
+    }
+
+    @Test
+    public void testDedupUpsertIdenticalKeptTopRewriteCopiesRowGroup() throws Exception {
+        // the commit of testDedupUpsertIdenticalKeptTopFirstMergeTwiceLeavesRowGroupUnchanged in a full rewrite: the
+        // rewrite copies row group 0 with its NULLs, and row group 1, and merges row group 2 from what the check
+        // decoded: 2 x 9 columns in the check, none in the merge
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(4);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, -1);
+        assertMemoryLeak(() -> {
+            createFileTopShapeTables(" DEDUP UPSERT KEYS(ts)", 2, 12);
+            assertDecodedColumnsAndWrittenRows(18, 12, storedRow(4, 2), newRow(tsOf(11)));
+            assertChunkNullCounts("c2", "2,0,0");
+            assertReaders(topRows(12, 2, 11, null, true));
+        });
+    }
+
+    @Test
+    public void testDedupUpsertIdenticalKeptTopSchemaRewriteCopiesRowGroup() throws Exception {
+        // the commit of testDedupUpsertIdenticalKeptTopRewriteCopiesRowGroup after a column is added: the rewrite
+        // copies row groups 0 and 1 with a null chunk for the column, which the parquet file lacks
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(4);
+        assertMemoryLeak(() -> {
+            createFileTopShapeTables(" DEDUP UPSERT KEYS(ts)", 2, 12);
+            for (String t : tables()) {
+                execute("ALTER TABLE " + t + " ADD COLUMN extra INT");
+            }
+            drainWalQueue();
+            assertDecodedColumnsAndWrittenRows(18, 12, storedRow(4, 2), newRow(tsOf(11)));
+            assertChunkNullCounts("c2", "2,0,0");
+            assertReaders(topRows(12, 2, 11, null, true));
+        });
+    }
+
+    @Test
+    public void testDedupUpsertIdenticalKeptTopStatisticsDisabledMergesRowGroupOnce() throws Exception {
+        // no chunk carries a null count: the partition updater cannot tell that the NULLs of row group 0 are the
+        // rows of the kept top, so the first commit merges row group 0, and then row group 2 from the start: 2 x 9
+        // columns in the check, 2 x 9 in the merge. The merge writes null counts, as the designated timestamp keeps
+        // its statistics: the second commit leaves row group 0 in place
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(4);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_STATISTICS_ENABLED, false);
+        assertMemoryLeak(() -> {
+            createFileTopShapeTables(" DEDUP UPSERT KEYS(ts)", 2, 12);
+            assertChunkNullCounts("c2", "?,?,?");
+            final boolean isChecked = hasNoSentinelType();
+            assertDecodedColumnsAndWrittenRows(isChecked ? 36 : 18, 8, storedRow(4, 2), newRow(tsOf(11)));
+            assertChunkNullCounts("c2", "2,?,0");
+            assertDecodedColumnsAndWrittenRows(
+                    18,
+                    isChecked ? 4 : 8,
+                    storedRow(4, 2),
+                    rowOf(51, tsOf(11), o3Literal(), "51", "'51'", "#s", "5.5m")
+            );
+            final List<Row> expected = topRows(12, 2, 11, null, true);
+            expected.set(10, new Row(51, tsOf(11), Kind.O3));
+            assertReaders(expected);
+        });
+    }
+
+    @Test
+    public void testDedupUpsertIdenticalKeptTopThenGapRowLeavesRowGroupUnchanged() throws Exception {
+        // top 2 that the parquet file records, 12 rows: the replay of row 4 in row group 0, whose NULLs are the rows of
+        // the kept top, and the new row at 07:30, which goes into a row group of its own before row group 2 and stops the check. Row group 0 stays in
+        // place, the merge decodes nothing. CHAR: the check does not run, the merge decodes and writes row group 0
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(4);
+        assertMemoryLeak(() -> {
+            createFileTopShapeTables(" DEDUP UPSERT KEYS(ts)", 2, 12);
+            assertDecodedColumnsAndWrittenRows(
+                    9,
+                    hasNoSentinelType() ? 1 : 5,
+                    storedRow(4, 2),
+                    newRow("2024-01-01T07:30:00.000000Z")
+            );
+            assertChunkNullCounts("c2", "2,0,0,0");
+            assertReaders(topRows(12, 2, -1, "2024-01-01T07:30:00.000000Z", true));
+        });
+    }
+
+    @Test
+    public void testDedupUpsertIdenticalKeptTopThenNewRowKeepsKeyColumnsOfLaterMerge() throws Exception {
+        // top 2 that the parquet file records, 12 rows: the replay of row 4 in row group 0, whose NULLs are the rows of
+        // the kept top, and the new row at 09:30, which fails the key stage of row group 2. Row group 0 stays in place, and the merge of row
+        // group 2 takes over the keys that the check decoded: 9 + 1 columns in the check, 8 in the merge
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(4);
+        assertMemoryLeak(() -> {
+            createFileTopShapeTables(" DEDUP UPSERT KEYS(ts)", 2, 12);
+            assertDecodedColumnsAndWrittenRows(
+                    18,
+                    hasNoSentinelType() ? 5 : 9,
+                    storedRow(4, 2),
+                    newRow("2024-01-01T09:30:00.000000Z")
+            );
+            assertChunkNullCounts("c2", "2,0,0");
+            assertReaders(topRows(12, 2, -1, "2024-01-01T09:30:00.000000Z", true));
         });
     }
 
@@ -1813,6 +2044,42 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
                     // both tops end: c reads false in rows 1, 2, s reads 0 in rows 1..6
                     expected.put(v).put('\t').put(v > 2 && v % 2 == 0).put('\t').put(v > 6 ? -v : 0).put('\n');
                 }
+            }
+            assertTwoColumnTopRows(expected.toString());
+        });
+    }
+
+    @Test
+    public void testDedupUpsertKeptTopAndEndedTopInFirstMergeRewritesRowGroup() throws Exception {
+        // BOOLEAN c with top 2 and SHORT s with top 4, which the parquet file records, 12 rows: the replay of row 4 (row group 0) passes the identity
+        // check, the change of row 11 fails it. The top of c ends inside the prefix of rows 1..3 and stays, the top
+        // of s ends after it: the merge of row group 0 writes 0 over the NULLs of s, so the merge loop merges it,
+        // and then row group 2 from the start: 4 columns of 2 row groups in the check and again in the merge. The
+        // test does not depend on the parameters, it runs once
+        assumeWalOnce();
+        setInPlaceProperties(4);
+        assertMemoryLeak(() -> {
+            createTwoColumnTopTables(2, 4, 12, true);
+            assertChunkNullCounts("c", "2,0,0");
+            assertChunkNullCounts("s", "4,0,0");
+            assertDecodedColumnsAndWrittenRows(
+                    TWO_COLUMN_TOP_COLUMNS,
+                    16,
+                    8,
+                    twoColumnRow(4, 2, 4),
+                    "(11, '" + tsOf(11) + "', false, -1)"
+            );
+            assertChunkNullCounts("c", "2,0,0");
+            assertChunkNullCounts("s", "0,0,0");
+            final StringSink expected = new StringSink();
+            expected.put("v\tc\ts\n");
+            for (int v = 1; v <= 12; v++) {
+                // c keeps its top, rows 1, 2 read NULL; s reads 0 in rows 1..4
+                expected.put(v).put('\t');
+                if (v > 2) {
+                    expected.put(v % 2 == 0);
+                }
+                expected.put('\t').put(v == 11 ? -1 : (v > 4 ? -v : 0)).put('\n');
             }
             assertTwoColumnTopRows(expected.toString());
         });
@@ -2727,9 +2994,22 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
             String[] rows,
             List<Row> expected
     ) throws Exception {
+        assertFailedCommitThenRetry(isFailing, isWriteFailure, rowCount, rows, expected, false);
+    }
+
+    // assertFailedCommitThenRetry() over the tables of createShapeTables(), with the column tops recorded in the
+    // parquet file when isFileTop, see createFileTopShapeTables()
+    private void assertFailedCommitThenRetry(
+            AtomicBoolean isFailing,
+            AtomicBoolean isWriteFailure,
+            int rowCount,
+            String[] rows,
+            List<Row> expected,
+            boolean isFileTop
+    ) throws Exception {
         for (boolean isRewrite : new boolean[]{false, true}) {
             for (boolean isWrite : new boolean[]{false, true}) {
-                createShapeTables(" DEDUP UPSERT KEYS(ts)", 2, rowCount, -1);
+                createShapeTables(" DEDUP UPSERT KEYS(ts)", 2, rowCount, -1, -1, this::literalOf, Integer::toString, isFileTop);
                 if (isRewrite) {
                     for (String t : tables()) {
                         execute("ALTER TABLE " + t + " ADD COLUMN extra INT");
@@ -3189,6 +3469,23 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
             IntFunction<String> literalOfRow,
             IntFunction<String> ciOfRow
     ) throws Exception {
+        createShapeTables(dedup, top, rowCount, tiedLo, tiedHi, literalOfRow, ciOfRow, false);
+    }
+
+    // the tables of createShapeTables(); isConvertedLast converts 2024-01-01 while it is the last partition and adds the
+    // row of 2024-01-02 after. That conversion records the column tops in the parquet file, as the conversion of any
+    // partition did in earlier versions; the conversion of a partition before the last writes the rows of a top as
+    // NULLs and records no top
+    private void createShapeTables(
+            String dedup,
+            int top,
+            int rowCount,
+            int tiedLo,
+            int tiedHi,
+            IntFunction<String> literalOfRow,
+            IntFunction<String> ciOfRow,
+            boolean isConvertedLast
+    ) throws Exception {
         for (String t : tables()) {
             createBaseTable(t, dedup);
             final StringBuilder topRows = new StringBuilder("INSERT INTO " + t + " (v, ts) VALUES ");
@@ -3209,11 +3506,24 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
                         .append(", ").append(ciOfRow.apply(v)).append(", '").append(v).append("', #s, ").append(v % 10).append(".5m)");
             }
             execute(sql.toString());
-            execute("INSERT INTO " + t + " (v, ts, c1, c2, c3) VALUES (99, '2024-01-02T00:00:00.000000Z', "
-                    + literalOf(4) + ", " + literalOf(4) + ", " + literalOf(4) + ")");
+            if (!isConvertedLast) {
+                insertNextDayRow(t);
+            }
         }
         drainWalQueue();
         convertToParquet();
+        if (isConvertedLast) {
+            for (String t : tables()) {
+                insertNextDayRow(t);
+            }
+            drainWalQueue();
+        }
+    }
+
+    // createShapeTables() of rows 1..rowCount and top `top`, with the column tops recorded in the parquet file, see
+    // isConvertedLast
+    private void createFileTopShapeTables(String dedup, int top, int rowCount) throws Exception {
+        createShapeTables(dedup, top, rowCount, -1, -1, this::literalOf, Integer::toString, true);
     }
 
     // rows 1..6 and a row with v = duplicateV at 03:00, the timestamp of row 4, before the columns exist (top 7),
@@ -3258,6 +3568,12 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
     // DEDUP UPSERT KEYS(ts) tables with BOOLEAN c added after topC rows and SHORT s added after topS rows (topC <=
     // topS), rows 1..rowCount, see twoColumnRow(); 2024-01-01 converted to parquet, in row groups of 4
     private void createTwoColumnTopTables(int topC, int topS, int rowCount) throws Exception {
+        createTwoColumnTopTables(topC, topS, rowCount, false);
+    }
+
+    // the tables of createTwoColumnTopTables(), converted while 2024-01-01 is the last partition when isConvertedLast,
+    // see createShapeTables()
+    private void createTwoColumnTopTables(int topC, int topS, int rowCount, boolean isConvertedLast) throws Exception {
         for (String t : tables()) {
             createBaseTable(t, " DEDUP UPSERT KEYS(ts)");
             execute("INSERT INTO " + t + " (v, ts) VALUES " + rowsNoValue(1, topC));
@@ -3276,10 +3592,18 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
                 sql.append(v > topS + 1 ? ", " : "").append(twoColumnRow(v, topC, topS));
             }
             execute(sql.toString());
-            execute("INSERT INTO " + t + " (v, ts) VALUES (99, '2024-01-02T00:00:00.000000Z')");
+            if (!isConvertedLast) {
+                execute("INSERT INTO " + t + " (v, ts) VALUES (99, '2024-01-02T00:00:00.000000Z')");
+            }
         }
         drainWalQueue();
         convertToParquet();
+        if (isConvertedLast) {
+            for (String t : tables()) {
+                execute("INSERT INTO " + t + " (v, ts) VALUES (99, '2024-01-02T00:00:00.000000Z')");
+            }
+            drainWalQueue();
+        }
     }
 
     private void dropTables() throws Exception {
@@ -3364,6 +3688,12 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
     }
 
     // inserts the rows, each from rowOf(), into pt and tw in one commit
+    // the row of 2024-01-02 of createShapeTables(), so that 2024-01-01 is not the last partition
+    private void insertNextDayRow(String table) throws Exception {
+        execute("INSERT INTO " + table + " (v, ts, c1, c2, c3) VALUES (99, '2024-01-02T00:00:00.000000Z', "
+                + literalOf(4) + ", " + literalOf(4) + ", " + literalOf(4) + ")");
+    }
+
     private void insertUpsertRows(String... rows) throws Exception {
         for (String t : tables()) {
             execute("INSERT INTO " + t + " (" + UPSERT_COLUMNS + ") VALUES " + String.join(", ", rows));

@@ -420,6 +420,51 @@ fn row_offset_from(row_offset: jlong) -> ParquetResult<usize> {
 }
 
 #[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_isRowGroupRewriteUnchanged(
+    mut env: JNIEnv,
+    _class: JClass,
+    updater: *const ParquetUpdater,
+    row_group_lo: jint,
+    row_group_hi: jint,
+    row_offset: jlong,
+) -> jboolean {
+    let env = &mut env;
+    if updater.is_null() {
+        let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
+        err.add_context("error in PartitionUpdater.isRowGroupRewriteUnchanged");
+        return err.into_cairo_exception().throw(env);
+    }
+    // SAFETY: Pointer was created by `Box::into_raw` in the create function.
+    // Single-threaded JNI access guarantees no aliasing.
+    let parquet_updater = unsafe { &*updater };
+    let is_unchanged = usize::try_from(row_group_lo)
+        .ok()
+        .zip(usize::try_from(row_group_hi).ok())
+        .ok_or_else(|| {
+            fmt_err!(
+                InvalidLayout,
+                "negative row group index: [{},{}]",
+                row_group_lo,
+                row_group_hi
+            )
+        })
+        .and_then(|(rg_lo, rg_hi)| {
+            parquet_updater.is_row_group_rewrite_unchanged(
+                rg_lo,
+                rg_hi,
+                row_offset_from(row_offset)?,
+            )
+        });
+    match is_unchanged {
+        Ok(is_unchanged) => is_unchanged as jboolean,
+        Err(mut err) => {
+            err.add_context("error in PartitionUpdater.isRowGroupRewriteUnchanged");
+            err.into_cairo_exception().throw(env)
+        }
+    }
+}
+
+#[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_setColumnTopRowLimit(
     mut env: JNIEnv,
     _class: JClass,

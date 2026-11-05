@@ -50,6 +50,9 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
     // Whether the first stage of the merge that keepRowGroupMerge() kept prepared the designated timestamp and
     // the dedup key columns only
     private boolean isPreparedMergeKeyColumnsOnly;
+    // The MERGE among the unchanged merge actions whose row groups hold NULLs of a column without NULL that may
+    // be the rows of the column top that the output keeps, -1 when there is none, see setKeptTopMergeAction()
+    private int keptTopMergeAction = -1;
     // Decode buffers of the designated timestamp and the dedup key columns of a SKIP row group merge.
     // They are apart from getRowGroupBuffers() because a parquet rewrite can copy row groups through
     // ParquetRowGroupMaterializer, which decodes into the shared buffers, between the two stages of
@@ -119,6 +122,7 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
         rowGroupOrder.clear();
         srcPtrs.clear();
         topRows.clear();
+        keptTopMergeAction = -1;
         unchangedMergeActionLo = 0;
         unchangedMergeActionHi = 0;
     }
@@ -183,6 +187,11 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
 
     public LongList getGapO3Ranges() {
         return gapO3Ranges;
+    }
+
+    // the MERGE that setKeptTopMergeAction() named, -1 when there is none
+    public int getKeptTopMergeAction() {
+        return keptTopMergeAction;
     }
 
     public RowGroupBuffers getKeyRowGroupBuffers() {
@@ -308,6 +317,16 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
     }
 
     /**
+     * Takes the MERGE that {@link #setKeptTopMergeAction(int)} named out of the unchanged merge actions: the merge
+     * loop merges it, because its merge writes its row groups otherwise than stored.
+     */
+    public void mergeKeptTopMergeAction() {
+        assert isUnchangedMergeAction(keptTopMergeAction);
+        unchangedMergeActionLo = keptTopMergeAction + 1;
+        keptTopMergeAction = -1;
+    }
+
+    /**
      * Starts a row group merge with the given column count of the table. The previous merge must
      * have been freed with {@link #freeRowGroupMerge()}.
      */
@@ -331,6 +350,16 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
         }
         mergeIndexSize = size;
         return mergeIndexAddr;
+    }
+
+    /**
+     * Names the MERGE among the merge actions of {@link #setUnchangedMergeActions(int, int)} that the merge loop leaves
+     * as stored only when the partition updater finds that its merge writes its row groups as stored, see
+     * {@code O3PartitionJob.isUpsertIdenticalUpToPartitionMax()}, otherwise {@link #mergeKeptTopMergeAction()} takes
+     * it out. {@link #clear()} forgets it.
+     */
+    public void setKeptTopMergeAction(int actionIndex) {
+        keptTopMergeAction = actionIndex;
     }
 
     public void setMergeActiveColCount(int mergeActiveColCount) {

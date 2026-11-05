@@ -142,6 +142,9 @@ pub struct ParquetUpdater {
     /// Column top of each column of the old file, keyed by parquet field_id: the top its QDB
     /// metadata gives, or 0 when the chunk null counts contradict it, see column_top_evidence().
     old_column_tops: RapidHashMap<i32, usize>,
+    /// The QuestDB type of each column of the old file, in the order of its schema, as its QDB
+    /// metadata gives it, see is_row_group_rewrite_unchanged().
+    old_column_types: Vec<ColumnType>,
     /// The columns whose old top the chunk null counts cannot verify. with_kept_column_tops()
     /// keeps such a top only over rows the caller passes as 0.
     unverified_column_tops: HashSet<i32>,
@@ -455,6 +458,11 @@ impl ParquetUpdater {
                 Some((id, top))
             })
             .collect();
+        let old_column_types = source_qdb_meta
+            .schema
+            .iter()
+            .map(|col| col.column_type)
+            .collect();
         let old_row_count = file_metadata
             .row_groups
             .iter()
@@ -485,6 +493,7 @@ impl ParquetUpdater {
             old_ascii,
             written_ascii: RapidHashMap::default(),
             old_column_tops,
+            old_column_types,
             unverified_column_tops,
             lowered_column_tops: RapidHashMap::default(),
             old_row_count,
@@ -602,6 +611,77 @@ impl ParquetUpdater {
         } else {
             0
         }
+    }
+
+    /// Whether the update can leave the old row groups `[rg_lo, rg_hi]` as they are instead of
+    /// re-encoding, from output row `row_offset`, the rows they hold, as a merge that replaces
+    /// their rows with identical rows does in one row group: the re-encode writes the same NULLs
+    /// and keeps the same column tops. It does when each BOOLEAN, BYTE and SHORT chunk holds as
+    /// NULLs exactly the rows of the kept top, which with_kept_column_tops() encodes as NULLs,
+    /// the only NULLs of these types (see column_top_evidence()), and no chunk would lower an
+    /// unverified top that covers some of its rows, see with_kept_column_tops() and
+    /// check_kept_tops_against_written_row_group(). A chunk without a null count shows neither.
+    /// CHAR reads a NULL and a 0 alike. A column that the output drops does not count.
+    ///
+    /// Call after set_column_top_row_limit() and before the update writes a row group that
+    /// starts below the limit, which can lower an unverified top.
+    pub fn is_row_group_rewrite_unchanged(
+        &self,
+        rg_lo: usize,
+        rg_hi: usize,
+        row_offset: usize,
+    ) -> ParquetResult<bool> {
+        let row_groups = &self.file_metadata.row_groups;
+        if rg_lo > rg_hi || rg_hi >= row_groups.len() {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "is_row_group_rewrite_unchanged: row groups [{},{}] out of range [0,{})",
+                rg_lo,
+                rg_hi,
+                row_groups.len()
+            ));
+        }
+        let row_groups = &row_groups[rg_lo..=rg_hi];
+        for (index, field) in self.file_metadata.schema_descr.fields().iter().enumerate() {
+            let (Some(column_id), Some(&column_type)) =
+                (field.get_field_info().id, self.old_column_types.get(index))
+            else {
+                return Ok(false);
+            };
+            if self
+                .target_col_id_to_pos
+                .as_ref()
+                .is_some_and(|positions| !positions.contains_key(&column_id))
+            {
+                continue;
+            }
+            let top = self.kept_column_top(column_id);
+            let is_unverified = self.unverified_column_tops.contains(&column_id);
+            let mut row_group_lo = row_offset;
+            for row_group in row_groups {
+                let row_count = row_group.num_rows();
+                let top_rows = top.saturating_sub(row_group_lo).min(row_count) as u64;
+                let null_count = row_group
+                    .columns()
+                    .get(index)
+                    .and_then(|chunk| chunk.metadata().statistics.as_ref())
+                    .and_then(|statistics| statistics.null_count)
+                    .and_then(|null_count| u64::try_from(null_count).ok());
+                let is_unchanged = if is_no_null_sentinel_type(column_type) {
+                    (top_rows == 0 || !is_unverified)
+                        && (column_type.tag() == ColumnTypeTag::Char
+                            || null_count == Some(top_rows))
+                } else {
+                    // the re-encoded chunk counts the NULLs of the chunk
+                    top_rows == 0 || null_count.is_some_and(|null_count| null_count >= top_rows)
+                };
+                if !is_unchanged {
+                    return Ok(false);
+                }
+                row_group_lo += row_count;
+            }
+        }
+        Ok(true)
     }
 
     /// Returns a copy of the partition whose BOOLEAN, BYTE, SHORT and CHAR columns start
@@ -7351,6 +7431,211 @@ mod tests {
         // INT keeps its real values: the top applies to no-sentinel types only
         let int_stats = chunk_statistics(&md, 0, 5);
         assert_eq!(int_stats.max_value, Some(100i32.to_le_bytes().to_vec()));
+        Ok(())
+    }
+
+    /// Updates in place, under limit `limit`, the 8 rows of a source whose columns hold NULLs below
+    /// `null_tops` and whose footer gives the tops `footer_tops` (see with_footer_column_tops()).
+    /// With `rg`, re-encodes that row group from the rows it holds, as a merge that replaces them
+    /// with identical rows passes them: 0 below a top in a BOOLEAN, BYTE, SHORT or CHAR column,
+    /// INT NULL in the INT column. Returns what is_row_group_rewrite_unchanged() answers for `rg`
+    /// before the write, true without `rg`, then the footer tops and the null counts of the
+    /// BOOLEAN, BYTE, SHORT and INT chunks of both row groups, by row group. CHAR reads a NULL and
+    /// a 0 alike, and the re-encode writes the rows below an ended top as 0.
+    #[allow(clippy::type_complexity)]
+    fn update_topped_source(
+        null_tops: [usize; 5],
+        footer_tops: [usize; 5],
+        limit: usize,
+        rg: Option<usize>,
+    ) -> Result<(bool, Vec<usize>, Vec<Vec<i64>>), Box<dyn Error>> {
+        let alloc = crate::allocator::TestAllocatorState::new();
+        let (written, _) = write_topped_source(null_tops)?;
+        let mut tops = vec![0];
+        tops.extend_from_slice(&footer_tops);
+        let bytes = with_footer_column_tops(&std::fs::read(written.path())?, &tops)?;
+        let src = NamedTempFile::new()?;
+        std::fs::write(src.path(), &bytes)?;
+        let mut updater = open_topped_updater(&alloc, &src, bytes.len() as u64, None)?;
+        updater.set_column_top_row_limit(limit);
+        let mut is_unchanged = true;
+        if let Some(rg) = rg {
+            let row_lo = rg * 4;
+            is_unchanged = updater.is_row_group_rewrite_unchanged(rg, rg, row_lo)?;
+            let ts: Vec<i64> = (row_lo..row_lo + 4)
+                .map(|row| (row as i64 + 1) * 10)
+                .collect();
+            let mut columns = vec![make_designated_ts_with_id(
+                0,
+                "ts",
+                Box::leak(ts.into_boxed_slice()),
+            )];
+            for (i, &(id, name, tag)) in TOPPED_TAGS.iter().enumerate() {
+                let null_top = null_tops[i];
+                columns.push(topped_column(id, name, tag, 0, 4, move |row| {
+                    if row_lo + row < null_top {
+                        NULL_BELOW_TOP
+                    } else {
+                        (row_lo + row) as i64 + 1
+                    }
+                }));
+            }
+            let rows = Partition { table: "t".to_string(), columns };
+            updater.replace_row_group(&rows, rg as i32, row_lo)?;
+        }
+        updater.end(None)?;
+        let md = read_footer(&src)?;
+        let null_counts = (0..2)
+            .map(|rg| {
+                let mut counts = topped_null_counts(&md, rg);
+                // CHAR
+                counts.remove(3);
+                counts
+            })
+            .collect();
+        Ok((is_unchanged, footer_column_tops(&md), null_counts))
+    }
+
+    #[test]
+    fn row_group_rewrite_unchanged_iff_rewrite_keeps_nulls_and_tops() -> Result<(), Box<dyn Error>>
+    {
+        // Every top and limit of the 8 rows in row groups of 4: a top that the footer gives and the
+        // NULLs hold, one footer top that QuestDB 9.3.3 left stale over values (see
+        // top_contradicted_by_null_counts_ends) or below NULLs, and tops that differ by column.
+        // The answer matches what the re-encode does to the null counts and the footer tops.
+        let mut unchanged_count = 0;
+        let mut changed_count = 0;
+        for top in 0..=8 {
+            let cases = [
+                ([top; 5], [top; 5]),
+                ([0; 5], [top; 5]),
+                ([top; 5], [top / 2; 5]),
+                (
+                    [top, 8 - top, top / 2, top, 8 - top],
+                    [top, 8 - top, top / 2, top, 8 - top],
+                ),
+            ];
+            for (null_tops, footer_tops) in cases {
+                for limit in 0..=8 {
+                    let (_, stored_tops, stored_null_counts) =
+                        update_topped_source(null_tops, footer_tops, limit, None)?;
+                    for rg in 0..2 {
+                        let (is_unchanged, tops, null_counts) =
+                            update_topped_source(null_tops, footer_tops, limit, Some(rg))?;
+                        let is_rewrite_unchanged =
+                            tops == stored_tops && null_counts == stored_null_counts;
+                        assert_eq!(
+                            is_unchanged, is_rewrite_unchanged,
+                            "null tops {null_tops:?}, footer tops {footer_tops:?}, limit {limit}, rg {rg}"
+                        );
+                        if is_unchanged {
+                            unchanged_count += 1;
+                        } else {
+                            changed_count += 1;
+                        }
+                    }
+                }
+            }
+        }
+        // both answers occur
+        assert!(unchanged_count > 0 && changed_count > 0);
+        Ok(())
+    }
+
+    #[test]
+    fn row_group_rewrite_unchanged_keeps_null_rows_of_kept_top() -> Result<(), Box<dyn Error>> {
+        // top 2, the merge after row 2 (limit 3): the rows 0, 1 of row group 0 stay NULL in a
+        // re-encode, the INT NULLs count as many rows as its top covers
+        let (is_unchanged, _, _) = update_topped_source([2; 5], [2; 5], 3, Some(0))?;
+        assert!(is_unchanged);
+        // the limit at the top ends it: the re-encode writes 0 over rows 0, 1
+        let (is_unchanged, tops, null_counts) = update_topped_source([2; 5], [2; 5], 2, Some(0))?;
+        assert!(!is_unchanged);
+        assert_eq!(tops, vec![0; 6]);
+        assert_eq!(null_counts[0], vec![0, 0, 0, 2]);
+        // top 6 runs into row group 1 and stays (limit 7): its rows 4, 5 stay NULL
+        let (is_unchanged, _, _) = update_topped_source([6; 5], [6; 5], 7, Some(1))?;
+        assert!(is_unchanged);
+        Ok(())
+    }
+
+    #[test]
+    fn row_group_rewrite_unchanged_rejects_unverified_top() -> Result<(), Box<dyn Error>> {
+        // without statistics no null count verifies the top: with_kept_column_tops() keeps it
+        // only over the rows that the re-encode finds 0
+        let alloc = crate::allocator::TestAllocatorState::new();
+        let (src, src_len) = write_topped_source_without_statistics([2; 5])?;
+        let updater = {
+            let mut updater = open_topped_updater(&alloc, &src, src_len, None)?;
+            updater.set_column_top_row_limit(3);
+            updater
+        };
+        assert!(!updater.is_row_group_rewrite_unchanged(0, 0, 0)?);
+        // row group 1 has no top rows, but no null count shows that it holds no NULL either
+        assert!(!updater.is_row_group_rewrite_unchanged(1, 1, 4)?);
+        Ok(())
+    }
+
+    #[test]
+    fn row_group_rewrite_unchanged_skips_columns_the_output_drops() -> Result<(), Box<dyn Error>> {
+        // BYTE has top 6, which limit 3 ends: a re-encode writes 0 over the NULLs of row group 0. A rewrite whose
+        // target schema drops BYTE writes no chunk of it
+        let alloc = crate::allocator::TestAllocatorState::new();
+        let (src, src_len) = write_topped_source([2, 6, 2, 2, 2])?;
+        let out = NamedTempFile::new()?;
+        let mut updater = open_topped_updater(&alloc, &src, src_len, Some(&out))?;
+        updater.set_column_top_row_limit(3);
+        assert!(!updater.is_row_group_rewrite_unchanged(0, 0, 0)?);
+        let mut columns = vec![make_designated_ts_with_id(0, "ts", &[10])];
+        for &(id, name, tag) in TOPPED_TAGS.iter().filter(|(id, _, _)| *id != 2) {
+            columns.push(topped_column(id, name, tag, 0, 1, |_| 0));
+        }
+        updater.set_target_schema(&Partition { table: "t".to_string(), columns })?;
+        assert!(updater.is_row_group_rewrite_unchanged(0, 0, 0)?);
+        Ok(())
+    }
+
+    #[test]
+    fn row_group_rewrite_unchanged_rejects_column_without_field_id() -> Result<(), Box<dyn Error>> {
+        // a file whose BYTE column carries no field id: no top of the update describes it
+        let alloc = crate::allocator::TestAllocatorState::new();
+        let (written, _) = write_topped_source([0; 5])?;
+        let bytes = std::fs::read(written.path())?;
+        let len = bytes.len();
+        let meta_len = i32::from_le_bytes(bytes[len - 8..len - 4].try_into()?) as usize;
+        let mut thrift =
+            read_metadata_with_size(&mut Cursor::new(&bytes), len as u64)?.into_thrift();
+        let byte_field = thrift
+            .schema
+            .iter_mut()
+            .find(|element| element.name == "b")
+            .expect("BYTE column");
+        byte_field.field_id = None;
+        let mut stripped = bytes[..len - 8 - meta_len].to_vec();
+        parquet2::write::end_file(&mut stripped, &thrift)?;
+        let src = NamedTempFile::new()?;
+        std::fs::write(src.path(), &stripped)?;
+        let mut updater = open_topped_updater(&alloc, &src, stripped.len() as u64, None)?;
+        updater.set_column_top_row_limit(3);
+        assert!(!updater.is_row_group_rewrite_unchanged(0, 0, 0)?);
+        Ok(())
+    }
+
+    #[test]
+    fn row_group_rewrite_unchanged_rejects_row_groups_out_of_range() -> Result<(), Box<dyn Error>> {
+        let alloc = crate::allocator::TestAllocatorState::new();
+        let (src, src_len) = write_topped_source([2; 5])?;
+        let updater = open_topped_updater(&alloc, &src, src_len, None)?;
+        for (rg_lo, rg_hi) in [(2, 2), (1, 0), (0, 2)] {
+            let err = updater
+                .is_row_group_rewrite_unchanged(rg_lo, rg_hi, 0)
+                .expect_err("out of range");
+            assert!(err.to_string().contains("out of range"), "{err}");
+        }
+        // a run of both row groups, from row 0: top 2 is kept below limit 3
+        let mut updater = updater;
+        updater.set_column_top_row_limit(3);
+        assert!(updater.is_row_group_rewrite_unchanged(0, 1, 0)?);
         Ok(())
     }
 
