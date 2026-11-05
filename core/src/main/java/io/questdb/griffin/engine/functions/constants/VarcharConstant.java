@@ -85,14 +85,6 @@ public class VarcharConstant extends VarcharFunction implements ConstantFunction
         return value != null ? new VarcharConstant(value, false) : NULL;
     }
 
-    public static VarcharConstant newInstance(CharSequence value) {
-        return value != null ? new VarcharConstant(value) : NULL;
-    }
-
-    public static VarcharConstant newInstance(Utf8Sequence value) {
-        return value != null ? new VarcharConstant(value) : NULL;
-    }
-
     @Override
     public CharSequence getStrA(Record rec) {
         return utf16Value;

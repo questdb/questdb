@@ -32,7 +32,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import org.jetbrains.annotations.Nullable;
 
 /**
  * Flattens compatible binary merge factories into one N-way owner. When set type widening changes
@@ -53,7 +52,6 @@ public final class MergeUnionAllRecordCursorFactoryBuilder {
             ObjList<Function> castFunctionsA,
             ObjList<Function> castFunctionsB,
             boolean isAscending,
-            @Nullable IntList symbolUnionColumns,
             CastFunctionFactory castFunctionFactory,
             SqlExecutionContext executionContext
     ) throws SqlException {
@@ -80,8 +78,7 @@ public final class MergeUnionAllRecordCursorFactoryBuilder {
                     operandsA.positions,
                     operandsA.castFunctions,
                     metadata.getTimestampIndex(),
-                    isAscending,
-                    symbolUnionColumns
+                    isAscending
             );
             operandsA = null;
             return result;

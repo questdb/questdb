@@ -43,8 +43,6 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.engine.functions.constants.Long256Constant;
 import io.questdb.griffin.engine.functions.constants.Long256NullConstant;
-import io.questdb.griffin.engine.functions.date.TimestampFloorFromOffsetUtcFunctionFactory;
-import io.questdb.griffin.engine.functions.date.TimestampFloorFunctionFactory;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.ParquetEncoding;
 import io.questdb.griffin.model.ExecutionModel;
@@ -1100,17 +1098,6 @@ public class SqlUtil {
         return tableName;
     }
 
-    /**
-     * Extracts the interval/stride expression from a timestamp_floor or
-     * timestamp_floor_utc function call, handling 2/3/5-param overloads.
-     */
-    public static ExpressionNode getTimestampFloorInterval(ExpressionNode ast) {
-        if (ast.paramCount == 3 || ast.paramCount == 5) {
-            return ast.args.getQuick(ast.paramCount - 1);
-        }
-        return ast.lhs;
-    }
-
     public static byte implicitCastAsByte(long value, int fromType) {
         if (value >= Byte.MIN_VALUE && value <= Byte.MAX_VALUE) {
             return (byte) value;
@@ -1729,23 +1716,6 @@ public class SqlUtil {
         return Math.max(lo, Math.min(hi, result));
     }
 
-    public static boolean isNotPlainSelectModel(QueryModel model) {
-        return model.getTableName() != null
-                || model.getGroupBy().size() > 0
-                || model.getJoinModels().size() > 1
-                || model.getLatestByType() != QueryModel.LATEST_BY_NONE
-                || model.getUnionModel() != null;
-    }
-
-    public static boolean isParallelismSupported(ObjList<Function> functions) {
-        for (int i = 0, n = functions.size(); i < n; i++) {
-            if (!functions.getQuick(i).supportsParallelism()) {
-                return false;
-            }
-        }
-        return true;
-    }
-
     /**
      * Returns true when the alias carries protective double quotes added by
      * {@link #createExprColumnAlias(CharacterStore, CharSequence, AbstractLowerCaseCharSequenceHashSet, LowerCaseCharSequenceIntHashMap, int, boolean)}
@@ -1764,16 +1734,6 @@ public class SqlUtil {
      */
     public static boolean isQuoteProtectedAlias(CharSequence alias, int lo, int hi) {
         return quoteProtectedInteriorDot(alias, lo, hi) != Integer.MIN_VALUE;
-    }
-
-    /**
-     * Returns true if the given expression node is a timestamp_floor or
-     * timestamp_floor_utc function call.
-     */
-    public static boolean isTimestampFloorFunction(ExpressionNode ast) {
-        return ast.type == ExpressionNode.FUNCTION
-                && (Chars.equalsIgnoreCase(TimestampFloorFunctionFactory.NAME, ast.token)
-                || Chars.equalsIgnoreCase(TimestampFloorFromOffsetUtcFunctionFactory.NAME, ast.token));
     }
 
     public static boolean isZeroOnEmptyAggregate(ExpressionNode node) {

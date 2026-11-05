@@ -264,10 +264,6 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
         return getCairoEngine().getTableTokenIfExists(tableName);
     }
 
-    default TableToken getTableTokenIfExists(CharSequence tableName, int lo, int hi) {
-        return getCairoEngine().getTableTokenIfExists(tableName, lo, hi);
-    }
-
     /**
      * Returns the token of the table, view, materialized view or live view of the given name, or null
      * when there is no such object or the principal may not see it, see

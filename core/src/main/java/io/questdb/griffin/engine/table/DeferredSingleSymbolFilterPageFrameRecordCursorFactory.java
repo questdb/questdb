@@ -116,13 +116,6 @@ public class DeferredSingleSymbolFilterPageFrameRecordCursorFactory extends Page
         }
     }
 
-    /**
-     * The index of the symbol column whose index this scan reads.
-     */
-    public int getSymbolColumnIndex() {
-        return symbolColumnIndex;
-    }
-
     @Override
     public void revertFromSampleByIndexPageFrameCursorFactory() {
         convertedToFrame = false;

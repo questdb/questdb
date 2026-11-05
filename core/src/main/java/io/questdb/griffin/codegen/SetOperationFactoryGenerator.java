@@ -508,18 +508,13 @@ final class SetOperationFactoryGenerator {
                 }
             }
 
-            final IntList symbolColumns;
             if (plan.isMerged()) {
                 metadata.setTimestampIndex(plan.getOutput().getColumnIndexById(plan.getRequestedOrderColumnId()));
-                // The merge retains this list after the compiler's plan pool is reset.
-                symbolColumns = new IntList(plan.getSymbolColumns());
-            } else {
-                symbolColumns = null;
             }
             isTransferred = true;
             final RecordCursorFactory result = generateSetOperation(
                     frame, plan.getOperation(), metadata, left, right, leftCasts, rightCasts,
-                    plan.isMerged() ? plan.getRequestedOrderDirection() : null, plan.getPosition(), plan.getRightPosition(), symbolColumns, executionContext
+                    plan.isMerged() ? plan.getRequestedOrderDirection() : null, plan.getPosition(), plan.getRightPosition(), executionContext
             );
             if (plan.getOperation().isUnion() && plan.isSymbolRestorationRequired()) {
                 // This helper consumes the completed union on success and on failure.
@@ -541,7 +536,7 @@ final class SetOperationFactoryGenerator {
 
     /**
      * Consumes both factories and cast lists on entry; a UNION ALL merges its branches in {@code mergeDirection} unless
-     * it is null. Metadata and symbol columns outlive the compiler.
+     * it is null. Metadata outlives the compiler.
      */
     private RecordCursorFactory generateSetOperation(
             GenerationFrame frame,
@@ -554,7 +549,6 @@ final class SetOperationFactoryGenerator {
             @Nullable SortDirection mergeDirection,
             int positionA,
             int positionB,
-            @Nullable IntList symbolUnionColumns,
             SqlExecutionContext executionContext
     ) throws SqlException {
         boolean isTransferred = false;
@@ -564,7 +558,7 @@ final class SetOperationFactoryGenerator {
                     isTransferred = true;
                     return MergeUnionAllRecordCursorFactoryBuilder.build(
                             metadata, factoryA, positionA, factoryB, positionB, castFunctionsA, castFunctionsB,
-                            mergeDirection == SortDirection.ASCENDING, symbolUnionColumns, MERGE_CAST_FACTORY, executionContext
+                            mergeDirection == SortDirection.ASCENDING, MERGE_CAST_FACTORY, executionContext
                     );
                 }
                 isTransferred = true;

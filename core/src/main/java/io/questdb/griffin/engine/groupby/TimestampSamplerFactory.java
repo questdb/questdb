@@ -124,14 +124,6 @@ public final class TimestampSamplerFactory {
         return k;
     }
 
-    public static TimestampSampler getInstance(TimestampDriver driver, long interval, CharSequence units, int position) throws SqlException {
-        if (units.length() == 1) {
-            return getInstance(driver, interval, units.charAt(0), position);
-        }
-        // Just in case SqlParser will allow this in the future
-        throw SqlException.$(position, "expected one character interval qualifier");
-    }
-
     @NotNull
     public static TimestampSampler getInstance(TimestampDriver driver, long interval, char timeUnit, int position) throws SqlException {
         return driver.getTimestampSampler(interval, timeUnit, position);

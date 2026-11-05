@@ -24,7 +24,6 @@
 
 package io.questdb.griffin;
 
-import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.Chars;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import org.jetbrains.annotations.NotNull;
@@ -53,14 +52,5 @@ public final class SqlHints {
         final CharSequence params = hints == null ? null : hints.get(hintName);
         return Chars.containsWordIgnoreCase(params, tableNameA, HINTS_PARAMS_DELIMITER) &&
                 Chars.containsWordIgnoreCase(params, tableNameB, HINTS_PARAMS_DELIMITER);
-    }
-
-    private static boolean hasHintWithParams(
-            @NotNull QueryModel queryModel,
-            @NotNull CharSequence hintName,
-            @Nullable CharSequence tableNameA,
-            @Nullable CharSequence tableNameB
-    ) {
-        return hasHintWithParams(queryModel.getHints(), hintName, tableNameA, tableNameB);
     }
 }

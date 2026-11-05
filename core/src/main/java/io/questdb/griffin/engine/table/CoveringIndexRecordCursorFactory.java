@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.CompositeAwarePartitionFrameCursor;
 import io.questdb.cairo.EmptySymbolMapReader;
 import io.questdb.cairo.GeoHashes;
@@ -550,23 +549,6 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
-    }
-
-    /**
-     * Whether this factory can serve a backward (negative-limit) page-frame scan.
-     * Only single-key queries qualify: the single-key cursor implements a genuine
-     * backward scan (DESC partitions, high row-range sub-frames first). The
-     * multi-key cursor merges keys forward only -- it is globally
-     * timestamp-ordered ascending, but has no backward scan -- so codegen routes
-     * its negative limits to the serial path, where LimitRecordCursorFactory
-     * computes last-N via size + skip over the ascending merge.
-     * <p>
-     * Delegates the backup test to {@link #supportsPageFrameCursor()} rather than repeating
-     * it. The one caller consults this only after that method has already answered true, so a
-     * separate {@code backup == null} term here could never decide anything on its own.
-     */
-    public boolean supportsNegativeLimitPageFrame() {
-        return supportsPageFrameCursor() && singleKeyPageFrameCursor != null;
     }
 
     @Override

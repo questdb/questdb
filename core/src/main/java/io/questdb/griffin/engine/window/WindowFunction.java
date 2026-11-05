@@ -652,17 +652,6 @@ public interface WindowFunction extends Function {
     }
 
     /**
-     * The output-metadata column index this function writes its result to, as set by
-     * {@link #setColumnIndex(int)} during code generation. Used by the keep-flag filter fusion to
-     * confirm a WHERE literal references exactly this function's boolean output column.
-     *
-     * @return the output column index, or {@code -1} if not applicable.
-     */
-    default int getColumnIndex() {
-        return -1;
-    }
-
-    /**
      * Appends, in ascending order, the pass1 traversal ordinals this function selects (keeps).
      * Only valid to call after {@link #preparePass2()} has run, and only on functions for which
      * {@link #isRowSelecting()} returns {@code true}. The cached executor translates ordered or

@@ -155,7 +155,6 @@ public class MutableModelsTest {
         context.setRangeTo(newExpressionNode());
         context.setRangeStep(newExpressionNode(), 30);
         context.setAlias(newExpressionNode(), 40);
-        context.setParentModel(QueryModel.FACTORY.newInstance());
         context.addListOffset(newExpressionNode());
         assertDifferentFromFresh(context, freshContext);
 
@@ -290,14 +289,11 @@ public class MutableModelsTest {
         WindowJoinContext freshContext = new WindowJoinContext();
         context.setLoExpr(newExpressionNode(), 10);
         context.setLoExprTimeUnit(WindowExpression.TIME_UNIT_SECOND);
-        context.setLo(100);
         context.setLoKind(WindowJoinContext.FOLLOWING, 20);
         context.setHiExpr(newExpressionNode(), 30);
         context.setHiExprTimeUnit(WindowExpression.TIME_UNIT_MINUTE);
-        context.setHi(200);
         context.setHiKind(WindowJoinContext.FOLLOWING, 40);
         context.setIncludePrevailing(false);
-        context.setParentModel(QueryModel.FACTORY.newInstance());
         assertDifferentFromFresh(context, freshContext);
 
         context.clear();

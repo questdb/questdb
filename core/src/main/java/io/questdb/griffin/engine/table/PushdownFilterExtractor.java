@@ -29,7 +29,6 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.Chars;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -180,7 +179,6 @@ public final class PushdownFilterExtractor {
         private final int columnWriterIndex;
         private final int operationType;
         private final ObjList<Function> valueFunctions = new ObjList<>();
-        private final ObjList<ExpressionNode> values = new ObjList<>();
         // Set when the condition stands for a negated range comparison: NULL rows satisfy it as well, so it prunes
         // only row groups without NULLs.
         private boolean isNullMatching;
@@ -204,16 +202,8 @@ public final class PushdownFilterExtractor {
             this.operationType = operationType;
         }
 
-        public void addValue(ExpressionNode valueNode) {
-            values.add(valueNode);
-        }
-
         public void addValueFunction(Function valueFunction) {
             valueFunctions.add(valueFunction);
-        }
-
-        public void addValues(ObjList<ExpressionNode> values1) {
-            values.addAll(values1);
         }
 
         @Override
@@ -239,10 +229,6 @@ public final class PushdownFilterExtractor {
 
         public ObjList<Function> getValueFunctions() {
             return valueFunctions;
-        }
-
-        public ObjList<ExpressionNode> getValues() {
-            return values;
         }
 
         /**

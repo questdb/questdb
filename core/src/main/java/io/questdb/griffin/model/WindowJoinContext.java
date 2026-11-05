@@ -30,27 +30,22 @@ public class WindowJoinContext implements Mutable {
     public static final int CURRENT = 3;
     public static final int FOLLOWING = 2;
     public static final int PRECEDING = 1;
-    private long hi = Long.MAX_VALUE;
     private ExpressionNode hiExpr;
     private int hiExprPos;
     private char hiExprTimeUnit;
     private int hiKind = CURRENT;
     private int hiKindPos;
     private boolean includePrevailing = true;
-    private long lo = Long.MIN_VALUE;
     private ExpressionNode loExpr;
     private int loExprPos;
     private char loExprTimeUnit;
     private int loKind = PRECEDING;
     private int loKindPos;
-    private QueryModel parentModel;
 
     @Override
     public void clear() {
         loExpr = null;
         loExprPos = 0;
-        lo = Long.MIN_VALUE;
-        hi = Long.MAX_VALUE;
         loExprTimeUnit = 0;
         hiExpr = null;
         hiExprPos = 0;
@@ -60,11 +55,6 @@ public class WindowJoinContext implements Mutable {
         hiKind = CURRENT;
         hiKindPos = 0;
         includePrevailing = true;
-        parentModel = null;
-    }
-
-    public long getHi() {
-        return hi;
     }
 
     public ExpressionNode getHiExpr() {
@@ -87,10 +77,6 @@ public class WindowJoinContext implements Mutable {
         return hiKindPos;
     }
 
-    public long getLo() {
-        return lo;
-    }
-
     public ExpressionNode getLoExpr() {
         return loExpr;
     }
@@ -111,16 +97,8 @@ public class WindowJoinContext implements Mutable {
         return loKindPos;
     }
 
-    public QueryModel getParentModel() {
-        return parentModel;
-    }
-
     public boolean isIncludePrevailing() {
         return includePrevailing;
-    }
-
-    public void setHi(long hi) {
-        this.hi = hi;
     }
 
     public void setHiExpr(ExpressionNode hiExpr, int hiExprPos) {
@@ -141,10 +119,6 @@ public class WindowJoinContext implements Mutable {
         this.includePrevailing = includePrevailing;
     }
 
-    public void setLo(long lo) {
-        this.lo = lo;
-    }
-
     public void setLoExpr(ExpressionNode loExpr, int loExprPos) {
         this.loExpr = loExpr;
         this.loExprPos = loExprPos;
@@ -157,9 +131,5 @@ public class WindowJoinContext implements Mutable {
     public void setLoKind(int loKind, int loKindPos) {
         this.loKind = loKind;
         this.loKindPos = loKindPos;
-    }
-
-    public void setParentModel(QueryModel parentModel) {
-        this.parentModel = parentModel;
     }
 }

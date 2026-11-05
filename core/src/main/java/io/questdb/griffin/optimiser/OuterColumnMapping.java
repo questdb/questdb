@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.optimiser;
 
-import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.Mutable;
 
@@ -96,18 +95,6 @@ final class OuterColumnMapping implements Mutable {
     void push(int outerId, int columnId) {
         outerIds.add(outerId);
         columnIds.add(columnId);
-    }
-
-    /**
-     * Renames the mapped columns above {@code base} that {@code columnIds} holds.
-     */
-    void remapColumns(int base, IntIntHashMap columnIds) {
-        for (int i = base, n = this.columnIds.size(); i < n; i++) {
-            final int remappedId = columnIds.get(this.columnIds.getQuick(i));
-            if (remappedId > -1) {
-                this.columnIds.setQuick(i, remappedId);
-            }
-        }
     }
 
     void removeAt(int index) {

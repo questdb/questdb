@@ -131,17 +131,6 @@ public class GenericRecordMetadata extends AbstractRecordMetadata {
         return metadata;
     }
 
-    public static RecordMetadata removeTimestamp(RecordMetadata that) {
-        if (that.getTimestampIndex() != -1) {
-            if (that instanceof GenericRecordMetadata) {
-                ((GenericRecordMetadata) that).setTimestampIndex(-1);
-                return that;
-            }
-            return GenericRecordMetadata.copyOfSansTimestamp(that);
-        }
-        return that;
-    }
-
     public GenericRecordMetadata add(TableColumnMetadata meta) {
         return add(columnCount, meta);
     }

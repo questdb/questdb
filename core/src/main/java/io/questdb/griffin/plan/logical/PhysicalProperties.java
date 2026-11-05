@@ -425,14 +425,6 @@ public final class PhysicalProperties {
         };
     }
 
-    private static int choose(Capability condition, int whenYes, int whenNo) {
-        return switch (condition) {
-            case YES -> whenYes;
-            case NO -> whenNo;
-            case UNKNOWN -> merge(whenYes, whenNo);
-        };
-    }
-
     private static Capability choose(Capability condition, Capability whenYes, Capability whenNo) {
         return switch (condition) {
             case YES -> whenYes;

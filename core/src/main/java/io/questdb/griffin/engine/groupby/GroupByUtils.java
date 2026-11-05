@@ -342,15 +342,6 @@ public class GroupByUtils {
         return true;
     }
 
-    public static boolean isParallelismSupported(ObjList<GroupByFunction> functions) {
-        for (int i = 0, n = functions.size(); i < n; i++) {
-            if (!functions.getQuick(i).supportsParallelism()) {
-                return false;
-            }
-        }
-        return true;
-    }
-
     /**
      * The constant a FILL(NULL) gap row reads for a column of {@code type}, or null when no NULL constant exists.
      */

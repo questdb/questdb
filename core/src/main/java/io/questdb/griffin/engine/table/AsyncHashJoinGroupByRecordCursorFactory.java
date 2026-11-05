@@ -193,14 +193,6 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         return SCAN_DIRECTION_OTHER;
     }
 
-    /**
-     * True when either input scans a timestamp interval, so that the rows it contributes can
-     * change between executions of this factory; see {@link HashJoinGroupByBuildChoiceRecordCursorFactory}.
-     */
-    public boolean hasIntervalScan() {
-        return isIntervalScan(probeFactory) || isIntervalScan(buildFactory);
-    }
-
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return functions.isKeyed();
@@ -2021,16 +2013,6 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         if (state != SqlExecutionCircuitBreaker.STATE_OK) {
             sequence.cancel(state);
             return true;
-        }
-        return false;
-    }
-
-    // Filters and projections wrap the table scan, so the walk stops at the first page frame factory.
-    private static boolean isIntervalScan(RecordCursorFactory factory) {
-        for (RecordCursorFactory current = factory; current != null; current = current.getBaseFactory()) {
-            if (current instanceof PageFrameRecordCursorFactory frames) {
-                return frames.isIntervalScan();
-            }
         }
         return false;
     }

@@ -49,7 +49,7 @@ import static io.questdb.griffin.SqlParser.ZERO_OFFSET;
  * are reused across query compilation, so making sure that we reset all fields correctly
  * is important.
  */
-public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sinkable {
+public class QueryModel implements Mutable, ExecutionModel, Sinkable {
     public static final QueryModelFactory FACTORY = new QueryModelFactory();
     public static final int JOIN_ASOF = 4;
     public static final int JOIN_CROSS = 3;
@@ -105,7 +105,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public static final String SUB_QUERY_ALIAS_PREFIX = "_xQdbA";
     private static final ObjList<String> modelTypeName = new ObjList<>();
     private final LowerCaseCharSequenceObjHashMap<QueryColumn> aliasToColumnMap = new LowerCaseCharSequenceObjHashMap<>();
-    private final LowerCaseCharSequenceObjHashMap<CharSequence> aliasToColumnNameMap = new LowerCaseCharSequenceObjHashMap<>();
     private final LowerCaseCharSequenceHashSet auditedDecls = new LowerCaseCharSequenceHashSet();
     private final ObjList<QueryColumn> columns = new ObjList<>();
     private final LowerCaseCharSequenceObjHashMap<ExpressionNode> decls = new LowerCaseCharSequenceObjHashMap<>();
@@ -133,7 +132,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final ObjList<ExpressionNode> unnestExpressions = new ObjList<>();
     private final ObjList<ObjList<CharSequence>> unnestJsonColumnNames = new ObjList<>();
     private final ObjList<IntList> unnestJsonColumnTypes = new ObjList<>();
-    private final ObjList<ExpressionNode> updateSetColumns = new ObjList<>();
     private final ObjList<ViewAuditModel> viewAudits = new ObjList<>();
     private final WindowJoinContext windowJoinContext = new WindowJoinContext();
     private final LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauseModel = new LowerCaseCharSequenceObjHashMap<>();
@@ -161,7 +159,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private ExpressionNode limitLo;
     // position of the limit clause token
     private int limitPosition;
-    private long metadataVersion = -1;
     private int modelPosition = 0;
     private int modelType = ExecutionModel.QUERY;
     private QueryModel nestedModel;
@@ -233,15 +230,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public boolean addField(QueryColumn column) {
         final CharSequence alias = column.getAlias();
-        final ExpressionNode ast = column.getAst();
         assert alias != null;
-        aliasToColumnMap.put(alias, column);
-        int aliasKeyIndex = aliasToColumnNameMap.keyIndex(alias);
-        if (aliasKeyIndex > -1) {
-            aliasToColumnNameMap.putAt(aliasKeyIndex, alias, ast.token);
-            return true;
-        }
-        return false;
+        return aliasToColumnMap.put(alias, column);
     }
 
     public void addGroupBy(ExpressionNode node) {
@@ -287,7 +277,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     @Override
     public void clear() {
         columns.clear();
-        aliasToColumnNameMap.clear();
         joinModels.clear();
         joinModels.add(this);
         sampleBy = null;
@@ -320,7 +309,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         withClauseModel.clear();
         namedWindows.clear();
         selectModelType = SELECT_MODEL_NONE;
-        metadataVersion = -1;
         expressionModels.clear();
         distinct = false;
         nestedModelIsSubQuery = false;
@@ -333,7 +321,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         isCommaJoin = false;
         isCteModel = false;
         modelType = ExecutionModel.QUERY;
-        updateSetColumns.clear();
         standaloneUnnest = false;
         unnestColumnAliases.clear();
         unnestExpressions.clear();
@@ -484,10 +471,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public int getLimitPosition() {
         return limitPosition;
-    }
-
-    public long getMetadataVersion() {
-        return metadataVersion;
     }
 
     public int getModelPosition() {
@@ -659,10 +642,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return total;
     }
 
-    public ObjList<ExpressionNode> getUpdateExpressions() {
-        return updateSetColumns;
-    }
-
     public ExpressionNode getViewNameExpr() {
         return viewNameExpr;
     }
@@ -793,19 +772,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         }
     }
 
-    /**
-     * Removes column from the model by index. This method also removes all references to column alias, but
-     * leaves out column name to alias mapping. This is because the mapping is ambiguous.
-     *
-     * @param columnIndex of the column to remove. This index is based on the columns list.
-     */
-    public void removeColumn(int columnIndex) {
-        CharSequence columnAlias = columns.getQuick(columnIndex).getAlias();
-        columns.remove(columnIndex);
-        aliasToColumnMap.remove(columnAlias);
-        aliasToColumnNameMap.remove(columnAlias);
-    }
-
     public void setAlias(ExpressionNode alias) {
         this.alias = alias;
     }
@@ -873,10 +839,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void setLimitPosition(int limitPosition) {
         this.limitPosition = limitPosition;
-    }
-
-    public void setMetadataVersion(long metadataVersion) {
-        this.metadataVersion = metadataVersion;
     }
 
     public void setModelPosition(int modelPosition) {
@@ -1191,11 +1153,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return sink.toString();
     }
 
-    @Override
-    public CharSequence translateAlias(CharSequence column) {
-        return aliasToColumnNameMap.get(column);
-    }
-
     private static void aliasToSink(CharSequence alias, CharSink<?> sink) {
         sink.putAscii(' ');
         boolean quote = !Chars.isQuoted(alias) && Chars.indexOf(alias, ' ') != -1;
@@ -1380,22 +1337,19 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             aliasToSink(alias.token, sink);
         }
         sink.putAscii(" set ");
-        for (int i = 0, n = getUpdateExpressions().size(); i < n; i++) {
+        final ObjList<QueryColumn> setColumns = nestedModel.getColumns();
+        for (int i = 0, n = setColumns.size(); i < n; i++) {
             if (i > 0) {
                 sink.putAscii(',');
             }
-            CharSequence columnExpr = getUpdateExpressions().get(i).token;
-            sink.put(columnExpr);
+            final QueryColumn setColumn = setColumns.getQuick(i);
+            sink.put(setColumn.getName());
             sink.putAscii(" = ");
-            QueryColumn setColumn = getNestedModel().getColumns().getQuick(i);
             setColumn.getAst().toSink(sink);
         }
-
-        if (getNestedModel() != null) {
-            sink.putAscii(" from (");
-            getNestedModel().toSink(sink);
-            sink.putAscii(")");
-        }
+        sink.putAscii(" from (");
+        nestedModel.toSink(sink);
+        sink.putAscii(")");
     }
 
     public static final class QueryModelFactory implements ObjectFactory<QueryModel> {

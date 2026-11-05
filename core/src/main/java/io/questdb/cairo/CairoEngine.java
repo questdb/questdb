@@ -2731,12 +2731,6 @@ public class CairoEngine implements Closeable, WriterSource {
         return token;
     }
 
-    public TableToken getTableTokenIfExists(CharSequence tableName, int lo, int hi) {
-        final StringSink sink = Misc.getThreadLocalSink();
-        sink.put(tableName, lo, hi);
-        return getTableTokenIfExists(sink);
-    }
-
     public void getTableTokens(ObjHashSet<TableToken> bucket, boolean includeDropped) {
         tableNameRegistry.getTableTokens(bucket, includeDropped);
     }

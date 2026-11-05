@@ -104,10 +104,6 @@ final class PreparedFilter implements Closeable {
         return bindVarFunctions;
     }
 
-    MemoryCARW getBindVarMemory() {
-        return bindVarMemory;
-    }
-
     IntHashSet getColumns() {
         return columns;
     }

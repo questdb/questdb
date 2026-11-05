@@ -224,7 +224,7 @@ final class UpdateBinder implements Mutable {
         if (token.isView()) {
             throw SqlException.cannotModify(tableName.position, token);
         }
-        try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(token, source.getMetadataVersion())) {
+        try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(token)) {
             final boolean isSequenced = !executionContext.isWalApplication() && executionContext.getCairoEngine().isWalTable(metadata.getTableToken());
             target.of(tableName.token, tableName.position, metadata.getTableToken(), metadata.getTableId(), metadata.getMetadataVersion(), isSequenced);
             final ScanPlan scan = binder.bindScan(source, tableName, metadata.getTableToken(), metadata.getMetadataVersion());

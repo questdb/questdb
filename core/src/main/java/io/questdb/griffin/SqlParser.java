@@ -7218,9 +7218,6 @@ public class SqlParser {
 
             // Value expression
             ExpressionNode expr = expr(lexer, (QueryModel) null, sqlParserCallback);
-            ExpressionNode setColumnExpression = expressionNodePool.next().of(ExpressionNode.LITERAL, col, 0, colPosition);
-            updateQueryModel.getUpdateExpressions().add(setColumnExpression);
-
             QueryColumn valueColumn = queryColumnPool.next().of(col, colPosition, expr);
             fromModel.addColumn(colPosition, valueColumn, false, "in SET clause");
 

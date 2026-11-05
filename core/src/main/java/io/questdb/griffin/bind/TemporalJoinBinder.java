@@ -410,40 +410,40 @@ final class TemporalJoinBinder {
         throw SqlException.$(criteria.position, "unsupported HORIZON join expression [expr='").put(criteria).put("']");
     }
 
+    private void bindWindowJoinBound(
+            WindowJoinBoundSetter setter,
+            int kind,
+            int kindPosition,
+            int positiveKind,
+            ExpressionNode expression,
+            char timeUnit,
+            int position,
+            OutputSchema master,
+            CharSequence slaveAlias,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        if (kind == WindowJoinContext.CURRENT) {
+            setter.set(0, null, 0, (char) 0, kindPosition);
+            return;
+        }
+        final long value = windowJoinBoundValue(expression, executionContext);
+        if (value == -1) {
+            setter.set(0, windowJoinBoundExpression(expression, master, slaveAlias, executionContext), kind == positiveKind ? 1 : -1, timeUnit, position);
+            return;
+        }
+        final long bound = kind == positiveKind ? value : value == Long.MAX_VALUE ? Long.MIN_VALUE : -value;
+        if (bound == Long.MIN_VALUE || bound == Long.MAX_VALUE) {
+            throw SqlException.position(kindPosition).put("unbounded preceding/following is not supported in WINDOW joins");
+        }
+        setter.set(bound, null, 0, timeUnit, position);
+    }
+
     private void bindWindowJoinBounds(WindowJoinStep step, WindowJoinContext syntax, OutputSchema master,
                                       SqlExecutionContext executionContext) throws SqlException {
-        final int loKind = syntax.getLoKind();
-        if (loKind == WindowJoinContext.CURRENT) {
-            step.setLo(0, null, 0, (char) 0, syntax.getLoKindPos());
-        } else {
-            final long value = windowJoinBoundValue(syntax.getLoExpr(), executionContext);
-            if (value == -1) {
-                step.setLo(0, windowJoinBoundExpression(syntax.getLoExpr(), master, step.getSlaveAlias(), executionContext),
-                        loKind == WindowJoinContext.PRECEDING ? 1 : -1, syntax.getLoExprTimeUnit(), syntax.getLoExprPos());
-            } else {
-                final long lo = loKind == WindowJoinContext.PRECEDING ? value : value == Long.MAX_VALUE ? Long.MIN_VALUE : -value;
-                if (lo == Long.MIN_VALUE || lo == Long.MAX_VALUE) {
-                    throw SqlException.position(syntax.getLoKindPos()).put("unbounded preceding/following is not supported in WINDOW joins");
-                }
-                step.setLo(lo, null, 0, syntax.getLoExprTimeUnit(), syntax.getLoExprPos());
-            }
-        }
-        final int hiKind = syntax.getHiKind();
-        if (hiKind == WindowJoinContext.CURRENT) {
-            step.setHi(0, null, 0, (char) 0, syntax.getHiKindPos());
-        } else {
-            final long value = windowJoinBoundValue(syntax.getHiExpr(), executionContext);
-            if (value == -1) {
-                step.setHi(0, windowJoinBoundExpression(syntax.getHiExpr(), master, step.getSlaveAlias(), executionContext),
-                        hiKind == WindowJoinContext.FOLLOWING ? 1 : -1, syntax.getHiExprTimeUnit(), syntax.getHiExprPos());
-            } else {
-                final long hi = hiKind == WindowJoinContext.FOLLOWING ? value : value == Long.MAX_VALUE ? Long.MIN_VALUE : -value;
-                if (hi == Long.MIN_VALUE || hi == Long.MAX_VALUE) {
-                    throw SqlException.position(syntax.getHiKindPos()).put("unbounded preceding/following is not supported in WINDOW joins");
-                }
-                step.setHi(hi, null, 0, syntax.getHiExprTimeUnit(), syntax.getHiExprPos());
-            }
-        }
+        bindWindowJoinBound(step::setLo, syntax.getLoKind(), syntax.getLoKindPos(), WindowJoinContext.PRECEDING, syntax.getLoExpr(),
+                syntax.getLoExprTimeUnit(), syntax.getLoExprPos(), master, step.getSlaveAlias(), executionContext);
+        bindWindowJoinBound(step::setHi, syntax.getHiKind(), syntax.getHiKindPos(), WindowJoinContext.FOLLOWING, syntax.getHiExpr(),
+                syntax.getHiExprTimeUnit(), syntax.getHiExprPos(), master, step.getSlaveAlias(), executionContext);
     }
 
     /**
@@ -1133,4 +1133,8 @@ final class TemporalJoinBinder {
         }
     }
 
+    @FunctionalInterface
+    private interface WindowJoinBoundSetter {
+        void set(long value, BoundExpression expression, int sign, char timeUnit, int position);
+    }
 }

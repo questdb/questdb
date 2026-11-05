@@ -330,10 +330,6 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         return future;
     }
 
-    public LowerCaseCharSequenceObjHashMap<TableColumnMetadata> getAugmentedColumnMetadata() {
-        return augmentedColumnMetadata;
-    }
-
     @Override
     public long getBatchO3MaxLag() {
         return batchO3MaxLag;
@@ -947,10 +943,6 @@ public class CreateTableOperationImpl implements CreateTableOperation {
 
     String getTimestampColumnName() {
         return timestampColumnName;
-    }
-
-    int getTimestampColumnNamePosition() {
-        return timestampColumnNamePosition;
     }
 
     int getTimestampType() {
