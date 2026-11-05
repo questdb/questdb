@@ -1291,9 +1291,6 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         });
     }
 
-    // A deferred frame that appends NO rows must never be ack-covered, however
-    // clean the connection is: the client's dictionary chunks are exactly this
-    // frame, and the data frames behind them reference the ids they register.
     /**
      * Frames of two tables with 20 columns each, past the initial capacity of a
      * table's column mapping and of its cached schema section, alternate and keep
@@ -1344,6 +1341,9 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         });
     }
 
+    // A deferred frame that appends NO rows must never be ack-covered, however
+    // clean the connection is: the client's dictionary chunks are exactly this
+    // frame, and the data frames behind them reference the ids they register.
     @Test
     public void testZeroRowDeferredFrameIsNeverAckCovered() throws Exception {
         assertMemoryLeak(() -> {

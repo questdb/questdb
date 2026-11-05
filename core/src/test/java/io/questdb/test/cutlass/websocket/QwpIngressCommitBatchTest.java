@@ -1227,13 +1227,6 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     }
 
     /**
-     * A redo decodes the batch's frames again, so a frame must find the dictionary as
-     * it was when it first arrived. Here frame 1 names id 0 without a delta, meaning
-     * x, and frame 2 redefines id 0 as y, as a client replaying another sender's
-     * dictionary does. Frame 2 commits the batch before it joins, so the redo after
-     * frame 3's failure replays frame 2 alone, and frame 1 keeps x.
-     */
-    /**
      * A table dropped and re-created between passes leaves a stale entry, which the next
      * lookup evicts. When closing the evicted writer fails, the entry keeps its writer, and
      * the table cache must still not serve it again: the re-created table's two frames in
@@ -1288,6 +1281,13 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * A redo decodes the batch's frames again, so a frame must find the dictionary as
+     * it was when it first arrived. Here frame 1 names id 0 without a delta, meaning
+     * x, and frame 2 redefines id 0 as y, as a client replaying another sender's
+     * dictionary does. Frame 2 commits the batch before it joins, so the redo after
+     * frame 3's failure replays frame 2 alone, and frame 1 keeps x.
+     */
     @Test
     public void testRedefiningSymbolDictionaryEndsCommitBatch() throws Exception {
         assertMemoryLeak(() -> {
