@@ -58,6 +58,8 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     private long batchSize = -1;
     private int dedupMode = TableUtils.DEDUP_MODE_UPSERT;
     private int defaultSymbolCapacity;
+    private long expiryCleanupIntervalMicros;
+    private String expiryPredicate;
     private boolean ignoreIfExists = false;
     private ExpressionNode likeTableNameExpr;
     private int maxUncommittedRows;
@@ -111,6 +113,8 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                     volumePosition,
                     ttlHoursOrMonths,
                     ttlPosition,
+                    expiryPredicate,
+                    expiryCleanupIntervalMicros,
                     tableFormat,
                     dedupMode,
                     walEnabled,
@@ -164,6 +168,8 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                 maxUncommittedRows,
                 ttlHoursOrMonths,
                 ttlPosition,
+                expiryPredicate,
+                expiryCleanupIntervalMicros,
                 tableFormat,
                 dedupMode,
                 walEnabled,
@@ -198,6 +204,8 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         volumePosition = 0;
         ttlHoursOrMonths = 0;
         ttlPosition = 0;
+        expiryPredicate = null;
+        expiryCleanupIntervalMicros = 0;
         walEnabled = false;
         tableKind = TableUtils.TABLE_KIND_REGULAR_TABLE;
     }
@@ -349,6 +357,14 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
 
     public void setTtlPosition(int ttlPosition) {
         this.ttlPosition = ttlPosition;
+    }
+
+    public void setExpiryPredicate(String expiryPredicate) {
+        this.expiryPredicate = expiryPredicate;
+    }
+
+    public void setExpiryCleanupIntervalMicros(long expiryCleanupIntervalMicros) {
+        this.expiryCleanupIntervalMicros = expiryCleanupIntervalMicros;
     }
 
     public void setTtlToSinkOverride(Sinkable ttlToSinkOverride) {

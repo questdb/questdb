@@ -595,10 +595,10 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
 
     @Test
     public void testWalConversionKeepsOlderMetaFormatTrust() throws Exception {
-        // A release that predates the dedup mode field writes minor version 2 into _meta and leaves the bytes of
+        // A release that predates the dedup mode field writes minor version 3 into _meta and leaves the bytes of
         // the later dedup mode field as they were, here holding a stale SKIP. The conversion to WAL keeps the
         // stored minor version, so readers keep ignoring those bytes and the table stays UPSERT. It also keeps
-        // the TTL, which minor version 2 covers.
+        // the TTL, which minor version 3 covers.
         assertMemoryLeak(() -> {
             try (TestServerMain serverMain = startWithWalApplyDisabled()) {
                 serverMain.execute("CREATE TABLE t (ts TIMESTAMP, k INT, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");

@@ -79,10 +79,11 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     public final static short SET_MAT_VIEW_REFRESH = SET_MAT_VIEW_REFRESH_TIMER + 1; // 25
     public final static short SET_PARQUET_ENCODING = SET_MAT_VIEW_REFRESH + 1; // 26
     public final static short SET_TABLE_FORMAT = SET_PARQUET_ENCODING + 1; // 27
+    public final static short SET_EXPIRE = SET_TABLE_FORMAT + 1; // 28
     // Same as SET_DEDUP_ENABLE, but carries the dedup mode: extraInfo is [dedupMode, dedup key writer indexes...].
     // SET_DEDUP_ENABLE, which carries only the dedup key writer indexes, implies the UPSERT mode. The builder
     // keeps emitting SET_DEDUP_ENABLE for UPSERT so that versions predating the dedup mode can still apply it.
-    public final static short SET_DEDUP_ENABLE_WITH_MODE = SET_TABLE_FORMAT + 1; // 28
+    public final static short SET_DEDUP_ENABLE_WITH_MODE = SET_EXPIRE + 1; // 29
     // V2 layout (this branch onwards): index type fits in low 3 bits, dedup
     // key sits at bit 3, and bit 63 is the format-version marker that
     // distinguishes v2 payloads from any pre-v2 ALTER message still queued in
@@ -215,7 +216,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                     securityContext.authorizeAlterTableDropPartition(tableToken);
             case ATTACH_PARTITION -> securityContext.authorizeAlterTableAttachPartition(tableToken);
             case DETACH_PARTITION -> securityContext.authorizeAlterTableDetachPartition(tableToken);
-            case SET_PARAM_MAX_UNCOMMITTED_ROWS, SET_PARAM_COMMIT_LAG, SET_TTL ->
+            case SET_PARAM_MAX_UNCOMMITTED_ROWS, SET_PARAM_COMMIT_LAG, SET_TTL, SET_EXPIRE ->
                     securityContext.authorizeAlterTableSetParam(tableToken);
             case SET_TABLE_FORMAT -> securityContext.authorizeAlterTableSetFormat(tableToken);
             case SET_DEDUP_ENABLE, SET_DEDUP_ENABLE_WITH_MODE ->
@@ -698,6 +699,20 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         );
     }
 
+    private void applySetExpire(MetadataService svc) {
+        String predicate = Chars.toString(activeExtraStrInfo.getStrA(0));
+        if (predicate != null && predicate.isEmpty()) {
+            predicate = null;
+        }
+        final long cleanupIntervalMicros = extraInfo.get(0);
+        try {
+            svc.setMetaExpiry(predicate, cleanupIntervalMicros);
+        } catch (CairoException e) {
+            e.position(tableNamePosition);
+            throw e;
+        }
+    }
+
     private void applyTableFormat(MetadataService svc) {
         final int tableFormat = (int) extraInfo.get(0);
         try {
@@ -818,6 +833,9 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                 break;
             case SET_TTL:
                 applyTtl(svc);
+                break;
+            case SET_EXPIRE:
+                applySetExpire(svc);
                 break;
             case RENAME_TABLE:
                 applyRenameTable(svc);

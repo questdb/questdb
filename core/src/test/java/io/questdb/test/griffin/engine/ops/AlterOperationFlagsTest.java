@@ -51,7 +51,7 @@ public class AlterOperationFlagsTest {
 
     @Test
     public void testDedupEnableSkipRoundTrip() throws Exception {
-        // SKIP needs opcode 28 (SET_DEDUP_ENABLE_WITH_MODE): extraInfo carries the dedup mode first,
+        // SKIP needs opcode 29 (SET_DEDUP_ENABLE_WITH_MODE): extraInfo carries the dedup mode first,
         // followed by the writer indexes of the dedup key columns. The WAL sequencer stores the operation
         // with serializeBody and replays it with deserializeBody, so the payload must round-trip exactly.
         TestUtils.assertMemoryLeak(() -> {
@@ -71,6 +71,8 @@ public class AlterOperationFlagsTest {
             ) {
                 src.serializeBody(sink1);
                 final long size1 = sink1.getAppendOffset();
+                // the WAL stores the opcode, 28 is SET_EXPIRE
+                Assert.assertEquals(29, sink1.getShort(0));
                 Assert.assertEquals(AlterOperation.SET_DEDUP_ENABLE_WITH_MODE, sink1.getShort(0));
                 Assert.assertEquals(tableNamePosition, sink1.getInt(2));
                 Assert.assertEquals("mode and two dedup key indexes", 3, sink1.getInt(6));

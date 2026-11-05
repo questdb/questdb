@@ -37,6 +37,8 @@ import static io.questdb.cairo.TableUtils.META_OFFSET_PARTITION_BY;
 
 public class TableWriterMetadata extends AbstractRecordMetadata implements TableMetadata {
     private int dedupMode;
+    private long expiryCleanupIntervalMicros;
+    private String expiryPredicate;
     private int maxUncommittedRows;
     private long metadataVersion;
     private long o3MaxLag;
@@ -67,6 +69,16 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     @Override
     public int getDedupMode() {
         return dedupMode;
+    }
+
+    @Override
+    public long getExpiryCleanupIntervalMicros() {
+        return expiryCleanupIntervalMicros;
+    }
+
+    @Override
+    public String getExpiryPredicate() {
+        return expiryPredicate;
     }
 
     @Override
@@ -180,6 +192,8 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         this.storageVersion = metaMem.getInt(TableUtils.META_OFFSET_VERSION);
         this.walEnabled = metaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
         this.ttlHoursOrMonths = TableUtils.getTtlHoursOrMonths(metaMem);
+        this.expiryPredicate = null;
+        this.expiryCleanupIntervalMicros = 0;
         this.tableFormat = TableUtils.getTableFormat(metaMem);
         this.dedupMode = TableUtils.getDedupMode(metaMem);
 
@@ -241,6 +255,26 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
                 }
             }
         }
+
+        // Trailing row-expiry policy section. Use the shared offset + predicate-length helpers so this
+        // stays byte-identical with TableReaderMetadata's reader, independent of the covering-population
+        // loop above.
+        if (TableUtils.isMetaFormatAtLeast(metaMem, TableUtils.META_FORMAT_MINOR_VERSION_EXPIRE_ROWS)) {
+            long policyOffset = TableUtils.getMetaExpiryPolicyOffset(metaMem, columnCount);
+            if (policyOffset >= 0 && policyOffset + Integer.BYTES <= metaSize) {
+                long predicateStorageLength = TableUtils.getMetaExpiryPredicateStorageLength(metaMem, policyOffset, metaSize);
+                if (predicateStorageLength >= 0) {
+                    CharSequence pred = metaMem.getStrA(policyOffset);
+                    if (pred != null && pred.length() > 0) {
+                        this.expiryPredicate = Chars.toString(pred);
+                    }
+                    policyOffset += predicateStorageLength;
+                    if (policyOffset + Long.BYTES <= metaSize) {
+                        this.expiryCleanupIntervalMicros = metaMem.getLong(policyOffset);
+                    }
+                }
+            }
+        }
     }
 
     public void setDedupMode(int dedupMode) {
@@ -269,6 +303,11 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
 
     public void setTtlHoursOrMonths(int ttlHoursOrMonths) {
         this.ttlHoursOrMonths = ttlHoursOrMonths;
+    }
+
+    public void setExpiry(String predicate, long cleanupIntervalMicros) {
+        this.expiryPredicate = predicate;
+        this.expiryCleanupIntervalMicros = cleanupIntervalMicros;
     }
 
     public void setTxReader(TxReader txReader) {

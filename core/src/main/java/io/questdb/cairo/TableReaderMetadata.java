@@ -49,6 +49,8 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     private final FilesFacade ff;
     private final LowerCaseCharSequenceIntHashMap tmpValidationMap = new LowerCaseCharSequenceIntHashMap();
     private int dedupMode;
+    private long expiryCleanupIntervalMicros;
+    private String expiryPredicate;
     private boolean isCopy;
     private boolean isSoftLink;
     private int maxUncommittedRows;
@@ -129,6 +131,8 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         maxUncommittedRows = 0;
         o3MaxLag = 0;
         ttlHoursOrMonths = 0;
+        expiryPredicate = null;
+        expiryCleanupIntervalMicros = 0;
         tableFormat = TableUtils.TABLE_FORMAT_NATIVE;
         dedupMode = TableUtils.DEDUP_MODE_UPSERT;
         writerColumnCount = 0;
@@ -177,6 +181,16 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
 
     public int getDenseSymbolIndex(int columnIndex) {
         return ((TableReaderMetadataColumn) columnMetadata.getQuick(columnIndex)).getDenseSymbolIndex();
+    }
+
+    @Override
+    public long getExpiryCleanupIntervalMicros() {
+        return expiryCleanupIntervalMicros;
+    }
+
+    @Override
+    public String getExpiryPredicate() {
+        return expiryPredicate;
     }
 
     @Override
@@ -338,6 +352,8 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         this.metadataVersion = mem.getLong(TableUtils.META_OFFSET_METADATA_VERSION);
         this.walEnabled = mem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
         this.ttlHoursOrMonths = TableUtils.getTtlHoursOrMonths(mem);
+        this.expiryPredicate = null;
+        this.expiryCleanupIntervalMicros = 0;
         this.tableFormat = TableUtils.getTableFormat(mem);
         this.dedupMode = TableUtils.getDedupMode(mem);
         this.columnMetadata.clear();
@@ -390,6 +406,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         }
         this.columnCount = columnMetadata.size();
         readCoveringColumnData(mem, columnCount);
+        readExpiryPolicy(mem, columnCount);
     }
 
     public void updateTableToken(TableToken tableToken) {
@@ -527,6 +544,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         }
 
         readCoveringColumnData(newMetaMem, newColumnCount);
+        readExpiryPolicy(newMetaMem, newColumnCount);
         return transitionIndex;
     }
 
@@ -541,6 +559,31 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
 
     private MemoryR getMetaMem() {
         return !isCopy ? metaMem : metaCopyMem;
+    }
+
+    private void readExpiryPolicy(MemoryR mem, int columnCount) {
+        this.expiryPredicate = null;
+        this.expiryCleanupIntervalMicros = 0;
+        if (!TableUtils.isMetaFormatAtLeast(mem, TableUtils.META_FORMAT_MINOR_VERSION_EXPIRE_ROWS)) {
+            return;
+        }
+        long offset = TableUtils.getMetaExpiryPolicyOffset(mem, columnCount);
+        long memSize = mem.size();
+        if (offset < 0 || offset + Integer.BYTES > memSize) {
+            return;
+        }
+        long predicateStorageLength = TableUtils.getMetaExpiryPredicateStorageLength(mem, offset, memSize);
+        if (predicateStorageLength < 0) {
+            return;
+        }
+        CharSequence pred = mem.getStrA(offset);
+        if (pred != null && pred.length() > 0) {
+            this.expiryPredicate = Chars.toString(pred);
+        }
+        offset += predicateStorageLength;
+        if (offset + Long.BYTES <= memSize) {
+            this.expiryCleanupIntervalMicros = mem.getLong(offset);
+        }
     }
 
     private void readCoveringColumnData(MemoryR mem, int columnCount) {

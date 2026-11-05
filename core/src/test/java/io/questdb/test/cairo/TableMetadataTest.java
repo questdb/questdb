@@ -51,7 +51,7 @@ import static org.junit.Assert.assertTrue;
 
 @RunWith(Parameterized.class)
 public class TableMetadataTest extends AbstractCairoTest {
-    // the header fields up to and including the dedup mode, the last field that the minor version gates
+    // the header fields up to and including the dedup mode, the last header field that the minor version gates
     private static final int HEADER_SIZE = 64;
     private final boolean walEnabled;
 
