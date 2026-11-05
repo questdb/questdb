@@ -4901,7 +4901,7 @@ public class TableReaderTest extends AbstractCairoTest {
             try (TableReader reader = engine.getReader("cache_flag")) {
                 SymbolMapReaderImpl symbols = (SymbolMapReaderImpl) reader.getSymbolMapReader(0);
                 TestUtils.assertEquals("value", symbols.valueOf(0));
-                Assert.assertEquals(1, symbols.getLowCacheSize());
+                Assert.assertEquals(1, symbols.getCacheSize());
 
                 execute("ALTER TABLE cache_flag ALTER COLUMN s NOCACHE");
                 Assert.assertTrue(reader.reload());
@@ -4916,7 +4916,7 @@ public class TableReaderTest extends AbstractCairoTest {
                 symbols = (SymbolMapReaderImpl) reader.getSymbolMapReader(0);
                 Assert.assertTrue(symbols.isCached());
                 TestUtils.assertEquals("value", symbols.valueOf(0));
-                Assert.assertEquals(1, symbols.getLowCacheSize());
+                Assert.assertEquals(1, symbols.getCacheSize());
             }
         });
     }
@@ -4937,9 +4937,9 @@ public class TableReaderTest extends AbstractCairoTest {
                     TestUtils.assertEquals("new", latestSymbols.valueOf(1));
                     TestUtils.assertEquals("old", copy.getSymbolMapReader(0).valueOf(0));
                     // all three share one entry; the older transactions still cannot see key 1
-                    Assert.assertEquals(2, latestSymbols.getLowCacheSize());
-                    Assert.assertEquals(2, ((SymbolMapReaderImpl) old.getSymbolMapReader(0)).getLowCacheSize());
-                    Assert.assertEquals(2, ((SymbolMapReaderImpl) copy.getSymbolMapReader(0)).getLowCacheSize());
+                    Assert.assertEquals(2, latestSymbols.getCacheSize());
+                    Assert.assertEquals(2, ((SymbolMapReaderImpl) old.getSymbolMapReader(0)).getCacheSize());
+                    Assert.assertEquals(2, ((SymbolMapReaderImpl) copy.getSymbolMapReader(0)).getCacheSize());
                     Assert.assertNull(copy.getSymbolMapReader(0).valueOf(1));
                     Assert.assertNull(old.getSymbolMapReader(0).valueOf(1));
                     Assert.assertEquals(1, engine.getSymbolMapCachePool().getEntryCount());
@@ -4988,8 +4988,6 @@ public class TableReaderTest extends AbstractCairoTest {
                         TestUtils.assertEquals("retained", uncached.valueOf(0));
                         Assert.assertEquals(0, uncached.getCacheSize());
                         Assert.assertEquals(0, uncached.getCacheAllocatedBytes());
-                        Assert.assertEquals(0, uncached.getLowCacheSize());
-                        Assert.assertEquals(0, uncached.getLowCacheAllocatedBytes());
                         Assert.assertEquals(0, localEngine.getSymbolMapCachePool().getEntryCount());
                     }
                 }
@@ -5055,13 +5053,11 @@ public class TableReaderTest extends AbstractCairoTest {
                             TestUtils.assertEquals("4097", symbols.valueBOf(4096));
                             TestUtils.assertEquals("1", view.valueOf(0));
                             TestUtils.assertEquals("4097", view.valueBOf(4096));
-                            Assert.assertEquals(isDisabled ? 0 : 1, symbols.getLowCacheSize());
-                            Assert.assertEquals(isDisabled ? 0 : 66 * 64, symbols.getLowCacheAllocatedBytes());
                             Assert.assertEquals(0, symbols.getCacheSize());
                             Assert.assertEquals(0, symbols.getCacheAllocatedBytes());
                             Assert.assertEquals(0, localEngine.getSymbolMapCachePool().getBudget().getUsedBytes());
                             Assert.assertEquals(isDisabled ? 0 : 1, localEngine.getSymbolMapCachePool().getEntryCount());
-                            Assert.assertEquals(isDisabled ? 0 : 66 * 64, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_SYMBOL_CACHE) - baseline);
+                            Assert.assertEquals(0, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_SYMBOL_CACHE) - baseline);
                         }
                         localEngine.execute("DROP TABLE cache_disabled", context);
                     },

@@ -30,6 +30,19 @@ import org.junit.Test;
 public class StringDistinctAggSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
+    public void testCastToStringUsesKeyComparison() throws Exception {
+        assertQuery("SELECT string_distinct_agg(s::STRING, ',') v FROM x")
+                .ddl("CREATE TABLE x AS (SELECT (CASE x % 3 WHEN 0 THEN 'b' WHEN 1 THEN 'a' END)::SYMBOL s FROM long_sequence(9))")
+                .noRandomAccess()
+                .expectSize()
+                .withPlanContaining("values: [string_distinct_agg(s,,)]")
+                .returns("""
+                        v
+                        a,b
+                        """);
+    }
+
+    @Test
     public void testConstantNull() throws Exception {
         String expected = """
                 string_distinct_agg
@@ -176,6 +189,18 @@ public class StringDistinctAggSymbolGroupByFunctionFactoryTest extends AbstractC
                 .noRandomAccess()
                 .expectSize()
                 .returns(expected);
+    }
+
+    @Test
+    public void testNoArguments() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s SYMBOL)");
+            assertException(
+                    "SELECT string_distinct_agg() FROM x",
+                    7,
+                    "function `string_distinct_agg` requires arguments"
+            );
+        });
     }
 
     @Test

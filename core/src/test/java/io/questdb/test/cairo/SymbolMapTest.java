@@ -28,8 +28,8 @@ import com.sun.management.ThreadMXBean;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SymbolMapCachePool;
-import io.questdb.cairo.SymbolMapLowSlice;
 import io.questdb.cairo.SymbolMapReaderImpl;
+import io.questdb.cairo.SymbolMapSegments;
 import io.questdb.cairo.SymbolMapUtil;
 import io.questdb.cairo.SymbolMapWriter;
 import io.questdb.cairo.SymbolValueCountCollector;
@@ -40,8 +40,8 @@ import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
+import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.Chars;
-import io.questdb.std.DirectIntCharSequenceHashMap;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Hash;
 import io.questdb.std.IntList;
@@ -57,7 +57,6 @@ import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.nanotime.NanosecondClockImpl;
 import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.DirectString;
-import io.questdb.std.str.DirectUtf16Sink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
@@ -74,7 +73,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.cairo.SymbolMapWriter.keyToOffset;
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
@@ -144,6 +142,333 @@ public class SymbolMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSharedCacheBudgetStopKeepsLoadedValues() throws Exception {
+        assertMemoryLeak(() -> {
+            final int keys = SymbolMapSegments.SEGMENT_KEYS;
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                createMap(path, "x", "v", 3 * keys, -1, 0);
+                createMap(path, "y", "w", keys, -1, 0);
+                NativeMemoryBudget budget = new NativeMemoryBudget(1024 * 1024);
+                LogCapture logs = new LogCapture();
+                try (
+                        SymbolMapCachePool pool = new SymbolMapCachePool(budget);
+                        SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, 3 * keys, pool, 0)
+                ) {
+                    logs.start();
+                    DirectString mapped = new DirectString();
+                    TestUtils.assertEquals("v0", reader.valueOf(0));
+                    final long usedBytes = budget.getUsedBytes();
+                    budget.setLimit(usedBytes);
+                    for (int i = 0; i < 3; i++) {
+                        CharSequence value = reader.valueOf(keys);
+                        TestUtils.assertEquals("v" + keys, value);
+                        Assert.assertEquals(address(reader.valueOf(keys, mapped)), address(value));
+                    }
+                    CharSequence cached = reader.valueOf(1);
+                    TestUtils.assertEquals("v1", cached);
+                    Assert.assertNotEquals(address(reader.valueOf(1, mapped)), address(cached));
+                    Assert.assertEquals(keys, reader.getCacheSize());
+                    Assert.assertEquals(usedBytes, budget.getUsedBytes());
+                    budget.setLimit(1024 * 1024);
+                    TestUtils.assertEquals("v" + (2 * keys), reader.valueOf(2 * keys));
+                    Assert.assertEquals(keys, reader.getCacheSize());
+                    Assert.assertEquals(usedBytes, budget.getUsedBytes());
+                    logs.drain();
+                    logs.assertOnlyOnce("symbol cache stopped admitting new values.*column=x, reason=budget");
+
+                    reader.of(configuration, path, "y", COLUMN_NAME_TXN_NONE, keys, pool, 0);
+                    Assert.assertEquals(0, budget.getUsedBytes());
+                    TestUtils.assertEquals("w0", reader.valueOf(0));
+                    Assert.assertEquals(keys, reader.getCacheSize());
+                } finally {
+                    logs.stop();
+                }
+                Assert.assertEquals(0, budget.getUsedBytes());
+            }
+        });
+    }
+
+    @Test
+    public void testSharedCacheConcurrentLoads() throws Exception {
+        assertMemoryLeak(() -> {
+            final int count = 5000;
+            final long seed = System.nanoTime();
+            LOG.info().$("testSharedCacheConcurrentLoads [seed=").$(seed).I$();
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                createMap(path, "x", "s", count, -1, 0);
+                NativeMemoryBudget budget = new NativeMemoryBudget(16 * 1024 * 1024);
+                try (
+                        SymbolMapCachePool pool = new SymbolMapCachePool(budget);
+                        SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, count, pool, 0)
+                ) {
+                    ObjList<SymbolTable> views = new ObjList<>();
+                    for (int t = 0; t < 8; t++) {
+                        views.add(reader.newSymbolTableView());
+                    }
+                    TestUtils.runConcurrently(8, t -> {
+                        Rnd rnd = new Rnd(seed, t);
+                        SymbolTable view = views.getQuick(t);
+                        for (int i = 0; i < 20_000; i++) {
+                            int key = rnd.nextInt(count);
+                            TestUtils.assertEquals("s" + key, view.valueOf(key));
+                        }
+                    });
+                    for (int key = 0; key < count; key++) {
+                        TestUtils.assertEquals("s" + key, reader.valueOf(key));
+                    }
+                    Assert.assertEquals(count, reader.getCacheSize());
+                    Assert.assertEquals(reader.getCacheAllocatedBytes(), budget.getUsedBytes());
+                }
+                Assert.assertEquals(0, budget.getUsedBytes());
+            }
+        });
+    }
+
+    @Test
+    public void testSharedCacheLoadsWholeSegmentOnFirstRead() throws Exception {
+        assertMemoryLeak(() -> {
+            final int keys = SymbolMapSegments.SEGMENT_KEYS;
+            final int count = 2 * keys + 10;
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                createMap(path, "x", "v", count, -1, 0);
+                NativeMemoryBudget budget = new NativeMemoryBudget(1024 * 1024);
+                try (
+                        SymbolMapCachePool pool = new SymbolMapCachePool(budget);
+                        SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, count, pool, 0);
+                        SymbolMapReaderImpl other = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, count, pool, 0)
+                ) {
+                    DirectString mapped = new DirectString();
+                    TestUtils.assertEquals("v" + (keys + 1), reader.valueOf(keys + 1));
+                    Assert.assertEquals(keys, reader.getCacheSize());
+                    Assert.assertEquals(reader.getCacheAllocatedBytes(), budget.getUsedBytes());
+                    final long allocatedBytes = reader.getCacheAllocatedBytes();
+                    long previous = 0;
+                    for (int key = keys; key < 2 * keys; key++) {
+                        CharSequence value = reader.valueOf(key);
+                        TestUtils.assertEquals("v" + key, value);
+                        Assert.assertNotEquals(address(reader.valueOf(key, mapped)), address(value));
+                        if (previous != 0) {
+                            Assert.assertEquals(previous + 4 + 2L * ("v" + (key - 1)).length(), address(value));
+                        }
+                        previous = address(value);
+                    }
+                    Assert.assertEquals(keys, reader.getCacheSize());
+                    Assert.assertEquals(allocatedBytes, reader.getCacheAllocatedBytes());
+                    Assert.assertEquals(address(reader.valueOf(keys)), address(other.valueOf(keys)));
+                    Assert.assertEquals(keys, other.getCacheSize());
+
+                    TestUtils.assertEquals("v" + (count - 1), other.valueOf(count - 1));
+                    Assert.assertEquals(keys + 10, reader.getCacheSize());
+                    TestUtils.assertEquals("v0", reader.valueOf(0));
+                    Assert.assertEquals(count, reader.getCacheSize());
+                    Assert.assertEquals(reader.getCacheAllocatedBytes(), budget.getUsedBytes());
+                }
+                Assert.assertEquals(0, budget.getUsedBytes());
+            }
+        });
+    }
+
+    @Test
+    public void testSharedCacheOomStopsAdmissionAndLogsOnce() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                createMap(path, "x", "s", 8, -1, 0);
+                NativeMemoryBudget budget = new NativeMemoryBudget(1024 * 1024);
+                LogCapture logs = new LogCapture();
+                try (
+                        SymbolMapCachePool pool = new SymbolMapCachePool(budget);
+                        SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, 8, pool, 0)
+                ) {
+                    long limit = Unsafe.getRssMemLimit();
+                    logs.start();
+                    try {
+                        Unsafe.setRssMemLimit(Unsafe.getRssMemUsed());
+                        for (int key = 0; key < 8; key++) {
+                            TestUtils.assertEquals("s" + key, reader.valueOf(key));
+                        }
+                    } finally {
+                        Unsafe.setRssMemLimit(limit);
+                    }
+                    // the stop outlives the memory shortage
+                    for (int key = 0; key < 8; key++) {
+                        TestUtils.assertEquals("s" + key, reader.valueBOf(key));
+                    }
+                    Assert.assertEquals(0, reader.getCacheSize());
+                    Assert.assertEquals(0, reader.getCacheAllocatedBytes());
+                    Assert.assertEquals(0, budget.getUsedBytes());
+                    logs.drain();
+                    logs.assertOnlyOnce("symbol cache stopped admitting new values.*column=x, reason=oom");
+                } finally {
+                    logs.stop();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSharedCachePartialSegmentGrowth() throws Exception {
+        assertMemoryLeak(() -> {
+            final int keys = SymbolMapSegments.SEGMENT_KEYS;
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                createMap(path, "x", "v", keys + 1, 100, 4096);
+                NativeMemoryBudget budget = new NativeMemoryBudget(1024 * 1024);
+                try (
+                        SymbolMapCachePool pool = new SymbolMapCachePool(budget);
+                        SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, 3, pool, 0);
+                        SymbolMapReaderImpl older = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, 3, pool, 0)
+                ) {
+                    StaticSymbolTable view = reader.newSymbolTableView();
+                    CharSequence retained = view.valueOf(0);
+                    TestUtils.assertEquals("v0", retained);
+                    Assert.assertEquals(3, reader.getCacheSize());
+                    final long inPlaceBytes = reader.getCacheAllocatedBytes();
+                    final long inPlaceAddress = address(retained);
+
+                    reader.updateSymbolCount(6);
+                    TestUtils.assertEquals("v5", reader.valueOf(5));
+                    Assert.assertEquals(6, reader.getCacheSize());
+                    Assert.assertEquals(inPlaceBytes, reader.getCacheAllocatedBytes());
+                    Assert.assertEquals(inPlaceAddress, address(reader.valueOf(0)));
+                    Assert.assertNull(older.valueOf(5));
+                    Assert.assertEquals(inPlaceAddress, address(older.valueOf(0)));
+
+                    reader.updateSymbolCount(keys);
+                    String longValue = "v100" + "x".repeat(4096);
+                    TestUtils.assertEquals(longValue, reader.valueOf(100));
+                    Assert.assertEquals(keys, reader.getCacheSize());
+                    Assert.assertTrue(reader.getCacheAllocatedBytes() > inPlaceBytes);
+                    Assert.assertNotEquals(inPlaceAddress, address(reader.valueOf(0)));
+                    TestUtils.assertEquals("v0", retained);
+                    TestUtils.assertEquals("v0", reader.valueOf(0));
+                    TestUtils.assertEquals("v5", reader.valueOf(5));
+                    Assert.assertEquals(reader.getCacheAllocatedBytes(), budget.getUsedBytes());
+
+                    reader.updateSymbolCount(keys + 1);
+                    TestUtils.assertEquals("v" + keys, reader.valueOf(keys));
+                    Assert.assertEquals(keys + 1, reader.getCacheSize());
+                    TestUtils.assertEquals("v0", reader.valueOf(0));
+                    Assert.assertEquals(reader.getCacheAllocatedBytes(), budget.getUsedBytes());
+                }
+                Assert.assertEquals(0, budget.getUsedBytes());
+            }
+        });
+    }
+
+    @Test
+    public void testSharedCachePublishesAfterCopy() throws Exception {
+        assertMemoryLeak(() -> {
+            final int keys = SymbolMapSegments.SEGMENT_KEYS;
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                createMap(path, "x", "v", keys, 100, 4096);
+                NativeMemoryBudget budget = new NativeMemoryBudget(1024 * 1024);
+                try (SymbolMapReaderImpl source = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, keys)) {
+                    MemoryR offsets = source.getSymbolOffsetsColumn();
+                    MemoryR chars = source.getSymbolValuesColumn();
+                    DirectString view = new DirectString();
+                    int[] loadingKey = {0};
+                    long[] publishedAddress = {0};
+                    int[] copies = {0};
+                    try (SymbolMapSegments segments = new SymbolMapSegments(budget) {
+                        @Override
+                        protected void onCopied() {
+                            copies[0]++;
+                            Assert.assertNull(get(loadingKey[0], view));
+                            if (publishedAddress[0] != 0) {
+                                Assert.assertEquals(publishedAddress[0], address(get(0, view)));
+                            }
+                            Assert.assertEquals(NOT_LOADED, load(loadingKey[0], keys, offsets, chars));
+                        }
+                    }) {
+                        Assert.assertEquals(SymbolMapSegments.LOADED, segments.load(0, 3, offsets, chars));
+                        Assert.assertEquals(1, copies[0]);
+                        publishedAddress[0] = address(segments.get(0, view));
+                        loadingKey[0] = 5;
+                        Assert.assertEquals(SymbolMapSegments.LOADED, segments.load(5, 6, offsets, chars));
+                        Assert.assertEquals(2, copies[0]);
+                        Assert.assertEquals(publishedAddress[0], address(segments.get(0, view)));
+                        TestUtils.assertEquals("v5", segments.get(5, view));
+                        loadingKey[0] = 200;
+                        Assert.assertEquals(SymbolMapSegments.LOADED, segments.load(200, keys, offsets, chars));
+                        Assert.assertEquals(3, copies[0]);
+                        Assert.assertNotEquals(publishedAddress[0], address(segments.get(0, view)));
+                        TestUtils.assertEquals("v200", segments.get(200, view));
+                        Assert.assertEquals(SymbolMapSegments.LOADED, segments.load(200, keys, offsets, chars));
+                        Assert.assertEquals(3, copies[0]);
+                    }
+                    Assert.assertEquals(0, budget.getUsedBytes());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSharedCacheSegmentBeyondLimitStops() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                createMap(path, "x", "v", 2, 1, 4096);
+                NativeMemoryBudget budget = new NativeMemoryBudget(1024 * 1024);
+                try (
+                        SymbolMapReaderImpl source = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, 2);
+                        SymbolMapSegments segments = new SymbolMapSegments(budget, 1024)
+                ) {
+                    MemoryR offsets = source.getSymbolOffsetsColumn();
+                    MemoryR chars = source.getSymbolValuesColumn();
+                    DirectString view = new DirectString();
+                    Assert.assertEquals(SymbolMapSegments.STOPPED, segments.load(0, 2, offsets, chars));
+                    Assert.assertEquals(SymbolMapSegments.STOP_BUDGET, segments.getStopReason());
+                    Assert.assertEquals(SymbolMapSegments.NOT_LOADED, segments.load(0, 2, offsets, chars));
+                    Assert.assertNull(segments.get(0, view));
+                    Assert.assertEquals(0, segments.size());
+                }
+                Assert.assertEquals(0, budget.getUsedBytes());
+            }
+        });
+    }
+
+    @Test
+    public void testSharedCacheValueFormats() throws Exception {
+        assertMemoryLeak(() -> {
+            final int keys = SymbolMapSegments.SEGMENT_KEYS;
+            ObjList<String> values = new ObjList<>("", "界", "😀", "a".repeat(30), "b".repeat(31));
+            for (int key = values.size(); key < keys + 2; key++) {
+                values.add(key == keys - 1 || key == keys ? "c".repeat(65_536) + key : "k" + key);
+            }
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                create(path, "x", 2 * keys, true);
+                try (SymbolMapWriter writer = new SymbolMapWriter(configuration, path, "x", COLUMN_NAME_TXN_NONE, 0, -1, NOOP_COLLECTOR, -1)) {
+                    Assert.assertEquals(SymbolTable.VALUE_IS_NULL, writer.put(null));
+                    for (int key = 0; key < values.size(); key++) {
+                        Assert.assertEquals(key, writer.put(values.getQuick(key)));
+                    }
+                }
+                try (
+                        SymbolMapCachePool pool = new SymbolMapCachePool(new NativeMemoryBudget(1024 * 1024));
+                        SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, values.size(), pool, 0)
+                ) {
+                    ObjList<StaticSymbolTable> views = new ObjList<>(reader, reader.newSymbolTableView());
+                    for (int v = 0; v < views.size(); v++) {
+                        StaticSymbolTable view = views.getQuick(v);
+                        Assert.assertNull(view.valueOf(SymbolTable.VALUE_IS_NULL));
+                        Assert.assertNull(view.valueOf(values.size()));
+                        for (int key = 0; key < values.size(); key++) {
+                            int next = (key + 1) % values.size();
+                            CharSequence a = view.valueOf(key);
+                            CharSequence b = view.valueBOf(next);
+                            TestUtils.assertEquals(values.getQuick(key), a);
+                            TestUtils.assertEquals(values.getQuick(next), b);
+                            Assert.assertEquals(values.getQuick(key).hashCode(), Chars.hashCode(a));
+                            Assert.assertEquals(key, view.keyOf(a));
+                            TestUtils.assertEquals(values.getQuick(key), a);
+                            TestUtils.assertEquals(values.getQuick(next), b);
+                        }
+                    }
+                    Assert.assertEquals(values.size(), reader.getCacheSize());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSharedCacheRetainedOnlyByReadersThatRead() throws Exception {
         assertMemoryLeak(() -> {
             try (Path path = new Path().of(configuration.getDbRoot())) {
@@ -171,7 +496,7 @@ public class SymbolMapTest extends AbstractCairoTest {
 
                     TestUtils.assertEquals("bbbb", unread.valueBOf(1));
                     Assert.assertEquals(1, pool.getEntryCount());
-                    Assert.assertEquals(1, unread.getLowCacheSize());
+                    Assert.assertEquals(2, unread.getCacheSize());
 
                     unread.of(configuration, path, "x", COLUMN_NAME_TXN_NONE, 2, pool, 0);
                     Assert.assertEquals(0, pool.getEntryCount());
@@ -183,347 +508,9 @@ public class SymbolMapTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSharedLowCacheGrowthAndSnapshots() throws Exception {
-        assertMemoryLeak(() -> {
-            ObjList<String> values = new ObjList<>("aaaa", "bbbb", "x".repeat(1000), "cccc", "dddd", "eeee");
-            try (Path path = new Path().of(configuration.getDbRoot())) {
-                create(path, "x", 8, true);
-                try (SymbolMapWriter writer = new SymbolMapWriter(configuration, path, "x", COLUMN_NAME_TXN_NONE, 0, -1, NOOP_COLLECTOR, -1)) {
-                    for (int i = 0; i < values.size(); i++) {
-                        writer.put(values.getQuick(i));
-                    }
-                }
-                NativeMemoryBudget budget = new NativeMemoryBudget(1024 * 1024);
-                try (
-                        SymbolMapCachePool pool = new SymbolMapCachePool(budget);
-                        SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, 0, pool, 0);
-                        SymbolMapReaderImpl older = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, 2, pool, 0)
-                ) {
-                    // opening and reloading copy nothing
-                    reader.updateSymbolCount(2);
-                    Assert.assertEquals(0, reader.getLowCacheSize());
-                    Assert.assertEquals(0, budget.getUsedBytes());
-                    // the first read copies the value, the second returns the shared slot
-                    older.valueOf(0);
-                    DirectString retained = (DirectString) older.valueOf(0);
-                    Assert.assertEquals(retained.lo(), ((DirectString) reader.valueOf(0)).lo());
-                    Assert.assertEquals(1, reader.getLowCacheSize());
-                    // the header slot, 64 slots and the alignment slack
-                    Assert.assertEquals(66 * 64, reader.getLowCacheAllocatedBytes());
-                    ObjList<SymbolTable> views = new ObjList<>(reader, reader.newSymbolTableView());
-                    for (int count = 3; count <= values.size(); count++) {
-                        reader.updateSymbolCount(count);
-                        for (int v = 0; v < views.size(); v++) {
-                            SymbolTable view = views.getQuick(v);
-                            for (int key = 0; key < count; key++) {
-                                CharSequence a = view.valueOf(key);
-                                CharSequence b = view.valueBOf((key + 1) % count);
-                                TestUtils.assertEquals(values.getQuick(key), a);
-                                TestUtils.assertEquals(values.getQuick((key + 1) % count), b);
-                            }
-                            Assert.assertNull(view.valueOf(count));
-                            Assert.assertNull(view.valueOf(-1));
-                        }
-                        TestUtils.assertEquals(values.getQuick(0), retained);
-                        TestUtils.assertEquals(values.getQuick(1), older.valueBOf(1));
-                        Assert.assertNull(older.valueOf(2));
-                    }
-                    // the 1000-char value does not fit a slot and lives in the map
-                    Assert.assertEquals(values.size() - 1, reader.getLowCacheSize());
-                    Assert.assertEquals(1, reader.getCacheSize());
-                    reader.updateSymbolCount(1);
-                    Assert.assertNull(reader.valueOf(1));
-                    Assert.assertNull(reader.newSymbolTableView().valueOf(1));
-                    Assert.assertEquals(66 * 64, reader.getLowCacheAllocatedBytes());
-                    Assert.assertEquals(reader.getCacheAllocatedBytes(), budget.getUsedBytes());
-                }
-                Assert.assertEquals(0, budget.getUsedBytes());
-            }
-        });
-    }
-
-    @Test
-    public void testSharedLowCacheGrowthWithConcurrentReader() throws Exception {
-        assertMemoryLeak(() -> {
-            String first = "x".repeat(65_536);
-            try (Path path = new Path().of(configuration.getDbRoot())) {
-                create(path, "x", 4096, true);
-                try (SymbolMapWriter writer = new SymbolMapWriter(configuration, path, "x", COLUMN_NAME_TXN_NONE, 0, -1, NOOP_COLLECTOR, -1)) {
-                    writer.put(first);
-                    for (int key = 1; key < 4097; key++) {
-                        writer.put("s" + (10_000 + key));
-                    }
-                }
-                try (
-                        SymbolMapCachePool pool = new SymbolMapCachePool(new NativeMemoryBudget(1024 * 1024));
-                        SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, 64, pool, 0);
-                        SymbolMapReaderImpl older = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, 65, pool, 0)
-                ) {
-                    DirectString retained = (DirectString) older.valueOf(0);
-                    AtomicReference<Throwable> failure = new AtomicReference<>();
-                    AtomicBoolean isDone = new AtomicBoolean();
-                    CountDownLatch started = new CountDownLatch(1);
-                    Thread thread = new Thread(() -> {
-                        SymbolTable view = older.newSymbolTableView();
-                        try {
-                            do {
-                                TestUtils.assertEquals(first, view.valueOf(0));
-                                TestUtils.assertEquals("s10064", view.valueBOf(64));
-                                Assert.assertNull(view.valueOf(65));
-                                started.countDown();
-                            } while (!isDone.get());
-                        } catch (Throwable e) {
-                            failure.set(e);
-                            started.countDown();
-                        }
-                    });
-                    thread.start();
-                    try {
-                        started.await();
-                        reader.updateSymbolCount(65);
-                        reader.valueOf(64);
-                        // taken before the slot array grows to 4096 slots
-                        CharSequence early = reader.valueBOf(64);
-                        for (int count = 66; count <= 4096; count++) {
-                            reader.updateSymbolCount(count);
-                            TestUtils.assertEquals("s" + (10_000 + count - 1), reader.valueOf(count - 1));
-                        }
-                        TestUtils.assertEquals("s10064", early);
-                    } finally {
-                        isDone.set(true);
-                        TestUtils.joinThreads(thread);
-                    }
-                    if (failure.get() != null) {
-                        throw new AssertionError(failure.get());
-                    }
-                    // an insert that lost the try-lock to the other thread is retried by a later read
-                    for (int key = 1; key < 4096; key++) {
-                        TestUtils.assertEquals("s" + (10_000 + key), reader.valueOf(key));
-                    }
-                    // the oversized key 0 takes neither a slot nor a map entry
-                    Assert.assertEquals(4095, reader.getLowCacheSize());
-                    Assert.assertEquals(0, reader.getCacheSize());
-                    // arrays of 128 to 4096 slots, each with a header slot and the alignment slack
-                    Assert.assertEquals(64 * (128 + 256 + 512 + 1024 + 2048 + 4096 + 6 * 2), reader.getLowCacheAllocatedBytes());
-                    TestUtils.assertEquals(first, retained);
-                    reader.updateSymbolCount(4097);
-                    TestUtils.assertEquals("s14096", reader.valueOf(4096));
-                    Assert.assertEquals(4095, reader.getLowCacheSize());
-                    Assert.assertEquals(1, reader.getCacheSize());
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testSharedLowCacheEmptyAndNullSymbols() throws Exception {
-        assertMemoryLeak(() -> {
-            try (Path path = new Path().of(configuration.getDbRoot())) {
-                create(path, "x", 8, true);
-                try (SymbolMapWriter writer = new SymbolMapWriter(configuration, path, "x", COLUMN_NAME_TXN_NONE, 0, -1, NOOP_COLLECTOR, -1)) {
-                    Assert.assertEquals(SymbolTable.VALUE_IS_NULL, writer.put(null));
-                    Assert.assertEquals(0, writer.put(""));
-                    Assert.assertEquals(1, writer.put("界"));
-                }
-                try (
-                        SymbolMapCachePool pool = new SymbolMapCachePool(new NativeMemoryBudget(1024 * 1024));
-                        SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, 0, pool, 0)
-                ) {
-                    Assert.assertEquals(0, reader.getLowCacheAllocatedBytes());
-                    reader.updateSymbolCount(2);
-                    ObjList<SymbolTable> views = new ObjList<>(reader, reader.newSymbolTableView());
-                    for (int v = 0; v < views.size(); v++) {
-                        SymbolTable view = views.getQuick(v);
-                        Assert.assertNull(view.valueOf(SymbolTable.VALUE_IS_NULL));
-                        CharSequence empty = view.valueOf(0);
-                        CharSequence unicode = view.valueBOf(1);
-                        TestUtils.assertEquals("", empty);
-                        TestUtils.assertEquals("界", unicode);
-                        Assert.assertEquals(0, ((StaticSymbolTable) view).keyOf(empty));
-                        TestUtils.assertEquals("", empty);
-                        TestUtils.assertEquals("界", unicode);
-                    }
-                    Assert.assertEquals(2, reader.getLowCacheSize());
-                    Assert.assertEquals(0, reader.getCacheSize());
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testSharedLowCacheReloadJump() throws Exception {
-        assertMemoryLeak(() -> {
-            try (Path path = new Path().of(configuration.getDbRoot())) {
-                create(path, "x", 4096, true);
-                try (SymbolMapWriter writer = new SymbolMapWriter(configuration, path, "x", COLUMN_NAME_TXN_NONE, 0, -1, NOOP_COLLECTOR, -1)) {
-                    for (int key = 0; key < 4096; key++) {
-                        writer.put("s" + key);
-                    }
-                }
-                try (
-                        SymbolMapCachePool pool = new SymbolMapCachePool(new NativeMemoryBudget(1024 * 1024));
-                        SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, 64, pool, 0)
-                ) {
-                    // a reload copies nothing; values move into slots as they are read
-                    reader.updateSymbolCount(4096);
-                    Assert.assertEquals(0, reader.getLowCacheSize());
-                    Assert.assertEquals(0, reader.getLowCacheAllocatedBytes());
-                    TestUtils.assertEquals("s0", reader.valueOf(0));
-                    Assert.assertEquals(64 * (64 + 2), reader.getLowCacheAllocatedBytes());
-                    for (int key = 1; key < 4096; key++) {
-                        TestUtils.assertEquals("s" + key, reader.valueOf(key));
-                    }
-                    Assert.assertEquals(4096, reader.getLowCacheSize());
-                    Assert.assertEquals(0, reader.getCacheSize());
-                    Assert.assertEquals(64 * (64 + 4096 + 2 * 2), reader.getLowCacheAllocatedBytes());
-                    for (int key = 0; key < 4096; key++) {
-                        TestUtils.assertEquals("s" + key, reader.valueBOf(key));
-                    }
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testSharedLowCacheOomStopsAdmissionAndLogsOnce() throws Exception {
-        assertMemoryLeak(() -> {
-            try (Path path = new Path().of(configuration.getDbRoot())) {
-                create(path, "x", 8, true);
-                try (SymbolMapWriter writer = new SymbolMapWriter(configuration, path, "x", COLUMN_NAME_TXN_NONE, 0, -1, NOOP_COLLECTOR, -1)) {
-                    for (int key = 0; key < 8; key++) {
-                        writer.put("s" + key);
-                    }
-                }
-                NativeMemoryBudget budget = new NativeMemoryBudget(1024 * 1024);
-                LogCapture logs = new LogCapture();
-                try (
-                        SymbolMapCachePool pool = new SymbolMapCachePool(budget);
-                        SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, 8, pool, 0)
-                ) {
-                    long limit = Unsafe.getRssMemLimit();
-                    logs.start();
-                    try {
-                        Unsafe.setRssMemLimit(Unsafe.getRssMemUsed());
-                        for (int key = 0; key < 8; key++) {
-                            TestUtils.assertEquals("s" + key, reader.valueOf(key));
-                        }
-                    } finally {
-                        Unsafe.setRssMemLimit(limit);
-                    }
-                    // the stop outlives the memory shortage
-                    for (int key = 0; key < 8; key++) {
-                        TestUtils.assertEquals("s" + key, reader.valueBOf(key));
-                    }
-                    Assert.assertEquals(0, reader.getLowCacheSize());
-                    Assert.assertEquals(0, reader.getLowCacheAllocatedBytes());
-                    Assert.assertEquals(0, budget.getUsedBytes());
-                    logs.drain();
-                    logs.assertOnlyOnce("symbol cache low slice stopped admitting new values.*column=x, reason=oom");
-                } finally {
-                    logs.stop();
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testSharedLowCacheHidesValueUntilCopied() throws Exception {
-        assertMemoryLeak(() -> {
-            DirectString view = new DirectString();
-            int[] copyingKey = {0};
-            int[] copies = {0};
-            try (
-                    DirectUtf16Sink chars = new DirectUtf16Sink(2L * SymbolMapLowSlice.MAX_INLINE_CHARS);
-                    SymbolMapLowSlice slice = new SymbolMapLowSlice() {
-                        @Override
-                        protected void onValueCopied() {
-                            copies[0]++;
-                            Assert.assertNull(get(copyingKey[0], view));
-                        }
-                    }
-            ) {
-                int[] keys = {0, 1, 2, 64};
-                String[] values = {"abcd", "", "x".repeat(SymbolMapLowSlice.MAX_INLINE_CHARS), "after growth"};
-                for (int i = 0; i < keys.length; i++) {
-                    copyingKey[0] = keys[i];
-                    chars.clear();
-                    chars.put(values[i]);
-                    Assert.assertEquals(SymbolMapLowSlice.INSERTED, slice.tryPut(keys[i], 65, chars.ptr(), chars.length()));
-                    Assert.assertEquals(i + 1, copies[0]);
-                    for (int j = 0; j <= i; j++) {
-                        TestUtils.assertEquals(values[j], slice.get(keys[j], view));
-                    }
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testSharedLowCachePublishesGrownArrayLast() throws Exception {
-        assertMemoryLeak(() -> {
-            DirectString view = new DirectString();
-            int[] publishedCapacity = {0};
-            int[] grows = {0};
-            try (
-                    DirectUtf16Sink chars = new DirectUtf16Sink(64);
-                    SymbolMapLowSlice slice = new SymbolMapLowSlice() {
-                        @Override
-                        protected void onGrowFilled() {
-                            grows[0]++;
-                            Assert.assertEquals(publishedCapacity[0], capacity());
-                        }
-                    }
-            ) {
-                chars.put("abcd");
-                Assert.assertEquals(SymbolMapLowSlice.INSERTED, slice.tryPut(0, 65, chars.ptr(), chars.length()));
-                Assert.assertEquals(1, grows[0]);
-                Assert.assertEquals(64, slice.capacity());
-                publishedCapacity[0] = 64;
-                Assert.assertEquals(SymbolMapLowSlice.INSERTED, slice.tryPut(64, 65, chars.ptr(), chars.length()));
-                Assert.assertEquals(2, grows[0]);
-                Assert.assertEquals(128, slice.capacity());
-                TestUtils.assertEquals("abcd", slice.get(0, view));
-                TestUtils.assertEquals("abcd", slice.get(64, view));
-            }
-        });
-    }
-
-    @Test
-    public void testSharedLowCacheLongValuesUseMap() throws Exception {
-        assertMemoryLeak(() -> {
-            // 30 chars fill a slot, 31 do not
-            ObjList<String> values = new ObjList<>("a".repeat(30), "b".repeat(31), "");
-            try (Path path = new Path().of(configuration.getDbRoot())) {
-                create(path, "x", 8, true);
-                try (SymbolMapWriter writer = new SymbolMapWriter(configuration, path, "x", COLUMN_NAME_TXN_NONE, 0, -1, NOOP_COLLECTOR, -1)) {
-                    for (int i = 0; i < values.size(); i++) {
-                        writer.put(values.getQuick(i));
-                    }
-                }
-                try (
-                        SymbolMapCachePool pool = new SymbolMapCachePool(new NativeMemoryBudget(1024 * 1024));
-                        SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, values.size(), pool, 0)
-                ) {
-                    DirectString mmapView = new DirectString();
-                    for (int key = 0; key < values.size(); key++) {
-                        reader.valueOf(key);
-                        CharSequence a = reader.valueOf(key);
-                        CharSequence b = reader.valueBOf((key + 1) % values.size());
-                        TestUtils.assertEquals(values.getQuick(key), a);
-                        TestUtils.assertEquals(values.getQuick((key + 1) % values.size()), b);
-                        Assert.assertNotEquals(address(reader.valueOf(key, mmapView)), address(a));
-                    }
-                    Assert.assertEquals(2, reader.getLowCacheSize());
-                    Assert.assertEquals(1, reader.getCacheSize());
-                }
-            }
-        });
-    }
-
-    @Test
     public void testSymbolTableViewsKeepValueHashes() throws Exception {
         assertMemoryLeak(() -> {
-            // a slot value, a map value and an empty value, whose hash is 0
+            // an empty value hashes to 0
             ObjList<String> values = new ObjList<>("a".repeat(30), "b".repeat(31), "");
             ObjList<String> others = new ObjList<>("x", "y", "z");
             try (Path path = new Path().of(configuration.getDbRoot())) {
@@ -546,7 +533,6 @@ public class SymbolMapTest extends AbstractCairoTest {
                     for (int key = 0; key < values.size(); key++) {
                         final int expected = values.getQuick(key).hashCode();
                         Assert.assertFalse(reader.hasValueHash(key));
-                        // the first read returns the mapped value, the second the cached one
                         for (int read = 0; read < 2; read++) {
                             CharSequence value = reader.valueOf(key);
                             Assert.assertTrue(DirectString.isRawView(value));
@@ -555,8 +541,7 @@ public class SymbolMapTest extends AbstractCairoTest {
                         }
                         Assert.assertEquals(expected, Chars.hashCode(reader.valueBOf(key)));
                     }
-                    Assert.assertEquals(2, reader.getLowCacheSize());
-                    Assert.assertEquals(1, reader.getCacheSize());
+                    Assert.assertEquals(values.size(), reader.getCacheSize());
 
                     // Both flyweights read the stored hash instead of hashing the chars.
                     reader.putValueHash(1, 42);
@@ -582,100 +567,6 @@ public class SymbolMapTest extends AbstractCairoTest {
                     }
                 }
             }
-        });
-    }
-
-    @Test
-    public void testSharedLowCacheGrowthOomKeepsSlotsAndUsesMap() throws Exception {
-        assertMemoryLeak(() -> {
-            try (Path path = new Path().of(configuration.getDbRoot())) {
-                create(path, "x", 128, true);
-                try (SymbolMapWriter writer = new SymbolMapWriter(configuration, path, "x", COLUMN_NAME_TXN_NONE, 0, -1, NOOP_COLLECTOR, -1)) {
-                    for (int key = 0; key < 128; key++) {
-                        writer.put("s" + key);
-                    }
-                }
-                NativeMemoryBudget budget = new NativeMemoryBudget(1024 * 1024);
-                LogCapture logs = new LogCapture();
-                try (
-                        SymbolMapCachePool pool = new SymbolMapCachePool(budget);
-                        SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, 64, pool, 0)
-                ) {
-                    logs.start();
-                    for (int key = 0; key < 64; key++) {
-                        TestUtils.assertEquals("s" + key, reader.valueOf(key));
-                    }
-                    Assert.assertEquals(64, reader.getLowCacheSize());
-                    Assert.assertEquals(66 * 64, reader.getLowCacheAllocatedBytes());
-                    Assert.assertEquals(0, budget.getUsedBytes());
-
-                    reader.updateSymbolCount(128);
-                    long limit = Unsafe.getRssMemLimit();
-                    try {
-                        Unsafe.setRssMemLimit(Unsafe.getRssMemUsed());
-                        TestUtils.assertEquals("s100", reader.valueOf(100));
-                    } finally {
-                        Unsafe.setRssMemLimit(limit);
-                    }
-                    TestUtils.assertEquals("s101", reader.valueOf(101));
-                    // the slots stop for good and keep their values; later low keys go to the map
-                    for (int key = 0; key < 128; key++) {
-                        TestUtils.assertEquals("s" + key, reader.valueBOf(key));
-                    }
-                    Assert.assertEquals(64, reader.getLowCacheSize());
-                    Assert.assertEquals(64, reader.getCacheSize());
-                    Assert.assertEquals(66 * 64, reader.getLowCacheAllocatedBytes());
-                    Assert.assertEquals(reader.getCacheAllocatedBytes(), budget.getUsedBytes());
-                    logs.drain();
-                    logs.assertOnlyOnce("symbol cache low slice stopped admitting new values.*column=x, reason=oom");
-                } finally {
-                    logs.stop();
-                }
-                Assert.assertEquals(0, budget.getUsedBytes());
-            }
-        });
-    }
-
-    @Test
-    public void testSharedLowCacheFillsAfterAnotherMapExhaustsBudget() throws Exception {
-        assertMemoryLeak(() -> {
-            final int highCount = 8192;
-            NativeMemoryBudget budget = new NativeMemoryBudget(1024 * 1024);
-            try (Path path = new Path().of(configuration.getDbRoot())) {
-                createMap(path, "x", "high", highCount, -1, 0);
-                createMap(path, "y", "low", 64, -1, 0);
-                try (
-                        SymbolMapCachePool pool = new SymbolMapCachePool(budget);
-                        SymbolMapReaderImpl highReader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, highCount, pool, 0);
-                        SymbolMapCachePool.Entry highEntry = pool.acquire(path, "x", COLUMN_NAME_TXN_NONE, 0);
-                        SymbolMapReaderImpl lowReader = new SymbolMapReaderImpl(configuration, path, "y", COLUMN_NAME_TXN_NONE, 64, pool, 0)
-                ) {
-                    Assert.assertNotNull(highEntry);
-                    TestUtils.assertEquals("high4096", highReader.valueOf(4096));
-                    budget.setLimit(budget.getUsedBytes());
-                    for (int key = 4097; key < highCount && highEntry.getMap().isFilling(); key++) {
-                        TestUtils.assertEquals("high" + key, highReader.valueOf(key));
-                    }
-                    Assert.assertEquals(DirectIntCharSequenceHashMap.STOP_BUDGET, highEntry.getMap().getStopReason());
-                    Assert.assertEquals(budget.getLimit(), budget.getUsedBytes());
-                    Assert.assertEquals(highReader.getCacheAllocatedBytes(), budget.getUsedBytes());
-
-                    for (int key = 0; key < 64; key++) {
-                        TestUtils.assertEquals("low" + key, lowReader.valueOf(key));
-                    }
-                    Assert.assertEquals(64, lowReader.getLowCacheSize());
-                    Assert.assertEquals(0, lowReader.getCacheSize());
-                    Assert.assertEquals(Integer.MAX_VALUE, lowReader.getMaxCachedKey());
-                    DirectString mmapView = new DirectString();
-                    for (int key = 0; key < 64; key++) {
-                        CharSequence value = lowReader.valueBOf(key);
-                        TestUtils.assertEquals("low" + key, value);
-                        Assert.assertNotEquals(address(lowReader.valueOf(key, mmapView)), address(value));
-                    }
-                    Assert.assertEquals(highReader.getCacheAllocatedBytes(), budget.getUsedBytes());
-                }
-            }
-            Assert.assertEquals(0, budget.getUsedBytes());
         });
     }
 
@@ -713,7 +604,6 @@ public class SymbolMapTest extends AbstractCairoTest {
                             }
                             TestUtils.assertEquals("s4999", reader.valueOf(4999));
                             TestUtils.assertEquals("s0", reader.valueOf(0));
-                            Assert.assertEquals(1, reader.getLowCacheSize());
                             Assert.assertEquals(0, reader.getCacheSize());
                             logs.drain();
                             logs.assertOnlyOnce("symbol cache stopped admitting new values.*column=x, reason=" + (isOom ? "oom" : "budget"));
@@ -779,16 +669,22 @@ public class SymbolMapTest extends AbstractCairoTest {
     public void testSharedCachePoolAcquireRacesLastRelease() throws Exception {
         assertMemoryLeak(() -> {
             NativeMemoryBudget budget = new NativeMemoryBudget(1024 * 1024);
-            try (SymbolMapCachePool pool = new SymbolMapCachePool(budget); Path path = new Path().of("table")) {
+            try (
+                    Path dbPath = new Path().of(configuration.getDbRoot());
+                    SymbolMapCachePool pool = new SymbolMapCachePool(budget);
+                    Path path = new Path().of("table")
+            ) {
+                createMap(dbPath, "x", "shared", 1, -1, 0);
+                final SymbolMapReaderImpl source = new SymbolMapReaderImpl(configuration, dbPath, "x", COLUMN_NAME_TXN_NONE, 1);
                 TestUtils.runConcurrently(4, worker -> {
                     DirectString view = new DirectString();
                     for (int i = 0; i < 5000; i++) {
                         try (SymbolMapCachePool.Entry entry = pool.acquire(path, "sym", -1, 0)) {
                             Assert.assertNotNull(entry);
-                            putCacheValue(entry, "shared");
-                            CharSequence value = entry.getMap().get(0, view);
+                            entry.getSegments().load(0, 1, source.getSymbolOffsetsColumn(), source.getSymbolValuesColumn());
+                            CharSequence value = entry.getSegments().get(0, view);
                             if (value != null) {
-                                TestUtils.assertEquals("shared", value);
+                                TestUtils.assertEquals("shared0", value);
                             }
                             try (SymbolMapCachePool.Entry same = pool.acquire(path, "sym", -1, 0)) {
                                 Assert.assertSame(entry, same);
@@ -796,6 +692,7 @@ public class SymbolMapTest extends AbstractCairoTest {
                         }
                     }
                 });
+                source.close();
                 Assert.assertEquals(0, pool.getEntryCount());
                 Assert.assertEquals(0, budget.getUsedBytes());
             }
@@ -807,22 +704,29 @@ public class SymbolMapTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             NativeMemoryBudget budget = new NativeMemoryBudget(1024 * 1024);
             try (
+                    Path dbPath = new Path().of(configuration.getDbRoot());
                     SymbolMapCachePool pool = new SymbolMapCachePool(budget);
                     Path path = new Path().of("table");
                     SymbolMapCachePool.Entry first = pool.acquire(path, "sym", -1, 0);
                     SymbolMapCachePool.Entry second = pool.acquire(path, "sym", -1, 0)
             ) {
                 Assert.assertSame(first, second);
-                Assert.assertTrue(putCacheValue(first, "retained"));
+                createMap(dbPath, "x", "retained", 1, -1, 0);
+                try (SymbolMapReaderImpl source = new SymbolMapReaderImpl(configuration, dbPath, "x", COLUMN_NAME_TXN_NONE, 1)) {
+                    Assert.assertEquals(
+                            SymbolMapSegments.LOADED,
+                            first.getSegments().load(0, 1, source.getSymbolOffsetsColumn(), source.getSymbolValuesColumn())
+                    );
+                }
                 DirectString view = new DirectString();
-                first.getMap().get(0, view);
+                first.getSegments().get(0, view);
                 pool.close();
                 pool.clear();
                 Assert.assertEquals(0, pool.getEntryCount());
                 Assert.assertNull(pool.acquire(path, "sym", -1, 0));
                 Assert.assertTrue(budget.getUsedBytes() > 0);
-                TestUtils.assertEquals("retained", view);
-                TestUtils.assertEquals("retained", second.getMap().get(0, view));
+                TestUtils.assertEquals("retained0", view);
+                TestUtils.assertEquals("retained0", second.getSegments().get(0, view));
             }
             Assert.assertEquals(0, budget.getUsedBytes());
         });
@@ -863,7 +767,6 @@ public class SymbolMapTest extends AbstractCairoTest {
                         SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, 5000, pool, 0);
                         SymbolMapReaderImpl older = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, 4999, pool, 0)
                 ) {
-                    Assert.assertEquals(0, reader.getLowCacheSize());
                     Assert.assertEquals(0, reader.getCacheSize());
                     ObjList<StaticSymbolTable> views = new ObjList<>(reader, reader.newSymbolTableView(), older, older.newSymbolTableView());
                     for (int i = 0; i < views.size(); i++) {
@@ -873,9 +776,8 @@ public class SymbolMapTest extends AbstractCairoTest {
                         }
                         Assert.assertNull(view.valueOf(-1));
                         Assert.assertNull(view.valueOf(view.getSymbolCount()));
-                        // the first scan fills the slots and the map, the later ones only read them
-                        Assert.assertEquals(4096, reader.getLowCacheSize());
-                        Assert.assertEquals(904, reader.getCacheSize());
+                        // the first scan loads every segment, the later ones only read them
+                        Assert.assertEquals(5000, reader.getCacheSize());
                         Assert.assertEquals(
                                 ((DirectString) reader.valueOf(4096)).lo(),
                                 ((DirectString) view.valueOf(4096)).lo()
@@ -889,7 +791,7 @@ public class SymbolMapTest extends AbstractCairoTest {
                     CharSequence held = worker.valueOf(4096);
                     reader.valueOf(4097);
                     TestUtils.assertEquals("symbol4096", held);
-                    Assert.assertEquals(904, reader.getCacheSize());
+                    Assert.assertEquals(5000, reader.getCacheSize());
                 }
             }
         });
@@ -911,12 +813,13 @@ public class SymbolMapTest extends AbstractCairoTest {
                         SymbolMapReaderImpl older = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, 9999, pool, 0)
                 ) {
                     TestUtils.assertEquals("symbol9999", reader.valueOf(9999));
-                    Assert.assertEquals(1, reader.getCacheSize());
+                    final int tailKeys = 10_000 % SymbolMapSegments.SEGMENT_KEYS;
+                    Assert.assertEquals(tailKeys, reader.getCacheSize());
                     Assert.assertEquals(0, older.getCacheSize());
                     TestUtils.assertEquals("symbol0", older.valueOf(0));
-                    Assert.assertEquals(1, older.getCacheSize());
+                    Assert.assertEquals(tailKeys + SymbolMapSegments.SEGMENT_KEYS, older.getCacheSize());
                     Assert.assertEquals(1, pool.getEntryCount());
-                    Assert.assertTrue(reader.getCacheAllocatedBytes() < 1024);
+                    Assert.assertTrue(reader.getCacheAllocatedBytes() < 16 * 1024);
                     Assert.assertNull(older.valueOf(9999));
                     Assert.assertNull(older.newSymbolTableView().valueOf(9999));
                     Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, older.keyOf("symbol9999"));
@@ -949,78 +852,6 @@ public class SymbolMapTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSharedCacheBusyInsertBacksOff() throws Exception {
-        assertMemoryLeak(() -> {
-            final int symbolCount = SymbolMapReaderImpl.INSERT_BACKOFF + 8;
-            final String suffix = "-".repeat(31);
-            try (Path path = new Path().of(configuration.getDbRoot())) {
-                create(path, "x", symbolCount, true);
-                try (SymbolMapWriter writer = new SymbolMapWriter(configuration, path, "x", COLUMN_NAME_TXN_NONE, 0, -1, NOOP_COLLECTOR, -1)) {
-                    for (int key = 0; key < symbolCount; key++) {
-                        writer.put("s" + key + suffix);
-                    }
-                }
-                CountDownLatch growing = new CountDownLatch(1);
-                CountDownLatch released = new CountDownLatch(1);
-                AtomicInteger reservations = new AtomicInteger();
-                NativeMemoryBudget budget = new NativeMemoryBudget(1024 * 1024) {
-                    @Override
-                    public boolean tryReserve(long bytes) {
-                        if (reservations.incrementAndGet() == 1) {
-                            growing.countDown();
-                            try {
-                                Assert.assertTrue(released.await(10, TimeUnit.SECONDS));
-                            } catch (InterruptedException e) {
-                                Thread.currentThread().interrupt();
-                                throw new AssertionError(e);
-                            }
-                        }
-                        return super.tryReserve(bytes);
-                    }
-                };
-                try (
-                        SymbolMapCachePool pool = new SymbolMapCachePool(budget);
-                        SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, symbolCount, pool, 0)
-                ) {
-                    SymbolTable view = reader.newSymbolTableView();
-                    AtomicReference<Throwable> failure = new AtomicReference<>();
-                    Thread thread = new Thread(() -> {
-                        try {
-                            TestUtils.assertEquals("s0" + suffix, reader.valueOf(0));
-                        } catch (Throwable e) {
-                            failure.set(e);
-                        }
-                    });
-                    thread.start();
-                    try {
-                        Assert.assertTrue(growing.await(10, TimeUnit.SECONDS));
-                        TestUtils.assertEquals("s1" + suffix, view.valueOf(1));
-                    } finally {
-                        released.countDown();
-                        TestUtils.joinThreads(thread);
-                    }
-                    if (failure.get() != null) {
-                        throw new AssertionError(failure.get());
-                    }
-                    Assert.assertEquals(1, reader.getCacheSize());
-                    for (int key = 2; key < SymbolMapReaderImpl.INSERT_BACKOFF + 2; key++) {
-                        TestUtils.assertEquals("s" + key + suffix, view.valueOf(key));
-                    }
-                    Assert.assertEquals(1, reader.getCacheSize());
-                    TestUtils.assertEquals("s1" + suffix, view.valueOf(1));
-                    Assert.assertEquals(2, reader.getCacheSize());
-                    TestUtils.assertEquals("s2" + suffix, reader.valueOf(2));
-                    Assert.assertEquals(3, reader.getCacheSize());
-                    TestUtils.assertEquals("s3" + suffix, view.valueOfOnce(3));
-                    Assert.assertEquals(3, reader.getCacheSize());
-                    Assert.assertEquals(0, reader.getLowCacheSize());
-                }
-                Assert.assertEquals(0, budget.getUsedBytes());
-            }
-        });
-    }
-
-    @Test
     public void testSharedCacheReaderWithZeroAndExhaustedBudget() throws Exception {
         assertMemoryLeak(() -> {
             try (Path path = new Path().of(configuration.getDbRoot())) {
@@ -1040,12 +871,9 @@ public class SymbolMapTest extends AbstractCairoTest {
                             SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, 4097, pool, 0)
                     ) {
                         SymbolTable view = reader.newSymbolTableView();
-                        Assert.assertEquals(-1, reader.getMaxCachedKey());
                         TestUtils.assertEquals("s0", reader.valueOf(0));
                         TestUtils.assertEquals("s1", reader.valueBOf(1));
-                        Assert.assertEquals(isDisabled ? -1 : Integer.MAX_VALUE, reader.getMaxCachedKey());
                         TestUtils.assertEquals("s4096", reader.valueOf(4096));
-                        Assert.assertEquals(isDisabled ? -1 : 4095, reader.getMaxCachedKey());
                         for (int i = 0; i < 10; i++) {
                             TestUtils.assertEquals("s0", reader.valueOf(0));
                             TestUtils.assertEquals("s4096", reader.valueBOf(4096));
@@ -1055,9 +883,7 @@ public class SymbolMapTest extends AbstractCairoTest {
                         Assert.assertEquals(0, reader.getCacheSize());
                         Assert.assertEquals(0, reader.getCacheAllocatedBytes());
                         Assert.assertEquals(isDisabled ? 0 : 1, pool.getEntryCount());
-                        Assert.assertEquals(isDisabled ? 0 : 2, reader.getLowCacheSize());
-                        Assert.assertEquals(isDisabled ? 0 : 66 * 64, reader.getLowCacheAllocatedBytes());
-                        Assert.assertEquals(isDisabled ? 0 : 66 * 64, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_SYMBOL_CACHE) - tagBytes);
+                        Assert.assertEquals(0, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_SYMBOL_CACHE) - tagBytes);
                         Assert.assertEquals(limit, budget.getUsedBytes());
                     }
                     budget.release(limit);
@@ -1453,7 +1279,6 @@ public class SymbolMapTest extends AbstractCairoTest {
     public void testKeyOfCachedKeyLeavesReaderCacheEmpty() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (Path path = new Path().of(configuration.getDbRoot())) {
-                // keys from SymbolMapLowSlice.MAX_KEYS up resolve through the shared map
                 final int n = 5000;
                 create(path, "x", n, true);
                 try (SymbolMapWriter writer = new SymbolMapWriter(
@@ -1484,11 +1309,11 @@ public class SymbolMapTest extends AbstractCairoTest {
                     Assert.assertEquals(SymbolTable.VALUE_IS_NULL, reader.keyOf(null, 4096));
                     Assert.assertEquals(0, reader.getCacheSize());
                     final CharSequence value = reader.valueOf(4500);
-                    Assert.assertEquals(1, reader.getCacheSize());
+                    Assert.assertEquals(SymbolMapSegments.SEGMENT_KEYS, reader.getCacheSize());
                     // a wrong hint must not rebind the valueOf() view passed in as the value
                     Assert.assertEquals(4500, reader.keyOf(value, 4501));
                     TestUtils.assertEquals("key4500", value);
-                    Assert.assertEquals(1, reader.getCacheSize());
+                    Assert.assertEquals(SymbolMapSegments.SEGMENT_KEYS, reader.getCacheSize());
                 }
             }
         });
@@ -1995,99 +1820,6 @@ public class SymbolMapTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNewOwnerOfEmptyStoppedCacheKeepsLowSlotsAndBounds() throws Exception {
-        assertMemoryLeak(() -> {
-            NativeMemoryBudget budget = new NativeMemoryBudget(1);
-            try (Path path = new Path().of(configuration.getDbRoot())) {
-                createMap(path, "x", "value", 8, 4097, 256);
-                try (
-                        SymbolMapCachePool pool = new SymbolMapCachePool(budget);
-                        SymbolMapCachePool.Entry entry = pool.acquire(path, "x", COLUMN_NAME_TXN_NONE, 0)
-                ) {
-                    Assert.assertNotNull(entry);
-                    DirectIntCharSequenceHashMap map = entry.getMap();
-                    Assert.assertEquals(Integer.MAX_VALUE, map.getMaxKeyIfStopped());
-                    Assert.assertEquals(DirectIntCharSequenceHashMap.STOPPED, map.tryPutIfAbsent(2, 0, 0));
-                    Assert.assertEquals(Integer.MIN_VALUE, map.getMaxKeyIfStopped());
-                    try (SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, 2, pool, 0)) {
-                        StaticSymbolTable view = reader.newSymbolTableView();
-                        DirectString mmapView = new DirectString();
-                        Assert.assertEquals(0, reader.getLowCacheSize());
-                        long mmapAddress = address(reader.valueOf(0, mmapView));
-                        // the first read returns the mapped value and copies it into a slot
-                        Assert.assertEquals(mmapAddress, address(view.valueOf(0)));
-                        Assert.assertNotEquals(mmapAddress, address(view.valueOf(0)));
-                        Assert.assertNull(view.valueOf(2));
-
-                        reader.updateSymbolCount(8);
-                        Assert.assertEquals(1, reader.getLowCacheSize());
-                        TestUtils.assertEquals("value7", view.valueBOf(7));
-                        long lowAddress = address(reader.valueOf(7));
-                        Assert.assertNotEquals(address(reader.valueOf(7, mmapView)), lowAddress);
-                        Assert.assertEquals(lowAddress, address(view.valueOf(7)));
-                        Assert.assertEquals(lowAddress, address(view.valueBOf(7)));
-                        reader.updateSymbolCount(1);
-                        Assert.assertNull(view.valueOf(1));
-                        Assert.assertNull(view.valueBOf(7));
-                        Assert.assertNull(view.valueOf(-1));
-                        Assert.assertNull(view.valueBOf(SymbolTable.VALUE_IS_NULL));
-                        Assert.assertNull(view.valueOf(Integer.MAX_VALUE));
-                        reader.updateSymbolCount(8);
-                        Assert.assertEquals(lowAddress, address(view.valueOf(7)));
-                        Assert.assertEquals(2, reader.getLowCacheSize());
-                        Assert.assertEquals(0, reader.getCacheSize());
-                        Assert.assertEquals(Integer.MIN_VALUE, map.getMaxKeyIfStopped());
-                    }
-                }
-            }
-            Assert.assertEquals(0, budget.getUsedBytes());
-        });
-    }
-
-    @Test
-    public void testOversizedMissDoesNotFreezeFillingReader() throws Exception {
-        assertMemoryLeak(() -> {
-            NativeMemoryBudget budget = new NativeMemoryBudget(1024 * 1024);
-            try (Path path = new Path().of(configuration.getDbRoot())) {
-                createMap(path, "x", "value", 4100, 4096, 4095);
-                try (
-                        SymbolMapCachePool pool = new SymbolMapCachePool(budget);
-                        SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, 4100, pool, 0);
-                        SymbolMapCachePool.Entry entry = pool.acquire(path, "x", COLUMN_NAME_TXN_NONE, 0)
-                ) {
-                    Assert.assertNotNull(entry);
-                    StaticSymbolTable view = reader.newSymbolTableView();
-                    DirectString mmapView = new DirectString();
-                    long oversizedAddress = address(reader.valueOf(4096, mmapView));
-                    Assert.assertEquals(oversizedAddress, address(view.valueOf(4096)));
-                    Assert.assertEquals(0, reader.getCacheSize());
-                    Assert.assertEquals(0, reader.getCacheAllocatedBytes());
-                    Assert.assertTrue(entry.getMap().isFilling());
-                    Assert.assertEquals(Integer.MAX_VALUE, entry.getMap().getMaxKeyIfStopped());
-
-                    long mmapAddress = address(reader.valueOf(4099, mmapView));
-                    Assert.assertEquals(mmapAddress, address(view.valueOf(4099)));
-                    Assert.assertEquals(1, reader.getCacheSize());
-                    CharSequence a = view.valueOf(4099);
-                    Assert.assertNotEquals(mmapAddress, address(a));
-                    long bytes = reader.getCacheAllocatedBytes();
-                    CharSequence b = view.valueBOf(4096);
-                    Assert.assertEquals(oversizedAddress, address(b));
-                    TestUtils.assertEquals("value4099", a);
-                    TestUtils.assertEquals("value4096" + "x".repeat(4095), b);
-                    Assert.assertEquals(4099, view.keyOf(a));
-                    TestUtils.assertEquals("value4099", a);
-                    Assert.assertEquals(bytes, reader.getCacheAllocatedBytes());
-                    Assert.assertEquals(1, reader.getCacheSize());
-                    Assert.assertTrue(entry.getMap().isFilling());
-                    Assert.assertEquals(Integer.MAX_VALUE, entry.getMap().getMaxKeyIfStopped());
-                }
-            }
-            Assert.assertEquals(0, budget.getUsedBytes());
-        });
-    }
-
-    @Test
     public void testReadEmptySymbolMap() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             int N = 10000;
@@ -2130,10 +1862,10 @@ public class SymbolMapTest extends AbstractCairoTest {
                         SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, keys.length, pool, 0)
                 ) {
                     Assert.assertTrue(reader.isCached());
-                    Assert.assertEquals(0, reader.getLowCacheSize());
+                    Assert.assertEquals(0, reader.getCacheSize());
                     for (int i = 0; i < keys.length; i++) {
                         TestUtils.assertEquals("key" + i, reader.valueOf(keys[i]));
-                        Assert.assertEquals(i + 1, reader.getLowCacheSize());
+                        Assert.assertEquals(keys.length, reader.getCacheSize());
                     }
                     for (int i = 0; i < keys.length; i++) {
                         final int j = keys.length - 1 - i;
@@ -2142,8 +1874,7 @@ public class SymbolMapTest extends AbstractCairoTest {
                         TestUtils.assertEquals("key" + i, a);
                         TestUtils.assertEquals("key" + j, b);
                     }
-                    Assert.assertEquals(keys.length, reader.getLowCacheSize());
-                    Assert.assertEquals(0, reader.getCacheSize());
+                    Assert.assertEquals(keys.length, reader.getCacheSize());
                 }
             }
         });
@@ -2176,72 +1907,6 @@ public class SymbolMapTest extends AbstractCairoTest {
                     Assert.assertTrue(Chars.contains(e.getMessage(), "too short"));
                 }
             }
-        });
-    }
-
-    @Test
-    public void testRebindAndReopenResetStoppedHint() throws Exception {
-        assertMemoryLeak(() -> {
-            final int symbolCount = 4102;
-            NativeMemoryBudget budget = new NativeMemoryBudget(1024 * 1024);
-            try (Path path = new Path().of(configuration.getDbRoot())) {
-                createMap(path, "x", "old", symbolCount, 4097, 256);
-                createMap(path, "y", "new", symbolCount, 4097, 256);
-                try (
-                        SymbolMapCachePool pool = new SymbolMapCachePool(budget);
-                        SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, symbolCount, pool, 0);
-                        SymbolMapCachePool.Entry oldEntry = pool.acquire(path, "x", COLUMN_NAME_TXN_NONE, 0)
-                ) {
-                    Assert.assertNotNull(oldEntry);
-                    StaticSymbolTable view = reader.newSymbolTableView();
-                    DirectString mmapView = new DirectString();
-                    reader.valueOf(4096);
-                    budget.setLimit(budget.getUsedBytes());
-                    reader.valueOf(4097);
-                    Assert.assertEquals(4096, oldEntry.getMap().getMaxKeyIfStopped());
-                    Assert.assertEquals(address(reader.valueOf(4098, mmapView)), address(view.valueOf(4098)));
-
-                    budget.setLimit(1024 * 1024);
-                    reader.of(configuration, path, "y", COLUMN_NAME_TXN_NONE, symbolCount, pool, 0);
-                    Assert.assertEquals(1, pool.getEntryCount());
-                    Assert.assertEquals(0, reader.getCacheSize());
-                    long mmapA = address(reader.valueOf(4098, mmapView));
-                    Assert.assertEquals(mmapA, address(view.valueOf(4098)));
-                    Assert.assertEquals(2, pool.getEntryCount());
-                    Assert.assertEquals(1, reader.getCacheSize());
-                    CharSequence a = view.valueOf(4098);
-                    Assert.assertNotEquals(mmapA, address(a));
-                    long mmapB = address(reader.valueOf(4099, mmapView));
-                    Assert.assertEquals(mmapB, address(view.valueBOf(4099)));
-                    CharSequence b = view.valueBOf(4099);
-                    Assert.assertNotEquals(mmapB, address(b));
-                    TestUtils.assertEquals("new4098", a);
-                    TestUtils.assertEquals("new4099", b);
-                    Assert.assertEquals(4098, view.keyOf(a));
-                    TestUtils.assertEquals("new4098", a);
-                    TestUtils.assertEquals("new4099", b);
-                    Assert.assertEquals(2, reader.getCacheSize());
-                    Assert.assertEquals(1, oldEntry.getMap().size());
-
-                    budget.setLimit(budget.getUsedBytes());
-                    reader.valueOf(4097);
-                    try (SymbolMapCachePool.Entry entry = pool.acquire(path, "y", COLUMN_NAME_TXN_NONE, 0)) {
-                        Assert.assertNotNull(entry);
-                        Assert.assertEquals(4099, entry.getMap().getMaxKeyIfStopped());
-                    }
-                    reader.close();
-                    budget.setLimit(1024 * 1024);
-                    reader.of(configuration, path, "x", COLUMN_NAME_TXN_NONE, symbolCount, pool, 1);
-                    Assert.assertEquals(0, reader.getCacheSize());
-                    long reopenedMmap = address(reader.valueOf(4101, mmapView));
-                    Assert.assertEquals(reopenedMmap, address(view.valueOf(4101)));
-                    Assert.assertEquals(1, reader.getCacheSize());
-                    Assert.assertNotEquals(reopenedMmap, address(view.valueOf(4101)));
-                    TestUtils.assertEquals("old4101", view.valueOf(4101));
-                    Assert.assertEquals(4096, oldEntry.getMap().getMaxKeyIfStopped());
-                }
-            }
-            Assert.assertEquals(0, budget.getUsedBytes());
         });
     }
 
@@ -2394,90 +2059,6 @@ public class SymbolMapTest extends AbstractCairoTest {
                 }
                 w.close();
             }
-        });
-    }
-
-    @Test
-    public void testSharedSparseStopPreservesHitsHolesAndReaderBounds() throws Exception {
-        assertMemoryLeak(() -> {
-            final int symbolCount = 8200;
-            NativeMemoryBudget budget = new NativeMemoryBudget(1024 * 1024);
-            try (Path path = new Path().of(configuration.getDbRoot())) {
-                createMap(path, "x", "value", symbolCount, 4097, 256);
-                try (
-                        SymbolMapCachePool pool = new SymbolMapCachePool(budget);
-                        SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, symbolCount, pool, 0);
-                        SymbolMapReaderImpl other = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, symbolCount, pool, 0);
-                        SymbolMapCachePool.Entry entry = pool.acquire(path, "x", COLUMN_NAME_TXN_NONE, 0)
-                ) {
-                    Assert.assertNotNull(entry);
-                    StaticSymbolTable view = reader.newSymbolTableView();
-                    StaticSymbolTable otherView = other.newSymbolTableView();
-                    DirectString mmapView = new DirectString();
-                    reader.valueOf(8000);
-                    reader.valueOf(4096);
-                    long cachedHigh = address(view.valueOf(8000));
-                    Assert.assertNotEquals(address(reader.valueOf(8000, mmapView)), cachedHigh);
-                    Assert.assertEquals(2, reader.getCacheSize());
-                    Assert.assertEquals(Integer.MAX_VALUE, entry.getMap().getMaxKeyIfStopped());
-                    budget.setLimit(budget.getUsedBytes());
-                    AtomicReference<Throwable> failure = new AtomicReference<>();
-                    CountDownLatch start = new CountDownLatch(1);
-                    Thread stopper = new Thread(() -> {
-                        try {
-                            start.await();
-                            Assert.assertNotNull(otherView.valueOf(4097));
-                        } catch (Throwable e) {
-                            failure.set(e);
-                        }
-                    });
-                    stopper.start();
-                    try {
-                        start.countDown();
-                        for (int i = 0; i < 128; i++) {
-                            TestUtils.assertEquals("value8000", view.valueOf(8000));
-                            TestUtils.assertEquals("value4096", view.valueBOf(4096));
-                        }
-                    } finally {
-                        TestUtils.joinThreads(stopper);
-                    }
-                    if (failure.get() != null) {
-                        throw new AssertionError(failure.get());
-                    }
-                    Assert.assertFalse(entry.getMap().isFilling());
-                    Assert.assertEquals(DirectIntCharSequenceHashMap.STOP_BUDGET, entry.getMap().getStopReason());
-                    Assert.assertEquals(8000, entry.getMap().getMaxKeyIfStopped());
-                    long bytes = reader.getCacheAllocatedBytes();
-                    long holeAddress = address(reader.valueOf(4098, mmapView));
-                    Assert.assertEquals(holeAddress, address(view.valueOf(4098)));
-                    Assert.assertEquals(cachedHigh, address(view.valueOf(8000)));
-                    Assert.assertEquals(cachedHigh, address(otherView.valueOf(8000)));
-                    long aboveAddress = address(reader.valueOf(8001, mmapView));
-                    CharSequence a = view.valueOf(8000);
-                    CharSequence b = view.valueBOf(8001);
-                    Assert.assertEquals(aboveAddress, address(b));
-                    TestUtils.assertEquals("value8000", a);
-                    TestUtils.assertEquals("value8001", b);
-                    Assert.assertEquals(8000, view.keyOf(a));
-                    TestUtils.assertEquals("value8000", a);
-                    TestUtils.assertEquals("value8001", b);
-
-                    reader.updateSymbolCount(4096);
-                    Assert.assertNull(view.valueOf(4096));
-                    Assert.assertNull(view.valueBOf(8000));
-                    Assert.assertNull(view.valueOf(8001));
-                    Assert.assertEquals(cachedHigh, address(otherView.valueOf(8000)));
-                    reader.updateSymbolCount(symbolCount);
-                    Assert.assertEquals(cachedHigh, address(view.valueOf(8000)));
-                    budget.setLimit(1024 * 1024);
-                    Assert.assertEquals(holeAddress, address(view.valueOf(4098)));
-                    Assert.assertEquals(aboveAddress, address(view.valueBOf(8001)));
-                    Assert.assertEquals(2, reader.getCacheSize());
-                    Assert.assertEquals(bytes, reader.getCacheAllocatedBytes());
-                    Assert.assertEquals(8000, entry.getMap().getMaxKeyIfStopped());
-                }
-            }
-            Assert.assertEquals(0, budget.getUsedBytes());
         });
     }
 
@@ -2666,13 +2247,12 @@ public class SymbolMapTest extends AbstractCairoTest {
                 ) {
                     TestUtils.assertEquals("first", reader.valueOf(0));
                     TestUtils.assertEquals("second", reader.valueOf(1));
-                    Assert.assertEquals(2, reader.getLowCacheSize());
-                    Assert.assertEquals(0, reader.getCacheSize());
+                    Assert.assertEquals(2, reader.getCacheSize());
 
-                    // the slots stay in the shared entry, the reader's bound hides them
+                    // the values stay in the shared entry, the reader's bound hides them
                     reader.updateSymbolCount(1);
                     Assert.assertEquals(1, reader.getSymbolCount());
-                    Assert.assertEquals(2, reader.getLowCacheSize());
+                    Assert.assertEquals(2, reader.getCacheSize());
                     TestUtils.assertEquals("first", reader.valueOf(0));
                     Assert.assertNull(reader.valueOf(1));
                     Assert.assertNull(reader.valueBOf(1));
@@ -3227,12 +2807,5 @@ public class SymbolMapTest extends AbstractCairoTest {
         }
     }
 
-
-    private static boolean putCacheValue(SymbolMapCachePool.Entry entry, String value) {
-        try (DirectUtf16Sink sink = new DirectUtf16Sink(2L * (value.length() + 1))) {
-            sink.put(value);
-            return entry.getMap().tryPutIfAbsent(0, sink.ptr(), sink.length()) == DirectIntCharSequenceHashMap.INSERTED;
-        }
-    }
 
 }

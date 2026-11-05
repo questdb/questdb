@@ -327,6 +327,7 @@ public class SymbolCacheBenchmark {
         public void setUpReader(SymbolCacheBenchmark benchmark) throws SqlException {
             this.benchmark = benchmark;
             reader = benchmark.engine.getReader("t");
+            reader.getSymbolMapReader(0).valueOf(0);
             benchmark.readSymbols(benchmark.denseHighKeys);
             benchmark.readCount(benchmark.symbolFunction);
         }

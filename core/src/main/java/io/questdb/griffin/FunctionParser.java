@@ -730,6 +730,13 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         return ex;
     }
 
+    private static boolean isSymbolKeyFunction(CharSequence name) {
+        return SqlKeywords.isInKeyword(name)
+                || Chars.equals(name, "<>all")
+                || Chars.equalsIgnoreCase(name, "count_distinct")
+                || Chars.equalsIgnoreCase(name, "string_distinct_agg");
+    }
+
     private static boolean isUntypedEmptyArrayLiteral(Function arg) {
         // ArrayConstant.emptyUntyped() is the only producer of an ArrayConstant without an element type
         return arg instanceof ArrayConstant && ColumnType.decodeArrayElementType(arg.getType()) == ColumnType.UNDEFINED;
@@ -1180,9 +1187,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             }
         }
 
-        // IN compares symbol keys directly, so the cast would only add per-row text hashing.
+        // These functions compare symbol keys directly, so the cast would only add per-row text hashing.
         if (
-                SqlKeywords.isInKeyword(node.token)
+                isSymbolKeyFunction(node.token)
                         && argCount > 0
                         && args.getQuick(0) instanceof CastSymbolToStrFunctionFactory.Func cast
         ) {

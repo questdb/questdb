@@ -26,8 +26,6 @@ package io.questdb.cairo;
 
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
-import io.questdb.std.DirectIntCharSequenceHashMap;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.NativeMemoryBudget;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.StringSink;
@@ -93,9 +91,8 @@ public class SymbolMapCachePool implements QuietCloseable {
 
     public class Entry implements QuietCloseable {
         private final String key;
-        private final SymbolMapLowSlice low = new SymbolMapLowSlice();
-        private final DirectIntCharSequenceHashMap map = new DirectIntCharSequenceHashMap(4, 0.7, MemoryTag.NATIVE_SYMBOL_CACHE, budget);
         private final AtomicInteger refCount = new AtomicInteger(1);
+        private final SymbolMapSegments segments = new SymbolMapSegments(budget);
 
         private Entry(String key) {
             this.key = key;
@@ -106,22 +103,17 @@ public class SymbolMapCachePool implements QuietCloseable {
             int count = refCount.decrementAndGet();
             assert count >= 0;
             if (count == 0 && refCount.compareAndSet(0, -1)) {
-                map.close();
-                low.close();
+                segments.close();
                 pool.remove(key, this);
             }
         }
 
-        public DirectIntCharSequenceHashMap getMap() {
-            return map;
+        public SymbolMapSegments getSegments() {
+            return segments;
         }
 
         NativeMemoryBudget getBudget() {
             return budget;
-        }
-
-        SymbolMapLowSlice getLow() {
-            return low;
         }
 
         private boolean incrementRefCount() {

@@ -524,10 +524,45 @@ public class InStrTest extends AbstractCairoTest {
                 "SELECT k FROM t WHERE coalesce(s, 'x')::STRING IN ('x', 'b')",
                 "SELECT k FROM t WHERE (CASE WHEN k > 3 THEN s ELSE n END)::STRING IN ('a', NULL)",
                 "SELECT d, v FROM (SELECT k % 2 d, nullif(first(s), last(s)) v FROM t) WHERE v::STRING IN ('a', NULL) ORDER BY d",
+                "SELECT k FROM t WHERE s::STRING <> ALL('{a,é€😀}'::text[])",
+                "SELECT k FROM t WHERE n::STRING <> ALL('{a,missing}'::text[])",
+                "SELECT k FROM t WHERE ix::STRING <> ALL('{a}'::text[])",
+                "SELECT k FROM t WHERE late::STRING <> ALL('{a}'::text[])",
+                "SELECT k FROM t WHERE s::STRING <> ALL('{}'::text[])",
+                "SELECT k FROM t WHERE s::STRING != ALL('{a}'::text[])",
+                "SELECT k FROM t WHERE NOT s::STRING <> ALL('{a,b}'::text[])",
+                "SELECT k, s::STRING <> ALL('{b}'::text[]) m FROM t",
+                "SELECT k FROM t WHERE str::SYMBOL::STRING <> ALL('{a}'::text[])",
+                "SELECT k FROM t WHERE coalesce(s, 'x')::STRING <> ALL('{x}'::text[])",
+                "SELECT k FROM (SELECT k, s FROM t UNION ALL SELECT k, s FROM u) WHERE s::STRING <> ALL('{a}'::text[]) ORDER BY k",
+                "SELECT t.k, u.k uk FROM t LEFT JOIN u ON t.k = u.k WHERE u.s::STRING <> ALL('{a}'::text[]) ORDER BY t.k",
+                "SELECT string_distinct_agg(s::STRING, ',') v FROM t",
+                "SELECT string_distinct_agg(n::STRING, ',') v FROM t",
+                "SELECT string_distinct_agg(ix::STRING, ',') v FROM t",
+                "SELECT string_distinct_agg(late::STRING, ',') v FROM t",
+                "SELECT string_agg(DISTINCT s::STRING, ',') v FROM t",
+                "SELECT k % 3 d, string_distinct_agg(s::STRING, ',') v FROM t ORDER BY d",
+                "SELECT string_distinct_agg(s::STRING, ',') v FROM (SELECT k, s FROM t UNION ALL SELECT k, s FROM u)",
+                "SELECT t.k % 2 d, string_distinct_agg(u.s::STRING, ',') v FROM t JOIN u ON t.k = u.k ORDER BY d",
+                "SELECT ts, string_distinct_agg(s::STRING, ',') v FROM t SAMPLE BY 1d",
+                "SELECT string_distinct_agg(coalesce(s, 'x')::STRING, ',') v FROM t",
+                "SELECT string_distinct_agg(nullif(s, 'a')::STRING, ',') v FROM t",
+                "SELECT count_distinct(s::STRING) c FROM t",
+                "SELECT count_distinct(n::STRING) c FROM t",
+                "SELECT count_distinct(ix::STRING) c FROM t",
+                "SELECT count_distinct(late::STRING) c FROM t",
+                "SELECT count(DISTINCT s::STRING) c FROM t",
+                "SELECT COUNT_DISTINCT(s::STRING) c FROM t",
+                "SELECT k % 3 d, count_distinct(s::STRING) c FROM t ORDER BY d",
+                "SELECT count_distinct(s::STRING) c FROM (SELECT k, s FROM t UNION ALL SELECT k, s FROM u)",
+                "SELECT t.k % 2 d, count_distinct(u.s::STRING) c FROM t JOIN u ON t.k = u.k ORDER BY d",
+                "SELECT ts, count_distinct(s::STRING) c FROM t SAMPLE BY 1d",
+                "SELECT count_distinct(coalesce(s, 'x')::STRING) c FROM t",
+                "SELECT count_distinct(nullif(s, 'a')::STRING) c FROM t",
         };
         for (int run = 0; run < 2; run++) {
             for (String query : queries) {
-                TestUtils.assertSqlCursors(engine, context, query.replace("::STRING IN", "::VARCHAR::STRING IN"), query, LOG);
+                TestUtils.assertSqlCursors(engine, context, query.replace("::STRING", "::VARCHAR::STRING"), query, LOG);
             }
             if (run == 0) {
                 engine.execute("ALTER TABLE t CONVERT PARTITION TO PARQUET WHERE ts < '1970-02-01'", context);

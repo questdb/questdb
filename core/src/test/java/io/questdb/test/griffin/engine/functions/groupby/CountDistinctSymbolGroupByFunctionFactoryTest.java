@@ -30,6 +30,19 @@ import org.junit.Test;
 public class CountDistinctSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
+    public void testCastToStringUsesKeyComparison() throws Exception {
+        assertQuery("SELECT d, count_distinct(s::STRING) c FROM x ORDER BY d")
+                .ddl("CREATE TABLE x AS (SELECT x % 2 d, (CASE x % 3 WHEN 0 THEN 'b' WHEN 1 THEN 'a' END)::SYMBOL s FROM long_sequence(9))")
+                .expectSize()
+                .withPlanContaining("count_distinct(s)")
+                .returns("""
+                        d\tc
+                        0\t2
+                        1\t2
+                        """);
+    }
+
+    @Test
     public void testConstant() throws Exception {
         String expected = """
                 a\tcount_distinct

@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.SymbolMapReaderImpl;
+import io.questdb.cairo.SymbolMapSegments;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
@@ -901,12 +902,9 @@ public class ParallelFilterTest extends AbstractCairoTest {
                                         .returns("count\n9001\n");
                             }
                             TestUtils.assertEquals("1", symbols.valueOf(0));
-                            // workers that lose the try-lock skip a copy, so neither count is exact
-                            Assert.assertTrue(symbols.getLowCacheSize() > 1);
-                            Assert.assertTrue(symbols.getLowCacheSize() <= 4096);
-                            // every value fits a slot, so the map holds only the keys from 4096 up
-                            Assert.assertTrue(symbols.getCacheSize() > 0);
-                            Assert.assertTrue(symbols.getCacheSize() <= 10_000 - 4096);
+                            // this reader loads one segment, the query's workers load the others
+                            Assert.assertTrue(symbols.getCacheSize() > SymbolMapSegments.SEGMENT_KEYS);
+                            Assert.assertTrue(symbols.getCacheSize() <= 10_000);
                         }
                     },
                     configuration,
