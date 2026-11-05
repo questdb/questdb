@@ -656,7 +656,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             optimiser.setPivotInValueRecorder(viewCompileRecord);
             final IQueryModel queryModel;
             try {
-                queryModel = optimiser.optimise((IQueryModel) model, executionContext, this);
+                // A reader's SELECT inherits the view's order, including a sub-query's ORDER BY under an
+                // aggregate or window. Keep it here too, so the dependencies cover that reader's scan columns.
+                queryModel = optimiser.optimise((IQueryModel) model, executionContext, this, OrderByMnemonic.ORDER_BY_REQUIRED);
             } finally {
                 optimiser.setPivotInValueRecorder(null);
             }
@@ -4749,7 +4751,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     viewCompileRecord.recordViews(((IQueryModel) executionModel).getReferencedViews());
                     optimiser.setPivotInValueRecorder(viewCompileRecord);
                     try {
-                        queryModel = optimiser.optimise((IQueryModel) executionModel, executionContext, this);
+                        // Like generateViewExecutionModel(), plan the definition with the order a reader inherits.
+                        queryModel = optimiser.optimise((IQueryModel) executionModel, executionContext, this, OrderByMnemonic.ORDER_BY_REQUIRED);
                     } finally {
                         optimiser.setPivotInValueRecorder(null);
                     }

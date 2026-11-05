@@ -69,6 +69,78 @@ import java.util.function.IntFunction;
 public class ViewColumnDependencyTest extends AbstractViewTest {
 
     @Test
+    public void testAggregateOverOrderedSubQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // Standalone queries retain the optimisation; only view definitions inherit a reader's order.
+            assertQuery("SELECT k, avg(a) av FROM (SELECT * FROM x ORDER BY ts DESC)")
+                    .noLeakCheck()
+                    .assertsPlanContaining("Row forward scan");
+            assertViewResult(
+                    "SELECT k, avg(a) av FROM (SELECT * FROM x ORDER BY ts DESC)",
+                    "{x=[a, k, ts]}",
+                    "k\tav\nk1\t2.0\n"
+            );
+            assertViewResult(
+                    "SELECT sum(a) s FROM (SELECT * FROM x ORDER BY b)",
+                    "{x=[a, b]}",
+                    "s\n4\n"
+            );
+            assertViewResult(
+                    "WITH ordered AS (SELECT * FROM x ORDER BY b DESC) SELECT k, avg(a) av FROM ordered",
+                    "{x=[a, b, k]}",
+                    "k\tav\nk1\t2.0\n"
+            );
+            assertViewResult(
+                    "SELECT avg(a) av FROM (SELECT * FROM x ORDER BY b LIMIT 1)",
+                    "{x=[a, b]}",
+                    "av\n1.0\n"
+            );
+            assertViewResult(
+                    "SELECT avg(a) av FROM (SELECT * FROM x ORDER BY b) UNION ALL SELECT avg(c) FROM (SELECT * FROM y ORDER BY d)",
+                    "{x=[a, b], y=[c, d]}",
+                    "av\n2.0\n6.0\n"
+            );
+            assertReads(
+                    "SELECT k, avg(a) av FROM (SELECT * FROM x ORDER BY ts DESC)",
+                    "{x=[a, k, ts]}",
+                    "SELECT av FROM v", "SELECT * FROM v WHERE av > 1", "SELECT count() FROM v"
+            );
+            execute("CREATE VIEW ordered_x AS (SELECT * FROM x ORDER BY b DESC)");
+            drainWalAndViewQueues();
+            assertViewResult(
+                    "SELECT avg(a) av FROM ordered_x",
+                    "{ordered_x=[], x=[a, b]}",
+                    "av\n2.0\n"
+            );
+        });
+    }
+
+    @Test
+    public void testAggregateOverOrderedSubQueryWalModes() throws Exception {
+        assertMemoryLeak(() -> {
+            for (boolean isWal : new boolean[]{false, true}) {
+                execute("CREATE TABLE w (ts TIMESTAMP, a DOUBLE, b LONG) TIMESTAMP(ts) PARTITION BY DAY " + (isWal ? "WAL" : "BYPASS WAL"));
+                for (int stage = 0; stage < 3; stage++) {
+                    if (stage == 1) {
+                        execute("INSERT INTO w VALUES (0, NULL, NULL)");
+                    } else if (stage == 2) {
+                        execute("INSERT INTO w VALUES (1, -2.0, 3), (2, 0.0, 2), (3, 2.0, 1)");
+                    }
+                    drainWalQueue();
+                    assertViewResult(
+                            "SELECT avg(a) av FROM (SELECT * FROM w ORDER BY b DESC)",
+                            "{w=[a, b]}",
+                            stage == 2 ? "av\n0.0\n" : "av\nnull\n"
+                    );
+                }
+                execute("DROP TABLE w");
+                drainWalAndViewQueues();
+            }
+        });
+    }
+
+    @Test
     public void testAliasNamedLikeAnotherTableIsNotADependency() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
@@ -347,6 +419,38 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
                     "SELECT t.* FROM x t CROSS JOIN LATERAL (SELECT * FROM y u WHERE u.k = t.k) l",
                     "{x=[*], y=[k]}"
             );
+        });
+    }
+
+    @Test
+    public void testOrderSensitiveAggregatesOverOrderedSubQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            assertViewResult(
+                    "SELECT string_agg(a::STRING, ',') s FROM (SELECT * FROM x ORDER BY b DESC)",
+                    "{x=[a, b]}",
+                    "s\n3,1\n"
+            );
+            assertViewResult(
+                    "SELECT array_agg(a::DOUBLE) arr FROM (SELECT * FROM x ORDER BY b DESC)",
+                    "{x=[a, b]}",
+                    "arr\n[3.0,1.0]\n"
+            );
+            assertViewResult(
+                    "SELECT first(a) f, last(a) l FROM (SELECT * FROM x ORDER BY b DESC)",
+                    "{x=[a, b]}",
+                    "f\tl\n3\t1\n"
+            );
+        });
+    }
+
+    @Test
+    public void testOverridableVariableInOrderedAggregate() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            final String viewSql = "DECLARE OVERRIDABLE @c := a SELECT k, avg(@c) av FROM (SELECT * FROM x ORDER BY ts DESC)";
+            assertDependencies(viewSql, "{x=[a, k, ts]}");
+            assertOverrideDenied(viewSql, "DECLARE @c := b SELECT * FROM v", "permission denied [table=x, columns=b]");
         });
     }
 
@@ -1925,6 +2029,23 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
     }
 
     @Test
+    public void testWindowFunctionOverOrderedSubQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            assertViewResult(
+                    "SELECT a, avg(a) OVER () av FROM (SELECT * FROM x ORDER BY b DESC)",
+                    "{x=[a, b]}",
+                    "a\tav\n3\t2.0\n1\t2.0\n"
+            );
+            assertViewResult(
+                    "SELECT a, avg(a) OVER (ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) av FROM (SELECT * FROM x ORDER BY b DESC)",
+                    "{x=[a, b]}",
+                    "a\tav\n3\t3.0\n1\t2.0\n"
+            );
+        });
+    }
+
+    @Test
     public void testWindowJoin() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
@@ -2338,6 +2459,22 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
         } catch (AssertionError e) {
             throw new AssertionError(statement + ": " + viewSql, e);
         }
+    }
+
+    private void assertViewResult(String viewSql, String expectedDependencies, String expectedResult) throws Exception {
+        assertDependenciesScanned(viewSql);
+        forEachViewStatement(viewSql, statement -> {
+            assertViewDependencies(viewSql, expectedDependencies, null, statement);
+            try (SqlExecutionContext context = denyBaseTableSelectContext()) {
+                assertQuery("SELECT * FROM v")
+                        .withContext(context)
+                        .noLeakCheck()
+                        .inferTimestamp()
+                        .inferRandomAccess()
+                        .sizeMayVary()
+                        .returns(expectedResult);
+            }
+        });
     }
 
     // Records the SELECT as the definition of the view v with CREATE VIEW, then with ALTER VIEW, while x gains

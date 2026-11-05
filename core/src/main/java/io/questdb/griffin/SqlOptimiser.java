@@ -16101,6 +16101,15 @@ public class SqlOptimiser implements Mutable {
             @Transient SqlExecutionContext sqlExecutionContext,
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
+        return optimise(model, sqlExecutionContext, sqlParserCallback, OrderByMnemonic.ORDER_BY_UNKNOWN);
+    }
+
+    IQueryModel optimise(
+            @Transient final IQueryModel model,
+            @Transient SqlExecutionContext sqlExecutionContext,
+            SqlParserCallback sqlParserCallback,
+            int topLevelOrderByMnemonic
+    ) throws SqlException {
         if (!model.isOptimisable()) {
             return model;
         }
@@ -16148,7 +16157,7 @@ public class SqlOptimiser implements Mutable {
             rewriteOrderByPosition(rewrittenModel);
             rewriteOrderByPositionForUnionModels(rewrittenModel);
             rewrittenModel = rewriteOrderBy(rewrittenModel);
-            optimiseOrderBy(rewrittenModel, OrderByMnemonic.ORDER_BY_UNKNOWN);
+            optimiseOrderBy(rewrittenModel, topLevelOrderByMnemonic);
             createOrderHash(rewrittenModel);
             moveWhereInsideSubQueries(rewrittenModel, sqlExecutionContext);
             eraseColumnPrefixInWhereClauses(rewrittenModel);
