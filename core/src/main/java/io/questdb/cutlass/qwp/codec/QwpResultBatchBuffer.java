@@ -41,6 +41,7 @@ import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.std.IntIntHashMap;
 import io.questdb.std.Long256;
 import io.questdb.std.Misc;
+import io.questdb.std.Decimals;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
@@ -169,6 +170,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         final int n = columnCount;
         final QwpColumnScratch[] scs = scratchesArr;
         final byte[] wts = wireTypesArr;
+        final int[] qts = qdbTypesArr;
         final SymbolTable[] sts = symbolTablesArr;
         for (int ci = 0; ci < n; ci++) {
             final QwpColumnScratch scratch = scs[ci];
@@ -185,6 +187,12 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                 case QwpConstants.TYPE_TIMESTAMP:
                 case QwpConstants.TYPE_TIMESTAMP_NANOS:
                 case QwpConstants.TYPE_DECIMAL64: {
+                    if (wt == QwpConstants.TYPE_DECIMAL64 && ColumnType.tagOf(qts[ci]) != ColumnType.DECIMAL64) {
+                        // DECIMAL8/16/32 travel as DECIMAL64: the page holds 1/2/4-byte
+                        // values with their own NULL sentinels, so widen row by row.
+                        perColumnRowLoop(record, lo, hi, ci);
+                        break;
+                    }
                     long base = frame.getPageAddress(ci);
                     if (base == 0) {
                         fillNulls(scratch, rows);
@@ -938,7 +946,29 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                 break;
             }
             case QwpConstants.TYPE_DECIMAL64:
-                scratch.appendLongOrNull(record.getDecimal64(ci));
+                switch (ColumnType.tagOf(qt)) {
+                    case ColumnType.DECIMAL8: {
+                        byte v = record.getDecimal8(ci);
+                        if (v == Decimals.DECIMAL8_NULL) scratch.appendNull();
+                        else scratch.appendLong(v);
+                        break;
+                    }
+                    case ColumnType.DECIMAL16: {
+                        short v = record.getDecimal16(ci);
+                        if (v == Decimals.DECIMAL16_NULL) scratch.appendNull();
+                        else scratch.appendLong(v);
+                        break;
+                    }
+                    case ColumnType.DECIMAL32: {
+                        int v = record.getDecimal32(ci);
+                        if (v == Decimals.DECIMAL32_NULL) scratch.appendNull();
+                        else scratch.appendLong(v);
+                        break;
+                    }
+                    default:
+                        scratch.appendLongOrNull(record.getDecimal64(ci));
+                        break;
+                }
                 break;
             case QwpConstants.TYPE_DECIMAL128: {
                 record.getDecimal128(ci, scratch.decimal128Sink);

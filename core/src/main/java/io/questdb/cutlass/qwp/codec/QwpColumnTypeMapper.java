@@ -77,7 +77,11 @@ public final class QwpColumnTypeMapper {
             case ColumnType.LONG256 -> QwpConstants.TYPE_LONG256;
             case ColumnType.UUID -> QwpConstants.TYPE_UUID;
             case ColumnType.BINARY -> QwpConstants.TYPE_BINARY;
-            case ColumnType.DECIMAL64 -> QwpConstants.TYPE_DECIMAL64;
+            // DECIMAL8/16/32 have no wire kind of their own: their unscaled value fits a
+            // long, so they travel as DECIMAL64 with the column's scale. The batch buffer
+            // widens the stored byte/short/int and maps each class's NULL sentinel.
+            case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32,
+                 ColumnType.DECIMAL64 -> QwpConstants.TYPE_DECIMAL64;
             case ColumnType.DECIMAL128 -> QwpConstants.TYPE_DECIMAL128;
             case ColumnType.DECIMAL256 -> QwpConstants.TYPE_DECIMAL256;
             default -> throw new UnsupportedOperationException(
