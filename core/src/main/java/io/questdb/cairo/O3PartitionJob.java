@@ -2468,9 +2468,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     // stored and completes what the check prepared of the MERGE that also takes
                     // the O3 rows past the max. When a later MERGE changes the partition, the
                     // merge loop leaves the row groups of the identical MERGEs before it as they
-                    // are, unless they hold a NULL of such a column, and completes what the check
-                    // prepared of the MERGE where it stops, when it merges nothing before it.
-                    // Either way it does not decode that row group again.
+                    // are, unless they hold a NULL of such a column that their merge writes as
+                    // 0/false, and completes what the check prepared of the MERGE where it stops,
+                    // when it merges nothing before it. Either way it does not decode that row
+                    // group again. Whether the merge of the first MERGE writes such NULLs, which
+                    // may be the rows of the kept column top, the partition updater tells once
+                    // the output opens.
                     // A rewrite that copies row groups through ParquetRowGroupMaterializer
                     // decodes them into the buffers of the columns past the keys, so the check
                     // keeps those columns only when it does not.
@@ -2483,6 +2486,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             actionCount,
                             o3HiUpToPartitionMax,
                             hasTypeConvertedColumns || forceFullReencode,
+                            rowGroupSize,
                             parquetColumns,
                             oooColumns,
                             sortedTimestampsAddr,
@@ -2522,6 +2526,14 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 tableWriter,
                                 ctx
                         );
+                        final int keptTopMergeAction = ctx.getKeptTopMergeAction();
+                        if (keptTopMergeAction > -1 && !isKeptTopMergeUnchanged(actionsBuf.getQuick(keptTopMergeAction), parquetMeta, partitionUpdater)) {
+                            // The merge of the first MERGE writes its NULLs as 0/false, see
+                            // isUpsertIdenticalUpToPartitionMax(): the merge loop merges it, and then the MERGE where
+                            // the identity check stopped from the start, in the buffers of what the check kept
+                            ctx.mergeKeptTopMergeAction();
+                            ctx.freeRowGroupMerge();
+                        }
                     }
                     for (int i = 0; i < actionCount; i++) {
                         final O3ParquetMergeStrategy.MergeAction action = actionsBuf.getQuick(i);
@@ -4823,6 +4835,16 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         return dedupRowCount;
     }
 
+    // The number of row groups that a merge of the given number of rows writes, see mergeRowGroupWrite(). Even-split:
+    // when the rows exceed 1.5x maxRowGroupSize, ceil(rows / maxChunkTarget) row groups so that none exceeds
+    // maxChunkTarget = maxRowGroupSize + maxRowGroupSize / 2. Integer division of maxRowGroupSize / 2 is intentional:
+    // the target must be representable exactly in integer arithmetic to avoid off-by-one overflows when distributing
+    // remainder rows across chunks.
+    private static int getMergeChunkCount(long mergeRowCount, int maxRowGroupSize) {
+        final long maxChunkTarget = (long) maxRowGroupSize + maxRowGroupSize / 2;
+        return mergeRowCount > maxChunkTarget ? (int) ((mergeRowCount + maxChunkTarget - 1) / maxChunkTarget) : 1;
+    }
+
     /**
      * Returns true if any two adjacent row groups share a boundary timestamp
      * (rg[i].max == rg[i+1].min) that the sorted O3 batch [srcOooLo, srcOooHi] also
@@ -4963,6 +4985,21 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         return false;
     }
 
+    // Whether the merge of the first MERGE, which the UPSERT identity check found identical, writes its row groups as
+    // stored, see isUpsertIdenticalUpToPartitionMax(). The actions before it copy the row groups before it, so the
+    // merge writes it from the output row where it starts in the file
+    private static boolean isKeptTopMergeUnchanged(
+            O3ParquetMergeStrategy.MergeAction action,
+            ParquetMetaFileReader parquetMeta,
+            PartitionUpdater partitionUpdater
+    ) {
+        long rowOffset = 0;
+        for (int rg = 0; rg < action.rowGroupIndex; rg++) {
+            rowOffset += parquetMeta.getRowGroupSize(rg);
+        }
+        return partitionUpdater.isRowGroupRewriteUnchanged(action.rowGroupIndex, action.rowGroupIndexHi, rowOffset);
+    }
+
     // Whether the type has no NULL value: BOOLEAN, BYTE and SHORT. A column top in a parquet file reads NULL where the
     // materialized top reads 0/false. CHAR 0 is NULL
     private static boolean isNoSentinelType(int columnType) {
@@ -5003,6 +5040,16 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
      * run of rows, the top, so the check leaves unchanged the identical MERGEs after the last one that the merge
      * loop merges.
      * <p>
+     * The output keeps a top that ends below the column top row limit, the rows before the first O3 row, and the
+     * merge writes its rows as NULLs. Only the first MERGE can hold such rows: a later one starts past the limit.
+     * Whether its NULLs are exactly those rows, and its merge writes its row groups as stored, the partition
+     * updater tells, see {@link PartitionUpdater#isRowGroupRewriteUnchanged}: the top that the output keeps lives
+     * in the parquet footer. The check leaves that question open, see
+     * {@link O3ParquetMergeContext#setKeptTopMergeAction}, and the job asks it when the UPSERT output opens. When
+     * the merge does not write the row groups as stored, the job merges the MERGE, and frees what the check kept.
+     * A rewrite that copies row groups through ParquetRowGroupMaterializer re-encodes them, as does a merge that
+     * writes more than one row group: the merge loop merges such a MERGE, as before.
+     * <p>
      * When the merge loop merges no action before the one where the check stops, the check keeps what it prepared
      * of that merge, see {@link O3ParquetMergeContext#keepRowGroupMerge}: the keys and the merge index, which live
      * in buffers of their own, and the other columns when it decoded them and {@code isCopyMaterializing} is false.
@@ -5013,12 +5060,14 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
      * as stored in order, in the same buffers.
      *
      * @param isCopyMaterializing whether the rewrite copies row groups through ParquetRowGroupMaterializer
+     * @param maxRowGroupSize     the row group size of the partition encoder, see {@link #getMergeChunkCount}
      */
     private static boolean isUpsertIdenticalUpToPartitionMax(
             ObjList<O3ParquetMergeStrategy.MergeAction> actions,
             int actionCount,
             long o3HiUpToPartitionMax,
             boolean isCopyMaterializing,
+            int maxRowGroupSize,
             DirectIntList parquetColumns,
             ReadOnlyObjList<? extends MemoryCR> oooColumns,
             long sortedTimestampsAddr,
@@ -5037,6 +5086,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         int unchangedActionLo = 0;
         // whether the merge loop merges an action before this one
         boolean isMergedBefore = false;
+        // the first MERGE when it is identical and its NULLs of a column without NULL may be the rows of the kept
+        // top, -1 otherwise, see O3ParquetMergeContext.setKeptTopMergeAction()
+        int keptTopMergeAction = -1;
+        boolean isFirstMerge = true;
         int i = 0;
         for (; i < actionCount; i++) {
             final O3ParquetMergeStrategy.MergeAction action = actions.getQuick(i);
@@ -5049,6 +5102,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             }
             if (action.type == O3ParquetMergeStrategy.ActionType.COPY_O3) {
                 ctx.setUnchangedMergeActions(unchangedActionLo, i);
+                ctx.setKeptTopMergeAction(keptTopMergeAction);
                 return false;
             }
             long rgRowCount = 0;
@@ -5099,6 +5153,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         isMergeKept = true;
                     }
                     ctx.setUnchangedMergeActions(unchangedActionLo, i);
+                    ctx.setKeptTopMergeAction(keptTopMergeAction);
                     return false;
                 }
                 mergeRowGroupPrepareOtherColumns(
@@ -5150,6 +5205,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             isMergeKept = true;
                         }
                         ctx.setUnchangedMergeActions(unchangedActionLo, i);
+                        ctx.setKeptTopMergeAction(keptTopMergeAction);
                         return false;
                     }
                 }
@@ -5181,10 +5237,17 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 }
             }
             if (hasNoSentinelNull(decoder.metadata(), tableWriterMetadata, tableToParquetIdx, action.rowGroupIndex, action.rowGroupIndexHi)) {
-                // the merge loop merges this MERGE when a later one changes the partition
-                unchangedActionLo = i + 1;
-                isMergedBefore = true;
+                if (isFirstMerge && !isCopyMaterializing && getMergeChunkCount(rgSize, maxRowGroupSize) == 1) {
+                    // its NULLs may be the rows of the kept top, which its merge writes as NULLs
+                    keptTopMergeAction = i;
+                } else {
+                    // the merge loop merges this MERGE when a later one changes the partition, and the ones before it
+                    unchangedActionLo = i + 1;
+                    isMergedBefore = true;
+                    keptTopMergeAction = -1;
+                }
             }
+            isFirstMerge = false;
         }
         ctx.setUnchangedMergeActions(0, i);
         return true;
@@ -5621,20 +5684,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final long mergeRowCount = ctx.getMergeRowCount();
         final long timestampMergeIndexAddr = ctx.getMergeIndexAddr();
         assert timestampMergeIndexAddr != 0;
-        final int numChunks;
-
-        // Even-split: when totalRows > 1.5x maxRowGroupSize, split into
-        // ceil(totalRows / maxChunkTarget) chunks so that no chunk exceeds
-        // maxChunkTarget = maxRowGroupSize + maxRowGroupSize / 2.
-        // Integer division of maxRowGroupSize / 2 is intentional: the target
-        // must be representable exactly in integer arithmetic to avoid off-by-one
-        // overflows when distributing remainder rows across chunks.
-        final long maxChunkTarget = (long) maxRowGroupSize + maxRowGroupSize / 2;
-        if (mergeRowCount > maxChunkTarget) {
-            numChunks = (int) ((mergeRowCount + maxChunkTarget - 1) / maxChunkTarget);
-        } else {
-            numChunks = 1;
-        }
+        final int numChunks = getMergeChunkCount(mergeRowCount, maxRowGroupSize);
         final long maxChunkSize = (mergeRowCount + numChunks - 1) / numChunks;
 
         // Phase 1b: ensure destination buffers in mergeDstBufs are large enough

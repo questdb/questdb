@@ -126,6 +126,18 @@ public class PartitionUpdater implements QuietCloseable {
     }
 
     /**
+     * Returns whether the update can leave the row groups {@code [rowGroupLo, rowGroupHi]} of the source file as
+     * they are instead of re-encoding, from output row {@code rowOffset}, the rows they hold in one row group, as a
+     * merge that replaces their rows with identical rows does: the re-encode writes the same NULLs and keeps the
+     * same column tops, see {@link #setColumnTopRowLimit(long)}. Call after {@link #setColumnTopRowLimit(long)}
+     * and before the update writes a row group.
+     */
+    public boolean isRowGroupRewriteUnchanged(int rowGroupLo, int rowGroupHi, long rowOffset) {
+        assert ptr != 0;
+        return isRowGroupRewriteUnchanged(ptr, rowGroupLo, rowGroupHi, rowOffset);
+    }
+
+    /**
      * Binds this updater to the source/target fds and sizes for an in-place
      * {@code _pm} update. Three easily-confused sizes: {@code parquetMetaFileSize}
      * is the parse anchor (the committed head from {@code _txn}, not the raw
@@ -340,6 +352,8 @@ public class PartitionUpdater implements QuietCloseable {
             int timestampIndex,
             long rowCount
     ) throws CairoException;
+
+    private static native boolean isRowGroupRewriteUnchanged(long impl, int rowGroupLo, int rowGroupHi, long rowOffset) throws CairoException;
 
     private static native void rewriteRowGroupColumns(
             long impl,
