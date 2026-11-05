@@ -4102,7 +4102,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 );
                                 break;
                             case GEOBYTE:
-                                castFunctions.add(GeoByteColumn.newInstance(i, fromType));
+                                castFunctions.add(
+                                        CastGeoHashToGeoHashFunctionFactory.newInstance(
+                                                0,
+                                                GeoByteColumn.newInstance(i, fromType),
+                                                toType,
+                                                fromType
+                                        )
+                                );
                                 break;
                             case GEOSHORT:
                                 castFunctions.add(
@@ -4164,7 +4171,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 );
                                 break;
                             case GEOSHORT:
-                                castFunctions.add(GeoShortColumn.newInstance(i, toType));
+                                castFunctions.add(
+                                        CastGeoHashToGeoHashFunctionFactory.newInstance(
+                                                0,
+                                                GeoShortColumn.newInstance(i, fromType),
+                                                toType,
+                                                fromType
+                                        )
+                                );
                                 break;
                             case GEOINT:
                                 castFunctions.add(
@@ -4216,7 +4230,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 );
                                 break;
                             case GEOINT:
-                                castFunctions.add(GeoIntColumn.newInstance(i, fromType));
+                                castFunctions.add(
+                                        CastGeoHashToGeoHashFunctionFactory.newInstance(
+                                                0,
+                                                GeoIntColumn.newInstance(i, fromType),
+                                                toType,
+                                                fromType
+                                        )
+                                );
                                 break;
                             case GEOLONG:
                                 castFunctions.add(
@@ -4258,7 +4279,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 );
                                 break;
                             case GEOLONG:
-                                castFunctions.add(GeoLongColumn.newInstance(i, fromType));
+                                castFunctions.add(
+                                        CastGeoHashToGeoHashFunctionFactory.newInstance(
+                                                0,
+                                                GeoLongColumn.newInstance(i, fromType),
+                                                toType,
+                                                fromType
+                                        )
+                                );
                                 break;
                             default:
                                 throw SqlException.unsupportedCast(
