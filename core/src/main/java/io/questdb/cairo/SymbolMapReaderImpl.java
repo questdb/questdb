@@ -51,6 +51,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.cairo.TableUtils.charFileName;
 import static io.questdb.cairo.TableUtils.offsetFileName;
@@ -59,6 +60,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     public static final int INSERT_BACKOFF = 1024;
     private static final Log LOG = LogFactory.getLog(SymbolMapReaderImpl.class);
     private static final int VALUE_HASHES_SIZE = 1024;
+    private final AtomicReference<SymbolMapCachePool> cachePool = new AtomicReference<>();
     private final MemoryCMR charMem = Vm.getCMRInstance();
     private final StringSink columnNameSink = new StringSink();
     private final ConcurrentBitmapIndexFwdReader indexReader = new ConcurrentBitmapIndexFwdReader();
@@ -67,14 +69,12 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     private final MemoryCMR offsetMem = Vm.getCMRInstance();
     private final SymbolTableView ownView = new SymbolTableView();
     private final Path path = new Path();
-    private DirectIntCharSequenceHashMap cache;
     private SymbolMapCachePool.Entry cacheEntry;
     private boolean cached;
     private long columnNameTxn;
     private CairoConfiguration configuration;
     // isLowFilling, lowKeyLimit and maxCachedKey are racy hints: a stale value only costs extra calls.
     private boolean isLowFilling;
-    private SymbolMapLowSlice low;
     private int lowKeyLimit;
     private int maxCachedKey = -1;
     private int maxHash;
@@ -128,22 +128,22 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
 
     @TestOnly
     public long getCacheAllocatedBytes() {
-        return cache == null ? 0 : cache.allocatedBytes();
+        return cacheEntry == null ? 0 : cacheEntry.getMap().allocatedBytes();
     }
 
     @TestOnly
     public int getCacheSize() {
-        return cache == null ? 0 : cache.size();
+        return cacheEntry == null ? 0 : cacheEntry.getMap().size();
     }
 
     @TestOnly
     public long getLowCacheAllocatedBytes() {
-        return low == null ? 0 : low.allocatedBytes();
+        return cacheEntry == null ? 0 : cacheEntry.getLow().allocatedBytes();
     }
 
     @TestOnly
     public int getLowCacheSize() {
-        return low == null ? 0 : low.size();
+        return cacheEntry == null ? 0 : cacheEntry.getLow().size();
     }
 
     @TestOnly
@@ -311,16 +311,8 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             // theoretically should require 2 value cells in index per hash
             // we use 4 cells to compensate for occasionally unlucky hash distribution
             this.maxHash = Math.max(Numbers.ceilPow2(symbolCapacity / 2) - 1, 1);
-            if (cached && cachePool != null) {
-                cacheEntry = cachePool.acquire(path.trimTo(plen), columnName, columnNameTxn, truncateVersion);
-                if (cacheEntry != null) {
-                    cache = cacheEntry.getMap();
-                    low = cacheEntry.getLow();
-                    isLowFilling = true;
-                    lowKeyLimit = SymbolMapLowSlice.MAX_KEYS;
-                    maxCachedKey = Integer.MAX_VALUE;
-                    refreshCacheBounds();
-                }
+            if (cached) {
+                this.cachePool.set(cachePool);
             }
             symbolTableGeneration = symbolTableGeneration == Long.MAX_VALUE ? 0 : symbolTableGeneration + 1;
             LOG.debug().$("open [columnName=").$(path.trimTo(plen).concat(columnName).$())
@@ -401,8 +393,20 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         return ((long) (key + 1) << 32) | (hash & 0xFFFFFFFFL);
     }
 
+    private void acquireCache(SymbolMapCachePool pool) {
+        final SymbolMapCachePool.Entry entry = pool.acquire(path, columnNameSink, columnNameTxn, truncateVersion);
+        if (entry != null) {
+            isLowFilling = true;
+            lowKeyLimit = SymbolMapLowSlice.MAX_KEYS;
+            maxCachedKey = Integer.MAX_VALUE;
+            cacheEntry = entry;
+            refreshCacheBounds();
+        }
+    }
+
     private void logCacheStopped() {
         NativeMemoryBudget budget = cacheEntry.getBudget();
+        DirectIntCharSequenceHashMap cache = cacheEntry.getMap();
         String reason = switch (cache.getStopReason()) {
             case DirectIntCharSequenceHashMap.STOP_BUDGET -> "budget";
             case DirectIntCharSequenceHashMap.STOP_OOM -> "oom";
@@ -415,17 +419,18 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     }
 
     private void logLowSliceStopped() {
-        final int cachedKeys = low.size();
+        final int cachedKeys = cacheEntry.getLow().size();
         LOG.info().$("symbol cache low slice stopped admitting new values [table=").$(path)
                 .$(", column=").$(columnNameSink).$(", reason=oom, cachedKeys=").$(cachedKeys).I$();
     }
 
     private void refreshCacheBounds() {
+        final SymbolMapLowSlice low = cacheEntry.getLow();
         if (isLowFilling && !low.isFilling()) {
             lowKeyLimit = low.capacity();
             isLowFilling = false;
         }
-        final int maxMapKey = cache.getMaxKeyIfStopped();
+        final int maxMapKey = cacheEntry.getMap().getMaxKeyIfStopped();
         if (maxMapKey != Integer.MAX_VALUE) {
             final int maxKey = Math.max(lowKeyLimit - 1, maxMapKey);
             if (maxCachedKey != maxKey) {
@@ -435,9 +440,8 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     }
 
     private void releaseCache() {
+        cachePool.set(null);
         cacheEntry = Misc.free(cacheEntry);
-        cache = null;
-        low = null;
         isLowFilling = false;
         lowKeyLimit = 0;
         maxCachedKey = -1;
@@ -510,9 +514,18 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         }
 
         private CharSequence bindValueOf(int key, DirectString view) {
-            if (key > maxCachedKey) {
+            // Entry's final fields make this racy read safe.
+            final SymbolMapCachePool.Entry entry = cacheEntry;
+            if (entry == null || key > maxCachedKey) {
+                final SymbolMapCachePool pool = cachePool.getPlain();
+                if (pool != null && key > -1 && key < symbolCount && cachePool.compareAndSet(pool, null)) {
+                    acquireCache(pool);
+                    return bindValueOf(key, view);
+                }
                 return SymbolMapReaderImpl.this.valueOf(key, view);
             }
+            final SymbolMapLowSlice low = entry.getLow();
+            final DirectIntCharSequenceHashMap cache = entry.getMap();
             // Shared entries may contain keys committed after this reader's transaction.
             if (key < 0 || key >= symbolCount) {
                 return null;

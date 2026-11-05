@@ -341,6 +341,7 @@ public class LikeSymbolFunctionFactoryTest extends AbstractCairoTest {
                             assertQuery(query).noLeakCheck().noRandomAccess().expectSize().returns(expected);
 
                             boolean isTiny = limit == 1024;
+                            TestUtils.assertEquals("symbol1", symbols.valueOf(0));
                             int lowCount = symbols.getLowCacheSize();
                             int cachedCount = symbols.getCacheSize();
                             Assert.assertEquals(predicates.getQuick(i), 4096, lowCount);

@@ -891,7 +891,6 @@ public class ParallelFilterTest extends AbstractCairoTest {
                         try (TableReader reader = localEngine.getReader("cache_parallel")) {
                             SymbolMapReaderImpl symbols = (SymbolMapReaderImpl) reader.getSymbolMapReader(0);
                             Assert.assertEquals(0, symbols.getCacheSize());
-                            // This reader resolves no values, so map entries come from the query's readers.
                             for (String table : new String[]{"cache_parallel", "nocache_parallel", "cache_parallel"}) {
                                 assertQuery("SELECT count() FROM " + table + " WHERE length(s) > 3")
                                         .withEngine(localEngine)
@@ -901,8 +900,9 @@ public class ParallelFilterTest extends AbstractCairoTest {
                                         .expectSize()
                                         .returns("count\n9001\n");
                             }
+                            TestUtils.assertEquals("1", symbols.valueOf(0));
                             // workers that lose the try-lock skip a copy, so neither count is exact
-                            Assert.assertTrue(symbols.getLowCacheSize() > 0);
+                            Assert.assertTrue(symbols.getLowCacheSize() > 1);
                             Assert.assertTrue(symbols.getLowCacheSize() <= 4096);
                             // every value fits a slot, so the map holds only the keys from 4096 up
                             Assert.assertTrue(symbols.getCacheSize() > 0);

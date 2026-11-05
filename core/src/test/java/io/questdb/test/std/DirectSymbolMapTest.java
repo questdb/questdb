@@ -884,7 +884,7 @@ public class DirectSymbolMapTest {
                 TestUtils.runConcurrently(16, id -> {
                     DirectString view = new DirectString();
                     int lastInserted = -1;
-                    for (int i = 0; i < 10_000; i++) {
+                    for (int i = 0; i < 10_000 || map.isFilling(); i++) {
                         int key = i * 16 + id;
                         int result = putResult(map, key, "value");
                         if (result == DirectIntCharSequenceHashMap.INSERTED) {

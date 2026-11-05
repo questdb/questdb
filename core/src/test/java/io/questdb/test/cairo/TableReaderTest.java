@@ -4935,6 +4935,7 @@ public class TableReaderTest extends AbstractCairoTest {
                 ) {
                     SymbolMapReaderImpl latestSymbols = (SymbolMapReaderImpl) latest.getSymbolMapReader(0);
                     TestUtils.assertEquals("new", latestSymbols.valueOf(1));
+                    TestUtils.assertEquals("old", copy.getSymbolMapReader(0).valueOf(0));
                     // all three share one entry; the older transactions still cannot see key 1
                     Assert.assertEquals(2, latestSymbols.getLowCacheSize());
                     Assert.assertEquals(2, ((SymbolMapReaderImpl) old.getSymbolMapReader(0)).getLowCacheSize());
