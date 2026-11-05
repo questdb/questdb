@@ -613,6 +613,25 @@ public class SqlParser {
     }
 
     /**
+     * Returns {@link #EXPIRE_BOUNDARY_TAIL} once the lexer has read {@code tok} again, the first token of the
+     * CREATE TABLE tail, which starts at {@code tokPos}. The tail takes {@code tok} for the last token the
+     * lexer read: it reports an error about {@code tok} at {@link GenericLexer#lastTokenPosition()}, and
+     * reads the token after it next. The lookahead that confirmed the boundary left the lexer one token
+     * further, at the token after {@code tok}, so the lexer goes back to {@code tokPos} and reads the
+     * lookahead tokens again from the text.
+     */
+    private static int tailBoundary(GenericLexer lexer, CharSequence tok, int tokPos) throws SqlException {
+        // drop the lookahead tokens put back to the lexer, it reads them again from the text after tok
+        while (lexer.hasUnparsed()) {
+            lexer.next();
+        }
+        lexer.backTo(tokPos, null);
+        final CharSequence rereadTok = SqlUtil.fetchNext(lexer);
+        assert rereadTok != null && Chars.equals(rereadTok, tok) && lexer.lastTokenPosition() == tokPos;
+        return EXPIRE_BOUNDARY_TAIL;
+    }
+
+    /**
      * Parses the optional row-expiry clause of CREATE TABLE:
      * {@code EXPIRE ROWS WHEN <predicate> [CLEANUP EVERY <duration>]}.
      * <p>
@@ -749,7 +768,7 @@ public class SqlParser {
                     // expireRowsClauseBoundary moves what tok reads. Copy it first: tok is the token the
                     // caller parses next, and for IN VOLUME / DEDUP UPSERT|SKIP that is the half the tail needs.
                     tok = GenericLexer.immutableOf(tok);
-                    final int boundary = expireRowsClauseBoundary(lexer, tok, inCreateTable, sqlParserCallback);
+                    final int boundary = expireRowsClauseBoundary(lexer, tok, tokPos, inCreateTable, sqlParserCallback);
                     if (boundary != EXPIRE_BOUNDARY_NONE) {
                         predicateEnd = tokPos;
                         foundCleanup = boundary == EXPIRE_BOUNDARY_CLEANUP;
@@ -836,7 +855,7 @@ public class SqlParser {
             }
             final int tokPos = lexer.lastTokenPosition();
             tok = GenericLexer.immutableOf(tok);
-            final int boundary = expireRowsClauseBoundary(lexer, tok, inCreateTable, sqlParserCallback);
+            final int boundary = expireRowsClauseBoundary(lexer, tok, tokPos, inCreateTable, sqlParserCallback);
             if (boundary != EXPIRE_BOUNDARY_NONE) {
                 end = tokPos;
                 foundCleanup = boundary == EXPIRE_BOUNDARY_CLEANUP;
@@ -2431,7 +2450,9 @@ public class SqlParser {
      * legal column names, and {@code IN} is also how a predicate spells {@code <col> IN (...)}. {@code WITH}
      * is a reserved keyword whose tail is an open-ended parameter list, so it ends the body on its own. The
      * lookahead token goes back to the lexer either way: a confirmed boundary is re-read by the clause tail,
-     * a rejected one is body content the capture loop must still see.
+     * a rejected one is body content the capture loop must still see. At a tail boundary the lexer also
+     * reads {@code tok} again, see {@link #tailBoundary}, so that the tail reports an error about
+     * {@code tok} at {@code tok} and not at the lookahead token after it.
      * <p>
      * The {@code WHEN <predicate>} capture and the {@code PARTITION BY <columns>} capture both come here,
      * so a column named {@code cleanup} or {@code dedup} reads the same way in every mode, and CREATE and
@@ -2444,6 +2465,7 @@ public class SqlParser {
     private int expireRowsClauseBoundary(
             GenericLexer lexer,
             CharSequence tok,
+            int tokPos,
             boolean inCreateTable,
             @Nullable SqlParserCallback sqlParserCallback
     ) throws SqlException {
@@ -2454,17 +2476,17 @@ public class SqlParser {
             return EXPIRE_BOUNDARY_NONE;
         }
         if (isWithKeyword(tok)) {
-            return EXPIRE_BOUNDARY_TAIL;
+            return tailBoundary(lexer, tok, tokPos);
         }
         if (isInKeyword(tok) && isNextTokKeyword(lexer, "volume")) {
-            return EXPIRE_BOUNDARY_TAIL;
+            return tailBoundary(lexer, tok, tokPos);
         }
         if ((isDedupKeyword(tok) || isDeduplicateKeyword(tok))
                 && (isNextTokKeyword(lexer, "upsert") || isNextTokKeyword(lexer, "skip"))) {
-            return EXPIRE_BOUNDARY_TAIL;
+            return tailBoundary(lexer, tok, tokPos);
         }
         if (sqlParserCallback != null && sqlParserCallback.isExpireRowsClauseBoundary(lexer, tok)) {
-            return EXPIRE_BOUNDARY_TAIL;
+            return tailBoundary(lexer, tok, tokPos);
         }
         return EXPIRE_BOUNDARY_NONE;
     }
