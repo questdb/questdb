@@ -27,10 +27,12 @@ package io.questdb.test.cairo.fuzz;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.IndexType;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -378,8 +380,10 @@ public class PostingIndexO3ConcurrencyFuzzTest extends AbstractFuzzTest {
                 }
             }
             final int partitionIndex = parquetPartitions.getQuick(rnd.nextInt(parquetPartitions.size()));
-            startTimestamp = reader.getPartitionTimestampByIndex(partitionIndex);
-            endTimestamp = ColumnType.getTimestampDriver(reader.getMetadata().getTimestampType()).addDays(startTimestamp, 1);
+            // FuzzRunner.generateTransactions() takes micros whatever the table's timestamp type
+            final TimestampDriver driver = ColumnType.getTimestampDriver(reader.getMetadata().getTimestampType());
+            startTimestamp = driver.toMicros(reader.getPartitionTimestampByIndex(partitionIndex));
+            endTimestamp = MicrosTimestampDriver.INSTANCE.addDays(startTimestamp, 1);
             LOG.info().$("follow-up list targets parquet [table=").$(tableNameWal)
                     .$(", partitions=").$(reader.getPartitionCount())
                     .$(", parquetPartitions=").$(parquetPartitions.size())

@@ -27,7 +27,6 @@ package io.questdb.test.fuzz;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableWriterAPI;
-import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.griffin.CompiledQuery;
@@ -43,12 +42,9 @@ import io.questdb.test.tools.TestUtils;
 public class FuzzConvertPartitionToParquetOperation implements FuzzTransactionOperation {
 
     private final long cutoffTimestamp;
-    // the unit of cutoffTimestamp
-    private final TimestampDriver timestampDriver;
 
-    public FuzzConvertPartitionToParquetOperation(long cutoffTimestamp, TimestampDriver timestampDriver) {
+    public FuzzConvertPartitionToParquetOperation(long cutoffTimestamp) {
         this.cutoffTimestamp = cutoffTimestamp;
-        this.timestampDriver = timestampDriver;
     }
 
     @Override
@@ -61,14 +57,8 @@ public class FuzzConvertPartitionToParquetOperation implements FuzzTransactionOp
         ) {
             context.with(AllowAllSecurityContext.INSTANCE);
             TableRecordMetadata metadata = wApi.getMetadata();
-            String tsColumnName = metadata.getColumnName(metadata.getTimestampIndex());
-            String sql = String.format("ALTER TABLE %s CONVERT PARTITION TO PARQUET WHERE %s > '%s' AND %s < '%s'",
-                    TestUtils.randomiseCase(tempRnd, wApi.getTableToken().getTableName()),
-                    tsColumnName,
-                    FuzzTransactionGenerator.toTimestampLiteral(timestampDriver, cutoffTimestamp - timestampDriver.fromDays(1)),
-                    tsColumnName,
-                    FuzzTransactionGenerator.toTimestampLiteral(timestampDriver, cutoffTimestamp)
-            );
+            String sql = "ALTER TABLE " + TestUtils.randomiseCase(tempRnd, wApi.getTableToken().getTableName())
+                    + " CONVERT PARTITION TO PARQUET WHERE " + FuzzTransactionOperation.partitionDayBeforeFilter(metadata, cutoffTimestamp);
 
             try {
                 CompiledQuery query = sqlCompiler.compile(sql, context);

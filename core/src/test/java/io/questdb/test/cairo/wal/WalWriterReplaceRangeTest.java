@@ -1784,20 +1784,19 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testReplaceRangeRemovesSplitParentThenPrepareParquetWithOpenReader() throws Exception {
+    public void testReplaceRangeRemovesSplitParentThenSquashWithOpenReader() throws Exception {
         assertMemoryLeak(() -> {
             TableToken tableToken = createDayWithSplitButNoParent();
-            // preparePartitionForParquetConversion() skips the active partition.
+            // Keeps the day out of the active partition.
             execute("INSERT INTO rg VALUES (301, '2022-02-25T10:00', 0)");
             drainWalQueue();
 
-            final long dayTimestamp = MicrosTimestampDriver.floor("2022-02-24");
             try (TableWriter writer = getWriter(tableToken)) {
                 try (TableReader ignore = getReader(tableToken)) {
                     // The day stays native, so the parent that the squash re-creates stays live. A
                     // reader on the latest txn must not make the squash copy the new parent: the copy
                     // would reuse the parent's directory name and queue that live directory for removal.
-                    Assert.assertEquals(dayTimestamp, writer.preparePartitionForParquetConversion(dayTimestamp));
+                    writer.squashPartitions();
                 }
                 // The next commit runs housekeeping, which removes queued partition versions that no
                 // reader uses.

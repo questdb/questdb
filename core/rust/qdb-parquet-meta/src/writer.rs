@@ -332,8 +332,6 @@ pub struct ParquetMetaUpdateWriter<'a> {
     existing_footer_length: u32,
     /// Final row-group list: reused committed blocks and new blocks.
     entries: Vec<RowGroupEntry>,
-    /// Block offset of each committed row group, by original index.
-    existing_row_group_offsets: Vec<u64>,
     parquet_footer_offset: u64,
     parquet_footer_length: u32,
     unused_bytes: u64,
@@ -356,20 +354,28 @@ pub struct ParquetMetaUpdateWriter<'a> {
     /// on the next chunk GET.
     scratchpad: Option<Vec<(u32, Vec<u8>)>>,
     prior_scratchpad: Vec<(u32, Vec<u8>)>,
+    prior_block_offsets: Vec<u64>,
+    prior_num_rows: Vec<u64>,
+    /// First index row of each committed row group, identity map resolved.
+    prior_index_row_lo: Vec<u64>,
+    /// Index rows the committed footer covers, identity map resolved.
+    prior_index_row_count: u64,
+    /// Set by [`Self::drop_index_row_map`]: the new footer carries the identity map.
+    is_index_row_map_dropped: bool,
 }
 
 enum RowGroupEntry {
-    /// Reuse the committed block of original row group `orig_idx`, which sits
-    /// at `offset`. Its bloom-section entries are copied through from
-    /// `orig_idx`, independent of the entry's position in the new footer.
-    Existing { offset: u64, orig_idx: usize },
-    /// Write a new block.
+    /// Reuse committed row group `src`: its block, bloom filters and index rows.
+    /// Its bloom-section entries are copied through from `src`, independent of
+    /// the entry's position in the new footer.
+    Existing { src: usize },
+    /// Write a new block. Its rows get fresh index rows.
     New(RowGroupBlockBuilder),
 }
 
 /// One row group of the new footer, for [`ParquetMetaUpdateWriter::set_row_groups`].
 pub enum RowGroupSlot {
-    /// Reuse the committed block (and bloom entries) of original row group `i`.
+    /// Reuse the committed block (bloom entries and index rows) of original row group `i`.
     Existing(usize),
     /// Write a new block.
     New(RowGroupBlockBuilder),
@@ -397,15 +403,20 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
         let rg_count = footer.row_group_count() as usize;
 
         // Initialize entries with existing row group offsets.
-        let mut existing_row_group_offsets = Vec::with_capacity(rg_count);
+        let mut entries = Vec::with_capacity(rg_count);
+        let mut prior_block_offsets = Vec::with_capacity(rg_count);
+        let mut prior_num_rows = Vec::with_capacity(rg_count);
+        let mut prior_index_row_lo = Vec::with_capacity(rg_count);
+        let mut cumulative_rows = 0u64;
         for i in 0..rg_count {
-            existing_row_group_offsets.push(footer.row_group_block_offset(i)?);
+            entries.push(RowGroupEntry::Existing { src: i });
+            prior_block_offsets.push(footer.row_group_block_offset(i)?);
+            let num_rows = reader.row_group(i)?.num_rows();
+            prior_num_rows.push(num_rows);
+            prior_index_row_lo.push(footer.row_group_index_row_lo(i)?.unwrap_or(cumulative_rows));
+            cumulative_rows = cumulative_rows.saturating_add(num_rows);
         }
-        let entries = existing_row_group_offsets
-            .iter()
-            .enumerate()
-            .map(|(orig_idx, &offset)| RowGroupEntry::Existing { offset, orig_idx })
-            .collect();
+        let prior_index_row_count = footer.index_row_count().unwrap_or(cumulative_rows);
 
         // Parse existing bloom filter data.
         let bloom_filter_columns = reader.bloom_filter_columns();
@@ -448,7 +459,6 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
             existing_footer_offset,
             existing_footer_length,
             entries,
-            existing_row_group_offsets,
             parquet_footer_offset: footer.parquet_footer_offset(),
             parquet_footer_length: footer.parquet_footer_length(),
             unused_bytes: footer.unused_bytes(),
@@ -460,7 +470,76 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
             prior_seq_txn,
             scratchpad: None,
             prior_scratchpad,
+            prior_block_offsets,
+            prior_num_rows,
+            prior_index_row_lo,
+            prior_index_row_count,
+            is_index_row_map_dropped: false,
         })
+    }
+
+    /// Writes the identity index row map whatever the row groups do: index rows start over as partition rows.
+    /// Only valid when no index file refers to the committed index rows, i.e. the table has no symbol index.
+    /// Older binaries reject a footer that carries a map, so a table without an index never writes one.
+    pub fn drop_index_row_map(&mut self) -> &mut Self {
+        self.is_index_row_map_dropped = true;
+        self
+    }
+
+    /// Places committed row group `src` at `index` (may append), keeping its block and index rows.
+    pub fn reuse_row_group(&mut self, index: usize, src: usize) -> ParquetMetaResult<&mut Self> {
+        if src >= self.prior_block_offsets.len() {
+            return Err(parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
+                "source row group index {} out of range [0, {})",
+                src,
+                self.prior_block_offsets.len()
+            ));
+        }
+        let len = self.entries.len();
+        if index == len {
+            self.entries.push(RowGroupEntry::Existing { src });
+            return Ok(self);
+        }
+        let slot = self.entries.get_mut(index).ok_or_else(|| {
+            parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
+                "row group index {} out of range [0, {}]",
+                index,
+                len
+            )
+        })?;
+        *slot = RowGroupEntry::Existing { src };
+        Ok(self)
+    }
+
+    /// Reused row groups keep their index rows, new ones take fresh rows past the
+    /// committed count. Returns `None` for the identity map, which the footer omits.
+    fn resolve_index_row_map(&self) -> Option<(u64, Vec<u64>)> {
+        let mut index_row_count = self.prior_index_row_count;
+        let mut lows = Vec::with_capacity(self.entries.len());
+        let mut cumulative_rows = 0u64;
+        let mut is_identity = true;
+        for entry in &self.entries {
+            let (lo, num_rows) = match entry {
+                RowGroupEntry::Existing { src } => {
+                    (self.prior_index_row_lo[*src], self.prior_num_rows[*src])
+                }
+                RowGroupEntry::New(builder) => {
+                    let lo = index_row_count;
+                    index_row_count = index_row_count.saturating_add(builder.num_rows);
+                    (lo, builder.num_rows)
+                }
+            };
+            is_identity &= lo == cumulative_rows;
+            cumulative_rows = cumulative_rows.saturating_add(num_rows);
+            lows.push(lo);
+        }
+        if is_identity && index_row_count == cumulative_rows {
+            None
+        } else {
+            Some((index_row_count, lows))
+        }
     }
 
     pub fn unused_bytes(&mut self, unused_bytes: u64) -> &mut Self {
@@ -511,24 +590,24 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
     }
 
     /// Replaces the entry list wholesale, in final row-group order.
-    /// `Existing(i)` reuses committed block `i` (its offset and bloom entries);
-    /// each `i` may appear at most once. Errors on an out-of-range or
+    /// `Existing(i)` reuses committed block `i` (its offset, bloom entries and
+    /// index rows); each `i` may appear at most once. Errors on an out-of-range or
     /// duplicate index, leaving the entry list unchanged.
     pub fn set_row_groups(&mut self, slots: Vec<RowGroupSlot>) -> ParquetMetaResult<&mut Self> {
-        let committed_count = self.existing_row_group_offsets.len();
+        let committed_count = self.prior_block_offsets.len();
         let mut used = vec![false; committed_count];
         let mut entries = Vec::with_capacity(slots.len());
         for slot in slots {
             match slot {
                 RowGroupSlot::Existing(orig_idx) => {
-                    let Some(&offset) = self.existing_row_group_offsets.get(orig_idx) else {
+                    if orig_idx >= committed_count {
                         return Err(parquet_meta_err!(
                             ParquetMetaErrorKind::InvalidValue,
                             "existing row group index {} out of range [0, {})",
                             orig_idx,
                             committed_count
                         ));
-                    };
+                    }
                     if used[orig_idx] {
                         return Err(parquet_meta_err!(
                             ParquetMetaErrorKind::InvalidValue,
@@ -537,7 +616,7 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
                         ));
                     }
                     used[orig_idx] = true;
-                    entries.push(RowGroupEntry::Existing { offset, orig_idx });
+                    entries.push(RowGroupEntry::Existing { src: orig_idx });
                 }
                 RowGroupSlot::New(builder) => entries.push(RowGroupEntry::New(builder)),
             }
@@ -638,8 +717,8 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
         let mut final_offsets: Vec<u64> = Vec::with_capacity(self.entries.len());
         for entry in &self.entries {
             match entry {
-                RowGroupEntry::Existing { offset, .. } => {
-                    final_offsets.push(*offset);
+                RowGroupEntry::Existing { src } => {
+                    final_offsets.push(self.prior_block_offsets[*src]);
                 }
                 RowGroupEntry::New(builder) => {
                     // Pad relative to the absolute file position.
@@ -674,13 +753,13 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
 
             for (rg_idx, entry) in self.entries.iter().enumerate() {
                 match entry {
-                    RowGroupEntry::Existing { orig_idx, .. } => {
+                    RowGroupEntry::Existing { src } => {
                         // Copy through the committed bloom entries. Read them at
-                        // orig_idx (existing_bloom_* is indexed by original row
+                        // src (existing_bloom_* is indexed by committed row
                         // group) and write them at rg_idx (the final position):
                         // the two differ once a split or an insert shifts groups.
                         if self.is_bloom_external {
-                            if let Some(ext) = self.existing_bloom_external.get(*orig_idx) {
+                            if let Some(ext) = self.existing_bloom_external.get(*src) {
                                 for (pos, &(off, len)) in ext.iter().enumerate() {
                                     let idx = rg_idx * bloom_col_count + pos;
                                     let o = idx * 16;
@@ -688,7 +767,7 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
                                     section[o + 8..o + 16].copy_from_slice(&len.to_le_bytes());
                                 }
                             }
-                        } else if let Some(inl) = self.existing_bloom_inlined.get(*orig_idx) {
+                        } else if let Some(inl) = self.existing_bloom_inlined.get(*src) {
                             for (pos, &shifted) in inl.iter().enumerate() {
                                 let idx = rg_idx * bloom_col_count + pos;
                                 let o = idx * 4;
@@ -765,6 +844,12 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
         };
         fb.set_scratchpad_entries(effective_scratchpad);
         fb.validate_scratchpad()?;
+        fb.set_index_row_map(if self.is_index_row_map_dropped {
+            None
+        } else {
+            self.resolve_index_row_map()
+        });
+        fb.validate_index_row_map()?;
         fb.write_to(&mut append_buf);
 
         // Resume CRC32 from the committed footer's checksum. The old CRC covers
@@ -901,6 +986,168 @@ mod tests {
 
         let reader = ParquetMetaReader::from_file_size(&bytes, parquet_meta_file_size).unwrap();
         assert_eq!(reader.squash_tracker(), Some(7));
+    }
+
+    fn index_row_map_rg(num_rows: u64) -> RowGroupBlockBuilder {
+        let mut rg = RowGroupBlockBuilder::new(2);
+        rg.set_num_rows(num_rows);
+        let mut c = ColumnChunkRaw::zeroed();
+        c.num_values = num_rows;
+        rg.set_column_chunk(0, c).unwrap();
+        rg
+    }
+
+    fn index_row_map_apply(
+        file: &[u8],
+        file_size: u64,
+        update: impl FnOnce(&mut ParquetMetaUpdateWriter),
+    ) -> (Vec<u8>, u64) {
+        let mut updater = ParquetMetaUpdateWriter::new(file, file_size).unwrap();
+        update(&mut updater);
+        updater.parquet_footer(8192, 512);
+        let (append_bytes, new_size) = updater.finish().unwrap();
+        let mut full = file[..file_size as usize].to_vec();
+        full.extend_from_slice(&append_bytes);
+        full[super::HEADER_PARQUET_META_FILE_SIZE_OFF
+            ..super::HEADER_PARQUET_META_FILE_SIZE_OFF + 8]
+            .copy_from_slice(&new_size.to_le_bytes());
+        (full, new_size)
+    }
+
+    fn index_row_map_of(file: &[u8], file_size: u64) -> Option<(u64, Vec<u64>)> {
+        let reader = ParquetMetaReader::from_file_size(file, file_size).unwrap();
+        reader.verify_checksum().unwrap();
+        let footer = reader.footer();
+        let count = footer.index_row_count()?;
+        let lows = (0..reader.row_group_count() as usize)
+            .map(|i| footer.row_group_index_row_lo(i).unwrap().unwrap())
+            .collect();
+        Some((count, lows))
+    }
+
+    #[test]
+    fn index_row_map_omitted_for_append() {
+        let (original, size) = make_simple_file();
+        let (full, new_size) = index_row_map_apply(&original, size, |u| {
+            u.add_row_group(index_row_map_rg(500));
+        });
+        assert_eq!(index_row_map_of(&full, new_size), None);
+        let reader = ParquetMetaReader::from_file_size(&full, new_size).unwrap();
+        assert!(!reader.footer_feature_flags().has_index_row_map());
+    }
+
+    #[test]
+    fn index_row_map_replace_takes_fresh_rows() {
+        let (original, size) = make_simple_file();
+        let (full, new_size) = index_row_map_apply(&original, size, |u| {
+            u.replace_row_group(0, index_row_map_rg(1001)).unwrap();
+        });
+        assert_eq!(index_row_map_of(&full, new_size), Some((2001, vec![1000])));
+    }
+
+    #[test]
+    fn index_row_map_reused_row_group_keeps_its_rows() {
+        // Insert in front: the committed group keeps [0, 1000), the new one takes [1000, 1200).
+        let (original, size) = make_simple_file();
+        let (full, new_size) = index_row_map_apply(&original, size, |u| {
+            u.replace_row_group(0, index_row_map_rg(200)).unwrap();
+            u.reuse_row_group(1, 0).unwrap();
+        });
+        assert_eq!(
+            index_row_map_of(&full, new_size),
+            Some((1200, vec![1000, 0]))
+        );
+        let reader = ParquetMetaReader::from_file_size(&full, new_size).unwrap();
+        assert_eq!(reader.row_group(0).unwrap().num_rows(), 200);
+        assert_eq!(reader.row_group(1).unwrap().num_rows(), 1000);
+        let original_reader = ParquetMetaReader::from_file_size(&original, size).unwrap();
+        assert_eq!(
+            reader.footer().row_group_block_offset(1).unwrap(),
+            original_reader.footer().row_group_block_offset(0).unwrap()
+        );
+    }
+
+    #[test]
+    fn index_row_map_carries_across_updates() {
+        let (original, size) = make_simple_file();
+        let (first, first_size) = index_row_map_apply(&original, size, |u| {
+            u.replace_row_group(0, index_row_map_rg(200)).unwrap();
+            u.reuse_row_group(1, 0).unwrap();
+        });
+        let (second, second_size) = index_row_map_apply(&first, first_size, |u| {
+            u.replace_row_group(1, index_row_map_rg(1003)).unwrap();
+            u.add_row_group(index_row_map_rg(10));
+        });
+        assert_eq!(
+            index_row_map_of(&second, second_size),
+            Some((2213, vec![1000, 1200, 2203]))
+        );
+        // the first snapshot still resolves its own map
+        assert_eq!(
+            index_row_map_of(&second, first_size),
+            Some((1200, vec![1000, 0]))
+        );
+    }
+
+    #[test]
+    fn index_row_map_dropped_keeps_identity_for_shifted_row_groups() {
+        // Insert in front, as index_row_map_reused_row_group_keeps_its_rows, with the map dropped.
+        let (original, size) = make_simple_file();
+        let (full, new_size) = index_row_map_apply(&original, size, |u| {
+            u.replace_row_group(0, index_row_map_rg(200)).unwrap();
+            u.reuse_row_group(1, 0).unwrap();
+            u.drop_index_row_map();
+        });
+        assert_eq!(index_row_map_of(&full, new_size), None);
+        let reader = ParquetMetaReader::from_file_size(&full, new_size).unwrap();
+        assert!(!reader.footer_feature_flags().has_index_row_map());
+        assert_eq!(reader.row_group(0).unwrap().num_rows(), 200);
+        assert_eq!(reader.row_group(1).unwrap().num_rows(), 1000);
+    }
+
+    #[test]
+    fn index_row_map_dropped_over_a_committed_map() {
+        // A committed map, then an update with the map dropped: the new footer is identity, the old one keeps its map.
+        let (original, size) = make_simple_file();
+        let (first, first_size) = index_row_map_apply(&original, size, |u| {
+            u.replace_row_group(0, index_row_map_rg(200)).unwrap();
+            u.reuse_row_group(1, 0).unwrap();
+        });
+        let (second, second_size) = index_row_map_apply(&first, first_size, |u| {
+            u.add_row_group(index_row_map_rg(10));
+            u.drop_index_row_map();
+        });
+        assert_eq!(index_row_map_of(&second, second_size), None);
+        assert_eq!(
+            index_row_map_of(&second, first_size),
+            Some((1200, vec![1000, 0]))
+        );
+        // A later update without the drop starts from the identity map.
+        let (third, third_size) = index_row_map_apply(&second, second_size, |u| {
+            u.replace_row_group(1, index_row_map_rg(1001)).unwrap();
+        });
+        assert_eq!(
+            index_row_map_of(&third, third_size),
+            Some((2211, vec![0, 1210, 1200]))
+        );
+    }
+
+    #[test]
+    fn index_row_map_returns_to_identity() {
+        let (original, size) = make_simple_file();
+        let (first, first_size) = index_row_map_apply(&original, size, |u| {
+            u.reuse_row_group(0, 0).unwrap();
+            u.add_row_group(index_row_map_rg(10));
+        });
+        assert_eq!(index_row_map_of(&first, first_size), None);
+    }
+
+    #[test]
+    fn index_row_map_reuse_rejects_out_of_range() {
+        let (original, size) = make_simple_file();
+        let mut updater = ParquetMetaUpdateWriter::new(&original, size).unwrap();
+        assert!(updater.reuse_row_group(0, 1).is_err());
+        assert!(updater.reuse_row_group(2, 0).is_err());
     }
 
     #[test]

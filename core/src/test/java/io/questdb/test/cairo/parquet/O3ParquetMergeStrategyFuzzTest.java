@@ -25,7 +25,7 @@
 package io.questdb.test.cairo.parquet;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
@@ -282,12 +282,15 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
             StringSink partName = new StringSink();
             try (TableReader reader = engine.getReader(walTable)) {
                 Assert.assertTrue("expected at least 2 partitions", reader.getPartitionCount() >= 2);
-                partitionTs = reader.getPartitionTimestampByIndex(0);
+                final int timestampType = reader.getMetadata().getTimestampType();
+                final long partitionTsNative = reader.getPartitionTimestampByIndex(0);
+                // FuzzRunner.generateTransactions() takes micros regardless of the table timestamp type
+                partitionTs = ColumnType.getTimestampDriver(timestampType).toMicros(partitionTsNative);
                 PartitionBy.setSinkForPartition(
                         partName,
-                        reader.getMetadata().getTimestampType(),
+                        timestampType,
                         reader.getPartitionedBy(),
-                        partitionTs
+                        partitionTsNative
                 );
             }
             execute("ALTER TABLE " + walTable + " CONVERT PARTITION TO PARQUET LIST '" + partName + "'");
@@ -487,7 +490,7 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
                     .I$();
             Assert.assertEquals(
                     "sentinel partition 2022-02-26 was removed",
-                    MicrosTimestampDriver.floor("2022-02-26"),
+                    ColumnType.getTimestampDriver(reader.getMetadata().getTimestampType()).parseFloorLiteral("2022-02-26"),
                     lastPartitionTs
             );
             final String tsColumnName = reader.getMetadata().getColumnName(reader.getMetadata().getTimestampIndex());
@@ -614,12 +617,15 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
             }
 
             // Convert the first partition (2022-02-24) to Parquet.
+            final long partitionTsNative;
             final long partitionTs;
             try (TableReader reader = engine.getReader(walTable)) {
                 Assert.assertEquals("partition count", hasSentinel ? 2 : 1, reader.getPartitionCount());
-                partitionTs = reader.getPartitionTimestampByIndex(0);
+                partitionTsNative = reader.getPartitionTimestampByIndex(0);
+                // FuzzRunner.generateTransactions() takes micros regardless of the table timestamp type
+                partitionTs = ColumnType.getTimestampDriver(reader.getMetadata().getTimestampType()).toMicros(partitionTsNative);
             }
-            Assert.assertTrue(convertToParquetIfNative(walTable, partitionTs));
+            Assert.assertTrue(convertToParquetIfNative(walTable, partitionTsNative));
 
             // Widen the O3 timestamp range to the full partition day so that
             // generated data can land before, within, and after the initial rows.
@@ -658,7 +664,7 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
             for (int round = 0; round < rounds || (round < maxRounds && fuzzer.getIoFailuresObserved() == 0); round++) {
                 // A replace can remove every row of the day and leave no partition to convert
                 // back, so the next round's rows build a native partition instead.
-                if (isParquetPartition(walTable, partitionTs)) {
+                if (isParquetPartition(walTable, partitionTsNative)) {
                     parquetRounds++;
                 }
 
@@ -731,7 +737,7 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
                     Misc.freeObjListAndClear(transactions);
                 }
                 drainWalQueue();
-                if (convertToParquetIfNative(walTable, partitionTs)) {
+                if (convertToParquetIfNative(walTable, partitionTsNative)) {
                     reconversions++;
                     LOG.info().$("round ").$(round).$(" left the partition native, converted it back to parquet").$();
                 }

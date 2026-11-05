@@ -85,6 +85,11 @@ reuses the committed name:
 - `O3PartitionJob.updateParquetIndexes` writes each index under the new column name txn `txn`
   (the current txn, the same value rewrite mode names its directory with) next to the committed
   files in the live partition directory. A committed name is always below the current txn.
+  It rebuilds the whole index, placing each row group's rows at the index rows the new footer's
+  index row map gives it (`collectRowGroupsInIndexRowOrder`): a kept row group keeps its index
+  rows, a written one takes fresh rows past the committed count, and the rows of a replaced or
+  dropped group get no entries. A table without a symbol index drops the map
+  (`PartitionUpdater.dropIndexRowMap()`), so its footer keeps the identity map.
 - `TableWriter.o3ConsumePartitionUpdateSink` (in-place branch) calls
   `versionRebuiltParquetIndexes`, which moves `_cv` to that name for the same columns (top 0) and
   queues the old name. `_cv` then commits with the new parquet file size in `_txn`.
@@ -118,12 +123,14 @@ that too, or readers keep opening the committed index files for the new row layo
 **Column tops on CONVERT TO NATIVE.** `CONVERT PARTITION TO PARQUET` keeps a native column top in
 the file's QuestDB metadata but zeroes a top below the row count in `_cv`. The Rust decoder skips
 every row group that lies whole inside the file's column top, so `produceNativeFromParquet` writes
-nothing for those rows. It counts them, plus the leading NULLs of the first chunk of a no-sentinel
-column (BOOLEAN/BYTE/SHORT/CHAR), and sets that as the native `_cv` top; a column with no chunk
-gets the row count. `restoreIndexFilesAfterParquetToNative` rebuilds the index of a column whose top
-the decode moved instead of linking the parquet partition's files, which index the old top's rows.
-Before this, a top spanning a whole row group (small row groups, a column added mid-partition)
-left `_cv` at 0 over a shorter native file: shifted values, and a read past the file's end.
+nothing for those rows. It counts the skipped rows before the first written chunk, plus the leading
+NULLs of that chunk for a no-sentinel column (BOOLEAN/BYTE/SHORT/CHAR), as the native `_cv` top
+(`parquetDecodedColumnLeadingRows`); a skipped row group after written data becomes an all-NULL
+chunk. `restoreIndexFilesAfterParquetToNative` links the parquet partition's index files only for
+a column with a zero top and a footer with the identity index row map; otherwise it rebuilds the
+index. Before this, a top spanning a whole row group (small row groups, a column added
+mid-partition) left `_cv` at 0 over a shorter native file: shifted values, and a read past the
+file's end.
 Pinned by `AlterTableConvertPartitionTest.testConvertRoundTripColumnTopSpanningRowGroups`.
 
 `hasTypeConvertedColumns` is set when a column maps into the parquet file through its

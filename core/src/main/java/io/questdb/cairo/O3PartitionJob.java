@@ -2613,6 +2613,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         parquetFileSize, // existing parquet data-file size (gates first-time vs incremental)
                         seqTxn
                 );
+                if (!hasIndexedSymbolColumn(tableWriterMetadata)) {
+                    // The index row map only serves symbol indexes, and an older binary rejects a footer that
+                    // carries one: a table without an index keeps the identity map.
+                    partitionUpdater.dropIndexRowMap();
+                }
 
                 if (hasSchemaChange || forceFullReencode) {
                     ParquetRowGroupMaterializer.setTargetSchema(
@@ -2926,6 +2931,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         tableWriterMetadata,
                         parquetColumns,
                         rowGroupBuffers,
+                        ctx.getRowGroupOrder(),
+                        ctx.getRowGroupIndexRowLos(),
                         isRewrite
                 );
 
@@ -3267,7 +3274,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     .$(", unusedBytes=").$size(resultUnusedBytes)
                     .$(", fullyMaterialized=").$(isFullyMaterialized)
                     .I$();
-            command.setResult(newParquetSize, isFullyMaterialized);
+            // The copy uses the identity index row map; index files built over another map do not describe it.
+            command.setResult(newParquetSize, isFullyMaterialized, parquetMeta.hasIndexRowMap());
             isBuilt = true;
         } finally {
             if (parquetAddr != 0) {
@@ -4791,6 +4799,18 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 }
             }
             prevMax = readRowGroupTimestampBound(partitionDecoder, meta, rg, timestampParquetIdx, true);
+        }
+        return false;
+    }
+
+    /**
+     * Whether {@link #updateParquetIndexes} has an index to maintain; without one, no index file refers to index rows.
+     */
+    private static boolean hasIndexedSymbolColumn(TableRecordMetadata metadata) {
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            if (metadata.getColumnType(i) == ColumnType.SYMBOL && metadata.isColumnIndexed(i)) {
+                return true;
+            }
         }
         return false;
     }
@@ -6442,9 +6462,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     }
 
     /**
-     * Rebuilds the partition's symbol indexes from the parquet file. Rewrite mode writes them
-     * into the new partition directory under the committed column name txns. Update mode writes
-     * them beside the committed files, which pinned readers still use, under column name txn
+     * Rebuilds the partition's symbol indexes from the parquet file, at the index rows of the new file's index
+     * row map. Rewrite mode writes them into the new partition directory under the committed column name txns.
+     * Update mode writes them beside the committed files, which pinned readers still use, under column name txn
      * {@code txn}; TableWriter.versionRebuiltParquetIndexes points _cv at them in the same _txn.
      */
     private static void updateParquetIndexes(
@@ -6464,6 +6484,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             TableRecordMetadata tableWriterMetadata,
             DirectIntList parquetColumns,
             RowGroupBuffers rowGroupBuffers,
+            IntList rowGroupOrder,
+            LongList rowGroupIndexRowLos,
             boolean isRewrite
     ) {
         long parquetAddr = 0;
@@ -6563,9 +6585,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             parquetColumns.add(parquetColumnIndex);
                             parquetColumns.add(ColumnType.SYMBOL);
 
-                            long rowCount = 0;
-                            final int rowGroupCount = parquetMetadata.getRowGroupCount();
-                            for (int rowGroupIndex = 0; rowGroupIndex < rowGroupCount; rowGroupIndex++) {
+                            // Index values grow per key, so the row groups go in index row order. Index rows of
+                            // row groups the map no longer references stay without entries.
+                            parquetMetadata.collectRowGroupsInIndexRowOrder(rowGroupOrder, rowGroupIndexRowLos);
+                            for (int i = 0, n = rowGroupOrder.size(); i < n; i++) {
+                                final int rowGroupIndex = rowGroupOrder.getQuick(i);
+                                final long indexRowLo = rowGroupIndexRowLos.getQuick(rowGroupIndex);
                                 assert parquetMetadata.getRowGroupSize(rowGroupIndex) <= Integer.MAX_VALUE;
                                 final int rowGroupSize = (int) parquetMetadata.getRowGroupSize(rowGroupIndex);
                                 partitionDecoder.decodeRowGroup(
@@ -6576,20 +6601,18 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                         rowGroupSize
                                 );
 
-                                long rowId = rowCount;
+                                long rowId = indexRowLo;
                                 final long addr = rowGroupBuffers.getChunkDataPtr(0);
                                 final long size = rowGroupBuffers.getChunkDataSize(0);
                                 if (size == 0) {
-                                    BitmapIndexUtils.addNullEntries(indexWriter, rowId, rowCount + rowGroupSize);
+                                    BitmapIndexUtils.addNullEntries(indexWriter, rowId, indexRowLo + rowGroupSize);
                                 } else {
                                     for (long p = addr, lim = addr + size; p < lim; p += 4, rowId++) {
                                         indexWriter.add(TableUtils.toIndexKey(Unsafe.getInt(p)), rowId);
                                     }
                                 }
-
-                                rowCount += rowGroupSize;
                             }
-                            indexWriter.setMaxValue(newPartitionSize - 1);
+                            indexWriter.setMaxValue(parquetMetadata.getIndexRowCount() - 1);
                         }
 
                         // Tag the chain entry with the upcoming txn so that if
@@ -6859,6 +6882,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     metadata,
                     ctx.getParquetColumns(),
                     ctx.getRowGroupBuffers(),
+                    ctx.getRowGroupOrder(),
+                    ctx.getRowGroupIndexRowLos(),
                     true
             );
 
