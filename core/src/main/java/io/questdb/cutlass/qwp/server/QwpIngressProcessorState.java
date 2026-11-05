@@ -149,6 +149,8 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     static final int SEND_STATE_RESUME_DURABLE_ACK_THEN_ERROR = 5;
     static final int SEND_STATE_RESUME_ERROR = 2;
     static final int SEND_STATE_RESUME_PONG = 9;
+    // Three longs for each of the commit batch's frames; see commitBatchFrames.
+    private static final int COMMIT_BATCH_FRAMES_INITIAL_CAPACITY = 3 * 64;
     private static final Log LOG = LogFactory.getLog(QwpIngressProcessorState.class);
     // The commit batch's tables, in the order they joined it, which is the order of
     // their first frames. See the commit batch fields below.
@@ -156,7 +158,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     private final ObjList<CommitBatchEntry> commitBatchEntryPool = new ObjList<>();
     // The commit batch's frames, three longs each: the address of the frame's payload
     // in the receive buffer, its length and its sequence.
-    private final LongList commitBatchFrames = new LongList();
+    private final LongList commitBatchFrames = new LongList(COMMIT_BATCH_FRAMES_INITIAL_CAPACITY);
     private final QwpTudCache.CommittedTxnConsumer committedTxnConsumer = this::recordCommittedTable;
     private final LineHttpProcessorConfiguration configuration;
     // Delta symbol dictionary for this connection
@@ -667,6 +669,14 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     @TestOnly
     public int getCachedSchemaCount() {
         return tudCache.getCachedSchemaCount();
+    }
+
+    /**
+     * The capacity, in longs, of the commit batch's per-frame record.
+     */
+    @TestOnly
+    public int getCommitBatchFramesCapacity() {
+        return commitBatchFrames.capacity();
     }
 
     @TestOnly
@@ -1622,8 +1632,12 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         isDurableProgressSnapshotFullyUploaded = false;
         isSendingLocalDurableAck = false;
         releaseIncarnations();
-        // A pooled context must not keep the staging memory.
+        // A pooled context must not keep the staging memory, nor the batch's per-frame
+        // record at the size of the largest receive pass the connection had.
         freeStagedFrame();
+        if (commitBatchFrames.capacity() > COMMIT_BATCH_FRAMES_INITIAL_CAPACITY) {
+            commitBatchFrames.restoreInitialCapacity();
+        }
 
         // Log cache stats before clearing (only if there were any lookups)
         long hits = symbolCache.getCacheHits();

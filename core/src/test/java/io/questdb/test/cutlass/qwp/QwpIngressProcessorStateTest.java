@@ -434,6 +434,53 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
     }
 
     /**
+     * A commit batch keeps three longs per frame for a redo, and a long receive pass grows
+     * that record. Ending the connection gives the memory back, so a pooled state does not
+     * keep it at the size of the largest pass it ever processed.
+     */
+    @Test
+    public void testFrameRecordShrinksWhenConnectionEnds() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE record_a (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final long message;
+            final int messageSize;
+            try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
+                 QwpTableBuffer table = new QwpTableBuffer("record_a")) {
+                table.getOrCreateColumn("val", QwpConstants.TYPE_LONG, false).addLong(1);
+                table.getOrCreateDesignatedTimestampColumn(QwpConstants.TYPE_TIMESTAMP).addLong(1_000_000L);
+                table.nextRow();
+                messageSize = encoder.encode(table);
+                message = Unsafe.malloc(messageSize, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.getUnsafe().copyMemory(encoder.getBuffer().getBufferPtr(), message, messageSize);
+            }
+            try {
+                LineHttpProcessorConfiguration config = new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+                try (QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, config)) {
+                    state.of(1, AllowAllSecurityContext.INSTANCE);
+                    final int initialCapacity = state.getCommitBatchFramesCapacity();
+                    // 300 frames commit as one batch: 900 longs, past the initial capacity.
+                    ingestInterleaved(state, new long[]{message}, new int[]{messageSize}, 0, 300);
+                    Assert.assertTrue("test setup: the batch must grow its frame record",
+                            state.getCommitBatchFramesCapacity() >= 900);
+                    state.onDisconnected();
+                    Assert.assertEquals(initialCapacity, state.getCommitBatchFramesCapacity());
+                    // The pooled state takes the next connection with the small record.
+                    state.of(2, AllowAllSecurityContext.INSTANCE);
+                    ingestInterleaved(state, new long[]{message}, new int[]{messageSize}, 0, 30);
+                    Assert.assertTrue(state.commitBatch());
+                    Assert.assertEquals(29, state.getHighestProcessedSequence());
+                    state.onDisconnected();
+                    Assert.assertEquals(initialCapacity, state.getCommitBatchFramesCapacity());
+                }
+            } finally {
+                Unsafe.free(message, messageSize, MemoryTag.NATIVE_DEFAULT);
+            }
+            drainWalQueue();
+            assertQuery("SELECT count() FROM record_a").noLeakCheck().noRandomAccess().expectSize().returns("count\n330\n");
+        });
+    }
+
+    /**
      * Frames that alternate between tables keep each table's schema parse and column
      * resolution, and keep joining one commit batch: once warm, they allocate nothing,
      * as frames of one table do.

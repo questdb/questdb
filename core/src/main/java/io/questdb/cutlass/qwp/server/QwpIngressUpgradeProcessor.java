@@ -61,6 +61,7 @@ import io.questdb.std.Vect;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.TestOnly;
 
 import java.nio.charset.StandardCharsets;
 
@@ -380,6 +381,14 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         }
 
         return UPGRADE_REQUIRED_RESPONSE.length;
+    }
+
+    /**
+     * The capacity, in longs, of the redo's copy of a commit batch's per-frame record.
+     */
+    @TestOnly
+    public int getRedoFramesCapacity() {
+        return redoFrames.capacity();
     }
 
     @Override
@@ -2064,6 +2073,26 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
      * client replays them.
      */
     private void redoCommitBatch(
+            HttpConnectionContext context,
+            QwpIngressProcessorState state,
+            long seq,
+            long payload,
+            int length,
+            boolean isFrameFailed,
+            boolean isFrameRoleChangeClose,
+            byte frameStatus,
+            String frameError
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+        try {
+            redoCommitBatch0(context, state, seq, payload, length, isFrameFailed, isFrameRoleChangeClose, frameStatus, frameError);
+        } finally {
+            // Scratch of this redo only: a large receive pass must not leave this worker's
+            // processor holding its per-frame record.
+            redoFrames.restoreInitialCapacity();
+        }
+    }
+
+    private void redoCommitBatch0(
             HttpConnectionContext context,
             QwpIngressProcessorState state,
             long seq,

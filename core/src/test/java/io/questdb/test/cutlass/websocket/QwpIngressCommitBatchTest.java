@@ -1201,7 +1201,8 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     /**
      * A full receive pass: over 1 MiB of one-row frames that alternate between a and b,
      * then a frame that appends to a and fails on b. The redo re-joins all the batch's
-     * frames from the receive buffer and commits each table once.
+     * frames from the receive buffer and commits each table once, and its copy of the
+     * batch's per-frame record shrinks back once it is done.
      */
     @Test
     public void testFullReceivePassRedoCommitsEachTableOnce() throws Exception {
@@ -1227,9 +1228,11 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
             ));
             Assert.assertTrue("test setup: the frames must fill over 1 MiB", wireLength > 1024 * 1024);
             final ObjList<byte[]> sent = new ObjList<>();
+            final QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+            final int redoFramesCapacityBefore = processor.getRedoFramesCapacity();
             ingestInOnePass(
                     engine,
-                    new QwpIngressUpgradeProcessor(engine, httpConfig),
+                    processor,
                     httpConfig,
                     AllowAllSecurityContext.INSTANCE,
                     false,
@@ -1237,6 +1240,8 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
                     sent,
                     frames
             );
+            Assert.assertEquals("the redo gives its copy of the frame record back",
+                    redoFramesCapacityBefore, processor.getRedoFramesCapacity());
             Assert.assertEquals("the redo commits a once", aBefore + 1, lastTxn(engine, "a"));
             Assert.assertEquals("the redo commits b once", bBefore + 1, lastTxn(engine, "b"));
             Assert.assertEquals(goodFrames - 1, maxCumulativeOkAck(sent));
