@@ -37,8 +37,11 @@ import io.questdb.cutlass.qwp.server.QwpUdpReceiverConfiguration;
 import io.questdb.griffin.SqlException;
 import io.questdb.network.Net;
 import io.questdb.std.Os;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -50,6 +53,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 @RunWith(Parameterized.class)
 public class QwpUdpInsertTest extends AbstractCairoTest {
@@ -1875,6 +1879,62 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUdpSegmentRollFailureOnIdleTableHeals() throws Exception {
+        // A failed WAL segment roll distresses the cached writer while it holds
+        // no rows. No commit or rollback path raises on such a writer, so the
+        // next lookup must evict it: one datagram refuses the table and the
+        // one after it lands through a fresh writer. Without the eviction every
+        // later datagram for the table fails on the distressed writer.
+        setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 1);
+        final AtomicBoolean isMkdirsFailing = new AtomicBoolean();
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public int mkdirs(Path path, int mode) {
+                if (Utf8s.containsAscii(path, "udp_roll_fail") && isMkdirsFailing.compareAndSet(true, false)) {
+                    return -1;
+                }
+                return super.mkdirs(path, mode);
+            }
+        };
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
+                // Datagram 1 creates the table and commits; the commit fills the
+                // one-row segment, so the writer rolls it on its next row.
+                sendRollFailRow(receiver, 1);
+                Assert.assertEquals(1, receiver.getCachedTableCount());
+                final long parseErrorsBefore = receiver.getDroppedParseErrorCount();
+                final long staleBefore = receiver.getDroppedStaleTableCount();
+
+                // Datagram 2 fails the segment roll and distresses the writer.
+                isMkdirsFailing.set(true);
+                sendRollFailRow(receiver, 2);
+                Assert.assertFalse("test setup: the segment roll must fail", isMkdirsFailing.get());
+                Assert.assertEquals(parseErrorsBefore + 1, receiver.getDroppedParseErrorCount());
+
+                // Datagram 3 finds the distressed writer: the lookup evicts it
+                // and refuses the datagram.
+                sendRollFailRow(receiver, 3);
+                Assert.assertEquals(staleBefore + 1, receiver.getDroppedStaleTableCount());
+                Assert.assertEquals(0, receiver.getCachedTableCount());
+
+                // Datagram 4 lands through a fresh writer.
+                sendRollFailRow(receiver, 4);
+                Assert.assertEquals(parseErrorsBefore + 1, receiver.getDroppedParseErrorCount());
+                Assert.assertEquals(staleBefore + 1, receiver.getDroppedStaleTableCount());
+            }
+            drainWalQueue();
+            assertQuery("SELECT v FROM udp_roll_fail")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v
+                            1
+                            4
+                            """);
+        });
+    }
+
+    @Test
     public void testUdpStaleTableWithBufferedRowsDropsDatagramAndHeals() throws Exception {
         // M4: end-to-end through processDatagram. A datagram buffers rows for a
         // table that is then DROPped WITHOUT a commit, so the cached TUD still
@@ -2025,6 +2085,14 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
                 "timeout: receiver cached " + receiver.getCachedTableCount() + " tables, expected " + minCachedTables,
                 receiver.getCachedTableCount() >= minCachedTables
         );
+    }
+
+    private static void sendRollFailRow(QwpUdpReceiver receiver, long value) {
+        try (QwpUdpSender sender = newSender()) {
+            sender.table("udp_roll_fail").longColumn("v", value).at(value * 1_000_000L, ChronoUnit.MICROS);
+            sender.flush();
+        }
+        drainReceiver(receiver);
     }
 
     private static QwpUdpSender newSender(int maxDatagramSize) {

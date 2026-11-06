@@ -1112,19 +1112,15 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
             // The mmap calls since the failing frame's preparation, or -1 before it.
             final AtomicInteger mmapsSinceArmed = new AtomicInteger(-1);
             final AtomicReference<WalWriter> batchWriter = new AtomicReference<>();
-            final AtomicBoolean isLeftInColumnarWrite = new AtomicBoolean();
             final FilesFacade ff = new TestFilesFacadeImpl() {
                 @Override
                 public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
                     if (mmapsSinceArmed.get() > -1) {
                         // 1: v's values cross onto the column's second page; 2: the cancel maps
-                        // the first page back; 3: closing the writer cancels again.
-                        final int mmap = mmapsSinceArmed.incrementAndGet();
-                        if (mmap == 2) {
+                        // the first page back. The failed cancel distresses the writer, so
+                        // closing it does not cancel again.
+                        if (mmapsSinceArmed.incrementAndGet() == 2) {
                             return FilesFacade.MAP_FAILED;
-                        }
-                        if (mmap == 3) {
-                            isLeftInColumnarWrite.set(batchWriter.get().isInColumnarWrite());
                         }
                     }
                     return super.mmap(fd, len, offset, flags, memoryTag);
@@ -1196,10 +1192,10 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
                     connection.deliverFrames(frames.length);
                     sent = connection.sentFrames();
                 }
-                Assert.assertTrue("test setup: the cancel's mapping must fail, and then the writer's close",
-                        mmapsSinceArmed.get() >= 3);
-                Assert.assertTrue("test setup: the failed cancel must leave a's writer mid columnar write",
-                        isLeftInColumnarWrite.get());
+                Assert.assertEquals("test setup: the cancel's mapping must fail, and the writer's close must not retry it",
+                        2, mmapsSinceArmed.get());
+                Assert.assertFalse("the failed cancel must distress a's writer, so the pool expels it",
+                        batchWriter.get().isOpen());
                 Assert.assertEquals("nothing commits", aBefore, lastTxn(hookEngine, "a"));
                 Assert.assertEquals("nothing is acked", -1, maxCumulativeOkAck(sent));
                 Assert.assertEquals(QwpConstants.STATUS_INTERNAL_ERROR, errorStatusForSeq(sent, batchFrames));
@@ -1803,19 +1799,15 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
             // The mmap calls since b joined the failing frame, or -1 before.
             final AtomicInteger mmapsSinceArmed = new AtomicInteger(-1);
             final AtomicReference<WalWriter> bWriter = new AtomicReference<>();
-            final AtomicBoolean isLeftInColumnarWrite = new AtomicBoolean();
             final FilesFacade ff = new TestFilesFacadeImpl() {
                 @Override
                 public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
                     if (mmapsSinceArmed.get() > -1) {
                         // 1: v's values cross onto the column's second page; 2: the cancel maps
-                        // the first page back; 3: freeing the writer cancels again.
-                        final int mmap = mmapsSinceArmed.incrementAndGet();
-                        if (mmap == 2) {
+                        // the first page back. The failed cancel distresses the writer, so
+                        // freeing it does not cancel again.
+                        if (mmapsSinceArmed.incrementAndGet() == 2) {
                             return FilesFacade.MAP_FAILED;
-                        }
-                        if (mmap == 3) {
-                            isLeftInColumnarWrite.set(bWriter.get().isInColumnarWrite());
                         }
                     }
                     return super.mmap(fd, len, offset, flags, memoryTag);
@@ -1865,10 +1857,10 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
                     connection.deliverFrames(batchFrames + 1);
                     sent = connection.sentFrames();
                 }
-                Assert.assertTrue("test setup: the cancel's mapping must fail, and then the writer's free",
-                        mmapsSinceArmed.get() >= 3);
-                Assert.assertTrue("test setup: the failed cancel must leave b's writer mid columnar write",
-                        isLeftInColumnarWrite.get());
+                Assert.assertEquals("test setup: the cancel's mapping must fail, and the writer's free must not retry it",
+                        2, mmapsSinceArmed.get());
+                Assert.assertFalse("the failed cancel must distress b's writer, so the pool expels it",
+                        bWriter.get().isOpen());
                 Assert.assertEquals("the batch commits a once", aBefore + 1, lastTxn(hookEngine, "a"));
                 Assert.assertEquals("b commits nothing more", bAfterFirstPass, lastTxn(hookEngine, "b"));
                 Assert.assertEquals(batchFrames, maxCumulativeOkAck(sent));

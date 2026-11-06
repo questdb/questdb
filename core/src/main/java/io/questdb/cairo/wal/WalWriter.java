@@ -2882,7 +2882,14 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
      * Cancels a columnar write operation. Package-private for columnar appender.
      */
     void cancelColumnarWrite(long startRowId) {
-        setAppendPosition(startRowId);
+        try {
+            setAppendPosition(startRowId);
+        } catch (Throwable th) {
+            // Columns left at unknown positions, as after a failed rollbackToSavepoint:
+            // latch, so the pool expels the writer and the QWP caches evict it.
+            distressed = true;
+            throw th;
+        }
     }
 
     /**

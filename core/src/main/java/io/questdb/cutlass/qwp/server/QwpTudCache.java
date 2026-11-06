@@ -639,13 +639,14 @@ public class QwpTudCache implements QwpSchemaCache, QuietCloseable {
             WalTableUpdateDetails tud = tableUpdateDetails.valueAt(key);
             if (!isTableTokenStale(tud)) {
                 try {
+                    throwIfWriterDistressed(tud);
                     applyPendingStructureChanges(tud);
                 } catch (Throwable th) {
-                    // Two ways to get here. (1) goActive() failed: the writer is
-                    // distressed (the flag never clears) while the table is alive,
-                    // so no staleness check would ever evict this entry and the
-                    // table would be wedged on this receiver until restart.
-                    // (2) goActive() replayed a concurrent RENAME (see
+                    // Two ways to get here. (1) The writer is distressed: an
+                    // earlier append, segment roll or goActive() failed, the flag
+                    // never clears, and the table is alive, so no staleness check
+                    // would ever evict this entry and the table would be wedged
+                    // on this receiver until restart. (2) goActive() replayed a concurrent RENAME (see
                     // applyPendingStructureChanges): buffered rows are already
                     // salvaged and the entry must not serve another lookup under
                     // the old name. Either way: evict and free the entry --
@@ -928,6 +929,19 @@ public class QwpTudCache implements QwpSchemaCache, QuietCloseable {
                 seqTxn
         );
         tud.setLastReportedSeqTxn(seqTxn);
+    }
+
+    // A distressed writer takes no more rows and no commit: WalWriter.commit refuses it,
+    // rollback0 skips it, and TableUpdateDetails.commit never calls it while it holds no
+    // rows, so neither the commit loops nor clear() evict it. The lookup evicts it, as
+    // after a failed goActive(); rows it still holds are already lost, and the caller
+    // refuses the frame or datagram, so no ack covers them.
+    private static void throwIfWriterDistressed(WalTableUpdateDetails tud) {
+        if (tud.getWriter() instanceof WalWriter walWriter && walWriter.isDistressed()) {
+            throw CairoException.critical(0)
+                    .put("WAL writer is distressed, discarding cached table [table=").put(tud.getTableNameUtf8())
+                    .put(", uncommittedRows=").put(walWriter.getUncommittedRowCount()).put(']');
+        }
     }
 
     private static boolean isValidQwpSchemaColumnName(QwpColumnDef columnDef, int maxFileNameLength) {

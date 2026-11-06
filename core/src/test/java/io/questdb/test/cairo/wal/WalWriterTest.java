@@ -1543,6 +1543,67 @@ public class WalWriterTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * A cancelled columnar write that cannot rewind its columns leaves them at unknown
+     * positions: the writer latches distressed, so caches evict it and the pool expels
+     * it, and the table takes rows through a fresh writer afterwards.
+     */
+    @Test
+    public void testCancelColumnarWriteFailureDistressesWriter() throws Exception {
+        final long pageSize = 16_384;
+        setProperty(PropertyKey.CAIRO_WAL_WRITER_DATA_APPEND_PAGE_SIZE, pageSize);
+        final AtomicBoolean isMmapFailing = new AtomicBoolean();
+        final AtomicInteger failedMmaps = new AtomicInteger();
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                if (isMmapFailing.compareAndSet(true, false)) {
+                    failedMmaps.incrementAndGet();
+                    return FilesFacade.MAP_FAILED;
+                }
+                return super.mmap(fd, len, offset, flags, memoryTag);
+            }
+        };
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final TableToken token = engine.verifyTableName("t");
+            final WalWriter w = engine.getWalWriter(token);
+            try {
+                final ColumnarRowAppender appender = w.getColumnarRowAppender();
+                final int rowCount = rowsCrossingAppendPages(pageSize);
+                appender.beginColumnarWrite(rowCount);
+                // The designated timestamp column crosses onto later pages: the cancel
+                // maps its first page again.
+                w.putServerAssignedTimestampColumnar(rowCount, 1_000_000L);
+                isMmapFailing.set(true);
+                try {
+                    appender.cancelColumnarWrite();
+                    Assert.fail("the cancel must fail");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not mmap");
+                }
+                Assert.assertEquals("test setup: the cancel must map a page", 1, failedMmaps.get());
+                Assert.assertTrue(w.isDistressed());
+                Assert.assertTrue(w.isInColumnarWrite());
+            } finally {
+                w.close();
+            }
+            Assert.assertFalse("the pool must expel the distressed writer", w.isOpen());
+            try (WalWriter w2 = engine.getWalWriter(token)) {
+                Assert.assertNotSame(w, w2);
+                TableWriter.Row row = w2.newRow(2_000_000L);
+                row.putInt(1, 7);
+                row.append();
+                w2.commit();
+            }
+            drainWalQueue();
+            assertQuery("SELECT ts, val FROM t").expectSize().timestamp("ts").returns("""
+                    ts\tval
+                    1970-01-01T00:00:02.000000Z\t7
+                    """);
+        });
+    }
+
     @Test
     public void testCancelRowDoesNotStartsNewSegment() throws Exception {
         assertMemoryLeak(() -> {

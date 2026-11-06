@@ -5237,6 +5237,20 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGetTableUpdateDetailsEvictsEntryWhenWriterDistressedWithRows() throws Exception {
+        assertLookupEvictsDistressedWriter(1);
+    }
+
+    @Test
+    public void testGetTableUpdateDetailsEvictsEntryWhenWriterDistressedWithoutRows() throws Exception {
+        // A distressed writer with no rows raises nothing on any commit or
+        // rollback path: TableUpdateDetails.commit() skips a writer without
+        // rows and WalWriter.rollback0() skips a distressed one. Only the
+        // lookup can evict it, or the table stays wedged on this cache.
+        assertLookupEvictsDistressedWriter(0);
+    }
+
+    @Test
     public void testGetTableUpdateDetailsFreesWriterOnFailure() throws Exception {
         // Exercises the catch(Throwable) block in QwpTudCache.getTableUpdateDetails()
         // that frees the WAL writer when the try block fails after the writer
@@ -7291,6 +7305,68 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
      * refused (dropped table, or the sequencer's token check), nothing of it is
      * committed or reported, and the client replays the batch by name.
      */
+    private void assertLookupEvictsDistressedWriter(int uncommittedRows) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE distressed (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("distressed"), null, null, 1
+                );
+                Assert.assertNotNull(tud);
+                for (int i = 0; i < uncommittedRows; i++) {
+                    TableWriter.Row row = tud.getWriter().newRow(1_000_000L + i);
+                    row.putInt(1, 100 + i);
+                    row.append();
+                }
+                ((WalWriter) tud.getWriter()).simulatePowerLossDropPending();
+
+                try {
+                    cache.getTableUpdateDetails(
+                            AllowAllSecurityContext.INSTANCE, new Utf8String("distressed"), null, null, 1
+                    );
+                    Assert.fail("the lookup must refuse a distressed writer");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(
+                            e.getFlyweightMessage(),
+                            "WAL writer is distressed, discarding cached table [table=distressed, uncommittedRows="
+                                    + uncommittedRows + ']'
+                    );
+                }
+                Assert.assertEquals("distressed entry must be evicted", 0, cache.size());
+
+                WalTableUpdateDetails healed = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("distressed"), null, null, 1
+                );
+                Assert.assertNotNull(healed);
+                Assert.assertNotSame(tud, healed);
+                TableWriter.Row row = healed.getWriter().newRow(2_000_000L);
+                row.putInt(1, 7);
+                row.append();
+                try {
+                    cache.commitAll((_, _, _) -> {
+                    });
+                } catch (Throwable th) {
+                    throw new AssertionError(th);
+                }
+            }
+            drainWalQueue();
+            assertQuery("SELECT ts, val FROM distressed")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tval
+                            1970-01-01T00:00:02.000000Z\t7
+                            """);
+        });
+    }
+
     private void assertBatchLostToReplacement(boolean isDrop, boolean isAfterAdmission) throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE prepared (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
