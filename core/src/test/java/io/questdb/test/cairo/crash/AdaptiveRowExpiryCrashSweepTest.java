@@ -86,14 +86,46 @@ public class AdaptiveRowExpiryCrashSweepTest extends AbstractAdaptiveCrashSweepT
             "2024-01-02:1,2024-01-04:1",
     };
 
+    /**
+     * The sweep has few enough crash points (28 on Linux, 39 elsewhere) to run whole inside the test timeout.
+     */
     @Test
-    public void testCleanupSweepRecoversToCommittedStateAtCrashPoints1To30() throws Exception {
-        assertSweepPartRecoversToCommittedState(1, 30);
-    }
+    public void testCleanupSweepRecoversToCommittedStateAtEveryCrashPoint() throws Exception {
+        Assert.assertEquals(STATES.length - 1, FINAL_STATE);
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, "0");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
+        Assert.assertEquals(CommitMode.ADAPTIVE, engine.getConfiguration().getCommitMode());
+        runWithCrashFacade(() -> {
+            // Per-inode strictness: one file's fsync does not make another file's size durable.
+            crashFf.modelSharedJournal = false;
 
-    @Test
-    public void testCleanupSweepRecoversToCommittedStateAtCrashPoints31ToLast() throws Exception {
-        assertSweepPartRecoversToCommittedState(31, Integer.MAX_VALUE);
+            final SweepResult r = forEachAdaptiveCrashPoint(new CleanupWorkload(), CRASH_POINT_CAP);
+
+            LOG.info().$("[row-expiry cleanup sweep] N=").$(r.n).$(", sweptPoints=").$(r.sweptPoints)
+                    .$(", stateByK=").$(Arrays.toString(r.recoveredByK())).$();
+
+            // Opening the WAL writer (7 ops), three cleanup commits (7, 6, 6) and the apply (2); off Linux, the
+            // commits add 11 msyncs.
+            assertCommitDurabilityOps(r, 28, 39);
+            Assert.assertFalse("the cap must not truncate this workload", r.truncated);
+            Assert.assertEquals("the cap must not truncate this workload", r.n, r.sweptPoints);
+            for (int k = 2; k <= r.sweptPoints; k++) {
+                Assert.assertTrue(
+                        "the recovered state must be non-decreasing at k=" + k + " ("
+                                + r.recoveredByK()[k - 1] + " -> " + r.recoveredByK()[k] + ")",
+                        r.recoveredByK()[k] >= r.recoveredByK()[k - 1]
+                );
+            }
+            Assert.assertTrue(
+                    "the earliest crash point must recover a state before the final one",
+                    r.recoveredByK()[1] < FINAL_STATE
+            );
+            Assert.assertEquals(
+                    "k=N must recover the final state (W=0: every returned cleanup commit is durable)",
+                    FINAL_STATE, r.recoveredByK()[r.sweptPoints]
+            );
+        });
     }
 
     private static String readPartitions() throws SqlException {
@@ -127,54 +159,6 @@ public class AdaptiveRowExpiryCrashSweepTest extends AbstractAdaptiveCrashSweepT
     private static boolean viewInvalid(TableToken mvTt) {
         final MatViewState state = engine.getMatViewStateStore().getViewState(mvTt);
         return state != null && state.isInvalid();
-    }
-
-    /**
-     * The sweep over crash points {@code firstK..min(lastK, N)}. Every point starts from a fresh identical baseline,
-     * so a part sweeps exactly the points the whole sweep would in its range.
-     */
-    private void assertSweepPartRecoversToCommittedState(int firstK, int lastK) throws Exception {
-        Assert.assertEquals(STATES.length - 1, FINAL_STATE);
-        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, "0");
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
-        Assert.assertEquals(CommitMode.ADAPTIVE, engine.getConfiguration().getCommitMode());
-        runWithCrashFacade(() -> {
-            // Per-inode strictness: one file's fsync does not make another file's size durable.
-            crashFf.modelSharedJournal = false;
-
-            final CleanupWorkload workload = new CleanupWorkload();
-            final SweepResult r = forEachAdaptiveCrashPoint(workload, CRASH_POINT_CAP, firstK, lastK);
-            final int first = r.firstSweptK;
-            final int last = r.lastSweptK;
-
-            LOG.info().$("[row-expiry cleanup sweep] N=").$(r.n).$(", sweptPoints=").$(r.sweptPoints)
-                    .$(", part=").$(first).$("..").$(last)
-                    .$(", stateByK=").$(Arrays.toString(r.recoveredByK())).$();
-
-            Assert.assertTrue("N must be > 0", r.n > 0);
-            Assert.assertFalse("the cap must not truncate this workload", r.truncated);
-            Assert.assertEquals("the cap must not truncate this workload", r.n, r.sweptPoints);
-            for (int k = first + 1; k <= last; k++) {
-                Assert.assertTrue(
-                        "the recovered state must be non-decreasing at k=" + k + " ("
-                                + r.recoveredByK()[k - 1] + " -> " + r.recoveredByK()[k] + ")",
-                        r.recoveredByK()[k] >= r.recoveredByK()[k - 1]
-                );
-            }
-            if (first == 1) {
-                Assert.assertTrue(
-                        "the earliest crash point must recover a state before the final one",
-                        r.recoveredByK()[1] < FINAL_STATE
-                );
-            }
-            if (last == r.sweptPoints) {
-                Assert.assertEquals(
-                        "k=N must recover the final state (W=0: every returned cleanup commit is durable)",
-                        FINAL_STATE, r.recoveredByK()[last]
-                );
-            }
-        });
     }
 
     private final class CleanupWorkload implements AdaptiveCrashWorkload {
