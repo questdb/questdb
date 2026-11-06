@@ -15387,6 +15387,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     int columnType = metadata.getColumnType(i);
                     if (i != metadata.getTimestampIndex() && columnType > 0) {
                         if (metadata.isDedupKey(i)) {
+                            if (ColumnType.isArray(columnType)) {
+                                // The many-addresses dedup does not report unsupported key types.
+                                // Fall back to 1 by 1 apply, where the dedup fails and suspends the table.
+                                throw CairoException.txnApplyBlockError(tableToken);
+                            }
                             long dataAddresses;
                             int valueSizeBytes = ColumnType.isVarSize(columnType) ? -1 : ColumnType.sizeOf(columnType);
 

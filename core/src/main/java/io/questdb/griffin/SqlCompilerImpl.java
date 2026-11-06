@@ -2040,6 +2040,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     throw SqlException.position(lexer.lastTokenPosition()).put("deduplicate key column not found [column=").put(columnName).put(']');
                 }
 
+                final int columnType = tableMetadata.getColumnType(colIndex);
+                if (ColumnType.isArray(columnType)) {
+                    throw SqlException.position(lexer.lastTokenPosition())
+                            .put("dedup key columns cannot include ARRAY [column=")
+                            .put(columnName).put(", type=")
+                            .put(ColumnType.nameOf(columnType)).put(']');
+                }
+
                 if (colIndex == tableMetadata.getTimestampIndex()) {
                     tsIncludedInDedupColumns = true;
                 }
