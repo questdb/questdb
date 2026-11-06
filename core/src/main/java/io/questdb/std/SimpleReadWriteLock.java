@@ -85,12 +85,27 @@ public class SimpleReadWriteLock implements ReadWriteLock {
 
         @Override
         public boolean tryLock(long time, @NotNull TimeUnit unit) {
-            throw new UnsupportedOperationException();
+            final long deadline = System.nanoTime() + unit.toNanos(time);
+            for (; ; ) {
+                if (tryLock()) {
+                    return true;
+                }
+                // Overflow-safe deadline comparison.
+                if (System.nanoTime() - deadline >= 0) {
+                    return false;
+                }
+                Thread.yield();
+            }
         }
 
         @Override
         public boolean tryLock() {
-            throw new UnsupportedOperationException();
+            if (nReaders.incrementAndGet() >= MAX_READERS) {
+                // A writer holds the lock or is waiting for readers to drain.
+                nReaders.decrementAndGet();
+                return false;
+            }
+            return true;
         }
 
         @Override
@@ -121,9 +136,39 @@ public class SimpleReadWriteLock implements ReadWriteLock {
             throw new UnsupportedOperationException();
         }
 
+        /**
+         * Bounded write acquire. {@link #lock()} waits for readers to drain in a bare spin with no
+         * upper bound, so a caller that must not be pinned indefinitely -- for example one running on
+         * a thread borrowed from another runtime -- has no way to give up. {@link #tryLock()} only
+         * offers all-or-nothing at the instant of the call. This gives up after {@code time}.
+         *
+         * <p>On timeout the reader bias and the exclusive flag are both rolled back, so readers that
+         * were fenced out while we waited are released.
+         */
         @Override
         public boolean tryLock(long time, @NotNull TimeUnit unit) {
-            throw new UnsupportedOperationException();
+            final long deadline = System.nanoTime() + unit.toNanos(time);
+            // Phase 1: take the exclusive flag. This also fences out competing writers.
+            while (!lock.compareAndSet(false, true)) {
+                // Overflow-safe deadline comparison.
+                if (System.nanoTime() - deadline >= 0) {
+                    return false;
+                }
+                Thread.yield();
+            }
+            // Phase 2: bias nReaders so no new reader can enter, then wait for residents to leave.
+            if (nReaders.addAndGet(MAX_READERS) == MAX_READERS) {
+                return true;
+            }
+            while (nReaders.get() != MAX_READERS) {
+                if (System.nanoTime() - deadline >= 0) {
+                    nReaders.addAndGet(-MAX_READERS);
+                    lock.set(false);
+                    return false;
+                }
+                Thread.yield();
+            }
+            return true;
         }
 
         @Override
