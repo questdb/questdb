@@ -636,7 +636,9 @@ public class IntervalFilterTest extends AbstractCairoTest {
             final String n2 = "[2024-01-01,2024-01-01T[09:00,10:00]:[00..59].[0..9]0]";
             final String n3 = "[2024-01-01,2024-01-01T[09:00]:[00..59].[0..9][0..9]0]";
             for (String tick : new String[]{n1, n2, n3, "[2024-01-01,2024-01-01T[09:,10:][00:,01:][00..59].[0..9]0]"}) {
-                assertInOnEveryColumn(tick, day, 206);
+                // each list unions into the one day, so the JIT checks tm and d with a single range
+                // check, which is also within the cap of a DATE key, the IN list threshold
+                assertInOnEveryColumn(tick, day, 206, true);
                 bindVariableService.clear();
                 bindVariableService.setStr("p", tick);
                 for (String column : new String[]{"ts", "tm"}) {
@@ -1150,36 +1152,28 @@ public class IntervalFilterTest extends AbstractCairoTest {
             final String q1Mondays = "year(ts) = 2024 AND month(ts) <= 3 AND day_of_week(ts) = 1";
             // $today, the Monday 2024-01-08, is one of the static days
             setCurrentMicros(Micros.toMicros(2024, 1, 8, 1, 0));
-            assertInOnEveryColumn("[$today,2024-[01..03]]#mon", q1Mondays, 13 * 24);
+            // $today and the 13 Mondays of the first quarter, or its 13 runs of workdays from Monday
+            // to Friday, make 14 range checks, more than the default limit of the JIT for an IN list
+            // (10), so the Java filter runs tm and d. $today and the 9 Mondays of January and
+            // February make 10, and the JIT filters tm and d.
+            assertInOnEveryColumn("[$today,2024-[01..03]]#mon", q1Mondays, 13 * 24, false);
             // ISO week 1 of 2024 starts on Monday 2024-01-01, and week 13 ends on Sunday 2024-03-31
-            assertInOnEveryColumn("[$today,2024-W[01..13]]#mon", q1Mondays, 13 * 24);
+            assertInOnEveryColumn("[$today,2024-W[01..13]]#mon", q1Mondays, 13 * 24, false);
             // 23 + 21 + 21 weekdays, the leap day 2024-02-29 among them
-            assertInOnEveryColumn("[$today,2024-[01..03]]#workday", "year(ts) = 2024 AND month(ts) <= 3 AND day_of_week(ts) <= 5", (23 + 21 + 21) * 24);
+            assertInOnEveryColumn("[$today,2024-[01..03]]#workday", "year(ts) = 2024 AND month(ts) <= 3 AND day_of_week(ts) <= 5", (23 + 21 + 21) * 24, false);
             final String janFebMondays = "[$today,2024-[01..02]]#mon";
-            assertInOnEveryColumn(janFebMondays, "year(ts) = 2024 AND month(ts) <= 2 AND day_of_week(ts) = 1", 9 * 24);
-            // The 9 Mondays and $today make 10 range checks, the default limit of the JIT for an IN
-            // list, so the JIT filters tm and d. The 14 range checks of the Q1 lists exceed it, and
-            // the Java filter runs them.
-            final int callerJitMode = sqlExecutionContext.getJitMode();
-            try {
-                sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
-                for (String column : new String[]{"tm", "d"}) {
-                    assertQuery("SELECT ts FROM t WHERE " + column + " IN '" + janFebMondays + "'")
-                            .noLeakCheck()
-                            .assertsPlanContaining("Async JIT Filter");
-                }
-            } finally {
-                sqlExecutionContext.setJitMode(callerJitMode);
-            }
+            assertInOnEveryColumn(janFebMondays, "year(ts) = 2024 AND month(ts) <= 2 AND day_of_week(ts) = 1", 9 * 24, true);
             assertQuery("SELECT ts FROM t WHERE ts IN '" + janFebMondays + "'")
                     .noLeakCheck()
                     .assertsPlanContaining("Interval forward scan on: t");
-            // $today, the Monday 2024-04-01, adds a day after the static ones
+            // $today, the Monday 2024-04-01, adds a day after the static ones. The JIT bounds the
+            // range checks without reading the clock, so the list still makes 14.
             setCurrentMicros(Micros.toMicros(2024, 4, 1, 3, 0));
             assertInOnEveryColumn(
                     "[$today,2024-[01..03]]#mon",
                     "year(ts) = 2024 AND ((month(ts) <= 3 AND day_of_week(ts) = 1) OR (month(ts) = 4 AND day(ts) = 1))",
-                    14 * 24
+                    14 * 24,
+                    false
             );
         });
     }
@@ -2997,8 +2991,10 @@ public class IntervalFilterTest extends AbstractCairoTest {
     }
 
     // Expects the rows of the reference predicate from the tick string on each column of table t:
-    // the designated ts, the non-designated tm and the DATE d, with the JIT on and off.
-    private void assertInOnEveryColumn(String tick, String referencePredicate, int expectedRowCount) throws Exception {
+    // the designated ts, the non-designated tm and the DATE d, with the JIT mode on and off, and
+    // the filter that runs them. The designated ts runs an interval scan with no row filter, so
+    // only tm and d can run on the JIT, and isJitExpected says whether they do when the JIT is on.
+    private void assertInOnEveryColumn(String tick, String referencePredicate, int expectedRowCount, boolean isJitExpected) throws Exception {
         final String reference = "SELECT ts FROM t WHERE " + referencePredicate;
         assertQuery("SELECT count() FROM (" + reference + ")")
                 .noLeakCheck()
@@ -3010,8 +3006,15 @@ public class IntervalFilterTest extends AbstractCairoTest {
             for (int jitMode : new int[]{SqlJitMode.JIT_MODE_ENABLED, SqlJitMode.JIT_MODE_DISABLED}) {
                 sqlExecutionContext.setJitMode(jitMode);
                 for (String column : new String[]{"ts", "tm", "d"}) {
-                    assertSqlCursors(reference, "SELECT ts FROM t WHERE " + column + " IN '" + tick + "'");
+                    final String sql = "SELECT ts FROM t WHERE " + column + " IN '" + tick + "'";
+                    assertSqlCursors(reference, sql);
+                    assertUsesCompiledFilter(sql, isJitExpected && !"ts".equals(column));
                 }
+                // usesCompiledFilter() is false for the Java filter too, which returns the same rows,
+                // so the plan tells the interval scan of ts apart from it
+                final String designatedTsSql = "SELECT ts FROM t WHERE ts IN '" + tick + "'";
+                assertQuery(designatedTsSql).noLeakCheck().assertsPlanContaining("Interval forward scan on: t");
+                assertQuery(designatedTsSql).noLeakCheck().assertsPlanNotContaining("Filter");
             }
         } finally {
             sqlExecutionContext.setJitMode(callerJitMode);
