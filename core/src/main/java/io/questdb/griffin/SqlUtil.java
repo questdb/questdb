@@ -1342,6 +1342,12 @@ public class SqlUtil {
 
     @SuppressWarnings("unused")
     // used by the row copier
+    public static char implicitCastDoubleAsChar(double value) {
+        return (char) value;
+    }
+
+    @SuppressWarnings("unused")
+    // used by the row copier
     public static float implicitCastDoubleAsFloat(double value) {
         final double d = Math.abs(value);
         if ((d >= Float.MIN_VALUE && d <= Float.MAX_VALUE) || (Numbers.isNull(value) || d == 0.0)) {
@@ -1395,6 +1401,12 @@ public class SqlUtil {
         }
 
         throw ImplicitCastException.inconvertibleValue(value, ColumnType.FLOAT, ColumnType.BYTE);
+    }
+
+    @SuppressWarnings("unused")
+    // used by the row copier
+    public static char implicitCastFloatAsChar(float value) {
+        return (char) value;
     }
 
     @SuppressWarnings("unused")
@@ -1467,6 +1479,12 @@ public class SqlUtil {
 
     @SuppressWarnings("unused")
     // used by the row copier
+    public static char implicitCastIntAsChar(int value) {
+        return value != Numbers.INT_NULL ? (char) value : 0;
+    }
+
+    @SuppressWarnings("unused")
+    // used by the row copier
     public static double implicitCastIntAsDouble(int value) {
         if (value == Numbers.INT_NULL) {
             return Double.NaN;
@@ -1519,6 +1537,12 @@ public class SqlUtil {
             return implicitCastAsByte(value, ColumnType.LONG);
         }
         return 0;
+    }
+
+    @SuppressWarnings("unused")
+    // used by the row copier
+    public static char implicitCastLongAsChar(long value) {
+        return value != Numbers.LONG_NULL ? (char) value : 0;
     }
 
     @SuppressWarnings("unused")
