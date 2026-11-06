@@ -757,12 +757,6 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         return null;
     }
 
-    private static long nextResultRowId(CoveringIndexCursor cursor) {
-        return cursor instanceof SourceRowCursor sourceCursor
-                ? sourceCursor.nextOrdinal()
-                : ((CoveringRowCursor) cursor).next();
-    }
-
     private static abstract class CoveringCursor implements RecordCursor {
         protected final IntList columnIndexes;
         protected final CoveringRecord coveringRecord;
@@ -772,7 +766,10 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         protected final SymbolTable[] symTablesCache;
         protected final int[] symbolIncludeCols;
         protected SqlExecutionCircuitBreaker circuitBreaker;
-        protected CoveringIndexCursor currentRowCursor;
+        // Native and Delta cursors stay on separate fields and call sites, so each site
+        // keeps a single receiver type and the JIT inlines the row loop.
+        protected CoveringRowCursor currentRowCursor;
+        protected SourceRowCursor currentSourceCursor;
         protected PartitionFrameCursor frameCursor;
         protected Function latestByFilter;
         protected TableReader tableReader;
@@ -799,7 +796,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             // still holds it), so the cursor re-pools into a live reader rather than a
             // stale/closed one. Mirrors CoveringPageFrameCursor.close() (closePendingCursor
             // before freeing frameCursor).
-            this.currentRowCursor = Misc.free(currentRowCursor);
+            freeCurrentCursors();
             frameCursor = Misc.free(frameCursor);
         }
 
@@ -834,7 +831,11 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             }
             while (true) {
                 if (currentRowCursor != null && currentRowCursor.hasNext()) {
-                    coveringRecord.setRowId(nextResultRowId(currentRowCursor));
+                    coveringRecord.setRowId(currentRowCursor.next());
+                    return true;
+                }
+                if (currentSourceCursor != null && currentSourceCursor.hasNext()) {
+                    coveringRecord.setRowId(currentSourceCursor.nextOrdinal());
                     return true;
                 }
                 if (!advanceKey()) {
@@ -866,7 +867,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             if (frameCursor != null) {
                 frameCursor.toTop();
             }
-            currentRowCursor = Misc.free(currentRowCursor);
+            freeCurrentCursors();
             resetIterationState();
         }
 
@@ -898,14 +899,26 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                             timestampHi
                     );
                     try {
-                        if (bwdCursor != null) {
-                            Misc.free(currentRowCursor);
-                            currentRowCursor = bwdCursor;
+                        if (bwdCursor instanceof SourceRowCursor sourceCursor) {
+                            freeCurrentCursors();
+                            currentSourceCursor = sourceCursor;
                             bwdCursor = null;
-                            coveringRecord.of(currentRowCursor);
+                            coveringRecord.of(sourceCursor);
                             coveringRecord.setSymbolKey(rawSymbolKey);
-                            while (currentRowCursor.hasNext()) {
-                                coveringRecord.setRowId(nextResultRowId(currentRowCursor));
+                            while (sourceCursor.hasNext()) {
+                                coveringRecord.setRowId(sourceCursor.nextOrdinal());
+                                if (latestByFilter.getBool(coveringRecord)) {
+                                    return true;
+                                }
+                            }
+                        } else if (bwdCursor instanceof CoveringRowCursor crc) {
+                            freeCurrentCursors();
+                            currentRowCursor = crc;
+                            bwdCursor = null;
+                            coveringRecord.of(crc);
+                            coveringRecord.setSymbolKey(rawSymbolKey);
+                            while (crc.hasNext()) {
+                                coveringRecord.setRowId(crc.next());
                                 if (latestByFilter.getBool(coveringRecord)) {
                                     return true;
                                 }
@@ -927,22 +940,31 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                             timestampHi
                     );
                     try {
-                        // The reader is backward: hasNext() positions both native and
-                        // Delta cursors on the logically last row. Native
-                        // CoveringRowCursor.seekToLast() is the same hasNext()/next()
-                        // pair; nextResultRowId additionally handles Delta ordinals.
-                        if (rowCursor != null && rowCursor.hasNext()) {
-                            final long lastRowId = nextResultRowId(rowCursor);
-                            Misc.free(currentRowCursor);
-                            currentRowCursor = rowCursor;
-                            rowCursor = null;
-                            coveringRecord.of(currentRowCursor);
-                            coveringRecord.setSymbolKey(rawSymbolKey);
-                            coveringRecord.setRowId(lastRowId);
-                            return true;
-                        }
-                        if (rowCursor != null) {
-                            currentRowCursor = Misc.free(currentRowCursor);
+                        // The reader is backward: hasNext() positions a Delta cursor on the logically last row.
+                        if (rowCursor instanceof SourceRowCursor sourceCursor) {
+                            if (sourceCursor.hasNext()) {
+                                final long lastRowId = sourceCursor.nextOrdinal();
+                                freeCurrentCursors();
+                                currentSourceCursor = sourceCursor;
+                                rowCursor = null;
+                                coveringRecord.of(sourceCursor);
+                                coveringRecord.setSymbolKey(rawSymbolKey);
+                                coveringRecord.setRowId(lastRowId);
+                                return true;
+                            }
+                            freeCurrentCursors();
+                        } else if (rowCursor instanceof CoveringRowCursor crc) {
+                            final long lastRowId = crc.seekToLast();
+                            if (lastRowId >= 0) {
+                                freeCurrentCursors();
+                                currentRowCursor = crc;
+                                rowCursor = null;
+                                coveringRecord.of(crc);
+                                coveringRecord.setSymbolKey(rawSymbolKey);
+                                coveringRecord.setRowId(lastRowId);
+                                return true;
+                            }
+                            freeCurrentCursors();
                         }
                     } finally {
                         Misc.free(rowCursor);
@@ -951,12 +973,17 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             }
         }
 
+        void freeCurrentCursors() {
+            currentRowCursor = Misc.free(currentRowCursor);
+            currentSourceCursor = Misc.free(currentSourceCursor);
+        }
+
         abstract boolean hasNextLatestBy();
 
         void of(PartitionFrameCursor frameCursor) {
             this.frameCursor = frameCursor;
             this.tableReader = frameCursor.getTableReader();
-            this.currentRowCursor = Misc.free(this.currentRowCursor);
+            freeCurrentCursors();
             resetIterationState();
             this.coveringRecord.of(null);
             SymbolTable indexSymbolTable = tableReader.getSymbolMapReader(indexColumnIndex);
@@ -994,10 +1021,14 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 // and a Delta no-hit result to null: either means "try the next
                 // partition", not a covering-index failure.
                 if (rowCursor != null) {
-                    Misc.free(currentRowCursor);
-                    currentRowCursor = rowCursor;
+                    freeCurrentCursors();
+                    if (rowCursor instanceof SourceRowCursor sourceCursor) {
+                        currentSourceCursor = sourceCursor;
+                    } else {
+                        currentRowCursor = (CoveringRowCursor) rowCursor;
+                    }
+                    coveringRecord.of(rowCursor);
                     rowCursor = null;
-                    coveringRecord.of(currentRowCursor);
                     coveringRecord.setSymbolKey(rawSymbolKey);
                     return true;
                 }
@@ -1816,6 +1847,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             long firstRowId = -1;
             long lastRowId = -1;
             boolean cursorExhausted = true;
+            // Typed locals keep one receiver type at each row call site.
+            final SourceRowCursor sourceCursor = coveringCursor instanceof SourceRowCursor c ? c : null;
+            final CoveringRowCursor rowCursor = sourceCursor == null ? (CoveringRowCursor) coveringCursor : null;
             try {
                 // Traverse-only: advancing the cursor to NATURAL exhaustion is what
                 // fires the posting reader's putCacheEntries (warming the per-key
@@ -1823,7 +1857,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 // chunk break at rowCap parks the cursor and resumes on the next
                 // call, which still reaches natural exhaustion eventually.
                 while (coveringCursor.hasNext()) {
-                    final long rowId = nextResultRowId(coveringCursor);
+                    final long rowId = rowCursor != null ? rowCursor.next() : sourceCursor.nextOrdinal();
                     if (materialize) {
                         if (capacity == 0) {
                             capacity = allocFrameBuffers();
@@ -3266,9 +3300,14 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                             frame.getTimestampLo(),
                             frame.getTimestampHi()
                     )) {
-                        if (rc != null) {
-                            while (rc.hasNext()) {
-                                nextResultRowId(rc);
+                        if (rc instanceof SourceRowCursor sourceCursor) {
+                            while (sourceCursor.hasNext()) {
+                                sourceCursor.nextOrdinal();
+                                total++;
+                            }
+                        } else if (rc instanceof CoveringRowCursor crc) {
+                            while (crc.hasNext()) {
+                                crc.next();
                                 total++;
                             }
                         }

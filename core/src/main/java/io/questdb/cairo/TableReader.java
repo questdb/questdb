@@ -821,6 +821,11 @@ public class TableReader implements Closeable, SymbolTableSource {
         return hasParquetPartitions;
     }
 
+    @TestOnly
+    public boolean hasPartitionFrameStates() {
+        return partitionFrameStates != null;
+    }
+
     public boolean isActive() {
         return txnAcquired;
     }
@@ -1176,7 +1181,9 @@ public class TableReader implements Closeable, SymbolTableSource {
         Misc.free(parquetMetadataPartitions.get(partitionIndex));
         Misc.free(parquetPartitions.get(partitionIndex));
         parquetMetaDecoders.remove(partitionIndex);
-        partitionFrameStates.removeIndexBlock(partitionIndex, 1);
+        if (partitionFrameStates != null) {
+            partitionFrameStates.removeIndexBlock(partitionIndex, 1);
+        }
         parquetMetadataPartitions.remove(partitionIndex);
         parquetPartitions.remove(partitionIndex);
         openPartitionInfo.removeIndexBlock(offset, PARTITIONS_SLOT_SIZE);
@@ -1447,6 +1454,9 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private void destroyPartitionFrameState(int partitionIndex) {
+        if (partitionFrameStates == null) {
+            return;
+        }
         final long state = partitionFrameStates.getQuick(partitionIndex);
         if (state != 0 && partitionFrameStateFactory != null) {
             partitionFrameStateFactory.destroy(state);
@@ -1568,9 +1578,11 @@ public class TableReader implements Closeable, SymbolTableSource {
      * Shares one pinned snapshot between index readers and lazy data-frame binding.
      */
     private long getOrOpenPartitionState(int partitionIndex) {
-        final long existing = partitionFrameStates.getQuick(partitionIndex);
-        if (existing != 0) {
-            return existing;
+        if (partitionFrameStates != null) {
+            final long existing = partitionFrameStates.getQuick(partitionIndex);
+            if (existing != 0) {
+                return existing;
+            }
         }
         if (!txFile.getPartitionHasDelta(partitionIndex)) {
             return 0;
@@ -1582,6 +1594,11 @@ public class TableReader implements Closeable, SymbolTableSource {
             }
         }
         final long state = partitionFrameStateFactory.open(this, partitionIndex, getSeqTxn());
+        // A reader without Delta partitions holds no list.
+        if (partitionFrameStates == null) {
+            partitionFrameStates = new LongList(partitionCount, 0);
+            partitionFrameStates.setAll(partitionCount, 0);
+        }
         partitionFrameStates.setQuick(partitionIndex, state);
         partitionFrameStatesLo = Math.min(partitionFrameStatesLo, partitionIndex);
         return state;
@@ -1634,8 +1651,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         parquetPartitions.setAll(partitionCount, NullMemoryCMR.INSTANCE);
         parquetMetaDecoders = new ObjList<>(partitionCount);
         parquetMetaDecoders.setAll(partitionCount, null);
-        partitionFrameStates = new LongList(partitionCount, 0);
-        partitionFrameStates.setAll(partitionCount, 0);
         columns = new ObjList<>(capacity + 2);
         columns.setPos(capacity + 2);
         columns.setQuick(0, NullMemoryCMR.INSTANCE);
@@ -1688,8 +1703,10 @@ public class TableReader implements Closeable, SymbolTableSource {
         parquetMetadataPartitions.insert(partitionIndex, 1, NullMemoryCMR.INSTANCE);
         parquetPartitions.insert(partitionIndex, 1, NullMemoryCMR.INSTANCE);
         parquetMetaDecoders.insert(partitionIndex, 1, null);
-        partitionFrameStates.insert(partitionIndex, 1);
-        partitionFrameStates.setQuick(partitionIndex, 0);
+        if (partitionFrameStates != null) {
+            partitionFrameStates.insert(partitionIndex, 1);
+            partitionFrameStates.setQuick(partitionIndex, 0);
+        }
 
         final int topBase = columnBase / 2;
         final int topSlotSize = columnSlotSize / 2;
