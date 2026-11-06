@@ -1417,6 +1417,38 @@ public class OrderedMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNullKeyUsesFixedSizeLayout() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final ArrayColumnTypes valueTypes = new ArrayColumnTypes()
+                    .add(ColumnType.LONG)
+                    .add(ColumnType.LONG);
+            try (
+                    OrderedMap map = new OrderedMap(
+                            17,
+                            new SingleColumnType(ColumnType.NULL),
+                            valueTypes,
+                            16,
+                            0.5,
+                            Integer.MAX_VALUE
+                    )
+            ) {
+                final MapKey key = map.withKey();
+                final MapValue value = key.createValue();
+                Assert.assertTrue(value.isNew());
+                Assert.assertEquals(16, map.getUsedHeapSize());
+
+                value.putLong(0, 42);
+                value.putLong(1, 84);
+
+                final MapValue existing = map.withKey().createValue();
+                Assert.assertFalse(existing.isNew());
+                Assert.assertEquals(42, existing.getLong(0));
+                Assert.assertEquals(84, existing.getLong(1));
+            }
+        });
+    }
+
+    @Test
     public void testKeyCopyFromFixedSizeKey() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             ArrayColumnTypes keyTypes = new ArrayColumnTypes();

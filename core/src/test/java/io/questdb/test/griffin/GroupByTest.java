@@ -2201,6 +2201,26 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupByNullLiteralKeyWithTightMapPage() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_SMALL_MAP_PAGE_SIZE, 17);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE null_key_t (v INT)");
+            execute("INSERT INTO null_key_t VALUES (1), (1), (2)");
+            assertQuery("""
+                    SELECT null AS e0, count_distinct(cnt) AS a0
+                    FROM (SELECT v AS k, count() AS cnt FROM null_key_t)
+                    GROUP BY 1
+                    """)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            e0\ta0
+                            null\t2
+                            """);
+        });
+    }
+
+    @Test
     public void testGroupByOrderByExpression() throws Exception {
         assertQuery("SELECT ts AS ref0 FROM x WHERE 1=1 GROUP BY ts ORDER BY (ts) NOT IN ('1970-01-01T00:00:00.000002Z');")
                 .ddl("CREATE TABLE x AS (SELECT x::timestamp AS ts, x::short AS event, x::short AS origin FROM long_sequence(2)) TIMESTAMP(ts);")
