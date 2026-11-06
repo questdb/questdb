@@ -87,11 +87,6 @@ public class QwpTableBlockCursor implements Mutable {
     private QwpSchemaCache schemaCache;
     // Table state
     private int rowCount;
-    // This block's schema parse and where its schema section sits in wire memory,
-    // for cacheSchema(); valid until the cursor is reused.
-    private QwpSchema schema;
-    private long schemaAddress;
-    private int schemaLength;
     private int stringColumnCount;
     private int[] stringColumnIndices = new int[16];
     private int symbolColumnCount;
@@ -120,9 +115,6 @@ public class QwpTableBlockCursor implements Mutable {
         currentRow = -1;
         gorillaEnabled = false;
         columnDefs = null;
-        schema = null;
-        schemaAddress = 0;
-        schemaLength = 0;
         connectionSymbolDict = null;
         deltaSymbolDictEnabled = false;
 
@@ -143,27 +135,6 @@ public class QwpTableBlockCursor implements Mutable {
                 cursor.clear();
             }
         }
-    }
-
-    /**
-     * Keeps this block's schema parse in {@code entry}, unless the entry holds it
-     * already. For a block parsed before its table had a slot in the schema cache:
-     * the table's next block then finds this parse, the same object the table's
-     * column resolution saw.
-     */
-    public void cacheSchema(QwpSchemaCacheEntry entry) {
-        if (entry.schema == schema) {
-            return;
-        }
-        if (entry.bytes.length < schemaLength) {
-            entry.bytes = new byte[Math.max(schemaLength, entry.bytes.length * 2)];
-        }
-        for (int i = 0; i < schemaLength; i++) {
-            entry.bytes[i] = Unsafe.getByte(schemaAddress + i);
-        }
-        entry.len = schemaLength;
-        entry.columnCount = columnCount;
-        entry.schema = schema;
     }
 
     /**
@@ -378,14 +349,12 @@ public class QwpTableBlockCursor implements Mutable {
         // Parse schema section (inline columns; zero-alloc: reuses parseResult)
         final QwpSchemaCacheEntry entry = schemaCache != null ? schemaCache.getSchemaCacheEntry(tableHeader.getTableNameUtf8()) : null;
         final QwpSchema schema;
-        schemaAddress = dataAddress + offset;
         if (entry != null
                 && entry.schema != null
                 && columnCount == entry.columnCount
                 && dataLength - offset >= entry.len
                 && isSameBytes(dataAddress + offset, entry.bytes, entry.len)) {
             schema = entry.schema;
-            schemaLength = entry.len;
             offset += entry.len;
         } else {
             if (entry != null) {
@@ -396,7 +365,6 @@ public class QwpTableBlockCursor implements Mutable {
             QwpSchema.parse(dataAddress + offset, dataLength - offset, columnCount, parseResult);
             final int n = parseResult.bytesConsumed;
             schema = parseResult.schema;
-            schemaLength = n;
             if (entry != null) {
                 if (entry.bytes.length < n) {
                     entry.bytes = new byte[Math.max(n, entry.bytes.length * 2)];
@@ -411,7 +379,6 @@ public class QwpTableBlockCursor implements Mutable {
             offset += n;
         }
 
-        this.schema = schema;
         this.columnDefs = schema.getColumns();
 
         // Initialize column cursors and type buckets

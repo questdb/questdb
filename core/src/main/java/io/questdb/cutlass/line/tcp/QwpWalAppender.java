@@ -157,10 +157,6 @@ public class QwpWalAppender implements QuietCloseable {
             WalTableUpdateDetails tud,
             boolean isColumnCreationAllowed
     ) throws CommitFailedException, QwpParseException {
-        // A block parsed before its table was open has no parse in the table's slot:
-        // leave it there, so the table's next block finds the object the column
-        // resolution below sees.
-        tableBlock.cacheSchema(tud.getQwpSchemaCacheEntry());
         for (int retryCount = 0; !tud.isDropped(); retryCount++) {
             try {
                 return appendToWalStreaming0(securityContext, tableBlock, tud, isColumnCreationAllowed);

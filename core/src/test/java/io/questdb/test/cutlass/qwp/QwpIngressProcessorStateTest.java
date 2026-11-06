@@ -1211,7 +1211,8 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
      * connection's table cache: none before the table is open, one shared by every
      * spelling of its name while it is open, and none once the entry is freed, which
      * also drops the freed entry's own caches. A block parsed before its table was
-     * open leaves its parse in the entry when it is appended to the table.
+     * open keeps its parse to itself: the table's next block parses into the entry, and
+     * the one after it finds that parse.
      */
     @Test
     public void testSchemaParseLivesWithItsTableEntry() throws Exception {
@@ -1244,17 +1245,21 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                     appender.appendToWalStreaming(AllowAllSecurityContext.INSTANCE, block, tud);
                     schema = block.getSchema();
                 }
-                Assert.assertSame("the append left the parse in the entry", schema, tud.getQwpSchemaCacheEntry().getColumns());
+                Assert.assertNull("the append leaves the entry without a parse", tud.getQwpSchemaCacheEntry().getColumns());
+                Assert.assertEquals(0, cache.getCachedSchemaCount());
+                final ObjList<QwpColumnDef> keptSchema = appendOneRow(decoder, appender, null, "parse_a", null, false);
+                Assert.assertNotSame("the table's next block parses again", schema, keptSchema);
+                Assert.assertSame("and keeps its parse in the entry", keptSchema, tud.getQwpSchemaCacheEntry().getColumns());
                 Assert.assertTrue(tud.hasQwpCaches());
-                Assert.assertSame(schema, appendOneRow(decoder, appender, null, "parse_a", null, false));
+                Assert.assertSame(keptSchema, appendOneRow(decoder, appender, null, "parse_a", null, false));
                 Assert.assertSame("the table's entry serves every spelling of its name",
-                        schema, appendOneRow(decoder, appender, null, "PARSE_A", null, false));
+                        keptSchema, appendOneRow(decoder, appender, null, "PARSE_A", null, false));
                 Assert.assertEquals(1, cache.getCachedSchemaCount());
                 cache.reset();
                 Assert.assertFalse("a freed entry keeps no cache", tud.hasQwpCaches());
                 Assert.assertEquals(0, cache.getCachedSchemaCount());
                 Assert.assertNotSame("the parse went with the entry",
-                        schema, appendOneRow(decoder, appender, null, "parse_a", null, false));
+                        keptSchema, appendOneRow(decoder, appender, null, "parse_a", null, false));
             }
             drainWalQueue();
             assertQuery("SELECT count() FROM parse_a").noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
