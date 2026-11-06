@@ -60,6 +60,8 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Vect;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.Arrays;
+
 public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWindowFunctionFactory {
 
     private static final ArrayColumnTypes COLUMN_TYPES = new ArrayColumnTypes();
@@ -145,6 +147,7 @@ public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWind
         private final int percentilesPos;
         private final MemoryARW resultMemory;
         private final int type;
+        private int[] indices = new int[0];
         private DirectArray result;
 
         public MultiPercentileContOverPartitionFunction(
@@ -302,8 +305,27 @@ public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWind
                     ArrayView percentiles = percentilesFunc.getArray(record);
                     int percentileCount = SqlUtil.getPercentileCount(percentiles, percentilesPos);
 
-                    // Sort the list (values start at listPtr + DATA_OFFSET)
-                    DoubleSort.sort(listMemory.getPageAddress(0) + listPtr + DATA_OFFSET, 0, size - 1);
+                    // Select only the order statistics needed for interpolation
+                    // instead of sorting the whole list
+                    int indexCount = percentileCount * 2;
+                    if (indices.length < indexCount) {
+                        indices = new int[indexCount];
+                    }
+                    for (int i = 0; i < percentileCount; i++) {
+                        double percentile = SqlUtil.getPercentile(percentiles, i, percentilesPos);
+                        double position = percentile * (size - 1);
+                        indices[i * 2] = (int) Math.floor(position);
+                        indices[i * 2 + 1] = (int) Math.ceil(position);
+                    }
+                    Arrays.sort(indices, 0, indexCount);
+                    DoubleSort.quickSelectMultiple(
+                            listMemory.getPageAddress(0) + listPtr + DATA_OFFSET,
+                            0,
+                            size - 1,
+                            indices,
+                            0,
+                            indexCount
+                    );
 
                     // Allocate result array: count (8 bytes) + percentile values
                     long resultPtr = resultMemory.appendAddressFor(8 + percentileCount * 8L) - resultMemory.getPageAddress(0);
@@ -385,6 +407,7 @@ public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWind
         private final Function percentilesFunc;
         private final int percentilesPos;
         private final int type;
+        private int[] indices = new int[0];
         private boolean isResultValid;
         private DirectArray result;
         private double[] results;
@@ -478,8 +501,20 @@ public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWind
             ArrayView percentiles = percentilesFunc.getArray(null);
             int percentileCount = SqlUtil.getPercentileCount(percentiles, percentilesPos);
 
-            // Sort the list
-            DoubleSort.sort(listMemory.getPageAddress(0), 0, size - 1);
+            // Select only the order statistics needed for interpolation instead
+            // of sorting the whole list
+            int indexCount = percentileCount * 2;
+            if (indices.length < indexCount) {
+                indices = new int[indexCount];
+            }
+            for (int i = 0; i < percentileCount; i++) {
+                double percentile = SqlUtil.getPercentile(percentiles, i, percentilesPos);
+                double position = percentile * (size - 1);
+                indices[i * 2] = (int) Math.floor(position);
+                indices[i * 2 + 1] = (int) Math.ceil(position);
+            }
+            Arrays.sort(indices, 0, indexCount);
+            DoubleSort.quickSelectMultiple(listMemory.getPageAddress(0), 0, size - 1, indices, 0, indexCount);
 
             // Pre-allocate or reuse results array
             if (results == null || results.length < percentileCount) {
