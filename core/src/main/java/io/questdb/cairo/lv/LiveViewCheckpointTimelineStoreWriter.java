@@ -4661,7 +4661,9 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
          * @return the newest logical key the spliced timeline holds, or
          * {@link Numbers#LONG_NULL} when it holds none. A splice appends no root,
          * so this is the boundary the caller's post-repair seal must clear before
-         * it may claim the generation covers a later base transaction.
+         * it may claim the generation covers a later base transaction. When the
+         * view's frontier ran past it, the generation is restorable only once that
+         * seal puts a root at the frontier.
          */
         public long getHeadRootMaxTimestamp() {
             return headRootMaxTimestamp;

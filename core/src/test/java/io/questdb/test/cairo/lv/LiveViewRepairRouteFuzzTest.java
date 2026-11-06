@@ -24,9 +24,13 @@
 
 package io.questdb.test.cairo.lv;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.lv.LiveViewCheckpointLayout;
+import io.questdb.cairo.lv.LiveViewCheckpointRepairMarker;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairRoute;
+import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreWriter;
 import io.questdb.cairo.lv.LiveViewInMemoryTier;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
@@ -37,10 +41,12 @@ import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.LongHashSet;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -131,6 +137,9 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
     private int firedThisRun;
     private boolean isOpenSegmentKeyedReplayForced;
     private LiveViewRefreshJob job;
+    // Cycles without rows that sealed the root a keyed resume owed once its closing seal failed:
+    // see keyedOwedRootEpisode.
+    private int keyedOwedRootSeals;
     // The highest timestamp inserted into the base so far this run.
     private long maxInsertedTs;
     private int tierReadRecomputeChecks;
@@ -329,6 +338,7 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
                 coverage.assertReachedStat(LiveViewRefreshStats.TRANSPLANTED_KEY_COUNT);
                 coverage.assertReachedStat(LiveViewRefreshStats.SPARSE_PUBLICATION_COUNT);
                 coverage.assertReachedStat(LiveViewRefreshStats.OPEN_SEGMENT_KEYED_PRICED_COUNT);
+                Assert.assertTrue("no cycle without rows sealed the root a keyed resume owed", keyedOwedRootSeals > 0);
             }
             case STEER_SPARSE_FALLBACK -> {
                 coverage.assertReached(LiveViewCheckpointRepairRoute.ROUTE_KEYED_CLOSED_SEGMENT);
@@ -681,6 +691,134 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
         }
         driveRefreshToQuiescence(job);
         assertNoCheckpointRootAboveTheNewestRow(viewInstance());
+    }
+
+    /**
+     * A keyed resume whose closing seal fails over the root it owes, then cycles without rows past
+     * the cadence, under a row cadence no pass reaches, the configured duration cadence and the
+     * configured chain budget, which lets the resume splice. Batches A and B, a row of every run
+     * key each, above every row, commit past the duration cadence and seal a root each, and batch
+     * C, a row of every run key but the first, commits above them inside the cadence. A late row
+     * of the first key between A and B takes the keyed resume from A's root: its splice
+     * re-versions B's root and keeps it as the newest, below C, and its closing seal fails on the
+     * writer stage the seal hook sets. The keyed replay ran beside the primary, and the freeze of
+     * B's root, which no replayed row follows, left the primary's batch minimum empty, so the head
+     * parked on B's root no longer sits at the newest row the view's table holds. A REPLACE_RANGE
+     * above every row, which deletes nothing and puts no row through the window, then commits past
+     * the cadence: its cycle reads the table, finds C above the head, and seals the root the
+     * repair owed. The next one republishes that root at its own commit, and a restart restores
+     * from it. A variant the keyed routes decline takes the row another way, and the episode ends
+     * there.
+     */
+    private void keyedOwedRootEpisode(LiveViewFuzzKnobs knobs, String oracleSql, String orderBy, int symCount) throws Exception {
+        driveRefreshToQuiescence(job);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_MAX_DURATION_MICROS, (String) null);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ADAPTIVE_CADENCE_ENABLED, "false");
+        // A resume that declines the chain truncates instead of splicing, and owes no root.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, (String) null);
+        try {
+            final LiveViewInstance instance = viewInstance();
+            setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
+            final long batchAHighTs = insertKeyBatch(maxInsertedTs + 1, 0, symCount);
+            drainWalQueue();
+            driveRefreshToQuiescence(job);
+            Assert.assertEquals("a root seals batch A", batchAHighTs, instance.getHeadCheckpointMaxTs());
+            setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
+            final long batchBHighTs = insertKeyBatch(batchAHighTs + 2, 0, symCount);
+            drainWalQueue();
+            driveRefreshToQuiescence(job);
+            Assert.assertEquals("a root seals batch B", batchBHighTs, instance.getHeadCheckpointMaxTs());
+            final long batchCHighTs = insertKeyBatch(batchBHighTs + 1, 1, symCount);
+            drainWalQueue();
+            driveRefreshToQuiescence(job);
+            Assert.assertEquals("no root seals batch C", batchBHighTs, instance.getHeadCheckpointMaxTs());
+
+            final long keyedResumesBefore = instance.getO3OpenSegmentKeyedResumeCount();
+            final long sealFailuresBefore = instance.getCheckpointSealFailures();
+            final long markerBaseGeneration = publishedCheckpointGeneration(instance);
+            hooks(job).setSimulateResumeHeadSealStart(
+                    () -> job.setCheckpointTimelineTestFailureStage(LiveViewCheckpointTimelineStoreWriter.TEST_FAIL_AFTER_METADATA_PUBLISH)
+            );
+            try {
+                execute("INSERT INTO base (ts, sym, i, x) VALUES (" + (batchAHighTs + 1) + "::timestamp, '" + SYMBOLS[0] + "', 1, 1.0)");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+            } finally {
+                hooks(job).setSimulateResumeHeadSealStart(null);
+                job.setCheckpointTimelineTestFailureStage(0);
+            }
+            if (instance.getO3OpenSegmentKeyedResumeCount() == keyedResumesBefore) {
+                LOG.info().$("LV route fuzz: keyed owed root episode ends, no keyed resume took the late row").$();
+                return;
+            }
+            Assert.assertEquals("the keyed resume's closing seal fails", sealFailuresBefore + 1, instance.getCheckpointSealFailures());
+            Assert.assertEquals("and leaves the head on B's root", batchBHighTs, instance.getHeadCheckpointMaxTs());
+            Assert.assertEquals("with the batch minimum empty", Long.MAX_VALUE, instance.getMinSeenTsSinceCheckpoint());
+            assertRepairMarkerLive(instance, markerBaseGeneration);
+
+            setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
+            commitRowlessReplaceRange();
+            Assert.assertEquals("the cycle seals the frontier", batchCHighTs, instance.getHeadCheckpointMaxTs());
+            Assert.assertEquals("the splice and the owed root", markerBaseGeneration + 2, publishedCheckpointGeneration(instance));
+            final LongList ladder = snapshotCheckpointLadder(instance);
+            Assert.assertEquals(batchCHighTs, ladder.getQuick(ladder.size() - 2));
+            keyedOwedRootSeals++;
+
+            final long generation = publishedCheckpointGeneration(instance);
+            setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
+            commitRowlessReplaceRange();
+            Assert.assertEquals("the next cycle republishes the root", generation + 1, publishedCheckpointGeneration(instance));
+            Assert.assertEquals(batchCHighTs, instance.getHeadCheckpointMaxTs());
+            Assert.assertEquals("and seals none", ladder.toString(), snapshotCheckpointLadder(instance).toString());
+
+            restart();
+            driveRefreshToQuiescence(job);
+            assertRestoredFromTimeline("lv");
+            assertView(oracleSql, orderBy, "after the restore from the keyed owed root");
+        } finally {
+            knobs.apply(AbstractLiveViewTest::setProperty);
+        }
+    }
+
+    // The repair marker on disk names markerBaseGeneration under the splice's generation one past
+    // it, which a restore reads as live.
+    private void assertRepairMarkerLive(LiveViewInstance instance, long markerBaseGeneration) {
+        try (
+                Path dir = new Path().of(configuration.getDbRoot())
+                        .concat(instance.getLiveViewToken())
+                        .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME)
+        ) {
+            Assert.assertTrue("the repair marker must stay on disk", LiveViewCheckpointRepairMarker.exists(configuration.getFilesFacade(), dir));
+            Assert.assertEquals(markerBaseGeneration, LiveViewCheckpointRepairMarker.readBaseGeneration(configuration, dir));
+        }
+        Assert.assertEquals("no root has landed past the splice", markerBaseGeneration + 1, publishedCheckpointGeneration(instance));
+    }
+
+    // A REPLACE_RANGE above every row, which deletes nothing and puts no row through the window,
+    // applied and refreshed.
+    private void commitRowlessReplaceRange() {
+        final long lo = Math.max(maxInsertedTs, viewInstance().getLatestSeenTs()) + 1;
+        replaceBaseRange(lo, lo + 1, Double.NaN);
+        drainWalQueue();
+        driveRefreshToQuiescence(job);
+    }
+
+    // One row of each run key from SYMBOLS[fromSym] to SYMBOLS[symCount - 1], a microsecond apart
+    // from fromTs up, in one commit. Returns the newest.
+    private long insertKeyBatch(long fromTs, int fromSym, int symCount) throws SqlException {
+        syntheticSink.clear();
+        syntheticSink.put("INSERT INTO base (ts, sym, i, x) VALUES ");
+        long t = fromTs;
+        for (int s = fromSym; s < symCount; s++, t++) {
+            if (s > fromSym) {
+                syntheticSink.put(", ");
+            }
+            syntheticSink.put('(').put(t).put("::timestamp, '").put(SYMBOLS[s]).put("', ").put(1 + (t & 511)).put(", 1.0)");
+        }
+        execute(syntheticSink);
+        maxInsertedTs = Math.max(maxInsertedTs, t - 1);
+        return t - 1;
     }
 
     /**
@@ -1079,6 +1217,9 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
             }
             if (steer == STEER_MIXED || steer == STEER_ANCHORS) {
                 departureEpisode(rnd, shape, isFiltered);
+            }
+            if (steer == STEER_KEYED_OPEN_SEGMENT) {
+                keyedOwedRootEpisode(knobs, oracleSql, orderBy, symCount);
             }
             if (faultPct > 0 && firedThisRun == 0) {
                 // No drawn fault fired. One in-order row above every other one, whose forward
