@@ -202,6 +202,8 @@ public abstract class AbstractAdaptiveCrashTest extends AbstractCrashConsistency
         // here, where the clean close's flush of the txnlog comes after the power loss and counts for nothing; after
         // crash() it would flush through a handle the rollback made stale.
         engine.releaseInactiveTableSequencers();
+        // The pool walk above does not visit a writer opened during it, and no writer may outlive the power loss.
+        engine.releaseAllWriters();
         crashFf.crash(engine.getConfiguration().getDbRoot());
 
         // The commit phase can re-point a table's name to a token it minted (REBASE WAL swaps a new table dir in)

@@ -329,6 +329,7 @@ informative=0
 failed_points=""
 mat_view_repairs_evaluated=0
 mat_view_precondition_misses=0
+sf_replays_proven=0
 # Machine-readable output, alongside the text log. It lands in $OUTDIR, outside $RUN, so the
 # success-path cleanup does not delete the report a green run produced.
 JUNIT_XML="${QDB_JUNIT_XML:-$OUTDIR/junit.xml}"
@@ -402,6 +403,7 @@ for n in $points; do
     v=$(verdict_classify "$line")
     checked=$((checked + 1))
     [ "$v" = NO_COMMIT ] || informative=$((informative + 1))
+    case "$out" in *"DETAIL SF_REPLAY_PROVEN"*) sf_replays_proven=$((sf_replays_proven + 1)) ;; esac
     if [ "${QDB_MAT_VIEW:-false}" = true ] \
             && [ "$(echo "$MODE" | tr 'A-Z' 'a-z')" = adaptive ] \
             && [ "$WINDOW" -gt 0 ]; then
@@ -478,6 +480,20 @@ if [ "${QDB_MAT_VIEW:-false}" = true ] \
         precondition_error="NOT_EVALUATED: none of $checked sampled mat-view boundaries reached an actual RPO rollback"
         junit_case "$JUNIT_CLASS" "mat-view-rpo-precondition" NOT_EVALUATED 0 "$precondition_error"
         echo "  $precondition_error"
+        fails=$((fails + 1))
+    fi
+fi
+
+# A boundary whose lost rows were never synced to the client's buffer is excused, so a client that
+# stopped syncing altogether would be excused at every boundary and the sweep would stay green
+# having proven nothing. The store-and-forward claim needs at least one boundary where the replay
+# restored rows the server had lost.
+if [ "$SF_REPLAY" = compare ]; then
+    junit_property sf_replays_proven "$sf_replays_proven"
+    if [ "$fails" -eq 0 ] && [ "$informative" -gt 0 ] && [ "$sf_replays_proven" -eq 0 ]; then
+        sf_error="NOT_EVALUATED: none of $checked sampled boundaries showed the client replaying rows the server had lost"
+        junit_case "$JUNIT_CLASS" "sf-replay-precondition" NOT_EVALUATED 0 "$sf_error"
+        echo "  $sf_error"
         fails=$((fails + 1))
     fi
 fi
