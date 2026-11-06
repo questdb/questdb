@@ -211,20 +211,31 @@ an upper bound on the interval count that holds for every "now".
 
 | Element    | Bound                                                        |
 |------------|--------------------------------------------------------------|
-| STATIC     | 1                                                            |
+| STATIC     | all entries together: runs plus empty intervals (see below)  |
 | SINGLE_VAR | `max(1, T)`                                                  |
 | RANGE      | 1 if contiguous (see below), otherwise no bound              |
+
+The compiler writes one STATIC entry per bracket leaf, day or list value, and
+phase 5 merges the intervals that overlap or touch, so the 20 STATIC entries of
+`[$today, 2024-01-[01..20]]` yield one interval. The STATIC entries count as the
+runs of overlapping or adjacent intervals they form, plus one per empty interval
+(lo > hi, as a zero duration yields), which the merge may keep apart from a run.
+Phases 2 and 3 treat each interval on its own and do not read "now", but either
+can split a run: the day filter keeps or drops an interval by the weekday of its
+lo, and a clock change at local midnight can part two adjacent local days in
+UTC. So the method runs both phases on the STATIC entries, as `evaluate()` does,
+before it counts the runs.
 
 A range is contiguous when it has no business-day walk and the expression has
 no time override, duration, day filter or named timezone. `emitRange()` then
 emits one interval or a run of adjacent whole days, which phase 5 merges into
 one.
 
-The day filter only drops intervals, the timezone conversion maps each interval
-to one, and the merge only joins them, so phases 2, 3 and 5 never raise the
-count. The method returns -1 (no bound) for an exchange calendar, for an offset
-or duration unit the timestamp driver does not know, for any other range, and
-when the sum exceeds `cap`.
+For the date variable elements, the day filter only drops intervals and the
+timezone conversion maps each interval to one, so phases 2 and 3 never raise
+their count, and phase 5 only joins intervals. The method returns -1 (no bound)
+for an exchange calendar, for an offset or duration unit the timestamp driver
+does not know, for any other range, and when the sum exceeds `cap`.
 
 ## Compile-Time Construction
 

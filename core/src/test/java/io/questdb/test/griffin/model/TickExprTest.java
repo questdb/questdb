@@ -1066,13 +1066,14 @@ public class TickExprTest {
 
     @Test
     public void testCompiledTickExprMaxIntervalCount() throws SqlException {
-        // Elements, time overrides and contiguous ranges take one interval each.
+        // Date variable elements, time overrides and contiguous ranges take one interval each, and
+        // the static elements one per run of adjacent intervals.
         assertMaxIntervalCount("$today", 10, 1);
         assertMaxIntervalCount("$now - 2h", 10, 1);
         assertMaxIntervalCount("$today - 3bd", 10, 1);
         assertMaxIntervalCount("[$yesterday, $today]", 10, 2);
         assertMaxIntervalCount("[$yesterday, 2024-01-02]", 10, 2);
-        assertMaxIntervalCount("[$today, 2024-06-[01..05]]", 10, 6);
+        assertMaxIntervalCount("[$today, 2024-06-[01..05]]", 10, 2);
         assertMaxIntervalCount("[$today, $yesterday]T[09:00,12:00,15:00]", 10, 6);
         assertMaxIntervalCount("$today#workday", 10, 1);
         assertMaxIntervalCount("$today@Europe/London", 10, 1);
@@ -1090,8 +1091,13 @@ public class TickExprTest {
         final String elevenTimes = "[$today]T[01:00,02:00,03:00,04:00,05:00,06:00,07:00,08:00,09:00,10:00,11:00]";
         assertMaxIntervalCount(elevenTimes, 11, 11);
         assertMaxIntervalCount(elevenTimes, 10, -1);
-        assertMaxIntervalCount("[$today, 2024-01-[01..10]]", 11, 11);
-        assertMaxIntervalCount("[$today, 2024-01-[01..10]]", 10, -1);
+        // Ten adjacent days form one run.
+        assertMaxIntervalCount("[$today, 2024-01-[01..10]]", 10, 2);
+        assertMaxIntervalCount("[$today, 2024-01-[01..10]]", 2, 2);
+        assertMaxIntervalCount("[$today, 2024-01-[01..10]]", 1, -1);
+        // Ten minutes on ten days form ten runs.
+        assertMaxIntervalCount("[$today, 2024-01-[01..10]T10:00]", 11, 11);
+        assertMaxIntervalCount("[$today, 2024-01-[01..10]T10:00]", 10, -1);
         assertMaxIntervalCount("[$yesterday, $today]", 1, -1);
 
         // No bound: these yield an interval per day or per session, and a range of days varies in
@@ -1116,12 +1122,8 @@ public class TickExprTest {
 
     @Test
     public void testCompiledTickExprMaxIntervalCountHoldsForAnyNow() throws SqlException {
-        // The JIT filter compiles getMaxIntervalCount() range checks for an expression and refills
-        // them on every run, so a count above the bound at any "now" would lose rows. Evaluates each
-        // expression every 30 minutes through 2024 and 2025, and one unit either side of each of
-        // those instants. The half hours cover the midnights of every zone here, the clock changes
-        // at local midnight in America/Santiago and Asia/Beirut, and the one before it in
-        // Atlantic/Azores.
+        // A count above the bound at any "now" would lose rows of the JIT filter, so
+        // maxIntervalCountForAnyNow() evaluates each expression through 2024 and 2025.
         final String[] expressions = {
                 "$today", "$yesterday", "$tomorrow", "$now", "$now - 2h", "$now + 90m", "$now - 7s",
                 "$now + 1T", "$now - 3u", "$now + 5n", "$today + 1M", "$today - 1y", "$today + 3bd",
@@ -1139,19 +1141,122 @@ public class TickExprTest {
                 "$now..$now + 1M", "$today - 1y..$today", "$now - 3h..$today", "$today..$now",
                 "$now - 1h..$now@+05:30", "$today..$today+5d@-03:00",
                 "[$today..$today+2d, $yesterday]", "[$now - 1h..$now, 2024-03-[01..03]]",
-                "[$today..$tomorrow, $today + 1w..$today + 8d]"
+                "[$today..$tomorrow, $today + 1w..$today + 8d]",
+                // Static runs next to a range, and lists whose bound exceeds every count: it counts
+                // the empty intervals of a zero duration apart from the days that cover them, and
+                // two date variables that touch apart from each other.
+                "[$today, 2024-01-[15..17]T09:00;0h, 2024-01-[15..17]]",
+                "[$yesterday, $today, 2024-01-[01..20]]#weekend",
+                "[$today..$today+2d, 2024-01-[01..20], 2024-02-[01..03]]"
         };
+        for (String expression : expressions) {
+            // Each expression yields an interval at some point, so the walk did evaluate it.
+            Assert.assertTrue(expression, maxIntervalCountForAnyNow(expression) > 0);
+        }
+        // The bound counts a run of static intervals as one, and some "now" away from the runs
+        // yields as many intervals as the bound. 2024-01-01 is a Monday.
+        assertMaxIntervalCountReached("[$today, 2024-01-[01..20]]", 2);
+        assertMaxIntervalCountReached("[2024-01-[01..20], $today, 2024-01-[21..31]]", 2);
+        // The workdays from 2024-01-01 to 01-20 form three runs, and those of January 2024 five.
+        assertMaxIntervalCountReached("[$today, 2024-01-[01..20]]#workday", 4);
+        assertMaxIntervalCountReached("[$today, 2024-01]#workday", 6);
+        // The clock goes back at local midnight on 2024-04-07 in America/Santiago and on 2024-10-27
+        // in Asia/Beirut, so the days before and after it do not touch in UTC.
+        assertMaxIntervalCountReached("[$today, 2024-04-[01..10]]@America/Santiago", 3);
+        assertMaxIntervalCountReached("[$today, 2024-10-[20..31]]@Asia/Beirut", 3);
+        // evaluate() keeps the interval [D - 6d, D) of each weekend day D of January 2024 by the
+        // weekday of its lo, which leaves four runs, and the one of $today when $today is a Friday or
+        // a Saturday.
+        assertMaxIntervalCountReached("[$today, 2024-01]T00:00#weekend;-6d", 5);
+    }
+
+    @Test
+    public void testCompiledTickExprMaxIntervalCountMergesStaticIntervals() throws SqlException {
+        // The compiler writes one STATIC entry per bracket leaf, day or list value, and evaluate()
+        // merges the intervals that overlap or touch. The bound counts the runs that the static
+        // intervals form, plus one per empty interval, and one interval for the date variable.
+        // One run: two seconds that touch, adjacent days of two elements, a day within its month,
+        // unsorted bracket values, runs on both sides of a date variable, and days around 1970 and
+        // near the end of the TIMESTAMP_NS range.
+        assertMaxIntervalCount("[$today, 2024-01-15T10:00:00, 2024-01-15T10:00:01]", Integer.MAX_VALUE, 2);
+        assertMaxIntervalCount("[$today, 2024-01-01, 2024-01-02]", Integer.MAX_VALUE, 2);
+        assertMaxIntervalCount("[$today, 2024-01, 2024-01-15]", Integer.MAX_VALUE, 2);
+        assertMaxIntervalCount("[$today, 2024-01-[03,01,02]]", Integer.MAX_VALUE, 2);
+        assertMaxIntervalCount("[$today, 2024-01-[01..20]]", Integer.MAX_VALUE, 2);
+        assertMaxIntervalCount("[2024-01-[01..20], $today, 2024-01-[21..31]]", Integer.MAX_VALUE, 2);
+        assertMaxIntervalCount("[$today, 1969-12-[30..31], 1970-01-01]", Integer.MAX_VALUE, 2);
+        assertMaxIntervalCount("[$today, 2261-12-[30..31]]", Integer.MAX_VALUE, 2);
+        // A single static interval, and the hour before 09:00 that a negative duration yields.
+        assertMaxIntervalCount("[$yesterday, 2024-01-02]", Integer.MAX_VALUE, 2);
+        assertMaxIntervalCount("[$today, 2024-01-15T09:00;-1h]", Integer.MAX_VALUE, 2);
+        // Apart: two seconds with a second between them, three days, and a minute on each of 336
+        // days.
+        assertMaxIntervalCount("[$today, 2024-01-15T10:00:00, 2024-01-15T10:00:02]", Integer.MAX_VALUE, 3);
+        assertMaxIntervalCount("[$today, 2024-01-[20,05,10]]", Integer.MAX_VALUE, 4);
+        assertMaxIntervalCount("[$today, 2024-[01..12]-[01..28]T10:00]", Integer.MAX_VALUE, 337);
+        // A zero duration yields the empty interval [09:00, 09:00 - 1 unit], which counts apart even
+        // within a day.
+        assertMaxIntervalCount("[$today, 2024-01-15T09:00;0h]", Integer.MAX_VALUE, 2);
+        assertMaxIntervalCount("[$today, 2024-01-[15..17]T09:00;0h]", Integer.MAX_VALUE, 4);
+        assertMaxIntervalCount("[$today, 2024-01-15T09:00;0h, 2024-01-15]", Integer.MAX_VALUE, 3);
+        // A zone without a clock change keeps the run.
+        assertMaxIntervalCount("[$today, 2024-01-[01..20]]@+05:00", Integer.MAX_VALUE, 2);
+        assertMaxIntervalCount("[$today, 2024-01-[01..20]]@Europe/London", Integer.MAX_VALUE, 2);
+        // America/Santiago goes back from 00:00 to 23:00 at the end of 2024-04-06 and Asia/Beirut at
+        // the end of 2024-10-26, and the conversion keeps the first 23:00 to 00:00, so these days
+        // end an hour before the next day starts in UTC. The jump of America/Santiago from 00:00 to
+        // 01:00 on 2024-09-08 keeps the days adjacent.
+        assertMaxIntervalCount("[$today, 2024-04-[01..10]]@America/Santiago", Integer.MAX_VALUE, 3);
+        assertMaxIntervalCount("[$today, 2024-10-[20..31]]@Asia/Beirut", Integer.MAX_VALUE, 3);
+        assertMaxIntervalCount("[$today, 2024-09-[06..09]]@America/Santiago", Integer.MAX_VALUE, 2);
+        // The day filter splits a run at a weekend. 2024-01-01 is a Monday, and the compiler drops
+        // the weekend 2024-01-06 and 01-07 whole.
+        assertMaxIntervalCount("[$today, 2024-01-[01..20]]#workday", Integer.MAX_VALUE, 4);
+        assertMaxIntervalCount("[$today, 2024-01]#workday", Integer.MAX_VALUE, 6);
+        assertMaxIntervalCount("[$today, 2024-01-[06..07]]#workday", Integer.MAX_VALUE, 1);
+        // The compiler keeps the interval [D - 6d, D) of each weekend day D of January 2024, and
+        // evaluate() keeps or drops each by the weekday of its lo. Those of the Sundays start on a
+        // Monday and go, and those of the Saturdays leave the runs from 2023-12-31 to 2024-01-05,
+        // 01-07 to 01-12, 01-14 to 01-19 and 01-21 to 01-26, while all eight would form one run.
+        assertMaxIntervalCount("[$today, 2024-01]T00:00#weekend;-6d", Integer.MAX_VALUE, 5);
+    }
+
+    @Test
+    public void testCompiledTickExprMaxIntervalCountRandomLists() throws SqlException {
+        // Builds random lists of date variables and static days, bracket ranges, unsorted brackets,
+        // months and zero duration days of 2024, under a day filter, a zone with clock changes at
+        // local midnight, a time override or a duration, and expects evaluate() to stay within the
+        // bound every 6 hours through 2024, and one unit either side of each of those instants.
+        final String[] suffixes = {
+                "", "#workday", "#weekend", "@Europe/London", "@America/Santiago", "@Asia/Beirut", "@+05:00",
+                "T10:00", ";1d", "T00:00;1d", "T00:00#weekend;-6d", "#workday;-1d"
+        };
+        final Rnd rnd = TestUtils.generateRandom(LOG);
         final TimestampDriver timestampDriver = timestampType.getDriver();
         final long start = timestampDriver.parseFloorLiteral("2024-01-01T00:00:00.000000Z");
-        final long end = timestampDriver.parseFloorLiteral("2026-01-01T00:00:00.000000Z");
-        final long step = timestampDriver.fromMinutes(30);
+        final long end = timestampDriver.parseFloorLiteral("2025-01-01T00:00:00.000000Z");
+        final long step = timestampDriver.fromHours(6);
         final LongList intervals = new LongList();
-        for (String expression : expressions) {
+        final StringSink expression = new StringSink();
+        for (int i = 0; i < 200; i++) {
+            final String suffix = suffixes[rnd.nextInt(suffixes.length)];
+            // The time override or duration of the list would follow the one of a zero duration day.
+            final boolean isZeroDurationDayAllowed = suffix.indexOf('T') < 0 && suffix.indexOf(';') < 0;
+            final int elementCount = 2 + rnd.nextInt(4);
+            final int dateVariableIndex = rnd.nextInt(elementCount);
+            expression.clear();
+            expression.put('[');
+            for (int e = 0; e < elementCount; e++) {
+                if (e > 0) {
+                    expression.put(", ");
+                }
+                appendRandomListElement(rnd, expression, e == dateVariableIndex, isZeroDurationDayAllowed);
+            }
+            expression.put(']').put(suffix);
             try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(
                     timestampDriver, configuration, expression, 0, expression.length(), 0)) {
                 final int bound = compiled.getMaxIntervalCount(Integer.MAX_VALUE);
-                Assert.assertTrue(expression, bound > 0);
-                int maxCount = 0;
+                Assert.assertTrue(expression.toString(), bound > 0);
                 for (long now = start; now < end; now += step) {
                     for (long delta = -1; delta <= 1; delta++) {
                         intervals.clear();
@@ -1161,11 +1266,8 @@ public class TickExprTest {
                             Assert.fail(expression + " yields " + count + " intervals, above its bound of " + bound
                                     + ", at " + timestampDriver.toMSecString(now + delta));
                         }
-                        maxCount = Math.max(maxCount, count);
                     }
                 }
-                // Each expression yields an interval at some point, so the walk did evaluate it.
-                Assert.assertTrue(expression, maxCount > 0);
             }
         }
     }
@@ -1346,17 +1448,19 @@ public class TickExprTest {
         addMinuteSlots(expectedAtPlus5, LocalDateTime.of(2024, 1, 1, 9, 0), ZoneOffset.ofHours(5), 10);
         addLocalDays(expectedAtPlus5, LocalDate.of(2024, 1, 8), LocalDate.of(2024, 1, 9), ZoneOffset.UTC);
         for (int n : new int[]{1, 10, 30}) {
-            assertCompiledTickExprIntervals("[$today,2024-01-01T[" + repeatedValues("09:00", n) + "]:[00..59].[0..9]0]", 601, expected);
-            assertCompiledTickExprIntervals("[$today,2024-01-01T[" + repeatedValues("09:00@+05:00", n) + "]:[00..59].[0..9]0]", 601, expectedAtPlus5);
+            assertCompiledTickExprIntervals("[$today,2024-01-01T[" + repeatedValues("09:00", n) + "]:[00..59].[0..9]0]", 601, 601, expected);
+            assertCompiledTickExprIntervals("[$today,2024-01-01T[" + repeatedValues("09:00@+05:00", n) + "]:[00..59].[0..9]0]", 601, 601, expectedAtPlus5);
         }
         // Each of the 100 outer values adds the same second. The merges after the outer values 3, 6,
-        // ..., 99 leave one interval, and the last value adds 100 more.
+        // ..., 99 leave one interval, and the last value adds 100 more. The 101 entries hold one
+        // run, so the expression yields 2 intervals at most.
         final LongList second = new LongList();
         addLocalBlock(second, LocalDateTime.of(2024, 1, 1, 9, 0), ZoneOffset.UTC, Micros.SECOND_MICROS);
         addLocalDays(second, LocalDate.of(2024, 1, 8), LocalDate.of(2024, 1, 9), ZoneOffset.UTC);
         assertCompiledTickExprIntervals(
                 "[$today,2024-01-01T[" + repeatedValues("09:", 100) + "][" + repeatedValues("00:00", 100) + "]]",
                 102,
+                2,
                 second
         );
     }
@@ -6762,6 +6866,42 @@ public class TickExprTest {
         assertBracketIntervalError("   ", "Invalid date");
     }
 
+    // Appends a random date variable when isDateVariable is set, and otherwise a random date
+    // variable, or a 2024 day, bracket range, unsorted bracket, month or, when
+    // isZeroDurationDayAllowed is set, a day with a zero duration. The months include those in
+    // which America/Santiago (April, September) and Asia/Beirut (March, October) change their
+    // clocks at local midnight.
+    private static void appendRandomListElement(Rnd rnd, StringSink sink, boolean isDateVariable, boolean isZeroDurationDayAllowed) {
+        final int kind = isDateVariable ? rnd.nextInt(4) : rnd.nextInt(isZeroDurationDayAllowed ? 9 : 8);
+        switch (kind) {
+            case 0 -> sink.put("$today");
+            case 1 -> sink.put("$yesterday");
+            case 2 -> sink.put("$today - ").put(1 + rnd.nextInt(9)).put('d');
+            case 3 -> sink.put("$now - ").put(1 + rnd.nextInt(47)).put('h');
+            default -> {
+                final int[] months = {1, 3, 4, 9, 10, 12};
+                sink.put("2024-").put(String.format("%02d", months[rnd.nextInt(months.length)]));
+                switch (kind) {
+                    case 4 -> sink.put(String.format("-%02d", 1 + rnd.nextInt(28)));
+                    case 5 -> {
+                        final int lo = 1 + rnd.nextInt(20);
+                        sink.put(String.format("-[%02d..%02d]", lo, lo + rnd.nextInt(9)));
+                    }
+                    case 6 -> sink.put(String.format(
+                            "-[%02d,%02d,%02d]",
+                            1 + rnd.nextInt(28),
+                            1 + rnd.nextInt(28),
+                            1 + rnd.nextInt(28)
+                    ));
+                    case 7 -> {
+                        // the whole month
+                    }
+                    default -> sink.put(String.format("-%02dT09:00;0h", 1 + rnd.nextInt(28)));
+                }
+            }
+        }
+    }
+
     private static int countMondays(LocalDate from, LocalDate to) {
         int mondayCount = 0;
         for (LocalDate day = from; !day.isAfter(to); day = day.plusDays(1)) {
@@ -6990,12 +7130,18 @@ public class TickExprTest {
         assertCompiledTickExpr(expression);
     }
 
-    // Compiles the expression, expects the number of intervals that its IR yields at most, and
-    // evaluates it at mondayNow()
-    private void assertCompiledTickExprIntervals(String expression, int expectedMaxIntervalCount, LongList expected) throws SqlException {
+    // Compiles the expression, expects the number of its IR elements and the number of intervals
+    // that it yields at most, and evaluates it at mondayNow()
+    private void assertCompiledTickExprIntervals(
+            String expression,
+            int expectedElementCount,
+            int expectedMaxIntervalCount,
+            LongList expected
+    ) throws SqlException {
         final TimestampDriver timestampDriver = timestampType.getDriver();
         out.clear();
         try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(timestampDriver, configuration, expression, 0, expression.length(), 0)) {
+            Assert.assertEquals(expression, expectedElementCount, compiled.getElementCount());
             Assert.assertEquals(expression, expectedMaxIntervalCount, compiled.getMaxIntervalCount(Integer.MAX_VALUE));
             compiled.evaluate(out, mondayNow());
         }
@@ -7192,6 +7338,13 @@ public class TickExprTest {
         }
     }
 
+    // Expects the bound of the expression to be expectedCount, and evaluate() to yield that many
+    // intervals at some "now" of maxIntervalCountForAnyNow()
+    private void assertMaxIntervalCountReached(String expression, int expectedCount) throws SqlException {
+        assertMaxIntervalCount(expression, Integer.MAX_VALUE, expectedCount);
+        Assert.assertEquals(expression, expectedCount, maxIntervalCountForAnyNow(expression));
+    }
+
     private void assertShortInterval(String expected, String interval) throws SqlException {
         out.clear();
         final TimestampDriver timestampDriver = timestampType.getDriver();
@@ -7255,6 +7408,39 @@ public class TickExprTest {
         final MaxIntervalsCountingConfiguration countingConfiguration = new MaxIntervalsCountingConfiguration();
         parseTickExprAtMonday(countingConfiguration, new LongList(), interval);
         return countingConfiguration.getterCallCount;
+    }
+
+    // The JIT filter compiles getMaxIntervalCount() range checks for an expression and refills
+    // them on every run, so a count above the bound at any "now" would lose rows. Evaluates the
+    // expression every 30 minutes through 2024 and 2025, and one unit either side of each of those
+    // instants, fails at a count above the bound, and returns the largest count. The half hours
+    // cover the midnights of every zone of the tests, the clock changes at local midnight in
+    // America/Santiago and Asia/Beirut, and the one before it in Atlantic/Azores.
+    private int maxIntervalCountForAnyNow(String expression) throws SqlException {
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final long start = timestampDriver.parseFloorLiteral("2024-01-01T00:00:00.000000Z");
+        final long end = timestampDriver.parseFloorLiteral("2026-01-01T00:00:00.000000Z");
+        final long step = timestampDriver.fromMinutes(30);
+        final LongList intervals = new LongList();
+        try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(
+                timestampDriver, configuration, expression, 0, expression.length(), 0)) {
+            final int bound = compiled.getMaxIntervalCount(Integer.MAX_VALUE);
+            Assert.assertTrue(expression, bound > 0);
+            int maxCount = 0;
+            for (long now = start; now < end; now += step) {
+                for (long delta = -1; delta <= 1; delta++) {
+                    intervals.clear();
+                    compiled.evaluate(intervals, now + delta);
+                    final int count = intervals.size() / 2;
+                    if (count > bound) {
+                        Assert.fail(expression + " yields " + count + " intervals, above its bound of " + bound
+                                + ", at " + timestampDriver.toMSecString(now + delta));
+                    }
+                    maxCount = Math.max(maxCount, count);
+                }
+            }
+            return maxCount;
+        }
     }
 
     // 2024-01-08T01:00, a Monday

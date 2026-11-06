@@ -1675,7 +1675,8 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
             assertOptionsHint(c, options, OptionsHint.SINGLE_SIZE);
         }
 
-        // Each element, time override and contiguous range below takes one check.
+        // Each date variable element, time override and contiguous range below takes one check,
+        // and the static days one per run of adjacent days.
         assertDateVariableCheckCount("atimestamp IN '$today@Europe/London'", 1);
         assertDateVariableCheckCount("atimestamp IN '$today#workday'", 1);
         assertDateVariableCheckCount("atimestamp IN '$now - 2h'", 1);
@@ -1683,7 +1684,13 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         assertDateVariableCheckCount("atimestamp IN '$todayT09:30;1h'", 1);
         assertDateVariableCheckCount("atimestamp IN '[$today]T[09:30,14:30];1h'", 2);
         assertDateVariableCheckCount("atimestamp IN '[$yesterday, 2020-01-01]'", 2);
-        assertDateVariableCheckCount("atimestamp IN '[$yesterday, 2020-01-[01..03]]'", 4);
+        assertDateVariableCheckCount("atimestamp IN '[$yesterday, 2020-01-[01..03]]'", 2);
+        assertDateVariableCheckCount("atimestamp IN '[$today, 2020-01-[01..10]]'", 2);
+        assertDateVariableCheckCount("atimestampns IN '[2020-01-[01..05], $today, 2020-01-[06..10]]'", 2);
+        // 2020-01-01 is a Wednesday. The workdays of 2020-01-01 to 01-10 form two runs, and those
+        // of January 2020 five.
+        assertDateVariableCheckCount("atimestamp IN '[$today, 2020-01-[01..10]]#workday'", 3);
+        assertDateVariableCheckCount("adate IN ('[$today, 2020-01]#workday')", 6);
         assertDateVariableCheckCount("atimestampns IN '$now - 1h..$now'", 1);
         assertDateVariableCheckCount("atimestamp IN '$now - 1h..$now@+02:00'", 1);
         assertDateVariableCheckCount("atimestamp IN '$today..$today+5d'", 1);
@@ -1749,7 +1756,8 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                 "$today..$today+2d;1h",
                 // Eleven intervals a day.
                 "[$today]T[01:00,02:00,03:00,04:00,05:00,06:00,07:00,08:00,09:00,10:00,11:00]",
-                "[$today, 2020-01-[01..10]]",
+                // Ten minutes on ten days and $today.
+                "[$today, 2020-01-[01..10]T10:00]",
                 // An unknown offset unit.
                 "$today + 1x",
                 "$today..$today + 1x"

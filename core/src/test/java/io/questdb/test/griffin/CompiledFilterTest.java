@@ -263,9 +263,14 @@ public class CompiledFilterTest extends AbstractCairoTest {
             // CompiledFilterTickBounds rounds the bounds of a date variable the same way.
             final long dec31At10 = -Micros.DAY_MICROS + 10 * Micros.HOUR_MICROS;
             final long jan1At10 = 10 * Micros.HOUR_MICROS;
+            final long jan5At10 = 4 * Micros.DAY_MICROS + 10 * Micros.HOUR_MICROS;
             assertFilterFollowsClock("dt IN '$today'", true, dec31At10, "k\n2\n3\n4\n", jan1At10, "k\n5\n");
             assertFilterFollowsClock("dt NOT IN '$today'", true, dec31At10, "k\n1\n5\n6\n", jan1At10, "k\n1\n2\n3\n4\n6\n");
             assertFilterFollowsClock("dt IN '$now - 500u;1T'", true, -Micros.MILLI_MICROS, "k\n4\n", 0, "k\n5\n");
+            // The days 1969-12-22 to 12-31 form one run, which $today joins on 1970-01-01, and the JIT
+            // rounds the bounds of the merged interval.
+            assertFilterFollowsClock("dt IN '[$today, 1969-12-[22..31]]'", true, jan1At10, "k\n1\n2\n3\n4\n5\n", jan5At10, "k\n1\n2\n3\n4\n");
+            assertFilterFollowsClock("dt NOT IN '[$today, 1969-12-[22..31]]'", true, jan1At10, "k\n6\n", jan5At10, "k\n5\n6\n");
         });
     }
 
@@ -662,6 +667,83 @@ public class CompiledFilterTest extends AbstractCairoTest {
             assertCountFollowsClock(query + " IN '[" + days336 + "]' OR k = 0", true, jun2025, 336, dec2024, 336);
             assertCountFollowsClock(query + " IN '[$today, " + days336 + "]' OR k = 0", false, jun2025, 336, dec2024, 337);
             assertCountFollowsClock(query + " IN '" + elements256 + "' OR k = 0", false, jun2025, 255, dec2024, 256);
+        });
+    }
+
+    @Test
+    public void testDateVariableIntervalWithStaticRangeAtInListThresholdLimits() throws Exception {
+        // cairo.sql.jit.max.in.list.size.threshold caps the range checks of a date variable IN. The
+        // static days of '[$today, 2024-01-[01..10]]' form one run, so the JIT compiles two checks for
+        // it. 2024-01-01 is a Monday, so the workdays among them form two runs, 01-01 to 01-05 and
+        // 01-08 to 01-10, and '#workday' takes three checks. 2024-01-12 is a Friday and 2024-01-13 a
+        // Saturday.
+        final String days = "'[$today, 2024-01-[01..10]]'";
+        final String workdays = "'[$today, 2024-01-[01..10]]#workday'";
+        assertMemoryLeak(() -> {
+            createTemporalDaysTable();
+            for (String c : new String[]{"dt", "tm", "tn"}) {
+                setProperty(PropertyKey.CAIRO_SQL_JIT_MAX_IN_LIST_SIZE_THRESHOLD, 2);
+                assertFilterFollowsClock(c + " IN " + days, true, jan2024(12), keys(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12), jan2024(13), keys(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 13));
+                assertFilterFollowsClock(c + " IN " + workdays, false, jan2024(12), keys(1, 2, 3, 4, 5, 8, 9, 10, 12), jan2024(13), keys(1, 2, 3, 4, 5, 8, 9, 10));
+                setProperty(PropertyKey.CAIRO_SQL_JIT_MAX_IN_LIST_SIZE_THRESHOLD, 1);
+                assertFilterFollowsClock(c + " IN " + days, false, jan2024(12), keys(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12), jan2024(13), keys(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 13));
+                setProperty(PropertyKey.CAIRO_SQL_JIT_MAX_IN_LIST_SIZE_THRESHOLD, 3);
+                assertFilterFollowsClock(c + " IN " + workdays, true, jan2024(12), keys(1, 2, 3, 4, 5, 8, 9, 10, 12), jan2024(13), keys(1, 2, 3, 4, 5, 8, 9, 10));
+            }
+        });
+    }
+
+    @Test
+    public void testDateVariableIntervalWithStaticRangeFollowsClock() throws Exception {
+        // The compiler keeps a static day range next to a date variable as one interval per day,
+        // which evaluate() merges. The JIT compiles a range check per run of adjacent static days, so
+        // '[$today, 2024-01-[01..10]]' takes two checks rather than the eleven that exceeded the IN
+        // list threshold (10 by default) and sent the filter to Java. 2024-01-12 is a Friday and
+        // 2024-01-13 a Saturday.
+        final String days = "'[$today, 2024-01-[01..10]]'";
+        assertMemoryLeak(() -> {
+            createTemporalDaysTable();
+            for (String c : new String[]{"dt", "tm", "tn"}) {
+                assertFilterFollowsClock(c + " IN " + days, true, jan2024(12), keys(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12), jan2024(13), keys(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 13));
+                assertFilterFollowsClock(c + " IN (" + days + ")", true, jan2024(12), keys(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12), jan2024(13), keys(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 13));
+                assertFilterFollowsClock(c + " NOT IN " + days, true, jan2024(12), allDayKeysExcept(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12), jan2024(13), allDayKeysExcept(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 13));
+                assertFilterFollowsClock(c + " IN " + days + " OR k = 13", true, jan2024(12), keys(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13), jan2024(13), keys(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 13));
+                // 2023-12-18 is a Monday: the workdays to 2024-01-05 form three runs, and 2024-01-08
+                // and 01-09 are a Monday and a Tuesday.
+                assertFilterFollowsClock(
+                        c + " IN '[$today, 2023-12-[18..31], 2024-01-[01..05]]#workday'",
+                        true,
+                        jan2024(8),
+                        keys(1, 2, 3, 4, 5, 8),
+                        jan2024(9),
+                        keys(1, 2, 3, 4, 5, 9)
+                );
+                // A minute of each day does not touch the next one: eleven checks, above the threshold.
+                assertFilterFollowsClock(c + " IN '[$today, 2024-01-[01..10]T10:00]'", false, jan2024(12), keys(12), jan2024(13), keys(13));
+            }
+            assertCountFollowsClock("SELECT count() FROM x WHERE tm IN " + days, true, jan2024(12), 11, jan2024(15), 10);
+            assertFollowsClock(
+                    "SELECT s, count() c, sum(k) sk FROM x WHERE tm IN " + days + " ORDER BY s",
+                    true,
+                    QueryAssertion::expectSize,
+                    jan2024(12),
+                    """
+                            s\tc\tsk
+                            a\t5\t25
+                            b\t6\t42
+                            """,
+                    jan2024(13),
+                    """
+                            s\tc\tsk
+                            a\t6\t38
+                            b\t5\t30
+                            """
+            );
+            // The interval scan takes the IN on the designated timestamp. Under OR, the filter keeps it.
+            assertFollowsClock("SELECT k FROM x WHERE ts IN " + days, false, jan2024(12), keys(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12), jan2024(13), keys(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 13));
+            assertFollowsClock("SELECT k FROM x WHERE ts IN " + days + " OR k = 0", true, jan2024(12), keys(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12), jan2024(13), keys(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 13));
+            setCurrentMicros(jan2024(12));
+            assertQuery("SELECT k FROM x WHERE tm IN " + days).noLeakCheck().assertsPlanContaining("Async JIT Filter");
         });
     }
 

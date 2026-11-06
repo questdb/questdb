@@ -34,6 +34,7 @@ import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.TimeZoneRules;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * A Function that represents a pre-parsed tick expression containing date variables
@@ -127,6 +128,9 @@ public class CompiledTickExpression extends UntypedFunction {
         this.durationPartCount = (int) ir.getQuick(IR_DURATION_COUNT_INDEX);
         this.hasDurationWithExchange = (header & HDR_DWE_BIT) != 0;
         this.dayFilterMask = (int) (header & HDR_DAY_MASK);
+        // IntervalUtils.compileTickExpr() parses the '#' suffix as a day filter only when it names no
+        // tick calendar, so Phase 2 of evaluate() never meets both.
+        assert dayFilterMask == 0 || exchangeSchedule == null;
         this.durationOff = IR_PREFIX_SIZE;
         this.toOff = durationOff + durationPartCount;
         this.elemOff = toOff + timeOverrideCount * 3;
@@ -193,12 +197,8 @@ public class CompiledTickExpression extends UntypedFunction {
         }
 
         // Phase 2: Apply day filter (before timezone conversion, in local time)
-        if (dayFilterMask != 0 && exchangeSchedule == null) {
-            applyDayFilter(outIntervals, outStart);
-        }
-
         // Phase 3: Apply timezone conversion
-        applyTimezone(outIntervals, outStart);
+        applyDayFilterAndTimezone(outIntervals, outStart);
 
         // Phase 4: Apply exchange schedule filter + optional duration
         if (exchangeSchedule != null) {
@@ -214,6 +214,14 @@ public class CompiledTickExpression extends UntypedFunction {
         }
     }
 
+    /**
+     * Returns the number of IR elements: one per SINGLE_VAR, RANGE and STATIC entry.
+     */
+    @TestOnly
+    public int getElementCount() {
+        return elemCount;
+    }
+
     public String getExpression() {
         return expression;
     }
@@ -225,15 +233,23 @@ public class CompiledTickExpression extends UntypedFunction {
      * bound has to hold for every clock value, not only for the current one: '$today#workday' yields
      * one interval on a weekday and none at a weekend.
      * <p>
-     * The bound is the sum of the element bounds. The day filter only drops intervals, the timezone
-     * conversion maps each interval to one, and the final merge only joins them, so none of them
-     * raises the count.
+     * The bound is the sum of the element bounds, where the STATIC entries count together. The final
+     * merge joins the intervals that overlap or touch, so it yields no more intervals than the STATIC
+     * bound below plus the intervals that the date variable elements emit.
      * <ul>
-     *     <li>STATIC: 1. The compiler expands a static element into one STATIC entry per
-     *     interval.</li>
+     *     <li>STATIC: the runs of overlapping or adjacent intervals that the STATIC entries leave
+     *     after the day filter and the timezone conversion, plus one for each empty interval
+     *     (lo &gt; hi, as a zero duration yields), which the merge may keep apart from a run. The
+     *     compiler writes one STATIC entry per bracket leaf, day or list value, so
+     *     '[$today, 2024-01-[01..20]]' holds twenty in one run. The day filter and the conversion
+     *     treat each interval on its own and do not read "now", but either can split a run: the
+     *     filter keeps or drops an interval by the weekday of its lo, and a clock change at local
+     *     midnight can part two adjacent local days in UTC. So this method runs both on the STATIC
+     *     entries as {@link #evaluate} does, before it counts the runs.</li>
      *     <li>SINGLE_VAR: the time override count, or 1 without time overrides.
      *     {@link #emitSingleVar} emits one interval per time override for a day-aligned value, and
-     *     one interval otherwise.</li>
+     *     one interval otherwise. The day filter only drops intervals, and the timezone conversion
+     *     maps each interval to one.</li>
      *     <li>RANGE: 1 when the range is contiguous, that is, it has no business-day walk, and the
      *     expression has no time override, duration, day filter or named timezone (a numeric offset
      *     is fine). {@link #emitRange} then emits either one interval or a run of adjacent whole
@@ -260,6 +276,7 @@ public class CompiledTickExpression extends UntypedFunction {
                 && dayFilterMask == 0
                 && tzRules == null;
         long count = 0;
+        LongList staticIntervals = null;
         int pos = elemOff;
         for (int i = 0; i < elemCount; i++) {
             final long word = ir.getQuick(pos);
@@ -271,7 +288,10 @@ public class CompiledTickExpression extends UntypedFunction {
                 count += perDayCount;
                 pos++;
             } else if (tag == TAG_STATIC) {
-                count++;
+                if (staticIntervals == null) {
+                    staticIntervals = new LongList();
+                }
+                staticIntervals.add(ir.getQuick(pos + 1), ir.getQuick(pos + 2));
                 pos += 3;
             } else {
                 if (!isContiguousRange
@@ -283,6 +303,29 @@ public class CompiledTickExpression extends UntypedFunction {
                 count++;
                 pos += 2;
             }
+            if (count > cap) {
+                return -1;
+            }
+        }
+        if (staticIntervals != null) {
+            applyDayFilterAndTimezone(staticIntervals, 0);
+            int emptyCount = 0;
+            int writeIndex = 0;
+            for (int i = 0, n = staticIntervals.size(); i < n; i += 2) {
+                final long lo = staticIntervals.getQuick(i);
+                final long hi = staticIntervals.getQuick(i + 1);
+                if (lo > hi) {
+                    emptyCount++;
+                } else {
+                    staticIntervals.setQuick(writeIndex++, lo);
+                    staticIntervals.setQuick(writeIndex++, hi);
+                }
+            }
+            staticIntervals.setPos(writeIndex);
+            if (staticIntervals.size() > 2) {
+                IntervalUtils.unionBracketExpandedIntervals(staticIntervals, 0);
+            }
+            count += staticIntervals.size() / 2 + emptyCount;
             if (count > cap) {
                 return -1;
             }
@@ -368,6 +411,15 @@ public class CompiledTickExpression extends UntypedFunction {
             out.setQuick(startIndex + i, out.getQuick(originalSize + i));
         }
         out.setPos(startIndex + totalIntervals * 2);
+    }
+
+    // Phases 2 and 3 of evaluate(). getMaxIntervalCount() runs them on the STATIC entries alone and
+    // takes the result for every "now", so neither may read "now".
+    private void applyDayFilterAndTimezone(LongList out, int startIndex) {
+        if (dayFilterMask != 0 && exchangeSchedule == null) {
+            applyDayFilter(out, startIndex);
+        }
+        applyTimezone(out, startIndex);
     }
 
     private void applyDurationToAllIntervals(LongList out, int startIndex) {
