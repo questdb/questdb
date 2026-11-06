@@ -289,8 +289,8 @@ public class AlterTableForceReindexTest extends AbstractCairoTest {
                 newDir = "2024-01-01." + writer.getTxn();
             }
             // Reindexing s alone links b's and p's live index files into the new directory
-            ff.failOpenRw = "/" + newDir + "/s.";
-            ff.failRmdir = "/" + newDir;
+            ff.failOpenRw = Files.SEPARATOR + newDir + Files.SEPARATOR + "s.";
+            ff.failRmdir = Files.SEPARATOR + newDir;
             try {
                 execute("alter table t force reindex parquet column s");
                 Assert.fail("the index rebuild must fail");
@@ -494,8 +494,8 @@ public class AlterTableForceReindexTest extends AbstractCairoTest {
             try (TableWriter writer = getWriter("t")) {
                 newDir = "2024-01-01." + writer.getTxn();
             }
-            ff.failOpenRw = "/" + newDir + "/s.";
-            ff.failRmdir = "/" + newDir;
+            ff.failOpenRw = Files.SEPARATOR + newDir + Files.SEPARATOR + "s.";
+            ff.failRmdir = Files.SEPARATOR + newDir;
             try {
                 execute("alter table t force reindex parquet");
                 Assert.fail("the index rebuild must fail");
