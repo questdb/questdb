@@ -1,0 +1,18 @@
+FROM eclipse-temurin:17-jdk
+
+RUN _jh="$(dirname "$(dirname "$(readlink -f "$(command -v java)")")")" && ln -sfn "$_jh" /opt/helix-jdk
+ENV JAVA_HOME=/opt/helix-jdk
+
+ENV MAVEN_VERSION=3.9.9
+ENV MAVEN_HOME=/opt/maven
+ENV PATH=/opt/maven/bin:$PATH
+
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates git curl tar && rm -rf /var/lib/apt/lists/*
+
+RUN curl -fsSL https://archive.apache.org/dist/maven/maven-3/${MAVEN_VERSION}/binaries/apache-maven-${MAVEN_VERSION}-bin.tar.gz -o /tmp/maven.tar.gz && tar -xzf /tmp/maven.tar.gz -C /opt && ln -s /opt/apache-maven-${MAVEN_VERSION} /opt/maven && rm /tmp/maven.tar.gz
+
+WORKDIR /app
+
+COPY . .
+
+RUN mvn -B -ntp -DskipTests -pl '!benchmarks' install
