@@ -4103,7 +4103,7 @@ public class PivotTest extends AbstractSqlParserTest {
             // │ US      │   NULL │   NULL │
             // └─────────┴────────┴────────┘
             //
-            // We return empty rows because PivotBinder.rewritePivot() pushes IN filter
+            // We return empty rows because PivotBinder.bindPivot() pushes IN filter
             // conditions down to the inner query, so no rows match when FOR values don't
             // exist in the data (e.g., year IN (1990, 1995) filters out all rows).
             // This behavior is kept for performance reasons.

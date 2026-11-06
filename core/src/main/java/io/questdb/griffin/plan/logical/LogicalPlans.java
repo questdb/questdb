@@ -322,10 +322,8 @@ public final class LogicalPlans {
      * otherwise.
      */
     public static ScanPlan expiringScan(LogicalPlan plan) {
-        while (!(plan instanceof ScanPlan) && plan != null && plan.inputCount() == 1) {
-            plan = plan.inputAt(0);
-        }
-        return plan instanceof ScanPlan scan && scan.getExpiryPolicy() != null ? scan : null;
+        final ScanPlan scan = scanUnderChain(plan);
+        return scan != null && scan.isExpiringRead() ? scan : null;
     }
 
     /**
@@ -1132,6 +1130,16 @@ public final class LogicalPlans {
      * {@link #SELF_COMPARISON_FALSE} for {@code !=}, {@code <>}, {@code >} and {@code <}, otherwise
      * {@link #SELF_COMPARISON_NONE}.
      */
+    /**
+     * The scan the single-input chain of the plan ends in; null when it ends in anything else.
+     */
+    public static ScanPlan scanUnderChain(LogicalPlan plan) {
+        while (!(plan instanceof ScanPlan) && plan.inputCount() == 1) {
+            plan = plan.inputAt(0);
+        }
+        return plan instanceof ScanPlan scan ? scan : null;
+    }
+
     public static int selfComparison(FunctionExpression call) {
         final ComparisonOperator operator = ComparisonOperator.of(call.getName());
         if (operator != null && call.getArgumentCount() == 2 && call.argumentAt(0) instanceof ColumnExpression left

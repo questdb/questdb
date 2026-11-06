@@ -57,6 +57,8 @@ import org.junit.runners.Parameterized;
 
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @RunWith(Parameterized.class)
 public class WindowJoinTest extends AbstractCairoTest {
@@ -7998,6 +8000,95 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowJoinUnqualifiedColumnReads() throws Exception {
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (sym SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO m VALUES ('A', 1.0, '2024-01-01'), ('B', 2.0, '2024-01-02')");
+            execute("CREATE TABLE s (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO s VALUES ('A', 10.0, '2024-01-01'), ('B', 20.0, '2024-01-02')");
+            execute("CREATE TABLE s2 (sym SYMBOL, v DOUBLE, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE j (sym SYMBOL, z DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            final String range = " RANGE BETWEEN 1 HOUR PRECEDING AND 1 HOUR FOLLOWING";
+            final String join = " FROM m a WINDOW JOIN s c ON (a.sym = c.sym)" + range;
+            final String join2 = join + " WINDOW JOIN s d ON (a.sym = d.sym)" + range;
+            final String pivot = "SELECT *" + join;
+
+            // what the select list reads outside its aggregates, in every spelling of the select list
+            assertAmbiguous("SELECT sym" + join, "sym");
+            assertAmbiguous("SELECT ts" + join, "ts");
+            assertAmbiguous("SELECT sym s1" + join, "sym");
+            assertAmbiguous("SELECT DISTINCT sym" + join, "sym");
+            assertAmbiguous("SELECT sym || 'x' y" + join, "sym");
+            assertAmbiguous("SELECT ts::LONG y" + join, "ts");
+            assertAmbiguous("SELECT a.sym, concat(a.sym, sym) y" + join, "sym");
+            assertAmbiguous("SELECT CASE WHEN v > 0 THEN sym ELSE 'n' END y" + join, "sym");
+            assertAmbiguous("SELECT a.ts, avg(c.price) + length(sym) x" + join, "sym");
+            assertAmbiguous("SELECT * FROM (SELECT ts" + join + ")", "ts");
+            assertAmbiguous("WITH q AS (SELECT sym" + join + ") SELECT * FROM q", "sym");
+            assertAmbiguous("SELECT sym FROM m WINDOW JOIN s ON (m.sym = s.sym)" + range, "sym");
+
+            // the filter of the master, and an order the select list does not name
+            assertAmbiguous("SELECT a.ts, avg(c.price) x" + join + " WHERE sym = 'A'", "sym");
+            assertAmbiguous("SELECT a.ts, avg(c.price) x" + join + " WHERE v > 0 AND ts > 0", "ts");
+            assertAmbiguous("SELECT a.ts, avg(c.price) x" + join + " ORDER BY sym", "sym");
+            assertAmbiguous("SELECT a.ts, avg(c.price) x" + join + " ORDER BY sym DESC, a.ts", "sym");
+            assertAmbiguous("SELECT a.ts, avg(c.price) x" + join + " ORDER BY length(sym)", "sym");
+            assertAmbiguous("SELECT a.sym, avg(c.price) x" + join + " ORDER BY ts", "ts");
+
+            // several slaves, and a column of a slave other than the first the master holds as well
+            assertAmbiguous("SELECT sym" + join2, "sym");
+            assertAmbiguous("SELECT price" + join2, "price");
+            assertAmbiguous("SELECT a.ts, avg(price) x" + join2, "price");
+            assertAmbiguous("SELECT a.ts, first(price) x" + join2, "price");
+            assertAmbiguous("SELECT a.ts, first(v) x" + join + " WINDOW JOIN s2 d ON (a.sym = d.sym)" + range, "v");
+
+            // a master that joins tables of its own
+            assertAmbiguous("SELECT sym, avg(c.price) x FROM m a JOIN j b ON (a.sym = b.sym) WINDOW JOIN s c ON (a.sym = c.sym)" + range, "sym");
+
+            // PIVOT over the join
+            assertAmbiguous(pivot + " PIVOT (sum(c.price) FOR sym IN ('A') GROUP BY a.ts)", "sym");
+            assertAmbiguous(pivot + " PIVOT (sum(c.price) FOR a.sym IN ('A') GROUP BY ts)", "ts");
+            assertAmbiguous(pivot + " WHERE sym = 'A' PIVOT (sum(c.price) FOR a.sym IN ('A') GROUP BY a.ts)", "sym");
+
+            // a column only the slave holds is out of reach outside an aggregate
+            final String slaveRead = "WINDOW join cannot reference right table non-aggregate column: ";
+            assertExceptionNoLeakCheck("SELECT price" + join, 7, slaveRead + "price");
+            assertExceptionNoLeakCheck("SELECT price + 1 y" + join, 7, slaveRead + "price");
+            assertExceptionNoLeakCheck("SELECT a.sym, c.price + 1 y" + join, 14, slaveRead + "c.price");
+            final String ordered = "SELECT a.ts, avg(c.price) x" + join + " ORDER BY ";
+            assertExceptionNoLeakCheck(ordered + "price", ordered.length(), slaveRead + "price");
+            assertExceptionNoLeakCheck(ordered + "c.price", ordered.length(), slaveRead + "c.price");
+            assertExceptionNoLeakCheck(ordered + "c.sym", ordered.length(), slaveRead + "c.sym");
+            assertExceptionNoLeakCheck(ordered + "price + 1", ordered.length(), slaveRead + "price");
+
+            // what one model holds keeps working, whatever the spelling
+            assertQuery("SELECT a.sym, v, a.v v2, avg(c.price) x, avg(price) y, avg(c.price) + v z" + join + " ORDER BY a.ts")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            sym\tv\tv2\tx\ty\tz
+                            A\t1.0\t1.0\t10.0\t10.0\t11.0
+                            B\t2.0\t2.0\t20.0\t20.0\t22.0
+                            """);
+            assertQuery("SELECT a.ts, a.sym, avg(c.price) x" + join + " WHERE v > 1 AND a.sym = 'B' ORDER BY sym, ts, x")
+                    .noLeakCheck()
+                    .returns("""
+                            ts\tsym\tx
+                            2024-01-02T00:00:00.000000Z\tB\t20.0
+                            """);
+            assertQuery("SELECT a.ts, avg(c.price) x" + join + " ORDER BY v DESC")
+                    .noLeakCheck()
+                    .returns("""
+                            ts\tx
+                            2024-01-02T00:00:00.000000Z\t20.0
+                            2024-01-01T00:00:00.000000Z\t10.0
+                            """);
+        });
+    }
+
+    @Test
     public void testWindowJoinVectorizedSharedColumnAggregates() throws Exception {
         // Multiple vectorized slave aggregates where two share one slave column dedup to a single
         // column slot. The per-worker reduce path kept its function args function-indexed (an entry
@@ -9452,6 +9543,15 @@ public class WindowJoinTest extends AbstractCairoTest {
                             sym2	sym2	2023-01-01T09:00:00.000000Z	1
                             """);
         });
+    }
+
+    /**
+     * Asserts that the first read of the column with no qualifier fails as ambiguous.
+     */
+    private static void assertAmbiguous(String sql, String column) throws Exception {
+        final Matcher read = Pattern.compile("(?<![.\\w])" + column + "\\b").matcher(sql);
+        Assert.assertTrue(sql, read.find());
+        assertExceptionNoLeakCheck(sql, read.start(), "Ambiguous column [name=" + column + ']');
     }
 
     private static boolean containsFactory(RecordCursorFactory factory, Class<?> factoryClass) {

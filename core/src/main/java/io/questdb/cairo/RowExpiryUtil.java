@@ -30,7 +30,7 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 
 /**
- * Shared helpers + codec for the row-expiry feature (read filter in {@code SqlParser}, cleanup in
+ * Shared helpers + codec for the row-expiry feature (read binding in {@code ExpiryReadBinder}, cleanup in
  * {@link RowExpiryCleanupJob}, validation/SHOW CREATE/catalogue in the compiler).
  * <p>
  * An {@code EXPIRE ROWS} policy is persisted as a single string in the table's {@code _meta}
@@ -40,7 +40,7 @@ import io.questdb.std.str.StringSink;
  * <ul>
  *     <li><b>scalar WHEN</b> — a plain (un-prefixed) boolean predicate. A row expires when it is TRUE.</li>
  *     <li><b>KEEP LATEST</b> ({@code 0x1F 'L'} + raw PARTITION BY column list) — keep only the latest row per
- *         key (a {@code LATEST ON} rewrite).</li>
+ *         key (a {@code LATEST ON} over the read).</li>
  *     <li><b>KEEP [N] HIGHEST/LOWEST</b> ({@code 0x1F 'N'} + {@code n 0x1F dir 0x1F col 0x1F keys}) — keep the
  *         group max/min ({@code n==0}, all ties) or the top-N by a column ({@code n>0}); desugars to a window
  *         predicate at use (the designated timestamp is needed only for the top-N tiebreak, known then).</li>
@@ -611,7 +611,7 @@ public final class RowExpiryUtil {
 
     /**
      * Reverses {@link #appendEscapedField} over {@code [lo, hi)}. A field carrying no escape - every field
-     * of every ordinary policy - is returned as a sub-sequence, so the read-filter path allocates nothing.
+     * of every ordinary policy - is returned as a sub-sequence.
      */
     private static CharSequence unescapeField(CharSequence stored, int lo, int hi) {
         for (int i = lo; i < hi; i++) {
@@ -634,7 +634,7 @@ public final class RowExpiryUtil {
 
     /**
      * Decoded view of a KEEP [N] HIGHEST/LOWEST policy ({@code 0x1F 'N' n 0x1F dir 0x1F col 0x1F keys}), used
-     * by SHOW CREATE, the catalogue functions, the read-filter rewrite and DDL validation. Construct it for a
+     * by SHOW CREATE, the catalogue functions and DDL validation. Construct it for a
      * policy {@link #isKeepBy} accepts.
      * <p>
      * Every field tolerates a truncated or otherwise malformed policy string: a missing separator reads as an

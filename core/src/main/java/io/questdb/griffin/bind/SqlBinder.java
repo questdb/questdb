@@ -529,7 +529,7 @@ public final class SqlBinder implements Mutable {
     private LogicalPlan bindQueryBlockWithHints(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         final BindScope bindScope = ctx.scope();
         if (model.isPivot()) {
-            return pivotBinder.rewritePivot(model, executionContext);
+            return pivotBinder.bindPivot(model, executionContext);
         }
         final boolean isOrderBound = !ctx.isSetOperationBranch;
         final QueryModel source = model.getNestedModel();
@@ -870,7 +870,7 @@ public final class SqlBinder implements Mutable {
 
     private LogicalPlan bindSourceWithHints(QueryModel source, SqlExecutionContext executionContext) throws SqlException {
         if (source.isPivot()) {
-            return pivotBinder.rewritePivot(source, executionContext);
+            return pivotBinder.bindPivot(source, executionContext);
         }
         if (source.getNestedModel() != null) {
             validateTimestampOffsetUnit(source);
@@ -922,12 +922,10 @@ public final class SqlBinder implements Mutable {
                 bindScanColumn(scan, i, table.getColumnName(i), table.getColumnType(i), table.isSymbolTableStatic(i),
                         table.isIndexed(i), i == table.getTimestampIndex());
             }
-            scan.setRandomAccess(!isRowIdSuppressed);
+            // the marker names the table a policy reads, and that read keeps its row ids
+            scan.setRandomAccess(!isRowIdSuppressed || expiryPredicate != null);
             if (expiryPredicate != null) {
                 return bindTimestamp(expiryReadBinder.bindScanRead(scan, expiryPolicy, tableName.position, executionContext), source);
-            }
-            if (expiryReadBinder.isPolicyBinding(token)) {
-                expiryReadBinder.markBoundRead(scan);
             }
             return bindTimestamp(scan, source);
         }

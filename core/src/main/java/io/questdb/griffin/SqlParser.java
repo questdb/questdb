@@ -656,7 +656,7 @@ public class SqlParser {
 
         if (isKeepKeyword(tok)) {
             // Relative retention modes (passthrough-mat-view-only, validated at create), stored encoded in
-            // the predicate slot and rewritten by the read filter:
+            // the predicate slot and applied by the read filter:
             //   KEEP LATEST [ON <ts>] PARTITION BY <cols>      -> latest row per key (LATEST ON)
             //   KEEP [<N>] HIGHEST|LOWEST ON <col> [PARTITION BY <cols>] -> group max/min (or top-N) by a column
             predicateStart = lexer.lastTokenPosition();
@@ -1023,7 +1023,7 @@ public class SqlParser {
         return node.token != null && !node.isQuoted && Chars.startsWith(node.token, '@');
     }
 
-    // The name the row-expiry read filter resolves a table reference by: unquoted, without the no-rowid
+    // The table a window WHEN policy's sub-query names: unquoted, without the no-rowid
     // marker. The marker only turns off random access, and binding strips it before it
     // reads the table, so a reference spelled with it reads the same table as the bare name.
     private static CharSequence expiryLookupName(CharSequence tableNameToken) {
@@ -5761,10 +5761,6 @@ public class SqlParser {
                 throw errUnexpected(lexer, tok);
             }
 
-            // No row-expiry read filter is applied to an UPDATE target: the read filter is
-            // materialized-view-only (isMatView()), and a materialized view cannot be the target of an
-            // UPDATE (rejected downstream with "cannot modify materialized view"). Plain tables never carry
-            // an expiry policy (rejected at CREATE/ALTER), so there is nothing to AND into the WHERE here.
             updateQueryModel.setNestedModel(fromModel);
         }
         return updateQueryModel;

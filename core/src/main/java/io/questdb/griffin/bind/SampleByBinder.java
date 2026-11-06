@@ -1125,10 +1125,7 @@ final class SampleByBinder {
         window.getOutput().copyFrom(output);
         scope.resetAliases(output);
         window.getOutput().add(keepId, ctx.createOutputName("__keep_subsample"), ColumnType.BOOLEAN, false);
-        final FilterPlan filter = ctx.planNodes.filters.next().of(window, ctx.planNodes.columns.next().of(keepId, ColumnType.BOOLEAN, subsample.position), subsample.position);
-        final ProjectPlan project = ctx.identityProjection(filter, subsample.position);
-        project.getExpressions().remove(output.getColumnCount());
-        project.getOutput().remove(output.getColumnCount());
+        final ProjectPlan project = ctx.keepRows(window, subsample.position);
         ctx.stopTimestampIntrinsics(project.getOutput());
         return project;
     }

@@ -449,6 +449,53 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNoRowidMarkerKeepsRowIdsOfValuePolicyRead() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO trades VALUES ('A', '2024-01-01T00:00:01.000000Z'), ('B', '2024-01-05T00:00:01.000000Z')");
+            execute("CREATE TABLE prices (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO prices VALUES
+                    ('A', 1.0, '2024-01-01T00:00:00.000000Z'),
+                    ('A', -1.0, '2024-01-02T00:00:00.000000Z'),
+                    ('B', 3.0, '2024-01-03T00:00:00.000000Z'),
+                    ('B', 5.0, '2024-01-04T00:00:00.000000Z')""");
+            execute("CREATE MATERIALIZED VIEW pmv AS (SELECT * FROM prices) EXPIRE ROWS WHEN price < 0");
+            drainWalAndMatViewQueues();
+            final String horizonJoin = "SELECT avg(p.price) x FROM trades t HORIZON JOIN '*!*pmv' p ON (t.sym = p.sym) RANGE FROM 0s TO 0s STEP 1s AS h";
+            // A's trade prevails on 1.0 and B's on 5.0.
+            assertQuery(horizonJoin).noLeakCheck().noRandomAccess().expectSize().returns("x\n3.0\n");
+
+            execute("ALTER MATERIALIZED VIEW pmv SET EXPIRE ROWS WHEN ts < '2024-01-01T12:00:00.000000Z'");
+            drainWalAndMatViewQueues();
+            // The cutoff hides 1.0, the only price A's trade could prevail on.
+            assertQuery(horizonJoin).noLeakCheck().noRandomAccess().expectSize().returns("x\n5.0\n");
+            // The ten days around each trade hold A's -1.0, and B's 3.0 and 5.0.
+            assertQuery("SELECT t.sym, avg(p.price) x FROM trades t WINDOW JOIN '*!*pmv' p ON (t.sym = p.sym) RANGE BETWEEN 10 DAY PRECEDING AND 10 DAY FOLLOWING")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            sym\tx
+                            A\t-1.0
+                            B\t4.0
+                            """);
+            assertQuery("SELECT * FROM '*!*pmv'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            sym\tprice\tts
+                            A\t-1.0\t2024-01-02T00:00:00.000000Z
+                            B\t3.0\t2024-01-03T00:00:00.000000Z
+                            B\t5.0\t2024-01-04T00:00:00.000000Z
+                            """);
+            for (String join : new String[]{"SPLICE", "ASOF", "LT"}) {
+                final String sql = "SELECT t.sym, t.ts, p.price FROM trades t " + join + " JOIN %s p ON (sym)";
+                assertSqlCursors(sql.replace("%s", "pmv"), sql.replace("%s", "'*!*pmv'"));
+            }
+        });
+    }
+
+    @Test
     public void testNoRowidMarkerSpellingReadsThroughPolicy() throws Exception {
         // The no-rowid marker prefix names the same table as the bare name, so a read spelled with it applies
         // the policy, and a materialized or live view cannot read a policied view through it.
@@ -3690,6 +3737,52 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
             try (SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1).with(security, bindVariableService, null, -1, null)) {
                 assertSelectAsked(security, context, "SELECT DISTINCT k FROM mv", "[k,v,ts]");
             }
+        });
+    }
+
+    @Test
+    public void testWindowPolicySubQueryReadsViewAsPlainTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (sym SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base VALUES
+                    ('A', 1.0, '2024-01-01T00:00:00.000000Z'),
+                    ('A', 3.0, '2024-01-01T12:00:00.000000Z'),
+                    ('B', 2.0, '2024-01-02T00:00:00.000000Z'),
+                    ('B', 5.0, '2024-01-03T00:00:00.000000Z'),
+                    ('C', 4.0, '2024-01-04T00:00:00.000000Z')""");
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base)");
+            drainWalAndMatViewQueues();
+            // Only A has two rows in one day, so the policy expires A's non-max row and keeps all of B and C.
+            execute("""
+                    ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS WHEN v < max(v) OVER (PARTITION BY sym)
+                    AND sym IN (SELECT sym FROM (SELECT sym, count() c, ts FROM mv SAMPLE BY 1d) WHERE c > 1)""");
+            drainWalAndMatViewQueues();
+
+            // The sub-query reads the view without the policy, like a table, so its SAMPLE BY runs in parallel.
+            assertQuery("SELECT sym, v FROM mv ORDER BY ts")
+                    .noLeakCheck()
+                    .withPlanContaining("Async Group By")
+                    .returns("""
+                            sym\tv
+                            A\t3.0
+                            B\t2.0
+                            B\t5.0
+                            C\t4.0
+                            """);
+            // The read of the view applies the policy, so its SAMPLE BY keeps the cursor it streams from.
+            assertQuery("SELECT ts, count() c FROM mv SAMPLE BY 1d")
+                    .noLeakCheck()
+                    .withPlanContaining("Sample By")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tc
+                            2024-01-01T00:00:00.000000Z\t1
+                            2024-01-02T00:00:00.000000Z\t1
+                            2024-01-03T00:00:00.000000Z\t1
+                            2024-01-04T00:00:00.000000Z\t1
+                            """);
         });
     }
 

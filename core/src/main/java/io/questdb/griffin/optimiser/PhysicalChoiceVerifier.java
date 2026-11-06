@@ -465,6 +465,9 @@ final class PhysicalChoiceVerifier {
     }
 
     static String aggregate(AggregatePlan aggregate, boolean isPlanned) {
+        if (aggregate.hasGroupingSets() && aggregate.getSharedConsumerCount() > 0) {
+            return PlanVerifier.GROUPING_SET_SHARED;
+        }
         final String sharedRead = sharedRead(aggregate, isPlanned);
         if (sharedRead != null) {
             return sharedRead;

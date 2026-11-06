@@ -25,7 +25,6 @@
 package io.questdb.griffin.bind;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MetadataCache;
 import io.questdb.cairo.RowExpiryUtil;
 import io.questdb.cairo.TableToken;
@@ -39,11 +38,9 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ExpressionVisitor;
-import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.LogicalPlan;
-import io.questdb.griffin.plan.logical.OutputSchema;
-import io.questdb.griffin.plan.logical.ProjectPlan;
+import io.questdb.griffin.plan.logical.LogicalPlans;
 import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.griffin.plan.logical.TreeWalk;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
@@ -78,8 +75,6 @@ final class ExpiryReadBinder implements Mutable {
     // predicate, reads the table without the policy rather than applying the policy a second time. Lookups ignore
     // case, as the table registry does, since a policy sub-query can name the table in a different case from the read.
     private final LowerCaseCharSequenceHashSet tablesBound = new LowerCaseCharSequenceHashSet();
-    private String boundPredicate;
-    private int boundPosition;
 
     ExpiryReadBinder(BindContext ctx, SqlBinder binder, SqlCompilerImpl compiler) {
         this.ctx = ctx;
@@ -120,18 +115,6 @@ final class ExpiryReadBinder implements Mutable {
         return ctx.planNodes.filters.next().of(scan, bound, scan.getPosition());
     }
 
-    private void beginBinding(TableToken token, String predicate, int position) {
-        tablesBound.add(token.getTableName());
-        boundPredicate = predicate;
-        boundPosition = position;
-    }
-
-    private void endBinding(TableToken token) {
-        tablesBound.remove(token.getTableName());
-        boundPredicate = null;
-        boundPosition = 0;
-    }
-
     /**
      * True when the policy binds a query of its own, see {@link #bindQueryRead}, rather than over the table's scan.
      */
@@ -155,26 +138,20 @@ final class ExpiryReadBinder implements Mutable {
         sql.putAscii(' ').putAscii(RowExpiryUtil.KEEP_COLUMN).putAscii(" FROM ");
         RowExpiryUtil.appendQuotedIdentifier(sql, token.getTableName());
         final LogicalPlan keepQuery;
-        beginBinding(token, policy.getPredicate(), position);
+        tablesBound.add(token.getTableName());
         try {
             final QueryModel query = compiler.parseExpiryQuery(sql, binder.getParserCallback());
             query.setArtificialStar(true);
             query.setViewNameExpr(viewName);
             keepQuery = binder.bindQuery(query, executionContext);
         } finally {
-            endBinding(token);
+            tablesBound.remove(token.getTableName());
         }
-        final OutputSchema output = keepQuery.getOutput();
-        final int keepIndex = output.getColumnCount() - 1;
-        final FilterPlan filter = ctx.planNodes.filters.next().of(
-                binder.declareTimestamp(keepQuery, SqlBinder.timestampIndex(output, policy.getTimestampName(), position), position),
-                ctx.planNodes.columns.next().of(output.getColumnId(keepIndex), ColumnType.BOOLEAN, position),
-                position
-        );
-        final ProjectPlan read = ctx.identityProjection(filter, position);
-        read.getExpressions().remove(keepIndex);
-        read.getOutput().remove(keepIndex);
-        return read;
+        final ScanPlan scan = LogicalPlans.scanUnderChain(keepQuery);
+        scan.setExpiringRead(true);
+        scan.setPosition(position);
+        final int timestampIndex = SqlBinder.timestampIndex(keepQuery.getOutput(), policy.getTimestampName(), position);
+        return ctx.keepRows(binder.declareTimestamp(keepQuery, timestampIndex, position), position);
     }
 
     /**
@@ -183,9 +160,9 @@ final class ExpiryReadBinder implements Mutable {
     LogicalPlan bindScanRead(ScanPlan scan, MetadataCache.ExpiryPolicyInfo policy, int position, SqlExecutionContext executionContext) throws SqlException {
         final TableToken token = scan.getTableToken();
         final String predicate = policy.getPredicate();
-        beginBinding(token, predicate, position);
+        scan.setExpiringRead(true);
+        tablesBound.add(token.getTableName());
         try {
-            markBoundRead(scan);
             if (RowExpiryUtil.isKeepLatest(predicate)) {
                 final StringSink text = policyTexts.next();
                 RowExpiryUtil.appendQuotedIdentifier(text, policy.getTimestampName());
@@ -195,7 +172,7 @@ final class ExpiryReadBinder implements Mutable {
             }
             return bindKeepFilter(scan, token, predicate, executionContext);
         } finally {
-            endBinding(token);
+            tablesBound.remove(token.getTableName());
         }
     }
 
@@ -217,24 +194,6 @@ final class ExpiryReadBinder implements Mutable {
     public void clear() {
         policyTexts.clear();
         tablesBound.clear();
-        boundPredicate = null;
-        boundPosition = 0;
-    }
-
-    /**
-     * Records on a scan of a table whose policy is being bound the policy its read applies, at the position of the read
-     * rather than in the text of the policy.
-     */
-    void markBoundRead(ScanPlan scan) {
-        scan.setExpiryPolicy(boundPredicate);
-        scan.setPosition(boundPosition);
-    }
-
-    /**
-     * True when the table is read for the policy being bound on it, which reads it without the policy.
-     */
-    boolean isPolicyBinding(TableToken token) {
-        return tablesBound.contains(token.getTableName());
     }
 
     /**
@@ -244,7 +203,7 @@ final class ExpiryReadBinder implements Mutable {
      */
     MetadataCache.ExpiryPolicyInfo policyOf(TableToken token, int position, SqlExecutionContext executionContext) throws SqlException {
         final MetadataCache metadataCache = executionContext.getCairoEngine().getMetadataCache();
-        if (!metadataCache.mayHaveExpiryPolicy() || isPolicyBinding(token)) {
+        if (!metadataCache.mayHaveExpiryPolicy() || tablesBound.contains(token.getTableName())) {
             return null;
         }
         final ExpiryReadPolicy readPolicy = executionContext.getExpiryReadPolicy(token);

@@ -360,6 +360,34 @@ final class TemporalJoinBinder {
         }
     }
 
+    private static boolean holdsColumn(ExpressionNode column, OutputSchema schema, CharSequence alias) throws SqlException {
+        final int index = FunctionBinder.findColumn(column, schema, alias);
+        if (index == OutputSchema.COLUMN_AMBIGUOUS) {
+            throw SqlException.ambiguousColumn(column.position, column.token);
+        }
+        return index >= 0;
+    }
+
+    /**
+     * The step of the slave that holds the column, or -1 when the master holds it or no model does. Rejects a name that
+     * more than one model of the join holds.
+     */
+    private static int windowJoinColumnStep(ExpressionNode column, WindowJoinPlan plan) throws SqlException {
+        boolean isHeld = holdsColumn(column, plan.inputAt(0).getOutput(), plan.getSteps().getQuick(0).getMasterAlias());
+        int step = -1;
+        for (int s = 0, n = plan.getSteps().size(); s < n; s++) {
+            final WindowJoinStep candidate = plan.getSteps().getQuick(s);
+            if (holdsColumn(column, candidate.getSlave().getOutput(), candidate.getSlaveAlias())) {
+                if (isHeld) {
+                    throw SqlException.ambiguousColumn(column.position, column.token);
+                }
+                isHeld = true;
+                step = s;
+            }
+        }
+        return step;
+    }
+
     private static CharSequence windowJoinAggregateName(ExpressionNode node, QueryModel model) {
         for (int i = 0, n = model.getColumns().size(); i < n; i++) {
             final QueryColumn column = model.getColumns().getQuick(i);
@@ -618,35 +646,30 @@ final class TemporalJoinBinder {
         return criteria;
     }
 
-    private int windowJoinReferencedStep(ExpressionNode node, WindowJoinPlan plan, OutputSchema master, int step, int position) throws SqlException {
+    private int windowJoinReferencedStep(ExpressionNode node, WindowJoinPlan plan, int step, int position) throws SqlException {
         if (node == null) {
             return step;
         }
         if (node.type == ExpressionNode.LITERAL) {
-            if (FunctionBinder.findColumn(node, master, plan.getSteps().getQuick(0).getMasterAlias()) >= 0) {
+            final int columnStep = windowJoinColumnStep(node, plan);
+            if (columnStep < 0) {
                 return step;
             }
-            for (int s = 0, n = plan.getSteps().size(); s < n; s++) {
-                final WindowJoinStep candidate = plan.getSteps().getQuick(s);
-                if (FunctionBinder.findColumn(node, candidate.getSlave().getOutput(), candidate.getSlaveAlias()) >= 0) {
-                    if (step >= 0 && step != s) {
-                        throw SqlException.$(position, "WINDOW join aggregate function cannot reference columns from multiple models");
-                    }
-                    return s;
-                }
+            if (step >= 0 && step != columnStep) {
+                throw SqlException.$(position, "WINDOW join aggregate function cannot reference columns from multiple models");
             }
-            return step;
+            return columnStep;
         }
-        step = windowJoinReferencedStep(node.lhs, plan, master, step, position);
-        step = windowJoinReferencedStep(node.rhs, plan, master, step, position);
+        step = windowJoinReferencedStep(node.lhs, plan, step, position);
+        step = windowJoinReferencedStep(node.rhs, plan, step, position);
         for (int i = 0, n = node.args.size(); i < n; i++) {
-            step = windowJoinReferencedStep(node.args.getQuick(i), plan, master, step, position);
+            step = windowJoinReferencedStep(node.args.getQuick(i), plan, step, position);
         }
         return step;
     }
 
-    private int windowJoinStepOf(ExpressionNode node, WindowJoinPlan plan, OutputSchema master) throws SqlException {
-        return Math.max(windowJoinReferencedStep(node, plan, master, -1, node.position), 0);
+    private int windowJoinStepOf(ExpressionNode node, WindowJoinPlan plan) throws SqlException {
+        return Math.max(windowJoinReferencedStep(node, plan, -1, node.position), 0);
     }
 
     /**
@@ -691,20 +714,6 @@ final class TemporalJoinBinder {
             }
         }
         return -1;
-    }
-
-    static void rejectWindowJoinSlaveColumn(ExpressionNode expression, OutputSchema master, WindowJoinPlan plan) throws SqlException {
-        if (expression.type != ExpressionNode.LITERAL
-                || FunctionBinder.findColumn(expression, master, plan.getSteps().getQuick(0).getMasterAlias()) >= 0) {
-            return;
-        }
-        for (int s = 0, m = plan.getSteps().size(); s < m; s++) {
-            final WindowJoinStep step = plan.getSteps().getQuick(s);
-            if (FunctionBinder.findColumn(expression, step.getSlave().getOutput(), step.getSlaveAlias()) >= 0) {
-                throw SqlException.position(expression.position)
-                        .put("WINDOW join cannot reference right table non-aggregate column: ").put(expression.token);
-            }
-        }
     }
 
     /**
@@ -936,6 +945,7 @@ final class TemporalJoinBinder {
             ExpressionNode where, SqlExecutionContext executionContext
     ) throws SqlException {
         final BindScope bindScope = ctx.scope();
+        final ExpressionNode masterFilter = where;
         final ObjList<QueryModel> sources = source.getJoinModels();
         final int first = joinIndex(source, QueryModel.JOIN_WINDOW);
         if (source.getSampleBy() != null) {
@@ -968,7 +978,7 @@ final class TemporalJoinBinder {
         }
         final ObjList<PivotForColumn> forColumns = model.getPivotForColumns();
         for (int i = 0, n = forColumns.size(); i < n; i++) {
-            rejectWindowJoinSlaveColumn(forColumns.getQuick(i).getInExpr(), master.getOutput(), plan);
+            rejectWindowJoinReads(forColumns.getQuick(i).getInExpr(), plan);
         }
         boolean isEmpty = false;
         if (where != null) {
@@ -981,6 +991,7 @@ final class TemporalJoinBinder {
                 plan.replaceInput(0, master);
             }
         }
+        rejectWindowJoinReads(masterFilter, plan);
         plan.setEmpty(isEmpty);
         ctx.promoteNoArgFunctions(model, master.getOutput(), masterAlias, executionContext);
         final OutputSchema output = plan.getOutput();
@@ -998,7 +1009,7 @@ final class TemporalJoinBinder {
         }
         bindScope.windowJoinAggregateSteps.clear();
         for (int i = 0, n = bindScope.aggregateNodes.size(); i < n; i++) {
-            bindScope.windowJoinAggregateSteps.add(windowJoinStepOf(bindScope.aggregateNodes.getQuick(i), plan, masterOutput));
+            bindScope.windowJoinAggregateSteps.add(windowJoinStepOf(bindScope.aggregateNodes.getQuick(i), plan));
         }
         bindScope.resetAliases(output);
         for (int s = 0, m = plan.getSteps().size(); s < m; s++) {
@@ -1090,11 +1101,12 @@ final class TemporalJoinBinder {
                     }
                 }
             } else if (expression.type == ExpressionNode.LITERAL) {
-                rejectWindowJoinSlaveColumn(expression, output, plan);
+                rejectWindowJoinReads(expression, plan);
                 final int resolved = ctx.bindColumnIndex(expression, output, masterAlias);
                 ctx.addProjection(project, output, resolved, column.getAlias() != null ? column.getAlias() : output.getColumnName(resolved),
                         expression.position, true);
             } else {
+                rejectWindowJoinReads(expression, plan);
                 final BoundExpression bound = ctx.functionBinder.bindValue(expression, output, masterAlias, aggregateSources, aggregateColumns, executionContext);
                 ctx.addProjection(project, bound, null, column.getName(), true);
                 scope.projectionAliasIndexes.add(project.getExpressions().size() - 1);
@@ -1103,6 +1115,14 @@ final class TemporalJoinBinder {
         aggregateSources.clear();
         aggregateColumns.clear();
         final boolean isOrderBound = !ctx.isSetOperationBranch;
+        if (isOrderBound) {
+            for (int i = 0, n = source.getOrderBy().size(); i < n; i++) {
+                final ExpressionNode order = source.getOrderBy().getQuick(i);
+                if (order.type != ExpressionNode.LITERAL || FunctionBinder.findColumn(order, project.getOutput(), null) < 0) {
+                    rejectWindowJoinReads(order, plan);
+                }
+            }
+        }
         final LogicalPlan result;
         if (model.isDistinct()) {
             if (isOrderBound) {
@@ -1140,6 +1160,28 @@ final class TemporalJoinBinder {
         collectWindowJoinAggregateOccurrences(node.rhs, plan, sources, targets);
         for (int i = 0, n = node.args.size(); i < n; i++) {
             collectWindowJoinAggregateOccurrences(node.args.getQuick(i), plan, sources, targets);
+        }
+    }
+
+    /**
+     * Rejects what an expression over the master reads outside its aggregates: a name more than one model of the join
+     * holds, and a column of a slave, which only an aggregate reads.
+     */
+    void rejectWindowJoinReads(ExpressionNode node, WindowJoinPlan plan) throws SqlException {
+        if (node == null || ctx.isAggregate(node)) {
+            return;
+        }
+        if (node.type == ExpressionNode.LITERAL) {
+            if (windowJoinColumnStep(node, plan) >= 0) {
+                throw SqlException.position(node.position)
+                        .put("WINDOW join cannot reference right table non-aggregate column: ").put(node.token);
+            }
+            return;
+        }
+        rejectWindowJoinReads(node.lhs, plan);
+        rejectWindowJoinReads(node.rhs, plan);
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            rejectWindowJoinReads(node.args.getQuick(i), plan);
         }
     }
 

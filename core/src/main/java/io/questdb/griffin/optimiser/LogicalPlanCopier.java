@@ -349,7 +349,7 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
         clone.getReferencedColumnNames().addAll(scan.getReferencedColumnNames());
         clone.getReferencedColumnPositions().addAll(scan.getReferencedColumnPositions());
         clone.getSourceColumnIndexes().addAll(scan.getSourceColumnIndexes());
-        clone.setExpiryPolicy(scan.getExpiryPolicy());
+        clone.setExpiringRead(scan.isExpiringRead());
         clone.setHints(scan.getHints());
         if (scan.isSequencedUpdate()) {
             clone.markSequencedUpdate();

@@ -416,9 +416,9 @@ public class RowExpiryMetadataTest extends AbstractCairoTest {
 
     @Test
     public void testKeepByPolicyDecoding() {
-        // Every reader of a KEEP [N] HIGHEST/LOWEST policy - SHOW CREATE / the catalogue functions
-        // (displayPredicate), the read-filter rewrite (windowPredicate) and DDL validation - goes through
-        // RowExpiryUtil.KeepBy, so they agree field for field, including on a string no encoder emits.
+        // SHOW CREATE / the catalogue functions (displayPredicate) and DDL validation read a KEEP [N]
+        // HIGHEST/LOWEST policy through RowExpiryUtil.KeepBy, field for field, including on a string no
+        // encoder emits. A read decodes the same fields in place, see testPolicyTextDecodesStoredFields.
         final String sep = String.valueOf((char) 0x1F);
 
         final String topN = RowExpiryUtil.encodeKeepBy(3, false, "v", "k");

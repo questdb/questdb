@@ -14777,7 +14777,7 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // T28: PIVOT inside LATERAL — rewritePivot already converted to GROUP BY
+    // T28: PIVOT inside LATERAL — bindPivot already converted to GROUP BY
     @Test
     public void testT28PivotInsideLateral() throws Exception {
         assertMemoryLeak(() -> {

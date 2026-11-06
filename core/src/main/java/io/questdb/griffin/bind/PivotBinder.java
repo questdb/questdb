@@ -65,7 +65,6 @@ import io.questdb.std.str.StringSink;
 
 import static io.questdb.griffin.bind.BindContext.sourceAlias;
 import static io.questdb.griffin.bind.TemporalJoinBinder.joinIndex;
-import static io.questdb.griffin.bind.TemporalJoinBinder.rejectWindowJoinSlaveColumn;
 
 final class PivotBinder implements Mutable {
     private final AggregateBinder aggregateBinder;
@@ -657,7 +656,7 @@ final class PivotBinder implements Mutable {
         }
     }
 
-    LogicalPlan rewritePivot(QueryModel pivot, SqlExecutionContext executionContext) throws SqlException {
+    LogicalPlan bindPivot(QueryModel pivot, SqlExecutionContext executionContext) throws SqlException {
         final BindScope scope = ctx.scope();
         final QueryModel windowScope = scope.namedWindowScope != null && scope.namedWindowScope.getNestedModel() == pivot
                 ? scope.namedWindowScope : pivot;
@@ -712,7 +711,7 @@ final class PivotBinder implements Mutable {
         for (int i = 0, n = groupBy.size(); i < n; i++) {
             final ExpressionNode key = groupBy.getQuick(i);
             if (windowJoin != null) {
-                rejectWindowJoinSlaveColumn(key, windowJoin.getOutput(), windowJoin);
+                temporalJoinBinder.rejectWindowJoinReads(key, windowJoin);
             }
             addPivotKey(grouped, key, pivotAlias(key), input, executionContext);
         }

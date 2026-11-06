@@ -1287,6 +1287,15 @@ public class PlanVerifierTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupingSetsServeNoSharedCursors() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE sets (a INT, v INT)");
+            assertAlgorithmContradicts("SELECT a, sum(v) s FROM sets GROUP BY ROLLUP(a)", AggregatePlan.class,
+                    aggregate -> aggregate.setSharedConsumerCount(1), PlanVerifier.GROUPING_SET_SHARED);
+        });
+    }
+
+    @Test
     public void testSampleByBucketKeyStale() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE sampled (sym SYMBOL, x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");

@@ -64,7 +64,6 @@ public final class ScanPlan extends LogicalPlan {
     private final LongList staticIntervals = new LongList();
     private AccessPath accessPath;
     private int depth;
-    private String expiryPolicy;
     private int hints;
     private int indexColumnId = -1;
     private SortDirection indexDirection = SortDirection.ASCENDING;
@@ -72,6 +71,7 @@ public final class ScanPlan extends LogicalPlan {
     private IndexRead indexRead = IndexRead.NONE;
     private IntervalScan intervalScan = IntervalScan.NONE;
     private boolean isRandomAccess = true;
+    private boolean isExpiringRead;
     private boolean isSequencedUpdate;
     private boolean isRewound;
     private boolean isTimestampDropped;
@@ -114,8 +114,8 @@ public final class ScanPlan extends LogicalPlan {
         nativeTimestampType = ColumnType.UNDEFINED;
         tableToken = null;
         viewName = null;
-        expiryPolicy = null;
         viewPosition = -1;
+        isExpiringRead = false;
         isUpdate = false;
         isSequencedUpdate = false;
         isRandomAccess = true;
@@ -226,13 +226,6 @@ public final class ScanPlan extends LogicalPlan {
         }
         return requestedOrder.isEmpty() || isNativeTimestampOrderRequested()
                 && requestedOrder.getDirections().getQuick(0) == scanDirection ? limitLo : null;
-    }
-
-    /**
-     * The stored EXPIRE ROWS policy that the read of this table applies; null for any other read.
-     */
-    public String getExpiryPolicy() {
-        return expiryPolicy;
     }
 
     public int getHints() {
@@ -504,6 +497,13 @@ public final class ScanPlan extends LogicalPlan {
     }
 
     /**
+     * True when this read of the table applies its EXPIRE ROWS policy.
+     */
+    public boolean isExpiringRead() {
+        return isExpiringRead;
+    }
+
+    /**
      * Whether the consumers request the order of the native designated timestamp alone, in either direction.
      */
     public boolean isNativeTimestampOrderRequested() {
@@ -643,8 +643,8 @@ public final class ScanPlan extends LogicalPlan {
         excludedKeys.addAll(keys);
     }
 
-    public void setExpiryPolicy(String expiryPolicy) {
-        this.expiryPolicy = expiryPolicy;
+    public void setExpiringRead(boolean isExpiringRead) {
+        this.isExpiringRead = isExpiringRead;
     }
 
     public void setHints(int hints) {
@@ -776,7 +776,7 @@ public final class ScanPlan extends LogicalPlan {
         visitor.fact("scanDirection", scanDirection);
         visitor.facts("staticIntervals", staticIntervals);
         visitor.fact("tableToken", tableToken);
-        visitor.fact("expiryPolicy", expiryPolicy);
+        visitor.fact("isExpiringRead", isExpiringRead);
         visitor.fact("viewName", viewName);
         visitor.fact("viewPosition", viewPosition);
     }

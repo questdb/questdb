@@ -2247,6 +2247,21 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByOverTableFunctionKeepsItsPlan() throws Exception {
+        assertMemoryLeak(() -> assertQuery("SELECT generate_series, count() c FROM generate_series('2024-01-01', '2024-01-03', '1d') SAMPLE BY 1d")
+                .noLeakCheck()
+                .withPlanContaining("GroupBy vectorized: false")
+                .timestamp("generate_series")
+                .expectSize()
+                .returns("""
+                        generate_series\tc
+                        2024-01-01T00:00:00.000000Z\t1
+                        2024-01-02T00:00:00.000000Z\t1
+                        2024-01-03T00:00:00.000000Z\t1
+                        """));
+    }
+
+    @Test
     public void testDeprecatedLatestByOverPolicyFeedsSampleBy() throws Exception {
         // A scalar policy reads the table directly, so LATEST BY publishes the designated timestamp a SAMPLE BY above
         // it needs. A KEEP policy reads through LatestBy light, which publishes none.
@@ -3603,7 +3618,7 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
                 .returns("expire_clause\n" + expected + "\n");
     }
 
-    // Asserts that the keep-filter reached the plan as the NOT the parser wrote, never as the inverted
+    // Asserts that the keep-filter reached the plan as the NOT a read binds, never as the inverted
     // comparison, and that the query returns the rows the un-inverted filter keeps.
     private void assertKeepFilterSurvives(String sql, String expected) throws Exception {
         assertKeepFilterSurvives(sql, null, expected);

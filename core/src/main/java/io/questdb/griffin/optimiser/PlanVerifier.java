@@ -150,6 +150,7 @@ public final class PlanVerifier {
     public static final String GROUPING_CALL = "GROUPING call reads no grouping key of its grouping sets";
     public static final String GROUPING_SET_KEY = "grouping set lists an index that is no grouping key";
     public static final String GROUPING_SET_ROLLUP = "grouping set rolls up a key that is no column of its own";
+    public static final String GROUPING_SET_SHARED = "grouping sets count consumers of a shared cursor their factory does not serve";
     public static final String PREDICATE_TYPE = "predicate is not BOOLEAN";
     public static final String PROJECT_COUNTS = "projection column reference counts are stale";
     public static final String PROJECT_SHAPE = "projection expression count differs from its output";

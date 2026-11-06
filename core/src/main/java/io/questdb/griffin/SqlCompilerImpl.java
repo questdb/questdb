@@ -7882,8 +7882,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      * <p>
      * Every mode ends at the same compile probe, which runs when the user submits the statement but not
      * when WAL apply replays it. Resolving the policy's column names answers half the
-     * question: {@link SqlParser} splices the stored policy text into a generated query, and that query is
-     * stricter than name resolution. It refuses a KEEP LATEST key of a type LATEST ON has no support for, a
+     * question: a read binds a query that embeds the stored policy text, and that query is stricter than
+     * name resolution. It refuses a KEEP LATEST key of a type LATEST ON has no support for, a
      * key whose unquoted name is a SQL keyword, a keep column with no usable {@code max()}. A policy that
      * passes DDL and then fails to compile leaves the view unreadable for every query, {@code count()}
      * included, until {@code DROP EXPIRE}, and reports an error naming a clause its author never wrote.
@@ -7926,7 +7926,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      * Compiles (and opens) the query a read of a policied object runs for a structural policy, spelled the
      * way {@code ExpiryReadBinder} binds a read of the view: a {@code LATEST ON} sub-query for KEEP LATEST,
      * a projection-CASE keep query for KEEP HIGHEST/LOWEST and window WHEN. Any compile or bind error - an
-     * unknown column, a key type or spelling the rewrite cannot use, window syntax - surfaces as a clear
+     * unknown column, a key type or spelling the read cannot use, window syntax - surfaces as a clear
      * "invalid EXPIRE ROWS policy".
      * <p>
      * The probe compiles and opens, and stops there. {@code LIMIT 0} bounds it, but the bound alone does not

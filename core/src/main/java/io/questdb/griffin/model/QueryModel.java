@@ -430,12 +430,6 @@ public class QueryModel implements Mutable, ExecutionModel, Sinkable {
         return decls;
     }
 
-    /**
-     * The materialized view this model reads through its EXPIRE ROWS policy, as the caller wrote it: the view name at
-     * the position of its reference. The parser sets it on the model that held the reference when it rewrites that
-     * reference into the keep-filter sub-query, so that planning can name the view when the rewritten read cannot
-     * serve an operator that needs a plain table. Null for any other model.
-     */
     public ObjList<ExpressionNode> getExpressionModels() {
         return expressionModels;
     }

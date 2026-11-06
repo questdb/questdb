@@ -27,7 +27,6 @@ package io.questdb.griffin.optimiser;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.IndexType;
-import io.questdb.cairo.RowExpiryUtil;
 import io.questdb.cairo.sql.TableAccessInfo;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -1411,8 +1410,7 @@ final class OperatorPlanning implements Mutable {
                     // cause it reports is a KEEP or window-function policy, which has no per-row filter to take.
                     throw SqlException.position(expiring.getPosition())
                             .put("right-hand side of HORIZON JOIN cannot be materialized view '").put(expiring.getTableToken().getTableName())
-                            .put("' because its EXPIRE ROWS policy ")
-                            .put(RowExpiryUtil.isStructuralPolicy(expiring.getExpiryPolicy()) ? "uses KEEP or a window function" : "is not a cutoff on the designated timestamp");
+                            .put("' because its EXPIRE ROWS policy uses KEEP or a window function");
                 }
                 throw SqlException.$(slave.getPosition(), "right-hand side of HORIZON JOIN can only be a table with an optional filter");
             }

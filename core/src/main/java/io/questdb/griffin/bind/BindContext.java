@@ -509,6 +509,20 @@ final class BindContext implements Mutable {
     /**
      * The function binding built for the bound root, which the preparations own until code generation adopts it.
      */
+    /**
+     * Keeps the rows of the input whose last column, a boolean the input computes to decide it, is true, and drops that
+     * column.
+     */
+    ProjectPlan keepRows(LogicalPlan input, int position) {
+        final OutputSchema output = input.getOutput();
+        final int keepIndex = output.getColumnCount() - 1;
+        final FilterPlan filter = planNodes.filters.next().of(input, planNodes.columns.next().of(output.getColumnId(keepIndex), ColumnType.BOOLEAN, position), position);
+        final ProjectPlan project = identityProjection(filter, position);
+        project.getExpressions().remove(keepIndex);
+        project.getOutput().remove(keepIndex);
+        return project;
+    }
+
     Function preparedRoot(BoundExpression root) {
         final PreparedFunctions.Entry entry = preparedFunctions.findOwned(root);
         if (entry == null) {
