@@ -129,28 +129,6 @@ public class SymbolMapSegments implements QuietCloseable {
         return record(slot & ADDRESS_MASK, offset, view);
     }
 
-    /**
-     * Like {@link #get(int, DirectString)}, but skips the directory while {@code key} falls in the segment
-     * {@code hint} last found. A hint belongs to one thread.
-     */
-    public @Nullable DirectString get(int key, @NotNull DirectString view, @NotNull Hint hint) {
-        final int index = key >>> SEGMENT_BITS;
-        final int offset = key & SEGMENT_MASK;
-        if (hint.index == index && offset < hint.count && hint.owner == this) {
-            return record(hint.segment, offset, view);
-        }
-        final long slot = slot(key);
-        final int count = (int) (slot >>> COUNT_SHIFT);
-        if (offset >= count) {
-            return null;
-        }
-        hint.owner = this;
-        hint.index = index;
-        hint.count = count;
-        hint.segment = slot & ADDRESS_MASK;
-        return record(hint.segment, offset, view);
-    }
-
     public int getStopReason() {
         return stopReason;
     }
@@ -337,12 +315,5 @@ public class SymbolMapSegments implements QuietCloseable {
         stopReason = reason;
         this.resumeBytes = resumeBytes;
         isFilling = false;
-    }
-
-    public static final class Hint {
-        private int count;
-        private int index = -1;
-        private SymbolMapSegments owner;
-        private long segment;
     }
 }

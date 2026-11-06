@@ -39,6 +39,7 @@ import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.RuntimeConstFunction;
 import io.questdb.griffin.engine.functions.ScalarSubQueryBoundRefFunction;
+import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bool.BooleanSubQueryFunction;
@@ -730,11 +731,13 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         return ex;
     }
 
-    private static boolean isSymbolKeyFunction(CharSequence name) {
-        return SqlKeywords.isInKeyword(name)
-                || Chars.equals(name, "<>all")
-                || Chars.equalsIgnoreCase(name, "count_distinct")
-                || Chars.equalsIgnoreCase(name, "string_distinct_agg");
+    // The aggregates always compare keys, and a non-static symbol table may give one value several keys.
+    private static boolean isSymbolCastElidable(CharSequence name, CastSymbolToStrFunctionFactory.Func cast) {
+        if (SqlKeywords.isInKeyword(name) || Chars.equals(name, "<>all")) {
+            return true;
+        }
+        return (Chars.equalsIgnoreCase(name, "count_distinct") || Chars.equalsIgnoreCase(name, "string_distinct_agg"))
+                && ((SymbolFunction) cast.getArg()).isSymbolTableStatic();
     }
 
     private static boolean isUntypedEmptyArrayLiteral(Function arg) {
@@ -1190,9 +1193,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         // These functions compare symbol keys directly, so the cast would only add per-row text hashing.
         CastSymbolToStrFunctionFactory.Func elidedCast = null;
         if (
-                isSymbolKeyFunction(node.token)
-                        && argCount > 0
+                argCount > 0
                         && args.getQuick(0) instanceof CastSymbolToStrFunctionFactory.Func cast
+                        && isSymbolCastElidable(node.token, cast)
         ) {
             elidedCast = cast;
             args.setQuick(0, cast.getArg());

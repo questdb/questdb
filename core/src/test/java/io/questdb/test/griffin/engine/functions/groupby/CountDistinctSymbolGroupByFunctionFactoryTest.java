@@ -30,6 +30,18 @@ import org.junit.Test;
 public class CountDistinctSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
+    public void testCastOfNonStaticSymbolCountsText() throws Exception {
+        // 'a' has two rnd_symbol keys; the key column avoids the rewrite into GROUP BY.
+        assertQuery("SELECT x % 1 k, count_distinct(rnd_symbol('a', 'a', 'b')::STRING) c FROM long_sequence(100)")
+                .expectSize()
+                .withPlanContaining("count_distinct(rnd_symbol")
+                .returns("""
+                        k\tc
+                        0\t2
+                        """);
+    }
+
+    @Test
     public void testCastToStringUsesKeyComparison() throws Exception {
         assertQuery("SELECT d, count_distinct(s::STRING) c FROM x ORDER BY d")
                 .ddl("CREATE TABLE x AS (SELECT x % 2 d, (CASE x % 3 WHEN 0 THEN 'b' WHEN 1 THEN 'a' END)::SYMBOL s FROM long_sequence(9))")
@@ -181,18 +193,6 @@ public class CountDistinctSymbolGroupByFunctionFactoryTest extends AbstractCairo
                     .expectSize()
                     .returns(expected);
         });
-    }
-
-    @Test
-    public void testNonStaticSymbolTableCountsValues() throws Exception {
-        // rnd_symbol keys are list positions, so 'a' has two of them.
-        assertQuery("SELECT count_distinct(rnd_symbol('a', 'a', 'b')) c1, count_distinct(rnd_symbol('a', 'a', 'b')::STRING) c2 FROM long_sequence(100)")
-                .noRandomAccess()
-                .expectSize()
-                .returns("""
-                        c1\tc2
-                        2\t2
-                        """);
     }
 
     @Test

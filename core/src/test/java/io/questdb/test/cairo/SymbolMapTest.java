@@ -108,6 +108,75 @@ public class SymbolMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCacheFlagChangeKeepsViewHashesRight() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                createMap(path, "x", "v", 3, -1, 0);
+                try (
+                        SymbolMapCachePool pool = new SymbolMapCachePool(new NativeMemoryBudget(1024 * 1024));
+                        SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, 3, pool, 0);
+                        SymbolMapWriter writer = new SymbolMapWriter(configuration, path, "x", COLUMN_NAME_TXN_NONE, 3, -1, NOOP_COLLECTOR, -1)
+                ) {
+                    StaticSymbolTable view = reader.newSymbolTableView();
+                    Assert.assertEquals("v0".hashCode(), Chars.hashCode(view.valueOf(0)));
+
+                    writer.updateCacheFlag(false);
+                    reader.of(configuration, path, "x", COLUMN_NAME_TXN_NONE, 3, pool, 0);
+                    Assert.assertFalse(reader.isCached());
+                    Assert.assertEquals("v1".hashCode(), Chars.hashCode(view.valueOf(1)));
+                    Assert.assertEquals("v2".hashCode(), Chars.hashCode(view.valueOf(2)));
+
+                    writer.updateCacheFlag(true);
+                    reader.of(configuration, path, "x", COLUMN_NAME_TXN_NONE, 3, pool, 0);
+                    Assert.assertTrue(reader.isCached());
+                    Assert.assertEquals("v1".hashCode(), Chars.hashCode(view.valueOf(1)));
+                    Assert.assertEquals("v2".hashCode(), Chars.hashCode(view.valueOf(2)));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testNoCacheReadsTouchNoCacheState() throws Exception {
+        assertMemoryLeak(() -> {
+            final int count = 3;
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                create(path, "x", 128, false);
+                try (SymbolMapWriter writer = new SymbolMapWriter(configuration, path, "x", COLUMN_NAME_TXN_NONE, 0, -1, NOOP_COLLECTOR, -1)) {
+                    for (int key = 0; key < count; key++) {
+                        Assert.assertEquals(key, writer.put("v" + key));
+                    }
+                }
+                try (
+                        SymbolMapCachePool pool = new SymbolMapCachePool(new NativeMemoryBudget(1024 * 1024));
+                        SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, count, pool, 0)
+                ) {
+                    Assert.assertFalse(reader.isCached());
+                    StaticSymbolTable view = reader.newSymbolTableView();
+                    for (int key = 0; key < count; key++) {
+                        final String expected = "v" + key;
+                        for (SymbolTable table : new SymbolTable[]{reader, view}) {
+                            TestUtils.assertEquals(expected, table.valueOf(key));
+                            Assert.assertEquals(expected.hashCode(), Chars.hashCode(table.valueOf(key)));
+                            TestUtils.assertEquals(expected, table.valueBOf(key));
+                            Assert.assertEquals(expected.hashCode(), Chars.hashCode(table.valueBOf(key)));
+                        }
+                        Assert.assertFalse(reader.hasValueHash(key));
+                    }
+                    for (SymbolTable table : new SymbolTable[]{reader, view}) {
+                        for (int key : new int[]{-1, count}) {
+                            Assert.assertNull(table.valueOf(key));
+                            Assert.assertNull(table.valueBOf(key));
+                        }
+                    }
+                    Assert.assertEquals(0, reader.getCacheSize());
+                    Assert.assertEquals(0, pool.getBudget().getUsedBytes());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSharedCacheConcurrentFirstReadTakesOneReference() throws Exception {
         assertMemoryLeak(() -> {
             final int threadCount = 4;
@@ -626,6 +695,38 @@ public class SymbolMapTest extends AbstractCairoTest {
                     Assert.assertEquals(0, pool.getEntryCount());
                     TestUtils.assertEquals("aaaa", unread.newSymbolTableView().valueOf(0));
                     Assert.assertEquals(1, pool.getEntryCount());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testStaticSymbolKeysTopUpLeavesSharedCacheAlone() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                createMap(path, "x", "v", 5, -1, 0);
+                try (
+                        SymbolMapCachePool pool = new SymbolMapCachePool(new NativeMemoryBudget(1024 * 1024));
+                        SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, 2, pool, 0)
+                ) {
+                    CharSequenceHashSet values = new CharSequenceHashSet();
+                    values.add("v1");
+                    values.add("v2");
+                    values.add("v3");
+                    StaticSymbolKeys keys = new StaticSymbolKeys();
+                    Assert.assertTrue(keys.of(reader, values));
+                    reader.updateSymbolCount(3);
+                    Assert.assertFalse(keys.of(reader, values));
+                    assertKeys(keys, 1, 2);
+                    Assert.assertEquals(0, reader.getCacheSize());
+                    Assert.assertEquals(0, pool.getBudget().getUsedBytes());
+
+                    CharSequence held = reader.valueOf(0);
+                    Assert.assertTrue(reader.getCacheSize() > 0);
+                    reader.updateSymbolCount(4);
+                    Assert.assertFalse(keys.of(reader, values));
+                    assertKeys(keys, 1, 2, 3);
+                    TestUtils.assertEquals("v0", held);
                 }
             }
         });

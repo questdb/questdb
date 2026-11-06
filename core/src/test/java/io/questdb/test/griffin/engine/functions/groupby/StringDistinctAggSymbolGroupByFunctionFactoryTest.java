@@ -30,6 +30,18 @@ import org.junit.Test;
 public class StringDistinctAggSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
+    public void testCastOfNonStaticSymbolAggregatesText() throws Exception {
+        // 'a' has two rnd_symbol keys.
+        assertQuery("SELECT string_distinct_agg(rnd_symbol('a', 'a', 'b')::STRING, ',') IN ('a,b', 'b,a') v FROM long_sequence(100)")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        v
+                        true
+                        """);
+    }
+
+    @Test
     public void testCastToStringUsesKeyComparison() throws Exception {
         assertQuery("SELECT string_distinct_agg(s::STRING, ',') v FROM x")
                 .ddl("CREATE TABLE x AS (SELECT (CASE x % 3 WHEN 0 THEN 'b' WHEN 1 THEN 'a' END)::SYMBOL s FROM long_sequence(9))")
@@ -201,21 +213,6 @@ public class StringDistinctAggSymbolGroupByFunctionFactoryTest extends AbstractC
                     "function `string_distinct_agg` requires arguments"
             );
         });
-    }
-
-    @Test
-    public void testNonStaticSymbolTableAggregatesValues() throws Exception {
-        // rnd_symbol keys are list positions, so 'a' has two of them; the order follows the random draws.
-        assertQuery("""
-                SELECT string_distinct_agg(rnd_symbol('a', 'a', 'b'), ',') IN ('a,b', 'b,a') v1,
-                    string_distinct_agg(rnd_symbol('a', 'a', 'b')::STRING, ',') IN ('a,b', 'b,a') v2
-                FROM long_sequence(100)""")
-                .noRandomAccess()
-                .expectSize()
-                .returns("""
-                        v1\tv2
-                        true\ttrue
-                        """);
     }
 
     @Test

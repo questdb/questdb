@@ -338,7 +338,13 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
 
     @Override
     public CharSequence valueBOf(int key) {
-        return ownView.valueBOf(key);
+        if (cached) {
+            return ownView.cachedValueOf(key, ownView.csviewB);
+        }
+        if (key > -1 && key < symbolCount) {
+            return charMem.getStrB(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)));
+        }
+        return null;
     }
 
     /**
@@ -348,7 +354,18 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
      */
     @Override
     public CharSequence valueOf(int key) {
-        return ownView.valueOf(key);
+        if (cached) {
+            return ownView.cachedValueOf(key, ownView.csviewA);
+        }
+        if (key > -1 && key < symbolCount) {
+            return charMem.getStrA(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)));
+        }
+        return null;
+    }
+
+    @Override
+    public CharSequence valueOfOnce(int key) {
+        return ownView.valueOfOnce(key);
     }
 
     /**
@@ -443,12 +460,12 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
 
         @Override
         public CharSequence valueBOf(int key) {
-            return cachedValueOf(key, csviewB);
+            return cached ? cachedValueOf(key, csviewB) : SymbolMapReaderImpl.this.valueOf(key, csviewB);
         }
 
         @Override
         public CharSequence valueOf(int key) {
-            return cachedValueOf(key, csviewA);
+            return cached ? cachedValueOf(key, csviewA) : SymbolMapReaderImpl.this.valueOf(key, csviewA);
         }
 
         @Override
@@ -472,12 +489,12 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
                 return null;
             }
             final SymbolMapSegments segments = entry.getSegments();
-            if (segments.get(key, view, view.hint) != null) {
+            if (segments.get(key, view) != null) {
                 return view;
             }
             final int result = segments.load(key, symbolCount, offsetMem, charMem);
             if (result == SymbolMapSegments.LOADED) {
-                return segments.get(key, view, view.hint);
+                return segments.get(key, view);
             }
             if (result == SymbolMapSegments.STOPPED) {
                 logCacheStopped(entry);
@@ -510,16 +527,15 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         }
 
         /**
-         * The A and B value flyweights. The view sets the key on every bind, so the key names the
-         * bound value, and hashCode() reuses the hash that valueHashes holds for that key.
+         * The A and B value flyweights. On a cached column the view sets the key on every bind, so the
+         * key names the bound value, and hashCode() reuses the hash that valueHashes holds for that key.
          */
         private final class CachedHashView extends DirectString {
-            private final SymbolMapSegments.Hint hint = new SymbolMapSegments.Hint();
             private int key = -1;
 
             @Override
             public int hashCode() {
-                final int k = key;
+                final int k = cached ? key : -1;
                 if (k < 0) {
                     return super.hashCode();
                 }

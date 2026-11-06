@@ -219,6 +219,25 @@ public class InStrTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCastNonStaticSymbolComparesText() throws Exception {
+        // 'a' has two rnd_symbol keys.
+        assertQuery("SELECT count() FROM long_sequence(100) WHERE rnd_symbol('a', 'a')::STRING IN ('a')")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        count
+                        100
+                        """);
+        assertQuery("SELECT count() FROM long_sequence(100) WHERE rnd_symbol('a', 'a')::STRING <> ALL('{a}'::text[])")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        count
+                        0
+                        """);
+    }
+
+    @Test
     public void testCastSymbol() throws Exception {
         assertMemoryLeak(() -> {
             for (String cacheFlag : new String[]{"CACHE", "NOCACHE"}) {
@@ -307,6 +326,18 @@ public class InStrTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlanContaining("filter: s in [b]");
         });
+    }
+
+    @Test
+    public void testCastSymbolKeptForFunctionsWithoutKeys() throws Exception {
+        assertQuery("SELECT length(s::STRING) l FROM x")
+                .ddl("CREATE TABLE x AS (SELECT 'abc'::SYMBOL s FROM long_sequence(1))")
+                .expectSize()
+                .withPlanContaining("length(s::string)")
+                .returns("""
+                        l
+                        3
+                        """);
     }
 
     @Test

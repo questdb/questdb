@@ -46,6 +46,7 @@ import org.openjdk.jmh.annotations.Level;
 import org.openjdk.jmh.annotations.Measurement;
 import org.openjdk.jmh.annotations.Mode;
 import org.openjdk.jmh.annotations.OutputTimeUnit;
+import org.openjdk.jmh.annotations.Param;
 import org.openjdk.jmh.annotations.Scope;
 import org.openjdk.jmh.annotations.Setup;
 import org.openjdk.jmh.annotations.State;
@@ -64,7 +65,8 @@ import java.util.concurrent.TimeUnit;
 /**
  * Measures CACHE symbol reads, symbol filters and JSON encoding through SQL. Table {@code t} has
  * 1,000,000 distinct symbols: its first day holds each key once in key order, its second day holds
- * 1,000 sparse keys above 4,095. Table {@code low} has 1,000 distinct symbols.
+ * 1,000 sparse keys above 4,095. Table {@code low} has 1,000 distinct symbols. Tables {@code random}
+ * and {@code nocache} hold keys in random order.
  * <p>
  * The {@code first} benchmarks open a new reader per invocation; {@code gc.alloc.rate.norm} then
  * shows the heap each reader needs for its values. {@code firstProjection} reads symbols from the
@@ -158,6 +160,11 @@ public class SymbolCacheBenchmark {
     @Benchmark
     public long castStringNotEqualAll() throws SqlException {
         return readCount(castStringNotEqualAll);
+    }
+
+    @Benchmark
+    public long filterRandomKeysWorkers(RandomKeys state, Workers workers) throws SqlException {
+        return readCount(state.filterWorkers, workers.context);
     }
 
     @Benchmark
@@ -260,6 +267,21 @@ public class SymbolCacheBenchmark {
     @Benchmark
     public long readLowKeysStoppedCache(StoppedCache state) throws SqlException {
         return readSymbols(lowKeys);
+    }
+
+    @Benchmark
+    public long readNoCacheFunction(NoCache state) throws SqlException {
+        return readCount(state.function);
+    }
+
+    @Benchmark
+    public long readNoCacheKeys(NoCache state) throws SqlException {
+        return readSymbols(state.keys);
+    }
+
+    @Benchmark
+    public long readRandomKeys(RandomKeys state) throws SqlException {
+        return readSymbols(state.keys);
     }
 
     @Benchmark
@@ -426,6 +448,30 @@ public class SymbolCacheBenchmark {
     }
 
     @State(Scope.Benchmark)
+    public static class NoCache {
+        private RecordCursorFactory function;
+        private RecordCursorFactory keys;
+
+        @Setup(Level.Trial)
+        public void setUp(SymbolCacheBenchmark benchmark) throws SqlException {
+            final CairoEngine engine = benchmark.engine;
+            final SqlExecutionContext context = benchmark.context;
+            engine.execute("DROP TABLE IF EXISTS nocache", context);
+            engine.execute("CREATE TABLE nocache (s SYMBOL CAPACITY 1024 NOCACHE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", context);
+            engine.execute("INSERT INTO nocache SELECT 'symbol' || rnd_int(0, 999, 0), timestamp_sequence('2024-01-01', 1) FROM long_sequence(1_000_000)", context);
+            engine.releaseAllWriters();
+            keys = engine.select("SELECT s FROM nocache", context);
+            function = engine.select("SELECT sum(length(s)) FROM nocache", context);
+        }
+
+        @TearDown(Level.Trial)
+        public void tearDown() {
+            keys = Misc.free(keys);
+            function = Misc.free(function);
+        }
+    }
+
+    @State(Scope.Benchmark)
     public static class NoOtherReader {
         @Setup(Level.Invocation)
         public void setUp(SymbolCacheBenchmark benchmark) {
@@ -455,6 +501,32 @@ public class SymbolCacheBenchmark {
         @TearDown(Level.Trial)
         public void tearDown() {
             reader = Misc.free(reader);
+        }
+    }
+
+    @State(Scope.Benchmark)
+    public static class RandomKeys {
+        @Param({"300", "1000", "10000", "100000"})
+        public int keyCount;
+        private RecordCursorFactory filterWorkers;
+        private RecordCursorFactory keys;
+
+        @Setup(Level.Trial)
+        public void setUp(SymbolCacheBenchmark benchmark, Workers workers) throws SqlException {
+            final CairoEngine engine = benchmark.engine;
+            final SqlExecutionContext context = benchmark.context;
+            engine.execute("DROP TABLE IF EXISTS random", context);
+            engine.execute("CREATE TABLE random (s SYMBOL CAPACITY 131072 CACHE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", context);
+            engine.execute("INSERT INTO random SELECT 'symbol' || rnd_int(0, " + (keyCount - 1) + ", 0), timestamp_sequence('2024-01-01', 1) FROM long_sequence(1_000_000)", context);
+            engine.releaseAllWriters();
+            keys = engine.select("SELECT s FROM random", context);
+            filterWorkers = engine.select("SELECT count() FROM random WHERE length(s) = 7", workers.context);
+        }
+
+        @TearDown(Level.Trial)
+        public void tearDown() {
+            keys = Misc.free(keys);
+            filterWorkers = Misc.free(filterWorkers);
         }
     }
 

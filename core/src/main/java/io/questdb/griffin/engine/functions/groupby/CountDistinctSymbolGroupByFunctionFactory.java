@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -52,17 +51,8 @@ public class CountDistinctSymbolGroupByFunctionFactory implements FunctionFactor
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        final SymbolFunction arg = (SymbolFunction) args.getQuick(0);
-        // A symbol table that is not static may give one value several keys, as rnd_symbol does.
-        if (!arg.isSymbolTableStatic()) {
-            return new CountDistinctStringGroupByFunction(
-                    arg,
-                    configuration.getCountDistinctCapacity(),
-                    configuration.getCountDistinctLoadFactor()
-            );
-        }
         return new CountDistinctSymbolGroupByFunction(
-                arg,
+                args.getQuick(0),
                 configuration.getCountDistinctCapacity(),
                 configuration.getCountDistinctLoadFactor()
         );
