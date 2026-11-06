@@ -48,6 +48,8 @@ import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.griffin.plan.logical.TreeWalk;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.Mutable;
+import io.questdb.std.ObjectPool;
+import io.questdb.std.str.StringSink;
 
 /**
  * Binds the read of a materialized view under an EXPIRE ROWS policy, so that expired rows are invisible to every read
@@ -69,6 +71,9 @@ final class ExpiryReadBinder implements Mutable {
     private final SqlBinder binder;
     private final SqlCompilerImpl compiler;
     private final BindContext ctx;
+    // What binding parses. The tokens of a parse read its text until the next bind, whatever other reads of the query
+    // bind meanwhile, so each parse has a text of its own.
+    private final ObjectPool<StringSink> policyTexts = new ObjectPool<>(StringSink::new, 2);
     // The tables whose policy is being bound: what the policy itself reads, its keep query or a sub-query of its
     // predicate, reads the table without the policy rather than applying the policy a second time. Lookups ignore
     // case, as the table registry does, since a policy sub-query can name the table in a different case from the read.
@@ -83,7 +88,7 @@ final class ExpiryReadBinder implements Mutable {
     }
 
     /**
-     * Returns the keep-filter text for an EXPIRE ROWS predicate, the rows that have NOT expired. A row expires only when
+     * Appends the keep-filter text for an EXPIRE ROWS predicate, the rows that have NOT expired. A row expires only when
      * the predicate is TRUE, so the keep-filter keeps every row whose predicate result is anything else, which
      * {@code NOT (predicate)} spells for every predicate shape. Over a comparison of the designated timestamp,
      * {@link io.questdb.griffin.model.IntervalExtractor} reads an interval out of that {@code NOT} and prunes partitions,
@@ -99,13 +104,17 @@ final class ExpiryReadBinder implements Mutable {
      * why the sweep spells it differently). {@code MatViewExpireRowsTest.testExpireScalarNullRowsFollowPredicateTruthValue}
      * pins this across the spellings.
      */
-    private static String keepFilterText(String predicate) {
-        return "NOT (" + predicate.trim() + ")";
+    private static void appendKeepFilter(StringSink sink, String predicate) {
+        sink.putAscii("NOT (");
+        RowExpiryUtil.appendTrimmed(sink, predicate, 0, predicate.length());
+        sink.putAscii(')');
     }
 
     private LogicalPlan bindKeepFilter(ScanPlan scan, TableToken token, String predicate, SqlExecutionContext executionContext) throws SqlException {
+        final StringSink text = policyTexts.next();
+        appendKeepFilter(text, predicate);
         final ExpressionNode keepFilter = SqlUtil.optimiseBooleanNot(
-                compiler.parseExpiryExpression(keepFilterText(predicate), binder.getParserCallback()), ctx.bindingExpressions);
+                compiler.parseExpiryExpression(text, binder.getParserCallback()), ctx.bindingExpressions);
         final BoundExpression bound = binder.bindPredicate(keepFilter, scan, token.getTableName(), executionContext);
         bound.walk(POLICY_CALLS);
         return ctx.planNodes.filters.next().of(scan, bound, scan.getPosition());
@@ -140,8 +149,11 @@ final class ExpiryReadBinder implements Mutable {
      * rest of the view.
      */
     LogicalPlan bindQueryRead(TableToken token, MetadataCache.ExpiryPolicyInfo policy, ExpressionNode viewName, int position, SqlExecutionContext executionContext) throws SqlException {
-        final String sql = "SELECT *, " + RowExpiryUtil.buildKeepCase(RowExpiryUtil.windowPredicate(policy.getPredicate(), policy.getTimestampName()))
-                + " " + RowExpiryUtil.KEEP_COLUMN + " FROM " + RowExpiryUtil.quoteIdentifier(token.getTableName());
+        final StringSink sql = policyTexts.next();
+        sql.putAscii("SELECT *, ");
+        RowExpiryUtil.appendWindowKeepCase(sql, policy.getPredicate(), policy.getTimestampName());
+        sql.putAscii(' ').putAscii(RowExpiryUtil.KEEP_COLUMN).putAscii(" FROM ");
+        RowExpiryUtil.appendQuotedIdentifier(sql, token.getTableName());
         final LogicalPlan keepQuery;
         beginBinding(token, policy.getPredicate(), position);
         try {
@@ -175,8 +187,11 @@ final class ExpiryReadBinder implements Mutable {
         try {
             markBoundRead(scan);
             if (RowExpiryUtil.isKeepLatest(predicate)) {
-                return binder.bindLatestBy(scan, compiler.parseExpiryLatestBy(
-                        RowExpiryUtil.quoteIdentifier(policy.getTimestampName()) + " PARTITION BY " + RowExpiryUtil.keepLatestKeys(predicate), position));
+                final StringSink text = policyTexts.next();
+                RowExpiryUtil.appendQuotedIdentifier(text, policy.getTimestampName());
+                text.putAscii(" PARTITION BY ");
+                RowExpiryUtil.appendKeepLatestKeys(text, predicate);
+                return binder.bindLatestBy(scan, compiler.parseExpiryLatestBy(text, position));
             }
             return bindKeepFilter(scan, token, predicate, executionContext);
         } finally {
@@ -200,6 +215,7 @@ final class ExpiryReadBinder implements Mutable {
 
     @Override
     public void clear() {
+        policyTexts.clear();
         tablesBound.clear();
         boundPredicate = null;
         boundPosition = 0;

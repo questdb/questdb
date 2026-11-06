@@ -528,7 +528,7 @@ public final class SqlBinder implements Mutable {
 
     private LogicalPlan bindQueryBlockWithHints(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         final BindScope bindScope = ctx.scope();
-        if (model.isPivot() && model.getColumns().size() == 0) {
+        if (model.isPivot()) {
             return pivotBinder.rewritePivot(model, executionContext);
         }
         final boolean isOrderBound = !ctx.isSetOperationBranch;

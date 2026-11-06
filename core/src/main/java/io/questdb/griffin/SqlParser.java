@@ -6023,7 +6023,6 @@ public class SqlParser {
         // PIVOT operates on the result of a full subquery.
         // Syntax: SELECT ... FROM <subquery> WHERE <condition> PIVOT (agg FOR col IN (...))
         // The pivot transformation wraps the current model as a nested subquery.
-        boolean hasPivot = false;
         if (tok != null && isPivotKeyword(tok)) {
             try {
                 pivotMode = true;
@@ -6031,7 +6030,6 @@ public class SqlParser {
                 pivotModel.setModelPosition(lexer.lastTokenPosition());
                 pivotModel.setNestedModel(model);
                 tok = parsePivot(lexer, pivotModel, sqlParserCallback);
-                hasPivot = true;
                 model = pivotModel;
             } finally {
                 pivotMode = false;
@@ -6040,10 +6038,8 @@ public class SqlParser {
 
         // expect [sample by]
         if (tok != null && isSampleKeyword(tok)) {
-            if (hasPivot) {
-                QueryModel parentModel = queryModelPool.next();
-                parentModel.setNestedModel(model);
-                model = parentModel;
+            if (model.isPivot()) {
+                model = pivotParent(model);
             }
             expectBy(lexer);
             expectSample(lexer, model, sqlParserCallback);
@@ -6177,10 +6173,8 @@ public class SqlParser {
 
         if (tok != null && isGroupKeyword(tok)) {
             final int groupByPosition = lexer.lastTokenPosition();
-            if (hasPivot && model.isPivot()) {
-                QueryModel parentModel = queryModelPool.next();
-                parentModel.setNestedModel(model);
-                model = parentModel;
+            if (model.isPivot()) {
+                model = pivotParent(model);
             }
             expectBy(lexer);
             model.setGroupByPosition(groupByPosition);
@@ -7320,6 +7314,13 @@ public class SqlParser {
      * significantly impact performance. This aligns with mainstream databases which also
      * do not support ELSE in PIVOT. For such requirements, user can use subqueries instead.
      */
+    private QueryModel pivotParent(QueryModel pivot) {
+        final QueryModel parent = queryModelPool.next();
+        parent.setModelPosition(pivot.getModelPosition());
+        parent.setNestedModel(pivot);
+        return parent;
+    }
+
     private CharSequence parsePivot(GenericLexer lexer, QueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {
         CharSequence tok;
         expectTok(lexer, '(');

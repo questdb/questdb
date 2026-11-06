@@ -218,6 +218,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final ObjList<Subquery> compiledSubqueries = new ObjList<>();
     private final ObjList<QueryModel> compiledSubqueryModels = new ObjList<>();
     private final ViewCompilerExecutionContext compileViewContext;
+    private final StringSink expiryPolicySql = new StringSink();
     private final CharSequenceObjHashMap<String> dropAllTablesFailures = new CharSequenceObjHashMap<>();
     private final OutputSchema emptySchema = new OutputSchema();
     private final EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
@@ -7723,7 +7724,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     /**
-     * Binds {@link RowExpiryUtil#buildKeepCase} and refuses the policy when that fails. The
+     * Binds {@link RowExpiryUtil#appendKeepCase} and refuses the policy when that fails. The
      * strict form's type rules refuse a cross-type equality such as {@code s = 12345} on a {@code STRING}
      * column, which binds on its own but casts every value to {@code INT} once rows are evaluated: every
      * read and every sweep of the view would fail on the first non-numeric value, with an error that names
@@ -7749,7 +7750,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         Function f = null;
         try {
             clear();
-            lexer.of(RowExpiryUtil.buildKeepCase(Chars.toString(predicate)));
+            expiryPolicySql.clear();
+            RowExpiryUtil.appendKeepCase(expiryPolicySql, predicate);
+            lexer.of(expiryPolicySql);
             f = functionParser.parseFunction(parser.expr(lexer, (QueryModel) null, this), metadata, executionContext);
             f = Misc.free(f);
             // A bare <column> = <constant> has to compare values of one kind. A number compared with a text column
@@ -7960,17 +7963,22 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             boolean isNarrowProjection,
             int position
     ) throws SqlException {
-        final String sql;
+        final StringSink sql = expiryPolicySql;
+        sql.clear();
         if (RowExpiryUtil.isKeepLatest(predicate)) {
             final CharSequence keys = RowExpiryUtil.keepLatestKeys(predicate);
             final CharSequence selection = isNarrowProjection ? keys : "*";
-            sql = "SELECT " + selection + " FROM (SELECT " + selection + " FROM " + source + " LATEST ON "
-                    + RowExpiryUtil.quoteIdentifier(designatedTs) + " PARTITION BY " + keys + ") LIMIT 0";
+            sql.putAscii("SELECT ").put(selection).putAscii(" FROM (SELECT ").put(selection).putAscii(" FROM ").put(source).putAscii(" LATEST ON ");
+            RowExpiryUtil.appendQuotedIdentifier(sql, designatedTs);
+            sql.putAscii(" PARTITION BY ").put(keys).putAscii(") LIMIT 0");
         } else {
-            final String keepCase = RowExpiryUtil.buildKeepCase(RowExpiryUtil.windowPredicate(predicate, designatedTs));
-            sql = "SELECT " + (isNarrowProjection ? RowExpiryUtil.KEEP_COLUMN : "*") + " FROM (SELECT " + (isNarrowProjection ? "" : "*, ")
-                    + keepCase + " " + RowExpiryUtil.KEEP_COLUMN + " FROM " + source
-                    + ") WHERE " + RowExpiryUtil.KEEP_COLUMN + " LIMIT 0";
+            sql.putAscii("SELECT ").putAscii(isNarrowProjection ? RowExpiryUtil.KEEP_COLUMN : "*").putAscii(" FROM (SELECT ");
+            if (!isNarrowProjection) {
+                sql.putAscii("*, ");
+            }
+            RowExpiryUtil.appendWindowKeepCase(sql, predicate, designatedTs);
+            sql.putAscii(' ').putAscii(RowExpiryUtil.KEEP_COLUMN).putAscii(" FROM ").put(source)
+                    .putAscii(") WHERE ").putAscii(RowExpiryUtil.KEEP_COLUMN).putAscii(" LIMIT 0");
         }
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             try (RecordCursorFactory factory = compiler.compile(sql, executionContext).getRecordCursorFactory()) {

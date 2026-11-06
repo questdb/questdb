@@ -722,32 +722,36 @@ public class QueryAssertion {
     }
 
     /**
-     * Also assert the query's execution plan (EXPLAIN output) contains every one of {@code fragments}.
+     * Also assert the query's execution plan (EXPLAIN output) contains every one of {@code fragments}, on top of the
+     * fragments of earlier calls.
      * Honors {@link #noLeakCheck()}; cannot be combined with {@link #fullFatJoins()} or
      * {@link #withCompiler}.
      */
     public QueryAssertion withPlanContaining(CharSequence... fragments) {
-        final ObjList<CharSequence> list = new ObjList<>(fragments.length);
+        if (planFragments == null) {
+            planFragments = new ObjList<>(fragments.length);
+        }
         for (CharSequence fragment : fragments) {
             if (fragment != null) {
-                list.add(fragment);
+                planFragments.add(fragment);
             }
         }
-        this.planFragments = list;
         return this;
     }
 
     /**
-     * Also assert the query's execution plan (EXPLAIN output) contains NONE of {@code fragments}.
+     * Also assert the query's execution plan (EXPLAIN output) contains NONE of {@code fragments}, on top of the
+     * fragments of earlier calls.
      * The negative counterpart of {@link #withPlanContaining}. Honors {@link #noLeakCheck()}; cannot
      * be combined with {@link #fullFatJoins()} or {@link #withCompiler}.
      */
     public QueryAssertion withPlanNotContaining(CharSequence... fragments) {
-        final ObjList<CharSequence> list = new ObjList<>(fragments.length);
-        for (CharSequence fragment : fragments) {
-            list.add(fragment);
+        if (planFragmentsAbsent == null) {
+            planFragmentsAbsent = new ObjList<>(fragments.length);
         }
-        this.planFragmentsAbsent = list;
+        for (CharSequence fragment : fragments) {
+            planFragmentsAbsent.add(fragment);
+        }
         return this;
     }
 

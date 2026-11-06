@@ -4974,6 +4974,21 @@ public class PivotTest extends AbstractSqlParserTest {
         });
     }
 
+    @Test
+    public void testSampleByOverPivotFailsAtPivot() throws Exception {
+        // A pivot publishes no designated timestamp, so the error names the base query the SAMPLE BY reads.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k SYMBOL, s SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            final String message = "base query does not provide designated TIMESTAMP column";
+            String sql = "SELECT ts, k, sum(a) sa FROM t PIVOT (sum(v) FOR s IN ('a', 'b') GROUP BY k, ts) SAMPLE BY 1d";
+            assertQuery(sql).fails(sql.indexOf("PIVOT"), message);
+            sql = "SELECT count() c FROM t PIVOT (sum(v) FOR s IN ('a', 'b') GROUP BY ts) SAMPLE BY 1d";
+            assertQuery(sql).fails(sql.indexOf("PIVOT"), message);
+            sql = "SELECT count() c FROM (SELECT * FROM t WHERE v > 0) PIVOT (sum(v) FOR s IN ('a', 'b') GROUP BY ts) SAMPLE BY 1d FILL(0)";
+            assertQuery(sql).fails(sql.indexOf("PIVOT"), message);
+        });
+    }
+
     private static void assertNothingBusy() {
         Assert.assertEquals(0, engine.getSqlCompilerPool().getBusyCount());
         Assert.assertEquals(0, engine.getBusyReaderCount());

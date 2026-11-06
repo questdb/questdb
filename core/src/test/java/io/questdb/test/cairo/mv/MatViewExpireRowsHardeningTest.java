@@ -65,6 +65,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -1390,8 +1391,74 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEachPolicyReadKeepsItsOwnText() throws Exception {
+        // Binding parses a text per policy read, and the plan reads the tokens of each text until the next bind. KEEP
+        // HIGHEST leaves A's 3.0 and B's 7.0, KEEP LOWEST A's 1.0 and B's 5.0, WHEN v > 4 both A rows and KEEP LATEST
+        // the same rows as KEEP HIGHEST.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (k SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base VALUES
+                    ('A', 1.0, '2024-01-01T00:00:00.000000Z'),
+                    ('A', 3.0, '2024-01-02T00:00:00.000000Z'),
+                    ('B', 5.0, '2024-01-03T00:00:00.000000Z'),
+                    ('B', 7.0, '2024-01-04T00:00:00.000000Z')""");
+            drainWalQueue();
+            execute("CREATE MATERIALIZED VIEW hi AS (SELECT * FROM base) EXPIRE ROWS KEEP HIGHEST ON v PARTITION BY k");
+            execute("CREATE MATERIALIZED VIEW lo AS (SELECT * FROM base) EXPIRE ROWS KEEP LOWEST ON v PARTITION BY k");
+            execute("CREATE MATERIALIZED VIEW val AS (SELECT * FROM base) EXPIRE ROWS WHEN v > 4");
+            execute("CREATE MATERIALIZED VIEW lat AS (SELECT * FROM base) EXPIRE ROWS KEEP LATEST PARTITION BY k");
+            execute("CREATE MATERIALIZED VIEW only_a AS (SELECT * FROM base) EXPIRE ROWS WHEN k = 'B'");
+            execute("CREATE MATERIALIZED VIEW only_b AS (SELECT * FROM base) EXPIRE ROWS WHEN k = 'A'");
+            drainWalAndMatViewQueues();
+
+            assertQuery("SELECT h.k, h.v hv, l.v lv FROM hi h JOIN lo l ON (k) ORDER BY h.k")
+                    .noLeakCheck()
+                    .withPlanContaining("[v<max,false,true]")
+                    .withPlanContaining("[min<v,false,true]")
+                    .returns("""
+                            k\thv\tlv
+                            A\t3.0\t1.0
+                            B\t7.0\t5.0
+                            """);
+            assertQuery("SELECT k, v FROM hi UNION ALL SELECT k, v FROM val UNION ALL SELECT k, v FROM lat UNION ALL SELECT k, v FROM lo ORDER BY k, v")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tv
+                            A\t1.0
+                            A\t1.0
+                            A\t3.0
+                            A\t3.0
+                            A\t3.0
+                            B\t5.0
+                            B\t7.0
+                            B\t7.0
+                            """);
+
+            // A factory outlives its compile, and the next compile of the same compiler reuses the texts.
+            try (
+                    SqlCompiler compiler = engine.getSqlCompiler();
+                    RecordCursorFactory window = compiler.compile("SELECT k, v FROM hi ORDER BY k", sqlExecutionContext).getRecordCursorFactory();
+                    RecordCursorFactory scalar = compiler.compile("SELECT k, v FROM only_a ORDER BY v", sqlExecutionContext).getRecordCursorFactory();
+                    RecordCursorFactory latest = compiler.compile("SELECT k, v FROM lat ORDER BY k", sqlExecutionContext).getRecordCursorFactory();
+                    RecordCursorFactory other = compiler.compile("SELECT k, v FROM only_b ORDER BY v", sqlExecutionContext).getRecordCursorFactory()
+            ) {
+                final StringSink rows = new StringSink();
+                printRows(window, rows);
+                TestUtils.assertEquals("A\t3.0\nB\t7.0\n", rows);
+                printRows(scalar, rows);
+                TestUtils.assertEquals("A\t1.0\nA\t3.0\n", rows);
+                printRows(latest, rows);
+                TestUtils.assertEquals("A\t3.0\nB\t7.0\n", rows);
+                printRows(other, rows);
+                TestUtils.assertEquals("B\t5.0\nB\t7.0\n", rows);
+            }
+        });
+    }
+
+    @Test
     public void testPredicateThatOnlyFailsWhenWrappedRejected() throws Exception {
-        // Validation binds the predicate wrapped as (RowExpiryUtil.buildKeepCase)
+        // Validation binds the predicate wrapped as (RowExpiryUtil.appendKeepCase)
         //
         //   CASE WHEN (<predicate>) THEN false ELSE true END
         //
@@ -3955,6 +4022,16 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
             }
             if (isDenied) {
                 throw CairoException.authorization().put("permission denied [select on mv(v)]");
+            }
+        }
+    }
+
+    private static void printRows(RecordCursorFactory factory, StringSink rows) throws Exception {
+        rows.clear();
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            final Record record = cursor.getRecord();
+            while (cursor.hasNext()) {
+                TestUtils.println(record, factory.getMetadata(), rows);
             }
         }
     }
