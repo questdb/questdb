@@ -869,14 +869,14 @@ double MIN_DOUBLE(double *d, int64_t count) {
     for (; d < lim_vec; d += step) {
         _mm_prefetch(d + 63 * step, _MM_HINT_T1);
         vec.load(d);
-        bVec = abs(vec) < D_MAX;
+        bVec = vec > D_MIN;
         vecMin = select(bVec, min(vecMin, vec), vecMin);
     }
 
     double min = horizontal_min(vecMin);
     for (; d < lim; d++) {
         double x = *d;
-        if (x < min && std::isfinite(x)) {
+        if (x < min && x > D_MIN) {
             min = x;
         }
     }
@@ -899,14 +899,14 @@ double MAX_DOUBLE(double *d, int64_t count) {
     for (; d < lim_vec; d += step) {
         _mm_prefetch(d + 63 * step, _MM_HINT_T1);
         vec.load(d);
-        bVec = abs(vec) < D_MAX;
+        bVec = vec < D_MAX;
         vecMax = select(bVec, max(vecMax, vec), vecMax);
     }
 
     double max = horizontal_max(vecMax);
     for (; d < lim; d++) {
         double x = *d;
-        if (x > max && std::isfinite(x)) {
+        if (x > max && x < D_MAX) {
             max = x;
         }
     }

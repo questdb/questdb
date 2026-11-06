@@ -65,7 +65,7 @@ import java.util.concurrent.TimeUnit;
 @Measurement(iterations = 10)
 @Fork(2)
 public class GroupByManyKeysBenchmark {
-    @Param({"2000000"})
+    @Param({"60000000"})
     public int keyCount;
     @Param({"4"})
     public int workers;

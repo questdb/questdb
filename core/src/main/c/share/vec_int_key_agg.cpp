@@ -228,10 +228,10 @@ kIntMaxDouble(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong pDouble, jlong 
                 return JNI_FALSE;
             }
             *reinterpret_cast<int32_t *>(pKey) = key;
-            *reinterpret_cast<jdouble *>(pVal) = std::isfinite(d) ? d : D_MIN;
+            *reinterpret_cast<jdouble *>(pVal) = d < D_MAX ? d : D_MIN;
         } else {
             const jdouble old = *reinterpret_cast<jdouble *>(pVal);
-            *reinterpret_cast<jdouble *>(pVal) = MAX(std::isfinite(d) ? d : D_MIN, old);
+            *reinterpret_cast<jdouble *>(pVal) = MAX(d < D_MAX ? d : D_MIN, old);
         }
     }
     return JNI_TRUE;
@@ -370,10 +370,10 @@ kIntMinDouble(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong pDouble, jlong 
                 return JNI_FALSE;
             }
             *reinterpret_cast<int32_t *>(pKey) = key;
-            *reinterpret_cast<jdouble *>(pVal) = std::isfinite(d) ? d : D_MAX;
+            *reinterpret_cast<jdouble *>(pVal) = d > D_MIN ? d : D_MAX;
         } else {
             const jdouble old = *reinterpret_cast<jdouble *>(pVal);
-            *reinterpret_cast<jdouble *>(pVal) = MIN((std::isfinite(d) ? d : D_MAX), old);
+            *reinterpret_cast<jdouble *>(pVal) = MIN((d > D_MIN ? d : D_MAX), old);
         }
     }
     return JNI_TRUE;
