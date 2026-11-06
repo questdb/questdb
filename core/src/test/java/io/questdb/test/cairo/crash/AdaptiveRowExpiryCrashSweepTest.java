@@ -87,8 +87,9 @@ public class AdaptiveRowExpiryCrashSweepTest extends AbstractAdaptiveCrashSweepT
     };
 
     /**
-     * This sweep stays whole because N depends on the platform: Linux's filesystem-wide syncfs replaces the per-file
-     * msyncs other platforms issue, so a part that starts at a fixed crash point can fall past N and fail.
+     * This sweep stays whole because N depends on the platform: off Linux every WAL file flush adds an msync before
+     * its fdatasync (see {@link io.questdb.cairo.vm.api.MemoryMA#flushFile}), so a part that starts at a fixed crash
+     * point can fall past N and fail.
      */
     @Test
     public void testCleanupSweepRecoversToCommittedStateAtEveryCrashPoint() throws Exception {
