@@ -51,6 +51,7 @@ import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.tasks.TelemetryTask;
+import io.questdb.test.cairo.Overrides;
 import io.questdb.test.cutlass.http.TestHttpClient;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -885,6 +886,11 @@ public class ServerMainTest extends AbstractBootstrapTest {
                     final String[] expectedProps = (
                             "property_path\tenv_var_name\tvalue\tvalue_source\tsensitive\treloadable\n" +
                                     "binarydata.encoding.maxlength\tQDB_BINARYDATA_ENCODING_MAXLENGTH\t32768\tdefault\tfalse\tfalse\n" +
+                                    "cairo.adaptive.commit.group.window\tQDB_CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW\t50000\tdefault\tfalse\tfalse\n" +
+                                    "cairo.adaptive.epoch.column.sync.batched\tQDB_CAIRO_ADAPTIVE_EPOCH_COLUMN_SYNC_BATCHED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "cairo.adaptive.epoch.flush.on.close\tQDB_CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "cairo.adaptive.epoch.interval\tQDB_CAIRO_ADAPTIVE_EPOCH_INTERVAL\t60000\tdefault\tfalse\tfalse\n" +
+                                    "cairo.adaptive.epoch.max.rows\tQDB_CAIRO_ADAPTIVE_EPOCH_MAX_ROWS\t5000000\tdefault\tfalse\tfalse\n" +
                                     "cairo.attach.partition.copy\tQDB_CAIRO_ATTACH_PARTITION_COPY\tfalse\tdefault\tfalse\tfalse\n" +
                                     "cairo.attach.partition.suffix\tQDB_CAIRO_ATTACH_PARTITION_SUFFIX\t.attachable\tdefault\tfalse\tfalse\n" +
                                     "cairo.character.store.capacity\tQDB_CAIRO_CHARACTER_STORE_CAPACITY\t1024\tdefault\tfalse\tfalse\n" +
@@ -892,7 +898,11 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.column.indexer.queue.capacity\tQDB_CAIRO_COLUMN_INDEXER_QUEUE_CAPACITY\t64\tdefault\tfalse\tfalse\n" +
                                     "cairo.column.pool.capacity\tQDB_CAIRO_COLUMN_POOL_CAPACITY\t4096\tdefault\tfalse\tfalse\n" +
                                     "cairo.commit.lag\tQDB_CAIRO_COMMIT_LAG\t600000\tdefault\tfalse\tfalse\n" +
-                                    "cairo.commit.mode\tQDB_CAIRO_COMMIT_MODE\tnosync\tdefault\tfalse\tfalse\n" +
+                                    // AbstractBootstrapTest writes the suite commit mode into server.conf, so the source is the
+                                    // conf file rather than the built-in default. The value is the suite's, not the shipped one --
+                                    // interpolated rather than spelled "adaptive", so a -Dquestdb.test.commit.mode sweep does not
+                                    // fail here on a value this test is not about.
+                                    "cairo.commit.mode\tQDB_CAIRO_COMMIT_MODE\t" + Overrides.TEST_COMMIT_MODE + "\tconf\tfalse\tfalse\n" +
                                     "cairo.create.as.select.retry.count\tQDB_CAIRO_CREATE_AS_SELECT_RETRY_COUNT\t5\tdefault\tfalse\tfalse\n" +
                                     "cairo.date.locale\tQDB_CAIRO_DATE_LOCALE\ten\tdefault\tfalse\tfalse\n" +
                                     "cairo.default.sequencer.part.txn.count\tQDB_CAIRO_DEFAULT_SEQUENCER_PART_TXN_COUNT\t0\tdefault\tfalse\tfalse\n" +
@@ -1067,6 +1077,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.map.max.pages\tQDB_CAIRO_SQL_MAP_MAX_PAGES\t2147483647\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.map.max.resizes\tQDB_CAIRO_SQL_MAP_MAX_RESIZES\t2147483647\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.unordered.map.max.entry.size\tQDB_CAIRO_SQL_UNORDERED_MAP_MAX_ENTRY_SIZE\t32\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.max.grouping.sets\tQDB_CAIRO_SQL_MAX_GROUPING_SETS\t4096\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.max.negative.limit\tQDB_CAIRO_SQL_MAX_NEGATIVE_LIMIT\t10000\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.max.recompile.attempts\tQDB_CAIRO_SQL_MAX_RECOMPILE_ATTEMPTS\t10\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.max.symbol.not.equals.count\tQDB_CAIRO_SQL_MAX_SYMBOL_NOT_EQUALS_COUNT\t100\tdefault\tfalse\tfalse\n" +
@@ -1157,6 +1168,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.unordered.page.frame.reduce.queue.capacity\tQDB_CAIRO_UNORDERED_PAGE_FRAME_REDUCE_QUEUE_CAPACITY\t4096\tdefault\tfalse\tfalse\n" +
                                     "cairo.vector.aggregate.queue.capacity\tQDB_CAIRO_VECTOR_AGGREGATE_QUEUE_CAPACITY\t8\tdefault\tfalse\tfalse\n" +
                                     "cairo.volumes\tQDB_CAIRO_VOLUMES\t\tdefault\tfalse\tfalse\n" +
+                                    "cairo.wal.commit.writeback.drain\tQDB_CAIRO_WAL_COMMIT_WRITEBACK_DRAIN\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.apply.enabled\tQDB_CAIRO_WAL_APPLY_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.apply.look.ahead.txn.count\tQDB_CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT\t200\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.apply.block.size\tQDB_CAIRO_WAL_APPLY_BLOCK_SIZE\t78643200\tdefault\tfalse\tfalse\n" +
@@ -1466,6 +1478,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                             "qwp.max.rows.per.table\tQDB_QWP_MAX_ROWS_PER_TABLE\t1000000\tdefault\tfalse\tfalse\n" +
                                             "qwp.max.tables.per.connection\tQDB_QWP_MAX_TABLES_PER_CONNECTION\t10000\tdefault\tfalse\tfalse\n" +
                                             "qwp.max.uncommitted.rows\tQDB_QWP_MAX_UNCOMMITTED_ROWS\t1000000\tdefault\tfalse\tfalse\n" +
+                                            "qwp.min.idle.ms.before.writer.release\tQDB_QWP_MIN_IDLE_MS_BEFORE_WRITER_RELEASE\t30000\tdefault\tfalse\tfalse\n" +
                                             "qwp.udp.bind.to\tQDB_QWP_UDP_BIND_TO\t0.0.0.0:9007\tdefault\tfalse\tfalse\n" +
                                             "qwp.udp.commit.interval\tQDB_QWP_UDP_COMMIT_INTERVAL\t2000\tdefault\tfalse\tfalse\n" +
                                             "qwp.udp.enabled\tQDB_QWP_UDP_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
@@ -1586,6 +1599,9 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                             "cairo.checkpoint.recovery.threadpool.max\tQDB_CAIRO_CHECKPOINT_RECOVERY_THREADPOOL_MAX\t12\tdefault\tfalse\tfalse\n" +
                                             "cairo.partition.encoder.parquet.min.compression.ratio\tQDB_CAIRO_PARTITION_ENCODER_PARQUET_MIN_COMPRESSION_RATIO\t1.2\tdefault\tfalse\tfalse\n" +
                                             "cairo.partition.encoder.parquet.o3.rewrite.unused.max.bytes\tQDB_CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES\t1073741824\tdefault\tfalse\tfalse\n" +
+                                            "cairo.mat.view.row.expiry.cleanup.enabled\tQDB_CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                            "cairo.mat.view.row.expiry.cleanup.max.cached.partitions\tQDB_CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MAX_CACHED_PARTITIONS\t16384\tdefault\tfalse\tfalse\n" +
+                                            "cairo.mat.view.row.expiry.cleanup.min.expired.fraction\tQDB_CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MIN_EXPIRED_FRACTION\t0.5\tdefault\tfalse\tfalse\n" +
                                             "cairo.partition.encoder.parquet.o3.rewrite.unused.ratio\tQDB_CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO\t0.5\tdefault\tfalse\tfalse\n" +
                                             "cairo.wal.apply.suspended.write.denied\tQDB_CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED\tfalse\tdefault\tfalse\ttrue\n" +
                                             "cairo.wal.apply.suspended.tables\tQDB_CAIRO_WAL_APPLY_SUSPENDED_TABLES\t\tdefault\tfalse\ttrue\n" +

@@ -25,11 +25,16 @@
 package io.questdb.test.cairo.fuzz;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.TableWriter;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Numbers;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.datetime.nanotime.Nanos;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
@@ -159,6 +164,13 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                     .returns("count\n" +
                             expectedTxnCount + "\n");
 
+            if (engine.getConfiguration().getCommitMode() == CommitMode.ADAPTIVE) {
+                // Sequencer parts are purged against the older of the two save points, which recovery falls back
+                // to; one more save point at the applied cut moves the older one past them.
+                try (TableWriter writer = getWriter("chunk_seq")) {
+                    writer.advanceDurableEpoch(engine.getConfiguration().getMicrosecondClock().getTicks() / 1000L);
+                }
+            }
             drainPurgeJob();
 
             assertQuery("select count(*) from wal_transactions('chunk_seq')")
@@ -201,9 +213,9 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 0.01,
                 0.5,
                 0.5,
-                0.1,
+                0.01, // truncateProb: rare, so the days behind the active one outlive several conversions
                 0.0,
-                0.8,
+                0.05, // setTtlProb: rare, for the same reason
                 0.00,
                 0,
                 0.1,
@@ -211,7 +223,50 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 0.01, // addCoveringIndexProb
                 0.1 // SET FORMAT PARQUET|NATIVE probability
         );
-        setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 10, 1000, 100, 3);
+        // Several days, so CONVERT PARTITION reaches days behind the active one too.
+        setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 10, 1000, 100, 3 + rnd.nextInt(6));
+        setFuzzProperties(rnd);
+        setRndConvertedDayShapeProperties(rnd, fuzzer);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, getRndSmallParquetRowGroupSize(rnd));
+        runFuzz(rnd);
+    }
+
+    /**
+     * No TRUNCATE, TTL, and almost no DROP PARTITION, so older days keep collecting O3 splits and composite pieces.
+     */
+    @Test
+    public void testConvertSplitAndCompositePartitionToParquet() throws Exception {
+        Rnd rnd = generateRandom(LOG);
+        setTestParams(rnd);
+
+        setFuzzProbabilities(
+                0.01,
+                0.01,
+                0.01,
+                0.05,
+                0.05,
+                0.05,
+                0.05,
+                0.05,
+                1.0,
+                0.01,
+                0.005,
+                0.3,
+                0.3,
+                0.0, // truncateProb
+                0.0,
+                0.0, // setTtlProb
+                0.0, // replaceProb: a replace commit is not supported over a parquet partition
+                0,
+                0.05,
+                0.05,
+                0.05, // addCoveringIndexProb
+                0.0 // SET FORMAT PARQUET|NATIVE probability
+        );
+        setFuzzCounts(true, 20_000, 300, 20, 10, 1000, 100, 4 + rnd.nextInt(6));
+        setFuzzProperties(rnd);
+        setRndConvertedDayShapeProperties(rnd, fuzzer);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, getRndSmallParquetRowGroupSize(rnd));
         runFuzz(rnd);
     }
 
@@ -220,6 +275,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         // Creates WAL table in parquet format and keeps then run all parquet supported operations.
         Rnd rnd = generateRandom(LOG);
         setTestParams(rnd);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, getRndSmallParquetRowGroupSize(rnd));
         setCreateWalAsParquet(true);
 
         setFuzzProbabilities(
@@ -269,9 +325,9 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 0.01,
                 0.5,
                 0.5,
-                0.1,
+                0.01, // truncateProb: rare, so the days behind the active one outlive several conversions
                 0.0,
-                0.8,
+                0.05, // setTtlProb: rare, for the same reason
                 0.00,
                 0,
                 0.01,
@@ -280,7 +336,10 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 0.0
 
         );
-        setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 10, 1000, 100, 3);
+        setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 10, 1000, 100, 3 + rnd.nextInt(6));
+        setFuzzProperties(rnd);
+        setRndConvertedDayShapeProperties(rnd, fuzzer);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, getRndSmallParquetRowGroupSize(rnd));
         runFuzz(rnd);
     }
 
@@ -643,6 +702,62 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
+    public void testWalWriteManySmallTxnsWideTimestampRange() throws Exception {
+        // A backlog of hundreds of tiny O3 transactions spread over a wide timestamp range.
+        // WAL apply sorts a transaction block by a 64-bit key made of the timestamp offset
+        // and the txn index. With more than 256 txns the index takes 2 bytes, so a block
+        // spanning more than 2^48 timestamp units does not fit the key: ~3.3 days
+        // in nanos, ~8.9 years in micros. See https://github.com/questdb/questdb/issues/7989
+        // The test pins nanos: in micros it needs thousands of DAY partitions and runs too long.
+        Rnd rnd = generateRandom(LOG);
+        fuzzer.setTimestampType(ColumnType.TIMESTAMP_NANO);
+        setTestParams(rnd);
+
+        // Inserts only: replace commits, structural changes and partition operations
+        // end a transaction block, and the test needs blocks of hundreds of transactions
+        setFuzzProbabilities(
+                0.05,
+                0.1,
+                0.1,
+                0.05,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0.01,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0
+        );
+
+        // 2^48 nanos is ~3.26 days
+        final int overflowSpanDays = (int) ((1L << 48) / Nanos.DAY_NANOS) + 1;
+        final int transactionCount = 300 + rnd.nextInt(700);
+        setFuzzCounts(
+                true,
+                transactionCount * (1 + rnd.nextInt(3)),
+                transactionCount,
+                10,
+                10,
+                10,
+                10,
+                overflowSpanDays + rnd.nextInt(10)
+        );
+        setFuzzProperties(rnd);
+        // Load the whole backlog into one block. Short apply quota truncates loading of
+        // transaction details and splits the backlog into small blocks.
+        node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 1000);
+        runFuzz(rnd);
+    }
+
+    @Test
     public void testWalWriteManyTablesInOrder() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_O3_QUICKSORT_ENABLED, true);
         Rnd rnd = generateRandom(LOG);
@@ -795,6 +910,40 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         setFuzzCounts(true, 1_000_000, 500, 20, 1000, 1000, 100, 20);
         setFuzzProperties(rnd);
         runFuzz(rnd);
+    }
+
+    /**
+     * Makes the days CONVERT PARTITION reaches split and composite: several folders per day, a piece floor far below
+     * the default 4096 (a fuzz-sized day never spares enough rows for the merge-append pre-split otherwise), backfill
+     * O3 blocks into older days, merge-append mostly on, and, three runs in four, compaction effectively off so the
+     * conversion folds the splits and pieces itself.
+     */
+    private static void setRndConvertedDayShapeProperties(Rnd rnd, FuzzRunner fuzzer) {
+        final int maxSplits = 2 + rnd.nextInt(4);
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MAX_SPLITS, maxSplits);
+        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, maxSplits);
+        final long avgRowsPieceLim = Math.round(Math.pow(2, rnd.nextDouble() * 7));
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, avgRowsPieceLim);
+        final double backfillProb = 0.1 + 0.3 * rnd.nextDouble();
+        fuzzer.setBackfillProb(backfillProb);
+        final boolean isMergeAppend = rnd.nextInt(4) > 0;
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, isMergeAppend);
+        final boolean isShapeKept = rnd.nextInt(4) > 0;
+        if (isShapeKept) {
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, -1);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_COMMITS, 1_000);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, Micros.DAY_MICROS);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_PIECE_THRESHOLD, 10_000);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_ROWS_RATIO, 999);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, Numbers.SIZE_1GB);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_DEAD_THRESHOLD, Numbers.SIZE_1GB);
+        }
+        LOG.info().$("converted day shape [maxSplits=").$(maxSplits)
+                .$(", isMergeAppend=").$(isMergeAppend)
+                .$(", avgRowsPieceLim=").$(avgRowsPieceLim)
+                .$(", backfillProb=").$(backfillProb)
+                .$(", isShapeKept=").$(isShapeKept)
+                .I$();
     }
 
     /**

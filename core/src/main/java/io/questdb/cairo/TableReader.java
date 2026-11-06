@@ -71,8 +71,14 @@ public class TableReader implements Closeable, SymbolTableSource {
     private static final int PARTITIONS_SLOT_OFFSET_COLUMN_VERSION = PARTITIONS_SLOT_OFFSET_NAME_TXN + 1;
     private static final int PARTITIONS_SLOT_OFFSET_FORMAT = PARTITIONS_SLOT_OFFSET_COLUMN_VERSION + 1;
     private static final int PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN = PARTITIONS_SLOT_OFFSET_FORMAT + 1;
+    // _cv version and parquet file size a parquet partition's indexes were last found valid at, see checkParquetIndexes()
+    private static final int PARTITIONS_SLOT_OFFSET_INDEX_CHECK_CV = PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN + 1;
+    private static final int PARTITIONS_SLOT_OFFSET_INDEX_CHECK_PARQUET_SIZE = PARTITIONS_SLOT_OFFSET_INDEX_CHECK_CV + 1;
     private static final int PARTITIONS_SLOT_SIZE = 8; // must be power of 2
     private static final int PARTITIONS_SLOT_SIZE_MSB = Numbers.msb(PARTITIONS_SLOT_SIZE);
+    // Retries that must pass with no version change before a torn live area counts as terminal rather
+    // than contention. A power of 2. Far longer than any commit's publish window, yet still a short wait.
+    private static final int TORN_DIAGNOSIS_WINDOW = 1 << 16;
     private final BitSet activeColumns = new BitSet();
     private final MillisecondClock clock;
     private final ColumnVersionReader columnVersionReader;
@@ -375,6 +381,9 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     public IndexReader getIndexReader(int partitionIndex, int columnIndex, int direction) {
+        if (getPartitionFormat(partitionIndex) == PartitionFormat.PARQUET) {
+            checkParquetIndexes(partitionIndex, columnIndex);
+        }
         final int columnBase = getColumnBase(partitionIndex);
         final int index = getPrimaryColumnIndex(columnBase, columnIndex);
         final long partitionTimestamp = txFile.getPartitionTimestampByIndex(partitionIndex);
@@ -573,6 +582,14 @@ public class TableReader implements Closeable, SymbolTableSource {
         return txFile.getPartitionSize(partitionIndex);
     }
 
+    /**
+     * Name txn of a partition, that is, which version of the directory this reader sees.
+     */
+    @TestOnly
+    public long getPartitionNameTxnByIndex(int partitionIndex) {
+        return txFile.getPartitionNameTxn(partitionIndex);
+    }
+
     public long getPartitionTimestampByIndex(int partitionIndex) {
         return txFile.getPartitionTimestampByIndex(partitionIndex);
     }
@@ -768,8 +785,14 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     public boolean reload() {
+        final boolean wasActive = txnAcquired;
         if (acquireTxn()) {
             return false;
+        }
+        if (wasActive && partitionOverwriteControl != null) {
+            // readTxnSlow() releases the old txn in the scoreboard; drop the old partition sizes first,
+            // or the control flags a writer that legitimately appends once the scoreboard allows it
+            partitionOverwriteControl.releasePartitions(this);
         }
         try {
             reloadSlow(true);
@@ -782,6 +805,9 @@ public class TableReader implements Closeable, SymbolTableSource {
             txPartitionVersion = txFile.getPartitionTableVersion();
             txColumnVersion = txFile.getColumnVersion();
             txTruncateVersion = txFile.getTruncateVersion();
+            if (wasActive && partitionOverwriteControl != null) {
+                partitionOverwriteControl.acquirePartitions(this);
+            }
 
             // Useful for debugging
             // assert DebugUtils.reconcileColumnTops(PARTITIONS_SLOT_SIZE, openPartitionInfo, columnVersionReader, this);
@@ -899,6 +925,76 @@ public class TableReader implements Closeable, SymbolTableSource {
             return txFile.getVersion() == txFile.unsafeReadVersion();
         }
         return false;
+    }
+
+    /**
+     * Fails the query when the index of {@code columnIndex} on a parquet partition does not cover the partition's
+     * data. QuestDB 9.3.4 - 10.0.1 merged O3 rows into parquet partitions without resetting the column tops in
+     * {@code _cv}, and built the index from that stale top: rows inside it are missing from the index (and from the
+     * covered values of a covering index), and the index readers answer them as NULL. {@code PartitionCompactionScanJob}
+     * repairs such a partition: it rebuilds its indexes and zeroes the stale tops.
+     * <p>
+     * Lazy and per partition: runs on the first index use of the partition, checks every indexed column of it, and
+     * remembers a clean result against the {@code _cv} version and the parquet file size. Only the {@code _pm}
+     * statistics are read - a column must hold nothing but NULLs inside its top.
+     */
+    private void checkParquetIndexes(int partitionIndex, int columnIndex) {
+        final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
+        final long columnVersion = columnVersionReader.getVersion();
+        final long parquetFileSize = txFile.getPartitionParquetFileSize(partitionIndex);
+        if (openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_INDEX_CHECK_CV) == columnVersion
+                && openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_INDEX_CHECK_PARQUET_SIZE) == parquetFileSize) {
+            return;
+        }
+
+        final long partitionTimestamp = txFile.getPartitionTimestampByIndex(partitionIndex);
+        long partitionRowCount = getPartitionRowCount(partitionIndex);
+        if (partitionRowCount < 0) {
+            partitionRowCount = getPartitionRowCountFromMetadata(partitionIndex);
+        }
+        boolean allValid = true;
+        parquetMetaReader.of(getParquetMetadataAddr(partitionIndex), getParquetMetadataSize(partitionIndex));
+        try {
+            if (!parquetMetaReader.resolveFooter(parquetFileSize)) {
+                throw CairoException.critical(0).put("invalid _pm file: failed to resolve footer [table=")
+                        .put(tableToken.getTableName()).put(", parquetFileSize=").put(parquetFileSize).put(']');
+            }
+            for (int i = 0; i < columnCount; i++) {
+                if (!metadata.isColumnIndexed(i)) {
+                    continue;
+                }
+                int staleColumnIndex = hasDataInsideColumnTop(partitionTimestamp, partitionRowCount, i) ? i : -1;
+                final IntList coveredWriterIndices = metadata.getColumnMetadata(i).getCoveringColumnIndices();
+                if (coveredWriterIndices != null) {
+                    for (int c = 0, n = coveredWriterIndices.size(); c < n && staleColumnIndex < 0; c++) {
+                        final int coveredColumnIndex = getColumnIndexByWriterIndex(coveredWriterIndices.getQuick(c));
+                        if (coveredColumnIndex > -1 && hasDataInsideColumnTop(partitionTimestamp, partitionRowCount, coveredColumnIndex)) {
+                            staleColumnIndex = coveredColumnIndex;
+                        }
+                    }
+                }
+                if (staleColumnIndex > -1) {
+                    if (i == columnIndex) {
+                        final CairoException e = CairoException.critical(0)
+                                .put("index does not cover parquet partition data, partition compaction rebuilds it [table=")
+                                .put(tableToken.getTableName())
+                                .put(", partition=");
+                        formatErrorPartitionDirName(partitionIndex, e.message);
+                        e.put(", index=").put(metadata.getColumnName(i))
+                                .put(", column=").put(metadata.getColumnName(staleColumnIndex))
+                                .put(']');
+                        throw e;
+                    }
+                    allValid = false;
+                }
+            }
+        } finally {
+            parquetMetaReader.clear();
+        }
+        if (allValid) {
+            openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_INDEX_CHECK_CV, columnVersion);
+            openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_INDEX_CHECK_PARQUET_SIZE, parquetFileSize);
+        }
     }
 
     private void checkSchedulePurgeO3Partitions() {
@@ -1255,6 +1351,16 @@ public class TableReader implements Closeable, SymbolTableSource {
         Misc.freeObjList(indexes);
     }
 
+    /**
+     * Frees the index readers of a column and empties their slots, so that the next index lookup creates them
+     * afresh for the column's current index type.
+     */
+    private void freeIndexReaders(int base, int columnIndex) {
+        final int index = getPrimaryColumnIndex(base, columnIndex);
+        Misc.free(indexes.getAndSetQuick(index, null));
+        Misc.free(indexes.getAndSetQuick(index + 1, null));
+    }
+
     private void freeParquetPartitions() {
         Misc.freeObjList(parquetMetaDecoders);
         Misc.freeObjList(parquetMetadataPartitions);
@@ -1274,12 +1380,38 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
+    private int getColumnIndexByWriterIndex(int writerIndex) {
+        for (int i = 0; i < columnCount; i++) {
+            if (metadata.getWriterIndex(i) == writerIndex) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
     private long getPartitionNameTxn(int partitionIndex) {
         return txFile.getPartitionNameTxn(partitionIndex);
     }
 
     private long getPartitionTimestamp(int partitionIndex) {
         return openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE);
+    }
+
+    /**
+     * Whether the parquet column holds a non-NULL value inside its {@code _cv} column top, judged from the {@code _pm}
+     * null counts alone. A column the file does not carry is not judged.
+     */
+    private boolean hasDataInsideColumnTop(long partitionTimestamp, long partitionRowCount, int columnIndex) {
+        final int parquetColumnIndex = parquetMetaReader.getColumnIndexById(metadata.getOriginalWriterIndex(columnIndex));
+        if (parquetColumnIndex < 0) {
+            return false;
+        }
+        long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, metadata.getWriterIndex(columnIndex));
+        if (columnTop < 0 || columnTop > partitionRowCount) {
+            // the column is absent from the partition
+            columnTop = partitionRowCount;
+        }
+        return parquetMetaReader.hasNonNullValuesInsideColumnTop(parquetColumnIndex, columnTop);
     }
 
     private void init() {
@@ -1328,6 +1460,8 @@ public class TableReader implements Closeable, SymbolTableSource {
             openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, columnVersionReader.getMaxPartitionVersion(partitionTimestamp));
             openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_FORMAT, isParquet ? PartitionFormat.PARQUET : PartitionFormat.NATIVE);
             openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN, 0);
+            openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_INDEX_CHECK_CV, -1);
+            openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_INDEX_CHECK_PARQUET_SIZE, -1);
         }
         return openPartitionInfo;
     }
@@ -1356,6 +1490,8 @@ public class TableReader implements Closeable, SymbolTableSource {
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, -1);
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_FORMAT, -1);
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN, 0);
+        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_INDEX_CHECK_CV, -1);
+        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_INDEX_CHECK_PARQUET_SIZE, -1);
         partitionCount++;
         LOG.debug().$("inserted partition [index=").$(partitionIndex).$(", table=").$(tableToken)
                 .$(", timestamp=").$ts(ColumnType.getTimestampDriver(timestampType), timestamp).I$();
@@ -1494,6 +1630,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
+
     private long openPartition0(int partitionIndex) {
         final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
         if (txFile.getPartitionCount() < 2 && txFile.getTransientRowCount() == 0) {
@@ -1524,7 +1661,15 @@ public class TableReader implements Closeable, SymbolTableSource {
                         final long parquetFileSize = openParquetMetadata(partitionIndex);
                         path.trimTo(rootLen);
                         pathGenParquetPartition(partitionIndex, partitionNameTxn);
-                        if (ff.exists(path.$())) {
+                        final long parquetActualLength = ff.length(path.$());
+                        if (parquetActualLength >= 0) {
+                            // A remote partition may legitimately have no local data file. For a
+                            // present file, reject a torn extent before mapping the size from _pm.
+                            if (parquetFileSize > parquetActualLength) {
+                                throw CairoException.critical(0)
+                                        .put("parquet partition file too short [expected=").put(parquetFileSize)
+                                        .put(", actual=").put(parquetActualLength).put(", path=").put(path).put(']');
+                            }
                             MemoryCMR parquetMem = parquetPartitions.getQuick(partitionIndex);
                             try {
                                 if (parquetMem != null && parquetMem != NullMemoryCMR.INSTANCE) {
@@ -1677,6 +1822,7 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     private void readTxnSlow(long deadline) {
         int count = 0;
+        long tornWindowVersion = txFile.unsafeReadVersion();
 
         while (true) {
             if (txFile.unsafeLoadAll()) {
@@ -1701,11 +1847,32 @@ public class TableReader implements Closeable, SymbolTableSource {
             // This is unlucky, sequences have changed while we were reading transaction data
             // We must discard and try again
             count++;
+            // A torn live area is terminal, but one sample cannot tell it from contention, so it counts as
+            // torn only once a whole window of retries passes with the version unchanged. No clock needed.
+            if ((count & (TORN_DIAGNOSIS_WINDOW - 1)) == 0) {
+                final long versionNow = txFile.unsafeReadVersion();
+                if (versionNow == tornWindowVersion && txFile.unsafeIsLiveAreaTorn()) {
+                    throw tornLiveAreaException();
+                }
+                tornWindowVersion = versionNow;
+            }
             if (clock.getTicks() > deadline) {
+                // A reader that cannot advance is normally contention, but not when the live _txn area is
+                // torn: TxReader's fallback carries a txn a live scoreboard refuses, so this loop spins out.
+                // Report the torn _txn by name rather than a timeout.
+                if (txFile.unsafeIsLiveAreaTorn()) {
+                    throw tornLiveAreaException();
+                }
                 throw CairoException.critical(0).put("Transaction read timeout [src=reader, table=").put(tableToken).put(", timeout=").put(configuration.getSpinLockTimeout()).put("ms]");
             }
             Os.pause();
         }
+    }
+
+    private CairoException tornLiveAreaException() {
+        return CairoException.txnLiveAreaTorn()
+                .put("_txn live area is torn, reader cannot advance past the previous transaction [src=reader, table=")
+                .put(tableToken).put(", txn=").put(txFile.getTxn()).put(']');
     }
 
     private void reconcileOpenPartitions(long prevPartitionVersion, long prevColumnVersion, long prevTruncateVersion) {
@@ -2071,12 +2238,26 @@ public class TableReader implements Closeable, SymbolTableSource {
         return true;
     }
 
-    private boolean reloadColumnVersion(long columnVersion) {
-        if (columnVersionReader.getVersion() != columnVersion) {
-            // A duration, unlike the absolute deadline readTxnSlow() and reloadMetadata() take.
-            columnVersionReader.readSafe(clock, configuration.getSpinLockTimeout());
+    private boolean reloadColumnVersion(long columnVersion, long deadline) {
+        if (columnVersionReader.getVersion() == columnVersion) {
+            return true;
         }
-        return columnVersionReader.getVersion() == columnVersion;
+        // Unlike the absolute deadline readTxnSlow()/reloadMetadata() take: a consistent _cv behind the
+        // version _txn names is terminal, and the reader throws it by name without waiting on any clock.
+        columnVersionReader.readSafe(clock, configuration.getSpinLockTimeout(), columnVersion);
+        if (columnVersionReader.getVersion() == columnVersion) {
+            return true;
+        }
+        // _cv is ahead of the _txn record we loaded: a commit in flight has published _cv but not yet _txn.
+        // That one is worth waiting for, on this reload's deadline, then _txn is re-read.
+        if (clock.getTicks() > deadline) {
+            throw CairoException.critical(0).put("Column Version read timeout [src=reader, table=").put(tableToken)
+                    .put(", txnColumnVersion=").put(columnVersion)
+                    .put(", cvVersion=").put(columnVersionReader.getVersion())
+                    .put(", timeout=").put(configuration.getSpinLockTimeout()).put("ms]");
+        }
+        Os.pause();
+        return false;
     }
 
     private boolean reloadMetadata(int txnMetadataVersion, long deadline, boolean reshuffleColumns) {
@@ -2129,7 +2310,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             // Reload _meta if the structure version updated, reload _cv if column version updated
         } while (
             // Reload column versions, column version used in metadata reload column shuffle
-                !reloadColumnVersion(txFile.getColumnVersion())
+                !reloadColumnVersion(txFile.getColumnVersion(), deadline)
                         // Start again if _meta with the matching structure version cannot be loaded
                         || !reloadMetadata(txFile.getMetadataVersion(), deadline, reshuffle)
         );
@@ -2237,7 +2418,10 @@ public class TableReader implements Closeable, SymbolTableSource {
                             } else if (copyFrom > -1) {
                                 copyColumns(base, copyFrom, columns, columnTops, indexes, base, i);
                             } else if (copyFrom != Integer.MIN_VALUE) {
-                                // new instance
+                                // New instance. The slot's index readers belong to the column that held it before,
+                                // which may have had another index type: reloadColumnAt() would reopen them for this
+                                // column with the wrong kind of reader.
+                                freeIndexReaders(base, i);
                                 reloadColumnAt(
                                         partitionIndex,
                                         path,

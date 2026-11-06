@@ -120,6 +120,8 @@ public class PropServerConfigurationTest {
         PropServerConfiguration configuration = newPropServerConfiguration(properties);
         FilesFacade ff = configuration.getCairoConfiguration().getFilesFacade();
 
+        Assert.assertEquals(60_000L, configuration.getCairoConfiguration().getAdaptiveEpochIntervalMs());
+        Assert.assertEquals(5_000_000L, configuration.getCairoConfiguration().getAdaptiveEpochMaxRows());
         Assert.assertFalse(configuration.getCairoConfiguration().getLogLevelVerbose());
         Assert.assertEquals("Z", configuration.getCairoConfiguration().getLogTimestampTimezone());
         Assert.assertEquals(500, configuration.getHttpServerConfiguration().getAcceptLoopTimeout());
@@ -205,12 +207,21 @@ public class PropServerConfigurationTest {
 
         Assert.assertTrue(configuration.getCairoConfiguration().getLogSqlQueryProgressExe());
 
+        // The shipped default, which the whole product reads through CommitMode.DEFAULT. The test suite
+        // runs adaptive regardless, so this assertion is about what a user gets, not what the tests
+        // exercise.
         Assert.assertEquals(CommitMode.NOSYNC, configuration.getCairoConfiguration().getCommitMode());
+        Assert.assertEquals(CommitMode.DEFAULT, configuration.getCairoConfiguration().getCommitMode());
+        // RPO of the adaptive group commit out of the box.
+        Assert.assertEquals(50_000L, configuration.getCairoConfiguration().getAdaptiveCommitGroupWindowUs());
         Assert.assertEquals(2097152, configuration.getCairoConfiguration().getSqlCopyBufferSize());
         Assert.assertEquals(32, configuration.getCairoConfiguration().getCopyPoolCapacity());
         Assert.assertEquals(5, configuration.getCairoConfiguration().getCreateAsSelectRetryCount());
         Assert.assertEquals(8, configuration.getCairoConfiguration().getViewLexerPoolCapacity());
         Assert.assertTrue(configuration.getCairoConfiguration().isMatViewEnabled());
+        Assert.assertTrue(configuration.getCairoConfiguration().isMatViewRowExpiryCleanupEnabled());
+        Assert.assertEquals(16_384, configuration.getCairoConfiguration().getMatViewRowExpiryCleanupMaxCachedPartitions());
+        Assert.assertEquals(0.5, configuration.getCairoConfiguration().getMatViewRowExpiryCleanupMinExpiredFraction(), 0.000001);
         Assert.assertFalse(configuration.getCairoConfiguration().isMatViewCoveringIndexEnabled());
         Assert.assertEquals(10, configuration.getCairoConfiguration().getMatViewMaxRefreshRetries());
         Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getMatViewInsertAsSelectBatchSize());
@@ -251,6 +262,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(32, configuration.getCairoConfiguration().getSqlUnorderedMapMaxEntrySize());
         Assert.assertEquals(1024, configuration.getCairoConfiguration().getSqlModelPoolCapacity());
         Assert.assertEquals(10_000, configuration.getCairoConfiguration().getSqlMaxNegativeLimit());
+        Assert.assertEquals(4096, configuration.getCairoConfiguration().getSqlMaxGroupingSets());
         Assert.assertEquals(128 * 1024, configuration.getCairoConfiguration().getSqlSortKeyPageSize());
         Assert.assertEquals(Long.MAX_VALUE, configuration.getCairoConfiguration().getSqlSortKeyMaxBytes());
         Assert.assertEquals(128 * 1024, configuration.getCairoConfiguration().getSqlSortLightValuePageSize());
@@ -555,6 +567,20 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testInvalidCairoCommitModeFailsClosed() throws Exception {
+        final Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_COMMIT_MODE.getPropertyPath(), "adaptve");
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail("a commit-mode typo must not silently downgrade the database to nosync");
+        } catch (ServerConfigurationException expected) {
+            TestUtils.assertContains(expected.getMessage(), "invalid configuration value");
+            TestUtils.assertContains(expected.getMessage(), PropertyKey.CAIRO_COMMIT_MODE.getPropertyPath());
+            TestUtils.assertContains(expected.getMessage(), "adaptve");
+        }
+    }
+
+    @Test
     public void testCommitIntervalDefault() throws Exception {
         Properties properties = new Properties();
         properties.setProperty("line.tcp.commit.interval.default", "0");
@@ -568,6 +594,15 @@ public class PropServerConfigurationTest {
         properties.setProperty("line.tcp.commit.interval.default", "1000");
         configuration = newPropServerConfiguration(properties);
         Assert.assertEquals(1000, configuration.getLineTcpReceiverConfiguration().getCommitIntervalDefault());
+    }
+
+    @Test
+    public void testBatchedColumnSyncForceDisable() throws Exception {
+        // cairo.adaptive.epoch.column.sync.batched=false disables the batched save point column flush.
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_COLUMN_SYNC_BATCHED.getPropertyPath(), "false");
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertFalse(configuration.getCairoConfiguration().isAdaptiveEpochColumnSyncBatched());
     }
 
     @Test
@@ -1806,6 +1841,42 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testMatViewRowExpiryCleanupMaxCachedPartitionsAcceptsZero() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MAX_CACHED_PARTITIONS.getPropertyPath(), "0");
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(0, configuration.getCairoConfiguration().getMatViewRowExpiryCleanupMaxCachedPartitions());
+    }
+
+    @Test
+    public void testMatViewRowExpiryCleanupMaxCachedPartitionsRejectsNegative() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MAX_CACHED_PARTITIONS.getPropertyPath(), "-1");
+        assertInvalidConfiguration(properties, PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MAX_CACHED_PARTITIONS);
+    }
+
+    @Test
+    public void testMatViewRowExpiryCleanupMinExpiredFractionRejectsAboveOne() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MIN_EXPIRED_FRACTION.getPropertyPath(), "1.1");
+        assertInvalidConfiguration(properties, PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MIN_EXPIRED_FRACTION);
+    }
+
+    @Test
+    public void testMatViewRowExpiryCleanupMinExpiredFractionRejectsNaN() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MIN_EXPIRED_FRACTION.getPropertyPath(), "NaN");
+        assertInvalidConfiguration(properties, PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MIN_EXPIRED_FRACTION);
+    }
+
+    @Test
+    public void testMatViewRowExpiryCleanupMinExpiredFractionRejectsNegative() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MIN_EXPIRED_FRACTION.getPropertyPath(), "-0.1");
+        assertInvalidConfiguration(properties, PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MIN_EXPIRED_FRACTION);
+    }
+
+    @Test
     public void testMinimum2SharedWorkers() throws Exception {
         final Properties properties = new Properties();
         final PropServerConfiguration configuration = newPropServerConfiguration(properties);
@@ -2257,6 +2328,30 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testQwpMinIdleMsBeforeWriterRelease() throws Exception {
+        Properties properties = new Properties();
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(
+                30_000,
+                configuration.getHttpServerConfiguration().getLineHttpProcessorConfiguration().getQwpMinIdleMsBeforeWriterRelease()
+        );
+
+        properties.setProperty(PropertyKey.QWP_MIN_IDLE_MS_BEFORE_WRITER_RELEASE.getPropertyPath(), "5s");
+        configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(
+                5_000,
+                configuration.getHttpServerConfiguration().getLineHttpProcessorConfiguration().getQwpMinIdleMsBeforeWriterRelease()
+        );
+
+        properties.setProperty(PropertyKey.QWP_MIN_IDLE_MS_BEFORE_WRITER_RELEASE.getPropertyPath(), "0");
+        configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(
+                0,
+                configuration.getHttpServerConfiguration().getLineHttpProcessorConfiguration().getQwpMinIdleMsBeforeWriterRelease()
+        );
+    }
+
+    @Test
     public void testMemoryUsageLogConfiguration() throws Exception {
         Properties properties = new Properties();
         properties.setProperty(PropertyKey.MEMORY_USAGE_LOG_ENABLED.getPropertyPath(), "false");
@@ -2683,6 +2778,9 @@ public class PropServerConfigurationTest {
             Assert.assertTrue(configuration.getMetrics().isScrapeEnabled());
 
             Assert.assertFalse(configuration.getCairoConfiguration().isMatViewEnabled());
+            Assert.assertFalse(configuration.getCairoConfiguration().isMatViewRowExpiryCleanupEnabled());
+            Assert.assertEquals(1000, configuration.getCairoConfiguration().getMatViewRowExpiryCleanupMaxCachedPartitions());
+            Assert.assertEquals(0.25, configuration.getCairoConfiguration().getMatViewRowExpiryCleanupMinExpiredFraction(), 0.000001);
             Assert.assertEquals(100, configuration.getCairoConfiguration().getMatViewMaxRefreshRetries());
             Assert.assertEquals(1000, configuration.getCairoConfiguration().getMatViewInsertAsSelectBatchSize());
             Assert.assertEquals(10000, configuration.getCairoConfiguration().getMatViewRowsPerQueryEstimate());
@@ -3594,6 +3692,13 @@ public class PropServerConfigurationTest {
         Assert.assertFalse(configuration.isCheckpointRecoveryEnabled());
 
         Assert.assertEquals(CommitMode.ASYNC, configuration.getCommitMode());
+        // Adaptive settings, checked here so the CairoConfigurationWrapper arm proves the wrapper delegates
+        // them: every one of these is a default method on CairoConfiguration, so a missed delegation compiles.
+        Assert.assertEquals(12345, configuration.getAdaptiveEpochIntervalMs());
+        Assert.assertEquals(123456, configuration.getAdaptiveEpochMaxRows());
+        Assert.assertEquals(7777, configuration.getAdaptiveCommitGroupWindowUs());
+        Assert.assertFalse(configuration.isAdaptiveEpochFlushOnClose());
+        Assert.assertFalse(configuration.isAdaptiveEpochColumnSyncBatched());
         Assert.assertEquals(12, configuration.getCreateAsSelectRetryCount());
         Assert.assertEquals(16, configuration.getViewLexerPoolCapacity());
         Assert.assertFalse(configuration.isMatViewEnabled());
@@ -3843,7 +3948,8 @@ public class PropServerConfigurationTest {
                     if (!key.contains(".") || key.startsWith("http.redirect") || key.contains(" ")
                             || key.startsWith("replication") || key.startsWith("acl") || key.contains("tls")
                             || key.startsWith("cold.storage") || key.startsWith("native.")
-                            || key.startsWith("backup.") || key.startsWith("checkpoint.history.")) { // Enterprise confs
+                            || key.startsWith("backup.") || key.startsWith("checkpoint.history.")
+                            || key.startsWith("storage.policy.")) { // Enterprise confs
                         continue;
                     }
                     properties.clear();

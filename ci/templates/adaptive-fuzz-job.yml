@@ -1,0 +1,67 @@
+parameters:
+  - name: jobName
+    type: string
+  - name: displayName
+    type: string
+  - name: condition
+    type: string
+  - name: timeoutInMinutes
+    type: number
+  - name: testSets
+    type: object
+  - name: variables
+    type: object
+    default: {}
+  - name: testTimeoutInMinutes
+    type: number
+    default: 55
+  - name: artifactNameSuffix
+    type: string
+    default: ""
+  - name: setupScript
+    type: string
+    default: |
+      sudo apt-get update && sudo apt-get install -y openjdk-25-jdk maven build-essential zip
+      JAVA_PATH="/usr/lib/jvm/java-25-openjdk-amd64"
+      echo "##vso[task.setvariable variable=JAVA_HOME]$JAVA_PATH"
+      echo "##vso[task.setvariable variable=JAVA_HOME_25_X64]$JAVA_PATH"
+      echo "JAVA_HOME will be set to: $JAVA_PATH"
+  - name: postTestSteps
+    type: stepList
+    default: []
+
+jobs:
+  - job: ${{ parameters.jobName }}
+    displayName: ${{ parameters.displayName }}
+    condition: ${{ parameters.condition }}
+    workspace:
+      clean: all
+    strategy:
+      matrix:
+        ${{ each testSet in parameters.testSets }}:
+          ${{ testSet.key }}:
+            os: Linux
+            jdk: "1.25"
+            testset: "all"
+            ${{ each setting in testSet.value }}:
+              ${{ setting.key }}: ${{ setting.value }}
+            javadoc_step: ""
+            javadoc_profile: ""
+    pool:
+      name: hetzner-adaptive-commit-fuzz
+    timeoutInMinutes: ${{ parameters.timeoutInMinutes }}
+    variables:
+      SOURCE_CODE_CHANGED: true
+      ${{ each variable in parameters.variables }}:
+        ${{ variable.key }}: ${{ variable.value }}
+    steps:
+      - template: checkout-source.yml
+      - template: use-hetzner-apt-mirrors.yml
+      - bash: ${{ parameters.setupScript }}
+      - template: steps.yml
+        parameters:
+          isCheckoutEnabled: false
+          isHetznerAptMirrorEnabled: false
+          testTimeoutInMinutes: ${{ parameters.testTimeoutInMinutes }}
+          artifactNameSuffix: ${{ parameters.artifactNameSuffix }}
+      - ${{ parameters.postTestSteps }}
