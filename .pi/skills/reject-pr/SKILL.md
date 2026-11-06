@@ -22,7 +22,7 @@ Actions performed, in order:
 ## Step 0: Locate the review to post
 
 The body you post is **the most recent `review-pr` report in this conversation**
-(its Blocking / Moderate / Minor / Coverage map / Summary output).
+(its verdict, its findings and its Tests section).
 
 - If no review report exists in this conversation, STOP and tell the user to run
   `/skill:review-pr` first — do not fabricate a review.

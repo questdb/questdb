@@ -49,7 +49,7 @@ review runs again after those items, until it finds nothing that blocks or
 `--max-review-rounds` is reached.
 
 The run's scope is what the PR sets out to do plus what it breaks, as in
-review-pr's "Keep the blast radius of the PR small": the items given, the
+review-pr's "Keep the PR's scope small": the items given, the
 review's Blocking findings, and the bugs this PR caused, this run's commits
 included, whose risk blocks the PR ("Risk gate"); `--include-adjacent` adds
 the review's Adjacent findings. Any other bug the PR base already has becomes
@@ -101,7 +101,7 @@ review-pr runs them as the builtin `reviewer` at its default, high, because
 they only read code. The builtin `worker` and `reviewer` default to high, and
 a launch overrides that only through the `:max` suffix of its model;
 `review-pr-runner`, `risk-assessor` and the review's `review-prober`
-falsifiers set max in their definitions. The timeouts leave room for it.
+checkers set max in their definitions. The timeouts leave room for it.
 
 | Helper | Agent | Extra parameters |
 |---|---|---|
@@ -114,7 +114,7 @@ falsifiers set max in their definitions. The timeouts leave room for it.
 | Review | `review-pr-runner` | `timeoutMs: 28800000`, `acceptance: { level: "none", reason: "fix-pr reads the report" }` |
 
 The review helper is the only one that launches agents of its own: the
-review's discovery agents and falsifiers. Its definition,
+review's discovery agents and checkers. Its definition,
 `.pi/agents/review-pr-runner.md`, allows that. If it fails twice, run the
 review in the main session instead: read `.pi/skills/review-pr/SKILL.md` and
 follow it with the helper's arguments.
@@ -263,7 +263,7 @@ START, not only this run's. Number the rounds from 1.
    a PR, drop `<PR>` and `--body`. The prior files are the `report.md` of
    every earlier round, and `<state>/items.md` when the items came from a
    review: the review re-tests
-   their findings at HEAD. Its Step 2.6 measures the coverage of the whole PR
+   their findings at HEAD. Its Step 5 measures the coverage of the whole PR
    at HEAD, in a scratch worktree, and grades never-run code by what it would
    break if it were wrong.
 3. Queue each FINDING line as a new item with the ID `R<N>-<ID>` and run it
@@ -745,7 +745,7 @@ You are the review's parent: launch its agents yourself. Write your files to
 <state>/review<N>/.
 
 When the review is done, write there:
-- report.md: the Step 4 report;
+- report.md: the report (Step 9);
 - <ID>.md (B1, M1, A1, ... as numbered in the report): each Blocking and
   Moderate finding, and each Adjacent finding this PR introduced (its
   Origin), verbatim;

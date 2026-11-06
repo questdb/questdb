@@ -22,8 +22,8 @@ Actions performed, in order:
 ## Step 0: Confirm the review actually clears the bar
 
 Only approve if the most recent `review-pr` report in this conversation has a
-verdict of **approve** with ZERO open Blocking findings (per the review-pr
-correctness gate). Deferred findings don't block: the PR ships with them, and
+verdict of **approve** with ZERO open Blocking findings (per review-pr's
+verdict rules). Deferred findings don't block: the PR ships with them, and
 Step 2b files them privately. If a Blocking finding is still open, do NOT
 approve — tell the user the PR does not meet the bar and suggest `reject-pr`.
 
