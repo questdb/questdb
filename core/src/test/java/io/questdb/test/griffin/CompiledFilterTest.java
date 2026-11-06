@@ -1046,19 +1046,16 @@ public class CompiledFilterTest extends AbstractCairoTest {
             try {
                 for (int jitMode : new int[]{SqlJitMode.JIT_MODE_DISABLED, SqlJitMode.JIT_MODE_FORCE_SCALAR, SqlJitMode.JIT_MODE_ENABLED}) {
                     sqlExecutionContext.setJitMode(jitMode);
+                    // the IN fails while it parses the list, before the JIT
                     final String sql = "SELECT k FROM x WHERE ts IN '[$today,20[03..24]-[01..12]-[01..28]]#mon'";
                     assertExceptionNoLeakCheck(sql, sql.indexOf("'["), "Bracket expansion produces too many intervals (max 1024)");
-                    assertQuery("SELECT k FROM x WHERE ts IN '[$today,20[04..24]-[01..12]-[01..28]]#mon'")
-                            .noLeakCheck()
-                            .returns("""
-                                    k
-                                    3
-                                    6
-                                    """);
                 }
             } finally {
                 sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
             }
+            // The 1,008 Mondays never touch, so with $today the list can yield 1,009 intervals, more
+            // than the IN list threshold (10) lets the JIT check.
+            assertFilterWithAndWithoutJit("ts IN '[$today,20[04..24]-[01..12]-[01..28]]#mon'", "k\n3\n6\n", false);
         });
     }
 
@@ -1126,16 +1123,10 @@ public class CompiledFilterTest extends AbstractCairoTest {
                 for (int jitMode : new int[]{SqlJitMode.JIT_MODE_DISABLED, SqlJitMode.JIT_MODE_ENABLED}) {
                     sqlExecutionContext.setJitMode(jitMode);
                     bindVariableService.clear();
-                    // the error points at the tick string literal
+                    // The literals fail while they parse, before the JIT. The error points at the
+                    // tick string literal.
                     assertExceptionNoLeakCheck("SELECT k FROM x WHERE ts IN '" + overCap + "'", 28, overCapError);
                     assertExceptionNoLeakCheck("SELECT k FROM x WHERE ts NOT IN '" + overCap + "'", 32, overCapError);
-                    assertQuery("SELECT k FROM x WHERE ts IN '[2004..2024]-[01..12]-[01..28]#mon'")
-                            .noLeakCheck()
-                            .returns("""
-                                    k
-                                    3
-                                    6
-                                    """);
                     // The row filter parses a bind string when the cursor opens, and any parse error
                     // fails the query at position 0.
                     bindVariableService.setStr("p", "2024-13-45");
@@ -1143,6 +1134,12 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     bindVariableService.setStr("p", overCap);
                     assertExceptionNoLeakCheck("SELECT k FROM x WHERE ts IN :p", 0, overCapError);
                     assertExceptionNoLeakCheck("SELECT k FROM x WHERE ts NOT IN :p", 0, overCapError);
+                    // the JIT never compiles a timestamp IN over a bind variable
+                    for (String sql : new String[]{"SELECT k FROM x WHERE ts IN :p", "SELECT k FROM x WHERE ts NOT IN :p"}) {
+                        try (RecordCursorFactory factory = select(sql)) {
+                            Assert.assertFalse(sql + ", jit mode " + jitMode, factory.usesCompiledFilter());
+                        }
+                    }
                     // the check after each day of a date variable range reports its own message
                     bindVariableService.setStr("p", "[$today..$today+5000d]T[00,12]:00#mon;1h");
                     assertExceptionNoLeakCheck("SELECT k FROM x WHERE ts IN :p", 0, "Date range expansion produces too many intervals (max 1024)");
@@ -1150,6 +1147,8 @@ public class CompiledFilterTest extends AbstractCairoTest {
             } finally {
                 sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
             }
+            // its 1,008 range checks overflow the IR memory of the JIT
+            assertFilterWithAndWithoutJit("ts IN '[2004..2024]-[01..12]-[01..28]#mon'", "k\n3\n6\n", false);
         });
     }
 

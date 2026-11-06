@@ -1900,17 +1900,21 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     """);
             // The 600 slots of 10 ms of the minute 09:00 from 10 duplicate values hold rows 3, 4 and
             // 5; rows 2 and 6 lie between slots. At +05:00 the minute is 04:00Z and holds row 1.
+            // The slots never touch, so the JIT would need 600 range checks, more than its IR memory
+            // (cairo.sql.jit.ir.memory.max.pages) holds, and the Java filter runs tm.
             final String values = "09:00,".repeat(9) + "09:00";
-            assertInTickRows("2024-01-01T[" + values + "]:[00..59].[0..9]0", "k\n3\n4\n5\n");
-            assertInTickRows("2024-01-01T[" + values + "]:[00..59].[0..9]0@+05:00", "k\n1\n");
-            assertInTickRows("2024-01-01T[" + "09:00@+05:00,".repeat(9) + "09:00@+05:00]:[00..59].[0..9]0", "k\n1\n");
-            assertInTickRows("2024-01-01T[" + "09:00@+05:00,04:00,".repeat(4) + "09:00@+05:00,04:00]:[00..59].[0..9]0", "k\n1\n");
-            // 100 outer values of the same 100 seconds: the second 09:00:00 holds row 3
-            assertInTickRows("2024-01-01T[" + "09:,".repeat(99) + "09:][" + "00:00,".repeat(99) + "00:00]", "k\n3\n");
+            assertInTickRows("2024-01-01T[" + values + "]:[00..59].[0..9]0", "k\n3\n4\n5\n", false);
+            assertInTickRows("2024-01-01T[" + values + "]:[00..59].[0..9]0@+05:00", "k\n1\n", false);
+            assertInTickRows("2024-01-01T[" + "09:00@+05:00,".repeat(9) + "09:00@+05:00]:[00..59].[0..9]0", "k\n1\n", false);
+            assertInTickRows("2024-01-01T[" + "09:00@+05:00,04:00,".repeat(4) + "09:00@+05:00,04:00]:[00..59].[0..9]0", "k\n1\n", false);
+            // 100 outer values of the same 100 seconds: the second 09:00:00 holds row 3. The 10,000
+            // leaves make that one second, a single range check on the JIT.
+            assertInTickRows("2024-01-01T[" + "09:,".repeat(99) + "09:][" + "00:00,".repeat(99) + "00:00]", "k\n3\n", true);
             // Sunday 2024-01-07 and Monday 2024-01-08 at 09:00 at +05:00, 04:00Z on the same day: the
             // first 16 seconds of the minutes 04:00 to 04:16 on Monday hold rows 8 and 9. The
             // dropped Sunday leaves never move Monday's leaves below the start of their zoned value,
-            // which would leave them at 09:00Z, local time read as UTC (rows 10 and 11).
+            // which would leave them at 09:00Z, local time read as UTC (rows 10 and 11). The 17 runs
+            // of 16 seconds make 17 range checks on the JIT.
             final StringBuilder minutes = new StringBuilder();
             final StringBuilder seconds = new StringBuilder();
             for (int k = 0; k < 17; k++) {
@@ -1919,26 +1923,15 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     seconds.append(k == 0 ? "" : ",").append(':').append(twoDigits(k));
                 }
             }
-            assertInTickRows("2024-01-[07..08]T[09@+05:00][" + minutes + "][" + seconds + "]#mon", "k\n8\n9\n");
+            assertInTickRows("2024-01-[07..08]T[09@+05:00][" + minutes + "][" + seconds + "]#mon", "k\n8\n9\n", true);
             // One zoned value per day, 04:00:00 to 04:00:50Z on each Monday to Friday among days 1-28
             // of each month: rows 1, 2, 8, 9 and 12, not the Saturday (row 7) or 09:00Z (rows 10 and 11)
             final String workdayTick = "2024-[01..12]-[01..28]T[09:00@+05:00]:[00..50].[0..9]#workday";
             final String workdayRows = "SELECT k FROM x WHERE year(ts) = 2024 AND day(ts) <= 28 AND day_of_week(ts) <= 5 AND hour(ts) = 4 AND minute(ts) = 0 AND second(ts) <= 50";
             assertQuery(workdayRows).noLeakCheck().returns("k\n1\n2\n8\n9\n12\n");
-            final int callerJitMode = sqlExecutionContext.getJitMode();
-            try {
-                for (int jitMode : new int[]{SqlJitMode.JIT_MODE_ENABLED, SqlJitMode.JIT_MODE_DISABLED}) {
-                    sqlExecutionContext.setJitMode(jitMode);
-                    bindVariableService.clear();
-                    bindVariableService.setStr("p", workdayTick);
-                    for (String column : new String[]{"ts", "tm"}) {
-                        assertSqlCursors(workdayRows, "SELECT k FROM x WHERE " + column + " IN '" + workdayTick + "'");
-                        assertSqlCursors(workdayRows, "SELECT k FROM x WHERE " + column + " IN :p");
-                    }
-                }
-            } finally {
-                sqlExecutionContext.setJitMode(callerJitMode);
-            }
+            // Days 1-28 of a month hold 20 workdays, and the touching tenths of a second make one
+            // interval per day, so the JIT checks 240 intervals
+            assertInTickRows(workdayTick, "k\n1\n2\n8\n9\n12\n", true);
 
             // The first two values hold 1,200 intervals that never touch, so too-many-intervals
             // wins over the invalid third value.
@@ -2722,6 +2715,19 @@ public class IntervalFilterTest extends AbstractCairoTest {
         assertExceptionNoLeakCheck(sql, sql.indexOf("'["), "Bracket expansion produces too many intervals (max 1024)");
     }
 
+    // Expects the query to run its filter on the JIT when isJitExpected, the JIT mode of the context
+    // is on and the platform has a JIT, and on the Java filter or without a row filter otherwise.
+    private static void assertUsesCompiledFilter(String sql, boolean isJitExpected) throws SqlException {
+        final int jitMode = sqlExecutionContext.getJitMode();
+        try (RecordCursorFactory factory = select(sql)) {
+            Assert.assertEquals(
+                    sql + ", jit mode " + jitMode,
+                    isJitExpected && jitMode != SqlJitMode.JIT_MODE_DISABLED && JitUtil.isJitSupported(),
+                    factory.usesCompiledFilter()
+            );
+        }
+    }
+
     private static void putRandomPredicate(Rnd rnd, StringSink sink, StringSink tickSink) {
         // %c stands for the timestamp column
         switch (rnd.nextInt(14)) {
@@ -3013,8 +3019,11 @@ public class IntervalFilterTest extends AbstractCairoTest {
     }
 
     // Expects the rows of the tick string on the designated ts and the non-designated tm of table
-    // x, as a literal and as a bind variable, with the JIT on and off
-    private void assertInTickRows(String tick, String expected) throws Exception {
+    // x, as a literal and as a bind variable, with the JIT mode on and off, and the filter that
+    // runs them. The designated ts runs an interval scan with no row filter, and the JIT never
+    // compiles a timestamp IN over a bind variable. So only the literal on tm can run on the JIT,
+    // and isJitExpected says whether it does when the JIT is on.
+    private void assertInTickRows(String tick, String expected, boolean isJitExpected) throws Exception {
         final int callerJitMode = sqlExecutionContext.getJitMode();
         try {
             for (int jitMode : new int[]{SqlJitMode.JIT_MODE_ENABLED, SqlJitMode.JIT_MODE_DISABLED}) {
@@ -3022,8 +3031,12 @@ public class IntervalFilterTest extends AbstractCairoTest {
                 bindVariableService.clear();
                 bindVariableService.setStr("p", tick);
                 for (String column : new String[]{"ts", "tm"}) {
-                    assertQuery("SELECT k FROM x WHERE " + column + " IN '" + tick + "'").noLeakCheck().returns(expected);
-                    assertQuery("SELECT k FROM x WHERE " + column + " IN :p").noLeakCheck().returns(expected);
+                    final String literalSql = "SELECT k FROM x WHERE " + column + " IN '" + tick + "'";
+                    assertQuery(literalSql).noLeakCheck().returns(expected);
+                    assertUsesCompiledFilter(literalSql, isJitExpected && "tm".equals(column));
+                    final String bindSql = "SELECT k FROM x WHERE " + column + " IN :p";
+                    assertQuery(bindSql).noLeakCheck().returns(expected);
+                    assertUsesCompiledFilter(bindSql, false);
                 }
             }
         } finally {
