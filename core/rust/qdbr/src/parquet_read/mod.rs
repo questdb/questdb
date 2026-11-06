@@ -680,6 +680,132 @@ mod tests {
         Ok(())
     }
 
+    // A file with definition levels and a stale QdbMeta column top: BYTE column `b` and SHORT
+    // column `s`, Optional, with QdbMeta column_top 3 and no statistics, so no null count can
+    // verify the top. Its one row group of 5 rows stores 0, 0 and 0 below the top, as a merge
+    // that gave the top rows values writes them, then holds 2 def-level-0 NULLs.
+    fn gen_optional_byte_short_stale_top_parquet() -> ParquetResult<Vec<u8>> {
+        let mut qdb_meta = QdbMeta::new(2);
+        for tag in [ColumnTypeTag::Byte, ColumnTypeTag::Short] {
+            qdb_meta.schema.push(QdbMetaCol {
+                column_type: tag.into_type(),
+                column_top: 3,
+                format: None,
+                ascii: None,
+                id: None,
+            });
+        }
+        let mut fields = Vec::new();
+        for (id, name) in [(0, "b"), (1, "s")] {
+            fields.push(Arc::new(
+                Type::primitive_type_builder(name, PhysicalType::INT32)
+                    .with_id(Some(id))
+                    .with_repetition(parquet::basic::Repetition::OPTIONAL)
+                    .build()?,
+            ));
+        }
+        let schema = Arc::new(
+            Type::group_type_builder("schema")
+                .with_fields(fields)
+                .build()?,
+        );
+        let props = Arc::new(
+            WriterProperties::builder()
+                .set_dictionary_enabled(false)
+                .set_statistics_enabled(parquet::file::properties::EnabledStatistics::None)
+                .set_key_value_metadata(Some(vec![KeyValue::new(
+                    "questdb".to_string(),
+                    qdb_meta.serialize()?,
+                )]))
+                .build(),
+        );
+        let mut cursor = Cursor::new(Vec::new());
+        let mut fw = SerializedFileWriter::new(&mut cursor, schema, props)?;
+        let mut rg = fw.next_row_group()?;
+        for _ in 0..2 {
+            let mut cw = rg.next_column()?.expect("schema has two columns");
+            cw.typed::<parquet::data_type::Int32Type>().write_batch(
+                &[0, 0, 0],
+                Some(&[1, 1, 1, 0, 0]),
+                None,
+            )?;
+            cw.close()?;
+        }
+        rg.close()?;
+        fw.close()?;
+        Ok(cursor.into_inner())
+    }
+
+    // The definition levels of a chunk hold its NULLs. The footer decoder reads a BYTE/SHORT
+    // chunk with def levels as INT/LONG through them alone, as the `_pm` decoder does: the 0s
+    // stored below a stale QdbMeta top stay 0, and the def-level-0 rows read NULL, in plain,
+    // compacting and filling decodes.
+    #[test]
+    fn decode_row_group_reads_nulls_of_chunk_with_def_levels() -> ParquetResult<()> {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let buf = gen_optional_byte_short_stale_top_parquet()?;
+        let buf_len = buf.len() as u64;
+        let mut reader = Cursor::new(&buf);
+        let decoder = ParquetDecoder::read(allocator.clone(), &mut reader, buf_len)?;
+        let mut rgb = RowGroupBuffers::new(allocator);
+        let mut ctx = DecodeContext::new(buf.as_ptr(), buf_len);
+        let columns = [
+            (0, ColumnTypeTag::Int.into_type()),
+            (1, ColumnTypeTag::Long.into_type()),
+        ];
+        const INT_NULL: i32 = i32::MIN;
+        const LONG_NULL: i64 = i64::MIN;
+
+        assert_eq!(
+            decoder.decode_row_group(&mut ctx, &mut rgb, &columns, 0, 0, 5)?,
+            5
+        );
+        assert_eq!(read_i32s(&rgb, 0), vec![0, 0, 0, INT_NULL, INT_NULL]);
+        assert_eq!(read_i64s(&rgb, 1), vec![0, 0, 0, LONG_NULL, LONG_NULL]);
+
+        // Compacting filtered decode: rows 0 and 4.
+        assert_eq!(
+            decoder.decode_row_group_filtered::<false>(
+                &mut ctx,
+                &mut rgb,
+                0,
+                &columns,
+                0,
+                0,
+                5,
+                &[0, 4],
+            )?,
+            2
+        );
+        assert_eq!(read_i32s(&rgb, 0), vec![0, INT_NULL]);
+        assert_eq!(read_i64s(&rgb, 1), vec![0, LONG_NULL]);
+
+        // Filling filtered decode: rows 1 and 3 decode, the others read NULL.
+        assert_eq!(
+            decoder.decode_row_group_filtered::<true>(
+                &mut ctx,
+                &mut rgb,
+                0,
+                &columns,
+                0,
+                0,
+                5,
+                &[1, 3],
+            )?,
+            5
+        );
+        assert_eq!(
+            read_i32s(&rgb, 0),
+            vec![INT_NULL, 0, INT_NULL, INT_NULL, INT_NULL]
+        );
+        assert_eq!(
+            read_i64s(&rgb, 1),
+            vec![LONG_NULL, 0, LONG_NULL, LONG_NULL, LONG_NULL]
+        );
+        Ok(())
+    }
+
     // A filling filtered decode decides on the rows of the top it decodes, not on the NULLs it
     // fills in for the rows it skips.
     #[test]

@@ -404,6 +404,7 @@ pub fn decode_row_group(
             prepared.col_start,
             prepared.col_len,
         )?;
+        let has_def_levels = prepared.descriptor.max_def_level > 0;
         decoded = decode_column_chunk_with_params(
             ctx,
             column_chunk_bufs,
@@ -427,6 +428,7 @@ pub fn decode_row_group(
             prepared.original_column_type,
             to_column_type,
             leading_nulls,
+            has_def_levels,
             column_chunk_bufs,
         )?;
     }
@@ -567,6 +569,7 @@ pub fn decode_row_group_range(
             meta.original_column_type,
             to_column_type,
             &top_rows,
+            meta.descriptor.max_def_level > 0,
             column_chunk_bufs,
         )?;
 
@@ -639,6 +642,7 @@ pub fn decode_row_group_filtered<const FILL_NULLS: bool>(
             prepared.col_start,
             prepared.col_len,
         )?;
+        let has_def_levels = prepared.descriptor.max_def_level > 0;
         decoded = decode_column_chunk_filtered_with_params::<FILL_NULLS>(
             ctx,
             column_chunk_bufs,
@@ -672,6 +676,7 @@ pub fn decode_row_group_filtered<const FILL_NULLS: bool>(
             prepared.original_column_type,
             to_column_type,
             leading_nulls,
+            has_def_levels,
             column_chunk_bufs,
         )?;
     }
@@ -1962,6 +1967,238 @@ mod tests {
             bufs.column_bufs[0].column_top, 3,
             "range decode must surface the 3-row column top accumulated across groups, not 0"
         );
+        Ok(())
+    }
+
+    /// Build a parquet + `_pm` with a designated timestamp ("ts", index 0) and a column "v"
+    /// (index 1) of type `tag`, BYTE or SHORT, laid out as CONVERT TO PARQUET writes a split
+    /// or composite partition: each row group comes from the folders of one `row_groups`
+    /// entry, in order, and each folder is a (column top, values) pair. A folder's values can
+    /// so come ahead of the next folder's top rows, which the writer stores as def-level-0
+    /// NULLs: the chunk null count then covers rows that hold values.
+    fn build_folder_rows_no_sentinel_parquet_meta(
+        tag: ColumnTypeTag,
+        row_groups: &[&[(usize, &[i16])]],
+    ) -> ParquetResult<(Vec<u8>, Vec<u8>, u64)> {
+        use crate::parquet::qdb_metadata::QdbMeta;
+        use crate::parquet::tests::ColumnTypeTagExt;
+        use crate::parquet_metadata::convert::{convert_from_parquet, NoBloomFilterSource};
+        use crate::parquet_write::file::ParquetWriter;
+        use crate::parquet_write::schema::{
+            to_encodings, to_parquet_schema, Column, ParquetEncodingConfig, Partition,
+        };
+        use parquet2::read::read_metadata_with_size;
+        use qdb_parquet_meta::SeqTxn;
+        use std::io::Cursor;
+
+        let mut ts = 0i64;
+        let mut partitions: Vec<Vec<Partition>> = Vec::new();
+        for folders in row_groups {
+            let mut row_group = Vec::new();
+            for &(column_top, values) in folders.iter() {
+                let row_count = column_top + values.len();
+                let ts_values: Vec<i64> = (ts..ts + row_count as i64).collect();
+                ts += row_count as i64;
+                let ts_bytes: Vec<u8> = ts_values.iter().flat_map(|v| v.to_le_bytes()).collect();
+                let value_bytes: Vec<u8> = match tag {
+                    ColumnTypeTag::Byte => values.iter().map(|&v| v as i8 as u8).collect(),
+                    _ => values.iter().flat_map(|v| v.to_le_bytes()).collect(),
+                };
+                let ts_col = Column {
+                    name: "ts",
+                    data_type: ColumnTypeTag::Timestamp.into_type(),
+                    id: 0,
+                    row_count,
+                    primary_data: Box::leak(ts_bytes.into_boxed_slice()),
+                    secondary_data: &[],
+                    symbol_offsets: &[],
+                    column_top: 0,
+                    designated_timestamp: true,
+                    not_null_hint: true,
+                    strided_timestamp_16: false,
+                    designated_timestamp_ascending: true,
+                    parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
+                };
+                let value_col = Column {
+                    name: "v",
+                    data_type: tag.into_type(),
+                    id: 1,
+                    row_count,
+                    primary_data: Box::leak(value_bytes.into_boxed_slice()),
+                    secondary_data: &[],
+                    symbol_offsets: &[],
+                    column_top,
+                    designated_timestamp: false,
+                    not_null_hint: false,
+                    strided_timestamp_16: false,
+                    designated_timestamp_ascending: false,
+                    parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
+                };
+                row_group.push(Partition {
+                    table: "test".to_string(),
+                    columns: vec![ts_col, value_col],
+                });
+            }
+            partitions.push(row_group);
+        }
+
+        let mut parquet_buf = Vec::new();
+        let (schema, additional_meta) =
+            to_parquet_schema(&partitions[0][0], false, -1, SeqTxn::UNSET)?;
+        let encodings = to_encodings(&partitions[0][0]);
+        let mut chunked = ParquetWriter::new(&mut parquet_buf)
+            .with_statistics(true)
+            .chunked(schema, encodings)?;
+        for row_group in &partitions {
+            let parts: Vec<&Partition> = row_group.iter().collect();
+            let last_end = parts[parts.len() - 1].columns[0].row_count;
+            chunked.write_row_group_from_partitions(&parts, 0, last_end)?;
+        }
+        chunked.finish(additional_meta)?;
+
+        let mut cursor = Cursor::new(&parquet_buf);
+        let metadata = read_metadata_with_size(&mut cursor, parquet_buf.len() as u64)?;
+        let qdb_meta = metadata
+            .key_value_metadata
+            .as_ref()
+            .and_then(|kvs| {
+                kvs.iter()
+                    .find(|kv| kv.key == "questdb")
+                    .and_then(|kv| kv.value.as_deref())
+            })
+            .map(|j| QdbMeta::deserialize(j).unwrap());
+        let (parquet_meta_bytes, parquet_meta_file_size) = convert_from_parquet(
+            &metadata,
+            qdb_meta.as_ref(),
+            0,
+            0,
+            &NoBloomFilterSource,
+            None,
+        )?;
+        Ok((parquet_buf, parquet_meta_bytes, parquet_meta_file_size))
+    }
+
+    /// Decodes column 0 of `bufs` as `to_type` values, an INT or LONG/TIMESTAMP layout, with
+    /// None for the NULL of the type.
+    fn decoded_values(bufs: &RowGroupBuffers, to_type: ColumnType) -> Vec<Option<i64>> {
+        let data = bufs.column_bufs[0].data_vec.as_slice();
+        if to_type.tag() == ColumnTypeTag::Int {
+            data.chunks_exact(4)
+                .map(|c| i32::from_le_bytes(c.try_into().unwrap()))
+                .map(|v| (v != i32::MIN).then_some(v as i64))
+                .collect()
+        } else {
+            data.chunks_exact(8)
+                .map(|c| i64::from_le_bytes(c.try_into().unwrap()))
+                .map(|v| (v != i64::MIN).then_some(v))
+                .collect()
+        }
+    }
+
+    /// BYTE and SHORT have no NULL of their own: their only NULLs are column-top rows, and
+    /// native ALTER COLUMN TYPE INT, LONG or TIMESTAMP reads those as NULL and every stored
+    /// value, 0 included, as itself. Row group 0 holds 5, 0 and 7 of one folder ahead of the
+    /// 4 top rows of the next, row group 1 a stored 9 between top rows and a -3 after them,
+    /// so the null counts, 4 and 3, cover rows that hold values. Every `_pm` decode, of a
+    /// row group, a window of it, its filtered rows and a run of row groups, reads the
+    /// stored values and the NULLs where the folders put them.
+    #[test]
+    fn decode_keeps_values_ahead_of_a_later_folder_top() -> ParquetResult<()> {
+        use qdb_core::col_type::QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG;
+        let folders0: &[(usize, &[i16])] = &[(0, &[5, 0, 7]), (4, &[])];
+        let folders1: &[(usize, &[i16])] = &[(1, &[9]), (2, &[-3])];
+        let rg0 = [Some(5), Some(0), Some(7), None, None, None, None];
+        let rg1 = [None, Some(9), None, None, Some(-3)];
+        let ts_ns = ColumnType::new(ColumnTypeTag::Timestamp, QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG);
+        let tas = crate::allocator::TestAllocatorState::new();
+        let allocator = tas.allocator();
+        for tag in [ColumnTypeTag::Byte, ColumnTypeTag::Short] {
+            let (parquet_data, pm_bytes, pm_size) =
+                build_folder_rows_no_sentinel_parquet_meta(tag, &[folders0, folders1])?;
+            let reader = ParquetMetaReader::from_file_size(&pm_bytes, pm_size)?;
+            assert_eq!(reader.row_group_count(), 2);
+            for (rg, null_count) in [(0usize, 4u64), (1, 3)] {
+                assert_eq!(
+                    reader.row_group(rg)?.column_chunk(1)?.null_count,
+                    null_count,
+                    "{tag:?} row group {rg}"
+                );
+            }
+            for to_type in [
+                ColumnType::new(ColumnTypeTag::Int, 0),
+                ColumnType::new(ColumnTypeTag::Long, 0),
+                ColumnType::new(ColumnTypeTag::Timestamp, 0),
+                ts_ns,
+            ] {
+                let what = format!("{tag:?} -> {to_type}");
+                let col_pairs = [(1i32, to_type)];
+                let mut ctx = DecodeContext::new(parquet_data.as_ptr(), parquet_data.len() as u64);
+                let mut bufs = RowGroupBuffers::new(allocator.clone());
+                let source = || ColumnChunkSource::File(&parquet_data);
+
+                decode_row_group(&mut ctx, &mut bufs, source(), &reader, &col_pairs, 0, 0, 7)?;
+                assert_eq!(decoded_values(&bufs, to_type), rg0, "{what}, row group 0");
+                decode_row_group(&mut ctx, &mut bufs, source(), &reader, &col_pairs, 1, 0, 5)?;
+                assert_eq!(decoded_values(&bufs, to_type), rg1, "{what}, row group 1");
+                // a window that starts inside the folder ahead of the top
+                decode_row_group(&mut ctx, &mut bufs, source(), &reader, &col_pairs, 0, 1, 6)?;
+                assert_eq!(decoded_values(&bufs, to_type), rg0[1..6], "{what}, window");
+
+                // the filling filtered decode reads rows 0, 2 and 5 and fills NULL in the rest
+                let filtered_rows: [i64; 3] = [0, 2, 5];
+                decode_row_group_filtered::<true>(
+                    &mut ctx,
+                    &mut bufs,
+                    source(),
+                    &reader,
+                    0,
+                    &col_pairs,
+                    0,
+                    0,
+                    7,
+                    &filtered_rows,
+                )?;
+                assert_eq!(
+                    decoded_values(&bufs, to_type),
+                    [Some(5), None, Some(7), None, None, None, None],
+                    "{what}, filling filter"
+                );
+                // the compacting filtered decode returns rows 0, 2 and 5 only
+                decode_row_group_filtered::<false>(
+                    &mut ctx,
+                    &mut bufs,
+                    source(),
+                    &reader,
+                    0,
+                    &col_pairs,
+                    0,
+                    0,
+                    7,
+                    &filtered_rows,
+                )?;
+                assert_eq!(
+                    decoded_values(&bufs, to_type),
+                    [Some(5), Some(7), None],
+                    "{what}, compacting filter"
+                );
+
+                // the O3 merge decodes a run of row groups into one buffer
+                assert_eq!(
+                    decode_row_group_range(
+                        &mut ctx,
+                        &mut bufs,
+                        source(),
+                        &reader,
+                        &col_pairs,
+                        0,
+                        1
+                    )?,
+                    rg0.len() + rg1.len()
+                );
+                let run: Vec<Option<i64>> = rg0.iter().chain(rg1.iter()).copied().collect();
+                assert_eq!(decoded_values(&bufs, to_type), run, "{what}, range");
+            }
+        }
         Ok(())
     }
 }
