@@ -1020,7 +1020,7 @@ Critical findings that Step 3c rates below `--block-at`: real defects this PR in
 - **Suggested fix:** one or two lines
 - **Found in:** the PR or range, and the reviewed revision
 
-Offer to file them, with the labels `bug` and `deferred` (`deferred` alone for a coverage gap); do not file anything without being asked. When `gh repo view questdb/questdb-enterprise` fails, as it does for OSS contributors, keep the drafts in the console report and file nothing.
+Offer to file them; do not file anything without being asked. `approve-pr` files them when it approves the PR, with the labels `bug` and `deferred` (`deferred` alone for a coverage gap). When `gh repo view questdb/questdb-enterprise` fails, as it does for OSS contributors, keep the drafts in the console report and file nothing.
 
 ### Moderate
 Non-blocking admitted issues worth fixing. Number them M1, M2, ... Every item must still include the three summary lines and its decisive evidence. Dynamic behavioral speculation is not allowed here.
