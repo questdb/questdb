@@ -44,18 +44,18 @@ import org.junit.Test;
 /**
  * Proves that native memory allocated by the parallel covered-index decode path is
  * charged to (and therefore capped by) the per-query memory tracker, exactly like the
- * parquet decode path, and released as the scan moves on, as the parquet path releases
- * a decoded row group: the limit counts the covered frames a query holds, not every
- * frame it has decoded.
+ * parquet decode path.
  * <p>
  * A low-selectivity {@code sym = 'A'} materializes a wide covered VARCHAR for every
- * matched row. Decoded in one frame, those rows breach a per-query limit that comfortably
- * fits the group-by map, address cache and filter scratch; decoded in many small frames,
- * whose sum is well above the same limit, they do not, as each frame is freed once its
- * reducer is done with it. A narrow {@code sym = 'RARE'} control proves the covered path
- * runs fine under the same limit when its decode footprint is small - i.e. the breach is
- * caused specifically by the covered decode growing past the ceiling, not by unrelated
- * machinery.
+ * matched row. The workers of a covered GROUP BY keep every frame they decode until the
+ * query ends, as a record over it is stable and first(), last() and VARCHAR keys keep
+ * pointers into it, so the decoded rows breach a per-query limit that comfortably fits the
+ * group-by map, address cache and filter scratch, whether one frame or many small ones hold
+ * them. A covered Async Filter frees each frame once its cursor has collected it, so many
+ * small frames whose sum is well above the same limit do not breach it. A narrow
+ * {@code sym = 'RARE'} control proves the covered path runs fine under the same limit when
+ * its decode footprint is small - i.e. the breach is caused specifically by the covered
+ * decode growing past the ceiling, not by unrelated machinery.
  */
 public class CoveringIndexMemoryLimitTest extends AbstractCairoTest {
 
@@ -124,11 +124,12 @@ public class CoveringIndexMemoryLimitTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCoveredScanLargerThanPerQueryLimitCompletes() throws Exception {
+    public void testCoveredFilterLargerThanPerQueryLimitCompletes() throws Exception {
         // 1,000-row page frames, of which a covered frame holds about 230 KB; the 100k matched rows
-        // decode about 23 MB in all, well above the 8 MiB limit. Each frame is freed once its
-        // reducer is done with it, so the query holds a few frames at a time and completes. A pool
-        // that kept every frame it decoded until the query ended would breach the limit.
+        // decode about 23 MB in all, well above the 8 MiB limit. An Async Filter decodes each frame
+        // into the reduce-queue task that carries it, which frees it, and releases its charge, once
+        // the cursor has collected it, so the query holds a few frames at a time and completes. A
+        // task that kept its frames until the query ended would breach the limit.
         assertMemoryLeak(() -> {
             final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
@@ -139,18 +140,6 @@ public class CoveringIndexMemoryLimitTest extends AbstractCairoTest {
                         // ~100k rows over many day-partitions, 10 minutes apart in time
                         insertRows(engine, sqlExecutionContext, "t", 600_000_000L);
                         insertRows(engine, sqlExecutionContext, "ref", 600_000_000L);
-
-                        // Async GROUP BY: the workers' pools free each frame after aggregating it,
-                        // and first() and last() copy the covered VARCHAR, which is not stable.
-                        TestUtils.assertSqlCursors(
-                                compiler,
-                                sqlExecutionContext,
-                                "SELECT grp, sum(payload), first(grp), last(grp), count() FROM ref WHERE sym = 'A' GROUP BY grp ORDER BY grp",
-                                "SELECT grp, sum(payload), first(grp), last(grp), count() FROM t WHERE sym = 'A' GROUP BY grp ORDER BY grp",
-                                LOG
-                        );
-                        // Async Filter: a reduce-queue slot frees its frame once the cursor has
-                        // collected it.
                         TestUtils.assertSqlCursors(
                                 compiler,
                                 sqlExecutionContext,
@@ -158,6 +147,51 @@ public class CoveringIndexMemoryLimitTest extends AbstractCairoTest {
                                 "SELECT ts, grp, payload FROM t WHERE sym = 'A' AND payload > 1",
                                 LOG
                         );
+                        // a value-keeping reader over the filter copies the covered VARCHAR, which is
+                        // not stable
+                        TestUtils.assertSqlCursors(
+                                compiler,
+                                sqlExecutionContext,
+                                "SELECT first(grp), last(grp), count() FROM (SELECT ts, grp FROM ref WHERE sym = 'A' AND payload > 1 LIMIT 1_000_000)",
+                                "SELECT first(grp), last(grp), count() FROM (SELECT ts, grp FROM t WHERE sym = 'A' AND payload > 1 LIMIT 1_000_000)",
+                                LOG
+                        );
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
+    public void testCoveredGroupByKeepsItsFramesUnderPerQueryLimit() throws Exception {
+        // The same 100k matched rows in 1,000-row frames: a covered GROUP BY keeps every frame its
+        // workers decode until the query ends, so its first() and last() keep pointers into them
+        // rather than copies, and the frames' 23 MB breach the 8 MiB limit, as one large frame does.
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        createTable(engine, sqlExecutionContext, "t", true);
+                        insertRows(engine, sqlExecutionContext, "t", 600_000_000L);
+                        final StringSink sink = new StringSink();
+                        TestUtils.printSql(engine, sqlExecutionContext, RARE_QUERY, sink);
+                        TestUtils.assertEquals(RARE_RESULT, sink);
+                        try {
+                            TestUtils.printSql(engine, sqlExecutionContext, "SELECT grp, sum(payload), first(grp), last(grp) FROM t WHERE sym = 'A' GROUP BY grp ORDER BY grp", sink);
+                            Assert.fail("expected a per-query memory breach from covered decode");
+                        } catch (CairoException e) {
+                            Assert.assertTrue(
+                                    "expected isOutOfMemory(), got: " + e.getFlyweightMessage(),
+                                    e.isOutOfMemory()
+                            );
+                            TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                        }
+                        // the failed query left nothing charged: the control runs again under the
+                        // same limit
+                        TestUtils.printSql(engine, sqlExecutionContext, RARE_QUERY, sink);
+                        TestUtils.assertEquals(RARE_RESULT, sink);
                     },
                     configuration,
                     LOG

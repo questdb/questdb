@@ -101,6 +101,10 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
             this.dataAddresses = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), memoryTag);
             this.auxAddresses = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), memoryTag);
             this.frameMemoryPool = new PageFrameMemoryPool(configuration, 0L);
+            // The task belongs to a queue that every query shares, or to a frame sequence that
+            // lends it frame by frame, and a later frame may be another query's: the pool frees a
+            // covered frame once the task is collected, and a record over it is not stable.
+            frameMemoryPool.setKeepsCoveredFramesForQuery(false);
         } catch (Throwable th) {
             close();
             throw th;
