@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnPurgeJob;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -51,6 +52,8 @@ import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class VacuumColumnVersionTest extends AbstractCairoTest {
+    private static final String[] ROGUE_SYMBOL_FILES = {"rog_sym.c", "rog_sym.o", "rog_sym.k", "rog_sym.v"};
+    private static final String[] TABLE_ROOT = {"."};
     private int iteration;
 
     @BeforeClass
@@ -109,94 +112,6 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
                     }
                 }
 
-                assertFilesExist(partitions, "testPurge", files, "", true);
-
-                runTableVacuum("testPurge");
-                runPurgeJob(purgeJob);
-
-                assertFilesExist(partitions, "testPurge", files, "", false);
-            }
-        });
-    }
-
-    @Test
-    public void testVacuumRogueColumnFiles() throws Exception {
-        FilesFacade ff = engine.getConfiguration().getFilesFacade();
-        assertMemoryLeak(() -> {
-            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
-                execute(
-                        "create table testPurge as" +
-                                " (select timestamp_sequence('1970-01-01', 24 * 60 * 60 * 1000000L) ts," +
-                                " x," +
-                                " rnd_str('a', 'b', 'c', 'd') str," +
-                                " rnd_symbol('A', 'B', 'C', 'D') sym1," +
-                                " rnd_symbol('1', '2', '3', '4') sym2" +
-                                " from long_sequence(5)), index(sym2)" +
-                                " timestamp(ts) PARTITION BY DAY"
-                );
-
-                String[] partitions = new String[]{"1970-01-01", "1970-01-02", "1970-01-03", "1970-01-04", "1970-01-05"};
-                String[] files = {"sym_rogue.k", "sym_rogue.v", "sym_rogue.d"};
-                assertFilesExist(partitions, "testPurge", files, "", false);
-
-                execute("checkpoint release");
-
-                runPurgeJob(purgeJob);
-
-                assertFilesExist(partitions, "testPurge", files, "", false);
-
-                Path path = Path.getThreadLocal(configuration.getDbRoot());
-                path.concat(engine.verifyTableName("testPurge"));
-                int pathLen = path.size();
-                for (String partition : partitions) {
-                    for (String file : files) {
-                        path.trimTo(pathLen).concat(partition).concat(file).$();
-                        ff.touch(path.$());
-                    }
-                }
-
-                assertFilesExist(partitions, "testPurge", files, "", true);
-
-                runTableVacuum("testPurge");
-                runPurgeJob(purgeJob);
-
-                assertFilesExist(partitions, "testPurge", files, "", false);
-            }
-        });
-    }
-
-    @Test
-    public void testVacuumRogueSymbolFilesInTableRoot() throws Exception {
-        FilesFacade ff = engine.getConfiguration().getFilesFacade();
-        assertMemoryLeak(() -> {
-            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
-                execute(
-                        "create table testPurge as" +
-                                " (select timestamp_sequence('1970-01-01', 24 * 60 * 60 * 1000000L) ts," +
-                                " x," +
-                                " rnd_str('a', 'b', 'c', 'd') str," +
-                                " rnd_symbol('A', 'B', 'C', 'D') sym1," +
-                                " rnd_symbol('1', '2', '3', '4') sym2" +
-                                " from long_sequence(5)), index(sym2)" +
-                                " timestamp(ts) PARTITION BY DAY"
-                );
-
-                String[] partitions = new String[]{"."};
-                String[] files = {"rog_sym.c", "rog_sym.o", "rog_sym.k", "rog_sym.v"};
-                assertFilesExist(partitions, "testPurge", files, "", false);
-
-                Path path = Path.getThreadLocal(configuration.getDbRoot());
-                path.concat(engine.verifyTableName("testPurge"));
-                int pathLen = path.size();
-
-                path.trimTo(pathLen).concat("rog_sym.c").$();
-                ff.touch(path.$());
-                path.trimTo(pathLen).concat("rog_sym.o").$();
-                ff.touch(path.$());
-                path.trimTo(pathLen).concat("rog_sym.k").$();
-                ff.touch(path.$());
-                path.trimTo(pathLen).concat("rog_sym.v").$();
-                ff.touch(path.$());
                 assertFilesExist(partitions, "testPurge", files, "", true);
 
                 runTableVacuum("testPurge");
@@ -400,6 +315,162 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
                         A\t101.0\t2024-01-01T00:00:00.000000Z
                         A\t4.0\t2024-01-02T00:00:00.000000Z
                         """);
+            }
+        });
+    }
+
+    @Test
+    public void testVacuumRogueColumnFiles() throws Exception {
+        FilesFacade ff = engine.getConfiguration().getFilesFacade();
+        assertMemoryLeak(() -> {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                execute(
+                        "create table testPurge as" +
+                                " (select timestamp_sequence('1970-01-01', 24 * 60 * 60 * 1000000L) ts," +
+                                " x," +
+                                " rnd_str('a', 'b', 'c', 'd') str," +
+                                " rnd_symbol('A', 'B', 'C', 'D') sym1," +
+                                " rnd_symbol('1', '2', '3', '4') sym2" +
+                                " from long_sequence(5)), index(sym2)" +
+                                " timestamp(ts) PARTITION BY DAY"
+                );
+
+                String[] partitions = new String[]{"1970-01-01", "1970-01-02", "1970-01-03", "1970-01-04", "1970-01-05"};
+                String[] files = {"sym_rogue.k", "sym_rogue.v", "sym_rogue.d"};
+                assertFilesExist(partitions, "testPurge", files, "", false);
+
+                execute("checkpoint release");
+
+                runPurgeJob(purgeJob);
+
+                assertFilesExist(partitions, "testPurge", files, "", false);
+
+                Path path = Path.getThreadLocal(configuration.getDbRoot());
+                path.concat(engine.verifyTableName("testPurge"));
+                int pathLen = path.size();
+                for (String partition : partitions) {
+                    for (String file : files) {
+                        path.trimTo(pathLen).concat(partition).concat(file).$();
+                        ff.touch(path.$());
+                    }
+                }
+
+                assertFilesExist(partitions, "testPurge", files, "", true);
+
+                runTableVacuum("testPurge");
+                runPurgeJob(purgeJob);
+
+                assertFilesExist(partitions, "testPurge", files, "", false);
+            }
+        });
+    }
+
+    @Test
+    public void testVacuumRogueSymbolFilesInTableRoot() throws Exception {
+        assertMemoryLeak(() -> {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                execute(
+                        "create table testPurge as" +
+                                " (select timestamp_sequence('1970-01-01', 24 * 60 * 60 * 1000000L) ts," +
+                                " x," +
+                                " rnd_str('a', 'b', 'c', 'd') str," +
+                                " rnd_symbol('A', 'B', 'C', 'D') sym1," +
+                                " rnd_symbol('1', '2', '3', '4') sym2" +
+                                " from long_sequence(5)), index(sym2)" +
+                                " timestamp(ts) PARTITION BY DAY"
+                );
+                assertVacuumPurgesRogueSymbolFilesInTableRoot("testPurge", purgeJob);
+            }
+        });
+    }
+
+    @Test
+    public void testVacuumRogueSymbolFilesInTableRootKeepsFilesOfOtherTable() throws Exception {
+        assertMemoryLeak(() -> {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                // The symbol column comes last, so it is the last column VACUUM of "other" visits.
+                execute("CREATE TABLE other (ts TIMESTAMP, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY");
+                execute("""
+                        INSERT INTO other VALUES
+                        ('2024-01-01T00:00:00.000000Z', 'A'),
+                        ('2024-01-02T00:00:00.000000Z', 'B')
+                        """);
+                execute("CREATE TABLE testPurge (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+                touchRogueSymbolFilesInTableRoot("testPurge");
+
+                // One compiler runs both VACUUMs, as a pooled compiler does for successive VACUUM statements.
+                try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                    engine.releaseInactive();
+                    execute(compiler, "VACUUM TABLE other");
+                    engine.releaseInactive();
+                    execute(compiler, "VACUUM TABLE testPurge");
+                }
+                runPurgeJob(purgeJob);
+
+                assertFilesExist(TABLE_ROOT, "other", new String[]{"sym.c", "sym.o", "sym.k", "sym.v"}, "", true);
+                assertQuery("SELECT * FROM other")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tsym
+                                2024-01-01T00:00:00.000000Z\tA
+                                2024-01-02T00:00:00.000000Z\tB
+                                """);
+                assertFilesExist(TABLE_ROOT, "testPurge", ROGUE_SYMBOL_FILES, "", false);
+            }
+        });
+    }
+
+    @Test
+    public void testVacuumRogueSymbolFilesInTableRootOfEmptyTable() throws Exception {
+        assertMemoryLeak(() -> {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                // No symbol column and no partition, so the rogue column's files are the only column files on disk.
+                // No other test uses this table name, so a purge task a pooled compiler kept from an earlier test
+                // cannot name this table's files.
+                execute("CREATE TABLE emptyTable (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+                assertVacuumPurgesRogueSymbolFilesInTableRoot("emptyTable", purgeJob);
+            }
+        });
+    }
+
+    @Test
+    public void testVacuumRogueSymbolFilesInTableRootWithParquetPartitionsOnly() throws Exception {
+        assertMemoryLeak(() -> {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                // No symbol column, and a WAL table converts its active partition too, so no partition keeps
+                // native column files: the rogue column's files are the only column files on disk.
+                execute("CREATE TABLE testPurge (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("""
+                        INSERT INTO testPurge VALUES
+                        (1, '2024-01-01T00:00:00.000000Z'),
+                        (2, '2024-01-02T00:00:00.000000Z')
+                        """);
+                drainWalQueue();
+                execute("ALTER TABLE testPurge CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+                drainWalQueue();
+                assertQuery("SELECT name, isParquet FROM table_partitions('testPurge')")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("""
+                                name\tisParquet
+                                2024-01-01\ttrue
+                                2024-01-02\ttrue
+                                """);
+
+                assertVacuumPurgesRogueSymbolFilesInTableRoot("testPurge", purgeJob);
+
+                assertQuery("SELECT * FROM testPurge")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                x\tts
+                                1\t2024-01-01T00:00:00.000000Z
+                                2\t2024-01-02T00:00:00.000000Z
+                                """);
             }
         });
     }
@@ -730,6 +801,19 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * Asserts that VACUUM, followed by the purge it schedules, removes symbol files in the table root that belong to
+     * no column of the table.
+     */
+    private void assertVacuumPurgesRogueSymbolFilesInTableRoot(String tableName, ColumnPurgeJob purgeJob) throws SqlException {
+        touchRogueSymbolFilesInTableRoot(tableName);
+
+        runTableVacuum(tableName);
+        runPurgeJob(purgeJob);
+
+        assertFilesExist(TABLE_ROOT, tableName, ROGUE_SYMBOL_FILES, "", false);
+    }
+
     @NotNull
     private ColumnPurgeJob createPurgeJob() throws SqlException {
         return new ColumnPurgeJob(engine);
@@ -748,6 +832,17 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
             engine.releaseInactive();
         }
         execute("VACUUM TABLE " + tableName);
+    }
+
+    private void touchRogueSymbolFilesInTableRoot(String tableName) {
+        assertFilesExist(TABLE_ROOT, tableName, ROGUE_SYMBOL_FILES, "", false);
+        final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+        final Path path = Path.getThreadLocal(configuration.getDbRoot()).concat(engine.verifyTableName(tableName));
+        final int pathLen = path.size();
+        for (String file : ROGUE_SYMBOL_FILES) {
+            Assert.assertTrue(file, ff.touch(path.trimTo(pathLen).concat(file).$()));
+        }
+        assertFilesExist(TABLE_ROOT, tableName, ROGUE_SYMBOL_FILES, "", true);
     }
 
     private String[] update3ColumnsWithOpenReader(ColumnPurgeJob purgeJob, String tableName) throws SqlException {
