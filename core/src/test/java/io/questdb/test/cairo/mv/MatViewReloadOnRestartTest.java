@@ -883,6 +883,73 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testMatViewsReloadOnServerStartWithChangedAliasRules() throws Exception {
+        // QuestDB 8.x, and any release run with cairo.sql.column.alias.expression.enabled=false, names an
+        // unaliased avg(price) "avg". After a restart under the expression rules, the startup refresh compiles
+        // the stored query, which now names that column "avg(price)". The view keeps its columns and keeps
+        // refreshing, incrementally and in full.
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain main1 = startWithEnvVariables0(
+                    PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true",
+                    PropertyKey.LINE_TCP_ENABLED.getEnvVarName(), "false",
+                    PropertyKey.LINE_UDP_ENABLED.getEnvVarName(), "false",
+                    PropertyKey.HTTP_MIN_ENABLED.getEnvVarName(), "false",
+                    PropertyKey.HTTP_ENABLED.getEnvVarName(), "false",
+                    PropertyKey.PG_ENABLED.getEnvVarName(), "false",
+                    PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED.getEnvVarName(), "false"
+            )) {
+                executeWithRewriteTimestamp(main1);
+                execute(main1, "insert into base_price values('gbpusd', 1.5, '2024-09-10T12:01')");
+                execute(main1, "create materialized view price_1d as (select ts, sym, avg(price) from base_price sample by 1d) partition by DAY");
+                try (var refreshJob = createMatViewRefreshJob(main1.getEngine())) {
+                    drainWalAndMatViewQueues(refreshJob, main1.getEngine());
+                }
+                assertSql(main1, replaceExpectedTimestamp("ts\tsym\tavg\n2024-09-10T00:00:00.000000Z\tgbpusd\t1.5\n"), "price_1d");
+            }
+
+            try (final TestServerMain main2 = startWithEnvVariables0(
+                    PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true",
+                    PropertyKey.LINE_TCP_ENABLED.getEnvVarName(), "false",
+                    PropertyKey.LINE_UDP_ENABLED.getEnvVarName(), "false",
+                    PropertyKey.HTTP_MIN_ENABLED.getEnvVarName(), "false",
+                    PropertyKey.HTTP_ENABLED.getEnvVarName(), "false",
+                    PropertyKey.PG_ENABLED.getEnvVarName(), "false",
+                    PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED.getEnvVarName(), "true"
+            )) {
+                try (var refreshJob = createMatViewRefreshJob(main2.getEngine())) {
+                    drainWalAndMatViewQueues(refreshJob, main2.getEngine());
+                    assertSql(
+                            main2,
+                            "view_status\tinvalidation_reason\nvalid\t\n",
+                            "select view_status, invalidation_reason from materialized_views where view_name = 'price_1d'"
+                    );
+
+                    execute(main2, "insert into base_price values('gbpusd', 2.5, '2024-09-11T12:01')");
+                    drainWalAndMatViewQueues(refreshJob, main2.getEngine());
+                    assertSql(
+                            main2,
+                            replaceExpectedTimestamp("ts\tsym\tavg\n2024-09-10T00:00:00.000000Z\tgbpusd\t1.5\n2024-09-11T00:00:00.000000Z\tgbpusd\t2.5\n"),
+                            "price_1d"
+                    );
+
+                    execute(main2, "refresh materialized view price_1d full");
+                    drainWalAndMatViewQueues(refreshJob, main2.getEngine());
+                    assertSql(
+                            main2,
+                            "view_status\tinvalidation_reason\nvalid\t\n",
+                            "select view_status, invalidation_reason from materialized_views where view_name = 'price_1d'"
+                    );
+                    assertSql(
+                            main2,
+                            replaceExpectedTimestamp("ts\tsym\tavg\n2024-09-10T00:00:00.000000Z\tgbpusd\t1.5\n2024-09-11T00:00:00.000000Z\tgbpusd\t2.5\n"),
+                            "price_1d"
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
     public void testPeriodMatViewsReloadOnServerStart() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final long start = MicrosFormatUtils.parseUTCTimestamp("2024-12-12T00:00:00.000000Z");
