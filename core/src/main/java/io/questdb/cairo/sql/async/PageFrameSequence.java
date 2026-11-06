@@ -48,6 +48,7 @@ import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.continuation.CancellationBinding;
 import io.questdb.mp.continuation.FiberCancellationSignal;
+import io.questdb.mp.continuation.FiberDispatchContext;
 import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTracker;
@@ -680,6 +681,8 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         boolean idle = true;
         boolean dispatched = false;
         final int collectedFrameCount = collectedFrameIndex + 1;
+        final FiberDispatchContext dispatchContext = getDispatchContext();
+        final int unfinishedFrameLimit = dispatchContext != null ? dispatchContext.getParallelFrameLimit() : Integer.MAX_VALUE;
 
         try {
             if (!hasPublication) {
@@ -699,7 +702,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                 while (true) {
                     final int totalDispatched = dispatchStartFrameIndex - collectedFrameCount;
                     // Treat situation when we hit the dispatch limit as if it was a full queue (-1).
-                    if (totalDispatched >= dispatchLimit) {
+                    if (totalDispatched >= dispatchLimit || dispatchStartFrameIndex - reduceFinishedCounter.get() >= unfinishedFrameLimit) {
                         cursor = -1;
                     } else {
                         cursor = reducePubSeq.next();

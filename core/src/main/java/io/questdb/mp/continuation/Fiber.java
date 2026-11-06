@@ -167,8 +167,8 @@ public final class Fiber implements FiberWaitCoordinator.Target {
 
     /**
      * Returns whether the current Fiber holds a limited CPU grant it cannot give up because it
-     * may not park, or its fractional quota requires local parallel work. Such work must not occupy
-     * a shared publication ring while waiting for the owner to regain CPU credit.
+     * may not park, or its group requires local parallel work. Such work must not occupy a shared
+     * publication ring while it waits for CPU, because later frames on the ring wait behind it.
      */
     public static boolean isHoldingLimitedGrant() {
         final SuspensionScope.CarrierScope scope = SuspensionScope.scope();

@@ -498,6 +498,7 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
         signalProgress(frameSequence);
     }
 
+    @TestOnly
     public boolean tryAcquirePublication() {
         return acquirePublication() == PUBLICATION_ACQUIRED;
     }

@@ -38,6 +38,15 @@ public interface FiberDispatchContext {
     }
 
     /**
+     * Returns how many published page frames of one query may be unfinished at once. A reducer
+     * that claimed a frame and waits for CPU holds up later frames of every query on that ordered
+     * queue, so a context with few CPU grants keeps few frames out.
+     */
+    default int getParallelFrameLimit() {
+        return Integer.MAX_VALUE;
+    }
+
+    /**
      * Returns the query-registry owner represented by this context, or {@code -1} when the
      * context does not represent a SQL execution. QueryRegistry uses this opaque link to fold
      * execution-phase registrations into a protocol owner that was admitted before compilation.
@@ -55,7 +64,7 @@ public interface FiberDispatchContext {
     }
 
     /**
-     * Whether parallel work must run inline to keep quota waits off shared task queues.
+     * Whether parallel work must run inline to keep waits for CPU off shared task queues.
      */
     default boolean isParallelWorkLocal() {
         return false;
