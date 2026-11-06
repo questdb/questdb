@@ -31,6 +31,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
@@ -354,9 +355,14 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
         final FrameDecodeAheadAtom atom = (FrameDecodeAheadAtom) frameSequence.atom;
         final int slotId = atom.maybeAcquire(workerId, stealingFrameSequence == frameSequence, circuitBreaker);
         try {
-            // decodes the frame's covered columns into the pool's buffers for the frame, which the
-            // pool keeps until the fold has read the frame, see decodeFramesAheadAndReduceLocally()
-            atom.getDecodeMemoryPool(slotId).decodeAhead(frameIndex);
+            final PageFrameMemoryPool pool = atom.getDecodeMemoryPool(slotId);
+            try {
+                // decodes the frame's covered columns into the pool's buffers for the frame, which
+                // the pool keeps for the query
+                pool.navigateTo(frameIndex);
+            } finally {
+                pool.releaseParquetBuffers();
+            }
             // each task writes its own frame's entry; the round's latch publishes it to the owner
             frameSequence.decodedFrameSlots.setQuick(frameIndex, slotId);
         } finally {
@@ -383,10 +389,6 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
                     decodeAtom.setOwnerMemoryPool(decodeAtom.getDecodeMemoryPool(slotId));
                 }
                 reduceLocally(i);
-                if (slotId != NOT_DECODED_AHEAD) {
-                    // the fold has read the frame: its pool frees it, rather than at the end of the query
-                    decodeAtom.getDecodeMemoryPool(slotId).releaseDecodedAhead(i);
-                }
             }
         } finally {
             decodeAtom.setOwnerMemoryPool(null);

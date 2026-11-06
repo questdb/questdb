@@ -359,7 +359,8 @@ public class CoveredIndexDecodeBenchmark {
             case "first_last":
                 return "SELECT first(px), last(px) FROM " + table + w;
             case "first_last_varchar":
-                // a covered frame's VARCHAR is not stable, so last() copies the value of every row
+                // the workers keep their covered frames for the query, so last() keeps a pointer to
+                // the covered VARCHAR of the row rather than a copy
                 return "SELECT first(tag), last(tag) FROM " + table + w;
             case "count":
                 return "SELECT count() FROM " + table + w;

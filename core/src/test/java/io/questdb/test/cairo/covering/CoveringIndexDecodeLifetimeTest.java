@@ -29,6 +29,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameAddressCache;
@@ -70,13 +71,14 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.junit.Assert.*;
 
 /**
- * The lifetime of the buffers a covered (single-key covering-index) frame is decoded into. A
- * covered frame is a decoded frame, as a Parquet frame is: its buffers live while the frame memory
- * or a record of the pool is bound to them, or while the pool's cache budget has room for them, and
- * the per-frame release frees them. So a scan holds the frames it has in flight, not every frame it
- * has decoded; a shared reduce-queue slot keeps nothing of its frame once collected, whichever
- * queries share the queue; and a record over a covered frame is not stable, so a reader that keeps
- * a value past the frame copies it.
+ * The lifetime of the buffers a covered (single-key covering-index) frame is decoded into. A pool
+ * keeps them until its query ends, so that a record over a covered frame is stable, as one over a
+ * native frame is, and a cursor that reads rows back finds every frame it decoded. The pool of a
+ * reduce queue task cannot keep them: the queue is shared by every query, and a task carries one
+ * frame at a time. Its pool frees a covered frame once the cursor has collected the task, and a
+ * record over it is not stable, so a reader that keeps a value past the frame, above an Async
+ * Filter, copies it. So no slot keeps a covered frame past its collection, whichever queries share
+ * the queue, and a covered Async Filter scan holds the frames it has in flight.
  */
 public class CoveringIndexDecodeLifetimeTest extends AbstractCairoTest {
     private static final String COVERED_FILTER = "SELECT ts, sym, s, px FROM cov WHERE sym = 'S0' AND px > 0.5";
@@ -107,108 +109,88 @@ public class CoveringIndexDecodeLifetimeTest extends AbstractCairoTest {
             "SELECT ts, s, px FROM %s WHERE sym = 'S0' AND px > 0.5 LIMIT -50",
             "SELECT ts, first(s), last(s), count() FROM %s WHERE sym = 'S0' SAMPLE BY 1d",
             "SELECT DISTINCT s FROM %s WHERE sym = 'S0' ORDER BY s",
-            // a serial GROUP BY over the rows of a limited async filter
+            // Serial readers over the rows of a limited async filter, whose frames the reduce
+            // queue's tasks decode and free as the cursor collects them, while the readers go on:
+            // first(), last() and arg_max() keep a value of an earlier frame, the map of a VARCHAR
+            // key keeps its keys. The short VARCHAR is inlined into the aux vector, the long one
+            // lives in the data vector.
             "SELECT first(s), last(s), count() FROM (SELECT ts, s FROM %s WHERE sym = 'S0' AND px > 0.5 LIMIT 5000)",
+            "SELECT first(l), last(l), count() FROM (SELECT ts, l FROM %s WHERE sym = 'S0' AND px > 0.5 LIMIT 1_000_000)",
+            "SELECT s, count() FROM (SELECT s FROM %s WHERE sym = 'S0' AND px > 0.5 LIMIT 1_000_000) ORDER BY s",
+            "SELECT l, count() FROM (SELECT l FROM %s WHERE sym = 'S0' AND px > 0.5 LIMIT 1_000_000) ORDER BY l",
+            "SELECT arg_max(l, px), count() FROM (SELECT l, px FROM %s WHERE sym = 'S0' AND px > 0.5 LIMIT 1_000_000)",
+            "SELECT ts, first(l), last(l), count() FROM %s WHERE sym = 'S0' AND px > 0.5 SAMPLE BY 1d FILL(PREV)",
             "SELECT ts, s, count(s) OVER (ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) FROM %s WHERE sym = 'S0' AND px > 990",
             "SELECT string_agg(s, ',') FROM (SELECT ts, s FROM %s WHERE sym = 'S0' AND px > 990)",
     };
 
     @Test
-    public void testBudgetedPoolKeepsUnboundCoveredFramesWhileTheyFit() throws Exception {
-        // A pool with a cache budget, as a cursor that reads rows back has, keeps the covered frames
-        // no holder is bound to while the budget has room for them, and frees the oldest first.
+    public void testCoveredDecodeReleasesItsTrackerCharge() throws Exception {
+        // A covered frame's buffers charge the pool's tracker while they live. A pool that frees its
+        // covered frames with their frame, as a reduce queue task's does, releases the charge with
+        // them, so that the query's memory limit sees the frames the query holds; a pool that keeps
+        // them for its query holds the charge of every frame it has decoded until its query boundary
+        // releases it. A free after the tracker has been reconciled, at its query's end, is
+        // global-only: the reconciliation released the charge already.
         assertMemoryLeak(() -> {
             createPoolTable();
             final long frameBytes = coveredFrameBytes();
-            final int budgetFrames = 3;
-            try (
-                    RecordCursorFactory factory = select("SELECT sym, payload, v FROM t WHERE sym = 'A'");
-                    PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, PartitionFrameCursorFactory.ORDER_ASC);
-                    PageFrameAddressCache addressCache = new PageFrameAddressCache();
-                    // room for three frames, not four
-                    PageFrameMemoryPool pool = new PageFrameMemoryPool(configuration, budgetFrames * frameBytes + frameBytes / 2);
-                    PageFrameMemoryRecord recordA = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER)
-            ) {
-                final int frameCount = buildAddressCache(factory, cursor, addressCache);
-                assertTrue(frameCount > 2 * budgetFrames);
-                // the full budget, and room for more frames than the budget allows
-                pool.of(addressCache, ParquetDecodeHint.SCATTERED);
-                recordA.of(cursor);
-                // the frame memory stays on frame 0 while the record scans every frame
-                final PageFrameMemory frameMemory = pool.navigateTo(0);
-                for (int f = 0; f < frameCount; f++) {
-                    pool.navigateTo(f, recordA);
-                    assertFrameValues(recordA, addressCache, f);
-                    // frame 0 with the frame memory, f with the record, and the unbound frames
-                    // decoded last, while the budget has room for them
-                    final int expectedFrames = Math.min(f + 1, budgetFrames);
-                    assertEquals("frames held at frame " + f, expectedFrames, pool.getCoveredFrameCount());
-                    assertEquals(expectedFrames * frameBytes, pool.getCoveredCachedBytes());
-                }
-                // the frame memory's frame survived the scan
-                final PageFrameMemoryRecord recordB = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_B_LETTER);
-                try {
-                    recordB.of(cursor);
-                    recordB.init(frameMemory);
-                    assertFrameValues(recordB, addressCache, 0);
-                } finally {
-                    recordB.close();
-                }
-                // a frame that was freed decodes again
-                pool.navigateTo(1, recordA);
-                assertFrameValues(recordA, addressCache, 1);
-                pool.releaseParquetBuffers();
-                assertEquals(0, pool.getCoveredFrameCount());
-                assertEquals(0, pool.getCoveredCachedBytes());
-            }
-        });
-    }
-
-    @Test
-    public void testCoveredDecodeReleasesItsTrackerCharge() throws Exception {
-        // A covered frame's buffers charge the pool's tracker while they live, and their free
-        // releases the charge, so the query's memory limit sees the frames the query holds. A free
-        // after the tracker has been reconciled, at its query's end, is global-only: the
-        // reconciliation released the charge already.
-        assertMemoryLeak(() -> {
-            createPoolTable();
             try (
                     PerQueryMemoryTrackerProvider provider = new PerQueryMemoryTrackerProvider(configuration);
                     RecordCursorFactory factory = select("SELECT sym, payload, v FROM t WHERE sym = 'A'");
                     PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, PartitionFrameCursorFactory.ORDER_ASC);
                     PageFrameAddressCache addressCache = new PageFrameAddressCache();
-                    PageFrameMemoryPool pool = new PageFrameMemoryPool(configuration, 0L);
+                    PageFrameMemoryPool freeingPool = new PageFrameMemoryPool(configuration, 0L);
+                    PageFrameMemoryPool keepingPool = new PageFrameMemoryPool(configuration, 0L);
                     PageFrameMemoryRecord record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER)
             ) {
                 final int frameCount = buildAddressCache(factory, cursor, addressCache);
-                final MemoryTracker tracker = provider.acquire(AllowAllSecurityContext.INSTANCE, 1, MemoryTrackerWorkload.QUERY);
+                freeingPool.setKeepsCoveredFramesForQuery(false);
+                record.of(cursor);
+                MemoryTracker tracker = provider.acquire(AllowAllSecurityContext.INSTANCE, 1, MemoryTrackerWorkload.QUERY);
                 try {
-                    pool.setMemoryTracker(tracker);
-                    pool.of(addressCache);
-                    record.of(cursor);
+                    freeingPool.setMemoryTracker(tracker);
+                    freeingPool.of(addressCache);
                     for (int f = 0; f < frameCount; f++) {
-                        pool.navigateTo(f, record);
+                        freeingPool.navigateTo(f, record);
                         assertFrameValues(record, addressCache, f);
-                        // the frame the record is on, alone
-                        assertTrue(pool.getCoveredCachedBytes() > 0);
-                        assertEquals("charge at frame " + f, pool.getCoveredCachedBytes(), tracker.getUsed());
+                        assertEquals("charge at frame " + f, frameBytes, tracker.getUsed());
+                        // as the reduce queue task releases its frame once collected
+                        freeingPool.releaseParquetBuffers();
+                        assertEquals(0, freeingPool.getCoveredCachedBytes());
+                        assertEquals("the free released the charge", 0, tracker.getUsed());
                     }
-                    pool.releaseParquetBuffers();
-                    assertEquals(0, pool.getCoveredCachedBytes());
-                    assertEquals("the free released the charge", 0, tracker.getUsed());
 
                     // a frame that outlives its query's tracker
-                    pool.navigateTo(0, record);
-                    final long frameBytes = pool.getCoveredCachedBytes();
+                    freeingPool.navigateTo(0, record);
                     assertEquals(frameBytes, tracker.getUsed());
                     final long globalBefore = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_INDEX_READER);
                     tracker.reconcileCovered();
                     assertEquals("the reconciliation released the charge", 0, tracker.getUsed());
-                    pool.releaseParquetBuffers();
+                    freeingPool.releaseParquetBuffers();
                     assertEquals("the late free released no charge again", 0, tracker.getUsed());
                     assertEquals(globalBefore - frameBytes, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_INDEX_READER));
                 } finally {
-                    pool.clear();
+                    freeingPool.clear();
+                    tracker.close();
+                }
+
+                tracker = provider.acquire(AllowAllSecurityContext.INSTANCE, 2, MemoryTrackerWorkload.QUERY);
+                try {
+                    keepingPool.setMemoryTracker(tracker);
+                    keepingPool.of(addressCache);
+                    for (int f = 0; f < frameCount; f++) {
+                        keepingPool.navigateTo(f, record);
+                        // the release of a reducer keeps the covered frames
+                        keepingPool.releaseParquetBuffers();
+                        assertEquals("charge at frame " + f, (f + 1) * frameBytes, tracker.getUsed());
+                    }
+                    // the query boundary frees every frame, and its charge with it
+                    keepingPool.clear();
+                    assertEquals(0, keepingPool.getCoveredCachedBytes());
+                    assertEquals(0, tracker.getUsed());
+                } finally {
+                    keepingPool.clear();
                     tracker.close();
                 }
             }
@@ -216,61 +198,34 @@ public class CoveringIndexDecodeLifetimeTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCoveredFramesDecodedAheadOutliveTheReleaseUntilFolded() throws Exception {
-        // A frame decoded ahead of a fold stays through the release that the fold's reducers call
-        // after each frame, until the fold releases it; a query boundary releases it too.
+    public void testCoveredFrameStabilityFollowsItsPool() throws Exception {
+        // A record over a single-key covered frame is stable when its pool keeps the frame until its
+        // query ends, as every pool but a reduce queue task's does; over the frames of a pool that
+        // frees them with their frame, neither the frame memory nor a record is stable. A multi-key
+        // covered frame, decoded eagerly by the page frame cursor, which frees it at close, is stable
+        // in either pool, and so is a native frame; a decoded Parquet frame never is.
         assertMemoryLeak(() -> {
             createPoolTable();
-            try (
-                    RecordCursorFactory factory = select("SELECT sym, payload, v FROM t WHERE sym = 'A'");
-                    PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, PartitionFrameCursorFactory.ORDER_ASC);
-                    PageFrameAddressCache addressCache = new PageFrameAddressCache();
-                    PageFrameMemoryPool pool = new PageFrameMemoryPool(configuration, 0L);
-                    PageFrameMemoryRecord record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER)
-            ) {
-                buildAddressCache(factory, cursor, addressCache);
-                pool.of(addressCache);
-                record.of(cursor);
-                final long frameBytes = coveredFrameBytes();
-                pool.decodeAhead(0);
-                pool.decodeAhead(1);
-                pool.decodeAhead(2);
-                // decoded ahead, they stay beyond the zero budget
-                assertEquals(3, pool.getCoveredFrameCount());
-                assertEquals(3 * frameBytes, pool.getCoveredCachedBytes());
-                // as a reducer of the fold reads a frame and releases the decoded frames
-                record.init(pool.navigateTo(1));
-                assertFrameValues(record, addressCache, 1);
-                pool.releaseParquetBuffers();
-                assertEquals(3, pool.getCoveredFrameCount());
-                pool.releaseDecodedAhead(1);
-                assertEquals(2, pool.getCoveredFrameCount());
-                // a frame that is not decoded ahead is released as any other
-                record.init(pool.navigateTo(3));
-                assertEquals(3, pool.getCoveredFrameCount());
-                pool.releaseDecodedAhead(3);
-                pool.releaseParquetBuffers();
-                assertEquals(2, pool.getCoveredFrameCount());
-                // the fold reads frame 0 through a record, which keeps it once released
-                pool.navigateTo(0, record);
-                assertFrameValues(record, addressCache, 0);
-                pool.releaseDecodedAhead(0);
-                assertEquals(2, pool.getCoveredFrameCount());
-                pool.navigateTo(4, record);
-                assertEquals("the record left frame 0, which nothing keeps", 2, pool.getCoveredFrameCount());
-                // nothing to release for a frame the pool does not hold
-                pool.releaseDecodedAhead(9);
-                assertEquals(2, pool.getCoveredFrameCount());
-                // the query boundary frees frame 2, still decoded ahead
-                pool.of(addressCache);
-                assertEquals(0, pool.getCoveredFrameCount());
-                assertEquals(0, pool.getCoveredCachedBytes());
-                // and so does clear()
-                pool.decodeAhead(0);
-                assertEquals(1, pool.getCoveredFrameCount());
-                pool.clear();
-                assertEquals(0, pool.getCoveredFrameCount());
-                assertEquals(0, pool.getCoveredCachedBytes());
+            execute("CREATE TABLE plain (ts TIMESTAMP, sym SYMBOL, payload VARCHAR, v LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO plain SELECT * FROM t");
+            execute("CREATE TABLE pq (ts TIMESTAMP, sym SYMBOL, payload VARCHAR, v LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO pq SELECT * FROM t");
+            // all days but the last, the active partition
+            execute("ALTER TABLE pq CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-10'");
+            engine.releaseAllWriters();
+            for (boolean isKeepingCoveredFrames : new boolean[]{true, false}) {
+                assertEquals(10, assertStability("SELECT sym, payload, v FROM t WHERE sym = 'A'", isKeepingCoveredFrames));
+                // per-key frames are single-key covered ones, merged frames are not
+                assertStability("SELECT sym, payload, v FROM t WHERE sym IN ('A', 'B')", isKeepingCoveredFrames);
+                assertEquals(0, assertStability("SELECT sym, payload, v FROM plain", isKeepingCoveredFrames));
+                assertEquals(0, assertStability("SELECT sym, payload, v FROM pq", isKeepingCoveredFrames));
+            }
+            // a frame memory that is not a pool's tells by its format
+            try (PageFrameMemoryRecord record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER)) {
+                record.init(new FormatOnlyFrameMemory(PartitionFormat.NATIVE));
+                assertTrue(record.isStable());
+                record.init(new FormatOnlyFrameMemory(PartitionFormat.PARQUET));
+                assertFalse(record.isStable());
             }
         });
     }
@@ -279,10 +234,10 @@ public class CoveringIndexDecodeLifetimeTest extends AbstractCairoTest {
     public void testDecodeAheadFoldsOverCoveredFrames() throws Exception {
         // Rare keys over many partitions: fewer rows than the covering scan reduces on the query's
         // thread, in more frames than one thread decodes, so the workers decode the frames ahead of
-        // a fold on the query's thread. A single key's frames are decoded ahead, each kept by its
-        // pool until the fold has read it; merged frames of two keys, decoded as the scan builds
-        // them, are not, and the fold reads them through its own pool. Both equal the non-indexed
-        // twin.
+        // a fold on the query's thread. A single key's frames are decoded ahead, each kept by the
+        // pool that decoded it until the query ends, and the fold reads it there; merged frames of
+        // two keys, decoded as the scan builds them, are not, and the fold reads them through its
+        // own pool. Both equal the non-indexed twin, with the freed covered buffers poisoned.
         UnorderedPageFrameSequence.setLocalReduceOpenCountingForTesting(true);
         try {
             assertMemoryLeak(() -> TestUtils.execute(
@@ -322,12 +277,13 @@ public class CoveringIndexDecodeLifetimeTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFailedCoveredDecodeFreesItsFrame() throws Exception {
-        // A covered decode that breaches the query's memory limit frees what it allocated: the
-        // pool holds no buffers of the frame, the tracker no charge, and the record or frame
-        // memory is cleared, so that it does not read through its binding. A record's decode, of
-        // the frame or of the declared rows alone, and the frame memory's decode of the filter's
-        // columns fail alike. The pool decodes the frame once the limit allows.
+    public void testFailedCoveredDecodeLeavesNoChargeOnceReleased() throws Exception {
+        // A covered decode that breaches the query's memory limit fails with the limit's error: a
+        // record's decode of the frame, its decode of the declared rows alone, and the frame
+        // memory's decode of the filter's columns alike. A pool that frees its covered frames with
+        // their frame frees what the failed decode allocated, and the charge with it, once the frame
+        // is released, as the reduce queue task releases it when the cursor collects the failed
+        // frame. The pool decodes the frame once the limit allows.
         assertMemoryLeak(() -> {
             createPoolTable();
             final long frameBytes = coveredFrameBytes();
@@ -349,19 +305,15 @@ public class CoveringIndexDecodeLifetimeTest extends AbstractCairoTest {
                     PageFrameMemoryRecord record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER)
             ) {
                 buildAddressCache(factory, cursor, addressCache);
+                pool.setKeepsCoveredFramesForQuery(false);
                 final MemoryTracker tracker = provider.acquire(AllowAllSecurityContext.INSTANCE, 1, MemoryTrackerWorkload.QUERY);
                 try {
                     // the record's frame decode, its decode of declared rows, the frame memory's
                     // decode of the filter's columns
                     for (int path = 0; path < 3; path++) {
-                        // the record is on frame 0, decoded with no limit, and the decode of frame
-                        // 1 fails under the limit
-                        pool.setMemoryTracker(null);
+                        pool.setMemoryTracker(tracker);
                         pool.of(addressCache);
                         record.of(cursor);
-                        pool.navigateTo(0, record);
-                        assertFrameValues(record, addressCache, 0);
-                        pool.setMemoryTracker(tracker);
                         if (path == 1) {
                             // three of frame 1's 12 rows, one of them twice, few enough to decode
                             // alone
@@ -385,19 +337,14 @@ public class CoveringIndexDecodeLifetimeTest extends AbstractCairoTest {
                             TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
                         }
                         assertEquals(path == 1 ? 1 : 0, PageFrameMemoryPool.getCoveredRowDecodeCount() - decodedBefore);
+                        // what the failed decode allocated stays charged until the frame is released
+                        assertTrue(tracker.getUsed() <= frameBytes / 2);
+                        assertEquals(pool.getCoveredCachedBytes(), tracker.getUsed());
+                        pool.releaseParquetBuffers();
+                        assertEquals(0, pool.getCoveredFrameCount());
+                        assertEquals(0, pool.getCoveredCachedBytes());
                         assertEquals(0, tracker.getUsed());
-                        if (path == 2) {
-                            // the record keeps frame 0
-                            assertEquals(1, pool.getCoveredFrameCount());
-                            assertEquals(frameBytes, pool.getCoveredCachedBytes());
-                            assertFrameValues(record, addressCache, 0);
-                        } else {
-                            assertEquals("the record is cleared", -1, record.getFrameIndex());
-                            // frame 0, which the record left, made room for frame 1, whose
-                            // buffers the failure freed
-                            assertEquals(0, pool.getCoveredFrameCount());
-                            assertEquals(0, pool.getCoveredCachedBytes());
-                        }
+
                         // with no limit, the frame decodes
                         pool.setMemoryTracker(null);
                         if (path == 2) {
@@ -440,62 +387,139 @@ public class CoveringIndexDecodeLifetimeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testKeepingPoolKeepsCoveredFramesUntilItsQueryEnds() throws Exception {
+        // A pool that keeps covered frames for its query, as every pool but a reduce queue task's
+        // does, keeps every covered frame it decodes until its query boundary, whatever its cache
+        // budget, and through the release its reducers call after each frame: a reader that kept a
+        // pointer into a frame reads it intact, and a record that comes back to a frame finds it
+        // decoded, in the same buffers, so that a cursor that reads rows back in any order decodes
+        // each frame once.
+        assertMemoryLeak(() -> {
+            createPoolTable();
+            final long frameBytes = coveredFrameBytes();
+            try (
+                    RecordCursorFactory factory = select("SELECT sym, payload, v FROM t WHERE sym = 'A'");
+                    PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, PartitionFrameCursorFactory.ORDER_ASC);
+                    PageFrameAddressCache addressCache = new PageFrameAddressCache();
+                    // a cache budget of half a frame
+                    PageFrameMemoryPool pool = new PageFrameMemoryPool(configuration, frameBytes / 2);
+                    PageFrameMemoryRecord record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
+                    PageFrameMemoryRecord frameRecord = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_B_LETTER)
+            ) {
+                final int frameCount = buildAddressCache(factory, cursor, addressCache);
+                assertEquals(10, frameCount);
+                // the full budget, as for a cursor whose rows are read back in any order
+                pool.of(addressCache, ParquetDecodeHint.SCATTERED);
+                record.of(cursor);
+                frameRecord.of(cursor);
+                // a reader bound to the frame memory, as a reducer's record is
+                frameRecord.init(pool.navigateTo(0));
+                assertTrue(frameRecord.isStable());
+                final long[] valueAddresses = new long[frameCount];
+                for (int f = 0; f < frameCount; f++) {
+                    pool.navigateTo(f, record);
+                    assertTrue(record.isStable());
+                    assertFrameValues(record, addressCache, f);
+                    valueAddresses[f] = record.getPageAddress(2);
+                    // as a reducer releases the decoded frames after each frame
+                    pool.releaseParquetBuffers();
+                    assertEquals(f + 1, pool.getCoveredFrameCount());
+                    assertEquals((f + 1) * frameBytes, pool.getCoveredCachedBytes());
+                }
+                // the frame the reader was bound to, before the frame memory was released
+                assertFrameValues(frameRecord, addressCache, 0);
+                // the record comes back to every frame, in reverse order, and finds it decoded
+                for (int f = frameCount - 1; f >= 0; f--) {
+                    pool.navigateTo(f, record);
+                    assertEquals(valueAddresses[f], record.getPageAddress(2));
+                    assertFrameValues(record, addressCache, f);
+                }
+                assertEquals(frameCount, pool.getCoveredFrameCount());
+                assertEquals(frameCount * frameBytes, pool.getCoveredCachedBytes());
+                // the query boundary frees them
+                pool.of(addressCache);
+                assertEquals(0, pool.getCoveredFrameCount());
+                assertEquals(0, pool.getCoveredCachedBytes());
+                // and so does clear()
+                pool.navigateTo(3, record);
+                assertFrameValues(record, addressCache, 3);
+                assertEquals(1, pool.getCoveredFrameCount());
+                pool.clear();
+                assertEquals(0, pool.getCoveredFrameCount());
+                assertEquals(0, pool.getCoveredCachedBytes());
+            }
+        });
+    }
+
+    @Test
     public void testOutOfMemoryAtEveryCoveredAllocationLeavesThePoolUsable() throws Exception {
         // An allocation that fails anywhere in the decode of a covered frame, in the reopen of a
         // parked shell's address lists, in the index reader's cursor or in a column buffer, leaves
-        // no buffers of the frame behind, and the pool decodes the frame once memory allows, for
-        // the frame memory and for a record alike.
+        // the pool usable: the frame decodes in full once memory allows, for the frame memory and
+        // for a record alike, and the release frees what the failed decode allocated, in a pool
+        // that frees its covered frames with their frame and in one that keeps them for its query.
         assertMemoryLeak(() -> {
             createPoolTable();
             try (
                     RecordCursorFactory factory = select("SELECT sym, payload, v FROM t WHERE sym = 'A'");
                     PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, PartitionFrameCursorFactory.ORDER_ASC);
                     PageFrameAddressCache addressCache = new PageFrameAddressCache();
-                    PageFrameMemoryPool pool = new PageFrameMemoryPool(configuration, 0L);
                     PageFrameMemoryRecord record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
                     PageFrameMemoryRecord frameRecord = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_B_LETTER)
             ) {
                 buildAddressCache(factory, cursor, addressCache);
-                pool.of(addressCache);
                 record.of(cursor);
                 frameRecord.of(cursor);
-                for (boolean isRecord : new boolean[]{true, false}) {
-                    // a parked shell, which the next decode reopens
-                    pool.navigateTo(0, record);
-                    pool.releaseParquetBuffers();
-                    assertEquals(1, pool.getCoveringShellCount());
-                    int failures = 0;
-                    boolean hasDecodedUnderLimit = false;
-                    for (int slack = 0; !hasDecodedUnderLimit; slack += 16) {
-                        Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + slack);
-                        try {
-                            if (isRecord) {
-                                pool.navigateTo(1, record);
-                            } else {
-                                frameRecord.init(pool.navigateTo(1));
+                for (boolean isKeepingCoveredFrames : new boolean[]{true, false}) {
+                    try (PageFrameMemoryPool pool = new PageFrameMemoryPool(configuration, 0L)) {
+                        pool.setKeepsCoveredFramesForQuery(isKeepingCoveredFrames);
+                        for (boolean isRecord : new boolean[]{true, false}) {
+                            int failures = 0;
+                            boolean hasDecodedUnderLimit = false;
+                            for (int slack = 0; !hasDecodedUnderLimit; slack += 16) {
+                                // frame 0 decoded, and, in a pool that frees its covered frames,
+                                // released: its parked shell is what the next decode reopens
+                                pool.of(addressCache);
+                                pool.navigateTo(0, record);
+                                if (!isKeepingCoveredFrames) {
+                                    pool.releaseParquetBuffers();
+                                    assertEquals(1, pool.getCoveringShellCount());
+                                }
+                                Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + slack);
+                                try {
+                                    if (isRecord) {
+                                        pool.navigateTo(1, record);
+                                    } else {
+                                        frameRecord.init(pool.navigateTo(1));
+                                    }
+                                    hasDecodedUnderLimit = true;
+                                } catch (CairoException e) {
+                                    assertTrue(e.getFlyweightMessage().toString(), e.isOutOfMemory());
+                                    failures++;
+                                } finally {
+                                    Unsafe.setRssMemLimit(0);
+                                }
+                                // decoded, under the limit or now
+                                if (isRecord) {
+                                    pool.navigateTo(1, record);
+                                    assertFrameValues(record, addressCache, 1);
+                                } else {
+                                    frameRecord.init(pool.navigateTo(1));
+                                    assertFrameValues(frameRecord, addressCache, 1);
+                                }
+                                if (isKeepingCoveredFrames) {
+                                    // the query boundary frees the frames
+                                    pool.of(addressCache);
+                                } else {
+                                    pool.releaseParquetBuffers();
+                                }
+                                assertEquals(0, pool.getCoveredFrameCount());
+                                assertEquals(0, pool.getCoveredCachedBytes());
                             }
-                            hasDecodedUnderLimit = true;
-                        } catch (CairoException e) {
-                            assertTrue(e.getFlyweightMessage().toString(), e.isOutOfMemory());
-                            failures++;
-                            assertEquals("slack " + slack, 0, pool.getCoveredFrameCount());
-                            assertEquals("slack " + slack, 0, pool.getCoveredCachedBytes());
-                        } finally {
-                            Unsafe.setRssMemLimit(0);
+                            // the decode allocates in several places, each of which failed at some limit
+                            assertTrue("failures: " + failures, failures > 3);
                         }
-                        // decoded, under the limit or now
-                        if (isRecord) {
-                            pool.navigateTo(1, record);
-                            assertFrameValues(record, addressCache, 1);
-                        } else {
-                            frameRecord.init(pool.navigateTo(1));
-                            assertFrameValues(frameRecord, addressCache, 1);
-                        }
-                        pool.releaseParquetBuffers();
-                        assertEquals(0, pool.getCoveredCachedBytes());
                     }
-                    // the decode allocates in several places, each of which failed at some limit
-                    assertTrue("failures: " + failures, failures > 3);
                 }
             }
         });
@@ -519,25 +543,30 @@ public class CoveringIndexDecodeLifetimeTest extends AbstractCairoTest {
                 assertEquals(600, buildAddressCache(factory, cursor, addressCache));
                 pool.setRetainsCoveringShells(true);
                 pool.of(addressCache);
-                // frames decoded ahead stay, whatever the budget
+                // every frame stays, whatever the budget
                 for (int f = 0; f < 600; f++) {
-                    pool.decodeAhead(f);
+                    pool.navigateTo(f);
                 }
                 assertEquals(600, pool.getCoveredFrameCount());
                 pool.clear();
                 assertEquals(0, pool.getCoveredFrameCount());
                 assertEquals(0, pool.getCoveredCachedBytes());
                 assertEquals(COVERING_SHELL_CAP, pool.getCoveringShellCount());
+                // the next query's frames take the shells
+                pool.of(addressCache);
+                pool.navigateTo(0);
+                assertEquals(COVERING_SHELL_CAP - 1, pool.getCoveringShellCount());
             }
         });
     }
 
     @Test
-    public void testPoolOfSharedQueueKeepsNoDecodeMemoryPastTheFrame() throws Exception {
-        // The per-frame release of a pool that keeps no shells, as a shared queue task's does not,
-        // frees all of a covered frame's native memory: its buffers, the address lists of its
-        // shell and the scratch of its compressed runs. A pool that keeps shells, as an atom's
-        // does, keeps the scratch for its next frames, until its query boundary.
+    public void testPoolThatFreesCoveredFramesKeepsNoDecodeMemoryPastTheFrame() throws Exception {
+        // A pool that frees its covered frames with their frame, as a reduce queue task's, frees all
+        // of a covered frame's native memory once the frame is released: its buffers, the address
+        // lists of its shell, which it parks for the next frame, and the scratch of its compressed
+        // runs. A pool that keeps them, with its shells, as an atom's, holds every frame and the
+        // scratch until its query boundary.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t2 (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (v), v LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
             // two commits into each day, which the index seals into a generation of compressed
@@ -561,113 +590,41 @@ public class CoveringIndexDecodeLifetimeTest extends AbstractCairoTest {
                     }
                 }
                 final long before = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_INDEX_READER);
-                for (boolean isRetainingShells : new boolean[]{false, true}) {
-                    try (PageFrameMemoryPool pool = new PageFrameMemoryPool(configuration, 0L)) {
-                        pool.setRetainsCoveringShells(isRetainingShells);
-                        pool.of(addressCache);
-                        final long nativeDefaultBefore = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DEFAULT);
-                        for (int f = 0; f < frameCount; f++) {
-                            pool.navigateTo(f);
-                            // the frame's buffers and the run scratch
-                            assertEquals(
-                                    "retaining shells: " + isRetainingShells,
-                                    pool.getCoveredCachedBytes() + RUN_DECODE_SCRATCH_BYTES,
-                                    Unsafe.getMemUsedByTag(MemoryTag.NATIVE_INDEX_READER) - before
-                            );
-                            pool.releaseParquetBuffers();
-                            assertEquals(0, pool.getCoveredCachedBytes());
-                            assertEquals(
-                                    "retaining shells: " + isRetainingShells,
-                                    isRetainingShells ? RUN_DECODE_SCRATCH_BYTES : 0,
-                                    Unsafe.getMemUsedByTag(MemoryTag.NATIVE_INDEX_READER) - before
-                            );
-                            if (!isRetainingShells) {
-                                // the shell is parked, its address lists freed
-                                assertEquals(nativeDefaultBefore, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DEFAULT));
-                            }
-                        }
-                        pool.clear();
+                try (PageFrameMemoryPool pool = new PageFrameMemoryPool(configuration, 0L)) {
+                    pool.setKeepsCoveredFramesForQuery(false);
+                    pool.of(addressCache);
+                    final long nativeDefaultBefore = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DEFAULT);
+                    for (int f = 0; f < frameCount; f++) {
+                        assertFalse(pool.navigateTo(f).isStable());
+                        // the frame's buffers, in the shell the previous frame left, and the run scratch
+                        assertEquals(1, pool.getCoveredFrameCount());
+                        assertEquals(0, pool.getCoveringShellCount());
+                        assertEquals(pool.getCoveredCachedBytes() + RUN_DECODE_SCRATCH_BYTES, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_INDEX_READER) - before);
+                        pool.releaseParquetBuffers();
+                        assertEquals(0, pool.getCoveredFrameCount());
+                        assertEquals(0, pool.getCoveredCachedBytes());
                         assertEquals(before, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_INDEX_READER));
-                        if (isRetainingShells) {
-                            // a pool that stops keeping shells parks the shells it keeps
-                            assertEquals(1, pool.getCoveringShellCount());
-                            final long nativeDefaultKept = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DEFAULT);
-                            pool.setRetainsCoveringShells(false);
-                            assertEquals(1, pool.getCoveringShellCount());
-                            assertTrue(Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DEFAULT) < nativeDefaultKept);
-                            // and reopens them for the next decodes
-                            pool.of(addressCache);
-                            pool.navigateTo(0);
-                            assertEquals(0, pool.getCoveringShellCount());
-                            assertTrue(pool.getCoveredCachedBytes() > 0);
-                        }
+                        // the shell is parked, its address lists freed
+                        assertEquals(1, pool.getCoveringShellCount());
+                        assertEquals(nativeDefaultBefore, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DEFAULT));
                     }
+                    pool.clear();
+                    assertEquals(before, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_INDEX_READER));
                 }
-            }
-        });
-    }
-
-    @Test
-    public void testPoolOfUncoveredFramesDecodesNothingAhead() throws Exception {
-        // decodeAhead() decodes covered frames alone: a native frame needs no decode, and the pool
-        // holds nothing for it.
-        assertMemoryLeak(() -> {
-            createPoolTable();
-            execute("CREATE TABLE plain (ts TIMESTAMP, sym SYMBOL, payload VARCHAR, v LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
-            execute("INSERT INTO plain SELECT * FROM t WHERE sym = 'A'");
-            engine.releaseAllWriters();
-            try (
-                    RecordCursorFactory factory = select("SELECT sym, payload, v FROM plain");
-                    PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, PartitionFrameCursorFactory.ORDER_ASC);
-                    PageFrameAddressCache addressCache = new PageFrameAddressCache();
-                    PageFrameMemoryPool pool = new PageFrameMemoryPool(configuration, 0L);
-                    PageFrameMemoryRecord record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER)
-            ) {
-                // a frame a day
-                assertEquals(10, buildAddressCache(factory, cursor, addressCache));
-                pool.of(addressCache);
-                record.of(cursor);
-                pool.decodeAhead(0);
-                assertEquals(0, pool.getCoveredFrameCount());
-                pool.releaseDecodedAhead(0);
-                record.init(pool.navigateTo(0));
-                assertEquals(0, pool.getCoveredFrameCount());
-                assertEquals(12, addressCache.getFrameSize(0));
-                for (int r = 0; r < 12; r++) {
-                    record.setRowIndex(r);
-                    assertEquals(2L * r + 1, record.getLong(2));
+                try (PageFrameMemoryPool pool = new PageFrameMemoryPool(configuration, 0L)) {
+                    pool.setRetainsCoveringShells(true);
+                    pool.of(addressCache);
+                    for (int f = 0; f < frameCount; f++) {
+                        assertTrue(pool.navigateTo(f).isStable());
+                        pool.releaseParquetBuffers();
+                        assertEquals(f + 1, pool.getCoveredFrameCount());
+                        assertEquals(pool.getCoveredCachedBytes() + RUN_DECODE_SCRATCH_BYTES, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_INDEX_READER) - before);
+                    }
+                    pool.clear();
+                    assertEquals(before, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_INDEX_READER));
+                    // the shells keep their address lists for the next query
+                    assertEquals(frameCount, pool.getCoveringShellCount());
                 }
-            }
-        });
-    }
-
-    @Test
-    public void testRecordsOverCoveredFramesAreNotStable() throws Exception {
-        // A covered frame lives until its pool releases it, so neither its frame memory nor a record
-        // bound to it is stable. A multi-key covered frame, decoded eagerly by the page frame cursor,
-        // which frees it at close, is, and so is a native frame.
-        assertMemoryLeak(() -> {
-            createPoolTable();
-            execute("CREATE TABLE plain (ts TIMESTAMP, sym SYMBOL, payload VARCHAR, v LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
-            execute("INSERT INTO plain SELECT * FROM t");
-            engine.releaseAllWriters();
-            assertEquals(10, assertStability("SELECT sym, payload, v FROM t WHERE sym = 'A'"));
-            // per-key frames are single-key covered ones, merged frames are not
-            assertStability("SELECT sym, payload, v FROM t WHERE sym IN ('A', 'B')");
-            assertEquals(0, assertStability("SELECT sym, payload, v FROM plain"));
-            // a decoded Parquet frame is not
-            execute("CREATE TABLE pq (ts TIMESTAMP, sym SYMBOL, payload VARCHAR, v LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
-            execute("INSERT INTO pq SELECT * FROM t");
-            // all days but the last, the active partition
-            execute("ALTER TABLE pq CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-10'");
-            engine.releaseAllWriters();
-            assertEquals(0, assertStability("SELECT sym, payload, v FROM pq"));
-            // a frame memory that is not a pool's tells by its format
-            try (PageFrameMemoryRecord record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER)) {
-                record.init(new FormatOnlyFrameMemory(PartitionFormat.NATIVE));
-                assertTrue(record.isStable());
-                record.init(new FormatOnlyFrameMemory(PartitionFormat.PARQUET));
-                assertFalse(record.isStable());
             }
         });
     }
@@ -856,10 +813,55 @@ public class CoveringIndexDecodeLifetimeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSortReadsEachCoveredFrameBackFromOneDecode() throws Exception {
+        // A sort over a covered Async Filter reads its rows back through the filter cursor's own
+        // pool, in the sort's order, which goes from frame to frame for every px value. The pool
+        // keeps every covered frame it decodes until the query ends, so that each frame decodes
+        // once, whatever the cache budget: here a budget far smaller than a frame. The sort declares
+        // the rows it reads, few enough per frame for the pool to decode them alone, and to count
+        // the decodes. A pool that freed covered frames under its budget would decode a frame again
+        // at every return to it.
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, FRAME_ROWS);
+        setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 1024);
+        assertMemoryLeak(() -> TestUtils.execute(
+                new TestWorkerPool(4, WorkerPoolMode.LEGACY),
+                (engine, compiler, sqlExecutionContext) -> {
+                    createCoveredTables(engine, sqlExecutionContext);
+                    final String query = "SELECT ts, s, px FROM %s WHERE sym = 'S0' AND px > 900 ORDER BY px, ts";
+                    final StringSink sink = new StringSink();
+                    TestUtils.printSql(compiler, sqlExecutionContext, "EXPLAIN " + String.format(query, "cov"), sink);
+                    TestUtils.assertContains(sink, "Encode sort light");
+                    TestUtils.assertContains(sink, "Async JIT Filter");
+                    TestUtils.assertContains(sink, "CoveringIndex on: sym");
+                    final StringSink expected = new StringSink();
+                    TestUtils.printSql(compiler, sqlExecutionContext, String.format(query, "ref"), expected);
+                    PageFrameMemoryPool.setPoisoningFreedCoveredBuffers(true);
+                    try {
+                        for (int pass = 0; pass < 2; pass++) {
+                            final long decodesBefore = PageFrameMemoryPool.getCoveredRowDecodeCount();
+                            sink.clear();
+                            TestUtils.printSql(compiler, sqlExecutionContext, String.format(query, "cov"), sink);
+                            TestUtils.assertEquals(expected, sink);
+                            assertEquals("pass " + pass, framesWithPxAbove(900), PageFrameMemoryPool.getCoveredRowDecodeCount() - decodesBefore);
+                        }
+                    } finally {
+                        PageFrameMemoryPool.setPoisoningFreedCoveredBuffers(false);
+                    }
+                    assertEquals(0, reduceQueueCoveredBytes(engine));
+                },
+                configuration,
+                LOG
+        ));
+    }
+
+    @Test
     public void testValueKeepingReadersCopyCoveredValues() throws Exception {
-        // Every covered frame is freed once its reader is done with it, and its buffers are poisoned
-        // as they are freed: a reader that kept a pointer into a covered VARCHAR past its frame
-        // would read the poison, and its query would not equal the non-indexed twin's.
+        // A covered frame of a reduce queue task is freed once the cursor has collected it, and its
+        // buffers are poisoned as they are freed: a reader above the Async Filter that kept a pointer
+        // into a covered VARCHAR past its frame would read the poison, and its query would not equal
+        // the non-indexed twin's. The workers of a covered GROUP BY, and a cursor that reads rows
+        // back, keep their covered frames until the query ends, and their readers keep pointers into
+        // them, which stay valid. With JIT filters and without.
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, FRAME_ROWS);
         assertMemoryLeak(() -> {
             for (WorkerPoolMode mode : WorkerPoolMode.values()) {
@@ -869,11 +871,15 @@ public class CoveringIndexDecodeLifetimeTest extends AbstractCairoTest {
                             createCoveredTables(engine, sqlExecutionContext);
                             PageFrameMemoryPool.setPoisoningFreedCoveredBuffers(true);
                             try {
-                                for (String query : VALUE_KEEPING_QUERIES) {
-                                    TestUtils.assertSqlCursors(compiler, sqlExecutionContext, String.format(query, "ref"), String.format(query, "cov"), LOG);
+                                for (int jitMode : new int[]{SqlJitMode.JIT_MODE_ENABLED, SqlJitMode.JIT_MODE_DISABLED}) {
+                                    sqlExecutionContext.setJitMode(jitMode);
+                                    for (String query : VALUE_KEEPING_QUERIES) {
+                                        TestUtils.assertSqlCursors(compiler, sqlExecutionContext, String.format(query, "ref"), String.format(query, "cov"), LOG);
+                                    }
                                 }
                             } finally {
                                 PageFrameMemoryPool.setPoisoningFreedCoveredBuffers(false);
+                                sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
                             }
                             assertEquals(mode.toString(), 0, reduceQueueCoveredBytes(engine));
                             dropCoveredTables(engine, sqlExecutionContext);
@@ -881,91 +887,6 @@ public class CoveringIndexDecodeLifetimeTest extends AbstractCairoTest {
                         configuration,
                         LOG
                 );
-            }
-        });
-    }
-
-    @Test
-    public void testZeroBudgetPoolHoldsTheBoundCoveredFramesAlone() throws Exception {
-        // A zero-budget pool, as a reduce slot's, keeps the covered frames its frame memory and its
-        // records are bound to, and frees a frame once none of them is on it.
-        assertMemoryLeak(() -> {
-            createPoolTable();
-            try (
-                    RecordCursorFactory factory = select("SELECT sym, payload, v FROM t WHERE sym = 'A'");
-                    PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, PartitionFrameCursorFactory.ORDER_ASC);
-                    PageFrameAddressCache addressCache = new PageFrameAddressCache();
-                    PageFrameMemoryPool pool = new PageFrameMemoryPool(configuration, 0L);
-                    PageFrameMemoryRecord recordA = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
-                    PageFrameMemoryRecord recordB = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_B_LETTER);
-                    PageFrameMemoryRecord frameRecord = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER)
-            ) {
-                final int frameCount = buildAddressCache(factory, cursor, addressCache);
-                assertTrue(frameCount > 5);
-                pool.of(addressCache);
-                recordA.of(cursor);
-                recordB.of(cursor);
-                frameRecord.of(cursor);
-                final long frameBytes = coveredFrameBytes();
-
-                frameRecord.init(pool.navigateTo(0));
-                assertEquals(1, pool.getCoveredFrameCount());
-                pool.navigateTo(1, recordA);
-                pool.navigateTo(2, recordB);
-                assertEquals(3, pool.getCoveredFrameCount());
-                assertEquals(3 * frameBytes, pool.getCoveredCachedBytes());
-                // record A moves on: frame 1 is freed
-                pool.navigateTo(3, recordA);
-                assertEquals(3, pool.getCoveredFrameCount());
-                assertFrameValues(frameRecord, addressCache, 0);
-                assertFrameValues(recordA, addressCache, 3);
-                assertFrameValues(recordB, addressCache, 2);
-                // so does the frame memory: frame 0 is freed
-                frameRecord.init(pool.navigateTo(4));
-                assertEquals(3, pool.getCoveredFrameCount());
-                assertFrameValues(frameRecord, addressCache, 4);
-                // both records on one frame
-                pool.navigateTo(4, recordA);
-                pool.navigateTo(4, recordB);
-                assertEquals(1, pool.getCoveredFrameCount());
-                assertEquals(frameBytes, pool.getCoveredCachedBytes());
-                assertFrameValues(recordB, addressCache, 4);
-                // record B's move freed frame 2, which fails record A's fast path, so A binds its
-                // frame again
-                pool.navigateTo(4, recordA);
-                assertEquals(1, pool.getCoveredFrameCount());
-                assertFrameValues(recordA, addressCache, 4);
-                // record B bound through the frame memory, which does not hold it on frame 5,
-                // while its letter holds frame 4: the navigation binds it to frame 5
-                recordB.init(pool.navigateTo(5));
-                pool.navigateTo(5, recordB);
-                assertEquals(2, pool.getCoveredFrameCount());
-                assertFrameValues(recordB, addressCache, 5);
-                assertFrameValues(recordA, addressCache, 4);
-                // the frame memory releases frame 5, which record B keeps
-                pool.releaseFrameMemory();
-                pool.navigateTo(6, recordA);
-                assertEquals(2, pool.getCoveredFrameCount());
-                pool.navigateTo(6, recordB);
-                assertEquals("frame 5, released by the frame memory and left by record B, is freed", 1, pool.getCoveredFrameCount());
-                assertFrameValues(recordB, addressCache, 6);
-                // the release frees the bound frames too
-                pool.releaseParquetBuffers();
-                assertEquals(0, pool.getCoveredFrameCount());
-                assertEquals(0, pool.getCoveredCachedBytes());
-                // and a record's next navigation decodes its frame again
-                pool.navigateTo(1, recordA);
-                assertFrameValues(recordA, addressCache, 1);
-                assertEquals(1, pool.getCoveredFrameCount());
-                // a record bound through the frame memory alone, its letter bound to nothing
-                pool.releaseParquetBuffers();
-                recordB.init(pool.navigateTo(2));
-                pool.navigateTo(2, recordB);
-                assertEquals(1, pool.getCoveredFrameCount());
-                pool.releaseFrameMemory();
-                pool.navigateTo(3, recordA);
-                assertEquals("record B keeps frame 2", 2, pool.getCoveredFrameCount());
-                assertFrameValues(recordB, addressCache, 2);
             }
         });
     }
@@ -999,9 +920,10 @@ public class CoveringIndexDecodeLifetimeTest extends AbstractCairoTest {
         }
     }
 
-    // Asserts that every frame of the query is stable but the single-key covered and the Parquet
-    // ones, and returns how many single-key covered frames there are.
-    private static int assertStability(String query) throws Exception {
+    // Asserts that every frame of the query is stable but the Parquet ones and, in a pool that does
+    // not keep covered frames for its query, the single-key covered ones, and returns how many
+    // single-key covered frames there are.
+    private static int assertStability(String query, boolean isKeepingCoveredFrames) throws Exception {
         try (
                 RecordCursorFactory factory = select(query);
                 PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, PartitionFrameCursorFactory.ORDER_ASC);
@@ -1012,6 +934,7 @@ public class CoveringIndexDecodeLifetimeTest extends AbstractCairoTest {
         ) {
             final int frameCount = buildAddressCache(factory, cursor, addressCache);
             assertTrue(query, frameCount > 0);
+            pool.setKeepsCoveredFramesForQuery(isKeepingCoveredFrames);
             pool.of(addressCache);
             record.of(cursor);
             frameRecord.of(cursor);
@@ -1020,7 +943,7 @@ public class CoveringIndexDecodeLifetimeTest extends AbstractCairoTest {
             int coveredFrames = 0;
             for (int f = 0; f < frameCount; f++) {
                 final boolean isCovered = addressCache.isFrameSingleKeyCovered(f);
-                final boolean isStable = !isCovered && addressCache.getFrameFormat(f) == PartitionFormat.NATIVE;
+                final boolean isStable = (isKeepingCoveredFrames || !isCovered) && addressCache.getFrameFormat(f) == PartitionFormat.NATIVE;
                 coveredFrames += isCovered ? 1 : 0;
                 // as a filter's first pass reads the frame, then as its rows are read in full
                 assertEquals(query, isStable, pool.navigateTo(f, filterColumns).isStable());
@@ -1032,6 +955,10 @@ public class CoveringIndexDecodeLifetimeTest extends AbstractCairoTest {
                 assertEquals(query, isStable, record.isStable());
                 // the filter's first pass again, served by the frame read in full
                 assertEquals(query, isStable, pool.navigateTo(f, filterColumns).isStable());
+                if (!isKeepingCoveredFrames) {
+                    // as a reduce queue task releases its frame once collected
+                    pool.releaseParquetBuffers();
+                }
             }
             return coveredFrames;
         }
@@ -1064,21 +991,23 @@ public class CoveringIndexDecodeLifetimeTest extends AbstractCairoTest {
 
     private static void createCoveredTables(CairoEngine engine, SqlExecutionContext sqlExecutionContext) throws SqlException {
         engine.execute(
-                "CREATE TABLE cov (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (s, px), px DOUBLE, s VARCHAR)" +
+                "CREATE TABLE cov (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (s, px, l), px DOUBLE, s VARCHAR, l VARCHAR)" +
                         " TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL",
                 sqlExecutionContext
         );
         engine.execute(
-                "CREATE TABLE ref (ts TIMESTAMP, sym SYMBOL, px DOUBLE, s VARCHAR) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL",
+                "CREATE TABLE ref (ts TIMESTAMP, sym SYMBOL, px DOUBLE, s VARCHAR, l VARCHAR) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL",
                 sqlExecutionContext
         );
         // 64 day partitions of 2,000 rows, half of them 'S0', which a covered scan cuts into
-        // 200-row frames: 320 of them
+        // 200-row frames: 320 of them. s is short enough to be inlined into the aux vector, l is
+        // not, so its bytes live in the data vector.
         final String rows = "SELECT" +
                 " ('2024-01-01'::TIMESTAMP + (x - 1) * " + (86_400_000_000L / ROWS_PER_PARTITION) + "L)::timestamp ts," +
                 " ('S' || ((x - 1) % 2))::symbol sym," +
                 " (x % 997)::double px," +
-                " ('v' || (x % 50))::varchar s" +
+                " ('v' || (x % 50))::varchar s," +
+                " ('a-longer-value-' || (x % 50) || '-past-the-inline-limit')::varchar l" +
                 " FROM long_sequence(" + (long) PARTITIONS * ROWS_PER_PARTITION + ")";
         engine.execute("INSERT INTO cov " + rows, sqlExecutionContext);
         engine.execute("INSERT INTO ref " + rows, sqlExecutionContext);
@@ -1112,6 +1041,25 @@ public class CoveringIndexDecodeLifetimeTest extends AbstractCairoTest {
     private static void dropCoveredTables(CairoEngine engine, SqlExecutionContext sqlExecutionContext) throws SqlException {
         engine.execute("DROP TABLE cov", sqlExecutionContext);
         engine.execute("DROP TABLE ref", sqlExecutionContext);
+    }
+
+    // createCoveredTables(): the covered frames of the 'S0' rows, x odd, that hold a row whose px,
+    // x % 997, is above pxLo. A partition holds x = 2,000 p + 1 .. 2,000 p + 2,000, whose 1,000 odd
+    // x the scan cuts into five 200-row frames.
+    private static int framesWithPxAbove(int pxLo) {
+        int frames = 0;
+        for (long p = 0; p < PARTITIONS; p++) {
+            for (long k = 0; k < ROWS_PER_PARTITION / 2 / FRAME_ROWS; k++) {
+                final long xLo = ROWS_PER_PARTITION * p + 2L * FRAME_ROWS * k + 1;
+                for (long x = xLo, xHi = xLo + 2L * FRAME_ROWS; x < xHi; x += 2) {
+                    if (x % 997 > pxLo) {
+                        frames++;
+                        break;
+                    }
+                }
+            }
+        }
+        return frames;
     }
 
     // createCoveredTables(): the 'S0' rows, x odd, but those with x % 997 == 0, whose px is 0
