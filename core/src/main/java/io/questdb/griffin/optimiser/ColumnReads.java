@@ -295,7 +295,7 @@ final class ColumnReads implements Mutable {
      * True when the aggregate computes only the count of its input rows.
      */
     boolean isRowCount(AggregatePlan aggregate) {
-        if (aggregate.getGroupingExpressions().size() > 0 || aggregate.hasGroupingSets()) {
+        if (!aggregate.isSingleGroup()) {
             return false;
         }
         FunctionExpression count = null;

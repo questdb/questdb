@@ -187,7 +187,7 @@ final class OrderPlanning implements OptimiserPass {
 
     private static boolean isSingleRow(LogicalPlan plan) {
         plan = LogicalPlans.skipProjectsAndFilters(plan);
-        return plan instanceof AggregatePlan aggregate && aggregate.getGroupingExpressions().size() == 0 && !aggregate.hasGroupingSets();
+        return plan instanceof AggregatePlan aggregate && aggregate.isSingleGroup();
     }
 
     /**

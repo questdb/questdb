@@ -102,7 +102,7 @@ final class OperatorPlanning implements Mutable {
     private static final int PARALLEL_GROUPING_SETS_MAP_BUDGET = 256;
     private static final PlanVisitor SHARED_CONSUMERS = plan -> {
         if (plan instanceof AggregatePlan aggregate && aggregate.getSharedSource() != null
-                && sharedTarget(aggregate.getSharedSource().getInput()) instanceof AggregatePlan target) {
+                && sharedTarget(aggregate.getSharedSource().getInput()) instanceof AggregatePlan target && !target.hasGroupingSets()) {
             target.setSharedConsumerCount(target.getSharedConsumerCount() + 1);
         }
         return TreeWalk.CONTINUE;

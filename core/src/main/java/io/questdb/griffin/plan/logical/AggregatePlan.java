@@ -166,6 +166,14 @@ public final class AggregatePlan extends GroupingPlan {
     }
 
     /**
+     * True when the aggregate groups its whole input into the one row it returns. Grouping sets return a row per set,
+     * even when no set has a key.
+     */
+    public boolean isSingleGroup() {
+        return getGroupingExpressions().size() == 0 && !hasGroupingSets();
+    }
+
+    /**
      * Whether other consumers read the aggregate's rows: decorrelation domains that re-read it through their shared
      * source, see {@link #getSharedConsumerCount()}, or domain reads of the decorrelation domain, see
      * {@link #getReaderCount()}, which read it through shared cursors whenever its GROUP BY serves them.

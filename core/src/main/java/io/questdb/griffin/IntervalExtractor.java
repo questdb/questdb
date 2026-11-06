@@ -315,13 +315,11 @@ public final class IntervalExtractor implements Mutable {
         };
     }
 
-    // A literal bound must parse as a date; a computed bound must cast to TIMESTAMP.
+    // A literal bound must parse as a date; any other bound must have a type that reads as a timestamp, however the
+    // query spells it: a literal, a folded constant, a cast or a bind variable.
     private static void validateRangeBound(BoundExpression bound) throws SqlException {
-        if (bound instanceof ConstantExpression constant) {
-            if (constant.getSource() == null && constant.getLiteralText() != null) {
-                throw SqlException.invalidDate(constant.getLiteralText(), bound.getPosition());
-            }
-            return;
+        if (bound instanceof ConstantExpression constant && constant.getSource() == null && constant.getLiteralText() != null) {
+            throw SqlException.invalidDate(constant.getLiteralText(), bound.getPosition());
         }
         if (bound instanceof ColumnExpression || bound instanceof CursorExpression) {
             return;
@@ -520,7 +518,7 @@ public final class IntervalExtractor implements Mutable {
                 }
             }
         }
-        if (column.isDirectReference() && column.getDataType() == timestampType && isRangeOperator(operator)) {
+        if (!predicate.isPolicyPredicate() && column.isDirectReference() && column.getDataType() == timestampType && isRangeOperator(operator)) {
             validateRangeBound(bound);
         }
         final boolean isIntegralBound = bound instanceof ConstantExpression && column.isDirectReference()

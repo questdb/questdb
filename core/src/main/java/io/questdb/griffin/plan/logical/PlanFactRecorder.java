@@ -194,7 +194,7 @@ public final class PlanFactRecorder implements PlanExpressionVisitor, Expression
             }
             case FunctionExpression call -> {
                 add(READ, call.getFunctionFlags(), call.getOverload());
-                add(READ, (call.isProjectedOffset() ? 1 : 0) | (call.isSetOperation() ? 2 : 0), null);
+                add(READ, (call.isProjectedOffset() ? 1 : 0) | (call.isSetOperation() ? 2 : 0) | (call.isPolicyPredicate() ? 4 : 0), null);
                 for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
                     add(READ, call.getArgumentPosition(i), null);
                 }

@@ -58,9 +58,9 @@ import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.CommonUtils;
 
 import static io.questdb.griffin.bind.BindContext.*;
-import io.questdb.std.datetime.CommonUtils;
 
 final class TemporalJoinBinder {
     private final AggregateBinder aggregateBinder;

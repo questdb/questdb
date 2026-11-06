@@ -697,6 +697,64 @@ public class GroupingSetsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEmptyGroupingSetsWithoutAggregatesKeepMultiplicity() throws Exception {
+        // Each set returns a row, a repeated set included, and an empty set returns one over an empty input too. A
+        // query that reads no aggregate, or a count that prunes them all, still counts the sets rather than one group.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, v INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO t VALUES (1, 10, 1000), (2, 20, 2000)");
+            execute("CREATE TABLE e (a INT, v INT, ts TIMESTAMP) TIMESTAMP(ts)");
+
+            assertQuery("SELECT 1 AS x FROM t GROUP BY GROUPING SETS ((), ())")
+                    .expectSize().noRandomAccess()
+                    .returns("x\n1\n1\n");
+            assertQuery("SELECT 1 AS x FROM t GROUP BY GROUPING SETS (())")
+                    .expectSize().noRandomAccess()
+                    .returns("x\n1\n");
+            assertQuery("SELECT 1 AS x FROM e GROUP BY GROUPING SETS ((), ())")
+                    .expectSize().noRandomAccess()
+                    .returns("x\n1\n1\n");
+            assertQuery("SELECT count() n FROM (SELECT 1 AS x FROM t GROUP BY GROUPING SETS ((), ()))")
+                    .expectSize().noRandomAccess()
+                    .returns("n\n2\n");
+            assertQuery("SELECT count() n FROM (SELECT sum(v) s FROM t GROUP BY GROUPING SETS ((), (), ()))")
+                    .expectSize().noRandomAccess()
+                    .returns("n\n3\n");
+        });
+    }
+
+    @Test
+    public void testLateralOverRollupClosesEveryFunctionCopy() throws Exception {
+        // The aggregate over grouping sets serves no shared cursors, so the LATERAL that reads it holds no copy of its
+        // functions: every copy the compile creates belongs to a factory that closes it.
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+            execute("CREATE TABLE t (a INT, v INT)");
+            execute("INSERT INTO t VALUES (1, 100), (1, 200), (2, 300)");
+            execute("CREATE TABLE u (a INT, y INT)");
+            execute("INSERT INTO u VALUES (1, 400), (2, 8)");
+            TestFaultFunctionFactory.armCloseFailures(Integer.MAX_VALUE);
+            try {
+                assertQuery("""
+                        SELECT o.a, o.s, l.n FROM (
+                            SELECT a, sum(CASE WHEN test_fault() THEN v ELSE 0 END) s FROM t GROUP BY ROLLUP(a)
+                        ) o JOIN LATERAL (SELECT sum(y) n FROM u WHERE u.a = o.a AND u.y > o.s) l ORDER BY o.a""")
+                        .noLeakCheck()
+                        .returns("""
+                                a\ts\tn
+                                null\t600\tnull
+                                1\t300\t400
+                                2\t300\tnull
+                                """);
+                Assert.assertTrue(TestFaultFunctionFactory.created() > 0);
+                Assert.assertEquals(TestFaultFunctionFactory.created(), TestFaultFunctionFactory.closeCalls());
+            } finally {
+                TestFaultFunctionFactory.disarm();
+            }
+        });
+    }
+
+    @Test
     public void testEmptyGroupingSetsDuplicateCountStarMultiplicity() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (a INT, v INT, ts TIMESTAMP) TIMESTAMP(ts)");

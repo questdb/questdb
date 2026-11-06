@@ -271,7 +271,7 @@ public final class LogicalPlans {
      * that is a {@code min}, {@code max}, {@code first} or {@code last} of a direct column reference; null otherwise.
      */
     public static ColumnExpression endpointColumn(AggregatePlan aggregate) {
-        if (aggregate.getGroupingExpressions().size() != 0 || aggregate.hasGroupingSets() || aggregate.getAggregates().size() != 1) {
+        if (!aggregate.isSingleGroup() || aggregate.getAggregates().size() != 1) {
             return null;
         }
         final FunctionExpression call = aggregate.getAggregates().getQuick(0);
@@ -539,7 +539,7 @@ public final class LogicalPlans {
      * True when the aggregate only counts its input rows, which the generator does without reading them.
      */
     public static boolean isCount(AggregatePlan aggregate) {
-        if (aggregate.getGroupingExpressions().size() != 0 || aggregate.hasGroupingSets()) {
+        if (!aggregate.isSingleGroup()) {
             return false;
         }
         final ObjList<FunctionExpression> aggregates = aggregate.getAggregates();

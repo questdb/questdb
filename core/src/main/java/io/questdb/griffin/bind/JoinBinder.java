@@ -56,9 +56,9 @@ import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.CommonUtils;
 
 import static io.questdb.griffin.bind.BindContext.*;
-import io.questdb.std.datetime.CommonUtils;
 
 final class JoinBinder implements Mutable {
     private final SqlBinder binder;

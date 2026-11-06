@@ -670,7 +670,7 @@ public final class AggregateFactoryGenerator {
         boolean isAdopted = false;
         try {
             final ObjList<FunctionExpression> aggregates = plan.getAggregates();
-            if (plan.getGroupingExpressions().size() == 0 && aggregates.size() == 0) {
+            if (plan.isSingleGroup() && aggregates.size() == 0) {
                 // DISTINCT of constants uses global aggregation even over an empty
                 // input. Its outer projection owns the values; COUNT supplies the row.
                 final GenericRecordMetadata metadata = new GenericRecordMetadata();

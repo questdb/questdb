@@ -292,6 +292,31 @@ public class DesignatedTimestampIntervalLiteralTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRangeBoundOfOtherTypeIsInvalidDateHoweverSpelled() throws Exception {
+        // The type of a range bound decides, not its spelling: a literal, a folded constant, a cast, a negation and a
+        // bind variable all fail alike. The PostgreSQL simple protocol inlines a bind variable as such a cast.
+        assertMemoryLeak(() -> {
+            createTables();
+            assertError("SELECT * FROM x WHERE ts > 1.5", 27, "Invalid date");
+            assertError("SELECT * FROM x WHERE 1.5 < ts", 22, "Invalid date");
+            assertError("SELECT * FROM x WHERE ts < 1.5 * 1e15", 31, "Invalid date");
+            assertError("SELECT * FROM x WHERE ts > 3::short", 28, "Invalid date");
+            assertError("SELECT * FROM x WHERE ts > 3::byte", 28, "Invalid date");
+            assertError("SELECT * FROM x WHERE ts > ('3'::int2)", 31, "Invalid date");
+            assertError("SELECT * FROM x WHERE ts > 3.5::double", 30, "Invalid date");
+            assertError("SELECT * FROM x WHERE ts > 3.5::float", 30, "Invalid date");
+            assertError("SELECT * FROM x WHERE ts > ('3.5'::float8)", 33, "Invalid date");
+            assertError("SELECT * FROM x WHERE NOT (ts > 1.5)", 32, "Invalid date");
+            assertError("SELECT * FROM x WHERE NOT (ts > 3::short)", 33, "Invalid date");
+            assertError("SELECT * FROM x WHERE NOT (NOT (ts > 1.5))", 37, "Invalid date");
+            bindVariableService.clear();
+            bindVariableService.setDouble(0, 1.5);
+            assertError("SELECT * FROM x WHERE NOT (ts > $1)", 32, "Invalid date");
+            bindVariableService.clear();
+        });
+    }
+
+    @Test
     public void testRangeBoundComputedDoubleIsInvalidDate() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
@@ -334,16 +359,10 @@ public class DesignatedTimestampIntervalLiteralTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRangeBoundNegativeDoubleRunsAsFilter() throws Exception {
-        // A folded fractional bound compares as a number, like ts < 1.5, so it cannot narrow the scan. The row of x
-        // is in 2014, 1.389e15 microseconds after the epoch. A bound that reads a column still has to be a timestamp.
+    public void testRangeBoundNegativeDoubleLiteralIsInvalidDate() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
-            assertQuery("SELECT v FROM x WHERE ts <= -1.5").noLeakCheck().withPlanContaining("Frame forward scan on: x").returns("v\n");
-            assertQuery("SELECT v FROM x WHERE ts > -1.5").noLeakCheck().withPlanContaining("Frame forward scan on: x").returns("v\n1\n");
-            assertQuery("SELECT v FROM x WHERE ts < 1.5 * 1e15").noLeakCheck().withPlanContaining("Frame forward scan on: x").returns("v\n1\n");
-            assertQuery("SELECT v FROM x WHERE ts > 1.5 * 1e15").noLeakCheck().withPlanContaining("Frame forward scan on: x").returns("v\n");
-            assertError("SELECT * FROM x WHERE ts <= v * 1.5", 30, "Invalid date");
+            assertError("SELECT * FROM x WHERE ts <= -1.5", 28, "Invalid date");
         });
     }
 

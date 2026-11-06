@@ -1898,16 +1898,15 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
                     ('C', '2018-01-01T00:00:00.000000Z'),
                     ('D', '2018-01-02T00:00:00.000000Z')""");
             drainWalQueue();
-            assertQuery("select sym from base where ts < 1.5 * 1e15")
-                    .noLeakCheck()
-                    .withPlanContaining("filter: ts<1.5E15")
-                    .returns("sym\nA\n");
+            // A query's own filter may not compare the timestamp with a DOUBLE; only a policy does.
+            assertExceptionNoLeakCheck("select sym from base where ts < 1.5 * 1e15", 36, "Invalid date");
             final String[][] cases = {
                     // predicate, visible rows, rows on disk after a sweep, whether the read prunes
                     {"ts < 1500000000000000", "B\nC\nD\n", "3", "true"},
                     {"ts < 1.5e15", "B\nC\nD\n", "3", "false"},
                     {"1.5e15 > ts", "B\nC\nD\n", "3", "false"},
                     {"ts < 1.5 * 1e15", "B\nC\nD\n", "3", "false"},
+                    {"ts < 1.5e15::double", "B\nC\nD\n", "3", "false"},
                     {"ts <= 1.5e15", "C\nD\n", "2", "false"},
                     {"ts > -1.5", "", "1", "false"}
             };
@@ -1935,6 +1934,14 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
                 execute("drop materialized view mv");
                 drainWalAndMatViewQueues();
             }
+
+            // A double negation cancels, so the keep-filter reads as the bare comparison, which is still the policy's.
+            execute("create materialized view mv as (select * from base) expire rows when NOT (ts >= 1.5e15)");
+            drainWalAndMatViewQueues();
+            assertQuery("select sym from mv order by sym").noLeakCheck().returns("sym\nB\nC\nD\n");
+            // The policy compares with a DOUBLE, while a filter of the read over the same scan still may not.
+            final String ownFilter = "select sym from mv where ts > 1.5";
+            assertExceptionNoLeakCheck(ownFilter, ownFilter.indexOf("1.5"), "Invalid date");
         });
     }
 

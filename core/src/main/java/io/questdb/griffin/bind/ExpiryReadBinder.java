@@ -37,9 +37,12 @@ import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.plan.logical.BoundExpression;
+import io.questdb.griffin.plan.logical.ExpressionVisitor;
+import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.PlanTable;
 import io.questdb.griffin.plan.logical.ScanPlan;
+import io.questdb.griffin.plan.logical.TreeWalk;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.Mutable;
 import io.questdb.std.str.StringSink;
@@ -55,6 +58,12 @@ import io.questdb.std.str.StringSink;
  * compile, see {@link #predicateAt}.
  */
 final class ExpiryReadBinder implements Mutable {
+    private static final ExpressionVisitor POLICY_CALLS = expression -> {
+        if (expression instanceof FunctionExpression call) {
+            call.markPolicyPredicate();
+        }
+        return TreeWalk.CONTINUE;
+    };
     private final SqlBinder binder;
     private final SqlCompilerImpl compiler;
     private final BindContext ctx;
@@ -107,6 +116,7 @@ final class ExpiryReadBinder implements Mutable {
         final ExpressionNode keepFilter = SqlUtil.optimiseBooleanNot(
                 compiler.parseExpiryExpression(keepFilterText(predicate), binder.getParserCallback()), ctx.bindingExpressions);
         final BoundExpression bound = binder.bindPredicate(keepFilter, scan, token.getTableName(), executionContext);
+        bound.walk(POLICY_CALLS);
         return ctx.planNodes.filters.next().of(scan, bound, scan.getPosition());
     }
 

@@ -37,6 +37,7 @@ public final class FunctionExpression extends BoundExpression {
     public static final ObjectFactory<FunctionExpression> FACTORY = FunctionExpression::new;
     private final IntList argumentPositions = new IntList();
     private final ObjList<BoundExpression> arguments;
+    private boolean isPolicyPredicate;
     private boolean isProjectedOffset;
     private boolean isSetOperation;
     private FunctionFactoryDescriptor overload;
@@ -60,6 +61,7 @@ public final class FunctionExpression extends BoundExpression {
         argumentPositions.clear();
         arguments.clear();
         overload = null;
+        isPolicyPredicate = false;
         isSetOperation = false;
         isProjectedOffset = false;
     }
@@ -109,6 +111,14 @@ public final class FunctionExpression extends BoundExpression {
     }
 
     /**
+     * A call an EXPIRE ROWS policy states rather than the query. DDL validated the policy, which compares its operands
+     * as its text says, so what a query's own predicate may not compare still reads here.
+     */
+    public boolean isPolicyPredicate() {
+        return isPolicyPredicate;
+    }
+
+    /**
      * A projected timestamp offset pushed below its projection. Interval extraction inverts it by
      * shifting the intervals of the predicate over its input.
      */
@@ -127,6 +137,10 @@ public final class FunctionExpression extends BoundExpression {
         return overload.getFactory().isWindow();
     }
 
+    public void markPolicyPredicate() {
+        isPolicyPredicate = true;
+    }
+
     public FunctionExpression markProjectedOffset() {
         isProjectedOffset = true;
         return this;
@@ -139,6 +153,7 @@ public final class FunctionExpression extends BoundExpression {
     public FunctionExpression of(FunctionExpression expression, int position) {
         of(expression.overload, expression.arguments, expression.argumentPositions,
                 expression.getDataType(), expression.getFunctionFlags(), position);
+        isPolicyPredicate = expression.isPolicyPredicate;
         isSetOperation = expression.isSetOperation;
         isProjectedOffset = expression.isProjectedOffset;
         return this;
@@ -151,6 +166,7 @@ public final class FunctionExpression extends BoundExpression {
     public FunctionExpression of(FunctionExpression expression, ObjList<BoundExpression> arguments, int functionFlags) {
         of(expression.overload, arguments, expression.argumentPositions,
                 expression.getDataType(), functionFlags, expression.getPosition());
+        isPolicyPredicate = expression.isPolicyPredicate;
         isSetOperation = expression.isSetOperation;
         isProjectedOffset = expression.isProjectedOffset;
         return this;
