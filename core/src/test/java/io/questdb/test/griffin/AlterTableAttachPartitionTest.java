@@ -568,14 +568,14 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
             // The directory is back as staged, without the _pm the attach generated.
             Assert.assertTrue(java.nio.file.Files.exists(attachable.resolve(TableUtils.PARQUET_PARTITION_NAME)));
             Assert.assertFalse(java.nio.file.Files.exists(attachable.resolve(TableUtils.PARQUET_METADATA_FILE_NAME)));
+            // The writer that failed the attach still accepts data: engine.clear() would replace it.
+            execute("INSERT INTO t VALUES ('2024-01-06T00:00:00.000000Z', 101)");
             engine.clear();
             assertQuery("SELECT * FROM t").timestamp("ts").expectSize().returns("""
                     ts\tx
                     2024-01-05T00:00:00.000000Z\t100
+                    2024-01-06T00:00:00.000000Z\t101
                     """);
-
-            // The writer still accepts data after the failed attach.
-            execute("INSERT INTO t VALUES ('2024-01-06T00:00:00.000000Z', 101)");
 
             // A retry with a corrected file of a different size attaches.
             execute("CREATE TABLE src (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
