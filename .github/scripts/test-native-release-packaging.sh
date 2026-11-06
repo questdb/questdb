@@ -1329,7 +1329,7 @@ native_load_requirements = (
     (
         "NATIVE-EXACT-MACOS",
         "build-rust-macos-arm64",
-        "macos-14",
+        "macos-15",
         "Load exact macOS ARM64 Rust library",
         "core/rust/qdbr/target/release/libquestdbr.dylib",
     ),
