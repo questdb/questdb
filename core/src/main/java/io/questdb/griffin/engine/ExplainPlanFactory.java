@@ -37,6 +37,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.model.ExplainModel;
+import io.questdb.std.Misc;
 
 /**
  * Simple stub for returning query execution plan text as result set with one column and one row .
@@ -52,7 +53,12 @@ public class ExplainPlanFactory extends AbstractRecordCursorFactory {
     public ExplainPlanFactory(RecordCursorFactory base, int format) {
         super(METADATA);
         this.base = base;
-        this.cursor = new ExplainPlanRecordCursor(format);
+        try {
+            this.cursor = new ExplainPlanRecordCursor(format);
+        } catch (Throwable th) {
+            Misc.free(base, th);
+            throw th;
+        }
     }
 
     @Override

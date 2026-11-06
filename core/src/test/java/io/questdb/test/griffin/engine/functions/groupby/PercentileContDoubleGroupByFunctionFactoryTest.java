@@ -370,6 +370,43 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
     }
 
     @Test
+    public void testParallelGroupByPercentileFromSubquery() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 100);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
+                engine.execute("CREATE TABLE t AS (SELECT x lx, x::DOUBLE dx, (x % 4)::INT s FROM long_sequence(4_000))", sqlExecutionContext);
+                engine.execute("CREATE TABLE t2 (k INT, y INT)", sqlExecutionContext);
+                engine.execute("INSERT INTO t2 VALUES (1, 300), (2, 100)", sqlExecutionContext);
+                assertQuery("SELECT s, percentile_cont(dx, CASE WHEN (SELECT max(y) > 200 FROM t2 WHERE k = 1) THEN 0.9 ELSE 0.1 END) p FROM t GROUP BY s ORDER BY s")
+                        .withEngine(engine)
+                        .withContext(sqlExecutionContext)
+                        .noLeakCheck()
+                        .expectSize()
+                        .withPlanContaining("Async Group By workers: 4", "Frame forward scan on: t2 [state-shared],0.9,0.1")
+                        .returns("""
+                                s\tp
+                                0\t3600.4
+                                1\t3597.4
+                                2\t3598.4
+                                3\t3599.4
+                                """);
+                assertQuery("SELECT percentile_cont(dx, CASE WHEN (SELECT max(y) > 200 FROM t2 WHERE k = 1) THEN 0.9 ELSE 0.1 END) p FROM t")
+                        .withEngine(engine)
+                        .withContext(sqlExecutionContext)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .withPlanContaining("Async Group By workers: 4", "Frame forward scan on: t2 [state-shared],0.9,0.1")
+                        .returns("""
+                                p
+                                3600.1
+                                """);
+            }, configuration, LOG);
+        });
+    }
+
+    @Test
     public void testPercentileAllNulls() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test (x LONG)");

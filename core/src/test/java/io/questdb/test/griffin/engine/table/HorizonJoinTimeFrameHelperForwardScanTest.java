@@ -104,6 +104,7 @@ public class HorizonJoinTimeFrameHelperForwardScanTest extends AbstractCairoTest
                         BWD_SCAN_MIN_GAP,
                         BWD_SCAN_SWITCH_FACTOR,
                         null,
+                        null,
                         null
                 );
                 Assert.assertEquals(-1, firstForwardScanLookup(aggregating, cursor, map, positions, keys));
@@ -300,6 +301,7 @@ public class HorizonJoinTimeFrameHelperForwardScanTest extends AbstractCairoTest
                         BWD_SCAN_ABSOLUTE_THRESHOLD,
                         BWD_SCAN_MIN_GAP,
                         Long.MAX_VALUE,
+                        null,
                         null,
                         null,
                         true
@@ -542,6 +544,7 @@ public class HorizonJoinTimeFrameHelperForwardScanTest extends AbstractCairoTest
                             absoluteThreshold,
                             minGap,
                             switchFactor,
+                            null,
                             null,
                             null,
                             isWindowSwitchEnabled
@@ -790,7 +793,7 @@ public class HorizonJoinTimeFrameHelperForwardScanTest extends AbstractCairoTest
                     Map map = newMap();
                     HorizonJoinTimeFrameHelper helper = new HorizonJoinTimeFrameHelper(
                             configuration, 64, 1, BWD_SCAN_ABSOLUTE_THRESHOLD, BWD_SCAN_MIN_GAP,
-                            BWD_SCAN_SWITCH_FACTOR, null, new SingleColumnType(ColumnType.INT), true
+                            BWD_SCAN_SWITCH_FACTOR, null, new SingleColumnType(ColumnType.INT), null, true
                     )
             ) {
                 helper.of(cursor, tracker);
@@ -821,7 +824,7 @@ public class HorizonJoinTimeFrameHelperForwardScanTest extends AbstractCairoTest
                     Map map = newMap();
                     HorizonJoinTimeFrameHelper helper = new HorizonJoinTimeFrameHelper(
                             configuration, 64, 1, BWD_SCAN_ABSOLUTE_THRESHOLD, BWD_SCAN_MIN_GAP,
-                            BWD_SCAN_SWITCH_FACTOR, null, new SingleColumnType(ColumnType.INT), true
+                            BWD_SCAN_SWITCH_FACTOR, null, new SingleColumnType(ColumnType.INT), null, true
                     )
             ) {
                 helper.of(cursor, null);
@@ -853,7 +856,7 @@ public class HorizonJoinTimeFrameHelperForwardScanTest extends AbstractCairoTest
                     Map map = newMap();
                     HorizonJoinTimeFrameHelper helper = new HorizonJoinTimeFrameHelper(
                             configuration, 64, 1, BWD_SCAN_ABSOLUTE_THRESHOLD, BWD_SCAN_MIN_GAP,
-                            BWD_SCAN_SWITCH_FACTOR, null, new SingleColumnType(ColumnType.INT), true
+                            BWD_SCAN_SWITCH_FACTOR, null, new SingleColumnType(ColumnType.INT), null, true
                     )
             ) {
                 helper.of(cursor, null);
@@ -1134,6 +1137,7 @@ public class HorizonJoinTimeFrameHelperForwardScanTest extends AbstractCairoTest
                 BWD_SCAN_SWITCH_FACTOR,
                 null,
                 null,
+                null,
                 isWindowSwitchEnabled
         );
     }
@@ -1180,7 +1184,7 @@ public class HorizonJoinTimeFrameHelperForwardScanTest extends AbstractCairoTest
                     Map map = newMap();
                     HorizonJoinTimeFrameHelper helper = new HorizonJoinTimeFrameHelper(
                             configuration, 64, 1, BWD_SCAN_ABSOLUTE_THRESHOLD, BWD_SCAN_MIN_GAP,
-                            BWD_SCAN_SWITCH_FACTOR, filter, new SingleColumnType(ColumnType.INT), true
+                            BWD_SCAN_SWITCH_FACTOR, filter, new SingleColumnType(ColumnType.INT), null, true
                     )
             ) {
                 final MasterRecord master = new MasterRecord();

@@ -55,11 +55,6 @@ public class DateColumn extends DateFunction implements ColumnFunction {
         return rec.getDate(columnIndex);
     }
 
-    @Override
-    public boolean isThreadSafe() {
-        return true;
-    }
-
     static {
         COLUMNS.setPos(STATIC_COLUMN_COUNT);
         for (int i = 0; i < STATIC_COLUMN_COUNT; i++) {

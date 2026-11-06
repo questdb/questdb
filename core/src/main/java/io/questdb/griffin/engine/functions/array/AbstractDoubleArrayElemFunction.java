@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.griffin.ResultTypes;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
@@ -71,9 +72,10 @@ public abstract class AbstractDoubleArrayElemFunction extends ArrayFunction impl
     protected final DirectArray arrayOut;
     /**
      * Cached array views from the current row, populated by {@link #scanInputs}.
-     * Null entries represent NULL/empty inputs.
+     * Null entries represent NULL inputs.
      */
     private final ObjList<ArrayView> cachedViews = new ObjList<>();
+    private final int position;
     /**
      * Scratch: coordinate vector for nD iteration (size nDims).
      */
@@ -95,20 +97,14 @@ public abstract class AbstractDoubleArrayElemFunction extends ArrayFunction impl
      */
     protected int[] outStrides;
 
-    protected AbstractDoubleArrayElemFunction(CairoConfiguration configuration, ObjList<Function> args, int resolvedDims) {
+    protected AbstractDoubleArrayElemFunction(CairoConfiguration configuration, int position, ObjList<Function> args, int type) {
+        this.position = position;
         this.args = args;
-        this.nDims = resolvedDims;
-        if (resolvedDims > 0) {
-            this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, resolvedDims);
-            this.maxShape = new int[resolvedDims];
-            this.coords = new int[resolvedDims];
-            this.inputShape = new int[resolvedDims];
-            this.outStrides = new int[resolvedDims];
-        } else {
-            this.type = ColumnType.encodeArrayTypeWithWeakDims(ColumnType.DOUBLE, true);
-        }
         this.arrayOut = new DirectArray(configuration);
-        this.arrayOut.setType(type);
+        this.type = type;
+        if (!ColumnType.isArrayWithWeakDims(type)) {
+            ofDims(type);
+        }
     }
 
     @Override
@@ -118,8 +114,8 @@ public abstract class AbstractDoubleArrayElemFunction extends ArrayFunction impl
 
     @Override
     public void close() {
-        MultiArgFunction.super.close();
         Misc.free(arrayOut);
+        MultiArgFunction.super.close();
     }
 
     @Override
@@ -131,7 +127,8 @@ public abstract class AbstractDoubleArrayElemFunction extends ArrayFunction impl
             arrayOut.setDimLen(d, maxShape[d]);
             totalFlatLen *= maxShape[d];
         }
-        if (totalFlatLen == 0) {
+        // nDims stays 0 only when every argument is a NULL bind variable
+        if (nDims == 0 || totalFlatLen == 0) {
             return ArrayConstant.NULL;
         }
         arrayOut.applyShape();
@@ -155,22 +152,10 @@ public abstract class AbstractDoubleArrayElemFunction extends ArrayFunction impl
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         MultiArgFunction.super.init(symbolTableSource, executionContext);
-        int resolvedDims = 0;
-        for (int i = 0, n = args.size(); i < n; i++) {
-            int d = ColumnType.decodeWeakArrayDimensionality(args.getQuick(i).getType());
-            if (d > 0) {
-                resolvedDims = d;
-                break;
-            }
-        }
-        if (resolvedDims > 0) {
-            this.nDims = resolvedDims;
-            this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, resolvedDims);
-            this.arrayOut.setType(type);
-            this.maxShape = new int[resolvedDims];
-            this.coords = new int[resolvedDims];
-            this.inputShape = new int[resolvedDims];
-            this.outStrides = new int[resolvedDims];
+        final int resolvedType = resolveType(position, args);
+        if (!ColumnType.isArrayWithWeakDims(resolvedType)) {
+            this.type = resolvedType;
+            ofDims(resolvedType);
         }
     }
 
@@ -189,7 +174,7 @@ public abstract class AbstractDoubleArrayElemFunction extends ArrayFunction impl
         ArrayView.computeRowMajorStrides(maxShape, outStrides);
         for (int a = 0, n = cachedViews.size(); a < n; a++) {
             ArrayView arr = cachedViews.getQuick(a);
-            if (arr == null) {
+            if (arr == null || arr.isEmpty()) {
                 continue;
             }
             for (int d = 0; d < nDims; d++) {
@@ -229,6 +214,16 @@ public abstract class AbstractDoubleArrayElemFunction extends ArrayFunction impl
                 }
             }
         }
+    }
+
+    private void ofDims(int type) {
+        final int dims = ColumnType.decodeArrayDimensionality(type);
+        nDims = dims;
+        arrayOut.setType(type);
+        maxShape = new int[dims];
+        coords = new int[dims];
+        inputShape = new int[dims];
+        outStrides = new int[dims];
     }
 
     /**
@@ -280,9 +275,9 @@ public abstract class AbstractDoubleArrayElemFunction extends ArrayFunction impl
     /**
      * Validates that all arguments are DOUBLE[] with consistent dimensionality.
      *
-     * @return resolved dimensionality (0 if all args have weak dims)
+     * @return the result type, with weak dimensions while no argument's dimensionality is known
      */
-    static int validateArgsAndResolveDims(
+    static int validateArgsAndResolveType(
             int position,
             ObjList<Function> args,
             IntList argPositions,
@@ -291,21 +286,21 @@ public abstract class AbstractDoubleArrayElemFunction extends ArrayFunction impl
         if (args == null || args.size() < 2) {
             throw SqlException.$(position, funcName + " requires at least 2 arguments");
         }
-        int resolvedDims = 0;
         for (int i = 0, n = args.size(); i < n; i++) {
             int t = args.getQuick(i).getType();
             if (!ColumnType.isArray(t) || ColumnType.decodeArrayElementType(t) != ColumnType.DOUBLE) {
                 throw SqlException.$(argPositions.getQuick(i), "expected DOUBLE[] argument");
             }
-            int d = ColumnType.decodeWeakArrayDimensionality(t);
-            if (d > 0) {
-                if (resolvedDims > 0 && resolvedDims != d) {
-                    throw SqlException.$(position, "dimension mismatch");
-                }
-                resolvedDims = d;
-            }
         }
-        return resolvedDims;
+        return resolveType(position, args);
+    }
+
+    private static int resolveType(int position, ObjList<Function> args) throws SqlException {
+        final int type = ResultTypes.doubleArrayElementwise(ResultTypes.argTypes(args));
+        if (type == ColumnType.UNDEFINED) {
+            throw SqlException.$(position, "dimension mismatch");
+        }
+        return type;
     }
 
     /**

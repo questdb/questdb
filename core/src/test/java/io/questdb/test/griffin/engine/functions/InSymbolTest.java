@@ -249,4 +249,27 @@ public class InSymbolTest extends AbstractCairoTest {
                     .returns("s\nA\nC\n");
         });
     }
+
+    @Test
+    public void testScalarSubQueryInListElementReachesWorkerFilters() throws Exception {
+        // The worker clones of a parallel filter take the value of a scalar sub-query among the deferred
+        // IN elements from the owner filter; they never open the sub-query themselves.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, k INT, s SYMBOL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00', 1, 'A'),
+                    ('2024-01-01T00:00:01', 2, 'B'),
+                    ('2024-01-01T00:00:03', 3, 'C')
+                    """);
+            assertQuery("SELECT k FROM t WHERE s IN ('A', CASE WHEN NOT (SELECT max(k) > 2 FROM t) THEN 'B' ELSE 'C' END)")
+                    .noLeakCheck()
+                    .withPlanContaining("Async Filter")
+                    .returns("k\n1\n3\n");
+            assertQuery("SELECT s, count() FROM t WHERE s IN (CASE WHEN NOT (SELECT max(k) > 2 FROM t) THEN 'B' ELSE 'C' END) GROUP BY s")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("s\tcount\nC\t1\n");
+        });
+    }
 }

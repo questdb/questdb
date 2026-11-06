@@ -45,8 +45,8 @@ import io.questdb.std.str.Utf8StringSink;
 import org.jetbrains.annotations.NotNull;
 
 public abstract class StrFunction implements Function {
-    private final Utf8StringSink utf8SinkA = new Utf8StringSink();
-    private final Utf8StringSink utf8SinkB = new Utf8StringSink();
+    private Utf8StringSink utf8SinkA;
+    private Utf8StringSink utf8SinkB;
 
     @Override
     public ArrayView getArray(Record rec) {
@@ -226,33 +226,39 @@ public abstract class StrFunction implements Function {
     @Override
     public Utf8Sequence getVarcharA(Record rec) {
         final CharSequence cs = getStrA(rec);
-        if (cs != null) {
-            utf8SinkA.clear();
-            utf8SinkA.put(cs);
-            return utf8SinkA;
-        }
-        return null;
+        return cs != null ? utf8A(cs) : null;
     }
 
     @Override
     public Utf8Sequence getVarcharB(Record rec) {
         final CharSequence cs = getStrB(rec);
-        if (cs != null) {
-            utf8SinkB.clear();
-            utf8SinkB.put(cs);
-            return utf8SinkB;
+        if (cs == null) {
+            return null;
         }
-        return null;
+        if (utf8SinkB == null) {
+            utf8SinkB = new Utf8StringSink();
+        }
+        utf8SinkB.clear();
+        utf8SinkB.put(cs);
+        return utf8SinkB;
     }
 
     @Override
     public int getVarcharSize(Record rec) {
-        CharSequence utf16Value = getStrA(rec);
-        if (utf16Value == null) {
-            return TableUtils.NULL_LEN;
+        final CharSequence utf16Value = getStrA(rec);
+        return utf16Value != null ? utf8A(utf16Value).size() : TableUtils.NULL_LEN;
+    }
+
+    /**
+     * The UTF-8 encoding of {@code cs} in a sink the function allocates on first use, so a function that never
+     * reads its value as VARCHAR, such as a constant, allocates none.
+     */
+    private Utf8StringSink utf8A(CharSequence cs) {
+        if (utf8SinkA == null) {
+            utf8SinkA = new Utf8StringSink();
         }
         utf8SinkA.clear();
-        utf8SinkA.put(utf16Value);
-        return utf8SinkA.size();
+        utf8SinkA.put(cs);
+        return utf8SinkA;
     }
 }

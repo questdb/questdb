@@ -313,7 +313,7 @@ public class IntervalFilterTest extends AbstractCairoTest {
 
     @Test
     public void testEqualTimestampOrWithNullBindVariable() throws Exception {
-        // End-to-end guard for the OR-anchor union folding in WhereClauseParser: a nullable timestamp
+        // End-to-end guard for the OR-anchor union folding in IntervalExtractor: a nullable timestamp
         // bound in the FIRST disjunct of `ts = $1 or ts = $2` must drop only its own disjunct, not the
         // whole disjunction. The plan assertion pins that the OR group is still consumed as a runtime
         // interval union (no residual filter fallback), so the interval model alone decides the answer -

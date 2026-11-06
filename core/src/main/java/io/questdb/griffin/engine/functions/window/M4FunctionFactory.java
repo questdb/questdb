@@ -62,6 +62,11 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
     private static final String SIGNATURE = NAME + "(NDL)";
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.BOOLEAN;
+    }
+
+    @Override
     public String getSignature() {
         return SIGNATURE;
     }

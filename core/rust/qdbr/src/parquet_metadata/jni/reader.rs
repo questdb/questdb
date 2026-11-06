@@ -220,7 +220,7 @@ fn read_seq_txn_impl(reader: &ParquetMetaReader) -> i64 {
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileReader_canSkipRowGroup0(
+pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileReader_canSkipRowGroupInMeta0(
     mut env: JNIEnv,
     _class: JClass,
     ptr: *const JniParquetMetaReader,

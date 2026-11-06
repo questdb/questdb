@@ -49,6 +49,11 @@ import org.jetbrains.annotations.NotNull;
 public class IntervalFunctionFactory implements FunctionFactory {
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return IntervalUtils.getIntervalType(ColumnType.getImplicitTimestampType(argTypes.getQuick(0), argTypes.getQuick(1)));
+    }
+
+    @Override
     public String getSignature() {
         return "interval(NN)";
     }
@@ -65,8 +70,7 @@ public class IntervalFunctionFactory implements FunctionFactory {
         final Function hiFunc = args.getQuick(1);
         int leftTimestampType = ColumnType.getTimestampType(loFunc.getType());
         int rightTimestampType = ColumnType.getTimestampType(hiFunc.getType());
-        int timestampType = ColumnType.getHigherPrecisionTimestampType(leftTimestampType, rightTimestampType);
-        timestampType = ColumnType.getHigherPrecisionTimestampType(timestampType, ColumnType.TIMESTAMP_MICRO);
+        int timestampType = ColumnType.getImplicitTimestampType(loFunc.getType(), hiFunc.getType());
         TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
         int intervalType = IntervalUtils.getIntervalType(timestampType);
         if (loFunc.isConstant() && hiFunc.isConstant()) {

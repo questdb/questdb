@@ -122,9 +122,11 @@ public class LastNotNullCharGroupByFunction extends FirstCharGroupByFunction {
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        if (arg.getChar(record) != CharConstant.ZERO.getChar(null)) {
+        char val = arg.getChar(record);
+        if (val != CharConstant.ZERO.getChar(null)) {
             if (mapValue.getChar(valueIndex + 1) == CharConstant.ZERO.getChar(null) || rowId > mapValue.getLong(valueIndex)) {
-                computeFirst(mapValue, record, rowId);
+                mapValue.putLong(valueIndex, rowId);
+                mapValue.putChar(valueIndex + 1, val);
             }
         }
     }

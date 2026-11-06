@@ -45,7 +45,7 @@ public class EqDateFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new EqDateFunctionFactory.EqDateFunction(args.getQuick(0), args.getQuick(1));
+        return new EqDateFunction(args.getQuick(0), args.getQuick(1));
     }
 
     private static class EqDateFunction extends AbstractEqBinaryFunction {

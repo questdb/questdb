@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.SqlExecutionRequirements;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.table.ShowPartitionsRecordCursorFactory;
@@ -62,11 +63,11 @@ public class TablePartitionsFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPos, CairoConfiguration config, SqlExecutionContext context) throws SqlException {
+        final CharSequence tableName = SqlUtil.getTableName(args.getQuick(0), argPos.getQuick(0));
         final TableToken tt;
         final SqlExecutionContext.TableFunctionView view = context.getTableFunctionView();
         int timestampType;
         try {
-            final CharSequence tableName = args.getQuick(0).getStrA(null);
             tt = context.getTableToken(tableName);
             // Outside a view, or when the view's definition does not name the table, an invisible
             // table fails like a missing one, echoing its SQL spelling.

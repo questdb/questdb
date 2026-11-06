@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.TimestampPrecisionUse;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
@@ -40,8 +41,18 @@ import io.questdb.std.ObjList;
 public class IsEndOfMonthFunctionFactory implements FunctionFactory {
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.BOOLEAN;
+    }
+
+    @Override
     public String getSignature() {
         return "is_end_of_month(N)";
+    }
+
+    @Override
+    public TimestampPrecisionUse getTimestampPrecisionUse(CharSequence firstConstant) {
+        return TimestampPrecisionUse.INVARIANT;
     }
 
     @Override

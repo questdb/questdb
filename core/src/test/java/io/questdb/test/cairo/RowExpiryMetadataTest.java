@@ -39,6 +39,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.std.str.StringSink;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -72,6 +73,58 @@ public class RowExpiryMetadataTest extends AbstractCairoTest {
         super.setUp();
         // Mat views are gated behind dev mode (as in MatViewExpireRowsTest).
         setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+    }
+
+    @Test
+    public void testPolicyTextDecodesStoredFields() {
+        // A name can hold a quote and both characters the encoding reserves. The text a read parses has to quote it as
+        // the column it is, and take the raw PARTITION BY list as written.
+        final String col = "a\"b\u001Fc\u001Ed";
+        final String quoted = "\"a\"\"b\u001Fc\u001Ed\"";
+        assertEquals(
+                "row_number() OVER (PARTITION BY k ORDER BY " + quoted + " DESC, \"t\"\"s\" DESC) > 2",
+                windowPredicate(RowExpiryUtil.encodeKeepBy(2, true, col, "k"), "t\"s")
+        );
+        assertEquals(quoted + " > min(" + quoted + ") OVER ()", windowPredicate(RowExpiryUtil.encodeKeepBy(0, false, col, ""), "ts"));
+        assertEquals("row_number() OVER (ORDER BY \"v\" ASC) > 3", windowPredicate(RowExpiryUtil.encodeKeepBy(3, false, "v", ""), null));
+        assertEquals("\"v\" < max(\"v\") OVER (PARTITION BY k\u001Fz)", windowPredicate(RowExpiryUtil.encodeKeepBy(0, true, "v", "k\u001Fz"), "ts"));
+
+        // A lone escape char is not something the encoder emits, so it reads verbatim.
+        final String corrupt = "\u001FN0\u001FH\u001Fa\u001Ex\u001E\u001Fk\u001E";
+        assertEquals("\"a\u001Ex\u001E\" < max(\"a\u001Ex\u001E\") OVER (PARTITION BY k\u001E)", windowPredicate(corrupt, "ts"));
+
+        final StringSink sink = new StringSink();
+        final String keepLatest = RowExpiryUtil.encodeKeepLatest("ts", "a\u001Fb,c");
+        RowExpiryUtil.appendKeepLatestKeys(sink, keepLatest);
+        assertEquals("a\u001Fb,c", sink.toString());
+        assertEquals(sink.toString(), RowExpiryUtil.keepLatestKeys(keepLatest).toString());
+
+        sink.clear();
+        RowExpiryUtil.appendQuotedIdentifier(sink, "a\"b");
+        assertEquals("\"a\"\"b\"", sink.toString());
+        assertEquals(sink.toString(), RowExpiryUtil.quoteIdentifier("a\"b"));
+    }
+
+    @Test
+    public void testPolicyTextTrimsPredicate() {
+        final StringSink sink = new StringSink();
+        RowExpiryUtil.appendKeepCase(sink, " \t v < 1\n");
+        assertEquals("CASE WHEN (v < 1) THEN false ELSE true END", sink.toString());
+        sink.clear();
+        RowExpiryUtil.appendKeepCase(sink, "v < 1");
+        assertEquals("CASE WHEN (v < 1) THEN false ELSE true END", sink.toString());
+        sink.clear();
+        RowExpiryUtil.appendKeepCase(sink, "  ");
+        assertEquals("CASE WHEN () THEN false ELSE true END", sink.toString());
+        sink.clear();
+        RowExpiryUtil.appendKeepCase(sink, "");
+        assertEquals("CASE WHEN () THEN false ELSE true END", sink.toString());
+        sink.clear();
+        RowExpiryUtil.appendWindowKeepCase(sink, RowExpiryUtil.encodeWindow(" v < max(v) OVER () \n"), "ts");
+        assertEquals("CASE WHEN (v < max(v) OVER ()) THEN false ELSE true END", sink.toString());
+        sink.clear();
+        RowExpiryUtil.appendWindowKeepCase(sink, RowExpiryUtil.encodeKeepBy(0, true, "v", "k"), "ts");
+        assertEquals("CASE WHEN (\"v\" < max(\"v\") OVER (PARTITION BY k)) THEN false ELSE true END", sink.toString());
     }
 
     @Test
@@ -363,9 +416,9 @@ public class RowExpiryMetadataTest extends AbstractCairoTest {
 
     @Test
     public void testKeepByPolicyDecoding() {
-        // Every reader of a KEEP [N] HIGHEST/LOWEST policy - SHOW CREATE / the catalogue functions
-        // (displayPredicate), the read-filter rewrite (windowPredicate) and DDL validation - goes through
-        // RowExpiryUtil.KeepBy, so they agree field for field, including on a string no encoder emits.
+        // SHOW CREATE / the catalogue functions (displayPredicate) and DDL validation read a KEEP [N]
+        // HIGHEST/LOWEST policy through RowExpiryUtil.KeepBy, field for field, including on a string no
+        // encoder emits. A read decodes the same fields in place, see testPolicyTextDecodesStoredFields.
         final String sep = String.valueOf((char) 0x1F);
 
         final String topN = RowExpiryUtil.encodeKeepBy(3, false, "v", "k");
@@ -377,7 +430,7 @@ public class RowExpiryMetadataTest extends AbstractCairoTest {
         assertEquals("KEEP 3 LOWEST ON v PARTITION BY k", RowExpiryUtil.displayPredicate(topN));
         assertEquals(
                 "row_number() OVER (PARTITION BY k ORDER BY \"v\" ASC, \"ts\" DESC) > 3",
-                RowExpiryUtil.windowPredicate(topN, "ts")
+                windowPredicate(topN, "ts")
         );
 
         // An unparseable N reads as 0: the bare KEEP HIGHEST/LOWEST form, which carries the stricter
@@ -385,7 +438,7 @@ public class RowExpiryMetadataTest extends AbstractCairoTest {
         final String badCount = sep + "N" + "x7" + sep + "H" + sep + "v" + sep + "k";
         assertEquals(0, new RowExpiryUtil.KeepBy(badCount).n);
         assertEquals("KEEP HIGHEST ON v PARTITION BY k", RowExpiryUtil.displayPredicate(badCount));
-        assertEquals("\"v\" < max(\"v\") OVER (PARTITION BY k)", RowExpiryUtil.windowPredicate(badCount, "ts"));
+        assertEquals("\"v\" < max(\"v\") OVER (PARTITION BY k)", windowPredicate(badCount, "ts"));
 
         // Truncated right after the mode char: every field is missing, so each one reads empty.
         final String truncated = sep + "N";
@@ -702,5 +755,11 @@ public class RowExpiryMetadataTest extends AbstractCairoTest {
                     Numbers.encodeLowHighShorts(Numbers.decodeLowShort(field), version)
             );
         }
+    }
+
+    private static String windowPredicate(CharSequence stored, CharSequence designatedTs) {
+        final StringSink sink = new StringSink();
+        RowExpiryUtil.appendWindowPredicate(sink, stored, designatedTs);
+        return sink.toString();
     }
 }

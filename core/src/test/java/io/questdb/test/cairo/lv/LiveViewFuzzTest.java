@@ -68,7 +68,9 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.Base64;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -1414,8 +1416,8 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // (STRING, VARCHAR, BINARY, DOUBLE[]) - each an occasional NULL, else a random
     // value. STRING/VARCHAR carry an empty string on some rows (a real value
     // distinct from NULL) and range up to 24 chars so the run exercises both the
-    // inlined and the split VARCHAR path; BINARY rides a non-empty 'string'::binary
-    // cast; the array carries 1..5 doubles. The value bytes need not be
+    // inlined and the split VARCHAR path; BINARY carries 1..16 bytes through
+    // from_base64(); the array carries 1..5 doubles. The value bytes need not be
     // reconstructible by the recompute - they are materialized once into the base
     // table, and both the live view and the from-scratch recompute read them back
     // from there.
@@ -1436,7 +1438,9 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         if (rnd.nextInt(20) == 0) {
             sb.append("null");
         } else {
-            sb.append('\'').append(randomAscii(rnd, 1, 16)).append("'::binary");
+            sb.append("from_base64('")
+                    .append(Base64.getEncoder().encodeToString(randomAscii(rnd, 1, 16).getBytes(StandardCharsets.US_ASCII)))
+                    .append("')");
         }
         sb.append(", ");
         if (rnd.nextInt(20) == 0) {
@@ -4759,7 +4763,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             // ended on a restart would otherwise leave the freshly-rebuilt tier
             // empty, routing the read-back disk-only and leaving Mode B unexercised.
             execute("INSERT INTO base (ts, vs, vv, vb, va) VALUES ("
-                    + (tsv[rowCount - 1] + 1) + "::timestamp, 'zz', 'yy', 'xx'::binary, ARRAY[1.0, 2.0])");
+                    + (tsv[rowCount - 1] + 1) + "::timestamp, 'zz', 'yy', from_base64('eHg='), ARRAY[1.0, 2.0])");
             drainWalQueue();
             refreshCycle(job);
             driveRefreshToQuiescence(job);

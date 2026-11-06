@@ -138,6 +138,7 @@ class AsyncMultiHorizonJoinRecordCursor implements RecordCursor {
                 // freeObjList nulls the freed slots, so a reopen-breach re-close finds null instead of a stale freed cursor.
                 Misc.freeObjList(slaveFrameCursors);
                 Misc.freeObjListAndKeepObjects(slaveTimeFrameStates);
+                Function.cursorClosed(nonGroupByFunctions);
                 isOpen = false;
             }
         }

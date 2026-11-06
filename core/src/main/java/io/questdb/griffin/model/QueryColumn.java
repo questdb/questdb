@@ -25,7 +25,6 @@
 package io.questdb.griffin.model;
 
 import io.questdb.std.Chars;
-import io.questdb.std.IntList;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjectFactory;
 import io.questdb.std.str.CharSink;
@@ -40,8 +39,6 @@ public class QueryColumn implements Mutable, Sinkable {
     private ExpressionNode ast;
     private int columnType = -1;
     private boolean includeIntoWildcard = true;
-    private boolean isGenerated;
-    private final IntList groupingArgKeyPositions = new IntList();
 
     public QueryColumn() {
     }
@@ -52,9 +49,7 @@ public class QueryColumn implements Mutable, Sinkable {
         aliasPosition = 0;
         ast = null;
         includeIntoWildcard = true;
-        isGenerated = false;
         columnType = -1;
-        groupingArgKeyPositions.clear();
     }
 
     public CharSequence getAlias() {
@@ -65,6 +60,13 @@ public class QueryColumn implements Mutable, Sinkable {
         return aliasPosition;
     }
 
+    /**
+     * True when the parser made up the column's alias, which the query does not spell.
+     */
+    public boolean isAliasSynthesized() {
+        return aliasPosition == SYNTHESIZED_ALIAS_POSITION;
+    }
+
     public ExpressionNode getAst() {
         return ast;
     }
@@ -73,16 +75,8 @@ public class QueryColumn implements Mutable, Sinkable {
         return columnType;
     }
 
-    public IntList getGroupingArgKeyPositions() {
-        return groupingArgKeyPositions;
-    }
-
     public CharSequence getName() {
         return alias != null ? alias : ast.token;
-    }
-
-    public boolean isGenerated() {
-        return isGenerated;
     }
 
     public boolean isIncludeIntoWildcard() {
@@ -95,6 +89,12 @@ public class QueryColumn implements Mutable, Sinkable {
 
     public QueryColumn of(CharSequence alias, ExpressionNode ast) {
         return of(alias, ast, true);
+    }
+
+    public QueryColumn of(CharSequence alias, int aliasPosition, ExpressionNode ast) {
+        of(alias, ast, true, -1);
+        this.aliasPosition = aliasPosition;
+        return this;
     }
 
     public QueryColumn of(CharSequence alias, ExpressionNode ast, boolean includeIntoWildcard) {
@@ -115,15 +115,6 @@ public class QueryColumn implements Mutable, Sinkable {
         }
         this.alias = alias;
         this.aliasPosition = aliasPosition;
-    }
-
-    public void setGenerated(boolean isGenerated) {
-        this.isGenerated = isGenerated;
-    }
-
-    public void setGroupingArgKeyPositions(IntList keyPositions) {
-        groupingArgKeyPositions.clear();
-        groupingArgKeyPositions.addAll(keyPositions);
     }
 
     public void setIncludeIntoWildcard(boolean includeIntoWildcard) {

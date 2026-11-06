@@ -27,10 +27,13 @@ package io.questdb.cairo;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.vm.MemoryCARWImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
+import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
+import io.questdb.std.Misc;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -77,6 +80,33 @@ public class RecordArray extends RecordChain {
             super.close();
             throw th;
         }
+    }
+
+    /**
+     * An array whose memory starts at {@code initialSize} bytes and doubles up to {@code pageSize}, so it takes memory in
+     * proportion to the records it holds, see {@link MemoryCARWImpl}; its record offsets take a sixteenth of both.
+     */
+    public RecordArray(
+            @NotNull ColumnTypes columnTypes,
+            @NotNull RecordSink recordSink,
+            long initialSize,
+            long pageSize,
+            int maxPages
+    ) {
+        super(columnTypes, recordSink, initialSize, pageSize, maxPages);
+        try {
+            this.auxMem = varOffset > 0
+                    ? new MemoryCARWImpl(pageSize >> 4, maxPages, MemoryTag.NATIVE_RECORD_CHAIN, null, initialSize >> 4)
+                    : null;
+        } catch (Throwable th) {
+            super.close();
+            throw th;
+        }
+    }
+
+    protected RecordArray(@NotNull ColumnTypes columnTypes, RecordSink recordSink, MemoryCARW mem, MemoryARW auxMem) {
+        super(columnTypes, recordSink, mem);
+        this.auxMem = varOffset > 0 ? auxMem : Misc.free(auxMem);
     }
 
     public long beginRecord() {

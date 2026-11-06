@@ -36,6 +36,11 @@ import io.questdb.std.ObjList;
 
 public class CastCharToFloatFunctionFactory implements FunctionFactory {
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.FLOAT;
+    }
+
+    @Override
     public String getSignature() {
         return "cast(Af)";
     }

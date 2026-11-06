@@ -1071,18 +1071,17 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                 "SELECT t.k * 10 + s.k FROM t CROSS JOIN (SELECT k FROM s WHERE ct = 'u') s",
                 """
                         VirtualRecord
-                          functions: [k1*10+k]
-                            SelectedRecord
-                                Cross Join
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: t
-                                    SelectedRecord
-                                        Async Filter workers: 1
-                                          filter: ct=u
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: s
+                          functions: [t.k*10+s.k]
+                            Cross Join
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                                SelectedRecord
+                                    Async Filter workers: 1
+                                      filter: ct=u
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: s
                         """,
                 "[12,15,22,25,32,35,42,45,52,55,62,65]",
                 6

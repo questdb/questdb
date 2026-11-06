@@ -25,7 +25,7 @@
 package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.lv.LiveViewDefinition;
-import io.questdb.griffin.model.IQueryModel;
+import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.Chars;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
@@ -47,7 +47,7 @@ public class CreateLiveViewOperationBuilderImpl implements CreateLiveViewOperati
     // CairoEngine.createLiveView resolves this to a real PartitionBy value before
     // persisting to _lv.
     private int partitionBy = Numbers.INT_NULL;
-    private IQueryModel selectModel;
+    private QueryModel selectModel;
     private String selectSql;
     // The START FROM mode the user asked for. The parser always sets one - the clause is
     // mandatory - so START_FROM_UNSET only survives a builder that was never parsed into.
@@ -103,7 +103,7 @@ public class CreateLiveViewOperationBuilderImpl implements CreateLiveViewOperati
     }
 
     @Override
-    public IQueryModel getQueryModel() {
+    public QueryModel getQueryModel() {
         return selectModel;
     }
 
@@ -148,7 +148,7 @@ public class CreateLiveViewOperationBuilderImpl implements CreateLiveViewOperati
     }
 
     @Override
-    public void setSelectModel(IQueryModel selectModel) {
+    public void setSelectModel(QueryModel selectModel) {
         this.selectModel = selectModel;
     }
 

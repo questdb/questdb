@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.window;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -43,6 +44,11 @@ public class LttbGapFunctionFactory extends AbstractWindowFunctionFactory {
     // Uppercase 'L' for target (see LttbFunctionFactory): lets a bind-variable target reach
     // newInstance rather than being rejected by overload matching. The gap 's' stays constant-only.
     private static final String SIGNATURE = LttbFunctionFactory.NAME + "(NDLs)";
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.BOOLEAN;
+    }
 
     @Override
     public String getSignature() {

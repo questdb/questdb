@@ -54,7 +54,7 @@ public class PushdownFilterTokenlessNodeTest extends AbstractCairoTest {
     public void testTokenlessOrOperandOnParquetPartitionTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
-            // the retained-filter shape produced by the WhereClauseParser tokenless-node fix
+            // the retained-filter shape for a tokenless OR operand
             assertQuery("select * from p where ts = '2018-01-01' or (select b from x limit 1)")
                     .timestamp("ts")
                     .noLeakCheck()

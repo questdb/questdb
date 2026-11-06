@@ -30,6 +30,23 @@ import org.junit.Test;
 public class StringDistinctAggGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
+    public void testClosesArgument() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v VARCHAR)");
+            execute("INSERT INTO t VALUES (' a '), ('b '), (NULL), (' a')");
+            assertQuery("SELECT string_distinct_agg(trim(v)::STRING, ',') s FROM t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            s
+                            a,b
+                            """);
+            assertQuery("SELECT missing FROM (SELECT string_distinct_agg(trim(v)::STRING, ',') s FROM t)").noLeakCheck().fails(7, "Invalid column: missing");
+        });
+    }
+
+    @Test
     public void testConstantNull() throws Exception {
         String expected = """
                 string_distinct_agg

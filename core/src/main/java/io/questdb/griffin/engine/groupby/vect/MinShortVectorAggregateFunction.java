@@ -36,9 +36,6 @@ import io.questdb.std.Vect;
 import java.util.concurrent.atomic.LongAccumulator;
 import java.util.function.LongBinaryOperator;
 
-import static io.questdb.griffin.SqlCodeGenerator.GKK_MICRO_HOUR_INT;
-import static io.questdb.griffin.SqlCodeGenerator.GKK_NANO_HOUR_INT;
-
 public class MinShortVectorAggregateFunction extends IntFunction implements VectorAggregateFunction {
 
     public static final LongBinaryOperator MIN = (long l1, long l2) -> {

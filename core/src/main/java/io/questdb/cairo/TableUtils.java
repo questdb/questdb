@@ -34,7 +34,6 @@ import io.questdb.cairo.lv.LiveViewState;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.pool.WriterPool;
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableMetadata;
@@ -49,8 +48,6 @@ import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.cairo.vm.api.MemoryMW;
 import io.questdb.cairo.vm.api.MemoryR;
-import io.questdb.griffin.AnyRecordMetadata;
-import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.parquet.MappedMemoryPartitionDescriptor;
@@ -58,7 +55,6 @@ import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.IQueryModel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
@@ -71,7 +67,6 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.MemoryTag;
-import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
@@ -821,33 +816,6 @@ public final class TableUtils {
             }
             ff.close(fd);
         }
-    }
-
-    @NotNull
-    public static Function createCursorFunction(
-            FunctionParser functionParser,
-            @NotNull IQueryModel model,
-            @NotNull SqlExecutionContext executionContext
-    ) throws SqlException {
-        final ExpressionNode tableNameExpr = model.getTableNameExpr();
-        final SqlExecutionContext.TableFunctionView previousView = executionContext.getTableFunctionView();
-        final ExpressionNode viewNameExpr = model.getViewNameExpr();
-        if (viewNameExpr != null) {
-            executionContext.setTableFunctionView(getTableFunctionView(viewNameExpr, executionContext));
-        }
-        final Function function;
-        try {
-            function = functionParser.parseFunction(tableNameExpr, AnyRecordMetadata.INSTANCE, executionContext);
-        } finally {
-            if (viewNameExpr != null) {
-                executionContext.setTableFunctionView(previousView);
-            }
-        }
-        if (!ColumnType.isCursor(function.getType())) {
-            Misc.free(function);
-            throw SqlException.$(tableNameExpr.position, "function must return CURSOR");
-        }
-        return function;
     }
 
     public static void createDirsOrFail(FilesFacade ff, Path path, int mkDirMode) {

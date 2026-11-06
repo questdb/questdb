@@ -111,11 +111,6 @@ class WalApplySqlExecutionContext extends SqlExecutionContextImpl {
     }
 
     @Override
-    public TableToken getTableTokenIfExists(CharSequence tableName, int lo, int hi) {
-        return isStatementTarget(tableName, lo, hi) ? tableToken : super.getTableTokenIfExists(tableName, lo, hi);
-    }
-
-    @Override
     public boolean isBackgroundJob() {
         // The statement was a principal's, but this re-execution is not: it runs under the root
         // context, once on every node that applies the WAL.

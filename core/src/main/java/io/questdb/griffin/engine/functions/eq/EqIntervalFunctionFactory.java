@@ -37,6 +37,7 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
@@ -63,6 +64,7 @@ public class EqIntervalFunctionFactory implements FunctionFactory {
         final Function a = args.getQuick(0);
         final Function b = args.getQuick(1);
         if (a.getType() != b.getType()) {
+            Misc.freeObjList(args);
             return BooleanConstant.FALSE;
         }
 

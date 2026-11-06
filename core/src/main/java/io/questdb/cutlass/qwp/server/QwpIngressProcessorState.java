@@ -2011,7 +2011,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
             LOG.critical().$('[').$(fd).$("] unexpected error: ").$(th).$();
             tudCache.setDistressed();
             rejectMsg.clear();
-            rejectMsg.put("unexpected error: ").put(th.getMessage());
+            rejectMsg.put("unexpected error: ").put(Misc.getMessageOrClassName(th));
             reject(Status.INTERNAL_ERROR, rejectMsg, fd);
         }
     }

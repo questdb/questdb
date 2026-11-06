@@ -50,7 +50,7 @@ public class LiveViewRefreshCompatibilityTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             setCurrentMicros(0);
             createBaseAndLiveView();
-            installPersistedLegacySql();
+            installPersistedSql(LEGACY_SQL);
             try (SqlExecutionContext nonAdmin = new SqlExecutionContextImpl(engine, 1).with(new NoSystemAdminSecurityContext())) {
                 // An idempotent schema script replays the DDL an older release accepted: the live view exists,
                 // so the statement is a no-op, which must not compile the body CREATE now rejects first.
@@ -73,7 +73,7 @@ public class LiveViewRefreshCompatibilityTest extends AbstractLiveViewTest {
             }
             execute("INSERT INTO base VALUES ('2026-01-01T00:00:01.000000Z', 10, 'base')");
             drainWalQueue();
-            installPersistedLegacySql();
+            installPersistedSql(LEGACY_SQL);
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveSeedToCompletion(job, "lv");
@@ -92,6 +92,29 @@ public class LiveViewRefreshCompatibilityTest extends AbstractLiveViewTest {
             }
             assertQuery("SELECT view_name, view_status FROM live_views() WHERE view_name = 'lv'")
                     .noLeakCheck().noRandomAccess().returns("view_name\tview_status\nlv\tactive\n");
+        });
+    }
+
+    @Test
+    public void testPersistedDefinitionThatNoLongerFitsTheViewColumnsInvalidates() throws Exception {
+        assertMemoryLeak(() -> {
+            setCurrentMicros(0);
+            createBaseAndLiveView();
+            execute("INSERT INTO base VALUES ('2026-01-01T00:00:01.000000Z', 10, 'base')");
+            drainWalQueue();
+            // lv stores x as INT, and this definition now computes it as LONG256, which no copier writes into INT.
+            installPersistedSql("SELECT ts, x::long256 x, count(*) OVER (PARTITION BY g ORDER BY ts "
+                    + "ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base WHERE g = 'base'");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+            assertQuery("SELECT view_status, invalidation_reason FROM live_views() WHERE view_name = 'lv'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            view_status\tinvalidation_reason
+                            invalid\tview column type does not match its query, recreate the view [column=x, view=INT, query=LONG256]
+                            """);
         });
     }
 
@@ -114,11 +137,11 @@ public class LiveViewRefreshCompatibilityTest extends AbstractLiveViewTest {
 
     // Installs the SQL an older release would have persisted for lv, keeping the CREATE-time
     // metadata/dependencies, then rebuilds the registry from _lv just as startup does.
-    private static void installPersistedLegacySql() {
+    private static void installPersistedSql(String sql) {
         final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
         final LiveViewDefinition current = instance.getDefinition();
         final LiveViewDefinition legacy = new LiveViewDefinition(
-                current.getViewName(), LEGACY_SQL, current.getBaseTableName(), current.getBaseTableToken(),
+                current.getViewName(), sql, current.getBaseTableName(), current.getBaseTableToken(),
                 current.getBaseTimestampType(), current.getFlushEveryInterval(), current.getFlushEveryIntervalUnit(),
                 current.getInMemoryInterval(), current.getInMemoryIntervalUnit(), current.getPartitionBy(),
                 current.getViewLowerBoundTimestamp(), current.getStartFromKind(), current.getAnchorSpec(),

@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.RecordToRowCopier;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.QueryProgress;
@@ -53,6 +54,7 @@ import org.jetbrains.annotations.Nullable;
  * <pre>
  * [VirtualRecordCursorFactory]           output projection
  * WindowRecordCursorFactory
+ *   [SelectedRecordCursorFactory]        input rename (identity cross index, over an input projection)
  *   [VirtualRecordCursorFactory]         input projection
  *     [SelectedRecordCursorFactory]      input mapping
  *       [filter factory]                 residual WHERE
@@ -100,6 +102,7 @@ public final class LiveViewCompiledPlan {
     private final PageFrameRecordCursorFactory pageFrameFactory;
     private final RecordCursorFactory root;
     private final WindowRecordCursorFactory windowFactory;
+    private RecordToRowCopier copier;
 
     private LiveViewCompiledPlan(
             RecordCursorFactory root,
@@ -165,6 +168,13 @@ public final class LiveViewCompiledPlan {
         }
 
         node = windowFactory.getBaseFactory();
+        // The generator renames the window's input to the SELECT aliases with a
+        // row-transparent mapping; over a projection it sits above it, and the
+        // projection's cursor already yields the same record.
+        if (node instanceof SelectedRecordCursorFactory s && s.getBaseFactory() instanceof VirtualRecordCursorFactory
+                && isIdentity(s.getColumnCrossIndex(), s.getBaseFactory().getMetadata().getColumnCount())) {
+            node = s.getBaseFactory();
+        }
         VirtualRecordCursorFactory inputProjection = null;
         if (node instanceof VirtualRecordCursorFactory v) {
             inputProjection = v;
@@ -210,6 +220,13 @@ public final class LiveViewCompiledPlan {
     }
 
     /**
+     * The copier {@link #setCopier} stored, or {@code null} before it.
+     */
+    public @Nullable RecordToRowCopier getCopier() {
+        return copier;
+    }
+
+    /**
      * The residual WHERE the refresh path applies row by row, or {@code null} when the
      * view has no filter.
      */
@@ -239,6 +256,14 @@ public final class LiveViewCompiledPlan {
      */
     public RecordMetadata getWindowInputMetadata() {
         return windowFactory.getBaseFactory().getMetadata();
+    }
+
+    /**
+     * Keeps, for the plan's lifetime, the copier that writes the rows of {@link #getOutputMetadata()} into the
+     * view's table.
+     */
+    public void setCopier(RecordToRowCopier copier) {
+        this.copier = copier;
     }
 
     /**
@@ -360,6 +385,18 @@ public final class LiveViewCompiledPlan {
             return "a join over a window function";
         }
         return "this query shape";
+    }
+
+    private static boolean isIdentity(IntList crossIndex, int baseColumnCount) {
+        if (crossIndex.size() != baseColumnCount) {
+            return false;
+        }
+        for (int i = 0; i < baseColumnCount; i++) {
+            if (crossIndex.getQuick(i) != i) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static ProjectingRecordCursor projectingCursor(VirtualRecordCursorFactory projection) {

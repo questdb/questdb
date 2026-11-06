@@ -56,8 +56,18 @@ public class SymbolIndexFilteredRowCursorFactory implements SymbolFunctionRowCur
     }
 
     @Override
+    public int getColumnIndex() {
+        return columnIndex;
+    }
+
+    @Override
     public RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory) {
         return cursor.of(pageFrame, pageFrameMemory);
+    }
+
+    @Override
+    public RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory, long firstRow) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -65,6 +75,17 @@ public class SymbolIndexFilteredRowCursorFactory implements SymbolFunctionRowCur
         return symbolFunction;
     }
 
+    @Override
+    public long getRow(PageFrame pageFrame, long rowLo, long rowHi, long rowIndex) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getRowCount(PageFrame pageFrame, long rowLo, long rowHi, long maxCount) {
+        return -1;
+    }
+
+    @Override
     public int getSymbolKey() {
         return cursor.getSymbolKey() == 0 ? SymbolTable.VALUE_IS_NULL : cursor.getSymbolKey() - 1;
     }
@@ -72,16 +93,6 @@ public class SymbolIndexFilteredRowCursorFactory implements SymbolFunctionRowCur
     @Override
     public boolean isEntity() {
         return false;
-    }
-
-    // Both selecting values must be stable: the symbol key AND the residual index filter. A null key
-    // function means a compile-time-resolved constant key (stable); a single unstable source
-    // (e.g. rnd_* in either) makes the selected rows vary across opens.
-    @Override
-    public boolean isStableWithinExecution() {
-        final Function filter = cursor.getFilter();
-        return (symbolFunction == null || symbolFunction.isStableWithinExecution())
-                && (filter == null || filter.isStableWithinExecution());
     }
 
     @Override

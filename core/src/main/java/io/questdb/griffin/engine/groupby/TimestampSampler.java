@@ -28,6 +28,15 @@ import io.questdb.std.str.Sinkable;
 
 public interface TimestampSampler extends Sinkable {
 
+    /**
+     * Anchors the bucket grid at the grid line {@code localAnchor}, as {@link #setLocalAnchor(long)} does, and
+     * returns that line in {@link #round(long)} output space, the anchor {@link #roundFromAnchor(long, long)} takes.
+     */
+    default long anchorAtLocal(long localAnchor) {
+        setLocalAnchor(localAnchor);
+        return localAnchorAsUtc(localAnchor);
+    }
+
     long getApproxBucketSize();
 
     default long getBucketSize() {
@@ -58,6 +67,16 @@ public interface TimestampSampler extends Sinkable {
     long previousTimestamp(long timestamp);
 
     long round(long timestamp);
+
+    /**
+     * Returns the bucket of {@code timestamp} on the grid anchored at {@code anchor}, a value in {@link #round(long)}
+     * output space such as {@link #anchorAtLocal(long)} returns: the grid line at or before the timestamp, or the
+     * anchor for a timestamp before it, where {@code timestamp_floor_utc} puts the values between FROM and a later
+     * anchor (a positive OFFSET).
+     */
+    default long roundFromAnchor(long anchor, long timestamp) {
+        return Math.max(anchor, round(timestamp));
+    }
 
     /**
      * Anchors the bucket grid at a value that is already in the sampler's

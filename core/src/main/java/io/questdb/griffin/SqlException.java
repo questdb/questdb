@@ -25,6 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableToken;
 import io.questdb.std.FiberLocal;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.str.CharSink;
@@ -33,6 +34,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 public class SqlException extends Exception implements Sinkable, FlyweightMessageContainer {
     public static final int EXCEPTION_TABLE_DOES_NOT_EXIST = -105;
@@ -43,9 +45,11 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
     private static final int EXCEPTION_FUNCTION_NOT_ALLOWED = EXCEPTION_WAL_RECOVERABLE - 1;
     private static final int EXCEPTION_MATERIALIZATION_EXPIRY_CONFLICT = EXCEPTION_FUNCTION_NOT_ALLOWED - 1;
     private static final FiberLocal<SqlException> tlException = new FiberLocal<>(SqlException::new);
+    private static boolean isFlyweightReusedForTesting;
     private final StringSink message = new StringSink();
     private final StringSink tableName = new StringSink();
     private int error;
+    private Throwable factoryFailure;
     private boolean isTableBusy;
     private int position;
 
@@ -59,6 +63,13 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
 
     public static SqlException ambiguousColumn(int position, CharSequence columnName) {
         return position(position).put("Ambiguous column [name=").put(columnName).put(']');
+    }
+
+    /**
+     * The error of a statement that writes to a view of any kind, which only reads its tables.
+     */
+    public static SqlException cannotModify(int position, TableToken view) {
+        return position(position).put("cannot modify ").put(view.getType().keyword()).put(" [view=").put(view.getTableName()).put(']');
     }
 
     public static SqlException duplicateColumn(int position, CharSequence colName) {
@@ -75,6 +86,16 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
 
     public static SqlException emptyWindowContext(int position) {
         return SqlException.$(position, "window function called in non-window context, make sure to add OVER clause");
+    }
+
+    /**
+     * The error of a function factory that threw something other than a SqlException or an
+     * ImplicitCastException. The throwable becomes the exception's {@link #getCause() cause}.
+     */
+    public static SqlException factoryFailure(int position, Throwable failure) {
+        final SqlException ex = position(position).put("exception in function factory: ").put(failure.getMessage());
+        ex.factoryFailure = failure;
+        return ex;
     }
 
     /**
@@ -119,10 +140,6 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
         return position(position).put("Invalid date [str=").put(str).put(']');
     }
 
-    public static SqlException invalidDate(Utf8Sequence str, int position) {
-        return position(position).put("Invalid date [str=").put(str).put(']');
-    }
-
     public static SqlException invalidDate(int position) {
         return position(position).put("Invalid date");
     }
@@ -162,12 +179,22 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
     public static SqlException position(int position) {
         SqlException ex = tlException.get();
         // This is to have correct stack trace in local debugging with -ea option
-        assert (ex = new SqlException()) != null;
+        assert isFlyweightReusedForTesting || (ex = new SqlException()) != null;
         ex.message.clear();
         ex.position = position;
         ex.error = 0;
         ex.isTableBusy = false;
+        ex.factoryFailure = null;
         return ex;
+    }
+
+    /**
+     * With assertions enabled, {@link #position(int)} allocates a fresh instance per throw; this lets
+     * a test observe the per-carrier flyweight reuse that a production server performs.
+     */
+    @TestOnly
+    public static void setFlyweightReusedForTesting(boolean isReused) {
+        isFlyweightReusedForTesting = isReused;
     }
 
     public static SqlException tableDoesNotExist(int position, CharSequence tableName) {
@@ -202,6 +229,14 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
 
     public static SqlException walRecoverable(int position) {
         return position(position).errorCode(EXCEPTION_WAL_RECOVERABLE);
+    }
+
+    /**
+     * The throwable of a {@link #factoryFailure(int, Throwable) function factory failure}, otherwise null.
+     */
+    @Override
+    public Throwable getCause() {
+        return factoryFailure;
     }
 
     public int getErrorCode() {

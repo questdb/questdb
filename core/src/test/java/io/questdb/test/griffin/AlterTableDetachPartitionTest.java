@@ -2265,7 +2265,6 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                     assertQuery("select min(ts) from " + tableName)
                             .noLeakCheck()
                             .expectSize()
-                            .timestamp("min")
                             .returns(replaceTimestampSuffix("""
                                     min
                                     2022-06-01T00:02:52.799000Z

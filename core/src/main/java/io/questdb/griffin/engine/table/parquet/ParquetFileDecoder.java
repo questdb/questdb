@@ -75,7 +75,8 @@ public class ParquetFileDecoder implements ParquetDecoder, ParquetRowGroupSkippe
      * Check if a row group can be skipped based on min/max statistics and bloom filter conditions.
      * <p>
      * Filter list format: 3 longs per filter
-     * - Long 0: encoded(column_index, count, op) - lower 32 bits: column_index, next 24 bits: count, upper 8 bits: op
+     * - Long 0: encoded(column_index, count, op) - lower 32 bits: column_index, next 24 bits: count, next 7 bits: op,
+     * top bit: the filter is null-matching, see {@link ParquetRowGroupFilter#NULL_MATCHING_OP_FLAG}
      * - Long 1: values_ptr
      * - Long 2: column_type
      *
@@ -88,7 +89,7 @@ public class ParquetFileDecoder implements ParquetDecoder, ParquetRowGroupSkippe
     public boolean canSkipRowGroup(int rowGroupIndex, DirectLongList filters, long filterBufEnd) {
         assert ptr != 0;
         assert filters.size() % ParquetRowGroupFilter.LONGS_PER_FILTER == 0;
-        return canSkipRowGroup(
+        return canSkipRowGroup0(
                 ptr,
                 rowGroupIndex,
                 fileAddr,
@@ -292,7 +293,7 @@ public class ParquetFileDecoder implements ParquetDecoder, ParquetRowGroupSkippe
         return rowGroupMinTimestamp(ptr, fileAddr, fileSize, rowGroupIndex, timestampColumnIndex);
     }
 
-    private static native boolean canSkipRowGroup(
+    private static native boolean canSkipRowGroup0(
             long decoderPtr,
             int rowGroupIndex,
             long filePtr,

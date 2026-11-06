@@ -33,7 +33,6 @@ import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -776,7 +775,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             long replacementTimestampLo,
             long replacementTimestampHi
     ) {
-        final long recordRowCopierMetadataVersion = walWriter.getMetadata().getMetadataVersion();
         final long refreshFinishTimestampUs = microsecondClock.getTicks();
         final long commitPeriodHi = refreshContext.periodHi != Numbers.LONG_NULL ? refreshContext.periodHi : viewState.getLastPeriodHi();
         if (refreshContext.toBaseTxn == -1) {
@@ -810,7 +808,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             viewState.rangeRefreshSuccess(
                     factory,
                     copier,
-                    recordRowCopierMetadataVersion,
                     expiryPolicyVersion,
                     refreshFinishTimestampUs,
                     refreshTriggerTimestampUs,
@@ -831,7 +828,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             viewState.refreshSuccess(
                     factory,
                     copier,
-                    recordRowCopierMetadataVersion,
                     expiryPolicyVersion,
                     refreshFinishTimestampUs,
                     refreshTriggerTimestampUs,
@@ -1476,30 +1472,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         return true;
     }
 
-    private RecordToRowCopier getRecordToRowCopier(TableWriterAPI tableWriter, RecordCursorFactory factory, SqlCompiler compiler) {
-        final RecordMetadata fromMetadata = factory.getMetadata();
-        final RecordMetadata toMetadata = tableWriter.getMetadata();
-        for (int i = 0, n = fromMetadata.getColumnCount(); i < n; i++) {
-            final int fromType = fromMetadata.getColumnType(i);
-            final int toType = toMetadata.getColumnType(i);
-            if (!RecordToRowCopierUtils.isCopierConvertible(fromType, toType)) {
-                // The error describes a view/query schema mismatch, not a SQL token, so it carries no position.
-                throw CairoException.nonCritical().put("inconvertible types: ").put(ColumnType.nameOf(fromType))
-                        .put(" -> ").put(ColumnType.nameOf(toType))
-                        .put(" [from=").put(fromMetadata.getColumnName(i))
-                        .put(", to=").put(toMetadata.getColumnName(i)).put(']');
-            }
-        }
-        columnFilter.of(fromMetadata.getColumnCount());
-        return RecordToRowCopierUtils.generateCopier(
-                compiler.getAsm(),
-                fromMetadata,
-                toMetadata,
-                columnFilter,
-                configuration
-        );
-    }
-
     private int preflightMaterialization(
             MatViewDefinition viewDefinition,
             MatViewState viewState,
@@ -1545,7 +1517,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                 refreshSqlExecutionContext.hasTopLevelProjectionWildcard()
                         );
                         // A new factory can expose different result types even when the view schema is unchanged.
-                        copier = getRecordToRowCopier(walWriter, factory, compiler);
+                        copier = RecordToRowCopierUtils.generateViewCopier(
+                                compiler.getAsm(),
+                                factory.getMetadata(),
+                                walWriter.getMetadata(),
+                                columnFilter,
+                                configuration
+                        );
                     }
                 } finally {
                     refreshSqlExecutionContext.setMemoryTracker(null);
@@ -1565,7 +1543,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             viewState.returnRecordFactory(
                     factory,
                     copier,
-                    walWriter.getMetadata().getMetadataVersion(),
                     finalExpiryPolicyVersion
             );
             if (refreshStartStamped) {
@@ -1840,9 +1817,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             expiryPolicyVersion = viewState.getRecordFactoryExpiryPolicyVersion();
             factory = viewState.acquireRecordFactory();
             copier = viewState.getRecordToRowCopier();
-            if (walWriter.getMetadata().getMetadataVersion() != viewState.getRecordRowCopierMetadataVersion()) {
-                factory = Misc.free(factory);
-            }
 
             OUTER:
             for (int i = 0; i <= maxRetries; i++) {
@@ -1876,7 +1850,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                     refreshSqlExecutionContext.hasTopLevelProjectionWildcard()
                             );
                             // A new factory can expose different result types even when the view schema is unchanged.
-                            copier = getRecordToRowCopier(walWriter, factory, compiler);
+                            copier = RecordToRowCopierUtils.generateViewCopier(
+                                    compiler.getAsm(),
+                                    factory.getMetadata(),
+                                    walWriter.getMetadata(),
+                                    columnFilter,
+                                    configuration
+                            );
                         } catch (SqlException e) {
                             factory = Misc.free(factory);
                             if (e.isTableBusy()) {
@@ -1896,15 +1876,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
                     assert factory != null;
                     assert copier != null;
-                    final int timestampType = factory.getMetadata().getTimestampType();
-                    if (timestampType != walWriter.getMetadata().getTimestampType()) {
-                        throw CairoException.nonCritical().put("timestamp type mismatch between materialized view and query [view=")
-                                .put(ColumnType.nameOf(walWriter.getMetadata().getTimestampType()))
-                                .put(", query=")
-                                .put(ColumnType.nameOf(timestampType))
-                                .put(']');
-                    }
-
+                    // The view's timestamp is the query column of the same name, designated or not.
                     final int viewTimestampIndex = walWriter.getMetadata().getTimestampIndex();
                     final CharSequence timestampName = walWriter.getMetadata().getColumnName(viewTimestampIndex);
                     int cursorTimestampIndex = factory.getMetadata().getColumnIndexQuiet(timestampName);
@@ -1921,6 +1893,14 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                     .put(", queryColumnType=").put(ColumnType.nameOf(cursorTimestampType))
                                     .put(']');
                         }
+                    }
+                    final int timestampType = factory.getMetadata().getColumnType(cursorTimestampIndex);
+                    if (timestampType != walWriter.getMetadata().getTimestampType()) {
+                        throw CairoException.nonCritical().put("timestamp type mismatch between materialized view and query [view=")
+                                .put(ColumnType.nameOf(walWriter.getMetadata().getTimestampType()))
+                                .put(", query=")
+                                .put(ColumnType.nameOf(timestampType))
+                                .put(']');
                     }
 
                     long commitTarget = batchSize;
@@ -1982,7 +1962,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                             long insertedRows = 0;
                             while (cursor.hasNext()) {
                                 final long timestamp = record.getTimestamp(cursorTimestampIndex);
-                                if (timestamp < replacementTimestampLo || timestamp > replacementTimestampHi) {
+                                if (timestamp < replacementTimestampLo || timestamp >= replacementTimestampHi) {
                                     throw CairoException.nonCritical()
                                             .put("timestamp out of replace range [expected=").ts(driver, replacementTimestampLo)
                                             .put(", ").ts(driver, replacementTimestampHi)
@@ -2091,7 +2071,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     factory = Misc.free(factory);
                     walWriter.rollback();
                     if (i == maxRetries) {
-                        LOG.info().$("base table is under heavy DDL changes, will retry refresh later [view=").$(viewTableToken)
+                        LOG.info().$("base table keeps changing, will retry refresh later [view=").$(viewTableToken)
                                 .$(", totalAttempts=").$(maxRetries)
                                 .$(", msg=").$safe(e.getFlyweightMessage())
                                 .I$();
@@ -2135,7 +2115,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 // schedule a deferred retry (up to the configured limit) instead of invalidating,
                 // while full refresh invalidates as before (it truncates the view up front).
                 if (th instanceof SqlException e) {
-                    // While compiling the view SQL, the optimiser wraps reader pool exhaustion in a
+                    // While compiling the view SQL, binding wraps reader pool exhaustion in a
                     // checked SqlException with isTableBusy() set. Other retriable errors are unchecked.
                     throw e;
                 }
@@ -2222,7 +2202,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         // anchor. Bucket key K covers raw data in [K, K + stride). The iterator
         // boundaries must include the user offset so they align with bucket keys.
         if (CommonUtils.isSubDayUnit(samplingIntervalUnit)) {
-            long stdOff = CommonUtils.getFloorUtcTzOffset(tzRules, 0, samplingIntervalUnit);
+            long stdOff = tzRules.getStandardOffset();
             if (perCluster) {
                 return fixedOffsetIterator.of(
                         sampler,

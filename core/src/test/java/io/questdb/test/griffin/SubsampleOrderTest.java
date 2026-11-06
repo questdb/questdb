@@ -65,6 +65,25 @@ public class SubsampleOrderTest extends AbstractCairoTest {
             """;
 
     @Test
+    public void testAggregateKeepsInputOrderOfEqualTimestamps() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT x, (x * 7) % 5 AS v, timestamp_sequence('2024-01-01', (x % 3) * 1_000_000L) AS ts
+                        FROM long_sequence(30)
+                    ) TIMESTAMP(ts)
+                    """);
+            assertQuery("""
+                    SELECT count() AS c, sum(x) AS s
+                    FROM (SELECT ts, x, v FROM (SELECT * FROM t ORDER BY ts, x DESC) SUBSAMPLE sdt(v, 1))
+                    """)
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("c\ts\n24\t354\n");
+        });
+    }
+
+    @Test
     public void testAllAlgorithmsPreserveInputOrderMetadata() throws Exception {
         assertMemoryLeak(() -> {
             createTable();

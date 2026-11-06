@@ -48,8 +48,10 @@ public abstract class AbstractLowerCaseCharSequenceHashSet implements Mutable {
 
     @Override
     public void clear() {
-        Arrays.fill(keys, noEntryKey);
-        free = capacity;
+        if (free != capacity) {
+            Arrays.fill(keys, noEntryKey);
+            free = capacity;
+        }
     }
 
     public boolean contains(CharSequence key) {
@@ -77,7 +79,7 @@ public abstract class AbstractLowerCaseCharSequenceHashSet implements Mutable {
     }
 
     public int keyIndex(CharSequence key) {
-        int index = Chars.lowerCaseHashCode(key) & mask;
+        int index = (int) Hash.hashInt64(Chars.lowerCaseHashCode(key)) & mask;
 
         if (keys[index] == noEntryKey) {
             return index;
@@ -91,7 +93,7 @@ public abstract class AbstractLowerCaseCharSequenceHashSet implements Mutable {
     }
 
     public int keyIndex(CharSequence key, int lo, int hi) {
-        int index = Chars.lowerCaseHashCode(key, lo, hi) & mask;
+        int index = (int) Hash.hashInt64(Chars.lowerCaseHashCode(key, lo, hi)) & mask;
 
         if (keys[index] == noEntryKey) {
             return index;
@@ -132,7 +134,7 @@ public abstract class AbstractLowerCaseCharSequenceHashSet implements Mutable {
                     key != noEntryKey;
                     from = (from + 1) & mask, key = keys[from]
             ) {
-                int idealHit = Chars.lowerCaseHashCode(key) & mask;
+                int idealHit = (int) Hash.hashInt64(Chars.lowerCaseHashCode(key)) & mask;
                 if (idealHit != from) {
                     int to;
                     if (keys[idealHit] != noEntryKey) {

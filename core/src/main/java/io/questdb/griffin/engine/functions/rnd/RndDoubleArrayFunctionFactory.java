@@ -59,6 +59,18 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
+        // the function keeps the values it reads, not the arguments
+        final Function function = newFunction(position, args, argPositions, configuration);
+        Misc.freeObjList(args);
+        return function;
+    }
+
+    private static Function newFunction(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration
+    ) throws SqlException {
         // The following forms are supported:
         // - rnd_double_array(nDims) - 1 arg, generates random dim lengths up to 16 and random element values. No NaNs.
         // - rnd_double_array(nDims, nanRate) - 2 args, generates random dim lengths up to 16 and random element values. NaN frequency is using (rndInt() % nanRate == 0)

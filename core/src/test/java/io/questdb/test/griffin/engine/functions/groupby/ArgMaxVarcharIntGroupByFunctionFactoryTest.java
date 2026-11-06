@@ -118,18 +118,18 @@ public class ArgMaxVarcharIntGroupByFunctionFactoryTest extends AbstractCairoTes
         try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
             TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 String sql = "SELECT sym, arg_max(value, key) FROM tab GROUP BY sym ORDER BY sym";
-                TestUtils.assertSqlCursors(engine, sqlExecutionContext, sql, sql, LOG);
+                TestUtils.assertSqlCursors(engine, sqlExecutionContext, ArgMinMaxTestUtils.ARG_MAX_ORACLE, sql, LOG);
             }, configuration, LOG);
         }
     }
 
     @Test
     public void testArgMaxParallelMergeNullDestValidSrc() throws Exception {
-        execute("CREATE TABLE tab AS (SELECT rnd_symbol('A','B','C','D','E') sym, rnd_varchar('foo','bar','baz','qux') value, CASE WHEN x <= 1000000 THEN CAST(null AS int) ELSE rnd_int(1, 1000000, 0) END key FROM long_sequence(2000000))");
+        execute("CREATE TABLE tab AS (SELECT rnd_symbol('A','B','C','D','E') sym, rnd_varchar('foo','bar','baz','qux') value, CASE WHEN x <= 1000000 THEN CAST(null AS int) ELSE rnd_int() END key FROM long_sequence(2000000))");
         try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
             TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 String sql = "SELECT sym, arg_max(value, key) FROM tab GROUP BY sym ORDER BY sym";
-                TestUtils.assertSqlCursors(engine, sqlExecutionContext, sql, sql, LOG);
+                TestUtils.assertSqlCursors(engine, sqlExecutionContext, ArgMinMaxTestUtils.ARG_MAX_ORACLE, sql, LOG);
             }, configuration, LOG);
         }
     }
@@ -140,7 +140,7 @@ public class ArgMaxVarcharIntGroupByFunctionFactoryTest extends AbstractCairoTes
         try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
             TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 String sql = "SELECT sym, arg_max(value, key) FROM tab GROUP BY sym ORDER BY sym";
-                TestUtils.assertSqlCursors(engine, sqlExecutionContext, sql, sql, LOG);
+                TestUtils.assertSqlCursors(engine, sqlExecutionContext, ArgMinMaxTestUtils.ARG_MAX_ORACLE, sql, LOG);
             }, configuration, LOG);
         }
     }

@@ -26,16 +26,16 @@ package io.questdb.test.cairo.mv;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoTable;
-import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.RowExpiryCleanupJob;
+import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.mv.MatViewDefinition;
+import io.questdb.cairo.mv.MatViewRefreshSqlExecutionContext;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.OperationFuture;
@@ -60,6 +60,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.TestTimestampType;
 import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -1519,18 +1520,17 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
 
     @Test
     public void testReadFilterMarkDoesNotSpreadToCallerNot() throws Exception {
-        // The mark reaches only the blocks the parser builds, and the caller's own predicates land in them
-        // well after the inversion has run, so a NOT the caller writes is still inverted -- and drops NULL
-        // rows -- exactly as it does on a plain table.
+        // A comparison and its negation differ on a NULL operand, so a NOT the caller writes stays a NOT, on the
+        // view as on a plain table. v < 100.0 is false for B's NULL v, so NOT (v < 100.0) keeps B.
         assertMemoryLeak(() -> {
             createValuePolicyView();
 
             printSql("explain select sym, v from mv where not (v < 100.0)");
-            TestUtils.assertContains(sink, "v>=100.0");
+            TestUtils.assertContains(sink, "not (v<100.0)");
 
-            final String noRows = "sym\tv\n";
-            assertQuery("select sym, v from mv where not (v < 100.0)").noLeakCheck().returns(noRows);
-            assertQuery("select sym, v from base where not (v < 100.0)").noLeakCheck().returns(noRows);
+            final String nullRow = "sym\tv\nB\tnull\n";
+            assertQuery("select sym, v from mv where not (v < 100.0)").noLeakCheck().returns(nullRow);
+            assertQuery("select sym, v from base where not (v < 100.0)").noLeakCheck().returns(nullRow);
         });
     }
 
@@ -1560,31 +1560,58 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateWithNonDigitCharThresholdRejected() throws Exception {
-        // A one-character literal binds as CHAR, and the comparison with the timestamp reads it as a number on
-        // every row. Only a digit converts, so a policy such as ts < 'a' would fail every read of the view with
-        // "inconvertible value: a [CHAR -> LONG]". DDL refuses it at CREATE and at ALTER, with the timestamp
-        // on either side. A digit such as '5' converts, and the view keeps it.
+    public void testBareNoArgFunctionCallsFollowPassthroughFlag() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base (ts timestamp) timestamp(ts) partition by day");
+            final MatViewRefreshSqlExecutionContext refreshCtx = new MatViewRefreshSqlExecutionContext(engine, 0);
+            try (TableReader baseReader = getReader("base")) {
+                refreshCtx.of(baseReader, baseReader.getTableToken(), true);
+                Assert.assertFalse(
+                        "a passthrough view's refresh reads a bare name as a column",
+                        refreshCtx.allowBareNoArgFunctionCalls()
+                );
+
+                refreshCtx.of(baseReader, baseReader.getTableToken(), false);
+                Assert.assertTrue(
+                        "an aggregating view's refresh reads a bare name that matches no column as a call",
+                        refreshCtx.allowBareNoArgFunctionCalls()
+                );
+
+                refreshCtx.of(baseReader, baseReader.getTableToken(), true);
+                refreshCtx.clearReader();
+                Assert.assertTrue(
+                        "clearReader() drops the passthrough flag of the previous view",
+                        refreshCtx.allowBareNoArgFunctionCalls()
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testCreateWithCharThresholdRejected() throws Exception {
+        // A one-character literal binds as CHAR, and a read compares the timestamp with it as timestamp text,
+        // which no single character is, so such a policy would fail every read of the view with "Invalid date".
+        // DDL refuses it at CREATE and at ALTER, with the timestamp on either side.
         assertMemoryLeak(() -> {
             execute("create table base (sym symbol, ts timestamp) timestamp(ts) partition by day wal");
-            for (String predicate : new String[]{"ts < 'a'", "'a' > ts", "ts >= 'x'"}) {
+            for (String predicate : new String[]{"ts < 'a'", "'a' > ts", "ts >= 'x'", "ts < '5'"}) {
                 assertExceptionNoLeakCheck(
                         "create materialized view mv as (select * from base) expire rows when " + predicate,
                         25,
-                        "a CHAR threshold must be a digit, or every read of the view fails"
+                        "a CHAR threshold is not a timestamp, so every read of the view fails"
                 );
             }
-            execute("create materialized view mv as (select * from base) expire rows when ts < '5'");
+            execute("create materialized view mv as (select * from base) expire rows when ts < '2024'");
             drainWalAndMatViewQueues();
             assertExceptionNoLeakCheck(
                     "alter materialized view mv set expire rows when ts < 'a'",
                     48,
-                    "a CHAR threshold must be a digit, or every read of the view fails"
+                    "a CHAR threshold is not a timestamp, so every read of the view fails"
             );
             assertQuery("select expire_clause from materialized_views() where view_name = 'mv'")
                     .noLeakCheck()
                     .noRandomAccess()
-                    .returns("expire_clause\nts < '5'\n");
+                    .returns("expire_clause\nts < '2024'\n");
         });
     }
 
@@ -1754,7 +1781,7 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             execute("create materialized view mv as (select * from base) expire rows when ts > '2024-01-05T12:00:00.000000Z'");
             drainWalAndMatViewQueues();
 
-            // The reversed orientation flips too: NOT (ts > T) becomes ts <= T, which prunes to an interval.
+            // The reversed orientation prunes too: NOT (ts > T) reads as the interval ts <= T.
             assertQuery("select sym from mv")
                     .noLeakCheck()
                     .withPlanContaining("Interval forward scan")
@@ -1801,10 +1828,8 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
 
     @Test
     public void testNullThresholdRejectedInEveryOrientation() throws Exception {
-        // The read-filter flip accepts all four ordering operators with the timestamp on either side, and
-        // trusts constant arithmetic on the strength of DDL having evaluated it, so the rejection has to
-        // span the same set. A NULL threshold expires nothing whichever way the comparison points, and
-        // once flipped it reads as an empty view while every row stays on disk.
+        // A NULL threshold expires nothing whichever way the comparison points, so the rejection spans all four
+        // ordering operators with the timestamp on either side.
         assertMemoryLeak(() -> {
             execute("create table base (sym symbol, ts timestamp) timestamp(ts) partition by day wal");
             for (String predicate : new String[]{
@@ -1848,9 +1873,8 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
 
     @Test
     public void testConstantArithmeticThresholdPrunesPartitions() throws Exception {
-        // A duration written as a product is a compile-time constant, so DDL has already evaluated it and
-        // proven it non-NULL. The parser can therefore flip NOT(ts < T) to the bare ts >= T, and the scan
-        // reduces to an interval. Without that, this policy would read through a full scan.
+        // A duration written as a product is a compile-time constant, so NOT (ts < T) reads as the interval
+        // ts >= T. Without that, this policy would read through a full scan.
         assertMemoryLeak(() -> {
             execute("create table base (sym symbol, ts timestamp) timestamp(ts) partition by day wal");
             execute("create materialized view mv as (select * from base) expire rows when ts < 24*3600*1000000");
@@ -1862,13 +1886,11 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFloatingPointTimestampThresholdKeepsUnflippedFilter() throws Exception {
-        // The parser flips NOT(ts < T) to the bare ts >= T only when WhereClauseParser can turn T into a
-        // timestamp bound: it reads a constant's text as a date or a long, and requires any other bound to
-        // have a type it can convert to a timestamp. A DOUBLE threshold is neither, so the flipped filter
-        // would fail every read with "Invalid date". Such a policy keeps the un-inverted NOT, which compares
-        // ts with the DOUBLE row by row, the same way the cleanup sweep does. An integer threshold still
-        // flips and prunes. 1.5e15 microseconds is 2017-07-14T02:40:00Z, the timestamp of row B.
+    public void testFloatingPointTimestampThresholdKeepsFilter() throws Exception {
+        // NOT (ts < T) reads as an interval only when T is a timestamp bound. A DOUBLE threshold is not one, so
+        // such a policy compares ts with the DOUBLE row by row, the same way the cleanup sweep does, also when
+        // the DOUBLE is a constant expression. An integer threshold still prunes. 1.5e15 microseconds is
+        // 2017-07-14T02:40:00Z, the timestamp of row B.
         assertMemoryLeak(() -> {
             execute("create table base (sym symbol, ts timestamp) timestamp(ts) partition by day wal");
             execute("""
@@ -1878,15 +1900,17 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
                     ('C', '2018-01-01T00:00:00.000000Z'),
                     ('D', '2018-01-02T00:00:00.000000Z')""");
             drainWalQueue();
+            // A query's own filter may not compare the timestamp with a DOUBLE; only a policy does.
+            assertExceptionNoLeakCheck("select sym from base where ts < 1.5 * 1e15", 36, "Invalid date");
             final String[][] cases = {
                     // predicate, visible rows, rows on disk after a sweep, whether the read prunes
                     {"ts < 1500000000000000", "B\nC\nD\n", "3", "true"},
                     {"ts < 1.5e15", "B\nC\nD\n", "3", "false"},
                     {"1.5e15 > ts", "B\nC\nD\n", "3", "false"},
                     {"ts < 1.5 * 1e15", "B\nC\nD\n", "3", "false"},
+                    {"ts < 1.5e15::double", "B\nC\nD\n", "3", "false"},
                     {"ts <= 1.5e15", "C\nD\n", "2", "false"},
-                    {"ts > -1.5", "", "1", "false"},
-                    {"ts < '5'", "A\nB\nC\nD\n", "4", "false"}
+                    {"ts > -1.5", "", "1", "false"}
             };
             for (String[] c : cases) {
                 final String predicate = c[0];
@@ -1912,20 +1936,356 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
                 execute("drop materialized view mv");
                 drainWalAndMatViewQueues();
             }
+
+            // A double negation cancels, so the keep-filter reads as the bare comparison, which is still the policy's.
+            execute("create materialized view mv as (select * from base) expire rows when NOT (ts >= 1.5e15)");
+            drainWalAndMatViewQueues();
+            assertQuery("select sym from mv order by sym").noLeakCheck().returns("sym\nB\nC\nD\n");
+            // The policy compares with a DOUBLE, while a filter of the read over the same scan still may not.
+            final String ownFilter = "select sym from mv where ts > 1.5";
+            assertExceptionNoLeakCheck(ownFilter, ownFilter.indexOf("1.5"), "Invalid date");
         });
     }
 
     @Test
-    public void testClockArithmeticThresholdKeepsUnflippedFilter() throws Exception {
+    public void testClockArithmeticThresholdPrunesPartitions() throws Exception {
         // now() - c is a runtime constant: its value comes from the clock at cursor open, so the DDL check
-        // cannot evaluate it and the parser will not flip it. The policy is correct, it just reads through a
-        // full scan with the un-inverted NOT. dateadd expresses the same window and does prune.
+        // cannot evaluate it. The designated timestamp is never NULL, so the negated comparison reads as an
+        // interval from that value at cursor open, as dateadd does.
         assertMemoryLeak(() -> {
             execute("create table base (sym symbol, ts timestamp) timestamp(ts) partition by day wal");
             execute("create materialized view mv as (select * from base) expire rows when ts < now() - 3_600_000_000L");
             drainWalAndMatViewQueues();
             printSql("explain select * from mv");
-            TestUtils.assertContains(sink, "not (");
+            TestUtils.assertContains(sink, "Interval forward scan on: mv");
+            TestUtils.assertNotContains(sink, "not (");
+        });
+    }
+
+    @Test
+    public void testClockThresholdNullAtReadKeepsEveryRow() throws Exception {
+        // A row expires only when the predicate is TRUE, and a comparison with NULL is FALSE, so a threshold that is
+        // NULL when the cursor opens keeps every row.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into base values ('A', '2024-01-01T00:00:00.000000Z'), ('B', '2024-01-02T00:00:00.000000Z')");
+            drainWalQueue();
+            execute("create materialized view mv as (select * from base) expire rows when ts < now() + null::long");
+            drainWalAndMatViewQueues();
+            assertQuery("select sym, ts from mv").noLeakCheck().timestamp("ts").returns("""
+                    sym\tts
+                    A\t2024-01-01T00:00:00.000000Z
+                    B\t2024-01-02T00:00:00.000000Z
+                    """);
+            assertQuery("select count() from mv").noLeakCheck().noRandomAccess().expectSize().returns("count\n2\n");
+        });
+    }
+
+    @Test
+    public void testSampleByOverKeepAndWindowPolicyStaysInCursor() throws Exception {
+        // These policies read through a query of their own, so the read is a sub-query to the SAMPLE BY. KEEP LATEST
+        // leaves A's NULL row and B's 5.0; KEEP HIGHEST also leaves A's 3.0, since a NULL compares false to the highest.
+        assertMemoryLeak(() -> {
+            createSampleByPolicyFixture(TestTimestampType.MICRO);
+            execute("CREATE MATERIALIZED VIEW kl AS (SELECT * FROM base) EXPIRE ROWS KEEP LATEST PARTITION BY k");
+            execute("CREATE MATERIALIZED VIEW kh AS (SELECT * FROM base) EXPIRE ROWS KEEP HIGHEST ON v PARTITION BY k");
+            execute("CREATE MATERIALIZED VIEW wn AS (SELECT * FROM base) EXPIRE ROWS WHEN v < max(v) OVER (PARTITION BY k)");
+            drainWalAndMatViewQueues();
+            assertSampleByCursor("kl", """
+                    ts\tc
+                    2024-01-03T00:00:00.000000Z\t1
+                    2024-01-04T00:00:00.000000Z\t1
+                    """);
+            final String highest = """
+                    ts\tc
+                    2024-01-01T00:00:00.000000Z\t1
+                    2024-01-03T00:00:00.000000Z\t1
+                    2024-01-04T00:00:00.000000Z\t1
+                    """;
+            assertSampleByCursor("kh", highest);
+            assertSampleByCursor("wn", highest);
+        });
+    }
+
+    @Test
+    public void testSampleByOverScalarPolicyAnswersAsWhereOverBase() throws Exception {
+        // The view runs the SAMPLE BY cursor, the reference the GROUP BY over the bucket of a plain table.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (k SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base SELECT
+                        ('k' || (x % 3))::SYMBOL,
+                        CASE WHEN x % 7 = 0 THEN NULL ELSE (x % 5)::DOUBLE END,
+                        timestamp_sequence('2024-01-01', 3_600_000_000L)
+                    FROM long_sequence(2_000)""");
+            execute("CREATE TABLE other (k SYMBOL, w DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO other SELECT
+                        ('k' || (x % 3))::SYMBOL,
+                        x::DOUBLE,
+                        timestamp_sequence('2024-01-01', 86_400_000_000L)
+                    FROM long_sequence(30)""");
+            drainWalQueue();
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) EXPIRE ROWS WHEN v < 2.0");
+            drainWalAndMatViewQueues();
+
+            final String range = "FROM '2024-01-10' TO '2024-02-20'";
+            final String[] shapes = {
+                    "SELECT ts, count() c FROM @read SAMPLE BY 1d",
+                    "SELECT ts, k, sum(v) s, min(v) lo, max(v) hi FROM @read SAMPLE BY 3h ORDER BY ts, k",
+                    "SELECT ts, first(v) f, last(v) l FROM @read SAMPLE BY 1d",
+                    "SELECT ts, sum(v) s FROM @read SAMPLE BY 1h FILL(NULL)",
+                    "SELECT ts, sum(v) s FROM @read SAMPLE BY 1h FILL(PREV)",
+                    "SELECT ts, count() c FROM @read SAMPLE BY 1h FILL(0)",
+                    "SELECT ts, k, sum(v) s FROM @read SAMPLE BY 1d FILL(PREV) ORDER BY ts, k",
+                    "SELECT ts, sum(v) s FROM @read SAMPLE BY 1d " + range,
+                    "SELECT ts, sum(v) s FROM @read SAMPLE BY 1d " + range + " FILL(NULL)",
+                    "SELECT ts, k, sum(v) s FROM @read SAMPLE BY 1d " + range + " FILL(0) ORDER BY ts, k",
+                    "SELECT ts, count() c FROM @read SAMPLE BY 1d ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'",
+                    "SELECT ts, count() c FROM @read SAMPLE BY 1d ALIGN TO CALENDAR WITH OFFSET '01:00'",
+                    "SELECT ts, count() c FROM @read SAMPLE BY 1d ALIGN TO FIRST OBSERVATION",
+                    "SELECT ts, sum(v) s FROM @read SAMPLE BY 1h FILL(LINEAR)",
+                    "SELECT ts, count() c FROM @read SAMPLE BY 1d ORDER BY ts DESC LIMIT 2",
+                    "SELECT ts, count() c FROM @read SAMPLE BY 1d LIMIT 3",
+                    "SELECT ts, count() c FROM @read SAMPLE BY 1d LIMIT -3",
+                    "SELECT ts, count() c FROM @read LATEST ON ts PARTITION BY k SAMPLE BY 1d",
+                    "SELECT ts, count() c FROM @read LATEST ON ts PARTITION BY k SAMPLE BY 1d FILL(0)",
+                    "SELECT ts, count() c FROM @read LATEST ON ts PARTITION BY k SAMPLE BY 1d " + range,
+                    "SELECT ts, count() c FROM @read LATEST ON ts PARTITION BY k SAMPLE BY 1d " + range + " FILL(0)",
+                    "SELECT * FROM (SELECT ts, count() c FROM @read SAMPLE BY 1d) WHERE ts >= '2024-02-01'",
+                    "SELECT * FROM (SELECT ts, k, count() c FROM @read SAMPLE BY 1d) WHERE k = 'k1' ORDER BY ts",
+                    "SELECT * FROM (SELECT ts, count() c FROM @read SAMPLE BY 1d) ASOF JOIN other",
+                    "WITH c AS (SELECT ts, count() c FROM @read SAMPLE BY 1d) SELECT a.ts, a.c, b.c FROM c a JOIN c b ON (ts)",
+                    "SELECT ts, count() c FROM @read SAMPLE BY 1d UNION ALL SELECT ts, count() c FROM @read SAMPLE BY 2d",
+                    "SELECT count() FROM (SELECT ts, count() c FROM @read SAMPLE BY 1d)",
+            };
+            for (String shape : shapes) {
+                assertSqlCursors(shape.replace("@read", "base WHERE NOT (v < 2.0)"), shape.replace("@read", "mv"));
+            }
+            assertSqlCursors(
+                    "SELECT ts, count() c FROM base LATEST BY k WHERE NOT (v < 2.0) SAMPLE BY 1d",
+                    "SELECT ts, count() c FROM mv LATEST BY k SAMPLE BY 1d"
+            );
+            assertSqlCursors(
+                    "SELECT ts, count() c FROM base WHERE NOT (v < 2.0) AND k = 'k1' SAMPLE BY 1d",
+                    "SELECT ts, count() c FROM mv WHERE k = 'k1' SAMPLE BY 1d"
+            );
+            assertSqlCursors(
+                    "SELECT x.ts, count() c FROM base x JOIN other y ON (k) WHERE NOT (x.v < 2.0) SAMPLE BY 1d",
+                    "SELECT x.ts, count() c FROM mv x JOIN other y ON (k) SAMPLE BY 1d"
+            );
+            assertSqlCursors(
+                    "SELECT x.ts, count() c FROM base x ASOF JOIN other y ON (k) WHERE NOT (x.v < 2.0) SAMPLE BY 1d",
+                    "SELECT x.ts, count() c FROM mv x ASOF JOIN other y ON (k) SAMPLE BY 1d"
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByOverScalarPolicyBucketsOnLatestOnColumn() throws Exception {
+        // LATEST ON names a timestamp the read does not designate, so the SAMPLE BY buckets on that column. The policy
+        // hides A's row with the highest ts2, so A's latest row is the one at 2024-01-05.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (k SYMBOL, v DOUBLE, ts TIMESTAMP, ts2 TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base VALUES
+                    ('A', 1.0, '2024-01-01T00:00:00.000000Z', '2024-01-05T00:00:00.000000Z'),
+                    ('A', -1.0, '2024-01-02T00:00:00.000000Z', '2024-01-07T00:00:00.000000Z'),
+                    ('B', 5.0, '2024-01-03T00:00:00.000000Z', '2024-01-06T00:00:00.000000Z')""");
+            drainWalQueue();
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) EXPIRE ROWS WHEN v < 0");
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT ts2, count() c FROM mv LATEST ON ts2 PARTITION BY k SAMPLE BY 1d")
+                    .noLeakCheck().timestamp("ts2").expectSize()
+                    .returns("""
+                            ts2\tc
+                            2024-01-05T00:00:00.000000Z\t1
+                            2024-01-06T00:00:00.000000Z\t1
+                            """);
+        });
+    }
+
+    @Test
+    public void testSampleByOverScalarPolicyFiltersBeforeLatestOn() throws Exception {
+        // The policy hides B's newest row, so B's latest row is its older -1.0: a LATEST ON that read past the filter
+        // would put B in the 2024-01-03 bucket.
+        assertMemoryLeak(() -> {
+            createSampleByPolicyFixture(TestTimestampType.MICRO);
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) EXPIRE ROWS WHEN v > 4");
+            drainWalAndMatViewQueues();
+            final String buckets = """
+                    ts\tc
+                    2024-01-02T00:00:00.000000Z\t1
+                    2024-01-04T00:00:00.000000Z\t1
+                    """;
+            assertQuery("SELECT ts, count() c FROM mv LATEST ON ts PARTITION BY k SAMPLE BY 1d")
+                    .noLeakCheck().timestamp("ts").expectSize()
+                    .withPlanContaining("filter: not (4<v)")
+                    .returns(buckets);
+            assertQuery("SELECT ts, count() c FROM mv LATEST BY k SAMPLE BY 1d")
+                    .noLeakCheck().timestamp("ts").noRandomAccess()
+                    .returns(buckets);
+            assertQuery("SELECT ts, count() c FROM mv LATEST ON ts PARTITION BY k SAMPLE BY 1d FILL(0)")
+                    .noLeakCheck().timestamp("ts").noRandomAccess()
+                    .returns("""
+                            ts\tc
+                            2024-01-02T00:00:00.000000Z\t1
+                            2024-01-03T00:00:00.000000Z\t0
+                            2024-01-04T00:00:00.000000Z\t1
+                            """);
+            // The range applies below the LATEST ON, so A's latest row before TO is its 3.0.
+            assertQuery("SELECT ts, count() c FROM mv LATEST ON ts PARTITION BY k SAMPLE BY 1d FROM '2024-01-01' TO '2024-01-03'")
+                    .noLeakCheck().timestamp("ts").noRandomAccess()
+                    .returns("""
+                            ts\tc
+                            2024-01-01T00:00:00.000000Z\t1
+                            2024-01-02T00:00:00.000000Z\t1
+                            """);
+            assertQuery("SELECT ts, count() c FROM mv LATEST ON ts PARTITION BY k SAMPLE BY 1d FROM '2024-01-01' TO '2024-01-06' FILL(0)")
+                    .noLeakCheck().timestamp("ts").noRandomAccess()
+                    .returns("""
+                            ts\tc
+                            2024-01-01T00:00:00.000000Z\t0
+                            2024-01-02T00:00:00.000000Z\t1
+                            2024-01-03T00:00:00.000000Z\t0
+                            2024-01-04T00:00:00.000000Z\t1
+                            2024-01-05T00:00:00.000000Z\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testSampleByOverScalarPolicyHidingEveryRow() throws Exception {
+        assertMemoryLeak(() -> {
+            createSampleByPolicyFixture(TestTimestampType.MICRO);
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) EXPIRE ROWS WHEN v < 100 OR v IS NULL");
+            drainWalAndMatViewQueues();
+            assertSampleByCursor("mv", "ts\tc\n");
+            assertQuery("SELECT ts, count() c FROM mv SAMPLE BY 1d FROM '2024-01-01' TO '2024-01-03' FILL(0)")
+                    .noLeakCheck().timestamp("ts").noRandomAccess()
+                    .returns("""
+                            ts\tc
+                            2024-01-01T00:00:00.000000Z\t0
+                            2024-01-02T00:00:00.000000Z\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testSampleByOverScalarPolicyStreams() throws Exception {
+        // The SAMPLE BY cursor emits a bucket as it closes, so a LIMIT reads only the rows of the buckets it returns and
+        // a keyed read holds the keys of one bucket. WHEN v < 0 hides B's -1.0 and keeps A's NULL; WHEN ts < ... hides
+        // both rows of the first day.
+        assertMemoryLeak(() -> {
+            final int previousJitMode = sqlExecutionContext.getJitMode();
+            try {
+                for (TestTimestampType timestampType : TestTimestampType.values()) {
+                    createSampleByPolicyFixture(timestampType);
+                    execute("CREATE MATERIALIZED VIEW val AS (SELECT * FROM base) EXPIRE ROWS WHEN v < 0");
+                    execute("CREATE MATERIALIZED VIEW tim AS (SELECT * FROM base) EXPIRE ROWS WHEN ts < '2024-01-02T00:00:00.000000Z'");
+                    drainWalAndMatViewQueues();
+                    final String midnight = "T00:00:00.000000" + getTimestampSuffix(timestampType.getTypeName()) + "\t";
+                    for (int jitMode : new int[]{SqlJitMode.JIT_MODE_DISABLED, SqlJitMode.JIT_MODE_ENABLED}) {
+                        sqlExecutionContext.setJitMode(jitMode);
+                        assertSampleByCursor("val", "ts\tc\n"
+                                + "2024-01-01" + midnight + "2\n"
+                                + "2024-01-03" + midnight + "1\n"
+                                + "2024-01-04" + midnight + "1\n");
+                        assertSampleByCursor("tim", "ts\tc\n"
+                                + "2024-01-02" + midnight + "1\n"
+                                + "2024-01-03" + midnight + "1\n"
+                                + "2024-01-04" + midnight + "1\n");
+                        assertQuery("SELECT ts, count() c FROM val SAMPLE BY 1d LIMIT 2")
+                                .noLeakCheck().timestamp("ts").noRandomAccess()
+                                .withPlanContaining("Limit value: 2")
+                                .withPlanContaining("Sample By")
+                                .returns("ts\tc\n"
+                                        + "2024-01-01" + midnight + "2\n"
+                                        + "2024-01-03" + midnight + "1\n");
+                        assertQuery("SELECT * FROM (SELECT ts, count() c FROM tim SAMPLE BY 1d) LIMIT 2")
+                                .noLeakCheck().timestamp("ts").noRandomAccess()
+                                .withPlanContaining("Limit value: 2")
+                                .withPlanContaining("Sample By")
+                                .returns("ts\tc\n"
+                                        + "2024-01-02" + midnight + "1\n"
+                                        + "2024-01-03" + midnight + "1\n");
+                        assertQuery("SELECT ts, k, count() c FROM val SAMPLE BY 1d")
+                                .noLeakCheck().timestamp("ts").noRandomAccess()
+                                .withPlanContaining("Sample By")
+                                .returns("ts\tk\tc\n"
+                                        + "2024-01-01" + midnight + "A\t2\n"
+                                        + "2024-01-03" + midnight + "B\t1\n"
+                                        + "2024-01-04" + midnight + "A\t1\n");
+                        assertQuery("SELECT ts, count() c FROM val SAMPLE BY 1d FROM '2024-01-01' TO '2024-01-06' FILL(0)")
+                                .noLeakCheck().timestamp("ts").noRandomAccess()
+                                .withPlanContaining("Sample By")
+                                .returns("ts\tc\n"
+                                        + "2024-01-01" + midnight + "2\n"
+                                        + "2024-01-02" + midnight + "0\n"
+                                        + "2024-01-03" + midnight + "1\n"
+                                        + "2024-01-04" + midnight + "1\n"
+                                        + "2024-01-05" + midnight + "0\n");
+                        assertQuery("SELECT ts, count() c FROM tim SAMPLE BY 1d FROM '2024-01-01' TO '2024-01-06' FILL(0)")
+                                .noLeakCheck().timestamp("ts").noRandomAccess()
+                                .withPlanContaining("Sample By")
+                                .returns("ts\tc\n"
+                                        + "2024-01-01" + midnight + "0\n"
+                                        + "2024-01-02" + midnight + "1\n"
+                                        + "2024-01-03" + midnight + "1\n"
+                                        + "2024-01-04" + midnight + "1\n"
+                                        + "2024-01-05" + midnight + "0\n");
+                    }
+                    execute("DROP MATERIALIZED VIEW val");
+                    execute("DROP MATERIALIZED VIEW tim");
+                    execute("DROP TABLE base");
+                    drainWalAndMatViewQueues();
+                }
+            } finally {
+                sqlExecutionContext.setJitMode(previousJitMode);
+            }
+        });
+    }
+
+    @Test
+    public void testSampleByOverTableFunctionKeepsItsPlan() throws Exception {
+        assertMemoryLeak(() -> assertQuery("SELECT generate_series, count() c FROM generate_series('2024-01-01', '2024-01-03', '1d') SAMPLE BY 1d")
+                .noLeakCheck()
+                .withPlanContaining("GroupBy vectorized: false")
+                .timestamp("generate_series")
+                .expectSize()
+                .returns("""
+                        generate_series\tc
+                        2024-01-01T00:00:00.000000Z\t1
+                        2024-01-02T00:00:00.000000Z\t1
+                        2024-01-03T00:00:00.000000Z\t1
+                        """));
+    }
+
+    @Test
+    public void testDeprecatedLatestByOverPolicyFeedsSampleBy() throws Exception {
+        // A scalar policy reads the table directly, so LATEST BY publishes the designated timestamp a SAMPLE BY above
+        // it needs. A KEEP policy reads through LatestBy light, which publishes none.
+        assertMemoryLeak(() -> {
+            execute("create table base (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("""
+                    insert into base values
+                    ('A', 1.0, '2024-01-01T00:00:00.000000Z'),
+                    ('A', 3.0, '2024-01-02T00:00:00.000000Z'),
+                    ('B', -1.0, '2024-01-03T00:00:00.000000Z')""");
+            drainWalQueue();
+            execute("create materialized view mv as (select * from base)");
+            drainWalAndMatViewQueues();
+            final String sql = "select ts, count() c from (select * from mv latest by k) sample by 1d";
+            // Each policy expires only the B row, which leaves the newest A row as the one latest row.
+            for (String policy : new String[]{"when v < 0", "when ts > '2024-01-02T12:00:00.000000Z'"}) {
+                execute("alter materialized view mv set expire rows " + policy);
+                drainWalQueue();
+                assertQuery(sql).noLeakCheck().noRandomAccess().timestamp("ts")
+                        .returns("ts\tc\n2024-01-02T00:00:00.000000Z\t1\n");
+            }
+            execute("alter materialized view mv set expire rows keep highest on v partition by k");
+            drainWalQueue();
+            assertExceptionNoLeakCheck(sql, sql.indexOf("select *"), "TIMESTAMP column is required but not provided");
         });
     }
 
@@ -1967,10 +2327,8 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
 
     @Test
     public void testRetentionWindowWithNegativeStridePrunesPartitions() throws Exception {
-        // A retention window is written with a negative dateadd stride, and the parser builds that -1 as a
-        // one-operand minus over the constant 1. That subtree must count as non-null, or the whole dateadd
-        // threshold reads as possibly-NULL, the flip is refused, and the view loses the partition pruning
-        // this policy shape exists for.
+        // A retention window is written with a negative dateadd stride, and the view must keep the partition
+        // pruning this policy shape exists for.
         assertMemoryLeak(() -> {
             execute("create table base (sym symbol, ts timestamp) timestamp(ts) partition by day wal");
             execute("create materialized view mv_window as (select * from base) expire rows when ts < dateadd('h', -1, now())");
@@ -2141,11 +2499,11 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
         // WINDOW JOIN and HORIZON JOIN need time frames from their right-hand side. A policy that is not a
         // cutoff on the designated timestamp reads the view through a row filter, which has none. HORIZON
         // JOIN takes a plain per-row filter off its right-hand side and applies it while it looks up the
-        // prevailing row, so a value WHEN policy, clock arithmetic included, keeps it working. WINDOW JOIN
-        // takes no filter, and a KEEP or window WHEN policy decides each row against the other rows, so its
-        // read has no per-row filter to take. Those joins are refused with an error that names the view the
-        // caller wrote: WINDOW JOIN's names the missing cutoff, HORIZON JOIN's the KEEP or window policy.
-        // A timestamp cutoff reads as an interval scan and keeps both joins working.
+        // prevailing row, so a value WHEN policy keeps it working. WINDOW JOIN takes no filter, and a KEEP or
+        // window WHEN policy decides each row against the other rows, so its read has no per-row filter to take.
+        // Those joins are refused with an error that names the view the caller wrote: WINDOW JOIN's names the
+        // missing cutoff, HORIZON JOIN's the KEEP or window policy. A timestamp cutoff, clock arithmetic
+        // included, reads as an interval scan and keeps both joins working.
         assertMemoryLeak(() -> {
             execute("create table prices (ts timestamp, sym symbol, price double) timestamp(ts) partition by day wal");
             execute("create table trades (ts timestamp, sym symbol, qty double) timestamp(ts) partition by day");
@@ -2203,13 +2561,19 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
                     5.5\t5.0
                     """);
 
-            // now() - c does not flip to an interval, so it reads through a per-row filter too. An hour before
+            // now() - c reads as an interval from the clock at cursor open. An hour before
             // the clock keeps only the 2024-02-10 prices: the first two trades find no price, and the last two
             // see 20.0 and -2.0.
             setCurrentMicros(MicrosTimestampDriver.floor("2024-02-10T00:01:00.000000Z"));
             execute("alter materialized view pmv set expire rows when ts < now() - 3_600_000_000L");
             drainWalAndMatViewQueues();
-            assertExceptionNoLeakCheck(windowJoin, windowJoin.indexOf("pmv"), "right side of window join" + cutoffReason);
+            assertQuery(windowJoin).noLeakCheck().timestamp("ts").returns("""
+                    sym\tts\twp
+                    A\t2020-01-01T00:00:00.000000Z\tnull
+                    A\t2024-01-01T00:00:10.000000Z\tnull
+                    A\t2024-02-10T00:00:10.000000Z\t20.0
+                    B\t2024-02-10T00:00:50.000000Z\t28.0
+                    """);
             assertQuery(horizonJoin).noLeakCheck().noRandomAccess().expectSize().returns("""
                     avg
                     9.0
@@ -2489,78 +2853,6 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("mv"))) {
                 org.junit.Assert.assertNull(metadata.getExpiryPredicate());
             }
-        });
-    }
-
-    @Test
-    public void testReadFilterMemoizesFlipEligibilityOnCairoTable() throws Exception {
-        // The parser derives the keep-filter's flip verdict once per CairoTable instance; every later
-        // compile reads the memo. Proven by planting the opposite verdict on the live instance: a fresh
-        // compile (distinct SQL text, so the query cache cannot serve it) obeys the planted value. A
-        // policy or metadata change replaces the CairoTable, so a stale memo cannot survive a change.
-        assertMemoryLeak(() -> {
-            execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
-            execute("create materialized view mv as (select * from base) expire rows when ts < '2024-01-02T00:00:00.000000Z'");
-            drainWalAndMatViewQueues();
-
-            final CairoTable table;
-            try (MetadataCacheReader ro = engine.getMetadataCache().readLock()) {
-                table = ro.getTable(engine.verifyTableName("mv"));
-            }
-            assertNotNull(table);
-            assertEquals(CairoTable.EXPIRY_FLIP_UNKNOWN, table.getExpiryFlipEligibility());
-
-            // A DECLARE-carrying compile shares the memo with every other compile: the keep-filter and the
-            // flip probe both parse with no declarations in scope, so the verdict cannot vary by query
-            // (testDeclareCannotSteerKeepFilter covers the visibility side of that).
-            printSql("explain declare @unused := 1 select * from mv");
-            TestUtils.assertContains(sink, "Interval forward scan");
-            assertEquals(CairoTable.EXPIRY_FLIP_YES, table.getExpiryFlipEligibility());
-
-            printSql("explain select * from mv");
-            TestUtils.assertContains(sink, "Interval forward scan");
-            assertEquals(CairoTable.EXPIRY_FLIP_YES, table.getExpiryFlipEligibility());
-
-            // Without the flip the filter stays the NOT the parser wrote, which no longer yields a
-            // timestamp interval, so the scan covers every partition.
-            table.setExpiryFlipEligibility(CairoTable.EXPIRY_FLIP_NO);
-            printSql("explain select * from mv where true");
-            TestUtils.assertContains(sink, "not (");
-            Assert.assertFalse(sink.toString(), sink.toString().contains("Interval forward scan"));
-
-            table.setExpiryFlipEligibility(CairoTable.EXPIRY_FLIP_YES);
-            printSql("explain select * from mv where not false");
-            TestUtils.assertContains(sink, "Interval forward scan");
-        });
-    }
-
-    @Test
-    public void testReadFilterMemoizesWindowColumnListOnCairoTable() throws Exception {
-        // The window read-filter's outer projection CSV is derived once per CairoTable instance; every
-        // later compile reads the memo. Proven by planting a narrower projection: a fresh compile serves
-        // only the planted columns.
-        assertMemoryLeak(() -> {
-            execute("create table base (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
-            execute("create materialized view mv as (select * from base) expire rows keep highest on v partition by k");
-            drainWalAndMatViewQueues();
-
-            printSql("select * from mv");
-            TestUtils.assertEquals("k\tv\tts\n", sink);
-
-            final CairoTable table;
-            try (MetadataCacheReader ro = engine.getMetadataCache().readLock()) {
-                table = ro.getTable(engine.verifyTableName("mv"));
-            }
-            assertNotNull(table);
-            assertEquals("\"k\",\"v\",\"ts\"", table.getExpiryQuotedColumnsCsv());
-
-            table.setExpiryQuotedColumnsCsv("\"k\",\"ts\"");
-            printSql("select * from mv where true");
-            TestUtils.assertEquals("k\tts\n", sink);
-
-            table.setExpiryQuotedColumnsCsv(null);
-            printSql("select * from mv where not false");
-            TestUtils.assertEquals("k\tv\tts\n", sink);
         });
     }
 
@@ -3311,11 +3603,11 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
                 }
                 assertEquals(viewSqls[i], created, sortedDependencies(dependencies));
             }
-            // the "*" of v0 lets the view cover columns added to t later; v1 and v2 read mv through the
-            // policy's synthetic "SELECT * FROM mv WHERE ...", which adds the policy column v
+            // the "*" of v0 lets the view cover columns added to t later; v1 and v2 read mv through its
+            // policy, which adds the policy column v
             assertDependencies("v0", "{t=[*, k, status, ts, x]}");
-            assertDependencies("v1", "{mv=[*, k, v]}");
-            assertDependencies("v2", "{mv=[*, k, v], t=[k, status, ts]}");
+            assertDependencies("v1", "{mv=[k, v]}");
+            assertDependencies("v2", "{mv=[k, v], t=[k, status, ts]}");
         });
     }
 
@@ -3326,7 +3618,7 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
                 .returns("expire_clause\n" + expected + "\n");
     }
 
-    // Asserts that the keep-filter reached the plan as the NOT the parser wrote, never as the inverted
+    // Asserts that the keep-filter reached the plan as the NOT a read binds, never as the inverted
     // comparison, and that the query returns the rows the un-inverted filter keeps.
     private void assertKeepFilterSurvives(String sql, String expected) throws Exception {
         assertKeepFilterSurvives(sql, null, expected);
@@ -3434,6 +3726,25 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
 
     // Base table plus a policied passthrough mat view "mv" over a value column that holds a NULL: row A
     // expires, row B has a NULL v and is kept, row C is kept.
+    private void assertSampleByCursor(String view, String expected) throws Exception {
+        assertQuery("SELECT ts, count() c FROM " + view + " SAMPLE BY 1d")
+                .noLeakCheck().timestamp("ts").noRandomAccess()
+                .withPlanContaining("Sample By")
+                .returns(expected);
+    }
+
+    private static void createSampleByPolicyFixture(TestTimestampType timestampType) throws Exception {
+        execute("CREATE TABLE base (k SYMBOL, v DOUBLE, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("""
+                INSERT INTO base VALUES
+                ('A', 1.0, '2024-01-01T00:00:00.000000Z'),
+                ('A', 3.0, '2024-01-01T12:00:00.000000Z'),
+                ('B', -1.0, '2024-01-02T00:00:00.000000Z'),
+                ('B', 5.0, '2024-01-03T00:00:00.000000Z'),
+                ('A', null, '2024-01-04T00:00:00.000000Z')""");
+        drainWalQueue();
+    }
+
     private void createValuePolicyView() throws Exception {
         execute("CREATE TABLE base (sym SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
         execute("""
@@ -3615,13 +3926,11 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
         drainWalAndMatViewQueues();
     }
 
-    // A scalar EXPIRE ROWS policy rewrites the view reference into a "SELECT * FROM v WHERE <keep>"
-    // sub-query. A LATEST ON written above that sub-query reads a derived cursor, which resolves to
-    // LatestByLightRecordCursorFactory: it emits one row per partition key in map-insertion order and so
-    // publishes no designated timestamp. SqlOptimiser.pushLatestByToTableModel hoists the table read back
-    // up into the LATEST ON model, which restores the direct read, its designated timestamp and its
-    // timestamp ordering - so SAMPLE BY and ASOF JOIN above the LATEST ON compile and read correctly.
-    // The key here is deliberately NOT indexed: the hoist must not depend on an index for this.
+    // A scalar EXPIRE ROWS policy binds as a filter over the scan, so a LATEST ON over the read is a direct
+    // read of the table, with its designated timestamp and its timestamp ordering - so SAMPLE BY and ASOF JOIN
+    // above the LATEST ON compile and read correctly. LatestByLightRecordCursorFactory would emit one row per
+    // partition key in map-insertion order and publish no designated timestamp.
+    // The key here is deliberately NOT indexed: the direct read must not depend on an index for this.
     @Test
     public void testScalarPoliciedViewCarriesDesignatedTimestampThroughLatestOn() throws Exception {
         assertMemoryLeak(() -> {
@@ -3672,13 +3981,12 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
         });
     }
 
-    // Known limitation. The relative and window policies rewrite the view reference into a shape the hoist
-    // cannot take (its own LATEST ON, or a projection over a window function), so a LATEST ON above them
-    // still reads a derived cursor through LatestBy light, which carries no designated timestamp. Reading
+    // Known limitation. The relative and window policies read through a LATEST ON of their own or a projection
+    // over a window function, so a LATEST ON above them reads a derived cursor through LatestBy light, which carries no designated timestamp. Reading
     // such a view directly works; only a timestamp-requiring operator ABOVE a LATEST ON of it is refused.
     // Refusing is the correct outcome while the base is unordered - advertising a timestamp over
-    // key-ordered rows would give silently wrong SAMPLE BY buckets. Update this test if the rewrite
-    // changes to produce a hoistable shape.
+    // key-ordered rows would give silently wrong SAMPLE BY buckets. Update this test if those reads
+    // change to publish a timestamp.
     @Test
     public void testRelativePoliciedViewRejectsTimestampOperatorAboveLatestOn() throws Exception {
         assertMemoryLeak(() -> {

@@ -106,7 +106,7 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testExpiryWindowCompositeKeyRequiresEveryKey() throws Exception {
+    public void testExpiryWindowCompositeKeyMovesAnyKeyBelowWindow() throws Exception {
         assertMemoryLeak(() -> {
             createIndexedView("EXPIRE ROWS KEEP HIGHEST ON v PARTITION BY k, region");
 
@@ -118,11 +118,16 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlanContaining("Index forward scan on: k");
 
-            // A predicate on only one component leaves the composite partition identity open. The barrier
-            // keeps the whole-view window plan rather than applying the partial key constraint below it.
+            // A predicate on one component still drops whole partitions, so what the window computes over the
+            // others stays the same and the predicate moves below it.
+            assertQuery("SELECT k, region, v FROM mv WHERE k = 'A' ORDER BY region").noLeakCheck().returns("""
+                    k\tregion\tv
+                    A\tX\t9.0
+                    A\tY\t8.0
+                    """);
             assertQuery("SELECT k, region, v FROM mv WHERE k = 'A'")
                     .noLeakCheck()
-                    .assertsPlanNotContaining("Index forward scan on: k");
+                    .assertsPlanContaining("Index forward scan on: k");
         });
     }
 
@@ -204,11 +209,10 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testExpiryWindowNonKeyEqualityShapesStayOutsideWindow() throws Exception {
-        // Only an equality between a semantic partition key and a constant or bind variable is cloned below
-        // the window. Every other shape has to stay outside it, and an OR is the one that shows why: the
-        // window would see a subset that no longer holds key A's real maximum, and the query would report
-        // A's second-highest row as a survivor.
+    public void testExpiryWindowPredicatesOverKeysOnlyMoveBelowWindow() throws Exception {
+        // Only a predicate that reads nothing but partition keys moves below the window. One that reads another
+        // column has to stay outside it, and an OR is the one that shows why: the window would see a subset that
+        // no longer holds key A's real maximum, and the query would report A's second-highest row as a survivor.
         assertMemoryLeak(() -> {
             createIndexedView("EXPIRE ROWS KEEP HIGHEST ON v PARTITION BY k");
             // Kept rows: (A, X, 9.0) and (B, X, 7.0).
@@ -220,16 +224,16 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlanNotContaining("Index forward scan on: k");
 
-            // An IN list is not an '=' node, so it stays outside even though it names the key.
+            // An IN list over the key drops whole partitions.
             assertQuery("SELECT k, region, v FROM mv WHERE k IN ('A')").noLeakCheck().returns("""
                     k	region	v
                     A	X	9.0
                     """);
             assertQuery("SELECT k, region, v FROM mv WHERE k IN ('A')")
                     .noLeakCheck()
-                    .assertsPlanNotContaining("Index forward scan on: k");
+                    .assertsPlanContaining("Index forward scan on: k");
 
-            // A range leaves the partition identity open.
+            // So does a range over the key, which the index does not serve.
             assertQuery("SELECT k, region, v FROM mv WHERE k > 'A'").noLeakCheck().returns("""
                     k	region	v
                     B	X	7.0

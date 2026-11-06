@@ -260,6 +260,7 @@ impl PartitionFrameWriter {
             0, // unused_bytes: new file, no dead space
             self.squash_tracker,
             self.seq_txn,
+            true,
         )
         .context("generate_parquet_metadata failed")?;
 

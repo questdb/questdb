@@ -38,6 +38,30 @@ import java.util.Map;
 public class LowerCaseCharSequenceIntHashMapTest {
 
     @Test
+    public void testClear() {
+        final LowerCaseCharSequenceIntHashMap map = new LowerCaseCharSequenceIntHashMap();
+        map.clear();
+        Assert.assertEquals(0, map.size());
+        for (int i = 0; i < 100; i++) {
+            map.put("k" + i, i);
+        }
+        map.clear();
+        Assert.assertEquals(0, map.size());
+        Assert.assertEquals(0, map.keys().size());
+        for (int i = 0; i < 100; i++) {
+            Assert.assertEquals(-1, map.get("K" + i));
+        }
+        map.put("a", 1);
+        Assert.assertEquals(1, map.removeEntry("A"));
+        map.clear();
+        map.clear();
+        Assert.assertEquals(-1, map.get("a"));
+        map.inc("A");
+        Assert.assertEquals(1, map.get("a"));
+        Assert.assertEquals(1, map.size());
+    }
+
+    @Test
     public void testInc() {
         final LowerCaseCharSequenceIntHashMap lowerCaseMap = new LowerCaseCharSequenceIntHashMap();
 

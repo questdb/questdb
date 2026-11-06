@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.regex;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
@@ -95,6 +96,11 @@ public class RegexpReplaceVarcharFunctionFactory extends RegexpReplaceStrFunctio
     }
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.UNDEFINED;
+    }
+
+    @Override
     public String getSignature() {
         return "regexp_replace(ØSS)";
     }
@@ -117,10 +123,12 @@ public class RegexpReplaceVarcharFunctionFactory extends RegexpReplaceStrFunctio
         if (!pattern.isRuntimeConstant() && !replacement.isRuntimeConstant()) {
             final CharSequence patternStr = pattern.getStrA(null);
             if (patternStr == null) {
+                Misc.freeObjList(args);
                 return VarcharConstant.NULL;
             }
             CharSequence replacementStr = replacement.getStrA(null);
             if (replacementStr == null) {
+                Misc.freeObjList(args);
                 return VarcharConstant.NULL;
             }
             // Optimize for patterns like "^https?://(?:www\.)?([^/]+)/.*$" and replacements like "$1".
@@ -133,6 +141,7 @@ public class RegexpReplaceVarcharFunctionFactory extends RegexpReplaceStrFunctio
             ) {
                 final Matcher matcher = RegexUtils.createMatcher(pattern, patternPos);
                 if (matcher == null) {
+                    Misc.freeObjList(args);
                     return VarcharConstant.NULL;
                 }
                 try {
@@ -259,9 +268,9 @@ public class RegexpReplaceVarcharFunctionFactory extends RegexpReplaceStrFunctio
 
         @Override
         public void close() {
-            UnaryFunction.super.close();
             Misc.free(utf8SinkA);
             Misc.free(utf8SinkB);
+            UnaryFunction.super.close();
         }
 
         @Override
@@ -368,9 +377,9 @@ public class RegexpReplaceVarcharFunctionFactory extends RegexpReplaceStrFunctio
 
         @Override
         public void close() {
-            UnaryFunction.super.close();
             Misc.free(utf16SinkA);
             Misc.free(utf16SinkB);
+            UnaryFunction.super.close();
         }
 
         @Override

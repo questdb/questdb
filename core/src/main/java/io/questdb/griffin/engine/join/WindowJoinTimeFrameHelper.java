@@ -453,6 +453,16 @@ public class WindowJoinTimeFrameHelper {
         return isFrameCursorExhausted;
     }
 
+    /**
+     * Moves the cursor to the given frame and opens it. The bookmark stays as it is, so the next
+     * {@link #findRowLo(long, long, boolean)} still starts from it. The record does not move:
+     * position it with {@code recordAt()} before reading it.
+     */
+    public void jumpTo(int frameIndex) {
+        timeFrameCursor.jumpTo(frameIndex);
+        timeFrameCursor.open();
+    }
+
     public SymbolTable newSymbolTable(int columnIndex) {
         return timeFrameCursor.newSymbolTable(columnIndex);
     }

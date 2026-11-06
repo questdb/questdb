@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
@@ -36,6 +37,11 @@ import static io.questdb.griffin.engine.functions.groupby.ApproxPercentileDouble
 
 public class ApproxPercentileDoubleGroupByDefaultFunctionFactory implements FunctionFactory {
     private static final int DEFAULT_PRECISION = 1;
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.DOUBLE;
+    }
 
     @Override
     public String getSignature() {

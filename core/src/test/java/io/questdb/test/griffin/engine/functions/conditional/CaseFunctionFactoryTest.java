@@ -595,6 +595,23 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCharOrSymbolBeforeUuidOrIPv4() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT x, 'a'::char c, 'abc' s, 'abc'::symbol sym, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'::uuid u, '1.2.3.4'::ipv4 ip
+                        FROM long_sequence(1)
+                    )""");
+            assertQuery("SELECT CASE WHEN x > 0 THEN c WHEN x > 1 THEN s ELSE u END FROM t")
+                    .noLeakCheck()
+                    .fails(53, "inconvertible types: UUID -> STRING [from=UUID, to=STRING]");
+            assertQuery("SELECT CASE WHEN x > 0 THEN sym WHEN x > 1 THEN s ELSE ip END FROM t")
+                    .noLeakCheck()
+                    .fails(55, "inconvertible types: IPv4 -> STRING [from=IPv4, to=STRING]");
+        });
+    }
+
+    @Test
     public void testCharToVarcharCast() throws Exception {
         assertQuery("""
                 select\s
@@ -621,6 +638,46 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                         895\tf
                         -6\t1W씌䒙\uD8F2\uDE8E>
                         """);
+    }
+
+    @Test
+    public void testCommonTypeErrorIndependentOfValueOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (b BOOLEAN, c CHAR, s SYMBOL, ip IPv4, u UUID)");
+            execute("""
+                    INSERT INTO t VALUES
+                        (true, 'x', 'sym', '1.2.3.4', '11111111-1111-1111-1111-111111111111'),
+                        (false, 'y', 'abc', '1.2.3.4', '11111111-1111-1111-1111-111111111111')
+                    """);
+            assertQuery("SELECT CASE WHEN b THEN c WHEN NOT b THEN s ELSE ip END r FROM t")
+                    .noLeakCheck()
+                    .fails(49, "inconvertible types: IPv4 -> STRING [from=IPv4, to=STRING]");
+            assertQuery("SELECT CASE WHEN b THEN s WHEN NOT b THEN c ELSE ip END r FROM t")
+                    .noLeakCheck()
+                    .fails(49, "inconvertible types: IPv4 -> STRING [from=IPv4, to=STRING]");
+            assertQuery("SELECT CASE WHEN b THEN c WHEN NOT b THEN s ELSE u END r FROM t")
+                    .noLeakCheck()
+                    .fails(49, "inconvertible types: UUID -> STRING [from=UUID, to=STRING]");
+            assertQuery("SELECT CASE WHEN b THEN s WHEN NOT b THEN c ELSE u END r FROM t")
+                    .noLeakCheck()
+                    .fails(49, "inconvertible types: UUID -> STRING [from=UUID, to=STRING]");
+            assertQuery("SELECT CASE WHEN b THEN c ELSE s END r FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            r
+                            x
+                            abc
+                            """);
+            assertQuery("SELECT CASE WHEN b THEN s ELSE c END r FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            r
+                            sym
+                            y
+                            """);
+        });
     }
 
     @Test
@@ -1281,6 +1338,54 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                     end\s
                 from tanc""")
                 .fails(106, "inconvertible types: DOUBLE -> VARCHAR [from=DOUBLE, to=VARCHAR]");
+    }
+
+    @Test
+    public void testGeoHashValuesOfOneType() throws Exception {
+        assertQuery("""
+                SELECT x,
+                    CASE WHEN x = 1 THEN g1 ELSE h1 END c1,
+                    CASE WHEN x = 1 THEN g2 ELSE h2 END c2,
+                    CASE WHEN x = 1 THEN g5 ELSE h5 END c5,
+                    CASE WHEN x = 1 THEN g10 ELSE h10 END c10
+                FROM geo ORDER BY x
+                """)
+                .ddl("CREATE TABLE geo (x INT, g1 GEOHASH(1c), h1 GEOHASH(1c), g2 GEOHASH(2c), h2 GEOHASH(2c), "
+                                + "g5 GEOHASH(5c), h5 GEOHASH(5c), g10 GEOHASH(10c), h10 GEOHASH(10c))",
+                        """
+                                INSERT INTO geo VALUES
+                                (1, #u, #v, #u3, #v3, #u33d8, #v33d8, #u33d8b1234, #v33d8b1234),
+                                (2, #u, #v, #u3, #v3, #u33d8, #v33d8, #u33d8b1234, #v33d8b1234)
+                                """)
+                .expectSize()
+                .returns("""
+                        x\tc1\tc2\tc5\tc10
+                        1\tu\tu3\tu33d8\tu33d8b1234
+                        2\tv\tv3\tv33d8\tv33d8b1234
+                        """);
+    }
+
+    @Test
+    public void testGeoHashValuesOfTwoWidths() throws Exception {
+        assertQuery("SELECT x, CASE WHEN x = 1 THEN g1 ELSE g2 END c FROM geo")
+                .ddl("CREATE TABLE geo (x INT, g1 GEOHASH(1c), g2 GEOHASH(2c))")
+                .fails(31, "inconvertible types: GEOHASH(1c) -> GEOHASH(2c)");
+    }
+
+    @Test
+    public void testIntervalValues() throws Exception {
+        assertQuery("""
+                SELECT x, CASE WHEN x = 1
+                    THEN interval('2024-01-01'::timestamp, '2024-01-02'::timestamp)
+                    ELSE interval('2024-02-01'::timestamp, '2024-02-02'::timestamp)
+                END c FROM long_sequence(2)
+                """)
+                .expectSize()
+                .returns("""
+                        x\tc
+                        1\t('2024-01-01T00:00:00.000Z', '2024-01-02T00:00:00.000Z')
+                        2\t('2024-02-01T00:00:00.000Z', '2024-02-02T00:00:00.000Z')
+                        """);
     }
 
     @Test
@@ -2229,5 +2334,39 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                         940\t
                         841\t
                         """);
+    }
+
+    @Test
+    public void testWhenScalarBooleanSubQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            assertQuery("""
+                    SELECT x FROM long_sequence(3)
+                    WHERE x >= CASE WHEN (SELECT max(x) = 3 FROM long_sequence(3)) THEN 2 ELSE 1 END
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            x
+                            2
+                            3
+                            """);
+            assertQuery("SELECT CASE WHEN (SELECT x > 1 FROM long_sequence(1)) THEN 1 WHEN (SELECT true) THEN 2 ELSE 3 END c")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            c
+                            2
+                            """);
+            assertQuery("SELECT x, CASE WHEN (SELECT false) THEN 'a' ELSE 'b' END c FROM long_sequence(2)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\tc
+                            1\tb
+                            2\tb
+                            """);
+            assertQuery("SELECT CASE WHEN (SELECT x FROM long_sequence(1)) THEN 1 ELSE 2 END c")
+                    .noLeakCheck()
+                    .fails(18, "BOOLEAN expected, found CURSOR");
+        });
     }
 }

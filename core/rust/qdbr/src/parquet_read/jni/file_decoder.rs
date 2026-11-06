@@ -208,7 +208,7 @@ fn decode_row_group_impl<const MODE: u8>(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetFileDecoder_canSkipRowGroup(
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetFileDecoder_canSkipRowGroup0(
     mut env: JNIEnv,
     _class: JClass,
     decoder: *const ParquetDecoder,

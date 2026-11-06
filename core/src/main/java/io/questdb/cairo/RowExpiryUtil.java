@@ -30,7 +30,7 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 
 /**
- * Shared helpers + codec for the row-expiry feature (read filter in {@code SqlParser}, cleanup in
+ * Shared helpers + codec for the row-expiry feature (read binding in {@code ExpiryReadBinder}, cleanup in
  * {@link RowExpiryCleanupJob}, validation/SHOW CREATE/catalogue in the compiler).
  * <p>
  * An {@code EXPIRE ROWS} policy is persisted as a single string in the table's {@code _meta}
@@ -40,7 +40,7 @@ import io.questdb.std.str.StringSink;
  * <ul>
  *     <li><b>scalar WHEN</b> — a plain (un-prefixed) boolean predicate. A row expires when it is TRUE.</li>
  *     <li><b>KEEP LATEST</b> ({@code 0x1F 'L'} + raw PARTITION BY column list) — keep only the latest row per
- *         key (a {@code LATEST ON} rewrite).</li>
+ *         key (a {@code LATEST ON} over the read).</li>
  *     <li><b>KEEP [N] HIGHEST/LOWEST</b> ({@code 0x1F 'N'} + {@code n 0x1F dir 0x1F col 0x1F keys}) — keep the
  *         group max/min ({@code n==0}, all ties) or the top-N by a column ({@code n>0}); desugars to a window
  *         predicate at use (the designated timestamp is needed only for the top-N tiebreak, known then).</li>
@@ -104,8 +104,8 @@ public final class RowExpiryUtil {
 
     /**
      * Synthetic boolean column name used by the projection-CASE read filter / cleanup for window and keep-by
-     * policies: the inner projection computes {@code CASE WHEN (<pred>) THEN false ELSE true END} as this
-     * column and the outer query filters on it. Unlikely to collide with a real user column.
+     * policies: a projection computes {@link #appendWindowKeepCase} as this column and a filter over it reads it.
+     * Unlikely to collide with a real user column.
      */
     public static final String KEEP_COLUMN = "__qdb_re_keep";
 
@@ -113,6 +113,8 @@ public final class RowExpiryUtil {
     private static final char DIR_LOWEST = 'O';
     private static final char ESCAPED_ESCAPE = 'E';   // <escape>E decodes to the escape char itself
     private static final char ESCAPED_SENTINEL = 'S'; // <escape>S decodes to the field separator
+    private static final String KEEP_CASE_PREFIX = "CASE WHEN (";
+    private static final String KEEP_CASE_SUFFIX = ") THEN false ELSE true END";
     private static final char MODE_KEEP_BY = 'N';     // keep-max/min (n=0) or top-N (n>0), structural
     private static final char MODE_KEEP_LATEST = 'L'; // keep only the latest row per key
     private static final char MODE_WINDOW = 'W';      // an arbitrary window-function WHEN predicate
@@ -175,41 +177,55 @@ public final class RowExpiryUtil {
      * {@code AndFunctionFactory} drops a constant {@code true} operand when it builds the function, so
      * the wrapper adds no per-row work.
      * <p>
-     * The cleanup sweep runs this text. DDL validation binds {@link #buildStrictBindKeepFilter} instead,
+     * The cleanup sweep runs this text. DDL validation binds {@link #appendKeepCase} instead,
      * whose {@code switch} is stricter about operand types, so every policy it accepts also binds here.
-     * Reads express the same keep set as {@code NOT (<predicate>)} ({@code SqlParser.keepFilterWhereText}),
+     * Reads express the same keep set as {@code NOT (<predicate>)} ({@code ExpiryReadBinder.appendKeepFilter}),
      * which the JIT compiler can turn into machine code where a {@code CASE} cannot. Both spellings mean
      * "the predicate is not TRUE" and keep exactly the same rows, including rows whose operand is NULL;
      * {@code RowExpiryFuzzTest} checks the sweep against the read for randomised data, which is what holds
-     * the two in step. They are spelled differently because of what the optimiser does to each: a read's
-     * {@code NOT} survives only because the parser marks the query block it sits in
-     * ({@code SqlParser.markExpiryKeepFilter}), and the sweep builds its own SQL, where there is no block
-     * to mark and {@code SqlOptimiser.optimiseBooleanNot} would turn {@code NOT (v < 2.0)} into
-     * {@code v >= 2.0} and delete the NULL rows a read keeps. A {@code CASE} gives it nothing to rewrite.
+     * the two in step. Reads spell it as {@code NOT} because the planner extracts timestamp intervals out of a
+     * negated comparison, which the sweep has no use for: it classifies partitions on its own.
      * <p>
      * A NULL operand follows QuestDB's two-valued comparison semantics: {@code v < 2.0} is FALSE for a
      * NULL {@code v} and keeps the row, while {@code NOT (v >= 2.0)}, {@code v != 2.0} and
      * {@code v IS NULL} are TRUE for it, so this sweep deletes it. Spellings that read as the same rule
-     * can thus differ on NULL rows; see {@code SqlParser.keepFilterWhereText} for the full account.
+     * can thus differ on NULL rows; see {@code ExpiryReadBinder.appendKeepFilter} for the full account.
      */
     public static String buildRowExpiryKeepFilter(String predicate) {
         return "CASE WHEN ((" + predicate.trim() + ") AND true) THEN false ELSE true END";
     }
 
     /**
-     * Builds the scalar-WHEN keep-rows filter in its bare form,
-     * {@code CASE WHEN (<predicate>) THEN false ELSE true END}, for DDL validation to bind. This form binds
-     * under stricter type rules than {@link #buildRowExpiryKeepFilter}: {@code SqlParser.rewriteCase}
-     * compiles a single-branch {@code CASE WHEN (<column> = <constant>)} into a {@code switch}, which
-     * requires the two operands to have the same type where {@code =} converts one of them. So a predicate
-     * that binds here also binds in {@link #buildRowExpiryKeepFilter}, while a cross-type equality such as
-     * {@code s = 12345} on a {@code STRING} column binds only there.
+     * Appends the keep-rows expression in its bare form, {@code CASE WHEN (<predicate>) THEN false ELSE true END},
+     * which has two uses. A window or keep-by policy evaluates it as its {@link #KEEP_COLUMN}, see
+     * {@link #appendWindowKeepCase}, since a predicate that holds a window function never takes the {@code switch}
+     * form below.
      * <p>
-     * Only the bind outcome of this form is meaningful. Evaluated, the {@code switch} narrows the constant to
-     * the column's type and matches rows that {@code =} does not, so survivors are never computed with it.
+     * DDL validation binds it over a scalar predicate. This form binds under stricter type rules than
+     * {@link #buildRowExpiryKeepFilter}: {@code SqlParser.rewriteCase} compiles a single-branch
+     * {@code CASE WHEN (<column> = <constant>)} into a {@code switch}, which requires the two operands to have
+     * the same type where {@code =} converts one of them. So a predicate that binds here also binds in
+     * {@link #buildRowExpiryKeepFilter}, while a cross-type equality such as {@code s = 12345} on a
+     * {@code STRING} column binds only there.
+     * <p>
+     * Over a scalar predicate only the bind outcome is meaningful. Evaluated, the {@code switch} narrows the
+     * constant to the column's type and matches rows that {@code =} does not, so the survivors of a scalar
+     * policy are never computed with it.
      */
-    public static String buildStrictBindKeepFilter(String predicate) {
-        return "CASE WHEN (" + predicate.trim() + ") THEN false ELSE true END";
+    public static void appendKeepCase(CharSink<?> sink, CharSequence predicate) {
+        sink.putAscii(KEEP_CASE_PREFIX);
+        appendTrimmed(sink, predicate, 0, predicate.length());
+        sink.putAscii(KEEP_CASE_SUFFIX);
+    }
+
+    /**
+     * Appends {@link #appendKeepCase the keep-rows expression} of a window or keep-by policy, over
+     * {@link #appendWindowPredicate its predicate}.
+     */
+    public static void appendWindowKeepCase(CharSink<?> sink, CharSequence stored, CharSequence designatedTs) {
+        sink.putAscii(KEEP_CASE_PREFIX);
+        appendWindowPredicate(sink, stored, designatedTs);
+        sink.putAscii(KEEP_CASE_SUFFIX);
     }
 
     /**
@@ -361,6 +377,11 @@ public final class RowExpiryUtil {
      */
     public static String quoteIdentifier(CharSequence identifier) {
         final StringSink sink = new StringSink();
+        appendQuotedIdentifier(sink, identifier);
+        return sink.toString();
+    }
+
+    public static void appendQuotedIdentifier(CharSink<?> sink, CharSequence identifier) {
         sink.putAscii('"');
         for (int i = 0, n = identifier.length(); i < n; i++) {
             final char c = identifier.charAt(i);
@@ -369,23 +390,41 @@ public final class RowExpiryUtil {
             }
             sink.put(c);
         }
-        return sink.putAscii('"').toString();
+        sink.putAscii('"');
     }
 
     /**
-     * The window-function WHEN predicate text of a window policy: the stored predicate for {@link #isWindow},
-     * or the desugared keep-max/min/top-N predicate for {@link #isKeepBy} (the {@code designatedTs} is used
-     * only for the top-N ordering tiebreak; pass null to omit it). Returns null when {@code stored} is not a
-     * window/keep-by policy.
+     * Appends the text between {@code lo} and {@code hi} without the whitespace that surrounds it.
      */
-    public static String windowPredicate(CharSequence stored, CharSequence designatedTs) {
+    public static void appendTrimmed(CharSink<?> sink, CharSequence text, int lo, int hi) {
+        while (lo < hi && text.charAt(lo) <= ' ') {
+            lo++;
+        }
+        while (lo < hi && text.charAt(hi - 1) <= ' ') {
+            hi--;
+        }
+        sink.put(text, lo, hi);
+    }
+
+    /**
+     * Appends the PARTITION BY column list of a KEEP LATEST policy, see {@link #keepLatestKeys}.
+     */
+    public static void appendKeepLatestKeys(CharSink<?> sink, CharSequence stored) {
+        appendUnescaped(sink, stored, sentinelIndex(stored, 2) + 1, stored.length());
+    }
+
+    /**
+     * Appends the window-function WHEN predicate text of a window policy: the stored predicate for
+     * {@link #isWindow}, or the desugared keep-max/min/top-N predicate for {@link #isKeepBy} (the
+     * {@code designatedTs} is used only for the top-N ordering tiebreak; pass null to omit it). {@code stored} has
+     * to be one of the two.
+     */
+    public static void appendWindowPredicate(CharSink<?> sink, CharSequence stored, CharSequence designatedTs) {
         if (isWindow(stored)) {
-            return windowBody(stored).toString();
+            appendTrimmed(sink, stored, 2, stored.length());
+        } else {
+            appendKeepByPredicate(sink, stored, designatedTs);
         }
-        if (isKeepBy(stored)) {
-            return buildKeepByPredicate(stored, designatedTs);
-        }
-        return null;
     }
 
     /**
@@ -470,15 +509,24 @@ public final class RowExpiryUtil {
         return false;
     }
 
-    private static String buildKeepByPredicate(CharSequence stored, CharSequence designatedTs) {
-        final KeepBy k = new KeepBy(stored);
-        final StringSink sink = new StringSink();
-        if (k.n == 0) {
+    private static void appendKeepByPredicate(CharSink<?> sink, CharSequence stored, CharSequence designatedTs) {
+        final int len = stored.length();
+        final int countEnd = sentinelIndex(stored, 2);
+        final int directionEnd = sentinelIndex(stored, countEnd + 1);
+        final int colHi = sentinelIndex(stored, directionEnd + 1);
+        final int colLo = Math.min(directionEnd + 1, len);
+        final int keysLo = Math.min(colHi + 1, len);
+        final boolean isHighest = isKeepByHighest(stored, countEnd);
+        final int n = keepByCount(stored, countEnd);
+        if (n == 0) {
             // keep every row tied at the group max/min: a row expires when its value is strictly past it.
-            sink.put(quoteIdentifier(k.col)).putAscii(k.isHighest ? " < max(" : " > min(")
-                    .put(quoteIdentifier(k.col)).putAscii(") OVER (");
-            if (k.keys.length() > 0) {
-                sink.putAscii("PARTITION BY ").put(k.keys);
+            appendQuotedField(sink, stored, colLo, colHi);
+            sink.putAscii(isHighest ? " < max(" : " > min(");
+            appendQuotedField(sink, stored, colLo, colHi);
+            sink.putAscii(") OVER (");
+            if (keysLo < len) {
+                sink.putAscii("PARTITION BY ");
+                appendUnescaped(sink, stored, keysLo, len);
             }
             sink.put(')');
         } else {
@@ -489,16 +537,63 @@ public final class RowExpiryUtil {
             // first); "<col> IS NULL" is not a legal window sort key so the position cannot be forced. A NULL
             // row may thus be kept or expired under KEEP <N>; use KEEP HIGHEST/LOWEST (no N) to always keep NULLs.
             sink.putAscii("row_number() OVER (");
-            if (k.keys.length() > 0) {
-                sink.putAscii("PARTITION BY ").put(k.keys).putAscii(' ');
+            if (keysLo < len) {
+                sink.putAscii("PARTITION BY ");
+                appendUnescaped(sink, stored, keysLo, len);
+                sink.putAscii(' ');
             }
-            sink.putAscii("ORDER BY ").put(quoteIdentifier(k.col)).putAscii(k.isHighest ? " DESC" : " ASC");
+            sink.putAscii("ORDER BY ");
+            appendQuotedField(sink, stored, colLo, colHi);
+            sink.putAscii(isHighest ? " DESC" : " ASC");
             if (designatedTs != null) {
-                sink.putAscii(", ").put(quoteIdentifier(designatedTs)).putAscii(" DESC");
+                sink.putAscii(", ");
+                appendQuotedIdentifier(sink, designatedTs);
+                sink.putAscii(" DESC");
             }
-            sink.putAscii(") > ").put(k.n);
+            sink.putAscii(") > ").put(n);
         }
-        return sink.toString();
+    }
+
+    private static void appendQuotedField(CharSink<?> sink, CharSequence stored, int lo, int hi) {
+        sink.putAscii('"');
+        for (int i = lo; i < hi; i++) {
+            final char c = isEscapePair(stored, i, hi) ? unescaped(stored.charAt(++i)) : stored.charAt(i);
+            if (c == '"') {
+                sink.putAscii('"');
+            }
+            sink.put(c);
+        }
+        sink.putAscii('"');
+    }
+
+    private static void appendUnescaped(CharSink<?> sink, CharSequence stored, int lo, int hi) {
+        for (int i = lo; i < hi; i++) {
+            sink.put(isEscapePair(stored, i, hi) ? unescaped(stored.charAt(++i)) : stored.charAt(i));
+        }
+    }
+
+    /**
+     * True when a field holds an escape pair at {@code i}. A lone escape char, or one followed by an unknown code, is not
+     * something the encoder emits, so it reads verbatim rather than guessing what a corrupt policy string meant.
+     */
+    private static boolean isEscapePair(CharSequence stored, int i, int hi) {
+        if (stored.charAt(i) != POLICY_ESCAPE || i + 1 >= hi) {
+            return false;
+        }
+        final char code = stored.charAt(i + 1);
+        return code == ESCAPED_SENTINEL || code == ESCAPED_ESCAPE;
+    }
+
+    private static boolean isKeepByHighest(CharSequence stored, int countEnd) {
+        return countEnd + 1 < stored.length() && stored.charAt(countEnd + 1) == DIR_HIGHEST;
+    }
+
+    private static int keepByCount(CharSequence stored, int countEnd) {
+        try {
+            return Numbers.parseInt(stored, 2, countEnd);
+        } catch (NumericException e) {
+            return 0;
+        }
     }
 
     private static boolean hasMode(CharSequence s, char mode) {
@@ -516,40 +611,21 @@ public final class RowExpiryUtil {
 
     /**
      * Reverses {@link #appendEscapedField} over {@code [lo, hi)}. A field carrying no escape - every field
-     * of every ordinary policy - is returned as a sub-sequence, so the read-filter path allocates nothing.
+     * of every ordinary policy - is returned as a sub-sequence.
      */
     private static CharSequence unescapeField(CharSequence stored, int lo, int hi) {
         for (int i = lo; i < hi; i++) {
             if (stored.charAt(i) == POLICY_ESCAPE) {
-                return unescapeField0(stored, i, lo, hi);
+                final StringSink sink = new StringSink();
+                appendUnescaped(sink, stored, lo, hi);
+                return sink.toString();
             }
         }
         return stored.subSequence(lo, hi);
     }
 
-    private static String unescapeField0(CharSequence stored, int firstEscape, int lo, int hi) {
-        final StringSink sink = new StringSink();
-        sink.put(stored, lo, firstEscape);
-        for (int i = firstEscape; i < hi; i++) {
-            final char c = stored.charAt(i);
-            if (c == POLICY_ESCAPE && i + 1 < hi) {
-                final char code = stored.charAt(i + 1);
-                if (code == ESCAPED_SENTINEL) {
-                    sink.put(POLICY_SENTINEL);
-                    i++;
-                    continue;
-                }
-                if (code == ESCAPED_ESCAPE) {
-                    sink.put(POLICY_ESCAPE);
-                    i++;
-                    continue;
-                }
-            }
-            // A lone escape char, or one followed by an unknown code, is not something the encoder emits;
-            // pass it through verbatim rather than guessing what a corrupt policy string meant.
-            sink.put(c);
-        }
-        return sink.toString();
+    private static char unescaped(char code) {
+        return code == ESCAPED_SENTINEL ? POLICY_SENTINEL : POLICY_ESCAPE;
     }
 
     private static CharSequence windowBody(CharSequence stored) {
@@ -558,7 +634,7 @@ public final class RowExpiryUtil {
 
     /**
      * Decoded view of a KEEP [N] HIGHEST/LOWEST policy ({@code 0x1F 'N' n 0x1F dir 0x1F col 0x1F keys}), used
-     * by SHOW CREATE, the catalogue functions, the read-filter rewrite and DDL validation. Construct it for a
+     * by SHOW CREATE, the catalogue functions and DDL validation. Construct it for a
      * policy {@link #isKeepBy} accepts.
      * <p>
      * Every field tolerates a truncated or otherwise malformed policy string: a missing separator reads as an
@@ -588,14 +664,8 @@ public final class RowExpiryUtil {
             final int s1 = sentinelIndex(stored, 2);
             final int s2 = sentinelIndex(stored, s1 + 1);
             final int s3 = sentinelIndex(stored, s2 + 1);
-            int n;
-            try {
-                n = Numbers.parseInt(stored, 2, s1);
-            } catch (NumericException e) {
-                n = 0;
-            }
-            this.n = n;
-            this.isHighest = s1 + 1 < len && stored.charAt(s1 + 1) == DIR_HIGHEST;
+            this.n = keepByCount(stored, s1);
+            this.isHighest = isKeepByHighest(stored, s1);
             this.col = unescapeField(stored, Math.min(s2 + 1, len), s3).toString();
             this.keys = unescapeField(stored, Math.min(s3 + 1, len), len).toString();
         }

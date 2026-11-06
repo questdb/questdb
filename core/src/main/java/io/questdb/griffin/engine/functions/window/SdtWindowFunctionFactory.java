@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.window;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.map.Map;
@@ -44,12 +45,12 @@ import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
-import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
@@ -118,6 +119,11 @@ public class SdtWindowFunctionFactory extends AbstractWindowFunctionFactory {
         SDT_STATE_TYPES.add(ColumnType.LONG);   // pendingIndex
         SDT_STATE_TYPES.add(ColumnType.LONG);   // pendingTs
         SDT_STATE_TYPES.add(ColumnType.DOUBLE); // pendingValue
+    }
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.BOOLEAN;
     }
 
     @Override
@@ -204,7 +210,7 @@ public class SdtWindowFunctionFactory extends AbstractWindowFunctionFactory {
         private final SwingingDoor sd = new SwingingDoor();
         private long appendOffset; // pass1 write cursor (bytes)
         private SqlExecutionCircuitBreaker circuitBreaker;
-        private ObjList<ExpressionNode> orderBy;
+        private ObjList<CharSequence> orderBy;
         private long readOffset;   // pass2 read cursor (bytes)
 
         SdtOverWholeResultSetFunction(Function tsArg, Function valueArg, Function compdevArg, double compdev,
@@ -298,11 +304,14 @@ public class SdtWindowFunctionFactory extends AbstractWindowFunctionFactory {
 
         @Override
         public void initRecordComparator(
-                SqlCodeGenerator sqlGenerator,
+                BytecodeAssembler asm,
+                RecordComparatorCompiler comparatorCompiler,
+                ListColumnFilter columnFilter,
                 RecordMetadata metadata,
                 ArrayColumnTypes chainTypes,
                 IntList orderIndices,
-                ObjList<ExpressionNode> orderBy,
+                IntList orderPositions,
+                ObjList<CharSequence> orderBy,
                 IntList orderByDirection
         ) throws SqlException {
             // Reject a descending window ORDER BY on the sorted path; see newInstance for why
@@ -419,7 +428,7 @@ public class SdtWindowFunctionFactory extends AbstractWindowFunctionFactory {
         private final SwingingDoor scratch = new SwingingDoor();
         private final Function tsArg;
         private long appendOffset; // pass1 write cursor (bytes), monotonic across ALL partitions
-        private ObjList<ExpressionNode> orderBy;
+        private ObjList<CharSequence> orderBy;
         private long readOffset;   // pass2 read cursor (bytes), monotonic across ALL partitions
 
         SdtOverPartitionFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink,
@@ -489,11 +498,14 @@ public class SdtWindowFunctionFactory extends AbstractWindowFunctionFactory {
 
         @Override
         public void initRecordComparator(
-                SqlCodeGenerator sqlGenerator,
+                BytecodeAssembler asm,
+                RecordComparatorCompiler comparatorCompiler,
+                ListColumnFilter columnFilter,
                 RecordMetadata metadata,
                 ArrayColumnTypes chainTypes,
                 IntList orderIndices,
-                ObjList<ExpressionNode> orderBy,
+                IntList orderPositions,
+                ObjList<CharSequence> orderBy,
                 IntList orderByDirection
         ) throws SqlException {
             // Reject a descending window ORDER BY on the sorted path; see newInstance for why

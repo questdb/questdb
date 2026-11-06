@@ -34,8 +34,11 @@ import java.util.Comparator;
 
 public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
     private static final int DEFAULT_ARRAY_SIZE = 16;
+    private static final Object[] EMPTY_ARRAY = new Object[0];
     private T[] buffer;
     private int pos = 0;
+    // every slot at or past max(pos, staleLimit) is null, so clear() wipes no more than the slots in use
+    private int staleLimit;
 
     @SuppressWarnings("unchecked")
     public ObjList() {
@@ -59,7 +62,7 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
 
     @SuppressWarnings("unchecked")
     public ObjList(int capacity) {
-        this.buffer = (T[]) new Object[Math.max(capacity, DEFAULT_ARRAY_SIZE)];
+        this.buffer = (T[]) (capacity == 0 ? EMPTY_ARRAY : new Object[Math.max(capacity, DEFAULT_ARRAY_SIZE)]);
     }
 
     public void add(T value) {
@@ -104,10 +107,12 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
 
     @Override
     public void clear() {
-        if (pos > 0) {
-            Arrays.fill(buffer, null);
+        final int limit = Math.max(pos, staleLimit);
+        if (limit > 0) {
+            Arrays.fill(buffer, 0, limit, null);
         }
         pos = 0;
+        staleLimit = 0;
     }
 
     public boolean contains(T value) {
@@ -312,21 +317,26 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
     }
 
     public void set(int from, int to, T value) {
-        Arrays.fill(buffer, from, Math.min(buffer.length, to), value);
+        final int hi = Math.min(buffer.length, to);
+        Arrays.fill(buffer, from, hi, value);
+        staleLimit = Math.max(staleLimit, hi);
     }
 
     public void set(int index, T value) {
         buffer[index] = value;
+        staleLimit = Math.max(staleLimit, index + 1);
     }
 
     public void setAll(int count, T value) {
         checkCapacity(count);
         pos = count;
         Arrays.fill(buffer, value);
+        staleLimit = buffer.length;
     }
 
     public void setPos(int newPos) {
         checkCapacity(newPos);
+        staleLimit = Math.max(staleLimit, pos);
         pos = newPos;
     }
 

@@ -26,7 +26,5 @@ package io.questdb.griffin.engine.table;
 
 public interface SymbolFunctionRowCursorFactory extends FunctionBasedRowCursorFactory {
 
-    int getSymbolKey();
-
     void of(int symbolKey);
 }

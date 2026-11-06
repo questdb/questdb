@@ -146,12 +146,26 @@ class WaitWalFunction extends BooleanFunction implements Function {
     }
 
     @Override
+    public void offerStateTo(Function that) {
+        if (seqTxnArg != null && that instanceof WaitWalFunction other) {
+            seqTxnArg.offerStateTo(other.seqTxnArg);
+        }
+    }
+
+    @Override
     public void toPlan(PlanSink sink) {
         sink.val("wait_wal_table(").val(tableName);
         if (seqTxnArg != null) {
             sink.val(", ").val(seqTxnArg);
         }
         sink.val(')');
+    }
+
+    @Override
+    public void toTop() {
+        if (seqTxnArg != null) {
+            seqTxnArg.toTop();
+        }
     }
 
     private CairoException abortedException() {

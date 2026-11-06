@@ -34,9 +34,12 @@ import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
+import io.questdb.std.MemoryTrackerWorkload;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8Sequence;
@@ -89,6 +92,65 @@ public class PageFrameMemoryPoolTest extends AbstractCairoTest {
                 Assert.assertEquals(0, frameMemory.getAuxPageAddress(MSG));
                 Assert.assertEquals(0, frameMemory.getPageAddress(MSG));
                 Assert.assertEquals(0.5, Unsafe.getDouble(frameMemory.getPageAddress(B)), 0);
+            }
+        });
+    }
+
+    @Test
+    public void testNativeBytesMatchMemoryTracker() throws Exception {
+        assertMemoryLeak(() -> {
+            // five fixed-size columns in a single page each, so that the native vectors of a decode hold no spare capacity
+            execute("CREATE TABLE f (a INT, b DOUBLE, c LONG, d SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO f
+                    SELECT x::INT, x * 0.5, x, (x % 100)::SHORT, timestamp_sequence('2020-01-01', 86_400_000L)
+                    FROM long_sequence(3_000)
+                    """);
+            execute("ALTER TABLE f CONVERT PARTITION TO PARQUET WHERE ts < '2020-01-03'");
+            final MemoryTracker tracker = engine.getMemoryTrackerProvider().acquire(sqlExecutionContext.getSecurityContext(), 1, MemoryTrackerWorkload.QUERY);
+            try (RecordCursorFactory factory = select("f");
+                 PageFrameCursor frameCursor = factory.getPageFrameCursor(sqlExecutionContext, PartitionFrameCursorFactory.ORDER_ASC);
+                 PageFrameAddressCache addressCache = new PageFrameAddressCache();
+                 PageFrameMemoryPool pool = new PageFrameMemoryPool(configuration, Long.MAX_VALUE)) {
+                loadFrames(factory, frameCursor, addressCache);
+                Assert.assertEquals(PartitionFormat.PARQUET, addressCache.getFrameFormat(0));
+                Assert.assertEquals(PartitionFormat.PARQUET, addressCache.getFrameFormat(1));
+                pool.setMemoryTracker(tracker);
+                pool.of(addressCache, ParquetDecodeHint.SCATTERED);
+                final long usedBytes = tracker.getUsed();
+                // the decoded columns of a Parquet day and a descriptor for each of the five
+                pool.navigateTo(0);
+                Assert.assertEquals(ROWS_PER_DAY * (Integer.BYTES + Double.BYTES + Long.BYTES + Short.BYTES + Long.BYTES) + 5 * RowGroupBuffers.CHUNK_STRUCT_SIZE, pool.getCachedNativeBytes());
+                Assert.assertEquals(tracker.getUsed() - usedBytes, pool.getCachedNativeBytes());
+                pool.navigateTo(1);
+                Assert.assertEquals(2, pool.getCachedFrameCount());
+                Assert.assertEquals(tracker.getUsed() - usedBytes, pool.getCachedNativeBytes());
+                // a cap below the two days leaves the one the frame memory reads
+                final long frameBytes = pool.getCachedNativeBytes() / 2;
+                pool.setParquetDecodeHint(ParquetDecodeHint.SCATTERED, 2 * frameBytes - 1);
+                Assert.assertEquals(1, pool.getCachedFrameCount());
+                Assert.assertEquals(frameBytes, pool.getCachedNativeBytes());
+                Assert.assertEquals(tracker.getUsed() - usedBytes, pool.getCachedNativeBytes());
+                // a hint alone keeps the cap: the other day takes the memory of the cached one
+                pool.setParquetDecodeHint(ParquetDecodeHint.CYCLIC);
+                pool.navigateTo(0);
+                Assert.assertEquals(1, pool.getCachedFrameCount());
+                Assert.assertEquals(frameBytes, pool.getCachedNativeBytes());
+                Assert.assertEquals(tracker.getUsed() - usedBytes, pool.getCachedNativeBytes());
+                // a query binds the pool without a cap
+                pool.of(addressCache, ParquetDecodeHint.SCATTERED);
+                Assert.assertEquals(0, pool.getCachedNativeBytes());
+                Assert.assertEquals(usedBytes, tracker.getUsed());
+                pool.navigateTo(0);
+                pool.navigateTo(1);
+                Assert.assertEquals(2, pool.getCachedFrameCount());
+                Assert.assertEquals(2 * frameBytes, pool.getCachedNativeBytes());
+                Assert.assertEquals(tracker.getUsed() - usedBytes, pool.getCachedNativeBytes());
+                pool.releaseParquetBuffers();
+                Assert.assertEquals(0, pool.getCachedNativeBytes());
+                Assert.assertEquals(usedBytes, tracker.getUsed());
+            } finally {
+                tracker.close();
             }
         });
     }
@@ -289,6 +351,66 @@ public class PageFrameMemoryPoolTest extends AbstractCairoTest {
             }
         }
         Assert.assertEquals(3 * ROWS_PER_DAY, x);
+    }
+
+    @Test
+    public void testScatteredWalkKeepsNarrowFramesAfterWiderOnes() throws Exception {
+        assertMemoryLeak(() -> {
+            // four narrow Parquet days, then two wide ones, a row group each
+            execute("CREATE TABLE w (p VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO w
+                    SELECT CASE WHEN x <= 4_000 THEN 'a' ELSE rpad(x::VARCHAR, 300, ' compressible log line') END, timestamp_sequence('2020-01-01', 86_400_000L)
+                    FROM long_sequence(7_000)
+                    """);
+            execute("ALTER TABLE w CONVERT PARTITION TO PARQUET WHERE ts < '2020-01-07'");
+            try (RecordCursorFactory factory = select("w");
+                 PageFrameCursor frameCursor = factory.getPageFrameCursor(sqlExecutionContext, PartitionFrameCursorFactory.ORDER_ASC);
+                 PageFrameAddressCache addressCache = new PageFrameAddressCache()) {
+                loadFrames(factory, frameCursor, addressCache);
+                final long wideBytes;
+                final long narrowBytes;
+                try (PageFrameMemoryPool pool = new PageFrameMemoryPool(configuration, Long.MAX_VALUE)) {
+                    pool.of(addressCache, ParquetDecodeHint.SCATTERED);
+                    pool.navigateTo(0);
+                    narrowBytes = pool.getCachedBytes();
+                    pool.navigateTo(4);
+                    wideBytes = pool.getCachedBytes() - narrowBytes;
+                }
+                Assert.assertTrue(wideBytes > 8 * narrowBytes);
+                final long budget = 2 * wideBytes + narrowBytes / 2;
+                try (PageFrameMemoryPool pool = new PageFrameMemoryPool(configuration, budget)) {
+                    pool.of(addressCache, ParquetDecodeHint.SCATTERED);
+                    pool.navigateTo(4);
+                    pool.navigateTo(5);
+                    Assert.assertEquals(2, pool.getCachedFrameCount());
+                    // the narrow days push the wide ones out, and all of them then fit the budget
+                    for (int frame = 0; frame < 4; frame++) {
+                        pool.navigateTo(frame);
+                        Assert.assertTrue(pool.getCachedBytes() <= budget);
+                    }
+                    Assert.assertEquals(4, pool.getCachedFrameCount());
+                    Assert.assertEquals(4 * narrowBytes, pool.getCachedBytes());
+                    final long decodeCount = pool.getDecodeCount();
+                    for (int pass = 0; pass < 3; pass++) {
+                        for (int frame = 3; frame >= 0; frame--) {
+                            pool.navigateTo(frame);
+                        }
+                    }
+                    Assert.assertEquals(decodeCount, pool.getDecodeCount());
+                    Assert.assertEquals(6, decodeCount);
+                }
+                // a walk that does not come back reuses the memory of the wide day, whose peak the narrow days then count at
+                try (PageFrameMemoryPool pool = new PageFrameMemoryPool(configuration, budget)) {
+                    pool.of(addressCache, ParquetDecodeHint.CYCLIC);
+                    pool.navigateTo(4);
+                    pool.navigateTo(5);
+                    pool.navigateTo(0);
+                    Assert.assertEquals(2, pool.getCachedFrameCount());
+                    Assert.assertEquals(2 * wideBytes, pool.getCachedBytes());
+                }
+            }
+        });
     }
 
     private static IntHashSet columns(int... columnIndexes) {

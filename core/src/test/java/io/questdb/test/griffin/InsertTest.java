@@ -47,6 +47,7 @@ import io.questdb.std.Long256;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.TableModel;
@@ -680,6 +681,66 @@ public class InsertTest extends AbstractCairoTest {
                     1\tGBP\t150.4
                     1\tGBP\t56.4
                     """, "balances");
+        });
+    }
+
+    @Test
+    public void testInsertDateIntoTimestampColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            final String[] timestampTypes = {"TIMESTAMP", "TIMESTAMP_NS"};
+            final String[] expectedRows = {
+                    """
+                    id\td\tts
+                    1\t1960-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z
+                    2\t\t2024-01-02T10:20:30.456000Z
+                    3\t\t2024-01-03T00:00:00.123000Z
+                    4\t1950-06-01T00:00:00.000000Z\t2024-01-04T00:00:00.000000Z
+                    5\t\t2024-01-05T00:00:00.000000Z
+                    """,
+                    """
+                    id\td\tts
+                    1\t1960-01-01T00:00:00.000000000Z\t2024-01-01T00:00:00.000000000Z
+                    2\t\t2024-01-02T10:20:30.456000000Z
+                    3\t\t2024-01-03T00:00:00.123000000Z
+                    4\t1950-06-01T00:00:00.000000000Z\t2024-01-04T00:00:00.000000000Z
+                    5\t\t2024-01-05T00:00:00.000000000Z
+                    """
+            };
+            final String[] boundsErrors = {
+                    "designated timestamp before 1970-01-01 is not allowed",
+                    "designated timestamp_ns before 1970-01-01 and beyond 2261-12-31 23:59:59.999999999 is not allowed"
+            };
+            for (int i = 0; i < timestampTypes.length; i++) {
+                final String table = "tab" + i;
+                execute("CREATE TABLE " + table + " (id INT, d " + timestampTypes[i] + ", ts " + timestampTypes[i] + ") TIMESTAMP(ts) PARTITION BY DAY");
+                execute("INSERT INTO " + table + " VALUES (1, '1960-01-01'::date, '2024-01-01'::date), (2, NULL::date, '2024-01-02T10:20:30.456'::date)");
+                bindVariableService.clear();
+                bindVariableService.setDate(0, Numbers.LONG_NULL);
+                bindVariableService.setDate(1, 1_704_240_000_123L);
+                execute("INSERT INTO " + table + " VALUES (3, $1, $2)");
+                execute("INSERT INTO " + table + " SELECT 4, '1950-06-01'::date, '2024-01-04'::timestamp FROM long_sequence(1)");
+                execute("INSERT INTO " + table + " VALUES (5, NULL, '2024-01-05'::symbol)");
+
+                assertQuery("INSERT INTO " + table + " SELECT 6, NULL, '2024-01-06'::date FROM long_sequence(1)")
+                        .noLeakCheck()
+                        .fails(12, "expected timestamp column but type is DATE");
+                final String beforeEpochSql = "INSERT INTO " + table + " VALUES (6, NULL, '1960-01-01'::date)";
+                assertQuery(beforeEpochSql)
+                        .noLeakCheck()
+                        .fails(beforeEpochSql.indexOf("::date"), boundsErrors[i]);
+                bindVariableService.clear();
+                bindVariableService.setDate(0, Numbers.LONG_NULL);
+                final String nullBindSql = "INSERT INTO " + table + " VALUES (7, NULL, $1)";
+                assertQuery(nullBindSql)
+                        .noLeakCheck()
+                        .fails(nullBindSql.indexOf("$1"), "designated timestamp column cannot be NULL");
+                assertReaderCheckWal(expectedRows[i], table);
+            }
+            final String beyondNanosSql = "INSERT INTO tab1 VALUES (8, NULL, '2300-01-01'::date)";
+            assertQuery(beyondNanosSql)
+                    .noLeakCheck()
+                    .fails(beyondNanosSql.indexOf("::date"), boundsErrors[1]);
+            assertReaderCheckWal(expectedRows[1], "tab1");
         });
     }
 
@@ -1763,6 +1824,10 @@ public class InsertTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table tab (t1 timestamp_ns) timestamp(t1) partition by day;");
             assertQuery("insert into tab values ('2300-01-03T00:00:00.000001123')")
+                    .noLeakCheck()
+                    .fails(24, "timestamp_ns before 1970-01-01 and beyond 2261-12-31 23:59:59.999999999 is not allowed");
+            assertQuery("insert into tab values ('2262-01-01T00:00:00.000000000')")
+                    .noLeakCheck()
                     .fails(24, "timestamp_ns before 1970-01-01 and beyond 2261-12-31 23:59:59.999999999 is not allowed");
         });
     }
@@ -1779,6 +1844,41 @@ public class InsertTest extends AbstractCairoTest {
             execute("create table tab1 (t1 timestamp_ns, t2 timestamp_ns) timestamp(t2) partition by DAY;");
             assertQuery("insert into tab1 select t1, t2 from tab")
                     .fails(0, "inconvertible value: 11076652800123000 [TIMESTAMP -> TIMESTAMP_NS]");
+        });
+    }
+
+    @Test
+    public void testInsertTimestampNSOverflowPositionInLaterTuple() throws Exception {
+        assertMemoryLeak(() -> {
+            for (int wal = 0; wal < 2; wal++) {
+                final String table = "tab" + wal;
+                execute("CREATE TABLE " + table + " (id INT, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY "
+                        + (wal == 0 ? "BYPASS WAL" : "WAL"));
+                final String stringSql = "INSERT INTO " + table
+                        + " VALUES (1, '2020-01-01'), (2, '2300-01-03T00:00:00.000001123')";
+                assertQuery(stringSql)
+                        .noLeakCheck()
+                        .fails(stringSql.indexOf("'2300"), "timestamp_ns before 1970-01-01 and beyond 2261-12-31 23:59:59.999999999 is not allowed");
+
+                final String bindSql = "INSERT INTO " + table + " (ts, id) VALUES ('2020-01-01', 1), ($1, 2)";
+                bindVariableService.clear();
+                bindVariableService.setVarchar(0, new Utf8String("2300-01-03T00:00:00.000001123"));
+                assertQuery(bindSql)
+                        .noLeakCheck()
+                        .fails(bindSql.indexOf("$1"), "timestamp_ns before 1970-01-01 and beyond 2261-12-31 23:59:59.999999999 is not allowed");
+
+                bindVariableService.clear();
+                bindVariableService.setTimestamp(0, Long.MAX_VALUE);
+                assertQuery(bindSql)
+                        .noLeakCheck()
+                        .fails(bindSql.indexOf("$1"), "timestamp_ns before 1970-01-01 and beyond 2261-12-31 23:59:59.999999999 is not allowed");
+                drainWalQueue();
+                assertQuery("SELECT count() FROM " + table)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("count\n0\n");
+            }
         });
     }
 

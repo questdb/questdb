@@ -59,6 +59,22 @@ public class StringAggGroupByFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testClosesArgument() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v VARCHAR)");
+            execute("INSERT INTO t VALUES (' a '), ('b '), (NULL), (' a')");
+            final String expected = """
+                    s
+                    a,b,a
+                    """;
+            assertQuery("SELECT string_agg(trim(v), ',') s FROM t").noLeakCheck().noRandomAccess().expectSize().returns(expected);
+            assertQuery("SELECT string_agg(trim(v)::STRING, ',') s FROM t").noLeakCheck().noRandomAccess().expectSize().returns(expected);
+            assertQuery("SELECT missing FROM (SELECT string_agg(trim(v), ',') s FROM t)").noLeakCheck().fails(7, "Invalid column: missing");
+            assertQuery("SELECT missing FROM (SELECT string_agg(trim(v)::STRING, ',') s FROM t)").noLeakCheck().fails(7, "Invalid column: missing");
+        });
+    }
+
+    @Test
     public void testConstantNull() throws Exception {
         assertQuery("select string_agg(null, ',') from x")
                 .ddl("create table x as (select * from (select timestamp_sequence(0, 100000) ts from long_sequence(5)) timestamp(ts))")

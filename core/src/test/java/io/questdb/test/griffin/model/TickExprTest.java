@@ -89,23 +89,7 @@ public class TickExprTest {
             LongList out,
             short operation
     ) throws SqlException {
-        IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, out, operation, new StringSink(), true);
-    }
-
-    /**
-     * Overload that allows specifying applyEncoded parameter for testing encoded format paths.
-     */
-    public static void parseTickExpr(
-            TimestampDriver timestampDriver,
-            CharSequence seq,
-            int lo,
-            int lim,
-            int position,
-            LongList out,
-            short operation,
-            boolean applyEncoded
-    ) throws SqlException {
-        IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, out, operation, new StringSink(), applyEncoded);
+        IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, out, operation, new StringSink());
     }
 
     /**
@@ -121,24 +105,7 @@ public class TickExprTest {
             short operation,
             long nowTimestamp
     ) throws SqlException {
-        IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, out, operation, new StringSink(), true, nowTimestamp);
-    }
-
-    /**
-     * Overload that allows specifying both applyEncoded and nowTimestamp for testing date variables.
-     */
-    public static void parseTickExprWithNow(
-            TimestampDriver timestampDriver,
-            CharSequence seq,
-            int lo,
-            int lim,
-            int position,
-            LongList out,
-            short operation,
-            boolean applyEncoded,
-            long nowTimestamp
-    ) throws SqlException {
-        IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, out, operation, new StringSink(), applyEncoded, nowTimestamp);
+        IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, out, operation, new StringSink(), nowTimestamp);
     }
 
     @Before
@@ -489,6 +456,15 @@ public class TickExprTest {
     }
 
     @Test
+    public void testBracketExpansionSeparateDays() throws SqlException {
+        assertBracketInterval(
+                "[{lo=2018-01-10T00:00:00.000000Z, hi=2018-01-10T23:59:59.999999Z}," +
+                        "{lo=2018-01-15T00:00:00.000000Z, hi=2018-01-15T23:59:59.999999Z}]",
+                "2018-01-[10,15]"
+        );
+    }
+
+    @Test
     public void testBracketExpansionSingleValue() throws SqlException {
         assertBracketInterval(
                 "[{lo=2018-01-10T00:00:00.000000Z, hi=2018-01-10T23:59:59.999999Z}]",
@@ -509,16 +485,6 @@ public class TickExprTest {
     public void testBracketExpansionTwoValues() throws SqlException {
         assertBracketInterval(
                 "[{lo=2018-01-10T00:00:00.000000Z, hi=2018-01-10T23:59:59.999999Z},{lo=2018-01-15T00:00:00.000000Z, hi=2018-01-15T23:59:59.999999Z}]",
-                "2018-01-[10,15]"
-        );
-    }
-
-    @Test
-    public void testBracketExpansionWithApplyEncodedFalse() throws SqlException {
-        // Field expansion with applyEncoded=false - two separate day intervals
-        assertEncodedInterval(
-                "[{lo=2018-01-10T00:00:00.000000Z, hi=2018-01-10T23:59:59.999999Z}," +
-                        "{lo=2018-01-15T00:00:00.000000Z, hi=2018-01-15T23:59:59.999999Z}]",
                 "2018-01-[10,15]"
         );
     }
@@ -633,15 +599,20 @@ public class TickExprTest {
     }
 
     @Test
-    public void testBracketExpansionWithSubtractApplyEncodedFalse() throws SqlException {
-        // Test SUBTRACT operation with applyEncoded=false (exercises line 1167)
+    public void testBracketExpansionWithSubtract() throws SqlException {
+        // The parse leaves the literal's intervals; the caller inverts them to subtract them
         final TimestampDriver timestampDriver = timestampType.getDriver();
         out.clear();
         String interval = "2018-01-[10,15]";
-        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.SUBTRACT, false);
-        // With applyEncoded=false, we get 4 longs per interval (encoded format)
-        // 2 intervals * 4 longs = 8
-        Assert.assertEquals(8, out.size());
+        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.SUBTRACT);
+        String expected = "[{lo=2018-01-10T00:00:00.000000Z, hi=2018-01-10T23:59:59.999999Z}," +
+                "{lo=2018-01-15T00:00:00.000000Z, hi=2018-01-15T23:59:59.999999Z}]";
+        TestUtils.assertEquals(
+                ColumnType.isTimestampNano(timestampType.getTimestampType())
+                        ? expected.replace("00Z", "00000Z").replace("99Z", "99999Z")
+                        : expected,
+                intervalToString(timestampDriver, out)
+        );
     }
 
     @Test
@@ -1993,6 +1964,14 @@ public class TickExprTest {
     }
 
     @Test
+    public void testDateListSeparateDays() throws SqlException {
+        assertBracketInterval(
+                "[{lo=2025-01-01T00:00:00.000000Z, hi=2025-01-01T23:59:59.999999Z},{lo=2025-01-05T00:00:00.000000Z, hi=2025-01-05T23:59:59.999999Z}]",
+                "[2025-01-01,2025-01-05]"
+        );
+    }
+
+    @Test
     public void testDateListSingleDate() throws SqlException {
         // '[2025-12-31]' produces 1 full-day interval
         assertBracketInterval(
@@ -2043,17 +2022,6 @@ public class TickExprTest {
     }
 
     @Test
-    public void testDateListWithApplyEncodedFalse() throws SqlException {
-        // Test date list path with applyEncoded=false (exercises line 455 branch)
-        // When applyEncoded=false, intervals stay in 4-long encoded format and union is skipped
-        // 2 intervals * 4 longs = 8
-        assertEncodedInterval(
-                "[{lo=2025-01-01T00:00:00.000000Z, hi=2025-01-01T23:59:59.999999Z},{lo=2025-01-05T00:00:00.000000Z, hi=2025-01-05T23:59:59.999999Z}]",
-                "[2025-01-01,2025-01-05]"
-        );
-    }
-
-    @Test
     public void testDateListWithBracketExpansionAndDayFilter() throws SqlException {
         // Date list with bracket expansion AND day filter
         // [2024-01-[01..07],2024-01-15]#Mon should expand Jan 1-7 and Jan 15, then filter to Mondays only
@@ -2097,12 +2065,10 @@ public class TickExprTest {
     }
 
     @Test
-    public void testDateListWithDayFilterApplyEncodedFalse() throws SqlException {
-        // Test date list path with day filter and applyEncoded=false (exercises line 1617)
+    public void testDateListWithDayFilterKeepsMatchingDate() throws SqlException {
         // 2024-01-01 is Monday, 2024-01-02 is Tuesday, 2024-01-03 is Wednesday
-        // Day filter mask (Monday = bit 0 = 1) is encoded on all intervals
-        assertEncodedInterval(
-                "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-01T23:59:59.999999Z, dayFilter=Mon},{lo=2024-01-02T00:00:00.000000Z, hi=2024-01-02T23:59:59.999999Z, dayFilter=Mon},{lo=2024-01-03T00:00:00.000000Z, hi=2024-01-03T23:59:59.999999Z, dayFilter=Mon}]",
+        assertBracketInterval(
+                "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-01T23:59:59.999999Z}]",
                 "[2024-01-01,2024-01-02,2024-01-03]#Mon"
         );
     }
@@ -2175,14 +2141,6 @@ public class TickExprTest {
         assertBracketInterval(
                 "[{lo=2024-01-15T07:00:00.000000Z, hi=2024-01-15T07:00:00.999999Z},{lo=2024-01-15T07:00:30.000000Z, hi=2024-01-15T07:00:30.999999Z},{lo=2024-01-15T12:30:00.000000Z, hi=2024-01-15T12:30:00.999999Z},{lo=2024-01-15T12:30:30.000000Z, hi=2024-01-15T12:30:30.999999Z}]",
                 "[2024-01-15,2024-01-16]T[09:00,14:30]:[00,30]@+02:00#Mon"
-        );
-    }
-
-    @Test
-    public void testDateListWithNestedTimeExpansionEncoded() throws SqlException {
-        assertEncodedInterval(
-                "[{lo=2024-01-15T09:00:00.000000Z, hi=2024-01-15T09:00:00.999999Z},{lo=2024-01-15T09:00:30.000000Z, hi=2024-01-15T09:00:30.999999Z},{lo=2024-01-15T14:30:00.000000Z, hi=2024-01-15T14:30:00.999999Z},{lo=2024-01-15T14:30:30.000000Z, hi=2024-01-15T14:30:30.999999Z},{lo=2024-01-16T09:00:00.000000Z, hi=2024-01-16T09:00:00.999999Z},{lo=2024-01-16T09:00:30.000000Z, hi=2024-01-16T09:00:30.999999Z},{lo=2024-01-16T14:30:00.000000Z, hi=2024-01-16T14:30:00.999999Z},{lo=2024-01-16T14:30:30.000000Z, hi=2024-01-16T14:30:30.999999Z}]",
-                "[2024-01-15,2024-01-16]T[09:00,14:30]:[00,30]"
         );
     }
 
@@ -2438,6 +2396,15 @@ public class TickExprTest {
     }
 
     @Test
+    public void testDateVariableBareFullDay() throws SqlException {
+        assertBracketIntervalWithNow(
+                "[{lo=2026-03-15T00:00:00.000000Z, hi=2026-03-15T23:59:59.999999Z}]",
+                "$today",
+                "2026-03-15T14:30:00.000000Z"
+        );
+    }
+
+    @Test
     public void testDateVariableBareInvalidVariable() {
         // $invalid - unknown bare date variable triggers error and resets output
         assertBracketIntervalError("$invalid", "Unknown date variable");
@@ -2450,16 +2417,6 @@ public class TickExprTest {
                 "[{lo=2026-01-22T00:00:00.000000Z, hi=2026-01-27T23:59:59.999999Z}]",
                 "$today..$today+5d",
                 "2026-01-22T10:30:00.000000Z"
-        );
-    }
-
-    @Test
-    public void testDateVariableBareWithApplyEncodedFalse() throws SqlException {
-        // Bare date variable with applyEncoded=false - full day interval
-        assertEncodedIntervalWithNow(
-                "[{lo=2026-03-15T00:00:00.000000Z, hi=2026-03-15T23:59:59.999999Z}]",
-                "$today",
-                "2026-03-15T14:30:00.000000Z"
         );
     }
 
@@ -3190,17 +3147,10 @@ public class TickExprTest {
     }
 
     @Test
-    public void testDateVariableRangeWithDayFilterAndApplyEncodedFalse() throws SqlException {
-        // Day range with #Mon filter, applyEncoded=false - all 7 days stored with Mon mask
-        // 2026-02-09 is Monday, range covers Mon-Sun with #Fri filter stored on each
-        assertEncodedIntervalWithNow(
-                "[{lo=2026-02-09T00:00:00.000000Z, hi=2026-02-09T23:59:59.999999Z, dayFilter=Fri}," +
-                        "{lo=2026-02-10T00:00:00.000000Z, hi=2026-02-10T23:59:59.999999Z, dayFilter=Fri}," +
-                        "{lo=2026-02-11T00:00:00.000000Z, hi=2026-02-11T23:59:59.999999Z, dayFilter=Fri}," +
-                        "{lo=2026-02-12T00:00:00.000000Z, hi=2026-02-12T23:59:59.999999Z, dayFilter=Fri}," +
-                        "{lo=2026-02-13T00:00:00.000000Z, hi=2026-02-13T23:59:59.999999Z, dayFilter=Fri}," +
-                        "{lo=2026-02-14T00:00:00.000000Z, hi=2026-02-14T23:59:59.999999Z, dayFilter=Fri}," +
-                        "{lo=2026-02-15T00:00:00.000000Z, hi=2026-02-15T23:59:59.999999Z, dayFilter=Fri}]",
+    public void testDateVariableRangeWithDayFilterKeepsMatchingDay() throws SqlException {
+        // 2026-02-09 is Monday, so the seven days hold one Friday, 2026-02-13
+        assertBracketIntervalWithNow(
+                "[{lo=2026-02-13T00:00:00.000000Z, hi=2026-02-13T23:59:59.999999Z}]",
                 "[$today..$today+6d]#Fri",
                 "2026-02-09T10:30:00.000000Z"
         );
@@ -3289,10 +3239,9 @@ public class TickExprTest {
     }
 
     @Test
-    public void testDateVariableRangeWithHoursTimezoneAndApplyEncodedFalse() throws SqlException {
-        // Time-precision with timezone and applyEncoded=false
-        // 16:45-18:45 local Tokyo (UTC+9) → 07:45-09:45 UTC
-        assertEncodedIntervalWithNow(
+    public void testDateVariableRangeWithHoursTimezone() throws SqlException {
+        // 16:45-18:45 local Tokyo (UTC+9) -> 07:45-09:45 UTC
+        assertBracketIntervalWithNow(
                 "[{lo=2026-04-10T07:45:00.000000Z, hi=2026-04-10T09:45:00.000000Z}]",
                 "[$now - 2h..$now]@Asia/Tokyo",
                 "2026-04-10T18:45:00.000000Z"
@@ -3387,9 +3336,8 @@ public class TickExprTest {
     }
 
     @Test
-    public void testDateVariableRangeWithTimePrecisionAndApplyEncodedFalse() throws SqlException {
-        // Time-precision range with applyEncoded=false, no timezone
-        assertEncodedIntervalWithNow(
+    public void testDateVariableRangeWithTimePrecision() throws SqlException {
+        assertBracketIntervalWithNow(
                 "[{lo=2026-07-04T19:00:00.000000Z, hi=2026-07-04T21:00:00.000000Z}]",
                 "[$now - 2h..$now]",
                 "2026-07-04T21:00:00.000000Z"
@@ -3769,6 +3717,15 @@ public class TickExprTest {
     }
 
     @Test
+    public void testDayFilterBracketRangeKeepsMonday() throws SqlException {
+        // 2024-01-01 is Monday, 2024-01-02 and 2024-01-03 are not
+        assertBracketInterval(
+                "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-01T23:59:59.999999Z}]",
+                "2024-01-[01..03]#Mon"
+        );
+    }
+
+    @Test
     public void testDayFilterCaseInsensitive() throws SqlException {
         // Test case insensitivity
         assertBracketInterval(
@@ -3956,46 +3913,6 @@ public class TickExprTest {
         assertBracketInterval(
                 "[{lo=2024-01-01T09:00:00.000000Z, hi=2024-01-01T09:00:59.999999Z}]",
                 "[2024-01-01,2024-01-02]T09:00#Mon"
-        );
-    }
-
-    @Test
-    public void testDayFilterDynamicModeEncoding() throws SqlException {
-        // Test that day filter mask is properly encoded in dynamic (4-long) format
-        // This verifies the encoding, not the runtime filtering
-        final TimestampDriver timestampDriver = timestampType.getDriver();
-        out.clear();
-        String interval = "2024-01-[01..03]#Mon";
-        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false);
-
-        // With applyEncoded=false, we get 4 longs per interval (encoded format)
-        // 3 intervals (01, 02, 03) * 4 longs = 12
-        Assert.assertEquals(12, out.size());
-
-        // Verify day filter mask is encoded (Monday = bit 0 = 1)
-        int dayFilterMask0 = IntervalUtils.decodeDayFilterMask(out, 0);
-        int dayFilterMask1 = IntervalUtils.decodeDayFilterMask(out, 4);
-        int dayFilterMask2 = IntervalUtils.decodeDayFilterMask(out, 8);
-        Assert.assertEquals("Day filter mask should be 1 (Monday)", 1, dayFilterMask0);
-        Assert.assertEquals("Day filter mask should be 1 (Monday)", 1, dayFilterMask1);
-        Assert.assertEquals("Day filter mask should be 1 (Monday)", 1, dayFilterMask2);
-    }
-
-    @Test
-    public void testDayFilterDynamicModeEncodingWeekend() throws SqlException {
-        // Weekend mask = Sat|Sun encoded in interval
-        assertEncodedInterval(
-                "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-01T23:59:59.999999Z, dayFilter=Sat,Sun}]",
-                "2024-01-01#weekend"
-        );
-    }
-
-    @Test
-    public void testDayFilterDynamicModeEncodingWorkday() throws SqlException {
-        // Workday mask = Mon-Fri encoded in interval
-        assertEncodedInterval(
-                "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-01T23:59:59.999999Z, dayFilter=Mon,Tue,Wed,Thu,Fri}]",
-                "2024-01-01#workday"
         );
     }
 
@@ -4223,6 +4140,12 @@ public class TickExprTest {
     }
 
     @Test
+    public void testDayFilterWeekendDropsMonday() throws SqlException {
+        // 2024-01-01 is Monday
+        assertBracketInterval("[]", "2024-01-01#weekend");
+    }
+
+    @Test
     public void testDayFilterWithDateList() throws SqlException {
         // Date list with day filter
         // 2024-01-01 is Monday, 2024-01-06 is Saturday
@@ -4290,33 +4213,31 @@ public class TickExprTest {
     }
 
     @Test
-    public void testDayFilterWithTimezoneApplyEncodedFalse() throws SqlException {
-        // Dynamic mode: day filter mask stored for runtime evaluation
-        // Friday 2026-01-30 14:00 local NY → 19:00 UTC, #Fri matches
-        assertEncodedIntervalWithNow(
-                "[{lo=2026-01-30T18:00:00.000000Z, hi=2026-01-30T19:00:00.000000Z, dayFilter=Fri}]",
+    public void testDayFilterWithTimezoneRangeMatches() throws SqlException {
+        // Friday 2026-01-30 13:00-14:00 local New York (UTC-5) -> 18:00-19:00 UTC, #Fri matches
+        assertBracketIntervalWithNow(
+                "[{lo=2026-01-30T18:00:00.000000Z, hi=2026-01-30T19:00:00.000000Z}]",
                 "[$now - 1h..$now]@America/New_York#Fri",
                 "2026-01-30T14:00:00.000000Z"
         );
     }
 
     @Test
-    public void testDayFilterWithTimezoneApplyEncodedFalseMidnightCrossing() throws SqlException {
-        // Dynamic mode: late Saturday night local crosses to Sunday UTC
-        // Saturday 2026-01-31 23:30 local NY → Sunday 04:30 UTC
-        // Day filter checks LOCAL day (Saturday) → #Sat matches
-        assertEncodedIntervalWithNow(
-                "[{lo=2026-02-01T03:30:00.000000Z, hi=2026-02-01T04:30:00.000000Z, dayFilter=Sat}]",
+    public void testDayFilterWithTimezoneRangeMidnightCrossing() throws SqlException {
+        // Saturday 2026-01-31 22:30-23:30 local New York -> Sunday 03:30-04:30 UTC
+        // The day filter reads the local day, Saturday, so #Sat matches
+        assertBracketIntervalWithNow(
+                "[{lo=2026-02-01T03:30:00.000000Z, hi=2026-02-01T04:30:00.000000Z}]",
                 "[$now - 1h..$now]@America/New_York#Sat",
                 "2026-01-31T23:30:00.000000Z"
         );
     }
 
     @Test
-    public void testDayFilterWithTimezoneApplyEncodedFalseNoMatch() throws SqlException {
-        // Dynamic mode: Wednesday 2026-01-28 09:15 local, #Thu doesn't match but mask stored
-        assertEncodedIntervalWithNow(
-                "[{lo=2026-01-28T12:15:00.000000Z, hi=2026-01-28T14:15:00.000000Z, dayFilter=Thu}]",
+    public void testDayFilterWithTimezoneRangeNoMatch() throws SqlException {
+        // Wednesday 2026-01-28 local New York, #Thu drops the range
+        assertBracketIntervalWithNow(
+                "[]",
                 "[$now - 2h..$now]@America/New_York#Thu",
                 "2026-01-28T09:15:00.000000Z"
         );
@@ -4329,6 +4250,15 @@ public class TickExprTest {
         assertBracketInterval(
                 "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-05T23:59:59.999999Z}]",
                 "2024-01-[01..07]#workday"
+        );
+    }
+
+    @Test
+    public void testDayFilterWorkdayKeepsMonday() throws SqlException {
+        // 2024-01-01 is Monday
+        assertBracketInterval(
+                "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-01T23:59:59.999999Z}]",
+                "2024-01-01#workday"
         );
     }
 
@@ -4871,9 +4801,8 @@ public class TickExprTest {
     }
 
     @Test
-    public void testNoBracketsWithApplyEncodedFalse() throws SqlException {
-        // No-brackets path with applyEncoded=false
-        assertEncodedInterval(
+    public void testNoBracketsFullDay() throws SqlException {
+        assertBracketInterval(
                 "[{lo=2025-01-15T00:00:00.000000Z, hi=2025-01-15T23:59:59.999999Z}]",
                 "2025-01-15"
         );
@@ -5093,7 +5022,7 @@ public class TickExprTest {
     @Test
     public void testParseShortInterval9() throws Exception {
         Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
-        assertShortInterval("[{lo=2016-03-21T10:30:40.123456Z, hi=2016-03-21T10:30:40.123456Z}]", "2016-03-21T10:30:40.12345678");
+        assertShortInterval("[]", "2016-03-21T10:30:40.12345678");
     }
 
     @Test
@@ -5188,7 +5117,7 @@ public class TickExprTest {
             for (int i = 0; i < 20_000; i++) {
                 out.clear();
                 IntervalUtils.parseTickExpr(timestampDriver, configuration, interval, 0, interval.length(),
-                        0, out, IntervalOperation.INTERSECT, scratch, true);
+                        0, out, IntervalOperation.INTERSECT, scratch);
             }
             long minAllocatedBytes = Long.MAX_VALUE;
             long intervalCount = 0;
@@ -5197,7 +5126,7 @@ public class TickExprTest {
                 for (int i = 0; i < 10_000; i++) {
                     out.clear();
                     IntervalUtils.parseTickExpr(timestampDriver, configuration, interval, 0, interval.length(),
-                            0, out, IntervalOperation.INTERSECT, scratch, true);
+                            0, out, IntervalOperation.INTERSECT, scratch);
                     intervalCount += out.size() / 2;
                 }
                 minAllocatedBytes = Math.min(minAllocatedBytes,
@@ -5597,21 +5526,6 @@ public class TickExprTest {
     }
 
     @Test
-    public void testTimezoneEncodedFormat() throws SqlException {
-        // Test timezone conversion with encoded format (applyEncoded=false, stride=4)
-        // This exercises the isStaticMode=false branch in applyTimezoneToIntervals
-        // 08:00 in +03:00 = 05:00 UTC
-        final TimestampDriver timestampDriver = timestampType.getDriver();
-        out.clear();
-        parseTickExpr(timestampDriver, "2024-01-15T08:00@+03:00", 0, 23, 0, out, IntervalOperation.INTERSECT, false);
-        IntervalUtils.applyLastEncodedInterval(timestampDriver, out);
-        String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
-                ? "[{lo=2024-01-15T05:00:00.000000000Z, hi=2024-01-15T05:00:59.999999999Z}]"
-                : "[{lo=2024-01-15T05:00:00.000000Z, hi=2024-01-15T05:00:59.999999Z}]";
-        TestUtils.assertEquals(expected, intervalToString(timestampDriver, out));
-    }
-
-    @Test
     public void testTimezoneExtremeNegativeOffset() throws SqlException {
         // Test extreme negative offset -12:00
         // 08:00 in -12:00 = 08:00 + 12:00 = 20:00 UTC
@@ -5694,6 +5608,15 @@ public class TickExprTest {
         assertBracketInterval(
                 "[{lo=2024-01-15T13:00:00.000000Z, hi=2024-01-15T13:00:59.999999Z}]",
                 "2024-01-15T08:00@-05:00"
+        );
+    }
+
+    @Test
+    public void testTimezoneNumericOffsetMinutePrecision() throws SqlException {
+        // 08:00 in +03:00 = 05:00 UTC
+        assertBracketInterval(
+                "[{lo=2024-01-15T05:00:00.000000Z, hi=2024-01-15T05:00:59.999999Z}]",
+                "2024-01-15T08:00@+03:00"
         );
     }
 
@@ -5785,45 +5708,6 @@ public class TickExprTest {
     public void testWhitespaceOnlyInput() {
         // All whitespace input (exercises line 426 - firstNonSpace reaches lim)
         assertBracketIntervalError("   ", "Invalid date");
-    }
-
-    /**
-     * Converts encoded intervals (4-long format) to a readable string for assertions.
-     * Format: [{lo=..., hi=..., dayFilter=Mon,Tue,...}]
-     */
-    private static CharSequence encodedIntervalToSink(TimestampDriver driver, LongList intervals) {
-        sink.clear();
-        sink.put('[');
-        for (int i = 0, n = intervals.size(); i < n; i += 4) {
-            if (i > 0) {
-                sink.put(',');
-            }
-            sink.put('{');
-            sink.put("lo=");
-            driver.append(sink, intervals.getQuick(i));
-            sink.put(", hi=");
-            driver.append(sink, intervals.getQuick(i + 1));
-
-            // Extract dayFilterMask from periodCount (high byte of high int)
-            long periodCountLong = intervals.getQuick(i + 3);
-            int periodCount = Numbers.decodeHighInt(periodCountLong);
-            int dayFilterMask = (periodCount >> 24) & 0xFF;
-            if (dayFilterMask != 0) {
-                sink.put(", dayFilter=");
-                boolean first = true;
-                String[] days = {"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"};
-                for (int d = 0; d < 7; d++) {
-                    if ((dayFilterMask & (1 << d)) != 0) {
-                        if (!first) sink.put(',');
-                        sink.put(days[d]);
-                        first = false;
-                    }
-                }
-            }
-            sink.put('}');
-        }
-        sink.put(']');
-        return sink;
     }
 
     /**
@@ -6007,39 +5891,6 @@ public class TickExprTest {
                         ? expected.replace("00Z", "00000Z").replace("99Z", "99999Z")
                         : expected,
                 intervalToString(timestampDriver, out)
-        );
-    }
-
-    /**
-     * Asserts encoded interval (4-long format, applyEncoded=false) for static intervals.
-     * Use this for testing dynamic mode where day filter is stored for runtime evaluation.
-     */
-    private void assertEncodedInterval(String expected, String interval) throws SqlException {
-        out.clear();
-        final TimestampDriver timestampDriver = timestampType.getDriver();
-        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false);
-        TestUtils.assertEquals(
-                ColumnType.isTimestampNano(timestampType.getTimestampType())
-                        ? expected.replace("00Z", "00000Z").replace("99Z", "99999Z")
-                        : expected,
-                encodedIntervalToSink(timestampDriver, out)
-        );
-    }
-
-    /**
-     * Asserts encoded interval (4-long format, applyEncoded=false) with a specific "now" timestamp.
-     * Use this for testing dynamic mode where day filter is stored for runtime evaluation.
-     */
-    private void assertEncodedIntervalWithNow(String expected, String interval, String nowTimestamp) throws SqlException {
-        out.clear();
-        final TimestampDriver timestampDriver = timestampType.getDriver();
-        long now = timestampDriver.parseFloorLiteral(nowTimestamp);
-        parseTickExprWithNow(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false, now);
-        TestUtils.assertEquals(
-                ColumnType.isTimestampNano(timestampType.getTimestampType())
-                        ? expected.replace("00Z", "00000Z").replace("99Z", "99999Z")
-                        : expected,
-                encodedIntervalToSink(timestampDriver, out)
         );
     }
 

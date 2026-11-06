@@ -24,7 +24,7 @@
 
 package io.questdb.test.cairo;
 
-import io.questdb.griffin.SqlCodeGenerator;
+import io.questdb.griffin.codegen.SqlCodeGenerator;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Before;
 import org.junit.Test;

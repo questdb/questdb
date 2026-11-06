@@ -37,17 +37,16 @@ import org.junit.Assert;
 import org.junit.Test;
 
 /**
- * A parallel WINDOW JOIN steals the master's filter: it takes the compiled JIT filter, the bind
- * variable memory, the bind variable functions and the filter function itself, then calls
- * {@code halfClose()}, which deliberately frees none of the four because the window-join factory is
- * about to adopt them. Everything between that steal and the constructor therefore runs with four
- * unowned native handles in hand, and the generator's enclosing catch frees only {@code master}.
+ * A parallel WINDOW JOIN steals the master's filter: the generator prepares the compiled JIT filter,
+ * the bind variable memory, the bind variable functions and the filter function itself in a holder
+ * the window-join factory adopts. Everything between that preparation and the constructor runs with
+ * the four native handles in the holder.
  * <p>
  * These tests inject a failure into that window and let {@code assertMemoryLeak} decide: the
  * compiled filter holds an executable JIT page and the bind variable memory is native, so leaking
  * them fails the assertion. The fault point is
- * {@code CairoConfiguration#getSqlSmallPageFrameMinRows()}, which the generator reads on the very
- * next line after {@code halfClose()}.
+ * {@code CairoConfiguration#getSqlSmallPageFrameMinRows()}, which the generator reads right after
+ * it prepares the stolen filter.
  */
 public class WindowJoinStolenFilterLeakTest extends AbstractCairoTest {
 

@@ -39,6 +39,7 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.std.Chars;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Hash;
 import io.questdb.std.IntList;
@@ -60,6 +61,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.Arrays;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
@@ -1275,6 +1277,80 @@ public class SymbolMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSortedKeysFollowTheSymbols() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                create(path, "x", 1024, true);
+                try (SymbolMapWriter writer = new SymbolMapWriter(configuration, path, "x", COLUMN_NAME_TXN_NONE, 0, -1, NOOP_COLLECTOR, -1)) {
+                    writer.put("c");
+                    writer.put("a");
+                    writer.put("b");
+                    SymbolMapReaderImpl.isKeySortCounterEnabled = true;
+                    try (SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, 3)) {
+                        SymbolMapReaderImpl.testKeySorts.set(0);
+                        assertSortedKeys(reader, 1, 2, 0);
+                        assertSortedKeys(reader, 1, 2, 0);
+                        Assert.assertEquals(1, SymbolMapReaderImpl.testKeySorts.get());
+
+                        // an appended symbol merges into the order
+                        writer.put("aa");
+                        reader.updateSymbolCount(4);
+                        assertSortedKeys(reader, 1, 3, 2, 0);
+                        Assert.assertEquals(2, SymbolMapReaderImpl.testKeySorts.get());
+
+                        // a key past a shrunk symbol count may come back with another value
+                        writer.rollback(3);
+                        reader.updateSymbolCount(3);
+                        assertSortedKeys(reader, 1, 2, 0);
+                        writer.put("0");
+                        reader.updateSymbolCount(4);
+                        assertSortedKeys(reader, 3, 1, 2, 0);
+                        Assert.assertEquals(4, SymbolMapReaderImpl.testKeySorts.get());
+
+                        // a reopen of the symbol map sorts its symbols anew
+                        reader.of(configuration, path, "x", COLUMN_NAME_TXN_NONE, 4);
+                        assertSortedKeys(reader, 3, 1, 2, 0);
+                        Assert.assertEquals(5, SymbolMapReaderImpl.testKeySorts.get());
+
+                        // runs past the insertion sort, and appended runs that merge into them, sort as String does
+                        final Rnd rnd = new Rnd();
+                        final ObjList<String> values = new ObjList<>();
+                        for (int i = 0; i < 4; i++) {
+                            values.add(Chars.toString(reader.valueOf(i)));
+                        }
+                        for (int batch = 0; batch < 3; batch++) {
+                            final int sortedCount = values.size();
+                            for (int i = 0; i < 200; i++) {
+                                final String value = Chars.toString(rnd.nextChars(1 + rnd.nextInt(6)));
+                                if (writer.put(value) == values.size()) {
+                                    values.add(value);
+                                }
+                            }
+                            reader.updateSymbolCount(values.size());
+                            final Integer[] expected = new Integer[values.size()];
+                            for (int i = 0; i < expected.length; i++) {
+                                expected[i] = i;
+                            }
+                            Arrays.sort(expected, (l, r) -> values.getQuick(l).compareTo(values.getQuick(r)));
+                            final int[] expectedKeys = new int[expected.length];
+                            for (int i = 0; i < expected.length; i++) {
+                                expectedKeys[i] = expected[i];
+                            }
+                            // the reader keeps the sorted keys alone once the sort ends, not the runs it merged
+                            final long readerBytes = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_TABLE_READER);
+                            assertSortedKeys(reader, expectedKeys);
+                            Assert.assertEquals((long) (values.size() - sortedCount) * Integer.BYTES, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_TABLE_READER) - readerBytes);
+                        }
+                        Assert.assertEquals(8, SymbolMapReaderImpl.testKeySorts.get());
+                    } finally {
+                        SymbolMapReaderImpl.isKeySortCounterEnabled = false;
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSimpleAdd() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             int N = 1000000;
@@ -1915,6 +1991,23 @@ public class SymbolMapTest extends AbstractCairoTest {
      * {@link SymbolMapWriter#setCacheKeyBufferLimit(long)} first; at the production ceiling
      * getting here takes eight gigabytes of distinct keys.
      */
+    private static void assertSortedKeys(SymbolMapReaderImpl reader, int... expected) {
+        final IntList actual = new IntList();
+        actual.add(-1);
+        reader.copySortedKeysTo(actual);
+        Assert.assertEquals(expected.length + 1, actual.size());
+        try (DirectIntList directActual = new DirectIntList(1, MemoryTag.NATIVE_DEFAULT)) {
+            directActual.add(-1);
+            reader.copySortedKeysTo(directActual);
+            Assert.assertEquals(expected.length + 1, directActual.size());
+            for (int i = 0; i <= expected.length; i++) {
+                final int expectedKey = i == 0 ? -1 : expected[i - 1];
+                Assert.assertEquals(expectedKey, actual.getQuick(i));
+                Assert.assertEquals(expectedKey, directActual.get(i));
+            }
+        }
+    }
+
     private static ObjList<String> exhaustCache(SymbolMapWriter writer) {
         Assert.assertTrue("the column asked for a cache", writer.isCached());
         Assert.assertTrue("...and got one", writer.isCacheAllocated());

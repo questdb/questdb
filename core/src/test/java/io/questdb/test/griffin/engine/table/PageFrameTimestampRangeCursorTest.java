@@ -216,6 +216,7 @@ public class PageFrameTimestampRangeCursorTest extends AbstractCairoTest {
                     columnIndexes,
                     columnSizeShifts,
                     false,
+                    false,
                     false
             )) {
                 // An index-backed row cursor yields rows in index order, not in timestamp
@@ -711,7 +712,7 @@ public class PageFrameTimestampRangeCursorTest extends AbstractCairoTest {
         return new FullPartitionFrameCursorFactory(
                 tableToken,
                 TableUtils.ANY_TABLE_VERSION,
-                metadata,
+                TestUtils.tableDescriptor(metadata),
                 ORDER_ASC,
                 null,
                 0,
@@ -736,6 +737,7 @@ public class PageFrameTimestampRangeCursorTest extends AbstractCairoTest {
                 columnIndexes,
                 columnSizeShifts,
                 true,
+                metadata.getTimestampIndex() != -1,
                 false
         );
     }
@@ -760,8 +762,7 @@ public class PageFrameTimestampRangeCursorTest extends AbstractCairoTest {
                                 PartitionBy.DAY,
                                 intervals
                         ),
-                        metadata.getTimestampIndex(),
-                        metadata,
+                        TestUtils.tableDescriptor(metadata),
                         ORDER_ASC,
                         null,
                         0,
@@ -774,6 +775,7 @@ public class PageFrameTimestampRangeCursorTest extends AbstractCairoTest {
                 columnIndexes,
                 columnSizeShifts,
                 true,
+                metadata.getTimestampIndex() != -1,
                 false
         );
     }

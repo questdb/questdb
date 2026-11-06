@@ -41,8 +41,8 @@ import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
 
 /**
  * Verifies {@code EXPIRE ROWS KEEP LATEST [ON <ts>] PARTITION BY <cols>} on PASSTHROUGH materialized views
- * (the relative "keep only the latest row per key" retention mode). The read filter rewrites a reference to
- * a policied view into {@code SELECT * FROM v LATEST ON <ts> PARTITION BY <cols>}, so a passthrough view +
+ * (the relative "keep only the latest row per key" retention mode). The read filter reads a policied view as
+ * {@code SELECT * FROM v LATEST ON <ts> PARTITION BY <cols>}, so a passthrough view +
  * KEEP LATEST behaves as an incrementally-maintained "current state per key" table.
  * <p>
  * Physical cleanup is deferred for this mode (the read filter is authoritative), so these tests assert
@@ -549,7 +549,7 @@ public class RowExpiryKeepLatestTest extends AbstractCairoTest {
     @Test
     public void testKeepLatestTiedMaxTimestampCleanupIsDeferred() throws Exception {
         // TIED max timestamps: key A has TWO rows sharing the SAME max ts, both in NON-active partitions.
-        // The read filter rewrites to LATEST ON ts PARTITION BY k, so it keeps exactly ONE of the tied rows
+        // The read filter is LATEST ON ts PARTITION BY k, so it keeps exactly ONE of the tied rows
         // (LATEST ON breaks the ts tie deterministically). Cleanup must preserve both candidates because a
         // later refresh can remove the current winner.
         assertMemoryLeak(() -> {

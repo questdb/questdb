@@ -32,7 +32,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.CreateTableColumnModel;
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.IQueryModel;
+import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.Chars;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
@@ -51,8 +51,6 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
     private int periodLength;
     private char periodLengthUnit;
     private int refreshType = -1;
-    private String timeZone;
-    private String timeZoneOffset;
     private int timerInterval;
     private long timerStartUs = Numbers.LONG_NULL;
     private String timerTimeZone;
@@ -69,8 +67,6 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
                 deferred,
                 baseTableName,
                 baseTableNamePosition,
-                timeZone,
-                timeZoneOffset,
                 timerInterval,
                 timerUnit,
                 timerStartUs,
@@ -89,8 +85,6 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
         deferred = false;
         baseTableName = null;
         baseTableNamePosition = 0;
-        timeZone = null;
-        timeZoneOffset = null;
         timerInterval = 0;
         timerUnit = 0;
         timerStartUs = Numbers.LONG_NULL;
@@ -106,7 +100,7 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
     }
 
     @Override
-    public IQueryModel getQueryModel() {
+    public QueryModel getQueryModel() {
         return createTableOperationBuilder.getQueryModel();
     }
 
@@ -144,16 +138,8 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
     }
 
     @Override
-    public void setSelectModel(IQueryModel selectModel) {
+    public void setSelectModel(QueryModel selectModel) {
         createTableOperationBuilder.setSelectModel(selectModel);
-    }
-
-    public void setTimeZone(String timeZone) {
-        this.timeZone = timeZone;
-    }
-
-    public void setTimeZoneOffset(String timeZoneOffset) {
-        this.timeZoneOffset = timeZoneOffset;
     }
 
     public void setTimer(@Nullable String timeZone, long startUs, int interval, char unit) {

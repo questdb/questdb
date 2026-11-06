@@ -50,8 +50,8 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractCairoTest {
                 .returns("""
                         nspname\toid\txmin\tnspowner\toid1\trelname\trelnamespace\treltype\treloftype\trelowner\trelam\trelfilenode\treltablespace\trelpages\treltuples\trelallvisible\treltoastrelid\trelhasindex\trelisshared\trelpersistence\trelkind\trelnatts\trelchecks\trelhasrules\trelhastriggers\trelhassubclass\trelrowsecurity\trelforcerowsecurity\trelispopulated\trelreplident\trelispartition\trelrewrite\trelfrozenxid\trelminmxid\trelacl\treloptions\trelpartbound\trelhasoids\txmin1\tobjoid\tclassoid\tobjsubid\tdescription
                         pg_catalog\t11\t0\t1\t1259\tpg_class\t11\t0\t0\t0\t0\t0\t0\tfalse\t-1.0\t0\t0\tfalse\tfalse\tu\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\tfalse\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\tnull\tnull\t0\t
-                        public\t2200\t0\t1\t1259\tpg_class\t11\t0\t0\t0\t0\t0\t0\tfalse\t-1.0\t0\t0\tfalse\tfalse\tu\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\tfalse\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\tnull\tnull\t0\t
                         pg_catalog\t11\t0\t1\t1\tbeta\t2200\t0\t0\t0\t0\t0\t0\tfalse\t-1.0\t0\t0\tfalse\tfalse\tp\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\ttrue\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\tnull\tnull\t0\t
+                        public\t2200\t0\t1\t1259\tpg_class\t11\t0\t0\t0\t0\t0\t0\tfalse\t-1.0\t0\t0\tfalse\tfalse\tu\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\tfalse\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\tnull\tnull\t0\t
                         public\t2200\t0\t1\t1\tbeta\t2200\t0\t0\t0\t0\t0\t0\tfalse\t-1.0\t0\t0\tfalse\tfalse\tp\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\ttrue\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\tnull\tnull\t0\t
                         """);
     }

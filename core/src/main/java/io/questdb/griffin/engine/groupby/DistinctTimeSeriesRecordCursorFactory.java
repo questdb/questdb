@@ -84,7 +84,7 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
                     recordSink
             );
         } catch (Throwable t) {
-            close();
+            Misc.free(this, t);
             throw t;
         }
     }
@@ -146,6 +146,7 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
         private long prevTimestamp;
         private Record record;
         private Record recordB;
+        private long recordBRowId;
 
         public DistinctTimeSeriesRecordCursor(int timestampIndex, Map dataMap, RecordSink recordSink) {
             this.timestampIndex = timestampIndex;
@@ -216,6 +217,7 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
             this.baseCursor = baseCursor;
             record = baseCursor.getRecord();
             recordB = baseCursor.getRecordB();
+            recordBRowId = -1;
             if (!isOpen) {
                 isOpen = true;
                 dataMap.setMemoryTracker(sqlExecutionContext.getMemoryTracker());
@@ -235,6 +237,9 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
         @Override
         public void recordAt(Record record, long atRowId) {
             baseCursor.recordAt(record, atRowId);
+            if (record == recordB) {
+                recordBRowId = atRowId;
+            }
         }
 
         @Override
@@ -267,6 +272,9 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
                 // and map should be empty
                 key.create();
                 prevRowId = -1;
+                if (recordBRowId != -1) {
+                    baseCursor.recordAt(recordB, recordBRowId);
+                }
             }
 
             key = dataMap.withKey();

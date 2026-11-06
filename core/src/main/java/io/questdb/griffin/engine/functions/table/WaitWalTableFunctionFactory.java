@@ -25,10 +25,12 @@
 package io.questdb.griffin.engine.functions.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.SqlExecutionRequirements;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -40,16 +42,18 @@ public class WaitWalTableFunctionFactory implements FunctionFactory {
     }
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.BOOLEAN;
+    }
+
+    @Override
     public String getSignature() {
         return "wait_wal_table(s)";
     }
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        if (args.getQuick(0).isNullConstant()) {
-            throw SqlException.$(argPositions.getQuick(0), "tableName cannot be NULL");
-        }
-        final CharSequence tableName = args.getQuick(0).getStrA(null);
+        final CharSequence tableName = SqlUtil.getTableName(args.getQuick(0), argPositions.getQuick(0));
         return new WaitWalFunction(tableName, null);
     }
 }

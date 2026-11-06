@@ -31,7 +31,7 @@ import org.jetbrains.annotations.Nullable;
 
 public class WithClauseModel implements Mutable {
     public static final ObjectFactory<WithClauseModel> FACTORY = WithClauseModel::new;
-    private IQueryModel model;
+    private QueryModel model;
     private int position;
     // The CTEs visible at the definition, as they stood there, which every parse of the body
     // reads; see of().
@@ -68,14 +68,14 @@ public class WithClauseModel implements Mutable {
      *                    name as the definition's parse did, so a CTE that names itself reads the
      *                    CTE it shadows rather than itself.
      */
-    public void of(int position, @Nullable LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses, IQueryModel model) {
+    public void of(int position, @Nullable LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses, QueryModel model) {
         this.position = position;
         this.model = model;
         this.withClauses = withClauses;
     }
 
-    public IQueryModel popModel() {
-        IQueryModel m = model;
+    public QueryModel popModel() {
+        QueryModel m = model;
         model = null;
         return m;
     }

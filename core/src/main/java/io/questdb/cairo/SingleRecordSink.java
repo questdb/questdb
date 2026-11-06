@@ -323,6 +323,9 @@ public final class SingleRecordSink implements RecordSinkSPI, Mutable, Reopenabl
     }
 
     public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        if (tracker != memoryTracker && appendAddress != 0) {
+            Unsafe.chargeHeldMemory(heapLimit - heapStart, memoryTag, tracker);
+        }
         this.memoryTracker = tracker;
     }
 

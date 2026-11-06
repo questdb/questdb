@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.functions.constants;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.GeoLongFunction;
@@ -45,17 +44,6 @@ public class GeoLongConstant extends GeoLongFunction implements ConstantFunction
     @Override
     public long getGeoLong(Record rec) {
         return hash;
-    }
-
-    @Override
-    public boolean isEquivalentTo(Function obj) {
-        if (this == obj) {
-            return true;
-        }
-        if (obj instanceof GeoLongConstant that) {
-            return this.hash == that.hash;
-        }
-        return false;
     }
 
     @Override

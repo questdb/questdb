@@ -30,6 +30,23 @@ import org.junit.Test;
 public class StringDistinctAggVarcharGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
+    public void testClosesArgument() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v VARCHAR)");
+            execute("INSERT INTO t VALUES (' a '), ('b '), (NULL), (' a')");
+            assertQuery("SELECT string_distinct_agg(trim(v), ',') s FROM t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            s
+                            a,b
+                            """);
+            assertQuery("SELECT missing FROM (SELECT string_distinct_agg(trim(v), ',') s FROM t)").noLeakCheck().fails(7, "Invalid column: missing");
+        });
+    }
+
+    @Test
     public void testConstantNull() throws Exception {
         assertQuery("select string_distinct_agg(null::varchar, ',') from x")
                 .ddl("create table x as (select * from (select timestamp_sequence(0, 100000) ts from long_sequence(5)) timestamp(ts))")

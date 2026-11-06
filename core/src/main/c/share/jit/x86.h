@@ -795,6 +795,148 @@ namespace questdb::x86 {
         }
     }
 
+    // The cmp_not_* family computes !cmp_* exactly, NULL and NaN operands included, in one
+    // comparison rather than a comparison followed by a NOT.
+    jit_value_t cmp_not_lt(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
+        auto dt = lhs.dtype();
+        auto dk = dst_kind(lhs, rhs);
+        switch (dt) {
+            case data_type_t::i8:
+            case data_type_t::i16:
+            case data_type_t::i32:
+                return {int32_not_lt_gt(c, lhs.gp().r32(), rhs.gp().r32(), false, null_check), data_type_t::i32, dk};
+            case data_type_t::i64:
+                return {int64_not_lt_gt(c, lhs.gp(), rhs.gp(), false, null_check), data_type_t::i32, dk};
+            case data_type_t::f32: {
+                Vec l = c.new_xmm_ss("lhs_copy");
+                c.movss(l, lhs.vec());
+                Vec r = c.new_xmm_ss("rhs_copy");
+                c.movss(r, rhs.vec());
+                return { bin_or(c,
+                    {float_eq_epsilon(c, lhs.vec(), rhs.vec(), FLOAT_EPSILON), data_type_t::i32, dk},
+                    {float_nlt(c, l, r), data_type_t::i32, dk})
+                };
+            }
+            case data_type_t::f64: {
+                Vec l = c.new_xmm_sd("lhs_copy");
+                c.movsd(l, lhs.vec());
+                Vec r = c.new_xmm_sd("rhs_copy");
+                c.movsd(r, rhs.vec());
+                return { bin_or(c,
+                    {double_eq_epsilon(c, lhs.vec(), rhs.vec(), DOUBLE_EPSILON), data_type_t::i32, dk},
+                    {double_nlt(c, l, r), data_type_t::i32, dk})
+                };
+            }
+            default:
+                __builtin_unreachable();
+        }
+    }
+
+    jit_value_t cmp_not_le(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
+        auto dt = lhs.dtype();
+        auto dk = dst_kind(lhs, rhs);
+        switch (dt) {
+            case data_type_t::i8:
+            case data_type_t::i16:
+            case data_type_t::i32:
+                return {int32_not_le_ge(c, lhs.gp().r32(), rhs.gp().r32(), false, null_check), data_type_t::i32, dk};
+            case data_type_t::i64:
+                return {int64_not_le_ge(c, lhs.gp(), rhs.gp(), false, null_check), data_type_t::i32, dk};
+            case data_type_t::f32: {
+                Vec l = c.new_xmm_ss("lhs_copy");
+                c.movss(l, lhs.vec());
+                Vec r = c.new_xmm_ss("rhs_copy");
+                c.movss(r, rhs.vec());
+                return { bin_and(c,
+                    {float_ne_epsilon(c, lhs.vec(), rhs.vec(), FLOAT_EPSILON), data_type_t::i32, dk},
+                    {float_nle(c, l, r), data_type_t::i32, dk})
+                };
+            }
+            case data_type_t::f64: {
+                Vec l = c.new_xmm_sd("lhs_copy");
+                c.movsd(l, lhs.vec());
+                Vec r = c.new_xmm_sd("rhs_copy");
+                c.movsd(r, rhs.vec());
+                return { bin_and(c,
+                    {double_ne_epsilon(c, lhs.vec(), rhs.vec(), DOUBLE_EPSILON), data_type_t::i32, dk},
+                    {double_nle(c, l, r), data_type_t::i32, dk})
+                };
+            }
+            default:
+                __builtin_unreachable();
+        }
+    }
+
+    jit_value_t cmp_not_gt(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
+        auto dt = lhs.dtype();
+        auto dk = dst_kind(lhs, rhs);
+        switch (dt) {
+            case data_type_t::i8:
+            case data_type_t::i16:
+            case data_type_t::i32:
+                return {int32_not_lt_gt(c, lhs.gp().r32(), rhs.gp().r32(), true, null_check), data_type_t::i32, dk};
+            case data_type_t::i64:
+                return {int64_not_lt_gt(c, lhs.gp(), rhs.gp(), true, null_check), data_type_t::i32, dk};
+            case data_type_t::f32: {
+                Vec l = c.new_xmm_ss("lhs_copy");
+                c.movss(l, lhs.vec());
+                Vec r = c.new_xmm_ss("rhs_copy");
+                c.movss(r, rhs.vec());
+                return { bin_or(c,
+                    {float_eq_epsilon(c, lhs.vec(), rhs.vec(), FLOAT_EPSILON), data_type_t::i32, dk},
+                    {float_nlt(c, r, l), data_type_t::i32, dk})
+                };
+            }
+            case data_type_t::f64: {
+                Vec l = c.new_xmm_sd("lhs_copy");
+                c.movsd(l, lhs.vec());
+                Vec r = c.new_xmm_sd("rhs_copy");
+                c.movsd(r, rhs.vec());
+                return { bin_or(c,
+                    {double_eq_epsilon(c, lhs.vec(), rhs.vec(), DOUBLE_EPSILON), data_type_t::i32, dk},
+                    {double_nlt(c, r, l), data_type_t::i32, dk})
+                };
+            }
+            default:
+                __builtin_unreachable();
+        }
+    }
+
+    jit_value_t cmp_not_ge(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
+        auto dt = lhs.dtype();
+        auto dk = dst_kind(lhs, rhs);
+        switch (dt) {
+            case data_type_t::i8:
+            case data_type_t::i16:
+            case data_type_t::i32:
+                return {int32_not_le_ge(c, lhs.gp().r32(), rhs.gp().r32(), true, null_check), data_type_t::i32, dk};
+            case data_type_t::i64:
+                return {int64_not_le_ge(c, lhs.gp(), rhs.gp(), true, null_check), data_type_t::i32, dk};
+            case data_type_t::f32: {
+                Vec l = c.new_xmm_ss("lhs_copy");
+                c.movss(l, lhs.vec());
+                Vec r = c.new_xmm_ss("rhs_copy");
+                c.movss(r, rhs.vec());
+                return { bin_and(c,
+                    {float_ne_epsilon(c, lhs.vec(), rhs.vec(), FLOAT_EPSILON), data_type_t::i32, dk},
+                    {float_nle(c, r, l), data_type_t::i32, dk})
+                };
+            }
+            case data_type_t::f64: {
+                Vec l = c.new_xmm_sd("lhs_copy");
+                c.movsd(l, lhs.vec());
+                Vec r = c.new_xmm_sd("rhs_copy");
+                c.movsd(r, rhs.vec());
+                return { bin_and(c,
+                    {double_ne_epsilon(c, lhs.vec(), rhs.vec(), DOUBLE_EPSILON), data_type_t::i32, dk},
+                    {double_nle(c, r, l), data_type_t::i32, dk})
+                };
+            }
+            default:
+                __builtin_unreachable();
+        }
+    }
+
     // Narrow int arithmetic always runs at i32 width via int32_*, and its result is a Java INT:
     // AddIntFunctionFactory and its siblings take BYTE and SHORT operands widened to INT. So the
     // result is tagged i32 whether or not null checks are on. With null_check on, it can carry
@@ -1167,6 +1309,18 @@ namespace questdb::x86 {
                 break;
             case opcodes::Le:
                 values.append(arena, cmp_le(c, lhs, rhs, null_check));
+                break;
+            case opcodes::Not_Lt:
+                values.append(arena, cmp_not_lt(c, lhs, rhs, null_check));
+                break;
+            case opcodes::Not_Le:
+                values.append(arena, cmp_not_le(c, lhs, rhs, null_check));
+                break;
+            case opcodes::Not_Gt:
+                values.append(arena, cmp_not_gt(c, lhs, rhs, null_check));
+                break;
+            case opcodes::Not_Ge:
+                values.append(arena, cmp_not_ge(c, lhs, rhs, null_check));
                 break;
             case opcodes::Add:
                 values.append(arena, add(c, lhs, rhs, null_check));

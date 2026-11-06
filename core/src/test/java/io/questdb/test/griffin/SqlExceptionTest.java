@@ -32,8 +32,6 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.lang.reflect.Method;
-
 public class SqlExceptionTest extends AbstractCairoTest {
     @Test
     public void testDuplicateColumn() {
@@ -46,6 +44,23 @@ public class SqlExceptionTest extends AbstractCairoTest {
                 "[2022] Duplicate column [name=我们是最棒的]",
                 SqlException.duplicateColumn(2022, "我们是最棒的").getMessage()
         );
+    }
+
+    @Test
+    public void testFactoryFailureCauseResetsOnFlyweightReuse() {
+        SqlException.setFlyweightReusedForTesting(true);
+        try {
+            final IllegalStateException failure = new IllegalStateException("broken");
+            final SqlException factoryFailure = SqlException.factoryFailure(17, failure);
+            Assert.assertSame(failure, factoryFailure.getCause());
+            TestUtils.assertEquals("[17] exception in function factory: broken", factoryFailure.getMessage());
+
+            final SqlException other = SqlException.$(23, "rejected");
+            Assert.assertSame(factoryFailure, other);
+            Assert.assertNull(other.getCause());
+        } finally {
+            SqlException.setFlyweightReusedForTesting(false);
+        }
     }
 
     @Test
@@ -90,20 +105,21 @@ public class SqlExceptionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTableBusyFlagResetsOnFlyweightReuse() throws Exception {
-        // -ea makes position() allocate fresh exceptions. Load just SqlException without assertions
-        // to verify that its production flyweight clears the flag before the next throw.
-        final Class<?> exceptionClass = TestUtils.loadSqlExceptionWithAssertionsDisabled();
-        Assert.assertFalse(exceptionClass.desiredAssertionStatus());
-        final Method position = exceptionClass.getMethod("position", int.class);
-        final Method isTableBusy = exceptionClass.getMethod("isTableBusy");
-        final Object busy = position.invoke(null, 17);
-        exceptionClass.getMethod("setTableBusy", boolean.class).invoke(busy, true);
-        Assert.assertEquals(true, isTableBusy.invoke(busy));
+    public void testTableBusyFlagResetsOnFlyweightReuse() {
+        // -ea makes position() allocate fresh exceptions; force the production flyweight reuse
+        // to verify that it clears the flag before the next throw.
+        SqlException.setFlyweightReusedForTesting(true);
+        try {
+            final SqlException busy = SqlException.position(17);
+            busy.setTableBusy(true);
+            Assert.assertTrue(busy.isTableBusy());
 
-        final Object other = position.invoke(null, 23);
-        Assert.assertSame(busy, other);
-        Assert.assertEquals(false, isTableBusy.invoke(other));
+            final SqlException other = SqlException.position(23);
+            Assert.assertSame(busy, other);
+            Assert.assertFalse(other.isTableBusy());
+        } finally {
+            SqlException.setFlyweightReusedForTesting(false);
+        }
     }
 
     @Test

@@ -494,6 +494,21 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimeoutInMaterializedNestedLoop() throws Exception {
+        circuitBreaker.setTimeout(1);
+        assertMemoryLeak(() -> {
+            try {
+                assertTimeout(
+                        "create table crosstest as (select x::int id, timestamp_sequence(0, 1_000_000) ts from long_sequence(100_000)) timestamp(ts)",
+                        "select twap(a.id, a.ts) from crosstest a cross join crosstest b join crosstest c on b.id = c.id"
+                );
+            } finally {
+                resetTimeout();
+            }
+        });
+    }
+
+    @Test
     public void testTimeoutInMultiHashJoin() throws Exception {
         circuitBreaker.setTimeout(1);
         assertMemoryLeak(() -> {

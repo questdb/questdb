@@ -170,15 +170,6 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet implements 
         return list;
     }
 
-    public int getListIndexAt(int keyIndex) {
-        int index = -keyIndex - 1;
-        return list.indexOf(keys[index]);
-    }
-
-    public int getListIndexOf(@NotNull CharSequence cs) {
-        return getListIndexAt(keyIndex(cs));
-    }
-
     @Override
     public CharSequence keyAt(int index) {
         int index1 = -index - 1;
@@ -239,7 +230,9 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet implements 
         free -= n;
         for (int i = 0; i < n; i++) {
             final CharSequence key = list.getQuick(i);
-            keys[keyIndex(key)] = key;
+            if (key != null) {
+                keys[keyIndex(key)] = key;
+            }
         }
     }
 

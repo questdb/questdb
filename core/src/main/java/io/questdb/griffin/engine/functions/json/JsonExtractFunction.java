@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.json;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.MillisTimestampDriver;
@@ -100,8 +101,7 @@ public class JsonExtractFunction implements Function {
         Misc.free(stateA);
         Misc.free(stateB);
         pointer = Misc.free(pointer);
-        json.close();
-        path.close();
+        CairoException.rethrowCleanupFailure(Misc.freeBestEffort(Misc.freeBestEffort(null, json), path));
     }
 
     @Override
@@ -462,6 +462,14 @@ public class JsonExtractFunction implements Function {
         // getXxx(null) - the runtime-const wrapper and the half-runtime-const eq factories - reading it
         // per row instead of dereferencing a null record.
         return json.isRuntimeConstant();
+    }
+
+    @Override
+    public void offerStateTo(Function that) {
+        if (that instanceof JsonExtractFunction other) {
+            json.offerStateTo(other.json);
+            path.offerStateTo(other.path);
+        }
     }
 
     @Override

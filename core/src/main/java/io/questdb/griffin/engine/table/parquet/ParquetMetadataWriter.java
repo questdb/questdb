@@ -52,4 +52,19 @@ public class ParquetMetadataWriter {
      * @throws io.questdb.cairo.CairoException on error
      */
     public static native long generate(long allocator, int parquetFd, long parquetFileSize, int parquetMetaFd);
+
+    /**
+     * Records in a {@code _pm} written before the record existed that QuestDB's parquet writer wrote the
+     * partition. Reads the {@code created_by} of the parquet file, and when it is QuestDB's, appends a footer
+     * that repeats the committed snapshot with the record and publishes it through the {@code _pm} header, as an
+     * incremental update does.
+     *
+     * @param parquetFd       file descriptor of the parquet file (read-only)
+     * @param parquetFileSize committed size of the parquet file
+     * @param parquetMetaFd   file descriptor of the parquet meta file (read-write)
+     * @return the new parquet meta file size; 0 when the committed footer already carries the record; -1 when
+     * another writer wrote the parquet file, or the committed footer does not describe {@code parquetFileSize}
+     * @throws io.questdb.cairo.CairoException on error
+     */
+    public static native long markWrittenByQuestDB(int parquetFd, long parquetFileSize, int parquetMetaFd);
 }

@@ -59,8 +59,12 @@ open module io.questdb {
     exports io.questdb.cutlass.text.types;
 
     exports io.questdb.griffin;
+    exports io.questdb.griffin.bind;
+    exports io.questdb.griffin.codegen;
+    exports io.questdb.griffin.optimiser;
     exports io.questdb.griffin.engine;
     exports io.questdb.griffin.model;
+    exports io.questdb.griffin.plan.logical;
     exports io.questdb.griffin.engine.functions;
     exports io.questdb.griffin.engine.functions.rnd;
     exports io.questdb.griffin.engine.functions.bind;

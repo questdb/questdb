@@ -25,6 +25,7 @@
 package io.questdb.test.griffin.engine.groupby;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.test.TestCloseCounterFunctionFactory;
@@ -239,9 +240,9 @@ public class SampleByTemporalFunctionOwnershipTest extends AbstractCairoTest {
 
     @Test
     public void testTimezoneNormalizationClosesReplacedBounds() throws Exception {
-        // Sub-day calendar sampling with a timezone converts FROM/TO to UTC at compile time by
-        // swapping in TimestampConstant replacements. The replaced original functions must be
-        // closed exactly once at the swap; the replacements then live and die with the factory.
+        // Sub-day calendar sampling with a timezone converts runtime-constant FROM/TO bounds to
+        // UTC through wrappers that own the original functions; every function lives and dies
+        // with the factory.
         assertMemoryLeak(() -> {
             createPriceTable();
             TestCloseCounterFunctionFactory.reset();
@@ -258,7 +259,7 @@ public class SampleByTemporalFunctionOwnershipTest extends AbstractCairoTest {
             }
             Assert.assertEquals(
                     "every temporal function must close exactly once, including the originals " +
-                            "replaced by the timezone normalization",
+                            "the timezone normalization wraps",
                     TestCloseCounterFunctionFactory.created(),
                     TestCloseCounterFunctionFactory.closeCalls()
             );
@@ -268,26 +269,38 @@ public class SampleByTemporalFunctionOwnershipTest extends AbstractCairoTest {
 
     @Test
     public void testTimezoneNormalizationFailureClosesAllBounds() throws Exception {
-        // When the FROM bound has already been replaced and the TO bound's compile-time
-        // conversion then throws, every function - the replaced original, the replacement, the
-        // still-current TO original, timezone and offset - must be closed exactly once.
+        // Runtime-constant bounds convert to UTC when the cursor reads them. A TO bound that fails
+        // that conversion fails the execution; the factory then still owns every function - the
+        // FROM and TO originals inside their UTC conversions, timezone and offset - and closes
+        // each exactly once.
         assertMemoryLeak(() -> {
             createPriceTable();
             TestCloseCounterFunctionFactory.reset();
-            try {
-                select(
-                        "select ts, sum(price) s from t sample by 1h " +
-                                "from test_close_counter('1970-01-01') to test_close_counter('nope') " +
-                                "align to calendar time zone test_close_counter('UTC') " +
-                                "with offset test_close_counter('00:00')"
-                ).close();
-                Assert.fail("conversion failure expected");
-            } catch (Throwable e) {
-                TestUtils.assertContains(e.getMessage(), "inconvertible value");
+            try (RecordCursorFactory factory = select(
+                    "select ts, sum(price) s from t sample by 1h " +
+                            "from test_close_counter('1970-01-01') to test_close_counter('nope') " +
+                            "align to calendar time zone test_close_counter('UTC') " +
+                            "with offset test_close_counter('00:00')"
+            )) {
+                Assert.assertTrue(TestCloseCounterFunctionFactory.created() > 0);
+                boolean isFailed = false;
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    while (cursor.hasNext()) {
+                        cursor.getRecord();
+                    }
+                } catch (ImplicitCastException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
+                    isFailed = true;
+                }
+                Assert.assertTrue("conversion failure expected", isFailed);
+                Assert.assertEquals(
+                        "no temporal function may close before the owning factory closes",
+                        0,
+                        TestCloseCounterFunctionFactory.closeCalls()
+                );
             }
             Assert.assertEquals(
-                    "every temporal function must close exactly once when the TO conversion " +
-                            "fails after FROM was replaced",
+                    "every temporal function must close exactly once when the TO conversion fails",
                     TestCloseCounterFunctionFactory.created(),
                     TestCloseCounterFunctionFactory.closeCalls()
             );

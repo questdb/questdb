@@ -290,6 +290,10 @@ public class BytecodeAssembler {
         putShort(0x91);
     }
 
+    public void i2c() {
+        putShort(0x92);
+    }
+
     public void i2d() {
         putShort(0x87);
     }

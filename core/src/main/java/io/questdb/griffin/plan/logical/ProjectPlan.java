@@ -1,0 +1,159 @@
+/*+*****************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.plan.logical;
+
+import io.questdb.std.IntHashSet;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjectFactory;
+import io.questdb.std.ObjList;
+
+public final class ProjectPlan extends UnaryPlan {
+    public static final ObjectFactory<ProjectPlan> FACTORY = ProjectPlan::new;
+    private final ObjList<BoundExpression> expressions = new ObjList<>();
+    private final SortKeys requestedOrder = new SortKeys();
+    private final IntList updateTargetTypes = new IntList();
+    private int distinctColumnCount = -1;
+    private int distinctWindowColumnCount = -1;
+    private boolean hasTimestampDeclaration;
+    private boolean isImplied;
+    private int requestedOrderColumnId = -1;
+
+    @Override
+    public void clear() {
+        super.clear();
+        expressions.clear();
+        requestedOrder.clear();
+        updateTargetTypes.clear();
+        distinctColumnCount = -1;
+        distinctWindowColumnCount = -1;
+        hasTimestampDeclaration = false;
+        isImplied = false;
+        requestedOrderColumnId = -1;
+    }
+
+    /**
+     * Counts the distinct columns the projection selects as plain column references, and those of them that are
+     * results of the window beneath it; {@code OrderPlanning}, the last optimiser pass, derives the counts once it has
+     * dropped the sorts no consumer reads, and a projection that has none reads -1.
+     */
+    public void deriveColumnReferenceCounts(IntHashSet columnIds) {
+        columnIds.clear();
+        distinctColumnCount = 0;
+        distinctWindowColumnCount = 0;
+        final WindowPlan window = getChild() instanceof WindowPlan w ? w : null;
+        final int firstWindowColumn = window == null ? -1 : window.getOutput().getColumnCount() - window.getFunctionColumnIds().size();
+        for (int i = 0, n = expressions.size(); i < n; i++) {
+            if (expressions.getQuick(i) instanceof ColumnExpression column && columnIds.add(column.getColumnId())) {
+                distinctColumnCount++;
+                if (window != null && window.getOutput().getColumnIndexById(column.getColumnId()) >= firstWindowColumn) {
+                    distinctWindowColumnCount++;
+                }
+            }
+        }
+        columnIds.clear();
+    }
+
+    public int getDistinctColumnCount() {
+        return distinctColumnCount;
+    }
+
+    public int getDistinctWindowColumnCount() {
+        return distinctWindowColumnCount;
+    }
+
+    public ObjList<BoundExpression> getExpressions() {
+        return expressions;
+    }
+
+    /**
+     * The order the consumer of the projection would like its rows in.
+     */
+    public SortKeys getRequestedOrder() {
+        return requestedOrder;
+    }
+
+    /**
+     * The output column the consumer would like the rows ordered by in a single direction, or -1.
+     */
+    public int getRequestedOrderColumnId() {
+        return requestedOrderColumnId;
+    }
+
+    public IntList getUpdateTargetTypes() {
+        return updateTargetTypes;
+    }
+
+    public boolean hasTimestampDeclaration() {
+        return hasTimestampDeclaration;
+    }
+
+    public boolean hasUpdateConversions() {
+        return updateTargetTypes.size() > 0;
+    }
+
+    /**
+     * True when the query text names none of the projection's columns: it stands for a bare table name, which SQL
+     * reads as the table rather than as {@code SELECT *}, or the binder adds it over its input.
+     */
+    public boolean isImplied() {
+        return isImplied;
+    }
+
+    public void markImplied() {
+        isImplied = true;
+    }
+
+    public void markTimestampDeclaration() {
+        hasTimestampDeclaration = true;
+    }
+
+    public ProjectPlan of(LogicalPlan input, int position) {
+        configure(input, position);
+        return this;
+    }
+
+    public void setRequestedOrderColumnId(int requestedOrderColumnId) {
+        checkRewritable("ProjectPlan.setRequestedOrderColumnId");
+        this.requestedOrderColumnId = requestedOrderColumnId;
+    }
+
+    @Override
+    public void visitFacts(PlanFactRecorder visitor) {
+        super.visitFacts(visitor);
+        visitor.columnIds("requestedOrder", requestedOrder.getColumnIds());
+        visitor.facts("requestedOrder", requestedOrder.getDirections());
+        visitor.facts("updateTargetTypes", updateTargetTypes);
+        visitor.fact("distinctColumnCount", distinctColumnCount);
+        visitor.fact("distinctWindowColumnCount", distinctWindowColumnCount);
+        visitor.fact("hasTimestampDeclaration", hasTimestampDeclaration);
+        visitor.fact("isImplied", isImplied);
+        visitor.columnId("requestedOrderColumnId", requestedOrderColumnId);
+    }
+
+    @Override
+    public void visitReads(PlanExpressionVisitor visitor) {
+        PlanReads.expressions(expressions, visitor);
+    }
+}

@@ -46,13 +46,7 @@ class LtDoubleCursorFunction extends AbstractScalarCursorFunction {
 
     @Override
     public boolean getBool(Record rec) {
-        final double l = leftFunc.getDouble(rec);
-        // Evaluate the tolerance-aware equality only when the primitive ordering has not already
-        // settled the result: the operands of && and || are side-effect free, so the reordering
-        // preserves the exact NULL, NaN, infinity, signed-zero and tolerance semantics while the
-        // rows settled by the primitive comparison skip the Numbers.equals() call on this scan
-        // hot path.
-        return negated ? (l > value || Numbers.equals(l, value)) : (l < value && !Numbers.equals(l, value));
+        return isComplemented ? !isMatch(rec) : isMatch(rec);
     }
 
     @Override
@@ -78,5 +72,15 @@ class LtDoubleCursorFunction extends AbstractScalarCursorFunction {
     @Override
     protected void setNullValue() {
         value = Double.NaN;
+    }
+
+    private boolean isMatch(Record rec) {
+        final double l = leftFunc.getDouble(rec);
+        // Evaluate the tolerance-aware equality only when the primitive ordering has not already
+        // settled the result: the operands of && and || are side-effect free, so the reordering
+        // preserves the exact NULL, NaN, infinity, signed-zero and tolerance semantics while the
+        // rows settled by the primitive comparison skip the Numbers.equals() call on this scan
+        // hot path.
+        return negated ? (l > value || Numbers.equals(l, value)) : (l < value && !Numbers.equals(l, value));
     }
 }

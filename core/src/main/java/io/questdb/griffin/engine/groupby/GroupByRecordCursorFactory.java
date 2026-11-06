@@ -152,38 +152,12 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public boolean isStableWithinExecution() {
-        for (int i = 0, n = keyFunctions.size(); i < n; i++) {
-            if (!keyFunctions.getQuick(i).isStableWithinExecution()) {
-                return false;
-            }
-        }
-        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
-            if (!groupByFunctions.getQuick(i).isStableWithinExecution()) {
-                return false;
-            }
-        }
-        return base.isStableWithinExecution();
-    }
-
-    @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        final RecordCursor baseCursor = base.getCursor(executionContext);
-        try {
-            // init all record functions for this cursor, in case functions require metadata and/or symbol tables
-            Function.init(recordFunctions, baseCursor, executionContext, null);
-        } catch (Throwable th) {
-            baseCursor.close();
-            throw th;
-        }
-
-        try {
-            cursor.of(baseCursor, executionContext);
+        if (cursor.isOpenedByShared) {
+            cursor.isOpenedByShared = false;
             return cursor;
-        } catch (Throwable th) {
-            cursor.close();
-            throw th;
         }
+        return openCursor(executionContext);
     }
 
     @Override
@@ -193,11 +167,30 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         }
         int idx = sharedId - 1;
         GroupBySharedCursor shared = sharedCursors.getQuiet(idx);
+        assert sharedRecordFunctions != null;
+        assert idx < sharedRecordFunctions.size();
+        final ObjList<Function> sharedFunctions = sharedRecordFunctions.getQuick(idx);
         if (shared == null) {
-            assert sharedRecordFunctions != null;
-            assert idx < sharedRecordFunctions.size();
-            shared = new GroupBySharedCursor(cursor, sharedRecordFunctions.getQuick(idx));
+            shared = new GroupBySharedCursor(cursor, sharedFunctions);
             sharedCursors.extendAndSet(idx, shared);
+        }
+        // A shared consumer on the build side of a hash join opens before the primary cursor and reads its
+        // symbol tables as it opens; getCursor then hands over the open primary.
+        final boolean isPrimaryOpened = !cursor.isOpen;
+        if (isPrimaryOpened) {
+            openCursor(executionContext);
+            cursor.isOpenedByShared = true;
+        }
+        try {
+            for (int i = 0, n = recordFunctions.size(); i < n; i++) {
+                recordFunctions.getQuick(i).offerStateTo(sharedFunctions.getQuick(i));
+            }
+            Function.init(sharedFunctions, cursor.managedCursor, executionContext, null);
+        } catch (Throwable th) {
+            if (isPrimaryOpened) {
+                cursor.close();
+            }
+            throw th;
         }
         shared.of(cursor.dataMap);
         return shared;
@@ -264,6 +257,25 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
+    private RecordCursor openCursor(SqlExecutionContext executionContext) throws SqlException {
+        final RecordCursor baseCursor = base.getCursor(executionContext);
+        try {
+            // init all record functions for this cursor, in case functions require metadata and/or symbol tables
+            Function.init(recordFunctions, baseCursor, executionContext, null);
+        } catch (Throwable th) {
+            baseCursor.close();
+            throw th;
+        }
+
+        try {
+            cursor.of(baseCursor, executionContext);
+            return cursor;
+        } catch (Throwable th) {
+            cursor.close();
+            throw th;
+        }
+    }
+
     private static class GroupBySharedCursor extends AbstractVirtualFunctionRecordCursor {
         private final GroupByRecordCursor primaryCursor;
         private MapRecordCursor cachedMapCursor;
@@ -278,6 +290,14 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
             buildMapConditionally();
             baseCursor.calculateSize(circuitBreaker, counter);
+        }
+
+        @Override
+        public void close() {
+            super.close();
+            if (primaryCursor.isOpenedByShared) {
+                primaryCursor.close();
+            }
         }
 
         @Override
@@ -321,6 +341,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         private SqlExecutionCircuitBreaker circuitBreaker;
         private boolean isDataMapBuilt;
         private boolean isOpen;
+        private boolean isOpenedByShared;
         private long rowId;
 
         public GroupByRecordCursor(
@@ -359,12 +380,14 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public void close() {
+            isOpenedByShared = false;
             if (isOpen) {
                 isOpen = false;
                 Misc.free(dataMap);
                 Misc.free(allocator);
                 Misc.clearObjList(groupByFunctions);
                 super.close();
+                Function.cursorClosed(keyFunctions);
             }
         }
 

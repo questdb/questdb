@@ -1350,25 +1350,25 @@ public class CastTest extends AbstractCairoTest {
     @Test
     public void testCharToNumbersException() throws Exception {
         assertQuery("select 'm'::byte")
-                .fails(0, "inconvertible value: m [CHAR -> BYTE]");
+                .fails(10, "inconvertible value: m [CHAR -> BYTE]");
         assertQuery("select 'm'::short")
-                .fails(0, "inconvertible value: m [CHAR -> SHORT]");
+                .fails(10, "inconvertible value: m [CHAR -> SHORT]");
         assertQuery("select 'm'::int")
-                .fails(0, "inconvertible value: m [CHAR -> INT]");
+                .fails(10, "inconvertible value: m [CHAR -> INT]");
         assertQuery("select 'm'::long")
-                .fails(0, "inconvertible value: m [CHAR -> LONG]");
+                .fails(10, "inconvertible value: m [CHAR -> LONG]");
         assertQuery("select 'm'::float")
-                .fails(0, "inconvertible value: m [CHAR -> DOUBLE]");
+                .fails(10, "inconvertible value: m [CHAR -> DOUBLE]");
         assertQuery("select 'm'::double")
-                .fails(0, "inconvertible value: m [CHAR -> DOUBLE]");
+                .fails(10, "inconvertible value: m [CHAR -> DOUBLE]");
         assertQuery("select 'm'::date - 1")
-                .fails(0, "inconvertible value: m [CHAR -> DATE]");
+                .fails(10, "inconvertible value: m [CHAR -> DATE]");
         assertQuery("select 'm'::timestamp - 1")
-                .fails(0, "inconvertible value: m [CHAR -> TIMESTAMP]");
+                .fails(10, "inconvertible value: m [CHAR -> TIMESTAMP]");
         assertQuery("select 'm'::timestamp_ns - 1")
-                .fails(0, "inconvertible value: m [CHAR -> TIMESTAMP_NS]");
+                .fails(10, "inconvertible value: m [CHAR -> TIMESTAMP_NS]");
         assertQuery("select 'm'::boolean")
-                .fails(0, "inconvertible value: m [CHAR -> BOOLEAN]");
+                .fails(10, "inconvertible value: m [CHAR -> BOOLEAN]");
     }
 
     @Test
@@ -3925,6 +3925,35 @@ public class CastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLong256ToDoubleAndFloat() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (a LONG256)");
+            execute("""
+                    INSERT INTO tab VALUES
+                        ('0x2a'),
+                        ('0x0100000000000000000000000000000000000000000000000000000000000007'),
+                        (NULL)
+                    """);
+            assertQuery("SELECT a::DOUBLE d, a::FLOAT f FROM tab")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            d\tf
+                            42.0\t42.0
+                            7.0\t7.0
+                            null\tnull
+                            """);
+            assertQuery("SELECT 0x2a::LONG256::DOUBLE d, 0x2a::LONG256::FLOAT f, NULL::LONG256::DOUBLE dn, NULL::LONG256::FLOAT fn")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            d\tf\tdn\tfn
+                            42.0\t42.0\tnull\tnull
+                            """);
+        });
+    }
+
+    @Test
     public void testLong256ToInt() throws Exception {
         assertQuery("select a from tab")
                 .ddl("create table tab (a int)")
@@ -5184,6 +5213,23 @@ public class CastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStrToBinary() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (s STRING)");
+            assertExceptionNoLeakCheck("SELECT CAST('payload' AS BINARY)", 25, "unsupported cast");
+            assertExceptionNoLeakCheck("SELECT s::BINARY FROM tab", 10, "unsupported cast");
+            assertExceptionNoLeakCheck("SELECT 'a'::VARCHAR::BINARY", 21, "unsupported cast");
+            assertQuery("SELECT CAST(NULL::STRING AS BINARY) b")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            b
+                            
+                            """);
+        });
+    }
+
+    @Test
     public void testStrToBoolean() throws Exception {
         assertQuery("select boolean from tab")
                 .ddl("create table tab as (" +
@@ -5596,6 +5642,20 @@ public class CastTest extends AbstractCairoTest {
                         1259\tpg_class
                         1259\tpg_class
                         """);
+    }
+
+    @Test
+    public void testStringRegClassNull() throws Exception {
+        assertMemoryLeak(() -> assertQuery("""
+                SELECT null::string::regclass s, null::varchar::regclass v, null::symbol::regclass sy, null::char::regclass c,
+                    'pg_class'::regclass k
+                """)
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
+                        s\tv\tsy\tc\tk
+                        null\tnull\tnull\tnull\t1259
+                        """));
     }
 
     @Test

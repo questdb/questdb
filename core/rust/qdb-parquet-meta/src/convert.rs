@@ -57,6 +57,16 @@ use crate::types::{
 use crate::writer::ParquetMetaWriter;
 use crate::ParquetFieldId;
 
+/// The `created_by` QuestDB's parquet writer stamps on every file it writes.
+pub const QUESTDB_CREATED_BY: &str = "QuestDB version 9.0";
+
+/// Reports whether a QuestDB parquet writer wrote the file with this `created_by`. Releases 8.1.0
+/// to 9.0.1 stamped `QuestDB version 8.0`, and later releases stamp [`QUESTDB_CREATED_BY`]. Every
+/// one of them writes NaN as a Parquet null, see `FooterFeatureFlags::WRITTEN_BY_QUESTDB_BIT`.
+pub fn is_written_by_questdb(created_by: Option<&str>) -> bool {
+    matches!(created_by, Some("QuestDB version 8.0" | QUESTDB_CREATED_BY))
+}
+
 /// Resolves a column's QuestDB id, preferring the authoritative id carried in
 /// `QdbMeta` (the table writer index) over the Parquet `field_id`.
 ///
@@ -381,6 +391,7 @@ pub fn convert_from_parquet(
     let mut writer = ParquetMetaWriter::new();
     writer.designated_timestamp(designated_ts);
     writer.parquet_footer(parquet_footer_offset, parquet_footer_length);
+    writer.written_by_questdb(is_written_by_questdb(file_metadata.created_by.as_deref()));
     if let Some(meta) = qdb_meta {
         writer.squash_tracker(meta.squash_tracker);
         writer.seq_txn(SeqTxn::new(meta.seq_txn));
@@ -467,7 +478,7 @@ pub fn convert_from_parquet(
         }
 
         let mut rg_builder = RowGroupBlockBuilder::new(col_count as u32);
-        rg_builder.set_num_rows(rg.num_rows().max(0) as u64);
+        rg_builder.set_num_rows(rg.num_rows() as u64);
 
         for (col_idx, col_chunk) in rg_columns.iter().enumerate() {
             let meta = col_chunk.metadata();
@@ -530,6 +541,7 @@ pub fn generate_parquet_metadata(
     unused_bytes: u64,
     squash_tracker: i64,
     seq_txn: SeqTxn,
+    is_written_by_questdb: bool,
     bloom_source: &dyn BloomFilterSource,
 ) -> ParquetMetaResult<(Vec<u8>, u64)> {
     let mut writer = ParquetMetaWriter::new();
@@ -538,6 +550,7 @@ pub fn generate_parquet_metadata(
     writer.unused_bytes(unused_bytes);
     writer.squash_tracker(squash_tracker);
     writer.seq_txn(seq_txn);
+    writer.written_by_questdb(is_written_by_questdb);
 
     for &sc_idx in sorting_columns {
         writer.add_sorting_column(sc_idx);
@@ -945,5 +958,15 @@ mod tests {
         assert!(!sf.has_min_stat() && !sf.is_min_exact());
         assert!(!sf.has_max_stat() && !sf.is_max_exact());
         assert!(ool_min.is_none() && ool_max.is_none());
+    }
+
+    #[test]
+    fn written_by_questdb_covers_every_questdb_created_by() {
+        assert!(is_written_by_questdb(Some("QuestDB version 8.0")));
+        assert!(is_written_by_questdb(Some(QUESTDB_CREATED_BY)));
+        assert!(!is_written_by_questdb(Some(
+            "parquet-cpp-arrow version 15.0.0"
+        )));
+        assert!(!is_written_by_questdb(None));
     }
 }

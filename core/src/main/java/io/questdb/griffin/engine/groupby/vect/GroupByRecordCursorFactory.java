@@ -119,6 +119,9 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             @Transient @Nullable IntList symbolTableSkewIndex
     ) {
         super(metadata);
+        this.base = base;
+        // Keep the functions reachable by _close() while copying the caller's transient list.
+        this.vafList = vafList;
         try {
             this.workerCount = workerCount;
             entryPool = new ObjectPool<>(VectorAggregateEntry::new, configuration.getGroupByPoolCapacity());
@@ -129,7 +132,6 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             // ...
             // functions[n].type == columnTypes[n+1]
 
-            this.base = base;
             this.frameAddressCache = new PageFrameAddressCache();
             perWorkerLocks = new PerWorkerLocks(configuration, workerCount);
             sharedCircuitBreaker = new AtomicBooleanCircuitBreaker(engine);
@@ -138,8 +140,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             // first column is INT or SYMBOL
             pRosti = new long[workerCount];
             final int vafCount = vafList.size();
-            this.vafList = new ObjList<>(vafCount);
-            this.vafList.addAll(vafList);
+            this.vafList = new ObjList<>(vafList);
             raf = configuration.getRostiAllocFacade();
             for (int i = 0; i < workerCount; i++) {
                 long ptr = raf.alloc(columnTypes, configuration.getGroupByMapCapacity());
@@ -207,7 +208,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 frameMemoryPools.add(new PageFrameMemoryPool(configuration, 0L));
             }
         } catch (Throwable th) {
-            close();
+            Misc.free(this, th);
             throw th;
         }
     }
@@ -225,34 +226,16 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public boolean isStableWithinExecution() {
-        return base.isStableWithinExecution();
-    }
-
-    @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        aggregateError.clear();
-        oomCounter.set(0);
-        // clear maps
-        for (int i = 0, n = pRosti.length; i < n; i++) {
-            raf.clear(pRosti[i]);
+        if (cursor.isOpenedByShared) {
+            cursor.isOpenedByShared = false;
+            return cursor;
         }
-        // clear state of aggregate functions
-        for (int i = 0, n = vafList.size(); i < n; i++) {
-            vafList.getQuick(i).clear();
-        }
-        final PageFrameCursor pageFrameCursor = base.getPageFrameCursor(executionContext, ORDER_ASC);
-        return cursor.of(
-                base.getMetadata(),
-                pageFrameCursor,
-                executionContext.getMessageBus(),
-                executionContext.getCircuitBreaker(),
-                executionContext.getMemoryTracker()
-        );
+        return openCursor(executionContext);
     }
 
     @Override
-    public RecordCursor getSharedCursor(SqlExecutionContext executionContext, int sharedId) {
+    public RecordCursor getSharedCursor(SqlExecutionContext executionContext, int sharedId) throws SqlException {
         if (sharedCursors == null) {
             sharedCursors = new ObjList<>();
         }
@@ -261,6 +244,12 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         if (shared == null) {
             shared = new RostiSharedCursor();
             sharedCursors.extendAndSet(idx, shared);
+        }
+        // A shared consumer on the build side of a hash join opens before the primary cursor and reads its
+        // symbol tables as it opens; getCursor then hands over the open primary.
+        if (cursor.frameCursor == null) {
+            openCursor(executionContext);
+            cursor.isOpenedByShared = true;
         }
         shared.of();
         return shared;
@@ -370,6 +359,27 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         return reclaimed;
     }
 
+    private RecordCursor openCursor(SqlExecutionContext executionContext) throws SqlException {
+        aggregateError.clear();
+        oomCounter.set(0);
+        // clear maps
+        for (int i = 0, n = pRosti.length; i < n; i++) {
+            raf.clear(pRosti[i]);
+        }
+        // clear state of aggregate functions
+        for (int i = 0, n = vafList.size(); i < n; i++) {
+            vafList.getQuick(i).clear();
+        }
+        final PageFrameCursor pageFrameCursor = base.getPageFrameCursor(executionContext, ORDER_ASC);
+        return cursor.of(
+                base.getMetadata(),
+                pageFrameCursor,
+                executionContext.getMessageBus(),
+                executionContext.getCircuitBreaker(),
+                executionContext.getMemoryTracker()
+        );
+    }
+
     private void resetRostiMemorySize() {
         for (int i = 0, n = pRosti.length; i < n; i++) {
             if (!raf.reset(pRosti[i], ROSTI_MINIMIZED_SIZE)) {
@@ -428,6 +438,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         private long ctrlStart;
         private int frameCount;
         private PageFrameCursor frameCursor;
+        private boolean isOpenedByShared;
         private boolean isRostiBuilt;
         private long pRostiBig;
         private RostiRecord recordB;
@@ -455,6 +466,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public void close() {
+            isOpenedByShared = false;
             Misc.free(frameAddressCache);
             frameCursor = Misc.free(frameCursor);
             raf.reset(pRostiBig, ROSTI_MINIMIZED_SIZE);
@@ -1011,6 +1023,9 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public void close() {
+            if (cursor.isOpenedByShared) {
+                cursor.close();
+            }
         }
 
         @Override

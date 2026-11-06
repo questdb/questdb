@@ -88,7 +88,11 @@ public class LeadLagWindowFunctionFactoryHelper {
                 throw SqlException.$(argPositions.getQuick(1), "offset must be a constant");
             }
 
-            offset = offsetFunc.getLong(null);
+            offset = switch (ColumnType.tagOf(offsetFunc.getType())) {
+                case ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG, ColumnType.NULL,
+                     ColumnType.CHAR, ColumnType.STRING, ColumnType.VARCHAR -> offsetFunc.getLong(null);
+                default -> throw SqlException.$(argPositions.getQuick(1), "offset must be a positive integer");
+            };
             if (offset < 0) {
                 throw SqlException.$(argPositions.getQuick(1), "offset must be a positive integer");
             }
@@ -105,6 +109,10 @@ public class LeadLagWindowFunctionFactoryHelper {
         }
 
         if (offset == 0) {
+            if (defaultValue != null) {
+                args.setQuick(2, null);
+                Misc.free(defaultValue);
+            }
             return lagCurrentRowConstructor.newFunction(windowContext.getPartitionByRecord(), args.get(0),
                     LeadLagWindowFunctionFactoryHelper.LAG_NAME, windowContext.isIgnoreNulls());
         }

@@ -24,16 +24,17 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
 /**
  * Regression coverage for the posting-index DISTINCT fast path in
- * {@code SqlCodeGenerator.generateSelectGroupBy()} when the base table's WHERE clause
+ * {@code ScanFactoryGenerator.generatePostingDistinct()} when the base table's WHERE clause
  * carries a scalar-subquery designated-timestamp bound (a plain {@code ts >= (SELECT ...)}
  * or a nested {@code LATEST ON ...} subquery).
  *
- * <p>That branch re-enters {@code WhereClauseParser.extract()} on the base table's WHERE clause
+ * <p>That branch runs {@code IntervalExtractor.extract()} on the base table's WHERE clause
  * to decide whether the predicate reduces to interval-only intrinsics. When the scalar-subquery
  * timestamp bound resolves to a pure runtime interval (no residual filter, no key predicate), the
  * generator dispatches to {@code PostingIndexDistinctRecordCursorFactory} over an
@@ -41,6 +42,39 @@ import org.junit.Test;
  * DISTINCT over an interval scan) and the rows match the equivalent constant-bound query.
  */
 public class PostingIndexDistinctSubqueryBoundTest extends AbstractCairoTest {
+
+    @Test
+    public void testInSubqueryOverSerialPostingIndexDistinct() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, false);
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2024-01-01T00:00:00.000000Z', 'A'),
+                        ('2024-01-01T01:00:00.000000Z', 'B'),
+                        ('2024-01-02T00:00:00.000000Z', 'A')
+                    """);
+            final String expected = """
+                    ts	sym
+                    2024-01-01T00:00:00.000000Z	A
+                    2024-01-01T01:00:00.000000Z	B
+                    2024-01-02T00:00:00.000000Z	A
+                    """;
+            assertQuery("SELECT ts, sym FROM t WHERE sym IN (SELECT sym FROM t GROUP BY sym)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
+            assertQuery("SELECT ts, sym FROM t WHERE sym IN (SELECT DISTINCT sym FROM t)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
+        });
+    }
 
     @Test
     public void testPostingIndexDistinctWithNestedLatestBySubqueryBound() throws Exception {

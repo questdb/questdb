@@ -803,7 +803,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                             sendException(response, e.getPosition(), e.getFlyweightMessage(), state);
                             break OUT;
                         } catch (Throwable e) {
-                            sendException(response, 0, e.getMessage(), state);
+                            sendException(response, 0, Misc.getMessageOrClassName(e), state);
                             break OUT;
                         }
                         state.queryState = QUERY_PARQUET_SEND_HEADER;
@@ -849,7 +849,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         } catch (PeerIsSlowToReadException | PeerDisconnectedException e) {
                             throw e;
                         } catch (Throwable e) {
-                            sendException(response, 0, e.getMessage(), state);
+                            sendException(response, 0, Misc.getMessageOrClassName(e), state);
                             break OUT;
                         }
                         state.queryState = QUERY_PARQUET_FILE_SEND_COMPLETE;

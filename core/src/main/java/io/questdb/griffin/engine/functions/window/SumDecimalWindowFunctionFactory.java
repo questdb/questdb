@@ -48,6 +48,7 @@ import io.questdb.cairo.lv.LiveViewStatePageWriter;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.cairo.lv.LiveViewStatePageReader;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.ResultTypes;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.window.WindowContext;
@@ -120,6 +121,12 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
     private static final ArrayColumnTypes SUM_DECIMAL_NARROW_TYPES_LV;
 
     @Override
+    public int getResultType(IntList argTypes) {
+        final int argType = argTypes.getQuick(0);
+        return ColumnType.tagOf(argType) == ColumnType.DECIMAL256 ? ColumnType.UNDEFINED : ResultTypes.decimalSum(argType);
+    }
+
+    @Override
     public String getSignature() {
         return SIGNATURE;
     }
@@ -143,17 +150,10 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         int argType = arg.getType();
         int tag = ColumnType.tagOf(argType);
         int argPos = argPositions.getQuick(0);
-        int argScale = ColumnType.getDecimalScale(argType);
-        // sum widens: D8/D16 -> D64, D32/D64 -> D128, D128/D256 -> D256
-        int outputType = switch (tag) {
-            case ColumnType.DECIMAL8, ColumnType.DECIMAL16 ->
-                    ColumnType.getDecimalType(Decimals.getDecimalTagPrecision(ColumnType.DECIMAL64), argScale);
-            case ColumnType.DECIMAL32, ColumnType.DECIMAL64 ->
-                    ColumnType.getDecimalType(Decimals.getDecimalTagPrecision(ColumnType.DECIMAL128), argScale);
-            case ColumnType.DECIMAL128, ColumnType.DECIMAL256 ->
-                    ColumnType.getDecimalType(Decimals.getDecimalTagPrecision(ColumnType.DECIMAL256), argScale);
-            default -> throw SqlException.$(argPos, "sum is not yet implemented for ").put(ColumnType.nameOf(tag));
-        };
+        if (!ColumnType.isDecimalType(tag)) {
+            throw SqlException.$(argPos, "sum is not yet implemented for ").put(ColumnType.nameOf(tag));
+        }
+        int outputType = ResultTypes.decimalSum(argType);
 
         if (rowsHi < rowsLo) {
             boolean isRange = framingMode == WindowExpression.FRAMING_RANGE;
@@ -272,6 +272,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         throw th;
                     }
                 } else if (rowsLo == 0 && rowsHi == 0) {
+                    CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, partitionByRecord.getFunctions()));
                     return new Decimal128SumOverCurrentRowFunction(arg, outputType, argPos);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL128_TYPES);
@@ -401,6 +402,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         throw th;
                     }
                 } else if (rowsLo == 0 && rowsHi == 0) {
+                    CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, partitionByRecord.getFunctions()));
                     return new Decimal16SumOverCurrentRowFunction(arg, outputType);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL16_TYPES);
@@ -531,6 +533,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         throw th;
                     }
                 } else if (rowsLo == 0 && rowsHi == 0) {
+                    CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, partitionByRecord.getFunctions()));
                     return new Decimal256SumOverCurrentRowFunction(arg, outputType, argPos);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL128_TYPES);
@@ -661,6 +664,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         throw th;
                     }
                 } else if (rowsLo == 0 && rowsHi == 0) {
+                    CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, partitionByRecord.getFunctions()));
                     return new Decimal32SumOverCurrentRowFunction(arg, outputType);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL64_TYPES);
@@ -791,6 +795,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         throw th;
                     }
                 } else if (rowsLo == 0 && rowsHi == 0) {
+                    CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, partitionByRecord.getFunctions()));
                     return new Decimal64SumOverCurrentRowFunction(arg, outputType);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL64_TYPES);
@@ -920,6 +925,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         throw th;
                     }
                 } else if (rowsLo == 0 && rowsHi == 0) {
+                    CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, partitionByRecord.getFunctions()));
                     return new Decimal8SumOverCurrentRowFunction(arg, outputType);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL8_TYPES);
