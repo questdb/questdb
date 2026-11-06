@@ -351,8 +351,8 @@ public class InStrTest extends AbstractCairoTest {
     public void testCastSymbolResolvesKeysOncePerDictionary() throws Exception {
         assertMemoryLeak(() -> {
             final String[][] cases = {
-                    {"s::STRING IN ('b', 'd', 'e')", "v\n2\n4\n", "v\n5\n7\n", "v\n5\n7\n9\n"},
-                    {"s::STRING <> ALL ('{b,d,e}'::text[])", "v\n1\n3\n", "v\n6\n8\n", "v\n6\n8\n"}
+                    {"s::STRING IN ('b', 'd', 'e')", "v\n2\n4\n", "v\n5\n7\n", "v\n5\n7\n9\n", "v\n5\n7\n9\n"},
+                    {"s::STRING <> ALL ('{b,d,e}'::text[])", "v\n1\n3\n", "v\n6\n8\n", "v\n6\n8\n10\n", "v\n6\n8\n10\n11\n12\n13\n"}
             };
             StaticSymbolKeys.isResolutionCounterEnabled = true;
             try {
@@ -376,8 +376,15 @@ public class InStrTest extends AbstractCairoTest {
                                 assertFactoryRows(c[2], factory);
                                 Assert.assertEquals(walMode + ", parallel=" + isParallel + ": " + c[0], 2, StaticSymbolKeys.testResolutions.get());
 
-                                executeAndApply("INSERT INTO x VALUES ('e', 9, 9)");
+                                // Fewer new symbols than listed values: only the new keys are looked up.
+                                executeAndApply("INSERT INTO x VALUES ('e', 9, 9), ('z', 10, 10)");
                                 assertFactoryRows(c[3], factory);
+                                assertFactoryRows(c[3], factory);
+                                Assert.assertEquals(walMode + ", parallel=" + isParallel + ": " + c[0], 2, StaticSymbolKeys.testResolutions.get());
+
+                                executeAndApply("INSERT INTO x VALUES ('f', 11, 11), ('g', 12, 12), ('h', 13, 13)");
+                                assertFactoryRows(c[4], factory);
+                                assertFactoryRows(c[4], factory);
                                 Assert.assertEquals(walMode + ", parallel=" + isParallel + ": " + c[0], 3, StaticSymbolKeys.testResolutions.get());
                             }
                         }

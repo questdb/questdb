@@ -41,6 +41,8 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.griffin.engine.functions.bool.StaticSymbolKeys;
+import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Hash;
@@ -218,6 +220,42 @@ public class SymbolMapTest extends AbstractCairoTest {
                     }
                     Assert.assertEquals(count, reader.getCacheSize());
                     Assert.assertEquals(reader.getCacheAllocatedBytes(), budget.getUsedBytes());
+                }
+                Assert.assertEquals(0, budget.getUsedBytes());
+            }
+        });
+    }
+
+    @Test
+    public void testSharedCacheGrowingDictionaryChargesAboutItsSize() throws Exception {
+        assertMemoryLeak(() -> {
+            final int count = 10 * SymbolMapSegments.SEGMENT_KEYS;
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                createMap(path, "x", "value", count, -1, 0);
+                NativeMemoryBudget budget = new NativeMemoryBudget(1024 * 1024);
+                try (
+                        SymbolMapReaderImpl source = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, count);
+                        SymbolMapSegments loadedAtOnce = new SymbolMapSegments(budget);
+                        SymbolMapSegments loadedAsAdded = new SymbolMapSegments(budget)
+                ) {
+                    MemoryR offsets = source.getSymbolOffsetsColumn();
+                    MemoryR chars = source.getSymbolValuesColumn();
+                    for (int key = 0; key < count; key += SymbolMapSegments.SEGMENT_KEYS) {
+                        Assert.assertEquals(SymbolMapSegments.LOADED, loadedAtOnce.load(key, count, offsets, chars));
+                    }
+                    // A reader of the newest row loads each key as the writer adds it.
+                    for (int key = 0; key < count; key++) {
+                        Assert.assertEquals(SymbolMapSegments.LOADED, loadedAsAdded.load(key, key + 1, offsets, chars));
+                    }
+                    DirectString view = new DirectString();
+                    for (int key = 0; key < count; key++) {
+                        TestUtils.assertEquals(source.valueOf(key), loadedAsAdded.get(key, view));
+                    }
+                    // Allowed extra: the eighth of slack per segment, the first segment's first block and the
+                    // directories it outgrew.
+                    final long atOnce = loadedAtOnce.allocatedBytes();
+                    final long asAdded = loadedAsAdded.allocatedBytes();
+                    Assert.assertTrue(asAdded + " bytes loaded as added, " + atOnce + " at once", asAdded < atOnce * 1.2);
                 }
                 Assert.assertEquals(0, budget.getUsedBytes());
             }
@@ -2173,6 +2211,39 @@ public class SymbolMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStaticSymbolKeysFollowSymbolCount() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                createMap(path, "x", "v", 5, -1, 0);
+                try (SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, 2)) {
+                    CharSequenceHashSet values = new CharSequenceHashSet();
+                    values.add("v1");
+                    values.add("v2");
+                    values.add("v3");
+                    StaticSymbolKeys keys = new StaticSymbolKeys();
+                    Assert.assertTrue(keys.of(reader, values));
+                    assertKeys(keys, 1);
+                    Assert.assertFalse(keys.of(reader, values));
+                    assertKeys(keys, 1);
+
+                    // Fewer new keys than values: of() looks up the new keys.
+                    reader.updateSymbolCount(4);
+                    Assert.assertFalse(keys.of(reader, values));
+                    assertKeys(keys, 1, 2, 3);
+
+                    reader.updateSymbolCount(2);
+                    Assert.assertTrue(keys.of(reader, values));
+                    assertKeys(keys, 1);
+
+                    reader.updateSymbolCount(5);
+                    Assert.assertTrue(keys.of(reader, values));
+                    assertKeys(keys, 1, 2, 3);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSymbolCapacityRebuildRestoresTheDroppedCache() throws Exception {
         // ALTER TABLE ... ALTER COLUMN ... SYMBOL CAPACITY re-opens the map's files and
         // re-indexes every value it holds, so it is the one non-destructive lever an
@@ -2733,6 +2804,16 @@ public class SymbolMapTest extends AbstractCairoTest {
             final int values = 10_000;
             Assert.assertTrue(taggedBytesForWriter("cached", true, values) > taggedBytesForWriter("plain", false, values));
         });
+    }
+
+    private static void assertKeys(StaticSymbolKeys keys, int... expected) {
+        for (int key = 0, e = 0; key < 5; key++) {
+            final boolean isExpected = e < expected.length && expected[e] == key;
+            Assert.assertEquals("key " + key, isExpected, keys.contains(key));
+            if (isExpected) {
+                e++;
+            }
+        }
     }
 
     private static long address(CharSequence value) {

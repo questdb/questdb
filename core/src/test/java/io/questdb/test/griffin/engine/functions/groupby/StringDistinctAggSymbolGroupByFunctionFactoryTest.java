@@ -204,6 +204,21 @@ public class StringDistinctAggSymbolGroupByFunctionFactoryTest extends AbstractC
     }
 
     @Test
+    public void testNonStaticSymbolTableAggregatesValues() throws Exception {
+        // rnd_symbol keys are list positions, so 'a' has two of them; the order follows the random draws.
+        assertQuery("""
+                SELECT string_distinct_agg(rnd_symbol('a', 'a', 'b'), ',') IN ('a,b', 'b,a') v1,
+                    string_distinct_agg(rnd_symbol('a', 'a', 'b')::STRING, ',') IN ('a,b', 'b,a') v2
+                FROM long_sequence(100)""")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        v1\tv2
+                        true\ttrue
+                        """);
+    }
+
+    @Test
     public void testSkipNull() throws Exception {
         String expected = """
                 string_distinct_agg

@@ -88,6 +88,8 @@ import java.util.concurrent.TimeUnit;
         "--enable-native-access=ALL-UNNAMED"
 })
 public class SymbolCacheBenchmark {
+    // Keyed, since the optimiser turns an unkeyed count_distinct into a GROUP BY of its argument.
+    private static final String CAST_COUNT_DISTINCT = "SELECT count_distinct(s::STRING), timestamp_floor('100T', ts) FROM low";
     private static final String DAY_ONE = "ts IN '2024-01-01'";
     private static final String DAY_TWO = "ts IN '2024-01-02'";
     private static final String LARGE_LIST = largeList();
@@ -96,11 +98,13 @@ public class SymbolCacheBenchmark {
     private static final String STRING_IN = "SELECT count() FROM t WHERE " + DAY_ONE + " AND s::STRING IN ('symbol1', 'symbol2', 'symbol3')";
     private final Utf8StringSink sink = new Utf8StringSink();
     private SqlExecutionContext context;
+    private RecordCursorFactory castCountDistinctSerial;
     private RecordCursorFactory castStringDistinctAgg;
     private RecordCursorFactory castStringIn;
     private RecordCursorFactory castStringInSerial;
     private RecordCursorFactory castStringNotEqualAll;
     private RecordCursorFactory denseHighKeys;
+    private RecordCursorFactory largeStringInNewSymbol;
     private RecordCursorFactory largeStringInSerial;
     private RecordCursorFactory largeStringNotEqualAllSerial;
     private CairoEngine engine;
@@ -118,6 +122,16 @@ public class SymbolCacheBenchmark {
                 .addProfiler("gc")
                 .build();
         new Runner(opt).run();
+    }
+
+    @Benchmark
+    public long castCountDistinctSerial() throws SqlException {
+        return readCount(castCountDistinctSerial);
+    }
+
+    @Benchmark
+    public long castCountDistinctWorkers(Workers state) throws SqlException {
+        return readCount(state.castCountDistinct, state.context);
     }
 
     @Benchmark
@@ -188,6 +202,16 @@ public class SymbolCacheBenchmark {
     }
 
     @Benchmark
+    public long largeStringInNewSymbolSerial(NewSymbol state) throws SqlException {
+        return readCount(largeStringInNewSymbol);
+    }
+
+    @Benchmark
+    public long largeStringInOtherReaderSerial(AlternatingReader state) throws SqlException {
+        return readCount(largeStringInSerial);
+    }
+
+    @Benchmark
     public long largeStringInSerial() throws SqlException {
         return readCount(largeStringInSerial);
     }
@@ -250,6 +274,7 @@ public class SymbolCacheBenchmark {
         engine.execute("DROP TABLE IF EXISTS t", context);
         engine.execute("DROP TABLE IF EXISTS low", context);
         engine.execute("DROP TABLE IF EXISTS few", context);
+        engine.execute("DROP TABLE IF EXISTS growing", context);
         engine.execute("CREATE TABLE t (s SYMBOL CAPACITY 1048576 CACHE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", context);
         engine.execute("INSERT INTO t SELECT 'symbol' || (x - 1), timestamp_sequence('2024-01-01', 1) FROM long_sequence(1_000_000)", context);
         engine.execute("INSERT INTO t SELECT 'symbol' || (x % 1_000 * 900 + 5_000), timestamp_sequence('2024-01-02', 1) FROM long_sequence(1_000_000)", context);
@@ -257,6 +282,8 @@ public class SymbolCacheBenchmark {
         engine.execute("INSERT INTO low SELECT 'symbol' || (x % 1_000), 'symbol' || (x % 1_000), timestamp_sequence('2024-01-01', 1) FROM long_sequence(1_000_000)", context);
         engine.execute("CREATE TABLE few (s SYMBOL CACHE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", context);
         engine.execute("INSERT INTO few SELECT 'symbol' || (x % 50), timestamp_sequence('2024-01-01', 1) FROM long_sequence(100)", context);
+        engine.execute("CREATE TABLE growing (s SYMBOL CAPACITY 1048576 CACHE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", context);
+        engine.execute("INSERT INTO growing SELECT 'symbol' || (x % 50), timestamp_sequence('2024-01-01', 1) FROM long_sequence(100)", context);
         engine.releaseAllWriters();
 
         denseHighKeys = engine.select("SELECT s FROM t WHERE " + DAY_ONE, context);
@@ -273,6 +300,8 @@ public class SymbolCacheBenchmark {
         castStringInSerial = engine.select(STRING_IN, context);
         largeStringInSerial = engine.select(LARGE_STRING_IN, context);
         largeStringNotEqualAllSerial = engine.select(LARGE_STRING_NOT_EQUAL_ALL, context);
+        largeStringInNewSymbol = engine.select("SELECT count() FROM growing WHERE " + DAY_ONE + " AND s::STRING IN (" + LARGE_LIST + ")", context);
+        castCountDistinctSerial = engine.select(CAST_COUNT_DISTINCT, context);
         symbolFunction = engine.select("SELECT count() FROM t WHERE " + DAY_ONE + " AND length(s) > 0", context);
         context.setParallelFilterEnabled(true);
     }
@@ -294,6 +323,8 @@ public class SymbolCacheBenchmark {
         castStringInSerial = Misc.free(castStringInSerial);
         largeStringInSerial = Misc.free(largeStringInSerial);
         largeStringNotEqualAllSerial = Misc.free(largeStringNotEqualAllSerial);
+        largeStringInNewSymbol = Misc.free(largeStringInNewSymbol);
+        castCountDistinctSerial = Misc.free(castCountDistinctSerial);
         castStringNotEqualAll = Misc.free(castStringNotEqualAll);
         castStringDistinctAgg = Misc.free(castStringDistinctAgg);
         stringDistinctAgg = Misc.free(stringDistinctAgg);
@@ -349,6 +380,45 @@ public class SymbolCacheBenchmark {
         return list.toString();
     }
 
+    // Holds a pooled reader of few every other run, so consecutive runs get different readers.
+    @State(Scope.Benchmark)
+    public static class AlternatingReader {
+        private SymbolCacheBenchmark benchmark;
+        private TableReader reader;
+
+        @Setup(Level.Invocation)
+        public void setUp() {
+            reader = reader == null ? benchmark.engine.getReader("few") : Misc.free(reader);
+        }
+
+        @Setup(Level.Trial)
+        public void setUpTrial(SymbolCacheBenchmark benchmark) {
+            this.benchmark = benchmark;
+        }
+
+        @TearDown(Level.Trial)
+        public void tearDown() {
+            reader = Misc.free(reader);
+        }
+    }
+
+    // Adds a symbol before each run, in a partition the query does not scan.
+    @State(Scope.Benchmark)
+    public static class NewSymbol {
+        private SymbolCacheBenchmark benchmark;
+        private long count;
+
+        @Setup(Level.Invocation)
+        public void setUp() throws SqlException {
+            benchmark.engine.execute("INSERT INTO growing VALUES ('new" + count++ + "', '2024-01-02')", benchmark.context);
+        }
+
+        @Setup(Level.Trial)
+        public void setUpTrial(SymbolCacheBenchmark benchmark) {
+            this.benchmark = benchmark;
+        }
+    }
+
     @State(Scope.Benchmark)
     public static class NoOtherReader {
         @Setup(Level.Invocation)
@@ -386,6 +456,7 @@ public class SymbolCacheBenchmark {
     public static class Workers {
         private static final int WORKER_COUNT = 4;
         private SqlExecutionContext context;
+        private RecordCursorFactory castCountDistinct;
         private RecordCursorFactory castStringIn;
         private RecordCursorFactory largeStringIn;
         private RecordCursorFactory largeStringNotEqualAll;
@@ -401,6 +472,7 @@ public class SymbolCacheBenchmark {
                     null, null, -1, null
             );
             castStringIn = benchmark.engine.select(STRING_IN, context);
+            castCountDistinct = benchmark.engine.select(CAST_COUNT_DISTINCT, context);
             largeStringIn = benchmark.engine.select(LARGE_STRING_IN, context);
             largeStringNotEqualAll = benchmark.engine.select(LARGE_STRING_NOT_EQUAL_ALL, context);
         }
@@ -408,6 +480,7 @@ public class SymbolCacheBenchmark {
         @TearDown(Level.Trial)
         public void tearDown() {
             castStringIn = Misc.free(castStringIn);
+            castCountDistinct = Misc.free(castCountDistinct);
             largeStringIn = Misc.free(largeStringIn);
             largeStringNotEqualAll = Misc.free(largeStringNotEqualAll);
             pool.halt();

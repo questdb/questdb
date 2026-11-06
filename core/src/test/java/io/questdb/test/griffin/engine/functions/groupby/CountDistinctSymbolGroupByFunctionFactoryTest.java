@@ -184,6 +184,18 @@ public class CountDistinctSymbolGroupByFunctionFactoryTest extends AbstractCairo
     }
 
     @Test
+    public void testNonStaticSymbolTableCountsValues() throws Exception {
+        // rnd_symbol keys are list positions, so 'a' has two of them.
+        assertQuery("SELECT count_distinct(rnd_symbol('a', 'a', 'b')) c1, count_distinct(rnd_symbol('a', 'a', 'b')::STRING) c2 FROM long_sequence(100)")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        c1\tc2
+                        2\t2
+                        """);
+    }
+
+    @Test
     public void testNullConstant() throws Exception {
         String expected = """
                 s\tcount_distinct

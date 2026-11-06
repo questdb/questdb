@@ -69,7 +69,8 @@ public final class StaticSymbolKeys {
 
     /**
      * Resolves {@code values} to keys of {@code symbolTable}, unless the keys are still current or the owner
-     * offered its own. Returns true when it resolved them.
+     * offered its own. When the dictionary only gained fewer keys than there are values, it looks up the new
+     * keys instead. Returns true when it resolved all values.
      */
     public boolean of(@Nullable StaticSymbolTable symbolTable, CharSequenceHashSet values) {
         final boolean wasOffered = isOffered;
@@ -80,10 +81,22 @@ public final class StaticSymbolKeys {
         final int symbolCount = symbolTable.getSymbolCount();
         final long generation = symbolTable.getSymbolTableGeneration();
         if (symbolTable == this.symbolTable
-                && symbolCount == this.symbolCount
                 && generation == this.generation
                 && generation != StaticSymbolTable.NO_SYMBOL_TABLE_GENERATION) {
-            return false;
+            final int addedCount = symbolCount - this.symbolCount;
+            if (addedCount == 0) {
+                return false;
+            }
+            // Within a generation the dictionary only appends, so only the new keys can match a value.
+            if (addedCount > 0 && addedCount < values.size()) {
+                for (int key = this.symbolCount; key < symbolCount; key++) {
+                    if (values.contains(symbolTable.valueOfOnce(key))) {
+                        ownKeys.add(key);
+                    }
+                }
+                this.symbolCount = symbolCount;
+                return false;
+            }
         }
         keys = ownKeys;
         ownKeys.clear();

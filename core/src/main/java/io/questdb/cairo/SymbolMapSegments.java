@@ -73,6 +73,7 @@ public class SymbolMapSegments implements QuietCloseable {
     private long allocatedBytes;
     private volatile long directory;
     private volatile boolean isFilling = true;
+    private long loadedCharBytes;
     private int size;
     private int stopReason;
 
@@ -110,6 +111,7 @@ public class SymbolMapSegments implements QuietCloseable {
                 d = retired;
             }
         }
+        loadedCharBytes = 0;
         size = 0;
     }
 
@@ -182,7 +184,11 @@ public class SymbolMapSegments implements QuietCloseable {
             final int used = current == 0 ? 0 : Unsafe.getInt(current + USED_OFFSET);
             long segment = current;
             if (current == 0 || used + charBytes > Unsafe.getInt(current + CAPACITY_OFFSET)) {
-                segment = newSegment(current, count, used, used + charBytes, hiKey - firstKey == SEGMENT_KEYS);
+                final long neededCharBytes = used + charBytes;
+                final long capacity = hiKey - firstKey == SEGMENT_KEYS
+                        ? neededCharBytes
+                        : partialCapacity(neededCharBytes, charBytes, hiKey - loKey, current == 0 && index == 0);
+                segment = newSegment(current, count, used, neededCharBytes, capacity);
                 if (segment == 0) {
                     return STOPPED;
                 }
@@ -196,6 +202,7 @@ public class SymbolMapSegments implements QuietCloseable {
             Vect.memcpy(segment + SEGMENT_CHARS + used, chars.addressOf(charLo), charBytes);
             Unsafe.putInt(segment + USED_OFFSET, (int) (used + charBytes));
             publish(slotAddress, ((long) (hiKey - firstKey) << COUNT_SHIFT) | segment);
+            loadedCharBytes += charBytes;
             size += hiKey - loKey;
             return LOADED;
         } finally {
@@ -266,14 +273,11 @@ public class SymbolMapSegments implements QuietCloseable {
         allocatedBytes -= bytes;
     }
 
-    private long newSegment(long current, int count, int used, long neededCharBytes, boolean isFull) {
+    private long newSegment(long current, int count, int used, long neededCharBytes, long capacity) {
         if (neededCharBytes > maxCharBytes) {
             stop(STOP_BUDGET);
             return 0;
         }
-        final long capacity = isFull
-                ? neededCharBytes
-                : Math.min(maxCharBytes, Math.max(MIN_PARTIAL_CHAR_BYTES, 2 * neededCharBytes));
         final long bytes = SEGMENT_CHARS + capacity;
         final long segment = allocate(bytes);
         if (segment != 0) {
@@ -287,6 +291,19 @@ public class SymbolMapSegments implements QuietCloseable {
             }
         }
         return segment;
+    }
+
+    // A replaced block stays allocated, so a dictionary read as it grows would hold every block it outgrew.
+    // Only the first block of the first segment starts small, for dictionaries of a few values; a later
+    // partial segment gets room for all its keys at the average value size, plus an eighth for values that
+    // grow longer, such as sequential ids gaining a digit.
+    private long partialCapacity(long neededCharBytes, long newCharBytes, int newKeys, boolean isFirstBlock) {
+        long capacity = Math.max(MIN_PARTIAL_CHAR_BYTES, 2 * neededCharBytes);
+        if (!isFirstBlock) {
+            final long expected = (loadedCharBytes + newCharBytes) * SEGMENT_KEYS / (size + newKeys);
+            capacity = Math.max(capacity, expected + (expected >>> 3));
+        }
+        return Math.min(maxCharBytes, capacity);
     }
 
     private long slot(int key) {
