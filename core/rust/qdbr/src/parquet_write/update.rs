@@ -862,6 +862,23 @@ impl ParquetUpdater {
                 .collect(),
         );
 
+        // Remap bloom_filter_columns from source positions to target positions
+        // by parquet field id. replace_row_group / insert_row_group pass these
+        // indices to create_row_group, which picks bloom columns by position.
+        // Without the remap, a DROP or reorder attaches each bloom to the wrong
+        // target column (and keeps a bloom on a dropped column's old slot).
+        // copy_row_group_with_null_columns remaps raw-copied blooms separately
+        // via target_col_id_to_pos; this covers the re-encode path.
+        let target_pos = self.target_col_id_to_pos.as_ref().unwrap();
+        self.bloom_filter_columns = self
+            .bloom_filter_columns
+            .iter()
+            .filter_map(|&old_idx| {
+                let field_id = old_fields.get(old_idx)?.get_field_info().id?;
+                target_pos.get(&field_id).copied()
+            })
+            .collect();
+
         // Re-stamp the sort order from the dense target schema: ADD/DROP COLUMN
         // can shift the timestamp index. Must run before the copy/insert calls
         // that follow, which read sorting_columns().
@@ -6056,6 +6073,137 @@ mod tests {
             read_inlined(1),
             bloom_b,
             "target col 1 must not carry b's bloom"
+        );
+        Ok(())
+    }
+
+    /// Regression for #7894: after DROP COLUMN, replace_row_group must write
+    /// blooms at the remapped target positions. Source [a,b,c,ts] with a bloom
+    /// only on b (source position 1); target [b,c,ts]. Without remapping
+    /// bloom_filter_columns in set_target_schema, create_row_group still sees
+    /// source position 1 and attaches the bloom to c.
+    #[test]
+    fn replace_row_group_remaps_bloom_after_drop_column() -> Result<(), Box<dyn Error>> {
+        use crate::allocator::TestAllocatorState;
+        use parquet2::metadata::SortingColumn;
+        use std::io::Read as _;
+
+        let a: Vec<i32> = (1000..1016).collect();
+        let b: Vec<i32> = (2000..2016).collect();
+        let c: Vec<i32> = (3000..3016).collect();
+        let ts: Vec<i64> = (1..17).collect();
+        let src_partition = Partition {
+            table: "t".to_string(),
+            columns: vec![
+                make_column_with_id(10, "a", ColumnTypeTag::Int.into_type(), &a),
+                make_column_with_id(11, "b", ColumnTypeTag::Int.into_type(), &b),
+                make_column_with_id(12, "c", ColumnTypeTag::Int.into_type(), &c),
+                make_designated_ts_with_id(0, "ts", &ts),
+            ],
+        };
+        let mut bloom_cols = HashSet::new();
+        bloom_cols.insert(1); // only b
+        let src = NamedTempFile::new()?;
+        ParquetWriter::new(src.reopen()?)
+            .with_statistics(true)
+            .with_sorting_columns(Some(vec![SortingColumn::new(3, false, false)]))
+            .with_bloom_filter_columns(bloom_cols)
+            .finish(src_partition)?;
+        let src_len = src.as_file().metadata()?.len();
+
+        let out = NamedTempFile::new()?;
+        let alloc = TestAllocatorState::new();
+        let mut updater = super::ParquetUpdater::new(
+            alloc.allocator(),
+            src.reopen()?,
+            src_len,
+            out.reopen()?,
+            0, // rewrite
+            Some(vec![SortingColumn::new(3, false, false)]),
+            true,
+            false,
+            CompressionOptions::Uncompressed,
+            None,
+            None,
+            DEFAULT_BLOOM_FILTER_FPP,
+            0.0,
+            None,
+            0,
+            0,
+            -1,
+            SeqTxn::UNSET,
+        )?;
+        let target = Partition {
+            table: "t".to_string(),
+            columns: vec![
+                make_column_with_id(11, "b", ColumnTypeTag::Int.into_type(), &b),
+                make_column_with_id(12, "c", ColumnTypeTag::Int.into_type(), &c),
+                make_designated_ts_with_id(0, "ts", &ts),
+            ],
+        };
+        updater.set_target_schema(&target)?;
+        updater.replace_row_group(&target, 0)?;
+        let out_len = updater.end(None)?;
+
+        let mut out_bytes = Vec::new();
+        out.reopen()?.read_to_end(&mut out_bytes)?;
+        let out_md = read_metadata_with_size(&mut Cursor::new(&out_bytes[..]), out_len)?;
+        let rg = &out_md.row_groups[0];
+        assert_eq!(rg.columns().len(), 3);
+        assert!(
+            rg.columns()[0].metadata().bloom_filter_offset.is_some(),
+            "b (target 0) must keep the bloom filter"
+        );
+        assert!(
+            rg.columns()[1].metadata().bloom_filter_offset.is_none(),
+            "c (target 1) must not inherit b's source-position bloom"
+        );
+        assert!(
+            rg.columns()[2].metadata().bloom_filter_offset.is_none(),
+            "ts must carry no bloom"
+        );
+
+        // Same DROP, but insert_row_group instead of replace: same remap.
+        let out2 = NamedTempFile::new()?;
+        let alloc2 = TestAllocatorState::new();
+        let mut updater2 = super::ParquetUpdater::new(
+            alloc2.allocator(),
+            src.reopen()?,
+            src_len,
+            out2.reopen()?,
+            0,
+            Some(vec![SortingColumn::new(3, false, false)]),
+            true,
+            false,
+            CompressionOptions::Uncompressed,
+            None,
+            None,
+            DEFAULT_BLOOM_FILTER_FPP,
+            0.0,
+            None,
+            0,
+            0,
+            -1,
+            SeqTxn::UNSET,
+        )?;
+        updater2.set_target_schema(&target)?;
+        updater2.insert_row_group(&target, 0)?;
+        let out2_len = updater2.end(None)?;
+        let mut out2_bytes = Vec::new();
+        out2.reopen()?.read_to_end(&mut out2_bytes)?;
+        let out2_md = read_metadata_with_size(&mut Cursor::new(&out2_bytes[..]), out2_len)?;
+        let rg2 = &out2_md.row_groups[0];
+        assert!(
+            rg2.columns()[0].metadata().bloom_filter_offset.is_some(),
+            "insert: b must keep the bloom filter"
+        );
+        assert!(
+            rg2.columns()[1].metadata().bloom_filter_offset.is_none(),
+            "insert: c must not inherit b's source-position bloom"
+        );
+        assert!(
+            rg2.columns()[2].metadata().bloom_filter_offset.is_none(),
+            "insert: ts must carry no bloom"
         );
         Ok(())
     }
