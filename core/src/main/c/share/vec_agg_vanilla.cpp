@@ -147,10 +147,10 @@ double sumDouble_Vanilla(double *d, int64_t count) {
     bool hasData = false;
     for (; d < lim; d++) {
         const double v = *d;
-        if (!std::isnan(v)) {
-            sum += v;
-            hasData = true;
-        }
+        const bool isValue = !std::isnan(v);
+        // Adding -0.0 keeps the sum, and selecting it here keeps the select off the sum's dependency chain.
+        sum += isValue ? v : -0.0;
+        hasData |= isValue;
     }
     return hasData ? sum : NAN;
 }
@@ -160,11 +160,11 @@ double sumDoubleAcc_Vanilla(double *d, int64_t count, int64_t *accCount) {
     double sum = 0;
     int64_t c = 0;
     for (; d < lim; d++) {
-        double v = *d;
-        if (!std::isnan(v)) {
-            sum += v;
-            ++c;
-        }
+        const double v = *d;
+        const bool isValue = !std::isnan(v);
+        // Adding -0.0 keeps the sum, and selecting it here keeps the select off the sum's dependency chain.
+        sum += isValue ? v : -0.0;
+        c += isValue;
     }
     *accCount = c;
     return c > 0 ? sum : NAN;
