@@ -726,7 +726,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
                 if (entry != null) {
                     if (blockRows > 0) {
                         if (!isCommitBatchEntryJoinable(entry, blockRows)) {
-                            return rewindFrame(seq);
+                            return leaveCommitBatch(seq);
                         }
                         if (entry.frameSequence != seq) {
                             // The frame's first block of this table.
@@ -736,7 +736,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
                         }
                         // A block may not create a column while its table holds batch rows.
                         if (!walAppender.appendToWalStreaming(securityContext, block, entry.tud, false)) {
-                            return rewindFrame(seq);
+                            return leaveCommitBatch(seq);
                         }
                         messageAppendedRows = true;
                         entry.rows += blockRows;
@@ -754,12 +754,12 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
                         rejectMsg.clear();
                         rejectMsg.put("failed to create table update details for: ").put(block.getTableName());
                         reject(Status.INTERNAL_ERROR, rejectMsg, fd);
-                        return rewindFrame(seq);
+                        return leaveCommitBatch(seq);
                     }
                     if (blockRows > 0) {
                         // The cap check keeps the appender from committing this block on its own.
                         if (blockRows >= tud.getMetaMaxUncommittedRows()) {
-                            return rewindFrame(seq);
+                            return leaveCommitBatch(seq);
                         }
                         // The lookup refuses non-WAL tables, and every uncommitted row of the
                         // connection belongs to the batch, so a table outside it holds none.
@@ -769,7 +769,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
                             throwIfCommitRefused(tud, walWriter);
                         } catch (Throwable th) {
                             rejectCommitError(th);
-                            return rewindFrame(seq);
+                            return leaveCommitBatch(seq);
                         }
                         assert walWriter.getUncommittedRowCount() == 0 : "a table outside the commit batch holds uncommitted rows";
                         walWriter.markSavepoint();
@@ -795,7 +795,8 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
             // frame's clear() then meets the writer's refused rollback, which distresses the
             // table cache and frees every writer.
             assert newTableWriter == null || newTableWriter.getUncommittedRowCount() == 0 : "a failed append left rows in its writer";
-            return rewindFrame(seq);
+            rewindFrame(seq);
+            return false;
         }
         if (firstCommitBatchSequence == -1) {
             firstCommitBatchSequence = seq;
@@ -2220,6 +2221,22 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         return !tudCache.isDistressed() && entry.writer.getUncommittedRowCount() == entry.rows;
     }
 
+    // Called in joinCommitBatch's try for a frame that failed or cannot join: rewinds the
+    // frame (rewindFrame), and a frame that only could not join then starts again at its
+    // first block, for the normal path. Such a frame stopped at a block, so it has one. A
+    // parse failure of that block goes to joinCommitBatch's catch, which fails the frame
+    // and rewinds it again: the writers are at their savepoints already, and that rewind
+    // changes nothing. Returns false, joinCommitBatch's answer for the frame.
+    private boolean leaveCommitBatch(long seq) throws QwpParseException {
+        rewindFrame(seq);
+        if (isOk()) {
+            preparedMessageCursor.resetTableIteration();
+            assert preparedMessageCursor.hasNextTable() : "a frame that cannot join has no table block";
+            preparedTableBlock = preparedMessageCursor.nextTable();
+        }
+        return false;
+    }
+
     private boolean onCommitBatchFailed(CommitBatchEntry failed) {
         failedCommitBatchSequence = failed.firstSequence;
         // The frames before the failed table's first frame carry rows of the tables
@@ -2234,12 +2251,11 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     // Takes the rows of the frame at seq, which failed or cannot join, back out of the
     // batch: every batch writer the frame appended to returns to the savepoint it marked
     // before its first block of the table, and the tables the frame brought into the
-    // batch, the entries after all others, leave it. A frame that only could not join
-    // then starts again at its first block, for the normal path. A rewind that fails
-    // leaves rows the batch cannot vouch for: the table cache distresses, which commits
-    // nothing, the frame fails if it had not, and the entries stay as they are until the
-    // batch is abandoned. Returns false, joinCommitBatch's answer for such a frame.
-    private boolean rewindFrame(long seq) {
+    // batch, the entries after all others, leave it. A rewind that fails leaves rows the
+    // batch cannot vouch for: the table cache distresses, which commits nothing, the
+    // frame fails if it had not, so the normal path never takes it onto a distressed
+    // writer, and the entries stay as they are until clear() resets the batch.
+    private void rewindFrame(long seq) {
         try {
             for (int i = commitBatchEntryCount - 1; i > -1; i--) {
                 final CommitBatchEntry entry = commitBatchEntries.getQuick(i);
@@ -2265,17 +2281,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
                         .put(th instanceof CairoException e ? e.getFlyweightMessage() : th.getMessage());
                 reject(Status.INTERNAL_ERROR, rejectMsg, fd);
             }
-            return false;
         }
-        if (isOk()) {
-            try {
-                preparedMessageCursor.resetTableIteration();
-                preparedTableBlock = preparedMessageCursor.hasNextTable() ? preparedMessageCursor.nextTable() : null;
-            } catch (Throwable e) {
-                rejectMessageError(e);
-            }
-        }
-        return false;
     }
 
     // Throws what the table's commit would refuse with before appending a transaction: the

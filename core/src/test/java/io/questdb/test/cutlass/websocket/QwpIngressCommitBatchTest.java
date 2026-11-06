@@ -27,6 +27,7 @@ package io.questdb.test.cutlass.websocket;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
@@ -2865,6 +2866,110 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
                 drainWalQueue(hookEngine);
                 assertHookQuery(hookEngine, "SELECT v FROM a").expectSize().returns(V_100_TO_109);
                 assertHookQuery(hookEngine, "SELECT v FROM b").expectSize().returns("v\n50\n");
+            }
+        });
+    }
+
+    /**
+     * As {@link #testRewindFailureLosesBatchAndReplayCommitsItOnce}, for a frame that only
+     * cannot join: another session adds a column to b, the batch's second table, as the
+     * frame arrives, so the frame's block of b cannot join after its block of a appended
+     * 2,049 rows. Taking those rows back out maps the first page of a's column again, and
+     * that mapping fails. The frame had not failed, so it fails now, with INTERNAL_ERROR:
+     * the normal path must not take it onto a's distressed writer. The batch is abandoned
+     * with nothing committed, and the NACK names the frame.
+     */
+    @Test
+    public void testRewindFailureOfFrameThatCannotJoinLosesBatch() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("CREATE TABLE a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE b (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final int batchFrames = 10;
+            // Fails the next mapping of a file's first page once armed: the appends map later
+            // pages, and the rewind maps a column's first page again.
+            final AtomicBoolean isFirstPageMapFailing = new AtomicBoolean();
+            final AtomicInteger failedMmaps = new AtomicInteger();
+            final FilesFacade ff = new TestFilesFacadeImpl() {
+                @Override
+                public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                    if (offset == 0 && isFirstPageMapFailing.compareAndSet(true, false)) {
+                        failedMmaps.incrementAndGet();
+                        return FilesFacade.MAP_FAILED;
+                    }
+                    return super.mmap(fd, len, offset, flags, memoryTag);
+                }
+            };
+            final AtomicInteger readOnlyChecks = new AtomicInteger();
+            final AtomicReference<QwpIngressProcessorState> stateRef = new AtomicReference<>();
+            final AtomicReference<WalWriter> aWriter = new AtomicReference<>();
+            try (CairoEngine hookEngine = new CairoEngine(pagedConfiguration(ff)) {
+                @Override
+                public boolean isReadOnlyMode() {
+                    // Frame 0 checks at its preparation and before it opens the batch (1, 2),
+                    // frames 1 to 10 at their preparation (3 to 12), and so does the last frame.
+                    if (readOnlyChecks.incrementAndGet() == batchFrames + 3) {
+                        try (WalWriter writer = getWalWriter(verifyTableName("b"))) {
+                            writer.addColumn("z", ColumnType.INT, AllowAllSecurityContext.INSTANCE);
+                        }
+                        aWriter.set(stateRef.get().getCommitBatchWriter(1));
+                        isFirstPageMapFailing.set(true);
+                    }
+                    return false;
+                }
+            }) {
+                final byte[][] frames = new byte[batchFrames + 2][];
+                frames[0] = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 50L, 500_000L));
+                for (int i = 0; i < batchFrames; i++) {
+                    frames[i + 1] = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 100L + i, (i + 1) * 1_000_000L));
+                }
+                // The batch holds 10 rows of a. The frame's 2,049 rows of a move both of a's
+                // columns onto later 16 KiB pages.
+                try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
+                     QwpTableBuffer table = new QwpTableBuffer("a");
+                     QwpTableBuffer other = new QwpTableBuffer("b")) {
+                    final QwpTableBuffer.ColumnBuffer value = table.getOrCreateColumn("v", QwpConstants.TYPE_LONG, false);
+                    final QwpTableBuffer.ColumnBuffer timestamp = table.getOrCreateDesignatedTimestampColumn(QwpConstants.TYPE_TIMESTAMP);
+                    for (int row = 0; row < 2_049; row++) {
+                        value.addLong(1_000L + row);
+                        timestamp.addLong(11_000_000L + row);
+                        table.nextRow();
+                    }
+                    other.getOrCreateColumn("v", QwpConstants.TYPE_LONG, false).addLong(51L);
+                    other.getOrCreateDesignatedTimestampColumn(QwpConstants.TYPE_TIMESTAMP).addLong(13_000_000L);
+                    other.nextRow();
+                    encoder.setDeferCommit(false);
+                    encoder.beginMessage(2, new GlobalSymbolDictionary(), -1, -1);
+                    encoder.addTable(table);
+                    encoder.addTable(other);
+                    frames[batchFrames + 1] = encodedFrame(encoder, encoder.finishMessage());
+                }
+                final long aBefore = lastTxn(hookEngine, "a");
+                final long bBefore = lastTxn(hookEngine, "b");
+                final ObjList<byte[]> sent;
+                final QwpIngressProcessorState state = new QwpIngressProcessorState(
+                        RECV_BUFFER_SIZE,
+                        httpConfig.getSendBufferSize(),
+                        hookEngine,
+                        httpConfig.getLineHttpProcessorConfiguration()
+                );
+                try (Connection connection = new Connection(hookEngine, httpConfig, state, AllowAllSecurityContext.INSTANCE, false, 64 * 1024, frames)) {
+                    stateRef.set(connection.getState());
+                    connection.deliverFrames(frames.length);
+                    sent = connection.sentFrames();
+                }
+                Assert.assertEquals("test setup: the rewind's mapping must fail", 1, failedMmaps.get());
+                Assert.assertTrue("the failed rewind distresses a's writer", aWriter.get().isDistressed());
+                Assert.assertEquals("nothing commits", aBefore, lastTxn(hookEngine, "a"));
+                Assert.assertEquals("only the added column", bBefore + 1, lastTxn(hookEngine, "b"));
+                Assert.assertEquals("nothing is acked", -1, maxCumulativeOkAck(sent));
+                Assert.assertEquals("the NACK names the frame",
+                        QwpConstants.STATUS_INTERNAL_ERROR, errorStatusForSeq(sent, batchFrames + 1));
+                TestUtils.assertContains(errorMessageForSeq(sent, batchFrames + 1), "could not rewind the frame's rows");
+                Assert.assertFalse("the batch's first frame is not NACKed", hasErrorResponseForSeq(sent, 0));
+                drainWalQueue(hookEngine);
+                assertHookQuery(hookEngine, "SELECT v FROM a").expectSize().returns("v\n");
+                assertHookQuery(hookEngine, "SELECT v, z FROM b").expectSize().returns("v\tz\n");
             }
         });
     }
