@@ -2,6 +2,7 @@
 name: fix-pr
 description: Develop features and fix bugs or review findings from a list, one item at a time, with exhaustive tests enforced while developing - design the change and its test plan against CLAUDE.md "Testing" and have both challenged independently, build test-first, run the item's tests with coverage (ci/diff_coverage.py) and add tests until every changed line, branch and condition runs, have the tests reviewed independently and close the gaps; commit. When the queue is empty, run review-pr at level 3 over the whole PR, as before approval, and treat what blocks it the same way until a review finds nothing that blocks. Bugs this PR caused that an independent risk rating finds unlikely to hurt users ship as private issues, and bugs found on the way that the PR base already has become GitHub issues; neither is work for the run. Use when the user runs /skill:fix-pr or asks to develop or fix items with it.
 allowed-tools: bash read edit write subagent ctx_execute ctx_execute_file
+disable-model-invocation: true
 metadata:
   argument-hint: "[--block-at=critical|high|medium|low] [--fix-moderate] [--include-adjacent] [--no-issues] [--review-level=N] [--max-review-rounds=N] <items: features, bugs or review findings>"
 ---
