@@ -83,7 +83,9 @@ public interface BinaryFunction extends Function {
         if (other == this) {
             return true;
         }
-        if (other instanceof BinaryFunction that) {
+        if (other instanceof BinaryFunction that
+                && getClass() == that.getClass()
+                && getName().equals(that.getName())) {
             return getLeft().isEquivalentTo(that.getLeft()) && getRight().isEquivalentTo(that.getRight());
         }
         return false;
