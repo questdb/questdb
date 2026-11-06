@@ -153,9 +153,9 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     private static final int COMMIT_BATCH_FRAMES_INITIAL_CAPACITY = 3 * 64;
     private static final Log LOG = LogFactory.getLog(QwpIngressProcessorState.class);
     // The commit batch's tables, in the order they joined it, which is the order of
-    // their first frames. See the commit batch fields below.
+    // their first frames: the first commitBatchEntryCount entries. The entries past them
+    // wait for reuse. See the commit batch fields below.
     private final ObjList<CommitBatchEntry> commitBatchEntries = new ObjList<>();
-    private final ObjList<CommitBatchEntry> commitBatchEntryPool = new ObjList<>();
     // The commit batch's frames, three longs each: the address of the frame's payload
     // in the receive buffer, its length and its sequence.
     private final LongList commitBatchFrames = new LongList(COMMIT_BATCH_FRAMES_INITIAL_CAPACITY);
@@ -371,6 +371,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     // first block. The upgrade processor then rolls everything back and joins the batch's
     // frames again (commitBatchFrames), committing each table once: the frames are still
     // in its receive buffer, because a batch never outlives the receive pass.
+    private int commitBatchEntryCount;
     private long failedCommitBatchSequence = -1;
     private long firstCommitBatchSequence = -1;
     private long lastCommitBatchSequence = -1;
@@ -634,7 +635,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
      * and arrive a second time.
      */
     public boolean commitBatch() {
-        final int n = commitBatchEntries.size();
+        final int n = commitBatchEntryCount;
         if (n > 0) {
             final Lock roleSwitchLock = engine.getRoleSwitchReadLock();
             roleSwitchLock.lock();
@@ -687,7 +688,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
 
     @TestOnly
     public int getCommitBatchTableCount() {
-        return commitBatchEntries.size();
+        return commitBatchEntryCount;
     }
 
     /**
@@ -697,6 +698,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
      */
     @TestOnly
     public WalWriter getCommitBatchWriter(int index) {
+        assert index < commitBatchEntryCount;
         return commitBatchEntries.getQuick(index).writer;
     }
 
@@ -855,10 +857,10 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
      * The caller owns the watermark consequences.
      */
     public void resetCommitBatch() {
-        for (int i = 0, n = commitBatchEntries.size(); i < n; i++) {
-            commitBatchEntryPool.add(commitBatchEntries.getQuick(i).clear());
+        for (int i = 0, n = commitBatchEntryCount; i < n; i++) {
+            commitBatchEntries.getQuick(i).clear();
         }
-        commitBatchEntries.clear();
+        commitBatchEntryCount = 0;
         commitBatchFrames.clear();
         failedCommitBatchSequence = -1;
         firstCommitBatchSequence = -1;
@@ -2169,11 +2171,15 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     }
 
     private void addCommitBatchEntry(WalTableUpdateDetails tud, WalWriter writer, long seq, long rows) {
-        final int n = commitBatchEntryPool.size();
-        final CommitBatchEntry entry = n > 0 ? commitBatchEntryPool.popLast() : new CommitBatchEntry();
+        final CommitBatchEntry entry;
+        if (commitBatchEntryCount < commitBatchEntries.size()) {
+            entry = commitBatchEntries.getQuick(commitBatchEntryCount);
+        } else {
+            entry = new CommitBatchEntry();
+            commitBatchEntries.add(entry);
+        }
         entry.of(tud, writer, seq, rows);
-        tud.setQwpCommitBatchSlot(commitBatchEntries.size());
-        commitBatchEntries.add(entry);
+        tud.setQwpCommitBatchSlot(commitBatchEntryCount++);
     }
 
     // What joinCommitBatch answers for a frame that cannot join: a boundary while the batch
@@ -2240,7 +2246,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     // Looks the table up in the cache without side effects (see getCachedTableUpdateDetails);
     // the block's schema lookup has just found it.
     private CommitBatchEntry findCommitBatchEntry(DirectUtf8Sequence tableName) {
-        if (commitBatchEntries.size() == 0) {
+        if (commitBatchEntryCount == 0) {
             return null;
         }
         final WalTableUpdateDetails tud = tudCache.getCachedTableUpdateDetails(tableName);
@@ -2248,7 +2254,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
             return null;
         }
         final int slot = tud.getQwpCommitBatchSlot();
-        if (slot < 0 || slot >= commitBatchEntries.size()) {
+        if (slot < 0 || slot >= commitBatchEntryCount) {
             return null;
         }
         final CommitBatchEntry entry = commitBatchEntries.getQuick(slot);
@@ -2634,11 +2640,10 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         WalTableUpdateDetails tud;
         WalWriter writer;
 
-        CommitBatchEntry clear() {
+        void clear() {
             tracker = null;
             tud = null;
             writer = null;
-            return this;
         }
 
         void of(WalTableUpdateDetails tud, WalWriter writer, long firstSequence, long rows) {
