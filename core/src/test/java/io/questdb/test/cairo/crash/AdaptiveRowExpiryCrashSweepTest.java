@@ -87,13 +87,13 @@ public class AdaptiveRowExpiryCrashSweepTest extends AbstractAdaptiveCrashSweepT
     };
 
     @Test
-    public void testCleanupSweepRecoversToCommittedStateAtCrashPoints1To30() throws Exception {
-        assertSweepPartRecoversToCommittedState(1, 30);
+    public void testCleanupSweepRecoversToCommittedStateInFirstHalf() throws Exception {
+        assertSweepPartRecoversToCommittedState(1, 2);
     }
 
     @Test
-    public void testCleanupSweepRecoversToCommittedStateAtCrashPoints31ToLast() throws Exception {
-        assertSweepPartRecoversToCommittedState(31, Integer.MAX_VALUE);
+    public void testCleanupSweepRecoversToCommittedStateInSecondHalf() throws Exception {
+        assertSweepPartRecoversToCommittedState(2, 2);
     }
 
     private static String readPartitions() throws SqlException {
@@ -130,10 +130,10 @@ public class AdaptiveRowExpiryCrashSweepTest extends AbstractAdaptiveCrashSweepT
     }
 
     /**
-     * The sweep over crash points {@code firstK..min(lastK, N)}. Every point starts from a fresh identical baseline,
-     * so a part sweeps exactly the points the whole sweep would in its range.
+     * The sweep over part {@code part} of {@code partCount} near-equal ranges of the crash points 1..N. Every point
+     * starts from a fresh identical baseline, so a part sweeps exactly the points the whole sweep would in its range.
      */
-    private void assertSweepPartRecoversToCommittedState(int firstK, int lastK) throws Exception {
+    private void assertSweepPartRecoversToCommittedState(int part, int partCount) throws Exception {
         Assert.assertEquals(STATES.length - 1, FINAL_STATE);
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, "0");
@@ -144,7 +144,7 @@ public class AdaptiveRowExpiryCrashSweepTest extends AbstractAdaptiveCrashSweepT
             crashFf.modelSharedJournal = false;
 
             final CleanupWorkload workload = new CleanupWorkload();
-            final SweepResult r = forEachAdaptiveCrashPoint(workload, CRASH_POINT_CAP, firstK, lastK);
+            final SweepResult r = forEachAdaptiveCrashPointInPart(workload, CRASH_POINT_CAP, part, partCount);
             final int first = r.firstSweptK;
             final int last = r.lastSweptK;
 
@@ -152,7 +152,9 @@ public class AdaptiveRowExpiryCrashSweepTest extends AbstractAdaptiveCrashSweepT
                     .$(", part=").$(first).$("..").$(last)
                     .$(", stateByK=").$(Arrays.toString(r.recoveredByK())).$();
 
-            Assert.assertTrue("N must be > 0", r.n > 0);
+            // Opening the WAL writer (7 ops), three cleanup commits (7, 6, 6) and the apply (2); off Linux, the
+            // commits add 11 msyncs.
+            assertCommitDurabilityOps(r, 28, 39);
             Assert.assertFalse("the cap must not truncate this workload", r.truncated);
             Assert.assertEquals("the cap must not truncate this workload", r.n, r.sweptPoints);
             for (int k = first + 1; k <= last; k++) {

@@ -67,9 +67,11 @@ import java.util.List;
 public class AdaptiveCrashSweepSelfCheckTest extends AbstractAdaptiveCrashSweepTest {
 
     private static final long FIRST_TS = 1_727_740_800_000_000L; // 2024-10-01T00:00:00Z
-    // Rows per commit of the paged sweep: 6,400 bytes of WAL timestamp (16 bytes a row) and 3,200 of v, so
-    // with one-OS-page column pages every commit releases pages before it syncs.
-    private static final int PAGED_ROWS_PER_COMMIT = 400;
+    // Rows per commit of the paged sweep: 1 9/16 OS pages of WAL timestamp (16 bytes a row) and 25/32 of a page of
+    // v (8 bytes a row), so with one-OS-page column pages every commit releases pages before it syncs. That is 400
+    // rows with 4 KiB pages and 1,600 with the 16 KiB pages of Apple Silicon.
+    private static final int PAGED_ROWS_PER_COMMIT =
+            (int) (Files.PAGE_SIZE * 25 / 16 / AdaptiveCrashSweepSelfCheckTest.TIMESTAMP_COLUMN_ROW_SIZE);
     private static final int ROWS = 6; // identity sequence v = 0,1,2,3,4,5
     private static final int TIMESTAMP_COLUMN_ROW_SIZE = 16;
 
@@ -192,6 +194,43 @@ public class AdaptiveCrashSweepSelfCheckTest extends AbstractAdaptiveCrashSweepT
         }));
     }
 
+    /**
+     * The pinned op count follows the facade's syncfs mode, and a mismatch fails with the ops the count pass saw.
+     */
+    @Test
+    public void testCommitDurabilityOpPinFollowsSyncfsMode() throws Exception {
+        withAdaptiveW0(() -> runWithCrashFacade(() -> {
+            crashFf.modelSharedJournal = false;
+            final SweepResult r = forEachAdaptiveCrashPoint(new IdentityWorkload(), 1);
+            final String ops = phaseDurabilityOps();
+            Assert.assertEquals("the ops list holds one line per counted op", r.n, ops.split("\n").length);
+
+            crashFf.setSyncfsFileSystemWide(true);
+            assertCommitDurabilityOps(r, r.n, -1);
+            AssertionError mismatch = Assert.assertThrows(
+                    AssertionError.class,
+                    () -> assertCommitDurabilityOps(r, -1, r.n)
+            );
+            Assert.assertEquals(
+                    "the commit phase performed " + r.n + " durability ops, expected -1"
+                            + " with filesystem-wide syncfs=true; ops:\n" + ops,
+                    mismatch.getMessage()
+            );
+
+            crashFf.setSyncfsFileSystemWide(false);
+            assertCommitDurabilityOps(r, -1, r.n);
+            mismatch = Assert.assertThrows(
+                    AssertionError.class,
+                    () -> assertCommitDurabilityOps(r, r.n, -1)
+            );
+            Assert.assertEquals(
+                    "the commit phase performed " + r.n + " durability ops, expected -1"
+                            + " with filesystem-wide syncfs=false; ops:\n" + ops,
+                    mismatch.getMessage()
+            );
+        }));
+    }
+
     @Test
     public void testDeclaredPostCommitBoundaryExcludesOnlyDeclaredTail() throws Exception {
         runWithCrashFacade(() -> {
@@ -210,6 +249,68 @@ public class AdaptiveCrashSweepSelfCheckTest extends AbstractAdaptiveCrashSweepT
             assertInvalidBoundary(0);
             assertInvalidBoundary(4);
         });
+    }
+
+    /**
+     * A sweep with fewer crash points than parts fails in every part before it sweeps anything, and a part outside
+     * {@code 1..partCount} fails before the count pass.
+     */
+    @Test
+    public void testPartsBeyondTheSweepFail() throws Exception {
+        withAdaptiveW0(() -> runWithCrashFacade(() -> {
+            crashFf.modelSharedJournal = false;
+            for (int part = 1; part <= 3; part++) {
+                final IdentityWorkload workload = new IdentityWorkload();
+                final int p = part;
+                final AssertionError tooFewPoints = Assert.assertThrows(
+                        AssertionError.class,
+                        () -> forEachAdaptiveCrashPointInPart(workload, 2, p, 3)
+                );
+                Assert.assertEquals("the sweep's 2 crash points cannot fill 3 parts", tooFewPoints.getMessage());
+                Assert.assertEquals("part " + part + " must sweep nothing", "[]", workload.oracleKs.toString());
+            }
+
+            for (int[] partAndCount : new int[][]{{0, 2}, {3, 2}, {1, 0}}) {
+                final int badPart = partAndCount[0];
+                final int partCount = partAndCount[1];
+                final IllegalArgumentException error = Assert.assertThrows(
+                        IllegalArgumentException.class,
+                        () -> forEachAdaptiveCrashPointInPart(new IdentityWorkload(), 2, badPart, partCount)
+                );
+                Assert.assertEquals(
+                        "part must be in 1..partCount [part=" + badPart + ", partCount=" + partCount + ']',
+                        error.getMessage()
+                );
+            }
+        }));
+    }
+
+    /**
+     * Parts split the sweep's crash points into contiguous ranges whose sizes differ by at most one, and together
+     * sweep every point once. The cap fixes the sweep at 5 points whatever number of crash points the platform
+     * produces.
+     */
+    @Test
+    public void testPartsSplitTheSweepIntoNearEqualRanges() throws Exception {
+        withAdaptiveW0(() -> runWithCrashFacade(() -> {
+            crashFf.modelSharedJournal = false;
+            final int cap = 5;
+            final int[][] expectedKs = {{1}, {2, 3}, {4, 5}};
+            for (int part = 1; part <= expectedKs.length; part++) {
+                final IdentityWorkload workload = new IdentityWorkload();
+                final SweepResult r = forEachAdaptiveCrashPointInPart(workload, cap, part, expectedKs.length);
+                Assert.assertTrue(
+                        "the workload must declare more atomic ops than the cap, so the cap fixes the sweep's size",
+                        r.atomicCommitDurabilityOpCount > cap
+                );
+                Assert.assertEquals(cap, r.sweptPoints);
+                final int[] ks = expectedKs[part - 1];
+                Assert.assertEquals("crash points the oracle saw in part " + part,
+                        Arrays.toString(ks), workload.oracleKs.toString());
+                Assert.assertEquals("first crash point of part " + part, ks[0], r.firstSweptK);
+                Assert.assertEquals("last crash point of part " + part, ks[ks.length - 1], r.lastSweptK);
+            }
+        }));
     }
 
     @Test
@@ -351,6 +452,8 @@ public class AdaptiveCrashSweepSelfCheckTest extends AbstractAdaptiveCrashSweepT
     private final class IdentityWorkload implements AdaptiveCrashWorkload {
         private final int commits;
         private final boolean isApplyingEachCommit;
+        // The crash points the oracle ran at, in order.
+        private final List<Integer> oracleKs = new ArrayList<>();
         private final int rowsPerCommit;
         private int atomicCommitOps;
         // Rows the durable frontier (localDurableSeqTxn) covered when the commit phase stopped: at a crash,
@@ -436,6 +539,7 @@ public class AdaptiveCrashSweepSelfCheckTest extends AbstractAdaptiveCrashSweepT
 
         @Override
         public int oracle(int k, int n) throws Exception {
+            oracleKs.add(k);
             // Clean reopen: recovery must not leave the table suspended.
             Assert.assertFalse(
                     "k=" + k + ": table must NOT be suspended after recovery",
