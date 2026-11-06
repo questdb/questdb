@@ -401,9 +401,9 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
                 // One compiler runs both VACUUMs, as a pooled compiler does for successive VACUUM statements.
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
                     engine.releaseInactive();
-                    compiler.compile("VACUUM TABLE other", sqlExecutionContext);
+                    execute(compiler, "VACUUM TABLE other");
                     engine.releaseInactive();
-                    compiler.compile("VACUUM TABLE testPurge", sqlExecutionContext);
+                    execute(compiler, "VACUUM TABLE testPurge");
                 }
                 runPurgeJob(purgeJob);
 
@@ -427,8 +427,10 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
                 // No symbol column and no partition, so the rogue column's files are the only column files on disk.
-                execute("CREATE TABLE testPurge (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-                assertVacuumPurgesRogueSymbolFilesInTableRoot("testPurge", purgeJob);
+                // No other test uses this table name, so a purge task a pooled compiler kept from an earlier test
+                // cannot name this table's files.
+                execute("CREATE TABLE emptyTable (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+                assertVacuumPurgesRogueSymbolFilesInTableRoot("emptyTable", purgeJob);
             }
         });
     }
