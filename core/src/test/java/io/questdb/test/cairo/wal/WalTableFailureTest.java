@@ -317,6 +317,48 @@ public class WalTableFailureTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConvertMissingPartitionDoesNotSuspendWalTable() throws Exception {
+        // #8161: CONVERT of a day with no partition used to suspend the WAL table; DROP of the same day did not.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (value LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x VALUES (1, '2020-01-01T00:00:00.000000Z'), (2, '2020-01-02T00:00:00.000000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2019-06-01'");
+            execute("INSERT INTO x VALUES (3, '2020-01-03T00:00:00.000000Z')");
+            drainWalQueue();
+
+            TableToken token = engine.verifyTableName("x");
+            Assert.assertFalse(
+                    "CONVERT of a missing partition must not suspend the table",
+                    engine.getTableSequencerAPI().isSuspended(token)
+            );
+            assertQuery("SELECT count() FROM x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            3
+                            """);
+
+            // Same for CONVERT TO NATIVE of a missing day.
+            execute("ALTER TABLE x CONVERT PARTITION TO NATIVE LIST '2019-06-01'");
+            execute("INSERT INTO x VALUES (4, '2020-01-04T00:00:00.000000Z')");
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+            assertQuery("SELECT count() FROM x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            4
+                            """);
+        });
+    }
+
+    @Test
     public void testDataTxnFailToCommitInWalWriter() throws Exception {
         assertMemoryLeak(() -> {
             TableToken tableToken = createStandardWalTable(testName.getMethodName());
