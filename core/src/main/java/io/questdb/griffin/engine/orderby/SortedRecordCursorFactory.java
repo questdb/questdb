@@ -53,7 +53,8 @@ public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
             @NotNull RecordCursorFactory base,
             @NotNull RecordSink recordSink,
             @NotNull RecordComparator comparator,
-            @NotNull ListColumnFilter sortColumnFilter
+            @NotNull ListColumnFilter sortColumnFilter,
+            long valueMaxBytes
     ) {
         super(metadata);
         this.base = base;
@@ -73,7 +74,7 @@ public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
                     configuration.getSqlSortKeyPageSize(),
                     configuration.getSqlSortKeyMaxBytes(),
                     Math.min(configuration.getSqlSmallMapPageSize(), configuration.getSqlSortValuePageSize()),
-                    configuration.getSqlSortValueMaxBytes(),
+                    valueMaxBytes,
                     PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath(),
                     PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_BYTES.getPropertyPath(),
                     false

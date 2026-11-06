@@ -276,6 +276,24 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner,
     }
 
     @TestOnly
+    public int getMergeShardKeyCapacity() {
+        int capacity = 0;
+        for (int i = 0, n = destShards.size(); i < n; i++) {
+            capacity = Math.max(capacity, destShards.getQuick(i).getKeyCapacity());
+        }
+        return capacity;
+    }
+
+    @TestOnly
+    public int getShardKeyCapacity() {
+        int capacity = 0;
+        for (int i = 0, n = spanMaps.size(); i < n; i++) {
+            capacity = Math.max(capacity, spanMaps.getQuick(i).getShardKeyCapacity());
+        }
+        return capacity;
+    }
+
+    @TestOnly
     public RecordChain getResultRecords(int frameIndex) {
         return frameRecords.getQuick(frameIndex % frameRecords.size());
     }
@@ -392,12 +410,16 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner,
     @Override
     public void mergeShard(int slotId, int shardIndex) {
         final Map dest = destShards.getQuick(shardIndex);
-        dest.clear();
         // The frames of a bucket often repeat their keys, so the sum of the sources would reserve far too much.
         long size = 0;
         for (int i = 0, n = mergeSources.size(); i < n; i++) {
             size = Math.max(size, mergeSources.getQuick(i).getShards().getQuick(shardIndex).size());
         }
+        // Otherwise one huge bucket makes every later bucket pay to clear and emit its slots.
+        if (dest.getKeyCapacity() > StreamGroupByMap.SHRINK_RATIO * size) {
+            dest.restoreInitialCapacity();
+        }
+        dest.clear();
         if (size > dest.getKeyCapacity()) {
             dest.setKeyCapacity((int) Math.min(size, Integer.MAX_VALUE));
         }
@@ -409,7 +431,7 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner,
         }
     }
 
-    // The span maps must be sharded. The merged shards keep their capacity until the cursor closes.
+    // The span maps must be sharded.
     public ObjList<Map> openShardMerge(ObjList<StreamGroupByMap> sources) {
         shardMergeCount++;
         mergeSources.clear();
@@ -571,6 +593,14 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner,
             int capacity = 0;
             for (int i = 0, n = maps.size(); i < n; i++) {
                 capacity = Math.max(capacity, maps.getQuick(i).getKeyCapacity());
+            }
+            return capacity;
+        }
+
+        private synchronized int getShardKeyCapacity() {
+            int capacity = 0;
+            for (int i = 0, n = maps.size(); i < n; i++) {
+                capacity = Math.max(capacity, maps.getQuick(i).getShardKeyCapacity());
             }
             return capacity;
         }

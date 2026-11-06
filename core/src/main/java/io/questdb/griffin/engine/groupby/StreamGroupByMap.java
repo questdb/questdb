@@ -66,8 +66,8 @@ public final class StreamGroupByMap implements QuietCloseable {
     // A reduce task re-arms its breaker, so a count-throttled check there probes the client connection once per frame.
     public static final int BREAKER_CHECK_MASK = 4095;
     private static final long SHARD_PAGE_SIZE = 4 * 1024;
-    // clear() shrinks the map once its capacity exceeds this many slots per key the finished segment needed.
-    private static final int SHRINK_RATIO = 8;
+    // A map shrinks once its capacity exceeds this many slots per key the segment needs.
+    public static final int SHRINK_RATIO = 8;
     private final DirectLongList batchRows;
     private final int batchSize;
     private final IntList columnCrossIndex;
@@ -106,7 +106,7 @@ public final class StreamGroupByMap implements QuietCloseable {
     // The most keys a batch of the current segment reserved map capacity for.
     private long reservedKeys;
     private long segmentKey;
-    // The most keys a shard held, so that the next shard() presizes the shards the merge freed.
+    // The most keys a shard of the last merged segment held, so that the next shard() presizes the shards the merge freed.
     private int shardKeyCapacity;
 
     public StreamGroupByMap(
@@ -336,6 +336,11 @@ public final class StreamGroupByMap implements QuietCloseable {
         return segmentType == ColumnType.INT ? record.getInt(column) : record.getLong(column);
     }
 
+    @TestOnly
+    public int getShardKeyCapacity() {
+        return shardKeyCapacity;
+    }
+
     public ObjList<Map> getShards() {
         return shards;
     }
@@ -401,9 +406,11 @@ public final class StreamGroupByMap implements QuietCloseable {
 
     // Called before a merge frees the shards.
     public void rememberShardSizes() {
+        long maxKeys = 0;
         for (int i = 0; i < NUM_SHARDS; i++) {
-            shardKeyCapacity = (int) Math.max(shardKeyCapacity, shards.getQuick(i).size());
+            maxKeys = Math.max(maxKeys, shards.getQuick(i).size());
         }
+        shardKeyCapacity = maxKeys <= presizeMaxKeys ? (int) maxKeys : 0;
     }
 
     public void reopen(MemoryTracker tracker) {

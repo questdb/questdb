@@ -922,8 +922,14 @@ public class QueryFuzzTest extends AbstractCairoTest {
             LOG.info().$("sharding threshold coin [threshold=").$(shardingThreshold).I$();
         }
 
+        if (config.getPageFrameMaxRows() > 0) {
+            node1.setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 1);
+            node1.setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, config.getPageFrameMaxRows());
+        }
+
         LOG.info().$("fuzz config: tables=").$(config.getNumTables())
                 .$(", rows=").$(config.getRowsPerTable())
+                .$(", pageFrameMaxRows=").$(config.getPageFrameMaxRows())
                 .$(", queries=").$(config.getNumQueries())
                 .$(", diffJit=").$(config.isDiffJitEnabled())
                 .$(", diffShadow=").$(config.isDiffShadowEnabled())

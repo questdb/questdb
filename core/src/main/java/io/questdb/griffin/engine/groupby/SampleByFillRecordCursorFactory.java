@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.PropertyKey;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
@@ -189,16 +188,13 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 // idiom.
                 keysMap = MapFactory.createOrderedMap(configuration, mapKeyTypes, mapValueTypes, false);
                 if (!base.recordCursorSupportsRandomAccess()) {
-                    final long pageSize = Math.min(configuration.getSqlSmallMapPageSize(), configuration.getSqlSortValuePageSize());
-                    final long maxPages = Math.max(1L, configuration.getSqlSortValueMaxBytes() / Numbers.ceilPow2(pageSize));
                     final EntityColumnFilter columnFilter = new EntityColumnFilter();
                     columnFilter.of(metadata.getColumnCount());
                     recordChain = new RecordChain(
                             metadata,
                             RecordSinkFactory.getInstance(configuration, new BytecodeAssembler(), metadata, columnFilter),
-                            pageSize,
-                            (int) Math.min(maxPages, Integer.MAX_VALUE),
-                            PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_BYTES.getPropertyPath()
+                            configuration.getSqlSmallMapPageSize(),
+                            Integer.MAX_VALUE
                     );
                 }
             } else if (fixedPrevSrcCols.size() > 0) {

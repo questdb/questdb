@@ -71,7 +71,8 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
             CairoConfiguration configuration,
             RecordMetadata metadata,
             IntList sortColumnFilter,
-            RecordSink recordSink
+            RecordSink recordSink,
+            long valueMaxBytes
     ) {
         try {
             this.encoder = new SortKeyEncoder(metadata, sortColumnFilter);
@@ -90,7 +91,7 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
             );
             final long valuePageSize = Math.min(configuration.getSqlSmallMapPageSize(), configuration.getSqlSortValuePageSize());
             // RecordChain ceilPow2's the page before allocating; divide by the rounded unit to honor the cap.
-            final long valueMaxPagesFromBytes = Math.max(1L, configuration.getSqlSortValueMaxBytes() / Numbers.ceilPow2(valuePageSize));
+            final long valueMaxPagesFromBytes = Math.max(1L, valueMaxBytes / Numbers.ceilPow2(valuePageSize));
             this.recordChain = new RecordChain(
                     metadata,
                     recordSink,

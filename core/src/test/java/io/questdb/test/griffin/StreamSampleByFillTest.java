@@ -139,29 +139,44 @@ public class StreamSampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testKeyedCacheLimitAndReuse() throws Exception {
+    public void testKeyedCacheIgnoresSortLimit() throws Exception {
+        // The cache stands in for the map of a hash GROUP BY, which this limit never bounded.
         setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_BYTES, 8 * 1024);
         run((engine, compiler, context) -> {
             createPrices(context);
             engine.execute("INSERT INTO prices SELECT "
                     + "timestamp_sequence('2024-01-01'::timestamp, 120_000_000L)::" + timestampType
                     + ", 'A', x::double FROM long_sequence(2049)", context);
-            context.getBindVariableService().setDouble("max_price", 2049);
+            final String sql = "SELECT ts, sym, max(price) max FROM prices SAMPLE BY 1m FILL(PREV)";
+            assertCachedPlan(context, sql);
+            final String expected = TestUtils.printSqlToString(engine, context, sql + " ALIGN TO FIRST OBSERVATION", new StringSink()).toString();
+            query(context, sql).returns(expected);
+        });
+    }
+
+    @Test
+    public void testKeyedCacheMemoryLimitAndReuse() throws Exception {
+        run((engine, compiler, context) -> {
+            createPrices(context);
+            engine.execute("INSERT INTO prices SELECT "
+                    + "timestamp_sequence('2024-01-01'::timestamp, 2_000_000L)::" + timestampType
+                    + ", 'A', x::double FROM long_sequence(200_000)", context);
+            context.getBindVariableService().setDouble("max_price", 200_000);
             final String sql = "SELECT ts, sym, max(price) max FROM prices WHERE price <= :max_price "
-                    + "SAMPLE BY 1m FILL(PREV)";
+                    + "SAMPLE BY 1s FILL(PREV)";
             assertCachedPlan(context, sql);
             try (RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory();
-                 MemoryTracker tracker = engine.getMemoryTrackerProvider().acquire(context.getSecurityContext(), 42, MemoryTrackerWorkload.MAT_VIEW_REFRESH)) {
+                 MemoryTracker tracker = engine.getMemoryTrackerProvider().acquire(context.getSecurityContext(), 42, MemoryTrackerWorkload.QUERY)) {
                 context.setMemoryTracker(tracker);
+                setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 4 * 1024 * 1024);
                 try {
                     for (int iteration = 0; iteration < 3; iteration++) {
-                        context.getBindVariableService().setDouble("max_price", 2049);
+                        context.getBindVariableService().setDouble("max_price", 200_000);
                         try (RecordCursor cursor = factory.getCursor(context)) {
                             cursor.hasNext();
                             Assert.fail("expected replay cache limit breach");
                         } catch (CairoException e) {
-                            TestUtils.assertContains(e.getFlyweightMessage(), "breached in VirtualMemory");
-                            TestUtils.assertContains(e.getFlyweightMessage(), "(raise cairo.sql.sort.value.max.bytes)");
+                            Assert.assertTrue(e.getFlyweightMessage().toString(), e.isOutOfMemory());
                         }
                         Assert.assertEquals(0, tracker.getUsed());
                         context.getBindVariableService().setDouble("max_price", 3);
@@ -178,6 +193,7 @@ public class StreamSampleByFillTest extends AbstractCairoTest {
                         Assert.assertEquals(0, tracker.getUsed());
                     }
                 } finally {
+                    setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
                     context.setMemoryTracker(null);
                 }
             }

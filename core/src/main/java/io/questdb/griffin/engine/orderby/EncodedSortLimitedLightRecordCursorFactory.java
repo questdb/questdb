@@ -79,7 +79,8 @@ public class EncodedSortLimitedLightRecordCursorFactory extends AbstractRecordCu
             @Nullable Function hiFunction,
             ListColumnFilter sortColumnFilter,
             int timestampIndex,
-            @Nullable RecordSink recordSink // copies the kept rows of a base without random access
+            @Nullable RecordSink recordSink, // copies the kept rows of a base without random access
+            long valueMaxBytes
     ) {
         super(metadata);
         // The build phase never calls recordAt, but without copies emit re-fetches the kept rows from the base.
@@ -92,7 +93,7 @@ public class EncodedSortLimitedLightRecordCursorFactory extends AbstractRecordCu
         this.isCopying = recordSink != null;
         final boolean isScanAgainstOrder = timestampIndex != -1
                 && base.getScanDirection() != SortedRecordCursorFactory.getScanDirection(sortColumnFilter);
-        this.cursor = new EncodedSortLimitedLightRecordCursor(configuration, metadata, sortColumnFilter, timestampIndex, isScanAgainstOrder, recordSink);
+        this.cursor = new EncodedSortLimitedLightRecordCursor(configuration, metadata, sortColumnFilter, timestampIndex, isScanAgainstOrder, recordSink, valueMaxBytes);
     }
 
     @TestOnly

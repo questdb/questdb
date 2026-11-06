@@ -80,6 +80,7 @@ import java.util.concurrent.atomic.AtomicLong;
 
 @RunWith(Parameterized.class)
 public class StreamGroupByTest extends AbstractCairoTest {
+    private static final String SKEWED_KEYS_SQL = "SELECT timestamp_floor('1m', ts) bucket, k, count(*), sum(v) FROM trades";
     private final int frameRows;
     private final boolean parallel;
     private final int workers;
@@ -324,6 +325,76 @@ public class StreamGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHugeBucketDoesNotBurdenLaterBuckets() throws Exception {
+        Assume.assumeTrue(parallel);
+        setProperty(PropertyKey.CAIRO_SQL_SMALL_MAP_KEY_CAPACITY, 4);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 50);
+        run((engine, compiler, context) -> {
+            createSkewedKeysTable(engine, context);
+            try (RecordCursorFactory factory = compiler.compile(SKEWED_KEYS_SQL, context).getRecordCursorFactory()) {
+                final AsyncStreamGroupByAtom atom = ((AsyncStreamGroupByRecordCursorFactory) getGroupBy(factory)).getAtom();
+                try (RecordCursor cursor = factory.getCursor(context)) {
+                    Assert.assertTrue(cursor.hasNext());
+                    final int hugeBucketMergeCapacity = atom.getMergeShardKeyCapacity();
+                    final int hugeBucketShardCapacity = atom.getShardKeyCapacity();
+                    // The first row of the second bucket follows its merge.
+                    for (int row = 0; row < 60_000; row++) {
+                        Assert.assertTrue(cursor.hasNext());
+                    }
+                    Assert.assertEquals(2, atom.getShardMergeCount());
+                    final int mergeCapacity = atom.getMergeShardKeyCapacity();
+                    Assert.assertTrue(mergeCapacity + " of " + hugeBucketMergeCapacity, mergeCapacity < hugeBucketMergeCapacity);
+                    // Workers pool span maps, and a map that sat out the last merge remembers an earlier one.
+                    if (workers == 0) {
+                        final int shardCapacity = atom.getShardKeyCapacity();
+                        Assert.assertTrue(shardCapacity + " of " + hugeBucketShardCapacity, shardCapacity < hugeBucketShardCapacity);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testShardsHonorDisabledPresize() throws Exception {
+        Assume.assumeTrue(parallel);
+        setProperty(PropertyKey.CAIRO_SQL_SMALL_MAP_KEY_CAPACITY, 4);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 50);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_PRESIZE_ENABLED, "false");
+        run((engine, compiler, context) -> {
+            createSkewedKeysTable(engine, context);
+            try (RecordCursorFactory factory = compiler.compile(SKEWED_KEYS_SQL, context).getRecordCursorFactory()) {
+                final AsyncStreamGroupByAtom atom = ((AsyncStreamGroupByRecordCursorFactory) getGroupBy(factory)).getAtom();
+                drain(factory, context);
+                Assert.assertEquals(3, atom.getShardMergeCount());
+                Assert.assertEquals(0, atom.getShardKeyCapacity());
+            }
+        });
+    }
+
+    @Test
+    public void testRowCopiesIgnoreSortValueLimit() throws Exception {
+        // The copies stand in for the map of a hash GROUP BY, which this limit never bounded.
+        setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_BYTES, 1_024);
+        run((engine, compiler, context) -> {
+            createHighCardinalityTables(engine, context);
+            final String sql = "SELECT timestamp_floor('10s', ts) bucket, k, sum(v) s FROM $table ORDER BY s DESC, bucket, k";
+            assertMatchesHash(compiler, context, sql);
+            assertMatchesHash(compiler, context, sql + " LIMIT 10_000");
+        });
+    }
+
+    @Test
+    public void testRowCopiesIgnoreSortValueLimitWithoutEncodedSort() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_BYTES, 1_024);
+        setProperty(PropertyKey.CAIRO_SQL_ORDER_BY_SORT_ENABLED, "false");
+        run((engine, compiler, context) -> {
+            createHighCardinalityTables(engine, context);
+            assertMatchesHash(compiler, context,
+                    "SELECT timestamp_floor('10s', ts) bucket, k, sum(v) s FROM $table ORDER BY s DESC, bucket, k");
+        });
+    }
+
+    @Test
     public void testHighCardinalityBucketFailuresAndReuse() throws Exception {
         // Small shards grow while they merge, so a memory limit can fail a merge task on a worker.
         setProperty(PropertyKey.CAIRO_SQL_SMALL_MAP_KEY_CAPACITY, 4);
@@ -336,9 +407,10 @@ public class StreamGroupByTest extends AbstractCairoTest {
                 expected = read(factory, context);
             }
             try (RecordCursorFactory factory = compiler.compile(sql.replace("$table", "trades"), context).getRecordCursorFactory();
-                 MemoryTracker tracker = engine.getMemoryTrackerProvider().acquire(context.getSecurityContext(), 42, MemoryTrackerWorkload.MAT_VIEW_REFRESH)) {
+                 MemoryTracker tracker = engine.getMemoryTrackerProvider().acquire(context.getSecurityContext(), 42, MemoryTrackerWorkload.QUERY)) {
                 assertStream(getGroupBy(factory), true);
                 context.setMemoryTracker(tracker);
+                int breaches = 0;
                 try {
                     for (long limit = 1L << 26; limit >= 1L << 12; limit -= limit >> 3) {
                         setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, limit);
@@ -346,6 +418,7 @@ public class StreamGroupByTest extends AbstractCairoTest {
                             Assert.assertEquals(expected, read(factory, context));
                         } catch (CairoException e) {
                             Assert.assertTrue(e.getFlyweightMessage().toString(), e.isOutOfMemory());
+                            breaches++;
                         } finally {
                             setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
                         }
@@ -356,6 +429,7 @@ public class StreamGroupByTest extends AbstractCairoTest {
                 } finally {
                     context.setMemoryTracker(null);
                 }
+                Assert.assertTrue(breaches > 0);
             }
             // Cancels the query while the owner waits for the shard merges, the only caller of checkIfTripped().
             for (int iteration = 0; iteration < 3; iteration++) {
@@ -568,8 +642,8 @@ public class StreamGroupByTest extends AbstractCairoTest {
                     try (RecordCursor cursor = factory.getCursor(context)) {
                         Assert.assertTrue(cursor.hasNext());
                         final double sum = cursor.getRecord().getDouble(factory.getMetadata().getColumnIndex("s"));
-                        // 2.0 is the distance between doubles near 1e16, the best any Kahan sum can do here.
-                        Assert.assertEquals(sql, 6_132.0, sum, 2.0);
+                        // 2.0 is the distance between doubles near 1e16. Merging a worker's partial sum can lose that much.
+                        Assert.assertEquals(sql, 6_132.0, sum, 2.0 * (workers + 1));
                         Assert.assertFalse(cursor.hasNext());
                     }
                 }
@@ -2697,6 +2771,12 @@ public class StreamGroupByTest extends AbstractCairoTest {
                 Assert.assertTrue(sql, ((AsyncStreamGroupByRecordCursorFactory) getGroupBy(factory)).getAtom().getShardMergeCount() > 0);
             }
         }
+    }
+
+    // Three 1m buckets of 60_000 rows: the first holds a key per row, the others 200 keys.
+    private static void createSkewedKeysTable(CairoEngine engine, SqlExecutionContext context) throws Exception {
+        engine.execute("CREATE TABLE trades AS (SELECT timestamp_sequence('2024-01-01', 1_000L) ts, "
+                + "CASE WHEN x <= 60_000 THEN x ELSE x % 200 END k, x v FROM long_sequence(180_000)) TIMESTAMP(ts) PARTITION BY DAY", context);
     }
 
     // Each 10s bucket holds 10_000 rows of 5_000 keys, past the test sharding threshold, and spans frames.

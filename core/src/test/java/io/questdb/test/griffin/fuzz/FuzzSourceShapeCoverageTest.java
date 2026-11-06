@@ -38,6 +38,21 @@ import org.junit.Test;
 public class FuzzSourceShapeCoverageTest {
 
     @Test
+    public void testSmallFramesSplitDays() {
+        final Rnd rnd = new Rnd();
+        int smallFrames = 0;
+        for (int i = 0; i < 1_000; i++) {
+            final int maxRows = new FuzzConfig(rnd).getPageFrameMaxRows();
+            if (maxRows > 0) {
+                smallFrames++;
+                // A full day holds 48 rows, so its bucket spans frames of at most 32.
+                Assert.assertTrue(String.valueOf(maxRows), maxRows <= 32);
+            }
+        }
+        Assert.assertTrue("only " + smallFrames + " of 1000 configs use small frames", smallFrames > 250);
+    }
+
+    @Test
     public void testSubqueriesSampleByKeepingTheTimestamp() {
         final ObjList<FuzzColumn> columns = new ObjList<>();
         columns.add(new FuzzColumn("ts", TimestampType.INSTANCE));

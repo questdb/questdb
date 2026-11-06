@@ -75,6 +75,7 @@ public final class FuzzConfig {
     // QueryFuzzTest checks that precondition before it asserts a shape generated anything, so those
     // runs stay green instead of failing a working generator.
     private static final int DEFAULT_NUM_QUERIES = 1_000;
+    private static final int MAX_SMALL_PAGE_FRAME_ROWS = 32;
 
     private final boolean isDiffFusedEnabled;
     private final boolean isDiffJitEnabled;
@@ -99,11 +100,14 @@ public final class FuzzConfig {
     private final int minColumnsPerTable;
     private final int numQueries;
     private final int numTables;
+    private final int pageFrameMaxRows;
     private final int rowsPerTable;
     private final long stepMicros;
     private final String tsStart;
 
     public FuzzConfig(Rnd rnd) {
+        // Half of the runs cut each day of at most 48 rows into frames, so that buckets cross frames.
+        this.pageFrameMaxRows = rnd.nextBoolean() ? 1 + rnd.nextInt(MAX_SMALL_PAGE_FRAME_ROWS) : 0;
         // At least two: QueryGenerator gates every join shape (TEMPORAL, HORIZON, WINDOW JOIN) on
         // tables.size() >= 2, so a single-table run generated none of them at all - whatever the
         // query budget - and one run in three drew exactly one table. No shape needs a lone table
@@ -217,6 +221,10 @@ public final class FuzzConfig {
 
     public int getNumTables() {
         return numTables;
+    }
+
+    public int getPageFrameMaxRows() {
+        return pageFrameMaxRows;
     }
 
     public int getRowsPerTable() {

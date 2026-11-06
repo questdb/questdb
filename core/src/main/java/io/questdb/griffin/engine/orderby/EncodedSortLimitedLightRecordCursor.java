@@ -112,7 +112,8 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
             IntList sortColumnFilter,
             int timestampIndex,
             boolean isScanAgainstOrder,
-            @Nullable RecordSink recordSink
+            @Nullable RecordSink recordSink,
+            long valueMaxBytes
     ) {
         assert recordSink != null || !isScanAgainstOrder;
         SortKeyEncoder encoderInit = null;
@@ -126,7 +127,7 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
                 final long pageSize = Math.min(configuration.getSqlSmallMapPageSize(), configuration.getSqlSortValuePageSize());
                 // RecordArray ceilPow2's the page before allocating; divide by the rounded unit to honor the cap.
                 final int maxPages = (int) Math.min(
-                        Math.max(1L, configuration.getSqlSortValueMaxBytes() / Numbers.ceilPow2(pageSize)),
+                        Math.max(1L, valueMaxBytes / Numbers.ceilPow2(pageSize)),
                         Integer.MAX_VALUE
                 );
                 final String maxPagesConfigKey = PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_BYTES.getPropertyPath();

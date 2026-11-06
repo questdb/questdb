@@ -2088,8 +2088,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return false;
     }
 
-    // Over a hash GROUP BY, only these factories pass random access through to a light join.
-    private static boolean isLightHashJoinLostToStream(RecordCursorFactory factory) {
+    // Over a hash GROUP BY, only these factories pass random access through to a light join or sort.
+    private static boolean isOverStreamGroupBy(RecordCursorFactory factory) {
         for (RecordCursorFactory f = factory; f != null; f = f.getBaseFactory()) {
             if (f instanceof StreamGroupByRecordCursorFactory || f instanceof AsyncStreamGroupByRecordCursorFactory) {
                 return true;
@@ -5468,7 +5468,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 sortMetadata,
                                 groupByFactory,
                                 RecordSinkFactory.getInstance(configuration, asm, sortMetadata, entityColumnFilter),
-                                listColumnFilterA.copy()
+                                listColumnFilterA.copy(),
+                                configuration.getSqlSortValueMaxBytes()
                         );
                     }
                     case SampleBySortStrategy.LIGHT_RECORDCHAIN -> {
@@ -5497,7 +5498,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 base,
                                 recordSink,
                                 comparator,
-                                filterCopy
+                                filterCopy,
+                                configuration.getSqlSortValueMaxBytes()
                         );
                     }
                     default -> throw new IllegalStateException("unknown sample-by fill sort strategy: "
@@ -8379,7 +8381,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     validateOuterJoinExpressions(slaveModel, "INNER");
                                 }
 
-                                if (!fullFatJoins && isLightHashJoinLostToStream(slaveToFree)) {
+                                if (!fullFatJoins && isOverStreamGroupBy(slaveToFree)) {
                                     final RecordCursorFactory slaveToMaterialize = slaveToFree;
                                     slaveToFree = null;
                                     slaveToFree = materialize(slaveToMaterialize, true);
@@ -8637,7 +8639,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 );
             }
 
-            final boolean orderedByTimestampAsc = timestampIndex == metadata.getTimestampIndex()
+            // A table function leaf holds the latest-by nodes itself, and LATEST ON designates its column whatever the
+            // order of the rows. The cursor then compares timestamps instead of trusting the scan.
+            final boolean orderedByTimestampAsc = model.getNestedModel() != null
+                    && timestampIndex == metadata.getTimestampIndex()
                     && factory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_FORWARD;
 
             // LatestByLightRecordCursorFactory's constructor does not free the base on failure, so the
@@ -10051,7 +10056,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     hiFunc,
                                     listColumnFilterA.copy(),
                                     baseCursorTimestampIndex,
-                                    null
+                                    null,
+                                    configuration.getSqlSortValueMaxBytes()
                             );
                         }
                         return new LimitedSizeSortedLightRecordCursorFactory(
@@ -10149,7 +10155,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 firstOrderByColumnIndex == timestampIndex
                                         && recordCursorFactory.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_OTHER
                                         ? timestampIndex : -1,
-                                RecordSinkFactory.getInstance(configuration, asm, orderedMetadata, entityColumnFilter)
+                                RecordSinkFactory.getInstance(configuration, asm, orderedMetadata, entityColumnFilter),
+                                sortValueMaxBytes(recordCursorFactory)
                         );
                     }
                     return new EncodedSortRecordCursorFactory(
@@ -10157,7 +10164,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             orderedMetadata,
                             recordCursorFactory,
                             RecordSinkFactory.getInstance(configuration, asm, orderedMetadata, entityColumnFilter),
-                            listColumnFilterA.copy()
+                            listColumnFilterA.copy(),
+                            sortValueMaxBytes(recordCursorFactory)
                     );
                 }
                 // Null-before-risky: SortedRecordCursorFactory's ctor catch
@@ -10167,6 +10175,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 final RecordSink fullSortSink = RecordSinkFactory.getInstance(configuration, asm, orderedMetadata, entityColumnFilter);
                 final RecordComparator fullSortComparator = recordComparatorCompiler.newInstance(metadata, listColumnFilterA);
                 final ListColumnFilter fullSortFilterCopy = listColumnFilterA.copy();
+                final long fullSortValueMaxBytes = sortValueMaxBytes(recordCursorFactory);
                 final RecordCursorFactory baseForFullSort = recordCursorFactory;
                 recordCursorFactory = null;
                 return new SortedRecordCursorFactory(
@@ -10175,7 +10184,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         baseForFullSort,
                         fullSortSink,
                         fullSortComparator,
-                        fullSortFilterCopy
+                        fullSortFilterCopy,
+                        fullSortValueMaxBytes
                 );
             }
 
@@ -15771,6 +15781,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             throw th;
         }
         return new MaterializedRecordCursorFactory(configuration, base, recordSink, isStrict, !isRandomAccessLostToStream(base));
+    }
+
+    // A copy of stream GROUP BY rows stands in for the map of a hash GROUP BY, which only the query memory limit bounds.
+    private long sortValueMaxBytes(RecordCursorFactory base) {
+        return isOverStreamGroupBy(base) ? Long.MAX_VALUE : configuration.getSqlSortValueMaxBytes();
     }
 
     /**

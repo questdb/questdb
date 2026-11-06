@@ -958,7 +958,8 @@ public class OrderByLimitTest extends AbstractCairoTest {
                         null,
                         sortColumnFilter,
                         -1,
-                        sink
+                        sink,
+                        configuration.getSqlSortValueMaxBytes()
                 );
                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)
         ) {
