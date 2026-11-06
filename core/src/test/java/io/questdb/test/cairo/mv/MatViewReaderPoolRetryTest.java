@@ -30,6 +30,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewTimerJob;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
@@ -60,6 +61,37 @@ public class MatViewReaderPoolRetryTest extends AbstractCairoTest {
     @Test
     public void testJoinReaderPoolExhaustionDuringExecution() throws Exception {
         assertReaderPoolExhaustionRetries("symbols", true);
+    }
+
+    @Test
+    public void testSetExpireSurvivesViewReaderPoolExhaustionDuringApply() throws Exception {
+        // WAL apply re-compiles a stored SET EXPIRE. A full reader pool on the view during that apply
+        // must not cost the view the policy the statement already reported as set.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (k SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base VALUES ('a', 1.0, '2020-01-01T00:00:00Z'), ('a', 2.0, '2020-01-01T01:00:00Z')");
+            drainWalQueue();
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base)");
+            drainWalAndMatViewQueues();
+
+            // The statement-time check runs while the view's readers are free, and accepts the policy.
+            execute("ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS WHEN v < max(v) OVER (PARTITION BY k)");
+            final TableToken viewToken = engine.verifyTableName("mv");
+            try (
+                    TableReader ignored1 = engine.getReader(viewToken);
+                    TableReader ignored2 = engine.getReader(viewToken)
+            ) {
+                drainWalQueue();
+            }
+            // A busy pool may leave the transaction for a later pass, which this drain runs. A discarded
+            // SET EXPIRE stays discarded, so the assertions below tell the two apart.
+            drainWalQueue();
+
+            Assert.assertFalse("mv must not be suspended", engine.getTableSequencerAPI().isSuspended(viewToken));
+            try (TableMetadata metadata = engine.getTableMetadata(viewToken)) {
+                Assert.assertNotNull("mv must carry the policy", metadata.getExpiryPredicate());
+            }
+        });
     }
 
     @Test
