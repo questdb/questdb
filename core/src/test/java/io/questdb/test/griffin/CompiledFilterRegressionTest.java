@@ -7227,6 +7227,32 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSymbolArithmeticFallsBackToJava() throws Exception {
+        // https://github.com/questdb/questdb/issues/8173
+        // The Java filter does arithmetic on the symbol key, while the JIT used to
+        // resolve the constant as a symbol value, so `sym + 1 = 2` matched nothing.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO x VALUES (0::TIMESTAMP, 'a'), (1::TIMESTAMP, null), (2::TIMESTAMP, 'b'), (3::TIMESTAMP, '1')");
+
+            final String expected = """
+                    ts\tsym
+                    1970-01-01T00:00:00.000002Z\tb
+                    """;
+            assertJitMatchesJava("x WHERE sym + 1 = 2", false, expected);
+            assertJitMatchesJava("x WHERE 1 + sym = 2", false, expected);
+            assertJitMatchesJava("x WHERE sym * 2 = 2", false, expected);
+            assertJitMatchesJava("x WHERE sym - 1 = 0", false, expected);
+            assertJitMatchesJava("x WHERE (sym + 1) * 2 = 4", false, expected);
+            assertJitMatchesJava("x WHERE -sym = -1", false, expected);
+            assertJitMatchesJava("x WHERE sym + 1 = 2 OR sym = 'a'", false);
+            // comparisons without arithmetic keep the compiled filter
+            assertJitMatchesJava("x WHERE sym = 'b'", true, expected);
+            assertJitMatchesJava("x WHERE sym = -5 OR sym = 'b'", true, expected);
+        });
+    }
+
+    @Test
     public void testSymbolNumericNegativeZeroEquals() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (sy SYMBOL, k TIMESTAMP) TIMESTAMP(k)");
