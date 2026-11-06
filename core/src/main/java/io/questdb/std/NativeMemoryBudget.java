@@ -50,6 +50,10 @@ public class NativeMemoryBudget {
         return used.get();
     }
 
+    public boolean hasRoomFor(long bytes) {
+        return bytes <= limit - used.get();
+    }
+
     public void release(long bytes) {
         assert bytes >= 0;
         long remaining = used.addAndGet(-bytes);

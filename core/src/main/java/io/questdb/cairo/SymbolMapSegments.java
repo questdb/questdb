@@ -44,7 +44,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * in the order and format of the symbol char file, so a scan in key order stays sequential whatever order
  * filled the cache. Reads are lock-free; a load takes a try-lock that never waits. Published values never move
  * and replaced blocks stay allocated until close, so views survive later loads. All memory counts toward the
- * budget. Admission stops for good on the first allocation that fails.
+ * budget. Admission stops on the first allocation that fails. After a budget refusal, a later load admits again
+ * once the budget has room for the refused allocation; after a failed malloc, or for a segment too large to
+ * cache, admission stays stopped.
  */
 public class SymbolMapSegments implements QuietCloseable {
     public static final int LOADED = 0;
@@ -74,6 +76,8 @@ public class SymbolMapSegments implements QuietCloseable {
     private volatile long directory;
     private volatile boolean isFilling = true;
     private long loadedCharBytes;
+    // Bytes the budget refused; zero when admission stays stopped.
+    private volatile long resumeBytes;
     private int size;
     private int stopReason;
 
@@ -93,6 +97,7 @@ public class SymbolMapSegments implements QuietCloseable {
 
     @Override
     public void close() {
+        resumeBytes = 0;
         isFilling = false;
         long d = directory;
         directory = 0;
@@ -153,20 +158,25 @@ public class SymbolMapSegments implements QuietCloseable {
     /**
      * Copies the keys of the segment holding {@code key} that are below {@code symbolCount}. Returns LOADED when
      * {@code key} is cached, NOT_LOADED when the cache is busy or stopped, and STOPPED to the one caller whose
-     * load stops admission.
+     * load first stops admission.
      */
     public int load(int key, int symbolCount, MemoryR offsets, MemoryR chars) {
-        if (!isFilling || lock.get() || !lock.compareAndSet(false, true)) {
+        if ((!isFilling && !canResume()) || lock.get() || !lock.compareAndSet(false, true)) {
             return NOT_LOADED;
         }
         try {
             if (!isFilling) {
-                return NOT_LOADED;
+                if (!canResume()) {
+                    return NOT_LOADED;
+                }
+                isFilling = true;
             }
+            // Only the first stop reports STOPPED, so a cache that resumes and stops again logs once.
+            final int stopResult = stopReason == 0 ? STOPPED : NOT_LOADED;
             final int index = key >>> SEGMENT_BITS;
             final long d = directoryFor(index, symbolCount);
             if (d == 0) {
-                return STOPPED;
+                return stopResult;
             }
             final long slotAddress = d + DIRECTORY_HEADER + (long) index * Long.BYTES;
             final long slot = Unsafe.getLong(slotAddress);
@@ -190,7 +200,7 @@ public class SymbolMapSegments implements QuietCloseable {
                         : partialCapacity(neededCharBytes, charBytes, hiKey - loKey, current == 0 && index == 0);
                 segment = newSegment(current, count, used, neededCharBytes, capacity);
                 if (segment == 0) {
-                    return STOPPED;
+                    return stopResult;
                 }
             }
             final long relativeBase = used - charLo;
@@ -231,7 +241,7 @@ public class SymbolMapSegments implements QuietCloseable {
 
     private long allocate(long bytes) {
         if (!budget.tryReserve(bytes)) {
-            stop(STOP_BUDGET);
+            stop(STOP_BUDGET, bytes);
             return 0;
         }
         try {
@@ -240,9 +250,14 @@ public class SymbolMapSegments implements QuietCloseable {
             return address;
         } catch (CairoException e) {
             budget.release(bytes);
-            stop(STOP_OOM);
+            stop(STOP_OOM, 0);
             return 0;
         }
+    }
+
+    private boolean canResume() {
+        final long bytes = resumeBytes;
+        return bytes > 0 && budget.hasRoomFor(bytes);
     }
 
     private long directoryFor(int index, int symbolCount) {
@@ -275,7 +290,7 @@ public class SymbolMapSegments implements QuietCloseable {
 
     private long newSegment(long current, int count, int used, long neededCharBytes, long capacity) {
         if (neededCharBytes > maxCharBytes) {
-            stop(STOP_BUDGET);
+            stop(STOP_BUDGET, 0);
             return 0;
         }
         final long bytes = SEGMENT_CHARS + capacity;
@@ -318,8 +333,9 @@ public class SymbolMapSegments implements QuietCloseable {
         return Unsafe.getLongVolatile(d + DIRECTORY_HEADER + (long) index * Long.BYTES);
     }
 
-    private void stop(int reason) {
+    private void stop(int reason, long resumeBytes) {
         stopReason = reason;
+        this.resumeBytes = resumeBytes;
         isFilling = false;
     }
 

@@ -58,6 +58,8 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.NativeMemoryBudget;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Os;
@@ -4952,6 +4954,43 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSharedSymbolCacheResumesAfterPartitionDrop() throws Exception {
+        assertMemoryLeak(() -> {
+            final int count = 4_096;
+            execute("CREATE TABLE cache_drop (s SYMBOL CAPACITY 8192 CACHE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            // 40 seconds apart, the rows span two days.
+            execute("INSERT INTO cache_drop SELECT 'value' || x, timestamp_sequence(0, 40_000_000) FROM long_sequence(" + count + ")");
+            final NativeMemoryBudget budget = engine.getSymbolMapCachePool().getBudget();
+            final long originalLimit = budget.getLimit();
+            TableReader older = engine.getReader("cache_drop");
+            try {
+                assertSymbolValues((SymbolMapReaderImpl) older.getSymbolMapReader(0), count);
+                final long dictionaryBytes = budget.getUsedBytes();
+                budget.setLimit(dictionaryBytes + dictionaryBytes / 2);
+                // The dictionary stays as it was, but readers opened after the drop cache a copy of their own.
+                execute("ALTER TABLE cache_drop DROP PARTITION LIST '1970-01-01'");
+                try (TableReader newer = engine.getReader("cache_drop")) {
+                    SymbolMapReaderImpl newerSymbols = (SymbolMapReaderImpl) newer.getSymbolMapReader(0);
+                    assertSymbolValues(newerSymbols, count);
+                    Assert.assertEquals(2, engine.getSymbolMapCachePool().getEntryCount());
+                    final int stoppedSize = newerSymbols.getCacheSize();
+                    Assert.assertTrue("cached " + stoppedSize, stoppedSize > 0 && stoppedSize < count);
+
+                    older = Misc.free(older);
+                    engine.releaseInactive();
+                    Assert.assertEquals(1, engine.getSymbolMapCachePool().getEntryCount());
+                    assertSymbolValues(newerSymbols, count);
+                    Assert.assertEquals(count, newerSymbols.getCacheSize());
+                    Assert.assertEquals(newerSymbols.getCacheAllocatedBytes(), budget.getUsedBytes());
+                }
+            } finally {
+                Misc.free(older);
+                budget.setLimit(originalLimit);
+            }
+        });
+    }
+
+    @Test
     public void testSharedSymbolCacheShutdownWithLiveReader() throws Exception {
         assertMemoryLeak(() -> {
             try (
@@ -5585,6 +5624,12 @@ public class TableReaderTest extends AbstractCairoTest {
         TestUtils.assertEquals(expected, r.getStrB(index));
         Assert.assertNotSame(r.getStrA(index), r.getStrB(index));
         Assert.assertEquals(expected.length(), r.getStrLen(index));
+    }
+
+    private static void assertSymbolValues(SymbolMapReaderImpl symbols, int count) {
+        for (int key = 0; key < count; key++) {
+            TestUtils.assertEquals("value" + (key + 1), symbols.valueOf(key));
+        }
     }
 
     private static void checkColumnPurgeRemovesFiles(AtomicInteger counterRef, TestFilesFacade ff, int removeCallsExpected) throws SqlException {

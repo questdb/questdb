@@ -37,6 +37,7 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.Misc;
+import io.questdb.std.NativeMemoryBudget;
 import io.questdb.std.str.Utf8StringSink;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
@@ -257,6 +258,11 @@ public class SymbolCacheBenchmark {
     }
 
     @Benchmark
+    public long readLowKeysStoppedCache(StoppedCache state) throws SqlException {
+        return readSymbols(lowKeys);
+    }
+
+    @Benchmark
     public long readSparseHighKeys() throws SqlException {
         return readSymbols(sparseHighKeys);
     }
@@ -449,6 +455,29 @@ public class SymbolCacheBenchmark {
         @TearDown(Level.Trial)
         public void tearDown() {
             reader = Misc.free(reader);
+        }
+    }
+
+    // A one-byte cap refuses the first allocation, so reads of low go to the symbol files.
+    @State(Scope.Benchmark)
+    public static class StoppedCache {
+        private SymbolCacheBenchmark benchmark;
+        private long limit;
+
+        @Setup(Level.Trial)
+        public void setUp(SymbolCacheBenchmark benchmark) throws SqlException {
+            this.benchmark = benchmark;
+            final NativeMemoryBudget budget = benchmark.engine.getSymbolMapCachePool().getBudget();
+            limit = budget.getLimit();
+            benchmark.engine.releaseAllReaders();
+            budget.setLimit(1);
+            benchmark.readSymbols(benchmark.lowKeys);
+        }
+
+        @TearDown(Level.Trial)
+        public void tearDown() {
+            benchmark.engine.releaseAllReaders();
+            benchmark.engine.getSymbolMapCachePool().getBudget().setLimit(limit);
         }
     }
 
