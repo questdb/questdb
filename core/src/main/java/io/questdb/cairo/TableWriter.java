@@ -6804,7 +6804,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (metadata.getColumnType(i) <= 0) {
                     continue;
                 }
-                final int parquetColumnIndex = findParquetColumnIndex(parquetMetaReader, i);
+                final int parquetColumnIndex = findQueriedParquetColumnIndex(parquetMetaReader, i);
                 if (parquetColumnIndex < 0) {
                     continue;
                 }
@@ -9986,6 +9986,29 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         }
         return -1;
+    }
+
+    // Finds the Parquet column that queries decode for the table column, matching
+    // PageFrameMemoryPool.buildColumnIdMap() and resolveParquetColumn(): a column without a
+    // field id is keyed by its position, a key held by several columns means the last one, and
+    // a column changed by ALTER COLUMN TYPE is looked up by its current writer index before its
+    // original one. A foreign file can hold columns under both.
+    private int findQueriedParquetColumnIndex(ParquetMetaFileReader parquetMetadata, int metadataColumnIndex) {
+        final TableColumnMetadata columnMetadata = metadata.getColumnMetadata(metadataColumnIndex);
+        final int writerIndex = columnMetadata.getWriterIndex();
+        final int originalWriterIndex = columnMetadata.getOriginalWriterIndex();
+        int currentIndexMatch = -1;
+        int originalIndexMatch = -1;
+        for (int idx = 0, cnt = parquetMetadata.getColumnCount(); idx < cnt; idx++) {
+            final int columnId = parquetMetadata.getColumnId(idx);
+            final int key = columnId < 0 ? idx : columnId;
+            if (key == writerIndex) {
+                currentIndexMatch = idx;
+            } else if (key == originalWriterIndex) {
+                originalIndexMatch = idx;
+            }
+        }
+        return currentIndexMatch > -1 ? currentIndexMatch : originalIndexMatch;
     }
 
     private void finishColumnPurge() {
