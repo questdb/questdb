@@ -338,6 +338,9 @@ public class BitmapIndexWriter implements IndexWriter {
             long keyMemSize = keyMem.getAppendOffset();
             // check if key file header is present
             if (keyMemSize < BitmapIndexUtils.KEY_FILE_RESERVED) {
+                // Don't truncate the file on close. A failed ff.length() maps a non-empty
+                // file as empty, and a truncating close would destroy the index.
+                keyMem.close(false);
                 LOG.error().$("file too short [corrupt] [path=").$(path).I$();
                 throw CairoException.critical(0).put("Index file too short (w): ").put(path);
             }

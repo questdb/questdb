@@ -46,6 +46,7 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
     private PartitionDescriptor freshPartitionDescriptor;
     private LongList gapO3Ranges;
     private LongList mergeDstBufs;
+    private long mergeFirstTimestamp = Long.MAX_VALUE;
     private LongList nullBufs;
     private MemoryCARW rebaseAuxMem;
     private LongList rgO3Ranges;
@@ -77,6 +78,7 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
         freshPartitionDescriptor.clear();
         gapO3Ranges.clear();
         mergeDstBufs.clear();
+        mergeFirstTimestamp = Long.MAX_VALUE;
         nullBufs.clear();
         rgO3Ranges.clear();
         rowGroupBounds.clear();
@@ -129,6 +131,10 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
         return mergeDstBufs;
     }
 
+    public long getMergeFirstTimestamp() {
+        return mergeFirstTimestamp;
+    }
+
     public LongList getNullBufs(int colCount) {
         final int requiredLen = colCount * 4;
         nullBufs.setPos(requiredLen);
@@ -166,5 +172,9 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
         srcPtrs.setPos(requiredLen);
         srcPtrs.fill(0, requiredLen, 0);
         return srcPtrs;
+    }
+
+    public void setMergeFirstTimestamp(long mergeFirstTimestamp) {
+        this.mergeFirstTimestamp = mergeFirstTimestamp;
     }
 }

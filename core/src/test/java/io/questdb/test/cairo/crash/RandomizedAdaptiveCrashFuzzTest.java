@@ -26,13 +26,16 @@ package io.questdb.test.cairo.crash;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.pool.WriterPool;
 import io.questdb.cairo.wal.WalPurgeJob;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
+import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.MicrosecondClock;
@@ -51,6 +54,8 @@ import org.junit.rules.Timeout;
 
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+
+import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
 
 /**
  * Randomized adaptive crash fuzz: {@link AbstractAdaptiveCrashSweepTest}'s per-op sweep driver over randomized
@@ -146,23 +151,39 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
             fuzzer.setFuzzProbabilities(
                     0.05, 0.2, 0.05, 0.0, 0.1, 0, 0.15, 0, 0.6, 0.0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
         } else {
-            fuzzer.setFuzzProbabilities(
-                    0.05, 0.2, 0.05, 0.0,       // cancelRows, notSet, nullSet, rollback(=0: clean seqTxn map)
-                    0.1, 0.05, 0.05, 0.05,      // colAdd, colRemove, colRename, colTypeChange
-                    0.5, 0.0, 0.05, 0.03,       // dataAdd, equalTsRows(=0: canonical dump), partitionDrop, partitionToParquet
-                    0.03, 0.05, 0.0, 0.05,      // partitionToNative, truncate, tableDrop(=0), setTtl
-                    // replaceInsert(dedup) = 0: incompatible with partitionToParquet below. QuestDB does not support
-                    // replace-range commits over Parquet partitions, so once a partition is converted, a later replace
-                    // over it cannot be applied: in-order WAL replay hits "commit replace mode is not supported for
-                    // Parquet partitions" and suspends the table. An uncrashed run usually hides this, because
-                    // ApplyWal2TableJob skips a replace that a later txn supersedes. After a crash the sequencer log is
-                    // shorter, nothing supersedes it, the replace is applied and the table suspends, which looks like a
-                    // durability defect. Re-enable once the generator refuses to emit a replace range overlapping a
-                    // partition it converted.
-                    0.0, 0.0, 0.0, 0.02,        // replaceInsert(dedup), symbolAccessValidation, query, setParquetEncoding
-                    0.0, 0.03);                 // setTableFormat(=0), addCoveringIndex
+            // replaceInsert stays 0.0 here: enabling it in this shared config changes which op a pinned/nightly seed
+            // draws, perturbing testChangeColumnTypeSegmentPublishOrderCrashSafeW0 and the nightly full-library sweep.
+            // Replace-range commits over Parquet partitions ARE supported and crash-safe now (the old "not supported"
+            // throw is gone); testReplaceOverParquetCrashSafeW0 crash-sweeps that path deterministically, and
+            // ReplaceOverParquetShapeCoverageTest pins that the extracted config below can emit the shape when replace
+            // is enabled. The shared randomized draw stays 0.0 only to leave the pinned seeds' workloads byte-for-byte
+            // unchanged: raising it also exposes the nightly sweep to a pre-existing, replace-independent crash-harness
+            // limitation (a live sys.posting_seal_purge_log writer mmap at power loss via covering-index reseal),
+            // tracked separately and out of scope for this coverage.
+            setFullLibraryFuzzProbabilities(fuzzer, 0.0);
         }
-        //                     isO3, fuzzRowCount, txns, strLen, symStrLen, symCount, initialRows=0, partitions
+        setFullLibrarySweepFuzzCounts(fuzzer);
+    }
+
+    // The full destructive-op-library probabilities, extracted so the generator-coverage pin
+    // (ReplaceOverParquetShapeCoverageTest) drives the EXACT config configureFuzz() uses. replaceInsert is a
+    // parameter, not a constant: configureFuzz() passes 0.0 (workloads byte-for-byte as on the PR base), the pin
+    // passes 0.1 to prove the generator emits replace-over-Parquet shapes. Every other value and the argument order
+    // match configureFuzz()'s former inline call exactly, so no pinned/nightly seed's generated workload changes.
+    static void setFullLibraryFuzzProbabilities(FuzzRunner fuzzer, double replaceInsertProb) {
+        fuzzer.setFuzzProbabilities(
+                0.05, 0.2, 0.05, 0.0,           // cancelRows, notSet, nullSet, rollback(=0: clean seqTxn map)
+                0.1, 0.05, 0.05, 0.05,          // colAdd, colRemove, colRename, colTypeChange
+                0.5, 0.0, 0.05, 0.03,           // dataAdd, equalTsRows(=0: canonical dump), partitionDrop, partitionToParquet
+                0.03, 0.05, 0.0, 0.05,          // partitionToNative, truncate, tableDrop(=0), setTtl
+                replaceInsertProb, 0.0, 0.0, 0.02, // replaceInsert(dedup), symbolAccessValidation, query, setParquetEncoding
+                0.0, 0.03);                     // setTableFormat(=0), addCoveringIndex
+    }
+
+    // The shared sweep counts, extracted alongside the probabilities so the generator-coverage pin mirrors
+    // configureFuzz() exactly.
+    //                     isO3, fuzzRowCount, txns, strLen, symStrLen, symCount, initialRows=0, partitions
+    static void setFullLibrarySweepFuzzCounts(FuzzRunner fuzzer) {
         fuzzer.setFuzzCounts(true, 200, 20, 4, 4, 4, 0, 3);
     }
 
@@ -549,8 +570,9 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
                 try {
                     r = body.run(seed[0], seed[1]);
                 } catch (WorkloadNotCrashTestableException notTestable) {
-                    // Reject workloads that already suspend without a fault, such as unsupported replace-range
-                    // over Parquet. A pinned workload never redraws: report its seed and the original failure.
+                    // Reject workloads that already suspend without a fault, i.e. a generator combination that
+                    // suspends the table on a clean, uncrashed pass. A pinned workload never redraws: report its
+                    // seed and the original failure.
                     final String reason = notTestable.getMessage();
                     LOG.info().$("[seed] REJECTED seed ").$(seed[0]).$("L, ").$(seed[1]).$("L: ").$(reason).I$();
                     if (redraw == null) {
@@ -792,6 +814,174 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
             Assert.assertTrue("convert-partition crash at k=" + k + " changed committed data:\n" + recovered,
                     TestUtils.equals(fp, recovered));
             return 0;                                          // data-preserving op: single valid snapshot
+        }
+    }
+
+    private static final String ROP_PARQUET_DAY = "2024-01-01";
+    private static final String ROP_TABLE = "cf_rop";
+    private static final String ROP_TWIN = "cf_rop_twin";
+
+    // Seeds two days: 2024-01-01 (four rows) and 2024-01-02 (two rows); the older day becomes the Parquet partition
+    // the curated sweep replaces into. Identical for the Parquet table and its all-native twin.
+    private void seedTwoDays(String table) throws SqlException {
+        execute("insert into " + table + " values" +
+                " (1, '2024-01-01T01:00:00.000000Z', 10)," +
+                " (2, '2024-01-01T06:00:00.000000Z', 20)," +
+                " (3, '2024-01-01T12:00:00.000000Z', 30)," +
+                " (4, '2024-01-01T18:00:00.000000Z', 40)," +
+                " (5, '2024-01-02T06:00:00.000000Z', 50)," +
+                " (6, '2024-01-02T18:00:00.000000Z', 60)");
+    }
+
+    // A REPLACE_RANGE over [05:00, 15:00) of the Parquet day: it drops the 06:00 and 12:00 rows and adds one row at
+    // 08:00, leaving 01:00 and 18:00 untouched. The window is non-empty - it changes the data - so fp_post != fp_pre;
+    // an empty window (a gap with no rows and no appended row) would leave the data unchanged and fail the
+    // assertNotEquals(fp_pre, fp_post) non-vacuity guard in the workload's setup.
+    private void applyReplaceOverParquetDay(String table) throws NumericException {
+        final TableToken tt = engine.verifyTableName(table);
+        final long lo = MicrosTimestampDriver.floor("2024-01-01T05:00:00.000000Z");
+        final long hi = MicrosTimestampDriver.floor("2024-01-01T15:00:00.000000Z");
+        try (WalWriter ww = engine.getWalWriter(tt)) {
+            TableWriter.Row row = ww.newRow(MicrosTimestampDriver.floor("2024-01-01T08:00:00.000000Z"));
+            row.putLong(0, 100);
+            row.putLong(2, 999);
+            row.append();
+            ww.commitWithParams(lo, hi, WAL_DEDUP_MODE_REPLACE_RANGE);
+        }
+    }
+
+    // Non-vacuity baseline: the durable baseline partition the replace lands on must actually be Parquet, so the sweep
+    // cannot silently pass as a replace-over-native. A direct table_partitions read, so skipping the convert fails fast.
+    private void assertBaselinePartitionIsParquet(String table) throws SqlException {
+        final StringSink sink = new StringSink();
+        printSql("select isParquet from table_partitions('" + table + "') where name = '" + ROP_PARQUET_DAY + "'", sink);
+        Assert.assertEquals("durable baseline partition " + ROP_PARQUET_DAY + " must be Parquet, else this sweep is a "
+                + "replace-over-native, not replace-over-Parquet", "isParquet\ntrue\n", sink.toString());
+    }
+
+    // Deterministic curated crash sweep: a REPLACE_RANGE commit over a converted Parquet partition, the crash-recovery
+    // path the shared randomized sweep leaves at replaceInsert=0.0 (see configureFuzz). setup() builds a 2-day WAL
+    // table, converts the older day to Parquet, drains to the durable baseline, and asserts that baseline partition
+    // really is Parquet (non-vacuity). It records two independent oracle states from an all-NATIVE twin: fp_pre
+    // (baseline) and fp_post (the same replace applied to the twin), and asserts fp_pre != fp_post so an empty/no-op
+    // replace window - which still advances seqTxn - cannot pass (amendment). commit() applies the REPLACE_RANGE over
+    // the Parquet partition; the sweep crashes at every durability op and the oracle asserts recovery lands,
+    // unsuspended, on fp_pre or fp_post, with the sweep reaching BOTH. The workload carries no covering index, so it
+    // never opens sys.posting_seal_purge_log and cannot reach the pre-existing crash-harness gap.
+    @Test
+    public void testReplaceOverParquetCrashSafeW0() throws Exception {
+        Assume.assumeTrue("crash sweep is nightly-only; run with -D" + NIGHTLY_PROP + "=true",
+                Boolean.getBoolean(NIGHTLY_PROP));
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 3_600_000);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, 0);
+        // Pin the clock beyond the one-hour epoch threshold, as the other W=0 sweeps do: the fixed clock makes
+        // ApplyWal2TableJob's time quota identical at every crash point, so the two-state (fp_pre -> fp_post)
+        // staircase is load-independent.
+        setCurrentMicros(3_600_001_000L);
+        try {
+            runWithCrashFacade(() -> {
+                final ReplaceOverParquetWorkload workload = new ReplaceOverParquetWorkload();
+                final SweepResult r = forEachAdaptiveCrashPoint(workload);
+                Assert.assertFalse("replace-over-parquet sweep truncated (N > cap) - raise the cap", r.truncated);
+                Assert.assertTrue("sweep must exercise more than one crash point", r.sweptPoints > 1);
+                // Non-vacuity (amendment): the sweep must reach BOTH committed states. fp_pre and fp_post differ by
+                // seqTxn AND fingerprint (asserted in setup), so reaching both proves the replaced Parquet DATA
+                // recovers, not merely the seqTxn boundary a no-op replace would also move.
+                boolean preReached = false;
+                boolean postReached = false;
+                final int[] recovered = r.recoveredByK();
+                int prev = -1;
+                for (int k = 1; k <= r.sweptPoints; k++) {
+                    Assert.assertTrue("recovered seqTxn staircase went backwards at k=" + k
+                            + " (" + recovered[k] + " < " + prev + ")", recovered[k] >= prev);
+                    prev = recovered[k];
+                    preReached |= recovered[k] == workload.preSeqTxn;
+                    postReached |= recovered[k] == workload.postSeqTxn;
+                }
+                Assert.assertTrue("sweep never recovered the pre-replace Parquet baseline (seqTxn="
+                        + workload.preSeqTxn + ")", preReached);
+                Assert.assertTrue("sweep never recovered the post-replace state (seqTxn="
+                        + workload.postSeqTxn + ")", postReached);
+                Assert.assertEquals("the last atomic crash point must recover the full post-replace state",
+                        workload.postSeqTxn, recovered[r.sweptPoints]);
+            });
+        } finally {
+            setCurrentMicros(-1); // -1 => real clock (the harness default); do not leak a fixed clock
+        }
+    }
+
+    private final class ReplaceOverParquetWorkload implements AdaptiveCrashWorkload {
+        private String fpPost;        // twin state AFTER the replace (independent all-native oracle)
+        private String fpPre;         // twin state BEFORE the replace == the Parquet baseline
+        private int postSeqTxn;       // preSeqTxn + 1 (the single replace commit)
+        private int preSeqTxn;        // the main table's writerTxn at the durable baseline (replace not applied)
+        private TableToken token;
+
+        @Override
+        public void commit() throws Exception {
+            applyReplaceOverParquetDay(ROP_TABLE);
+            drainWalQueue();
+        }
+
+        @Override
+        public int oracle(int k, int n) throws Exception {
+            Assert.assertFalse("table left suspended after replace-over-parquet crash at k=" + k + " "
+                    + suspendReason(token), anyTableSuspended(token));
+            final String recovered = fingerprint(ROP_TABLE);
+            final long recoveredSeqTxn = tableSeqTxn(ROP_TABLE);
+            if (recoveredSeqTxn == preSeqTxn) {
+                Assert.assertTrue("recovered pre-replace seqTxn " + preSeqTxn + " with a non-baseline fingerprint "
+                        + "at k=" + k + ":\n" + recovered, TestUtils.equals(fpPre, recovered));
+            } else if (recoveredSeqTxn == postSeqTxn) {
+                Assert.assertTrue("recovered post-replace seqTxn " + postSeqTxn + " with a non-post fingerprint "
+                        + "at k=" + k + ":\n" + recovered, TestUtils.equals(fpPost, recovered));
+            } else {
+                Assert.fail("recovered an unknown seqTxn " + recoveredSeqTxn + " at k=" + k + " (expected "
+                        + preSeqTxn + " or " + postSeqTxn + "):\n" + recovered);
+            }
+            return (int) recoveredSeqTxn;
+        }
+
+        @Override
+        public TableToken[] setup(int iteration) throws Exception {
+            execute("drop table if exists " + ROP_TABLE);
+            execute("create table " + ROP_TABLE + " (id long, ts timestamp, v long) timestamp(ts) partition by day wal");
+            seedTwoDays(ROP_TABLE);
+            drainWalQueue();
+            // Convert the older day to Parquet, then drain: the durable baseline exposes a Parquet partition.
+            execute("alter table " + ROP_TABLE + " convert partition to parquet list '" + ROP_PARQUET_DAY + "'");
+            drainWalQueue();
+            token = engine.verifyTableName(ROP_TABLE);
+            assertBaselinePartitionIsParquet(ROP_TABLE);
+            if (fpPre == null) {
+                buildNativeTwinOracle();
+                Assert.assertNotEquals("curated replace must change data: fp_pre == fp_post means an empty/no-op "
+                                + "window that only advances seqTxn, which would not prove the Parquet data recovers",
+                        fpPre, fpPost);
+            }
+            preSeqTxn = (int) tableSeqTxn(ROP_TABLE);
+            postSeqTxn = preSeqTxn + 1;
+            return new TableToken[]{token};
+        }
+
+        @Override
+        public void teardown() throws Exception {
+            execute("drop table if exists " + ROP_TABLE);
+        }
+
+        // The all-native twin: identical rows, NO convert, the same replace applied. Its two fingerprints are the
+        // independent oracle the Parquet table must recover to. Dropped before any crash() so the facade never sees it.
+        private void buildNativeTwinOracle() throws Exception {
+            execute("drop table if exists " + ROP_TWIN);
+            execute("create table " + ROP_TWIN + " (id long, ts timestamp, v long) timestamp(ts) partition by day wal");
+            seedTwoDays(ROP_TWIN);
+            drainWalQueue();
+            fpPre = fingerprint(ROP_TWIN);
+            applyReplaceOverParquetDay(ROP_TWIN);
+            drainWalQueue();
+            fpPost = fingerprint(ROP_TWIN);
+            execute("drop table " + ROP_TWIN);
         }
     }
 
