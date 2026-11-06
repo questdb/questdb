@@ -36,8 +36,10 @@ import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.ParquetEncoding;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 
 public class FuzzTransactionGenerator {
@@ -179,6 +181,106 @@ public class FuzzTransactionGenerator {
             double probabilityOfBackfill,
             boolean isNoSentinelTypeChangeEnabled
     ) {
+        return generateSet(
+                initialRowCount,
+                sequencerMetadata,
+                tableMetadata,
+                rnd,
+                minTimestamp,
+                maxTimestamp,
+                rowCount,
+                transactionCount,
+                o3,
+                probabilityOfCancelRow,
+                probabilityOfUnassignedColumnValue,
+                probabilityOfAssigningNull,
+                probabilityOfTransactionRollback,
+                probabilityOfAddingNewColumn,
+                probabilityOfRemovingColumn,
+                probabilityOfRenamingColumn,
+                probabilityOfColumnTypeChange,
+                probabilityOfDataInsert,
+                probabilityOfSameTimestamp,
+                probabilityOfDropPartition,
+                probabilityOfConvertPartitionToParquet,
+                probabilityOfConvertPartitionToNative,
+                probabilityOfTruncate,
+                probabilityOfDropTable,
+                probabilityOfSetTtl,
+                replaceInsertProb,
+                probabilityOfSymbolAccessValidation,
+                probabilityOfQuery,
+                maxStrLenForStrColumns,
+                symbols,
+                metaVersion,
+                probabilityOfSetParquetEncoding,
+                probabilityOfAddCoveringIndex,
+                probabilityOfDropIndex,
+                probabilityOfSetTableFormat,
+                probabilityOfBackfill,
+                isNoSentinelTypeChangeEnabled,
+                false,
+                null
+        );
+    }
+
+    /**
+     * {@link #generateSet} that, with {@code isNoSentinelWideningEnabled}, changes BYTE and SHORT columns to types with
+     * NULL, see {@link FuzzChangeColumnTypeOperation#generateNoSentinelWidening}, and adds their names to
+     * {@code widenedColumns}. A quarter into the run it converts every day before the one taking writes to native and
+     * adds a BYTE or SHORT column, whose column top covers the rows written so far. The rows written later hold values,
+     * the late rows that cut older days into splits and pieces included, and no CONVERT PARTITION runs until, three
+     * quarters into the run, it converts every day before the one taking writes to parquet and widens a BYTE or SHORT
+     * column: a converted day can hold the values of one folder or piece ahead of the column top of the next in one
+     * row group, and the WAL tables apply the change lazily on it. After that half of the column type changes widen a
+     * BYTE or SHORT column, and no other change alters a column of these types.
+     * <p>
+     * Only the WAL tables convert partitions, and their merges cover other rows than the twin's commits, so the
+     * non-WAL twin and the WAL tables can disagree on which rows of these columns are a column top and which hold a
+     * stored 0: the caller compares NULL and the converted 0 of a widened column as one value, see
+     * FuzzRunner.setNoSentinelWideningChecked().
+     */
+    public static ObjList<FuzzTransaction> generateSet(
+            long initialRowCount,
+            TableRecordMetadata sequencerMetadata,
+            TableMetadata tableMetadata,
+            Rnd rnd,
+            long minTimestamp,
+            long maxTimestamp,
+            int rowCount,
+            int transactionCount,
+            boolean o3,
+            double probabilityOfCancelRow,
+            double probabilityOfUnassignedColumnValue,
+            double probabilityOfAssigningNull,
+            double probabilityOfTransactionRollback,
+            double probabilityOfAddingNewColumn,
+            double probabilityOfRemovingColumn,
+            double probabilityOfRenamingColumn,
+            double probabilityOfColumnTypeChange,
+            double probabilityOfDataInsert,
+            double probabilityOfSameTimestamp,
+            double probabilityOfDropPartition,
+            double probabilityOfConvertPartitionToParquet,
+            double probabilityOfConvertPartitionToNative,
+            double probabilityOfTruncate,
+            double probabilityOfDropTable,
+            double probabilityOfSetTtl,
+            double replaceInsertProb,
+            double probabilityOfSymbolAccessValidation,
+            double probabilityOfQuery,
+            int maxStrLenForStrColumns,
+            String[] symbols,
+            int metaVersion,
+            double probabilityOfSetParquetEncoding,
+            double probabilityOfAddCoveringIndex,
+            double probabilityOfDropIndex,
+            double probabilityOfSetTableFormat,
+            double probabilityOfBackfill,
+            boolean isNoSentinelTypeChangeEnabled,
+            boolean isNoSentinelWideningEnabled,
+            @Nullable ObjHashSet<String> widenedColumns
+    ) {
         Assert.assertFalse("no-sentinel type changes need in-order writes", isNoSentinelTypeChangeEnabled && o3);
         ObjList<FuzzTransaction> transactionList = new ObjList<>();
         int waitBarrierVersion = 0;
@@ -263,6 +365,19 @@ public class FuzzTransactionGenerator {
         // BYTE or SHORT, unless a CONVERT TO NATIVE comes first
         boolean isTextToNoSentinelChangeDue = false;
         boolean isTextToNoSentinelChangeSpent = !isNoSentinelTypeChangeEnabled;
+        // see the javadoc: a quarter into the run the generator adds a BYTE or SHORT column, and three quarters into the
+        // run it widens it, with no CONVERT PARTITION between the two
+        Assert.assertTrue("widening needs a sink for the widened columns", !isNoSentinelWideningEnabled || widenedColumns != null);
+        if (isNoSentinelWideningEnabled) {
+            // the two take iterations of their own
+            transactionCount += 2;
+        }
+        final int noSentinelColumnIteration = isNoSentinelWideningEnabled ? transactionCount / 4 : Integer.MAX_VALUE;
+        final int noSentinelWideningIteration = isNoSentinelWideningEnabled ? transactionCount * 3 / 4 : Integer.MAX_VALUE;
+        boolean isNoSentinelColumnAdded = !isNoSentinelWideningEnabled;
+        boolean isNoSentinelWideningSpent = !isNoSentinelWideningEnabled;
+        // the column added a quarter into the run, which the widening three quarters into the run changes
+        String noSentinelColumnName = null;
 
         // Anchor some O3 blocks near earlier timestamps to exercise collisions and adjacent writes.
         final double probabilityOfAnchoredBlock = o3 && rnd.nextBoolean() ? 0.3 * rnd.nextDouble() : 0;
@@ -292,6 +407,36 @@ public class FuzzTransactionGenerator {
             if (i == setTableFormatIteration) {
                 generateSetTableFormat(transactionList, metaVersion, waitBarrierVersion++, rnd);
                 continue;
+            }
+            if (!isNoSentinelColumnAdded && i >= noSentinelColumnIteration && getNonDeletedColumnCount(meta) < MAX_COLUMNS) {
+                // the days go back to native, so that the late rows after the column cut them into splits and
+                // pieces; its column top covers the rows written so far, and later rows hold values
+                isNoSentinelColumnAdded = true;
+                waitBarrierVersion = generateConvertEveryDay(transactionList, metaVersion, waitBarrierVersion, minTimestamp, lastTimestamp, oneDay, false);
+                meta = generateAddColumn(transactionList, metaVersion++, waitBarrierVersion++, rnd, meta, rnd.nextBoolean() ? ColumnType.BYTE : ColumnType.SHORT);
+                noSentinelColumnName = meta.getColumnName(meta.getColumnCount() - 1);
+                continue;
+            }
+            if (!isNoSentinelWideningSpent && isNoSentinelColumnAdded && i >= noSentinelWideningIteration) {
+                isNoSentinelWideningSpent = true;
+                // the days the late rows cut into splits and pieces go to parquet, which the widening then reads
+                waitBarrierVersion = generateConvertEveryDay(transactionList, metaVersion, waitBarrierVersion, minTimestamp, lastTimestamp, oneDay, true);
+                final RecordMetadata wideningMeta = FuzzChangeColumnTypeOperation.generateNoSentinelWidening(
+                        transactionList,
+                        estimatedTotalRows,
+                        metaVersion,
+                        waitBarrierVersion,
+                        rnd,
+                        meta,
+                        widenedColumns,
+                        noSentinelColumnName
+                );
+                if (wideningMeta != null) {
+                    meta = wideningMeta;
+                    metaVersion++;
+                    waitBarrierVersion++;
+                    continue;
+                }
             }
             final double rndDouble = rnd.nextDouble();
             double aggregateProbability = 0;
@@ -364,7 +509,8 @@ public class FuzzTransactionGenerator {
                 generateTruncateTable(transactionList, metaVersion, waitBarrierVersion++);
             } else if (wantToDropPartition) {
                 generateDropPartition(transactionList, metaVersion, waitBarrierVersion++, lastTimestamp, oneDay, rnd);
-            } else if (wantToConvertPartitionToParquet) {
+            } else if (wantToConvertPartitionToParquet && (!isNoSentinelColumnAdded || isNoSentinelWideningSpent)) {
+                // between the added column and the widening the days stay native, see the javadoc
                 final long cutoffTimestamp = generateConvertPartitionToParquet(
                         transactionList,
                         metaVersion,
@@ -378,8 +524,8 @@ public class FuzzTransactionGenerator {
                 // the partition of the cutoff has rows when its day is not before the first day of data
                 isTextToNoSentinelChangeDue |= !isTextToNoSentinelChangeSpent
                         && cutoffTimestamp - cutoffTimestamp % oneDay >= minTimestamp - minTimestamp % oneDay;
-            } else if (wantToConvertPartitionToNative && !isTextToNoSentinelChangeDue) {
-                // waits for the due text to BOOLEAN, BYTE or SHORT change
+            } else if (wantToConvertPartitionToNative && !isTextToNoSentinelChangeDue && (!isNoSentinelColumnAdded || isNoSentinelWideningSpent)) {
+                // waits for the due text to BOOLEAN, BYTE or SHORT change, and for the widening after the added column
                 generateConvertPartitionToNative(transactionList, metaVersion, waitBarrierVersion++, minTimestamp, lastTimestamp, oneDay, rnd);
             } else if (wantToAddCoveringIndex) {
                 if (generateAddCoveringIndex(transactionList, metaVersion, waitBarrierVersion, rnd, meta)) {
@@ -396,8 +542,12 @@ public class FuzzTransactionGenerator {
                     isTextToNoSentinelChangeSpent = true;
                     textToNoSentinelMeta = FuzzChangeColumnTypeOperation.generateTextToNoSentinelChange(transactionList, metaVersion, waitBarrierVersion, rnd, meta);
                 }
-                if (textToNoSentinelMeta != null) {
-                    meta = textToNoSentinelMeta;
+                // after the due widening, half of the type changes widen a BYTE or SHORT column, if there is one
+                final RecordMetadata wideningMeta = textToNoSentinelMeta == null && isNoSentinelWideningSpent && isNoSentinelWideningEnabled && rnd.nextBoolean()
+                        ? FuzzChangeColumnTypeOperation.generateNoSentinelWidening(transactionList, estimatedTotalRows, metaVersion, waitBarrierVersion, rnd, meta, widenedColumns)
+                        : null;
+                if (textToNoSentinelMeta != null || wideningMeta != null) {
+                    meta = textToNoSentinelMeta != null ? textToNoSentinelMeta : wideningMeta;
                     metaVersion++;
                     waitBarrierVersion++;
                 } else if (rnd.nextInt(5) != 0 ||
@@ -410,7 +560,17 @@ public class FuzzTransactionGenerator {
                         )) {
                     // a symbol capacity change takes 20% of the others; if it was not generated, generate a
                     // column type change
-                    meta = FuzzChangeColumnTypeOperation.generateColumnTypeChange(transactionList, estimatedTotalRows, metaVersion++, waitBarrierVersion++, rnd, meta);
+                    if (isNoSentinelWideningEnabled) {
+                        // only a widening changes a column without a NULL sentinel, see the javadoc
+                        final RecordMetadata changedMeta = FuzzChangeColumnTypeOperation.generateColumnTypeChange(transactionList, estimatedTotalRows, metaVersion, waitBarrierVersion, rnd, meta, true);
+                        if (changedMeta != null) {
+                            meta = changedMeta;
+                            metaVersion++;
+                            waitBarrierVersion++;
+                        }
+                    } else {
+                        meta = FuzzChangeColumnTypeOperation.generateColumnTypeChange(transactionList, estimatedTotalRows, metaVersion++, waitBarrierVersion++, rnd, meta);
+                    }
                 }
             } else if (wantToValidateSymbolAccess) {
                 FuzzTransaction transaction = new FuzzTransaction();
@@ -744,6 +904,34 @@ public class FuzzTransactionGenerator {
     }
 
 
+    /**
+     * Converts every day before the one that {@code lastTimestamp} falls in, to parquet or to native, one transaction a
+     * day, and returns the next wait barrier version.
+     */
+    private static int generateConvertEveryDay(
+            ObjList<FuzzTransaction> transactionList,
+            int metadataVersion,
+            int waitBarrierVersion,
+            long minTimestamp,
+            long lastTimestamp,
+            long oneDay,
+            boolean isToParquet
+    ) {
+        for (long day = minTimestamp - minTimestamp % oneDay, frontDay = lastTimestamp - lastTimestamp % oneDay; day < frontDay; day += oneDay) {
+            final FuzzTransaction transaction = new FuzzTransaction();
+            // the operations convert the day that starts in (cutoff - 1 day, cutoff)
+            final long cutoffTimestamp = day + oneDay - 1;
+            transaction.operationList.add(isToParquet
+                    ? new FuzzConvertPartitionToParquetOperation(cutoffTimestamp)
+                    : new FuzzConvertPartitionToNativeOperation(cutoffTimestamp));
+            transaction.waitBarrierVersion = waitBarrierVersion++;
+            transaction.structureVersion = metadataVersion;
+            transaction.waitAllDone = true;
+            transactionList.add(transaction);
+        }
+        return waitBarrierVersion;
+    }
+
     private static void generateDropPartition(
             ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion,
             long lastTimestamp, long oneDay, Rnd rnd
@@ -935,8 +1123,18 @@ public class FuzzTransactionGenerator {
             Rnd rnd,
             RecordMetadata tableMetadata
     ) {
+        return generateAddColumn(transactionList, metadataVersion, waitBarrierVersion, rnd, tableMetadata, generateNewColumnType(rnd));
+    }
+
+    static RecordMetadata generateAddColumn(
+            ObjList<FuzzTransaction> transactionList,
+            int metadataVersion,
+            int waitBarrierVersion,
+            Rnd rnd,
+            RecordMetadata tableMetadata,
+            int newType
+    ) {
         FuzzTransaction transaction = new FuzzTransaction();
-        int newType = generateNewColumnType(rnd);
         byte indexType;
         if (newType == ColumnType.SYMBOL && rnd.nextDouble() < 0.9) {
             // 50/50 split between BITMAP and POSTING variants so the fuzz

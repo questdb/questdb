@@ -355,6 +355,31 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     }
 
     /**
+     * As testConvertSplitAndCompositePartitionToParquet, with BYTE and SHORT columns changed to INT, LONG, TIMESTAMP
+     * and TIMESTAMP_NS, the first time lazily on a parquet partition: a split or composite day converts the stored
+     * values of one folder and the column top of the next into one row group. The WAL apply checks each CONVERT
+     * PARTITION and each such change against the rows of the table before it, see
+     * FuzzRunner.setNoSentinelWideningChecked(). No column is renamed or dropped and no table is dropped, so the
+     * widened columns keep their names, and no covering index includes them. With
+     * {@code -Dquestdb.fuzz.noSentinel.everyWideningTarget=true} BOOLEAN columns widen too, and the targets include
+     * DATE, FLOAT, DOUBLE, STRING, VARCHAR and SYMBOL.
+     */
+    @Test
+    public void testConvertSplitAndCompositeNoSentinelWideningFuzz() throws Exception {
+        runConvertSplitAndCompositeNoSentinelWideningFuzz(generateRandom(LOG));
+    }
+
+    /**
+     * testConvertSplitAndCompositeNoSentinelWideningFuzz with seeds that widen a column over a day whose NULLs do not
+     * lead it, the shape that read stored values as NULL when a BYTE or SHORT column changed to INT, LONG or TIMESTAMP.
+     */
+    @Test
+    public void testConvertSplitAndCompositeNoSentinelWideningOverNonLeadingNulls() throws Exception {
+        runConvertSplitAndCompositeNoSentinelWideningFuzz(generateRandom(LOG, 714743377371743956L, 2795700442123086616L));
+        Assert.assertTrue(FuzzRunner.getCheckedNoSentinelWideningsOverNonLeadingNulls() > 0);
+    }
+
+    /**
      * No TRUNCATE, TTL, and almost no DROP PARTITION, so older days keep collecting O3 splits and composite pieces.
      */
     @Test
@@ -1413,8 +1438,46 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         return instances.toString();
     }
 
-    private void runTxnZeroCoveredSymbolFuzz(Rnd rnd) throws Exception {
-        runTxnZeroCoveredSymbolFuzz(rnd, null);
+    private void runConvertSplitAndCompositeNoSentinelWideningFuzz(Rnd rnd) throws Exception {
+        setTestParams(rnd);
+
+        setFuzzProbabilities(
+                0.01,
+                0.01,
+                0.01,
+                0.05,
+                0.05,
+                0.0, // colRemoveProb
+                0.0, // colRenameProb
+                0.1,
+                1.0,
+                0.01,
+                0.005,
+                0.3,
+                0.3,
+                0.0, // truncateProb
+                0.0, // tableDropProb
+                0.0, // setTtlProb
+                0.0, // replaceProb: a replace commit is not supported over a parquet partition
+                0,
+                0.05,
+                0.05,
+                0.0, // addCoveringIndexProb
+                0.0 // SET FORMAT PARQUET|NATIVE probability
+        );
+        setFuzzCounts(true, 20_000, 300, 20, 10, 1000, 100, 4 + rnd.nextInt(6));
+        setFuzzProperties(rnd);
+        setRndConvertedDayShapeProperties(rnd, fuzzer);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, getRndSmallParquetRowGroupSize(rnd));
+        fuzzer.setNoSentinelWideningChecked(true);
+        FuzzChangeColumnTypeOperation.resetNoSentinelWidenings();
+        FuzzRunner.resetCheckedChanges();
+        runFuzz(rnd);
+        // three quarters into the run the generator converts the days before the one taking writes and widens a
+        // column, so the WAL apply checks a widening on a table with a parquet partition
+        Assert.assertTrue(FuzzChangeColumnTypeOperation.getNoSentinelWidenings() > 0);
+        Assert.assertTrue(FuzzRunner.getCheckedNoSentinelWideningsOnParquet() > 0);
+        Assert.assertTrue(FuzzRunner.getCheckedFormatChanges() > 0);
     }
 
     /**
@@ -1430,6 +1493,10 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
      *                               one platform only (fsync of a directory on POSIX, removal before a
      *                               copy on Windows), so the same seed would fail other calls on Windows.
      */
+    private void runTxnZeroCoveredSymbolFuzz(Rnd rnd) throws Exception {
+        runTxnZeroCoveredSymbolFuzz(rnd, null);
+    }
+
     private void runTxnZeroCoveredSymbolRandomFuzz(
             Rnd rnd,
             String defaultSymbolIndexType,
