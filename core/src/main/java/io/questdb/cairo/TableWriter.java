@@ -1187,6 +1187,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         commit();
 
         if (columnMetadata.isIndexed()) {
+            bumpMetadataVersionOnWalIndexSkip();
             throw CairoException.invalidMetadataRecoverable("column is already indexed", columnName);
         }
 
@@ -3205,6 +3206,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         TableColumnMetadata columnMetadata = metadata.getColumnMetadata(columnIndex);
         if (!columnMetadata.isIndexed()) {
             // if a column is indexed, it is also of type SYMBOL
+            bumpMetadataVersionOnWalIndexSkip();
             throw CairoException.invalidMetadataRecoverable("column is not indexed", columnName);
         }
         final int defaultIndexValueBlockSize = Numbers.ceilPow2(configuration.getIndexValueBlockSize());
@@ -7316,6 +7318,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         assert txWriter.getMetadataVersion() == metadata.getMetadataVersion();
     }
 
+    // Whether a column is indexed can differ per instance, because WAL apply skips an ADD INDEX on an
+    // instance with cold or delta-active partitions. Instances compare metadata versions, so an index
+    // ALTER that WAL apply tolerates bumps the version like one it applies. The bump commits with the
+    // seqTxn that apply() set, so a replay never repeats it.
+    private void bumpMetadataVersionOnWalIndexSkip() {
+        if (walApplySeqTxn > 0) {
+            writeMetadataToDisk();
+        }
+    }
+
     private int calculateInsertTransactionBlock(long seqTxn, TableWriterPressureControl pressureControl) {
         if (txWriter.getLagRowCount() > 0) {
             pressureControl.updateInflightTxnBlockLength(
@@ -7507,6 +7519,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             .$(", reason=table has a delta-active or remotely served partition]")
                             .$();
                 }
+                bumpMetadataVersionOnWalIndexSkip();
                 throw CairoException.invalidMetadataRecoverable(
                         "cannot create index, table has a delta-active or remotely served partition",
                         columnName
