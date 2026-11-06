@@ -1780,14 +1780,11 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     }
 
     /**
-     * The section 4.4 case of the design: a frame's only block, of b, which is new to the
-     * batch, writes values onto the next page of b's column and then fails on a value
-     * that is not a number. b gets its batch entry only once its append returns, so it has
-     * none, and when the cancel's mapping of the first page fails, b's writer is left mid
-     * columnar write with nothing to take back out. The frame fails, but nothing of it sits
-     * in a batch writer: the batch commits a once without b, the frame gets its own NACK,
-     * and the frame's clear() frees b's writer, whose rollback it refuses. b takes rows on
-     * a fresh connection, without any of the failed frame's.
+     * A frame's only block, of b, new to the batch, fails after crossing onto the next page
+     * of b's column, and the cancel's mapping of the first page fails too. b has no batch
+     * entry yet, so the batch commits a without b, the frame gets its own NACK, and the
+     * frame's clear() frees b's writer. b takes rows on a fresh connection, without any of
+     * the failed frame's.
      */
     @Test
     public void testNewTableCancelFailureCommitsBatchWithoutIt() throws Exception {

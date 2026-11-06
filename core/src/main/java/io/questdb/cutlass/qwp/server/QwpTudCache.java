@@ -642,17 +642,15 @@ public class QwpTudCache implements QwpSchemaCache, QuietCloseable {
                     throwIfWriterDistressed(tud);
                     applyPendingStructureChanges(tud);
                 } catch (Throwable th) {
-                    // Two ways to get here. (1) The writer is distressed: an
-                    // earlier append, segment roll or goActive() failed, the flag
-                    // never clears, and the table is alive, so no staleness check
-                    // would ever evict this entry and the table would be wedged
-                    // on this receiver until restart. (2) goActive() replayed a concurrent RENAME (see
-                    // applyPendingStructureChanges): buffered rows are already
-                    // salvaged and the entry must not serve another lookup under
-                    // the old name. Either way: evict and free the entry --
-                    // rolling back any still-uncommitted rows -- and rethrow so
-                    // the QWP layer refuses the frame (the deferred-ack clamp
-                    // holds; the client replays). The next lookup acquires a
+                    // Two ways to get here. (1) The writer is distressed, by an
+                    // earlier failure (see throwIfWriterDistressed) or by the
+                    // goActive() that just failed. (2) goActive() replayed a
+                    // concurrent RENAME (see applyPendingStructureChanges): buffered
+                    // rows are already salvaged and the entry must not serve another
+                    // lookup under the old name. Either way: evict and free the
+                    // entry -- rolling back any still-uncommitted rows -- and
+                    // rethrow so the QWP layer refuses the frame (the deferred-ack
+                    // clamp holds; the client replays). The next lookup acquires a
                     // fresh writer from the pool.
                     tableUpdateDetails.removeAt(key);
                     onEntryRemoved(tud);

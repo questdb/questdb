@@ -323,10 +323,10 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     // While a batch is pending, every uncommitted row of the connection belongs to it,
     // and nothing but the batch commit touches a batch table's writer: a frame joining
     // a table already in the batch skips the table lookup and cannot create columns,
-    // so it only appends its block, cancels it, or takes it back out (rewindFrame), and
-    // nothing evicts a batch table's cache entry. A positive check that each writer still holds exactly its batch
-    // rows (isCommitBatchEntryIntact), not a report from every path that might commit
-    // or discard rows, decides whether the batch may be acknowledged.
+    // so it only appends its block, cancels it, or rewinds it (rewindFrame), and nothing
+    // evicts a batch table's cache entry. A positive check that each writer still holds
+    // exactly its batch rows (isCommitBatchEntryIntact), not a report from every path
+    // that might commit or discard rows, decides whether the batch may be acknowledged.
     //
     // The tables commit one at a time, in the order they joined, under the role-switch
     // read lock held across all of them, and only after every table passed the checks a
@@ -343,12 +343,11 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     // frames added to the committed tables arrive a second time.
     //
     // A frame that fails or cannot join ends the batch, which commits as it stands before
-    // the frame is answered. Before the frame's first block of a table appends, the
-    // table's writer marks a savepoint, so the frame can take its own rows back out of
-    // the writers it touched (rewindFrame) and leave the batch's in place. When that
-    // rewind fails, or the frame's failure distressed the table cache, the batch cannot
-    // commit: the upgrade processor abandons it, nothing of it commits, the NACK names
-    // the failed frame, and the client replays the batch.
+    // the frame is answered. Before a frame's first block of a table appends, the table's
+    // writer marks a savepoint, so rewindFrame can remove the frame's rows and keep the
+    // batch's. If that rewind fails, or the frame's failure marked the table cache
+    // distressed, the batch cannot commit. The upgrade processor then abandons it with
+    // nothing committed and NACKs the failed frame, and the client replays the batch.
     private int commitBatchEntryCount;
     private long failedCommitBatchSequence = -1;
     private long firstCommitBatchSequence = -1;
@@ -669,9 +668,8 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
 
     /**
      * False once the table cache is distressed: a frame's failure left the connection's
-     * writers in doubt, or taking a frame's rows back out of them failed. A distressed
-     * cache commits nothing, so the commit batch can then only be abandoned, see
-     * {@link #abandonCommitBatch()}.
+     * writers in doubt, or rewinding a frame failed. A distressed cache commits nothing,
+     * so the commit batch can then only be abandoned, see {@link #abandonCommitBatch()}.
      */
     public boolean isCommitBatchIntact() {
         return !tudCache.isDistressed();
@@ -788,12 +786,12 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
             }
         } catch (Throwable e) {
             rejectMessageError(e);
-            // A table new to the batch gets its entry only once its append returned, so its
+            // A table new to the batch gets its entry only after its append returns, so a
             // failed append leaves nothing for rewindFrame: the appender cancelled the block,
-            // and the writer holds none of the batch's rows. When the cancel itself failed,
-            // the writer is left mid columnar write. The batch commits without it, and this
-            // frame's clear() then meets the writer's refused rollback, which distresses the
-            // table cache and frees every writer.
+            // and the writer holds none of the batch's rows. If the cancel failed too, the
+            // writer stays mid columnar write. The batch commits without it, and this frame's
+            // clear() hits the writer's refused rollback, marks the table cache distressed
+            // and frees every writer.
             assert newTableWriter == null || newTableWriter.getUncommittedRowCount() == 0 : "a failed append left rows in its writer";
             rewindFrame(seq);
             return false;
@@ -2207,26 +2205,21 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
                 && entry.rows + blockRows < entry.tud.getMetaMaxUncommittedRows();
     }
 
-    // Whether the batch may commit the table: the cache is healthy, and the table's
-    // writer holds exactly its batch rows, so nothing but the batch commit committed or
-    // discarded them, and a frame's rewind left exactly the rows the batch had before
-    // that frame. A positive check rather than a report from every path that could: the
-    // commit is what the ack vouches for. The cache distresses when a frame's failure or
-    // its rewind leaves writers in doubt; the upgrade processor then abandons the batch
-    // without committing it, and this check refuses a commit of it all the same. A
-    // table's entry and writer stay the same while it is in the batch: nothing evicts a
-    // batch table's entry, and a writer changes only when its entry is freed.
+    // Whether the batch may commit the table: the table cache is not distressed, and the
+    // writer holds exactly the entry's rows, so nothing else committed or discarded them
+    // and every rewind restored the rows the entry had before its frame. The ack covers
+    // what this check admits. A table's entry and writer stay the same while it is in the
+    // batch: nothing evicts a batch table's entry, and a writer changes only when its
+    // entry is freed.
     private boolean isCommitBatchEntryIntact(CommitBatchEntry entry) {
         assert entry.tud.getWriter() == entry.writer && tudCache.isCachedEntry(entry.tud);
         return !tudCache.isDistressed() && entry.writer.getUncommittedRowCount() == entry.rows;
     }
 
-    // Called in joinCommitBatch's try for a frame that failed or cannot join: rewinds the
-    // frame (rewindFrame), and a frame that only could not join then starts again at its
-    // first block, for the normal path. Such a frame stopped at a block, so it has one. A
-    // parse failure of that block goes to joinCommitBatch's catch, which fails the frame
-    // and rewinds it again: the writers are at their savepoints already, and that rewind
-    // changes nothing. Returns false, joinCommitBatch's answer for the frame.
+    // Rewinds the frame at seq. A frame that did not fail restarts at its first block, so
+    // the normal path can take it. Runs inside joinCommitBatch's try: a parse failure of
+    // the restart fails the frame there, and the second rewind finds nothing to undo.
+    // Always returns false.
     private boolean leaveCommitBatch(long seq) throws QwpParseException {
         rewindFrame(seq);
         if (isOk()) {
@@ -2248,13 +2241,12 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         return false;
     }
 
-    // Takes the rows of the frame at seq, which failed or cannot join, back out of the
-    // batch: every batch writer the frame appended to returns to the savepoint it marked
-    // before its first block of the table, and the tables the frame brought into the
-    // batch, the entries after all others, leave it. A rewind that fails leaves rows the
-    // batch cannot vouch for: the table cache distresses, which commits nothing, the
-    // frame fails if it had not, so the normal path never takes it onto a distressed
-    // writer, and the entries stay as they are until clear() resets the batch.
+    // Removes the rows of the frame at seq from the batch. Each writer the frame appended
+    // to rolls back to the savepoint marked before the frame's first block of its table,
+    // and the tables the frame added to the batch, always the last entries, leave it.
+    // If a rollback throws, the table cache is marked distressed, so the batch cannot
+    // commit, and a frame that had not failed fails, so the normal path never runs on
+    // the distressed writer. The entries stay until clear() resets the batch.
     private void rewindFrame(long seq) {
         try {
             for (int i = commitBatchEntryCount - 1; i > -1; i--) {

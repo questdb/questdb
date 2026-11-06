@@ -2885,8 +2885,8 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         try {
             setAppendPosition(startRowId);
         } catch (Throwable th) {
-            // Columns left at unknown positions, as after a failed rollbackToSavepoint:
-            // latch, so the pool expels the writer and the QWP caches evict it.
+            // The columns are at unknown positions, as after a failed rollbackToSavepoint():
+            // mark the writer distressed so that it is never reused.
             distressed = true;
             throw th;
         }

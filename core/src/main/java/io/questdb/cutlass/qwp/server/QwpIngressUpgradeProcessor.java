@@ -1775,17 +1775,17 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                     isNormalPath = false;
                     isBatched = true;
                 } else {
-                    // The frame failed or cannot join, and joinCommitBatch took its rows back
-                    // out of the batch's writers.
+                    // The frame failed or cannot join, and joinCommitBatch rewound its rows.
                     final boolean isFrameFailed = !state.isOk();
                     final byte frameStatus = responseStatusOf(state);
                     final String frameError = state.getErrorText();
                     final boolean isFrameRoleChangeClose = state.isRoleChangeClosePending();
                     if (!state.isCommitBatchIntact()) {
-                        // The frame's failure, or taking its rows back out, left the writers in
-                        // doubt, and the batch cannot commit. Strike this frame, retriably: the
-                        // watermark stays below the batch and the client replays it, so a failure
-                        // that recurs keeps striking this frame, not the batch's first.
+                        // The frame's failure or its rewind left the writers in doubt, so the
+                        // batch cannot commit. NACK this frame, retriably: the watermark stays
+                        // below the batch, the client replays it, and a failure that recurs
+                        // strikes this frame in the client's poison detector, not the batch's
+                        // first frame.
                         assert isFrameFailed : "a frame that left the table cache distressed has not failed";
                         isNormalPath = false;
                         LOG.error().$("WebSocket commit batch lost with a failed frame [fd=").$(context.getFd())

@@ -1880,11 +1880,8 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
 
     @Test
     public void testUdpSegmentRollFailureOnIdleTableHeals() throws Exception {
-        // A failed WAL segment roll distresses the cached writer while it holds
-        // no rows. No commit or rollback path raises on such a writer, so the
-        // next lookup must evict it: one datagram refuses the table and the
-        // one after it lands through a fresh writer. Without the eviction every
-        // later datagram for the table fails on the distressed writer.
+        // A failed segment roll distresses the cached writer while it holds no rows.
+        // The next lookup evicts it, so only two datagrams are lost.
         setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 1);
         final AtomicBoolean isMkdirsFailing = new AtomicBoolean();
         ff = new TestFilesFacadeImpl() {

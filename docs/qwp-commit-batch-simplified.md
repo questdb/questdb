@@ -1,9 +1,7 @@
 # QWP cross-table commit batching, simplified
 
-This document describes the simplified design of the QWP cross-table commit batch of PR #8195, as implemented on
-branch `jh_qwp_cross_table_commit_batch_simplified` on top of the PR head `a82a4afe95`. It started as a proposal;
-section 16 lists where the code disagreed with the proposal and how the design changed, and section 15 records the
-decisions on the questions the proposal left open. Methods are named rather than line numbers.
+This document describes the QWP cross-table commit batch as branch `jh_qwp_cross_table_commit_batch_simplified`
+implements it, on top of PR #8195 (`a82a4afe95`). Methods are named rather than line numbers.
 
 ## 1. Motivation
 
@@ -171,9 +169,10 @@ columnar write without an entry, and `rewindFrame` does not see it. The frame ha
 usually a `CairoException` from a failed mapping, which does not distress the cache), and the writer holds none of
 the batch's rows: its uncommitted row count is zero, because `finishColumnarWrite` never ran. The batch therefore
 commits without it, and the frame gets its own NACK. The frame's `clear()` then calls the writer's `rollback()`,
-which refuses a writer mid columnar write; `QwpTudCache.clear` distresses itself on that refusal and frees every
-writer, and closing the writer cancels the columnar write again. The catch of `joinCommitBatch` documents this and
-asserts that the writer holds no uncommitted rows.
+which refuses a writer mid columnar write; `QwpTudCache.clear` marks the cache distressed on that refusal and frees
+every writer. The failed cancel already marked the writer distressed (`WalWriter.cancelColumnarWrite`), so closing it
+does not try the cancel again, and the pool expels it. The catch of `joinCommitBatch` documents this and asserts
+that the writer holds no uncommitted rows.
 `QwpIngressCommitBatchTest#testNewTableCancelFailureCommitsBatchWithoutIt` drives it: the batch commits once, the
 frame is NACKed with the mapping failure, the writer is mid columnar write when the frame's `clear()` frees it, and
 the table takes rows on a fresh connection without any of the failed frame's.
@@ -185,9 +184,9 @@ and `prepareMessage` already clears the connection's `ConnectionSymbolCache` on 
 
 ### 4.5 A lost batch
 
-The table cache distresses when a frame's failure leaves the connection's writers in doubt: `rejectMessageError`
-distresses it for a `CommitFailedException` and for any throwable that is not a `QwpParseException` or a
-`CairoException`, and `rewindFrame` distresses it when a rewind throws. A distressed cache commits nothing
+The table cache becomes distressed when a frame's failure leaves the connection's writers in doubt:
+`rejectMessageError` marks it for a `CommitFailedException` and for any throwable that is not a `QwpParseException`
+or a `CairoException`, and `rewindFrame` marks it when a rewind throws. A distressed cache commits nothing
 (`isCommitBatchEntryIntact`), so the batch cannot commit.
 
 `handleBinaryMessage` then does what master did for a lost one-table batch: it does not call `commitBatch`, logs
@@ -217,13 +216,12 @@ one batch; a commits and b fails. The ack covers a1, the client replays b1, a2 a
 every frame carries both tables, as the Java client's combined frames do, both tables join at the first frame.
 Nothing is acked then, and the committed table receives the whole pass again.
 
-The batch trades loss for duplication, bounded by one receive pass. Section 5 narrows when it can happen. This is
-unchanged from PR #8195.
+The batch trades loss for duplication, bounded by one receive pass. Section 5 narrows when it can happen.
 
 ## 5. Refusal checks and the role-switch lock
 
 A failure between two tables' commits duplicates rows, so the batch refuses up front whatever it can know in
-advance. The two checks below are kept as they are in PR #8195; each has a purpose the other cannot serve.
+advance. Each of the two checks below has a purpose the other cannot serve.
 
 When a table joins, `TableSequencerAPI.throwIfCommitRefused` checks that the table token still matches its
 sequencer, that the table is not dropped, and that it is not hard-suspended while
@@ -381,7 +379,7 @@ Phase 1 of `QwpWalAppender` maps each block column to a writer column and create
 on the table's entry as `ColumnMapping`. A block skips Phase 1 when its schema object is the one the mapping was
 resolved for and the writer's metadata version is unchanged. A table's writer is fixed for the life of its entry, so
 the key needs no writer. Schemas with array columns run Phase 1 for every block, because array dimensions are checked
-against each block's data. Unchanged from PR #8195.
+against each block's data.
 
 ### 7.3 Table lookup
 
@@ -392,15 +390,23 @@ reads a slot hint from the entry (`qwpCommitBatchSlot`) and confirms it by ident
 The hint stays an int: `CommitBatchEntry` is private to `QwpIngressProcessorState`, and `WalTableUpdateDetails`
 lives in another package.
 
+`QwpTudCache.getTableUpdateDetails` evicts a cached entry whose WAL writer is distressed
+(`throwIfWriterDistressed`) and rethrows, as it does after a failed `goActive`. Nothing else would evict it: a
+failed segment roll or column addition can distress a writer that holds no rows, `TableUpdateDetails.commit` does
+not call a writer without rows, and `WalWriter.rollback0` skips a distressed one. Without the eviction, the QWP UDP
+receiver dropped every later datagram for the table until a restart. The lookup refuses the frame or datagram that
+finds the distressed writer, and the next lookup acquires a fresh writer. Commit batch tables do not take this
+lookup.
+
 `CommitBatchEntry` objects are kept in `commitBatchEntries` and reused in place behind a `commitBatchEntryCount`;
 `resetCommitBatch` clears the references of the entries in use and the count. The separate `commitBatchEntryPool`
 and its `popLast` and `clear` traffic are gone.
 
-`LowerCaseUtf8SequenceObjHashMap.clear` nulls its values, as in PR #8195.
+`LowerCaseUtf8SequenceObjHashMap.clear` nulls its values.
 
 ## 8. Acks larger than the send buffer
 
-Unchanged from PR #8195. `trySendAck` and `trySendDurableAckFrame` get the address to write a frame to from
+`trySendAck` and `trySendDurableAckFrame` get the address to write a frame to from
 `reserveFrame`. A frame that fits the send buffer goes there. A larger one goes to staging memory on the connection
 state (`stageFrame`, `MemoryTag.NATIVE_HTTP_CONN`), which grows to the largest frame and is freed at disconnect.
 `sendStagedFrame` copies the frame into the send buffer one buffer at a time and sends each piece. When a piece
@@ -445,8 +451,8 @@ orphan-adoption replay is the known source of such frames.
 
 ## 11. Tradeoffs and limitations
 
-Duplication after a partial commit, demote latency, visibility of rows at the pass's commit, and the Java client's
-one-row-frame throughput are as in PR #8195; see sections 4.6 and 5.
+The rewind changes neither the duplication after a partial commit (4.6), nor demote latency (5), nor when rows
+become visible, nor the Java client's one-row-frame throughput.
 
 A lost batch commits nothing (4.5). The PR's redo rebuilt the batch with fresh writers, committed it, and NACKed the
 failed frame; this design abandons the batch and NACKs the failed frame, as master did for its one-table batch. For a
@@ -467,16 +473,16 @@ Production lines from `git diff --stat a82a4afe95 -- core/src/main`, javadoc inc
 | Area | Change | Lines |
 |---|---|---|
 | `QwpIngressUpgradeProcessor` | Remove `redoCommitBatch`, `redoCommitBatch0`, `redoFrame`, `rejectRedoneFrame`, `redoFrames`, `REDO_FRAMES_MAX_RETAINED_CAPACITY`, `getRedoFramesCapacity`; in `handleBinaryMessage` remove the redo flags, the redo capture block and the redo dispatch, test a boolean from both `joinCommitBatch` calls, and abandon a lost batch (4.5) | +44 -249 |
-| `QwpIngressProcessorState` | Remove `commitBatchFrames`, `COMMIT_BATCH_FRAMES_INITIAL_CAPACITY`, `copyCommitBatchFrames`, `getCommitBatchFramesCapacity`, the `restoreInitialCapacity` call in `onDisconnected`, `COMMIT_BATCH_JOINED`, `COMMIT_BATCH_BOUNDARY`, `COMMIT_BATCH_REDO`, `cannotJoin`, the `hasAppended`, `appendingWriter` and `appendingWriterRows` bookkeeping, the redefined-dictionary rule, `onSymbolDictApplied` and `commitBatchEntryPool`; add `rewindFrame`, `leaveCommitBatch`, `isCommitBatchIntact`, the savepoint marks, `CommitBatchEntry.frameSequence` and `frameStartRows`, and `commitBatchEntryCount`; `joinCommitBatch(long seq)` returns boolean | +157 -165 |
-| `WalWriter` | Add `markSavepoint`, `rollbackToSavepoint` and four fields | +52 |
+| `QwpIngressProcessorState` | Remove `commitBatchFrames`, `COMMIT_BATCH_FRAMES_INITIAL_CAPACITY`, `copyCommitBatchFrames`, `getCommitBatchFramesCapacity`, the `restoreInitialCapacity` call in `onDisconnected`, `COMMIT_BATCH_JOINED`, `COMMIT_BATCH_BOUNDARY`, `COMMIT_BATCH_REDO`, `cannotJoin`, the `hasAppended`, `appendingWriter` and `appendingWriterRows` bookkeeping, the redefined-dictionary rule, `onSymbolDictApplied` and `commitBatchEntryPool`; add `rewindFrame`, `leaveCommitBatch`, `isCommitBatchIntact`, the savepoint marks, `CommitBatchEntry.frameSequence` and `frameStartRows`, and `commitBatchEntryCount`; `joinCommitBatch(long seq)` returns boolean | +153 -169 |
+| `WalWriter` | Add `markSavepoint`, `rollbackToSavepoint` and four fields; a failed `cancelColumnarWrite` marks the writer distressed | +60 -1 |
+| `QwpTudCache` | Evict a cached entry whose writer is distressed (`throwIfWriterDistressed`) | +23 -11 |
 | `QwpMessageCursor` | Add `firstTableAddress` and `resetTableIteration` | +14 |
 | `QwpTableBlockCursor`, `QwpWalAppender` | Remove `cacheSchema`, `schema`, `schemaAddress`, `schemaLength` and the call | -37 |
 
-Net: 184 production lines fewer (+267 -451). `TableSequencerAPI.throwIfCommitRefused`,
+Net: 173 production lines fewer (+294 -467). `TableSequencerAPI.throwIfCommitRefused`,
 `TableSequencerImpl.throwIfCommitRefused`, `TableUpdateDetails.authorizeCommit`, `ColumnMapping`, `QwpSchemaCache`,
 `QwpSchemaCacheEntry`, the staged-ack methods, `LowerCaseUtf8SequenceObjHashMap.clear` and `QwpUdpReceiver`'s use
-of the schema cache stay as they are. The proposal's row for `docs/qwp-commit-batch.md` does not apply: that
-document is not part of the repository; this one replaces it.
+of the schema cache stay as they are.
 
 ## 13. Tests
 
@@ -489,6 +495,7 @@ leaves uncommitted (4.5); the commit that removes the redo lists every changed e
 | `QwpIngressCommitBatchTest` | Batches across tables and multi-block frames; boundaries; partial failure and the ack; refusals at join and before commit; concurrent ALTER, DROP, RENAME and demote; sync and nosync; the ack-contract fuzz. The PR's redo scenarios keep their frames, contents and acks under rewind names, with one commit per table of the batch before the failed frame. Lost batches: `testFirstBlockCancelFailureLosesBatch`, `testFirstBlockUnexpectedErrorLosesBatch`, `testUnexpectedLookupErrorLosesBatch`, `testUnexpectedPreparationErrorLosesBatch`, `testWriterAcquisitionUnexpectedErrorAfterAppendLosesBatch`, `testRewindFailureLosesBatchAndReplayCommitsItOnce`, where the rewind's own mapping fails and the replay on a fresh connection commits the batch once, and `testRewindFailureOfFrameThatCannotJoinLosesBatch`, where the frame had not failed and fails with `INTERNAL_ERROR`. New rewind shapes: a second block failing after a block of every column type, a third block failing after a batch table and a new one in both orders, two blocks of a new table where the second fails or cannot join, a later block reaching the cap, and a new table whose cancel fails (4.4). `testRedefiningSymbolDictionaryJoinsCommitBatch` checks that a redefining frame joins |
 | `QwpIngressProcessorStateTest` | `joinCommitBatch` returns; a failed frame leaves the batch's rows and the entry list as they stood, also when it brought a table into the batch; a distressed cache leaves the batch not intact and its commit refused; caches; allocation once warm |
 | `QwpIngressCommitBatchTest#testCommitBatchFuzz*` | The generator keeps every failing shape; the coverage test counts rewind shapes; the pinned seeds stay, because the generator did not change |
+| `QwpIngressProcessorStateTest#testGetTableUpdateDetailsEvictsEntryWhenWriterDistressed*`, `QwpUdpInsertTest#testUdpSegmentRollFailureOnIdleTableHeals`, `WalWriterTest#testCancelColumnarWriteFailureDistressesWriter` | The lookup evicts a distressed writer with and without uncommitted rows; on the UDP receiver a failed segment roll loses two datagrams and the next one lands; a failed cancel marks the writer distressed |
 | `QwpIngressUpgradeProcessorResumeRecvTest` | `testRewoundFrameNackBehindBlockedAckResumesInOrder`: a rewound frame's NACK behind a blocked ack |
 | `QwpTableBlockCursorSchemaCacheTest`, `QwpParserCacheRetentionTest` | Unchanged. `QwpIngressProcessorStateTest#testSchemaParseLivesWithItsTableEntry` asserts that the append of a block parsed before its table opened leaves the slot empty, that the second block parses into it, and that the third hits |
 | `QwpIngressStagedAckFrameTest`, `QwpIngressOversizeAckTest`, `QwpIngressOracleFuzzTest`, `WalWriterTest#testCommitRefusalCheck*`, `LineHttpTudCacheTest`, `LowerCaseUtf8SequenceObjHashMapTest` | Unchanged |
@@ -526,44 +533,18 @@ tests assert the NACK's sequence, which is what the client's poison detector key
   cancelled, which would otherwise shift the next row's timestamp slot. It costs one loop over the columns, on a
   failure path, and only when no row was appended since the mark.
   `WalWriterTest#testSavepointRollbackDropsStartedRow` pins it.
-- `markSavepoint` does not refuse a distressed writer and does not assert against one. A distressed writer can reach
-  it: a segment roll that fails in `beginColumnarWrite` distresses the writer and throws a `CairoException`, which
-  does not distress the table cache, and the frame's `clear()` keeps the entry, because `rollback0` skips a
-  distressed writer without throwing. The next frame of that table, new to the batch, marks a savepoint on it. The
-  mark is harmless there: the append that follows refuses the distressed writer in `beginColumnarWrite`, and
-  `rollbackToSavepoint` refuses it too.
+- `markSavepoint` does not refuse a distressed writer and does not assert against one. The table lookup evicts
+  a distressed writer before a table joins a batch (7.3), and a batch writer that an append distresses fails its
+  `rollbackToSavepoint`, which loses the batch (4.5), so a mark on a distressed writer has no effect a check would
+  prevent.
 - Column creation stays refused for tables already in the batch. `addColumn` rolls uncommitted rows to a new segment
   and changes metadata the rewind cannot restore; a frame that needs a column on a batch table rewinds, the batch
-  commits, and the frame creates the column on its own commit, as in PR #8195.
+  commits, and the frame creates the column on its own commit.
 - A test makes `rollbackToSavepoint` throw through a failed page mapping (section 13); `WalWriter` has no test hook.
 - A lost batch NACKs the failed frame, not the batch's first frame (4.5).
 - A table new to the batch whose cancel fails leaves the batch committable (4.4).
 
-## 16. Where the code differed from the proposal
-
-- The proposal set a rewound entry's rows from the writer (`entry.rows = writer.getUncommittedRowCount()`) and
-  asserted they equal the rows before the frame, which nothing recorded. The entry now records them
-  (`frameStartRows`) when the frame marks the savepoint; the rewind sets `entry.rows` from them, and the commit-time
-  check compares them with the writer, so a wrong rewind is refused instead of trusted.
-- The proposal re-prepared every frame that did not join, inside `rewindFrame`. A failed frame is not prepared again:
-  the normal path does not process it, and after a parse failure `rejectMessageError` has already released the
-  message cursor's resources, so `resetTableIteration` would find a cleared cursor. The re-preparation lives in
-  `leaveCommitBatch`, inside `joinCommitBatch`'s try, which handles its parse failure; a separate catch for it could
-  run only on a parse that failed the second time over the same bytes, so no test could reach it.
-- The proposal let a failed rewind return without failing the frame. A frame that only could not join would then
-  take the normal path on a distressed writer; `rewindFrame` fails such a frame with `INTERNAL_ERROR`.
-- The proposal routed a lost batch through `commitBatch`, refusing it at its first entry and NACKing the batch's
-  first frame. Against the pinned Java client that misattributes a recurring failure to a healthy frame (4.5); the
-  supervisor approved NACKing the failed frame instead, as master did.
-- The proposal's risk that `resetTableIteration` meets a slot emptied by a parse error of a later block does not
-  arise: a parse error fails the frame, and a failed frame is not prepared again.
-- The proposal expected an assertion in `markSavepoint` against a distressed writer; a distressed writer is
-  reachable there (section 15), so the assertion would fail on a legitimate state.
-- The PR branch's `joinCommitBatch` took the frame's payload address and length for the per-frame record; with the
-  record gone it takes only the sequence.
-- The proposal estimated about 260 production lines fewer; the branch has 184 fewer.
-
-## 17. Code map
+## 16. Code map
 
 | Class | Role in this design |
 |---|---|
@@ -572,7 +553,7 @@ tests assert the NACK's sequence, which is what the client's poison detector key
 | `WalWriter` | `markSavepoint`, `rollbackToSavepoint`, and the existing `cancelColumnarWrite`, `finishColumnarWrite`, `setAppendPosition`, `rollback0` they build on |
 | `WalColumnarRowAppender` | `beginColumnarWrite`, `endColumnarWrite`, `cancelColumnarWrite`; the segment-roll assertion the relative savepoint relies on |
 | `QwpMessageCursor` | `resetTableIteration`, so a frame that only could not join restarts at its first block without re-applying its dictionary delta |
-| `QwpTudCache` | Table entries; `commitBatch` for one table; `QwpSchemaCache` implementation; side-effect-free lookup; the distressed `clear()` that frees every writer |
+| `QwpTudCache` | Table entries; `commitBatch` for one table; `QwpSchemaCache` implementation; side-effect-free lookup; eviction of distressed writers; the distressed `clear()` that frees every writer |
 | `QwpWalAppender` | Appends a block; per-table `ColumnMapping`; refuses column creation when asked |
 | `QwpTableBlockCursor`, `QwpSchemaCache`, `QwpSchemaCacheEntry` | Per-table schema parse cache |
 | `WalTableUpdateDetails` | Holds a table's mapping, schema slot and batch slot hint; drops the caches on close |

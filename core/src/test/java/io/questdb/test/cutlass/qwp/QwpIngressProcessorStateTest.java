@@ -5243,10 +5243,6 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
 
     @Test
     public void testGetTableUpdateDetailsEvictsEntryWhenWriterDistressedWithoutRows() throws Exception {
-        // A distressed writer with no rows raises nothing on any commit or
-        // rollback path: TableUpdateDetails.commit() skips a writer without
-        // rows and WalWriter.rollback0() skips a distressed one. Only the
-        // lookup can evict it, or the table stays wedged on this cache.
         assertLookupEvictsDistressedWriter(0);
     }
 
