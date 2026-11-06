@@ -647,6 +647,18 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                             1\t2024-01-03T00:00:00.000000Z
                             2\t2024-01-04T00:00:00.000000Z
                             """);
+            assertExceptionNoLeakCheck("SELECT ts, count() FROM " + file + " SAMPLE BY 1d", 0, "base query does not provide designated TIMESTAMP column");
+            assertQuery("SELECT ts, count() c FROM (SELECT * FROM " + file + " ORDER BY ts) SAMPLE BY 1d")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tc
+                            2024-01-01T00:00:00.000000Z\t1
+                            2024-01-02T00:00:00.000000Z\t1
+                            2024-01-03T00:00:00.000000Z\t1
+                            2024-01-04T00:00:00.000000Z\t1
+                            """);
             final String latestPlan = parallel ? "LatestBy light order_by_timestamp: false" : "LatestBy";
             final String latest = """
                     k\tts
