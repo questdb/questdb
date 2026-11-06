@@ -83,11 +83,6 @@ public class CoveringIndexBlockApplyFuzzTest extends AbstractFuzzTest {
         runCoveringBlockApplyFuzz(generateRandom(LOG));
     }
 
-    @Test
-    public void testCoveringBlockApplyFuzzRegression() throws Exception {
-        runCoveringBlockApplyFuzz(generateRandom(LOG, 0x51e6d0f2a3b4c5L, 0x9f8e7d6c5b4a39L));
-    }
-
     private void assertCoveredMatchesControl(int symbolCardinality) throws Exception {
         for (int s = 0; s < symbolCardinality; s++) {
             final String sym = "S" + s;

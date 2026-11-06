@@ -28,6 +28,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.std.QuietCloseable;
 
 public interface TableSequencer extends QuietCloseable {
+    long FENCE_REJECTED = Long.MIN_VALUE + 1;
     long NO_TXN = Long.MIN_VALUE;
 
     void dropTable();
@@ -62,6 +63,9 @@ public interface TableSequencer extends QuietCloseable {
 
     // returns committed txn number if schema version is the expected one, otherwise returns NO_TXN
     long nextTxn(long expectedStructureVersion, int walId, int segmentId, int segmentTxn, long txnMinTimestamp, long txnMaxTimestamp, long txnRowCount);
+
+    // returns FENCE_REJECTED unless expectedLastTxn is still the latest sequencer transaction
+    long nextTxnIfLastTxn(long expectedLastTxn, long expectedStructureVersion, int walId, int segmentId, int segmentTxn, long txnMinTimestamp, long txnMaxTimestamp, long txnRowCount);
 
     TableToken reload();
 
