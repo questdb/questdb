@@ -141,7 +141,7 @@ public class TxnScoreboardV2 implements TxnScoreboard {
                 if (seqTxn == UNKNOWN_SEQ_TXN) {
                     return -1;
                 }
-                if (seqTxn != Long.MAX_VALUE) {
+                if (seqTxn != NO_SEQ_TXN_FLOOR) {
                     if (count < capacity) {
                         Unsafe.getUnsafe().putLong(address + (long) count * Long.BYTES, seqTxn);
                     }
@@ -224,6 +224,8 @@ public class TxnScoreboardV2 implements TxnScoreboard {
         // as tableTxn advances. A reader admitted after updateMax() therefore cannot lower this
         // floor. Reader-pool copies keep their source reader at the copied snapshot until they close.
         // A checkpoint takes the CHECKPOINT_ID slot at its seqTxn before it closes its source reader.
+        // A caller that deletes files also checks that no checkpoint is in progress, after the scan: a
+        // checkpoint may take the slot and close its source reader during the scan.
         long min = currentSeqTxn;
         for (int i = 0; i < bitmapCount; i++) {
             long bitmap = Unsafe.getLongVolatile(bitmapMem + (long) i * Long.BYTES);

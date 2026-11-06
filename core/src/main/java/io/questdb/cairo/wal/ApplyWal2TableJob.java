@@ -419,6 +419,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         boolean isTerminating;
         boolean finishedAll = true;
         long initialSeqTxn = writer.getSeqTxn();
+        final long initialAppliedSeqTxn = writer.getAppliedSeqTxn();
         // Default to incremental mat view refresh.
         mvRefreshTask.clear();
         mvRefreshTask.operation = MatViewRefreshTask.INCREMENTAL_REFRESH;
@@ -616,7 +617,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     }
                     totalTransactionCount += iTransaction;
 
-                    if (!finishedAll || isTerminating) {
+                    // A run that moved nothing, such as a Delta stop on its first transaction, has nothing to commit.
+                    if (isTerminating || (!finishedAll
+                            && (writer.getSeqTxn() != initialSeqTxn || writer.getAppliedSeqTxn() != initialAppliedSeqTxn))) {
                         writer.commitSeqTxn();
                     }
 
@@ -1344,7 +1347,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     // table may get no next batch, and a notification dropped while the writer was busy is not
                     // republished.
                     writer.reconcileDurableEpochAnchor();
-                    if (pressureControl.onEnoughMemory()) {
+                    // A Delta stop says nothing about memory.
+                    if (!isLastApplyStoppedByDeltaPressure && pressureControl.onEnoughMemory()) {
                         LOG.info().$("table writing memory pressure is easing up [table=").$(tableToken)
                                 .$(", parallelMemoryLimit=").$(pressureControl.getMemoryPressureRegulationValue())
                                 .I$();

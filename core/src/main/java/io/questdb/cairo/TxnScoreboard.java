@@ -77,7 +77,9 @@ public interface TxnScoreboard extends QuietCloseable {
     /**
      * Returns the minimum sequencer transaction needed by active table snapshots.
      * The caller must read {@code currentTableTxn} and {@code currentSeqTxn} from one stable {@code _txn} view.
-     * A checkpoint's seqTxn is included through the {@link #CHECKPOINT_ID} slot.
+     * A checkpoint's seqTxn is included through the {@link #CHECKPOINT_ID} slot. A caller that deletes files also
+     * checks that no checkpoint is in progress, after the scan: a checkpoint may take the slot and close its source
+     * reader during the scan.
      */
     default long getMinSeqTxn(long currentTableTxn, long currentSeqTxn) {
         return UNKNOWN_SEQ_TXN;

@@ -431,7 +431,11 @@ public class SeqTxnTracker {
         // Updates seqTxn and returns true if CheckWalTransactionsJob should post notification
         // to run ApplyWal2TableJob for the table
         long stxn = seqTxn;
-        while (newSeqTxn > stxn && !Unsafe.cas(this, SEQ_TXN_OFFSET, stxn, newSeqTxn)) {
+        while (stxn < newSeqTxn) {
+            if (Unsafe.cas(this, SEQ_TXN_OFFSET, stxn, newSeqTxn)) {
+                metrics.walMetrics().addSeqTxn(newSeqTxn - Math.max(0, stxn));
+                break;
+            }
             stxn = seqTxn;
         }
         return writerTxn < seqTxn && suspendedState > 0 && pressureControl.isReadyToProcess();
@@ -443,7 +447,7 @@ public class SeqTxnTracker {
         long stxn = seqTxn;
         while (newSeqTxn > stxn) {
             if (Unsafe.cas(this, SEQ_TXN_OFFSET, stxn, newSeqTxn)) {
-                metrics.walMetrics().addSeqTxn(newSeqTxn - stxn);
+                metrics.walMetrics().addSeqTxn(newSeqTxn - Math.max(0, stxn));
                 break;
             }
             stxn = seqTxn;
@@ -466,7 +470,7 @@ public class SeqTxnTracker {
                 metrics.tableWriterMetrics().decSuspendedTables();
             }
         }
-        metrics.walMetrics().addSeqTxn(-seqTxn);
+        metrics.walMetrics().addSeqTxn(-Math.max(0, seqTxn));
         metrics.walMetrics().addWriterTxn(-Math.max(0, writerTxn));
         // Release this table's share of the engine-wide durable-ack gauge (wal_apply_local_durable_seq_txn), so a
         // dropped table does not leave its last value there. resetDurableFrontier() makes the one decrement, and

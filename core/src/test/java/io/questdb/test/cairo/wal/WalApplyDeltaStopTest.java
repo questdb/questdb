@@ -26,12 +26,14 @@ package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.PartitionDeltaWriter;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.pool.RecentWriteTracker;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
+import io.questdb.cairo.wal.TableWriterPressureControl;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.std.ReadOnlyObjList;
 import io.questdb.std.Unsafe;
@@ -40,12 +42,14 @@ import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.CairoTestConfiguration;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 /**
@@ -107,6 +111,11 @@ public class WalApplyDeltaStopTest extends AbstractCairoTest {
             }
         };
         AbstractCairoTest.setUpStatic();
+    }
+
+    @Before
+    public void resetGate() {
+        denials.set(0);
     }
 
     @Test
@@ -230,11 +239,169 @@ public class WalApplyDeltaStopTest extends AbstractCairoTest {
         }
     }
 
+    @Test
+    public void testMatViewTransactionStops() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE mv_base (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE MATERIALIZED VIEW mv_view AS (SELECT ts, sum(v) s FROM mv_base SAMPLE BY 1h) PARTITION BY DAY");
+            execute("INSERT INTO mv_base VALUES (1, '2020-01-01T00:00:00')");
+            drainWalAndMatViewQueues();
+            final TableToken view = engine.verifyTableName("mv_view");
+            try (TableWriter writer = getWriter(view)) {
+                writer.getTxWriter().setPartitionDeltaActiveByTimestamp(DAY_2020_01_01);
+                writer.bumpPartitionTableVersion();
+                writer.commit();
+            }
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(view);
+
+            // The refresh ends with a MAT_VIEW_DATA transaction into the Delta-active day
+            denials.set(Integer.MAX_VALUE);
+            gateCalls.set(0);
+            execute("INSERT INTO mv_base VALUES (2, '2020-01-01T01:00:00')");
+            drainWalAndMatViewQueues();
+
+            assertTrue(gateCalls.get() > 0);
+            assertEquals(tracker.getSeqTxn() - 1, tracker.getWriterTxn());
+            assertFalse(engine.getTableSequencerAPI().isSuspended(view));
+        });
+    }
+
+    @Test
+    public void testStopKeepsMemoryPressureRegulation() throws Exception {
+        assertMemoryLeak(() -> {
+            long nowMicros = MicrosecondClockImpl.INSTANCE.getTicks();
+            setCurrentMicros(nowMicros);
+            final TableToken token = createTableWithDeltaActiveDay("stop_memory");
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(token);
+            try (
+                    ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 0);
+                    CheckWalTransactionsJob checkJob = new CheckWalTransactionsJob(engine)
+            ) {
+                // The first run scans and records the republish counter
+                checkJob.run();
+                walApplyJob.drain(0);
+
+                denials.set(Integer.MAX_VALUE);
+                gateCalls.set(0);
+                execute("INSERT INTO stop_memory VALUES (3, '2020-01-01T01:00:00')");
+                // Two out-of-memory errors back the table off
+                final TableWriterPressureControl control = tracker.getMemPressureControl();
+                control.onOutOfMemory();
+                control.onOutOfMemory();
+                final int regulation = control.getMemoryPressureRegulationValue();
+                assertEquals(2, control.getMemoryPressureLevel());
+
+                for (int retry = 0; retry < 12; retry++) {
+                    // Past the backoff
+                    nowMicros += 30_000_000L;
+                    setCurrentMicros(nowMicros);
+                    final int gateCallsBefore = gateCalls.get();
+                    checkJob.run();
+                    walApplyJob.drain(0);
+                    assertTrue(gateCalls.get() > gateCallsBefore);
+                    assertEquals(1, tracker.getWriterTxn());
+                    assertEquals(regulation, control.getMemoryPressureRegulationValue());
+                    assertEquals(2, control.getMemoryPressureLevel());
+                }
+
+                // A run that applies its transaction eases the pressure
+                denials.set(0);
+                nowMicros += 30_000_000L;
+                setCurrentMicros(nowMicros);
+                checkJob.run();
+                walApplyJob.drain(0);
+                assertEquals(2, tracker.getWriterTxn());
+                assertEquals(1, control.getMemoryPressureLevel());
+            }
+        });
+    }
+
+    @Test
+    public void testStopWithNothingAppliedKeepsTableTxn() throws Exception {
+        assertMemoryLeak(() -> {
+            final long startMicros = MicrosecondClockImpl.INSTANCE.getTicks();
+            setCurrentMicros(startMicros);
+            final TableToken token = createTableWithDeltaActiveDay("stop_txn");
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(token);
+            final long intervalMicros = configuration.getSequencerCheckMinInterval() * 1_000L;
+            try (
+                    ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 0);
+                    CheckWalTransactionsJob checkJob = new CheckWalTransactionsJob(engine)
+            ) {
+                // The first run scans and records the republish counter
+                checkJob.run();
+                walApplyJob.drain(0);
+                final long tableTxn = readTableTxn(token);
+
+                denials.set(3);
+                gateCalls.set(0);
+                execute("INSERT INTO stop_txn VALUES (3, '2020-01-01T01:00:00')");
+                walApplyJob.drain(0);
+                assertEquals(1, gateCalls.get());
+                assertEquals(tableTxn, readTableTxn(token));
+
+                // Each paced retry stops first thing
+                for (int retry = 1; retry <= 2; retry++) {
+                    setCurrentMicros(startMicros + retry * intervalMicros);
+                    checkJob.run();
+                    walApplyJob.drain(0);
+                    assertEquals(1 + retry, gateCalls.get());
+                    assertEquals(1, tracker.getWriterTxn());
+                    assertEquals(tableTxn, readTableTxn(token));
+                }
+
+                // The retry that the gate lets through commits as usual
+                setCurrentMicros(startMicros + 3 * intervalMicros);
+                checkJob.run();
+                walApplyJob.drain(0);
+                assertEquals(2, tracker.getWriterTxn());
+                assertTrue(readTableTxn(token) > tableTxn);
+            }
+        });
+    }
+
+    @Test
+    public void testTruncateDoesNotConsultGate() throws Exception {
+        assertMemoryLeak(() -> {
+            final TableToken token = createTableWithDeltaActiveDay("stop_truncate");
+            denials.set(1);
+            gateCalls.set(0);
+            execute("TRUNCATE TABLE stop_truncate");
+            drainWalQueue();
+            assertEquals(0, gateCalls.get());
+            assertEquals(1, denials.get());
+            denials.set(0);
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(token);
+            assertEquals(tracker.getSeqTxn(), tracker.getWriterTxn());
+            assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+            assertQuery("SELECT count() FROM stop_truncate").noRandomAccess().expectSize().returns("count\n0\n");
+        });
+    }
+
+    // Its first day is Delta-active and its last is not.
+    private static TableToken createTableWithDeltaActiveDay(String name) throws Exception {
+        execute("CREATE TABLE " + name + " (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("INSERT INTO " + name + " VALUES (1, '2020-01-01T00:00:00'), (2, '2020-01-10T00:00:00')");
+        drainWalQueue();
+        try (TableWriter writer = getWriter(name)) {
+            writer.getTxWriter().setPartitionDeltaActiveByTimestamp(DAY_2020_01_01);
+            writer.bumpPartitionTableVersion();
+            writer.commit();
+        }
+        return engine.verifyTableName(name);
+    }
+
     private static int insertAndCountGateCalls(String insertBody) throws Exception {
         gateCalls.set(0);
         execute("INSERT INTO gate_tab " + insertBody);
         drainWalQueue();
         return gateCalls.get();
+    }
+
+    private static long readTableTxn(TableToken token) {
+        try (TableReader reader = engine.getReader(token)) {
+            return reader.getTxn();
+        }
     }
 
     private static long walPendingRowCount(TableToken token) {

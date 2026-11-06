@@ -318,6 +318,55 @@ public class SeqTxnMetricsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSeqTxnGaugeCountsCheckJobAdvance() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final long baseline = TestUtils.getMetricValue(engine, TAG_SEQ_TXN);
+            final SeqTxnTracker tracker = new SeqTxnTracker(configuration);
+            tracker.initTxns(0, 5, false);
+            assertSeqTxnGauge(baseline, 5);
+
+            // A scan reads the sequencer before the committer's own notification
+            tracker.notifyOnCheck(8);
+            assertEquals(8, tracker.getSeqTxn());
+            assertSeqTxnGauge(baseline, 8);
+            tracker.notifyOnCommit(8);
+            assertSeqTxnGauge(baseline, 8);
+
+            // An older scan leaves seqTxn and the gauge alone
+            tracker.notifyOnCheck(7);
+            assertEquals(8, tracker.getSeqTxn());
+            assertSeqTxnGauge(baseline, 8);
+
+            tracker.notifyOnDrop();
+            assertSeqTxnGauge(baseline, 0);
+        });
+    }
+
+    @Test
+    public void testSeqTxnGaugeFromUninitialisedTracker() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final long baseline = TestUtils.getMetricValue(engine, TAG_SEQ_TXN);
+
+            // The first increase from -1 adds the txn, not the txn + 1
+            final SeqTxnTracker committed = new SeqTxnTracker(configuration);
+            committed.notifyOnCommit(3);
+            assertSeqTxnGauge(baseline, 3);
+            committed.notifyOnDrop();
+            assertSeqTxnGauge(baseline, 0);
+
+            final SeqTxnTracker checked = new SeqTxnTracker(configuration);
+            checked.notifyOnCheck(4);
+            assertSeqTxnGauge(baseline, 4);
+            checked.notifyOnDrop();
+            assertSeqTxnGauge(baseline, 0);
+
+            // An untouched tracker has nothing to take back
+            new SeqTxnTracker(configuration).notifyOnDrop();
+            assertSeqTxnGauge(baseline, 0);
+        });
+    }
+
+    @Test
     public void testWriterTxnGaugeAcrossResetAndReinit() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final long baseline = TestUtils.getMetricValue(engine, TAG_WRITER_TXN);

@@ -296,6 +296,42 @@ public class TxnScoreboardTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyReaderSeqTxnsReportsUnknownSeqTxn() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final long address = Unsafe.malloc(2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            try (TxnScoreboardV2 scoreboard = new TxnScoreboardV2(4)) {
+                Assert.assertTrue(scoreboard.acquireTxn(0, 10, 100));
+                Assert.assertTrue(scoreboard.acquireTxn(1, 10, TxnScoreboard.UNKNOWN_SEQ_TXN));
+                Assert.assertEquals(-1, scoreboard.copyReaderSeqTxns(10, address, 2));
+                scoreboard.releaseTxn(1, 10);
+                Assert.assertEquals(1, scoreboard.copyReaderSeqTxns(10, address, 2));
+                Assert.assertEquals(100, Unsafe.getUnsafe().getLong(address));
+                scoreboard.releaseTxn(0, 10);
+            } finally {
+                Unsafe.free(address, 2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testCopyReaderSeqTxnsSkipsSavePoints() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final long address = Unsafe.malloc(2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            try (TxnScoreboardV2 scoreboard = new TxnScoreboardV2(4)) {
+                Assert.assertTrue(scoreboard.acquireTxn(0, 10, 100));
+                Assert.assertTrue(scoreboard.incrementTxn(TxnScoreboard.EPOCH_ID_A, 10, TxnScoreboard.NO_SEQ_TXN_FLOOR));
+                Assert.assertEquals(1, scoreboard.copyReaderSeqTxns(10, address, 2));
+                Assert.assertEquals(100, Unsafe.getUnsafe().getLong(address));
+                scoreboard.releaseTxn(0, 10);
+                Assert.assertEquals(0, scoreboard.copyReaderSeqTxns(10, address, 2));
+                scoreboard.releaseTxn(TxnScoreboard.EPOCH_ID_A, 10);
+            } finally {
+                Unsafe.free(address, 2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
     public void testCrawlV1() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (TxnScoreboard scoreboard = newTxnScoreboard()) {
