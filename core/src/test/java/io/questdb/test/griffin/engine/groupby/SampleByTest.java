@@ -17831,6 +17831,30 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleFillLinearLargeNegativeValues() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE g (d DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO g VALUES
+                    (-1.0E300, '2024-01-01T00:00:00.000000Z'),
+                    (-3.0E300, '2024-01-01T02:00:00.000000Z')
+                    """);
+            // the product of a value and the bucket width in micros overflows to -Infinity,
+            // where the positive large-value tests overflow to +Infinity or NaN
+            assertQuery("SELECT ts, last(d) d FROM g SAMPLE BY 1h FILL(LINEAR)")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            ts\td
+                            2024-01-01T00:00:00.000000Z\t-1.0E300
+                            2024-01-01T01:00:00.000000Z\t-2.0E300
+                            2024-01-01T02:00:00.000000Z\t-3.0E300
+                            """);
+        });
+    }
+
+    @Test
     public void testSampleFillLinearLargeValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE g (d DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
