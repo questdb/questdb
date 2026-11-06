@@ -1361,6 +1361,7 @@ dependencies = [
  "rand",
  "rapidhash",
  "rayon",
+ "regex",
  "seq-macro",
  "serde",
  "tempfile",
