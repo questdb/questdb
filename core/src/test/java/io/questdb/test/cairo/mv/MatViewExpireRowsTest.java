@@ -1954,6 +1954,53 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testClockThresholdNullAtReadKeepsEveryRow() throws Exception {
+        // A row expires only when the predicate is TRUE, and a comparison with NULL is FALSE, so a threshold that is
+        // NULL when the cursor opens keeps every row.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into base values ('A', '2024-01-01T00:00:00.000000Z'), ('B', '2024-01-02T00:00:00.000000Z')");
+            drainWalQueue();
+            execute("create materialized view mv as (select * from base) expire rows when ts < now() + null::long");
+            drainWalAndMatViewQueues();
+            assertQuery("select sym, ts from mv").noLeakCheck().timestamp("ts").returns("""
+                    sym\tts
+                    A\t2024-01-01T00:00:00.000000Z
+                    B\t2024-01-02T00:00:00.000000Z
+                    """);
+            assertQuery("select count() from mv").noLeakCheck().noRandomAccess().expectSize().returns("count\n2\n");
+        });
+    }
+
+    @Test
+    public void testDeprecatedLatestByOverPolicyFeedsSampleBy() throws Exception {
+        // A scalar policy reads the table directly, so LATEST BY publishes the designated timestamp a SAMPLE BY above
+        // it needs. A KEEP policy reads through LatestBy light, which publishes none.
+        assertMemoryLeak(() -> {
+            execute("create table base (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("""
+                    insert into base values
+                    ('A', 1.0, '2024-01-01T00:00:00.000000Z'),
+                    ('A', 3.0, '2024-01-02T00:00:00.000000Z'),
+                    ('B', -1.0, '2024-01-03T00:00:00.000000Z')""");
+            drainWalQueue();
+            execute("create materialized view mv as (select * from base)");
+            drainWalAndMatViewQueues();
+            final String sql = "select ts, count() c from (select * from mv latest by k) sample by 1d";
+            // Each policy expires only the B row, which leaves the newest A row as the one latest row.
+            for (String policy : new String[]{"when v < 0", "when ts > '2024-01-02T12:00:00.000000Z'"}) {
+                execute("alter materialized view mv set expire rows " + policy);
+                drainWalQueue();
+                assertQuery(sql).noLeakCheck().noRandomAccess().timestamp("ts")
+                        .returns("ts\tc\n2024-01-02T00:00:00.000000Z\t1\n");
+            }
+            execute("alter materialized view mv set expire rows keep highest on v partition by k");
+            drainWalQueue();
+            assertExceptionNoLeakCheck(sql, sql.indexOf("select *"), "TIMESTAMP column is required but not provided");
+        });
+    }
+
+    @Test
     public void testDeclareCannotSteerKeepFilter() throws Exception {
         // Column names may legally start with '@', so a stored predicate like "ts < @c" reads a column
         // named '@c'. The keep-filter parses with no declarations in scope, so a read that declares that

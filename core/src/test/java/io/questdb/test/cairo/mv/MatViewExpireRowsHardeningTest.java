@@ -3497,14 +3497,15 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
     @Test
     public void testPolicyReadsAskSelectOnTheColumnsTheyRead() throws Exception {
         // Policy, then the columns of: setting it, a read of sym, a read through a sub-query, a filter on another
-        // column, and a read through a view that reads only sym.
+        // column, a read through a view that reads only sym, and a bare count(). A count reads every column of an
+        // input that computes one, which the keep column of a window read does.
         final String[][] policies = {
-                {"KEEP LATEST PARTITION BY k", "[k,ts]", "[sym,k,ts]", "[ts,k]", "[sym,secret,k,ts]", "[k]"},
-                {"WHEN v < 2.0", "[v]", "[v,sym]", "[v,ts]", "[v,sym,secret]", "[v]"},
-                {"WHEN ts < '2025-01-01T00:00:01.000000Z'", "[ts]", "[ts,sym]", "[ts]", "[ts,sym,secret]", "[ts]"},
-                {"KEEP HIGHEST ON v PARTITION BY k", "[v,k]", "[sym,v,k,ts]", "[ts,v,k]", "[sym,secret,v,k,ts]", "[k,v,ts]"},
-                {"KEEP 1 HIGHEST ON v PARTITION BY k", "[k,v,ts]", "[sym,k,v,ts]", "[ts,k,v]", "[sym,secret,k,v,ts]", "[k,v,ts]"},
-                {"WHEN v < max(v) OVER (PARTITION BY k)", "[v,k]", "[sym,v,k,ts]", "[ts,v,k]", "[sym,secret,v,k,ts]", "[k,v,ts]"},
+                {"KEEP LATEST PARTITION BY k", "[k,ts]", "[sym,k,ts]", "[ts,k]", "[sym,secret,k,ts]", "[k]", "[k,ts]"},
+                {"WHEN v < 2.0", "[v]", "[v,sym]", "[v,ts]", "[v,sym,secret]", "[v]", "[v]"},
+                {"WHEN ts < '2025-01-01T00:00:01.000000Z'", "[ts]", "[ts,sym]", "[ts]", "[ts,sym,secret]", "[ts]", "[ts]"},
+                {"KEEP HIGHEST ON v PARTITION BY k", "[v,k]", "[sym,v,k,ts]", "[ts,v,k]", "[sym,secret,v,k,ts]", "[k,v,ts]", "[v,k,sym,secret,ts]"},
+                {"KEEP 1 HIGHEST ON v PARTITION BY k", "[k,v,ts]", "[sym,k,v,ts]", "[ts,k,v]", "[sym,secret,k,v,ts]", "[k,v,ts]", "[k,v,ts,sym,secret]"},
+                {"WHEN v < max(v) OVER (PARTITION BY k)", "[v,k]", "[sym,v,k,ts]", "[ts,v,k]", "[sym,secret,v,k,ts]", "[k,v,ts]", "[v,k,sym,secret,ts]"},
         };
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (sym SYMBOL, k SYMBOL, v DOUBLE, secret INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -3533,6 +3534,7 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
                     assertSelectAsked(security, context, "SELECT sym FROM mv WHERE secret > 0", policy[4]);
                     assertSelectAsked(security, context, "SELECT sym FROM exposed ORDER BY sym", policy[5]);
                     assertSelectAsked(security, context, "SELECT count() FROM exposed", policy[5]);
+                    assertSelectAsked(security, context, "SELECT count() FROM mv", policy[6]);
 
                     for (String source : new String[]{"mv", "'*!*mv'", "exposed"}) {
                         assertQuery("SELECT sym FROM " + source + " ORDER BY sym").withContext(context).noLeakCheck()
