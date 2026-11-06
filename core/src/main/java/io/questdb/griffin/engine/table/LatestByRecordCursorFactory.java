@@ -36,7 +36,6 @@ import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapRecord;
 import io.questdb.cairo.map.MapValue;
-import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -119,7 +118,7 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public boolean recordCursorSupportsRandomAccess() {
-        return false;
+        return base.recordCursorSupportsRandomAccess();
     }
 
     @Override
@@ -152,7 +151,7 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
         CairoException.rethrowCleanupFailure(failure);
     }
 
-    private static class LatestByRecordCursor implements NoRandomAccessRecordCursor {
+    private static class LatestByRecordCursor implements RecordCursor {
 
         // contains <[latest_by columns...], [row index, timestamp column]> pairs
         private final Map latestByMap;
@@ -189,6 +188,11 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
         @Override
         public Record getRecord() {
             return baseRecord;
+        }
+
+        @Override
+        public Record getRecordB() {
+            return baseCursor.getRecordB();
         }
 
         @Override
@@ -254,6 +258,11 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
         @Override
         public long preComputedStateSize() {
             return RecordCursor.fromBool(isMapBuilt) + baseCursor.preComputedStateSize();
+        }
+
+        @Override
+        public void recordAt(Record record, long atRowId) {
+            baseCursor.recordAt(record, atRowId);
         }
 
         @Override

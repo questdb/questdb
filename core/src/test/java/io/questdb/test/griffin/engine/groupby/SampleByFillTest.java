@@ -2561,13 +2561,14 @@ public class SampleByFillTest extends AbstractCairoTest {
                     "rnd_double() x " +
                     "FROM long_sequence(512)");
 
+            final String sql = "SELECT ts, k, count_distinct(x::long) FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR";
+            assertQuery(sql).noLeakCheck().assertsPlanContaining("Sort");
+            assertQuery(sql).noLeakCheck().assertsPlanNotContaining("Stream Group By");
             try {
-                assertQuery("SELECT ts, k, count_distinct(x::long) FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR")
+                assertQuery(sql)
                         .noLeakCheck()
                         .timestamp("ts")
                         .noRandomAccess()
-                        .withPlanContaining("Sort")
-                        .withPlanNotContaining("Stream Group By")
                         .returns("");
                 fail("expected LimitOverflowException from constrained sort.key budget");
             } catch (CairoException ex) {
@@ -2596,13 +2597,14 @@ public class SampleByFillTest extends AbstractCairoTest {
                     "rnd_double() x " +
                     "FROM long_sequence(512)");
 
+            final String sql = "SELECT ts, k, count_distinct(x::long) FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR";
+            assertQuery(sql).noLeakCheck().assertsPlanContaining("Sort");
+            assertQuery(sql).noLeakCheck().assertsPlanNotContaining("Stream Group By");
             try {
-                assertQuery("SELECT ts, k, count_distinct(x::long) FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR")
+                assertQuery(sql)
                         .noLeakCheck()
                         .timestamp("ts")
                         .noRandomAccess()
-                        .withPlanContaining("Sort")
-                        .withPlanNotContaining("Stream Group By")
                         .returns("");
                 fail("expected LimitOverflowException from constrained sort.value budget");
             } catch (CairoException ex) {

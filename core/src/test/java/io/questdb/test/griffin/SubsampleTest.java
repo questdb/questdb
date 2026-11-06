@@ -5944,8 +5944,10 @@ public class SubsampleTest extends AbstractCairoTest {
         // Red test: SELECT DISTINCT * must return the distinct rows subsampled by uniform, with
         // no helper column. Hand-derived: 4 distinct rows (the duplicate collapses), uniform(2)
         // keeps the first and last in timestamp order. Oracle: the explicit-column DISTINCT form
-        // (asserted green first).
+        // (asserted green first). The shape must keep fusing into the row-selecting window node,
+        // which needs the random access of the hash GROUP BY.
         assertMemoryLeak(() -> {
+            sqlExecutionContext.setStreamGroupByEnabled(false);
             execute("CREATE TABLE t (price DOUBLE, sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("INSERT INTO t VALUES (10.0, 'A', 1), (10.0, 'A', 1), (20.0, 'B', 2), (30.0, 'A', 3), (40.0, 'B', 4)");
             final String expected = "price\tsym\tts\n" +
@@ -5953,8 +5955,22 @@ public class SubsampleTest extends AbstractCairoTest {
                     "40.0\tB\t1970-01-01T00:00:00.000004Z\n";
             assertQuery("SELECT DISTINCT price, sym, ts FROM t SUBSAMPLE uniform(2)").returns(expected);
             assertQuery("SELECT DISTINCT * FROM t SUBSAMPLE uniform(2)")
-                    .withPlanContaining("CachedWindow")
+                    .withPlanContaining("CachedWindowLightSelect")
                     .returns(expected);
+        });
+    }
+
+    @Test
+    public void testDistinctStarUniformOverStreamGroupBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO t VALUES (10.0, 'A', 1), (10.0, 'A', 1), (20.0, 'B', 2), (30.0, 'A', 3), (40.0, 'B', 4)");
+            assertQuery("SELECT DISTINCT * FROM t SUBSAMPLE uniform(2)")
+                    .withPlanContaining("Filter filter: __keep_subsample", "CachedWindow", "Stream Group By")
+                    .withPlanNotContaining("CachedWindowLightSelect")
+                    .returns("price\tsym\tts\n" +
+                            "10.0\tA\t1970-01-01T00:00:00.000001Z\n" +
+                            "40.0\tB\t1970-01-01T00:00:00.000004Z\n");
         });
     }
 

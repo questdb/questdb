@@ -57,7 +57,7 @@ public class MaxFloatGroupByFunction extends FloatFunction implements GroupByFun
             float max = Float.NaN;
             for (; dataAddr < hi; dataAddr += Float.BYTES) {
                 float value = Unsafe.getFloat(dataAddr);
-                if (value > max || Numbers.isNull(max)) {
+                if ((value > max || Numbers.isNull(max)) && Float.isFinite(value)) {
                     max = value;
                 }
             }
@@ -70,7 +70,8 @@ public class MaxFloatGroupByFunction extends FloatFunction implements GroupByFun
 
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
-        mapValue.putFloat(valueIndex, arg.getFloat(record));
+        final float value = arg.getFloat(record);
+        mapValue.putFloat(valueIndex, Float.isFinite(value) ? value : Float.NaN);
     }
 
     @Override
@@ -82,8 +83,7 @@ public class MaxFloatGroupByFunction extends FloatFunction implements GroupByFun
             long rowCount,
             long baseRowId
     ) {
-        // Mirrors computeNext: replace the accumulator only when the new value is
-        // strictly greater, or when the accumulator is still the null sentinel (NaN/inf).
+        // Mirrors computeNext: a finite value replaces an accumulator that it beats or that is still NULL.
         final long valueColumnOffset = mapValue.getOffset(valueIndex);
         // Fast path: arg is a direct float column with data on the current frame.
         // Zero page address means a column top; fall through to the record-based path.
@@ -95,7 +95,7 @@ public class MaxFloatGroupByFunction extends FloatFunction implements GroupByFun
                 final float value = Unsafe.getFloat(argAddr + (rowIndex << 2));
                 final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                 final float current = Unsafe.getFloat(addr);
-                if (value > current || Numbers.isNull(current)) {
+                if ((value > current || Numbers.isNull(current)) && Float.isFinite(value)) {
                     Unsafe.putFloat(addr, value);
                 }
             }
@@ -106,7 +106,7 @@ public class MaxFloatGroupByFunction extends FloatFunction implements GroupByFun
                 final float value = arg.getFloat(record);
                 final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                 final float current = Unsafe.getFloat(addr);
-                if (value > current || Numbers.isNull(current)) {
+                if ((value > current || Numbers.isNull(current)) && Float.isFinite(value)) {
                     Unsafe.putFloat(addr, value);
                 }
             }
@@ -117,7 +117,7 @@ public class MaxFloatGroupByFunction extends FloatFunction implements GroupByFun
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         float max = mapValue.getFloat(valueIndex);
         float next = arg.getFloat(record);
-        if (next > max || Numbers.isNull(max)) {
+        if ((next > max || Numbers.isNull(max)) && Float.isFinite(next)) {
             mapValue.putFloat(valueIndex, next);
         }
     }

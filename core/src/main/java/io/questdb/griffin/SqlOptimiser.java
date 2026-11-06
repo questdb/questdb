@@ -792,16 +792,6 @@ public class SqlOptimiser implements Mutable {
         };
     }
 
-    /**
-     * Returns true for join types that NULL-extend the master (left) side: SPLICE, FULL OUTER and
-     * RIGHT OUTER, plus the JOIN_CROSS_RIGHT / JOIN_CROSS_FULL variants {@code homogenizeCrossJoins}
-     * produces for a non-equi RIGHT/FULL OUTER ON clause. Each emits rows with all master columns
-     * NULL, so a WHERE predicate on such a table must stay a post-join filter rather than push into
-     * its sub-query: pushing it leaks NULL-master rows (e.g. {@code a RIGHT JOIN b WHERE a.k = 'v'}
-     * keeps unmatched b rows whose a.k is NULL), and for SPLICE it also changes which master row
-     * prevails. An inner-join ON conjunct gates the inner join, which runs first, so it still pushes
-     * down. {@link #precomputeNullingJoinAnchors} turns this into the per-level anchor lookups.
-     */
     private static boolean hasTimeSeriesJoin(IQueryModel model) {
         final ObjList<IQueryModel> joinModels = model.getJoinModels();
         for (int i = 1, n = joinModels.size(); i < n; i++) {
@@ -817,6 +807,16 @@ public class SqlOptimiser implements Mutable {
         return false;
     }
 
+    /**
+     * Returns true for join types that NULL-extend the master (left) side: SPLICE, FULL OUTER and
+     * RIGHT OUTER, plus the JOIN_CROSS_RIGHT / JOIN_CROSS_FULL variants {@code homogenizeCrossJoins}
+     * produces for a non-equi RIGHT/FULL OUTER ON clause. Each emits rows with all master columns
+     * NULL, so a WHERE predicate on such a table must stay a post-join filter rather than push into
+     * its sub-query: pushing it leaks NULL-master rows (e.g. {@code a RIGHT JOIN b WHERE a.k = 'v'}
+     * keeps unmatched b rows whose a.k is NULL), and for SPLICE it also changes which master row
+     * prevails. An inner-join ON conjunct gates the inner join, which runs first, so it still pushes
+     * down. {@link #precomputeNullingJoinAnchors} turns this into the per-level anchor lookups.
+     */
     private static boolean isMasterNullingJoinType(int joinType) {
         return joinType == IQueryModel.JOIN_SPLICE
                 || joinType == IQueryModel.JOIN_FULL_OUTER

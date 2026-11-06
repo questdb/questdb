@@ -185,6 +185,38 @@ public class VectFuzzTest {
     }
 
     @Test
+    public void testMinMaxDoubleSkipInfinity() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final int maxCount = 40;
+            final long size = maxCount * (long) Double.BYTES;
+            final long ptr = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+            final double[] notFinite = {Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY, Double.NaN};
+            try {
+                // The lengths cover the SIMD body and the scalar tail, and the signs put each extreme in either.
+                for (int sign : new int[]{1, -1}) {
+                    for (int count = 1; count <= maxCount; count++) {
+                        double min = Double.NaN;
+                        double max = Double.NaN;
+                        for (int i = 0; i < count; i++) {
+                            final boolean isFinite = i % 4 == 3;
+                            final double value = isFinite ? sign * i : notFinite[i % 4];
+                            Unsafe.putDouble(ptr + i * (long) Double.BYTES, value);
+                            if (isFinite) {
+                                min = Double.isNaN(min) || value < min ? value : min;
+                                max = Double.isNaN(max) || value > max ? value : max;
+                            }
+                        }
+                        Assert.assertEquals("min, count: " + count, min, Vect.minDouble(ptr, count), 0);
+                        Assert.assertEquals("max, count: " + count, max, Vect.maxDouble(ptr, count), 0);
+                    }
+                }
+            } finally {
+                Unsafe.free(ptr, size, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
     public void testBinarySearchIndexT() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             int count = 1000;

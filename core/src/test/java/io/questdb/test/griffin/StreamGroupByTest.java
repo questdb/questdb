@@ -628,6 +628,90 @@ public class StreamGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMaxMinSkipInfinityInEveryLayout() throws Exception {
+        run((engine, compiler, context) -> {
+            engine.execute("CREATE TABLE s (ts TIMESTAMP, d DOUBLE, f FLOAT, k SYMBOL, i INT) TIMESTAMP(ts) PARTITION BY DAY", context);
+            engine.execute("""
+                    INSERT INTO s VALUES
+                        ('2024-01-01T00', 1, 1, 'a', 1), ('2024-01-01T01', 'Infinity', 'Infinity', 'a', 1), ('2024-01-01T02', 2, 2, 'a', 1),
+                        ('2024-01-02T00', 1, 1, 'b', 2), ('2024-01-02T01', '-Infinity', '-Infinity', 'b', 2), ('2024-01-02T02', 'Infinity', 'Infinity', 'b', 2),
+                        ('2024-01-02T03', 1, 1, 'b', 2),
+                        ('2024-01-03T00', null, null, 'c', 3), ('2024-01-03T01', 5, 5, 'c', 3),
+                        ('2024-01-04T00', null, null, 'd', 4),
+                        ('2024-01-05T00', '-Infinity', '-Infinity', 'e', 5), ('2024-01-05T01', 3, 3, 'e', 5),
+                        ('2024-01-06T00', 'Infinity', 'Infinity', 'f', 6), ('2024-01-06T01', '-Infinity', '-Infinity', 'f', 6),
+                        ('2024-01-07T00', 'Infinity', 'Infinity', 'g', 7), ('2024-01-07T01', 7, 7, 'g', 7), ('2024-01-07T02', 4, 4, 'g', 7)""", context);
+            final double[][] expected = {
+                    {2, 1, 5, Double.NaN, 3, Double.NaN, 7},
+                    {1, 1, 5, Double.NaN, 3, Double.NaN, 4}
+            };
+            final double[][] notKeyed = {{7}, {1}};
+            final String[] functions = {"max", "min"};
+            if (parallel) {
+                try (RecordCursorFactory factory = compiler.compile("SELECT i, max(d) v FROM s", context).getRecordCursorFactory()) {
+                    Assert.assertTrue(plan(factory, context).contains("GroupBy vectorized: true"));
+                }
+            }
+            for (boolean isStream : new boolean[]{true, false}) {
+                context.setStreamGroupByEnabled(isStream);
+                for (String arg : new String[]{"d", "f", "d + 0", "f + 0"}) {
+                    for (String filter : new String[]{"", " WHERE ts > 0"}) {
+                        for (int i = 0; i < functions.length; i++) {
+                            final String value = functions[i] + "(" + arg + ") v FROM s" + filter;
+                            assertValues(compiler, context, "SELECT ts, k, " + value + " SAMPLE BY 1d ORDER BY ts, k", "v", expected[i]);
+                            assertValues(compiler, context, "SELECT ts, " + value + " SAMPLE BY 1d ORDER BY ts", "v", expected[i]);
+                            assertValues(compiler, context, "SELECT k, " + value + " ORDER BY k", "v", expected[i]);
+                            assertValues(compiler, context, "SELECT i, " + value + " ORDER BY i", "v", expected[i]);
+                            assertValues(compiler, context, "SELECT " + value, "v", notKeyed[i]);
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testLatestOnOverSampleByFeedsTimeSeriesJoins() throws Exception {
+        run((engine, compiler, context) -> {
+            engine.execute("CREATE TABLE t (ts TIMESTAMP, k SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY", context);
+            engine.execute("INSERT INTO t VALUES ('2024-01-01T00:10', 'a', 1), ('2024-01-01T01:20', 'b', 2), ('2024-01-01T02:10', 'a', 3)", context);
+            engine.execute("CREATE TABLE u (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY", context);
+            engine.execute("INSERT INTO u VALUES ('2024-01-01T00:30', 1), ('2024-01-01T01:30', 2), ('2024-01-01T02:30', 4)", context);
+            engine.execute("CREATE TABLE latest (ts TIMESTAMP, k SYMBOL, s DOUBLE) TIMESTAMP(ts) PARTITION BY DAY", context);
+            engine.execute("INSERT INTO latest VALUES ('2024-01-01T01:00', 'b', 2), ('2024-01-01T02:00', 'a', 3)", context);
+            final String subquery = "(SELECT ts, k, sum(v) s FROM t SAMPLE BY 1h) LATEST ON ts PARTITION BY k";
+            assertQuery(subquery).withEngine(engine).withContext(context)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlanContaining("LatestBy\n    Materialize")
+                    .returns("""
+                            ts\tk\ts
+                            2024-01-01T01:00:00.000000Z\tb\t2.0
+                            2024-01-01T02:00:00.000000Z\ta\t3.0
+                            """);
+            final String[] wrappedSubqueries = {"((" + subquery + ") TIMESTAMP(ts))", "(" + subquery + ")"};
+            for (String join : new String[]{
+                    "SELECT * FROM %s a SPLICE JOIN u b",
+                    "SELECT * FROM u a SPLICE JOIN %s b",
+                    "SELECT a.ts, a.k, h.offset, b.x FROM %s a HORIZON JOIN u b RANGE FROM 0s TO 1s STEP 1s AS h",
+                    "SELECT h.offset, sum(b.x) sx, count() c FROM %s a HORIZON JOIN u b RANGE FROM 0s TO 1s STEP 1s AS h ORDER BY 1"
+            }) {
+                final String expected = compileAndRead(compiler, context, join.formatted("latest"));
+                for (String wrapped : wrappedSubqueries) {
+                    final String sql = join.formatted(wrapped);
+                    try (RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory()) {
+                        Assert.assertTrue(sql, plan(factory, context).contains("LatestBy"));
+                        for (int pass = 0; pass < 2; pass++) {
+                            Assert.assertEquals(sql, expected, read(factory, context));
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testStreamGroupByDisabled() throws Exception {
         run((engine, compiler, context) -> {
             createTable(compiler, context);
@@ -982,8 +1066,8 @@ public class StreamGroupByTest extends AbstractCairoTest {
             final String latest = """
                     SELECT a.ts, a.k, a.c FROM (SELECT timestamp_floor('1h', ts) ts, k, count() c FROM hash_t) a
                     JOIN (SELECT k, max(timestamp_floor('1h', ts)) m FROM hash_t) b ON a.k = b.k AND a.ts = b.m""";
-            final String byKey = readOrError(compiler, context, latest + " ORDER BY a.k");
-            final String byTs = readOrError(compiler, context, latest + " ORDER BY a.ts, a.k LIMIT 6");
+            final String byKey = compileAndRead(compiler, context, latest + " ORDER BY a.k");
+            final String byTs = compileAndRead(compiler, context, latest + " ORDER BY a.ts, a.k LIMIT 6");
             for (String[] sql : new String[][]{
                     {"SELECT * FROM ((SELECT ts, k, count() c FROM t SAMPLE BY 1h) LATEST ON ts PARTITION BY k) ORDER BY k", byKey},
                     {"SELECT * FROM ((SELECT timestamp_floor('1h', ts) ts, k, count() c FROM t ORDER BY ts) LATEST ON ts PARTITION BY k) ORDER BY k", byKey},
@@ -1103,7 +1187,7 @@ public class StreamGroupByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDescendingOrderMatchesForwardScanAroundJoinsAndUnions() throws Exception {
+    public void testDescendingOrderMatchesHashGroupByAroundJoinsAndUnions() throws Exception {
         run((engine, compiler, context) -> {
             createTable(compiler, context);
             final String sampleBy = "(SELECT ts, sum(v) s, last(v) l FROM trades SAMPLE BY 1m)";
@@ -1116,12 +1200,18 @@ public class StreamGroupByTest extends AbstractCairoTest {
                     "SELECT * FROM (SELECT ts, sum(v) s FROM trades SAMPLE BY 1m ORDER BY ts DESC) LIMIT 3",
                     "SELECT * FROM (SELECT ts, sum(v) s FROM trades SAMPLE BY 1m ORDER BY ts DESC) ORDER BY ts",
                     "SELECT first(s), last(s) FROM (SELECT ts, sum(v) s FROM trades SAMPLE BY 1m ORDER BY ts DESC)",
-                    "SELECT ts, sum(s) FROM (SELECT ts, sum(v) s FROM trades SAMPLE BY 1m ORDER BY ts DESC) SAMPLE BY 1h",
             }) {
-                context.setParallelGroupByEnabled(false);
-                final String expected = readOrError(compiler, context, sql);
-                context.setParallelGroupByEnabled(parallel);
-                Assert.assertEquals(sql, expected, readOrError(compiler, context, sql));
+                context.setStreamGroupByEnabled(false);
+                final String expected = compileAndRead(compiler, context, sql);
+                context.setStreamGroupByEnabled(true);
+                Assert.assertEquals(sql, expected, compileAndRead(compiler, context, sql));
+            }
+            final String overDescending = "SELECT ts, sum(s) FROM (SELECT ts, sum(v) s FROM trades SAMPLE BY 1m ORDER BY ts DESC) SAMPLE BY 1h";
+            try {
+                compileAndRead(compiler, context, overDescending);
+                Assert.fail(overDescending);
+            } catch (SqlException e) {
+                TestUtils.assertEquals("base query does not provide ASC order over designated TIMESTAMP column", e.getFlyweightMessage());
             }
         });
     }
@@ -1202,7 +1292,7 @@ public class StreamGroupByTest extends AbstractCairoTest {
                     "SELECT ts k, first(v), last(v), first_not_null(v), last_not_null(v) FROM dup ORDER BY k DESC",
                     "SELECT ts k, first(v), last(v), first_not_null(v), last_not_null(v) FROM dup GROUP BY ts ORDER BY k DESC"
             }) {
-                Assert.assertEquals(sql, expected, readOrError(compiler, context, sql));
+                Assert.assertEquals(sql, expected, compileAndRead(compiler, context, sql));
             }
         });
     }
@@ -2618,16 +2708,23 @@ public class StreamGroupByTest extends AbstractCairoTest {
     }
 
     private static void assertSums(SqlCompiler compiler, SqlExecutionContext context, String sql, double[] expected) throws Exception {
-        try (RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory();
-             RecordCursor cursor = factory.getCursor(context)) {
-            final int column = factory.getMetadata().getColumnIndex("sum");
+        assertValues(compiler, context, sql, "sum", expected);
+    }
+
+    private static void assertValues(SqlCompiler compiler, SqlExecutionContext context, String sql, String columnName, double[] expected) throws Exception {
+        try (RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory()) {
+            final int column = factory.getMetadata().getColumnIndex(columnName);
             final boolean isFloat = factory.getMetadata().getColumnType(column) == ColumnType.FLOAT;
-            final Record record = cursor.getRecord();
-            for (double value : expected) {
-                Assert.assertTrue(sql, cursor.hasNext());
-                Assert.assertEquals(sql, value, isFloat ? record.getFloat(column) : record.getDouble(column), 0);
+            for (int pass = 0; pass < 2; pass++) {
+                try (RecordCursor cursor = factory.getCursor(context)) {
+                    final Record record = cursor.getRecord();
+                    for (double value : expected) {
+                        Assert.assertTrue(sql, cursor.hasNext());
+                        Assert.assertEquals(sql, value, isFloat ? record.getFloat(column) : record.getDouble(column), 0);
+                    }
+                    Assert.assertFalse(sql, cursor.hasNext());
+                }
             }
-            Assert.assertFalse(sql, cursor.hasNext());
         }
     }
 
@@ -2660,20 +2757,18 @@ public class StreamGroupByTest extends AbstractCairoTest {
         throw new AssertionError("expected stream group by");
     }
 
+    private static String compileAndRead(SqlCompiler compiler, SqlExecutionContext context, String sql) throws Exception {
+        try (RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory()) {
+            return read(factory, context);
+        }
+    }
+
     private static String read(RecordCursorFactory factory, SqlExecutionContext context) throws Exception {
         final StringSink sink = new StringSink();
         try (RecordCursor cursor = factory.getCursor(context)) {
             CursorPrinter.println(cursor, factory.getMetadata(), sink, true, false);
         }
         return sink.toString();
-    }
-
-    private static String readOrError(SqlCompiler compiler, SqlExecutionContext context, String sql) throws Exception {
-        try (RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory()) {
-            return read(factory, context);
-        } catch (SqlException e) {
-            return e.getFlyweightMessage().toString();
-        }
     }
 
     private void assertFirstFrameCapacityMatchesGroups(SqlCompiler compiler, SqlExecutionContext context, String sql) throws Exception {

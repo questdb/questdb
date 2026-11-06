@@ -226,7 +226,7 @@ double minDouble_Vanilla(double *d, int64_t count) {
     double *pd = d;
     for (; pd < ext; pd++) {
         double x = *pd;
-        if (!std::isnan(x) && x < min) {
+        if (x < min && std::isfinite(x)) {
             min = x;
         }
     }
@@ -245,7 +245,7 @@ double maxDouble_Vanilla(double *d, int64_t count) {
     double *pd = d;
     for (; pd < ext; pd++) {
         double x = *pd;
-        if (!std::isnan(x) && x > max) {
+        if (x > max && std::isfinite(x)) {
             max = x;
         }
     }

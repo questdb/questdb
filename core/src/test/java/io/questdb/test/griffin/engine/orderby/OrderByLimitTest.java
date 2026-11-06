@@ -45,6 +45,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.Arrays;
 import java.util.HashSet;
 
 public class OrderByLimitTest extends AbstractCairoTest {
@@ -677,6 +678,19 @@ public class OrderByLimitTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelTopKFitsInItsEntries() throws Exception {
+        // The owner's and the worker's buffers fit, and half as much again for merge scratch does not.
+        assertTopKFitsInItsEntries(700_000, "Async Top K lo: 10000");
+    }
+
+    @Test
+    public void testSerialTopKFitsInItsEntries() throws Exception {
+        // One buffer fits, and half as much again for merge scratch does not.
+        sqlExecutionContext.setParallelTopKEnabled(false);
+        assertTopKFitsInItsEntries(400_000, "Encode sort light lo: 10000");
+    }
+
+    @Test
     public void testCopyingTopKSinkSeesOnlyBaseRecords() throws Exception {
         assertMemoryLeak(() -> {
             execute(
@@ -964,6 +978,30 @@ public class OrderByLimitTest extends AbstractCairoTest {
                 .expectSize()
                 .withPlanContaining("Encode sort", "lo:")
                 .returns(expected);
+    }
+
+    private void assertTopKFitsInItsEntries(long memoryLimit, String plan) throws Exception {
+        final int rows = 60_000;
+        final int limit = 10_000;
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, memoryLimit);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE top_k AS (SELECT x * 7_919 % 60_013 v FROM long_sequence(" + rows + "))");
+            final long[] values = new long[rows];
+            for (int i = 0; i < rows; i++) {
+                values[i] = (i + 1) * 7_919L % 60_013;
+            }
+            Arrays.sort(values);
+            final StringSink expected = new StringSink();
+            expected.put("v\n");
+            for (int i = 0; i < limit; i++) {
+                expected.put(values[i]).put('\n');
+            }
+            assertQuery("SELECT v FROM top_k ORDER BY v LIMIT " + limit)
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining(plan)
+                    .returns(expected);
+        });
     }
 
     private void assertMatchesReference(String query, String referenceQuery) throws Exception {

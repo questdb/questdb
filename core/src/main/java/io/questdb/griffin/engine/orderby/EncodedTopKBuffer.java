@@ -373,10 +373,11 @@ public class EncodedTopKBuffer implements QuietCloseable, Reopenable {
      */
     public void sort() {
         if (count > 1) {
-            // A compacting buffer holds O(limit) entries, so the scratch that merges its sorted runs stays O(limit).
+            // Scratch lets a copying top-K merge its sorted runs instead of copying each row again. Other
+            // buffers radix sort, so they need no memory beyond their entries.
             long scratchAddr = 0;
             long scratchSize = 0;
-            if (compactionTrigger != Long.MAX_VALUE) {
+            if (hasRowCopies && compactionTrigger != Long.MAX_VALUE) {
                 final long scratchLongs = (count >> 1) * longsPerEntry;
                 if (sortScratchMem.getCapacity() < scratchLongs) {
                     sortScratchMem.setCapacity(scratchLongs);
