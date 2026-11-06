@@ -288,9 +288,8 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     private static final int REMOVAL_TTL = 2;
     // What the restart after failTheOwedSealOfALateRow meets: the repair marker still live over
     // the splice, a root at the frontier that reads it as stale, or no timeline, which a streak of
-    // failed seals retired. OWED_SEAL_NONE: the run ran no such episode.
+    // failed seals retired.
     private static final int OWED_SEAL_MARKER_LIVE = 0;
-    private static final int OWED_SEAL_NONE = -1;
     private static final int OWED_SEAL_RESTORABLE = 1;
     private static final int OWED_SEAL_RETIRED = 2;
     // Salt the owed-seal episode's random sequence apart from the run's, which drawing it leaves
@@ -330,11 +329,12 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // departed batch started above it: see departNewestRows.
     private int unsealedDeparturesBelowLatestSeenTs;
     // Late rows of a batch whose repair failed its closing seal over a splice with no root at the
-    // view's frontier, which leaves the repair marker live: see failTheOwedSealOfALateRow. Then,
-    // by the restart after each: refused over the day the run dropped, restored from the root a
-    // later seal landed at the frontier, and met with no timeline, which the failure streak
-    // retired.
+    // view's frontier, which leaves the repair marker live: see failTheOwedSealOfALateRow. Of
+    // those, the ones the head-miss rebuild repaired through its end-of-table splice. Then, by the
+    // restart after each: refused over the day the run dropped, restored from the root a later
+    // seal landed at the frontier, and met with no timeline, which the failure streak retired.
     private int owedSealEpisodes;
+    private int headMissOwedSealEpisodes;
     private int blockedOwedSealEpisodes;
     private int restoredOwedSealEpisodes;
     private int retiredOwedSealEpisodes;
@@ -2218,15 +2218,22 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     }
 
     // Every sparse departure that keeps its timeline ends on failTheOwedSealOfALateRow, so every
-    // batch fails a closing seal over a root its repair owes. The restart after each turns on the
-    // route its late row takes, on the failures it draws and on whether its run dropped a day, and
-    // the two such episodes of a batch cannot reach every outcome, so the outcomes are logged.
+    // batch fails a closing seal over a root its repair owes. The episode after the departure that
+    // keeps the timeline, which every batch runs, is shaped for the head-miss rebuild, so every
+    // batch fails the closing seal of an end-of-table splice too. The restart after each turns on
+    // the route its late row takes, on the failures it draws and on whether its run dropped a day,
+    // and the two such episodes of a batch cannot reach every outcome, so the outcomes are logged.
     private void assertReachedAnOwedSealEpisode() {
         LOG.info().$("LV fuzz owed-seal episodes [episodes=").$(owedSealEpisodes)
+                .$(", headMiss=").$(headMissOwedSealEpisodes)
                 .$(", blocked=").$(blockedOwedSealEpisodes)
                 .$(", restored=").$(restoredOwedSealEpisodes)
                 .$(", retired=").$(retiredOwedSealEpisodes).I$();
         Assert.assertTrue("no late row's repair left its marker live over a failed closing seal", owedSealEpisodes > 0);
+        Assert.assertTrue(
+                "no late row's head-miss rebuild left its marker live over a failed closing seal",
+                headMissOwedSealEpisodes > 0
+        );
     }
 
     // The repair marker on disk names markerBaseGeneration, under the splice's generation one past
@@ -2246,28 +2253,24 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     }
 
     /**
-     * Asserts what the restart after a sparse departure met, on {@code job}, and returns the job
-     * the view refreshes on from there. With no owed-seal episode, the departure's own route, and
-     * with a root a later seal landed at the frontier, a restore. With the marker still live or the timeline
-     * retired, the rebuild from the applied base: over the day the run dropped, which
-     * {@code droppedDayTs} names, the restatement guard refuses it and the view stops with every
-     * row {@code base_shadow} keeps, until the day goes back into the base and a restart rebuilds
-     * the view past the guard.
+     * Asserts what the restart after failTheOwedSealOfALateRow met, on {@code job}, and returns the
+     * job the view refreshes on from there. With a root a later seal landed at the frontier, a
+     * restore. With the marker still live or the timeline retired, the rebuild from the applied
+     * base: over the day the run dropped, which {@code droppedDayTs} names, the restatement guard
+     * refuses it and the view stops with every row {@code base_shadow} keeps, until the day goes
+     * back into the base and a restart rebuilds the view past the guard.
      */
     private LiveViewRefreshJob assertTheRestartAfterTheOwedSealEpisode(
             LiveViewRefreshJob job,
-            int sparseDepartureShape,
             int owedSealOutcome,
             long droppedDayTs,
             String oracleOrderedSql,
             String shadowOracleOrderedSql,
             String viewOrderedSql
     ) throws Exception {
-        if (owedSealOutcome == OWED_SEAL_NONE || owedSealOutcome == OWED_SEAL_RESTORABLE) {
-            assertSparseDepartureRestartRoute(sparseDepartureShape);
-            if (owedSealOutcome == OWED_SEAL_RESTORABLE) {
-                restoredOwedSealEpisodes++;
-            }
+        if (owedSealOutcome == OWED_SEAL_RESTORABLE) {
+            assertRestoredFromTimeline("lv");
+            restoredOwedSealEpisodes++;
             return job;
         }
         if (owedSealOutcome == OWED_SEAL_RETIRED) {
@@ -2359,19 +2362,30 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
      * writer stage that fails a publication ahead of its superblock, so the closing seal fails. The
      * stage stays for {@code k}, drawn in [0, 2], more commits of a row above C, then one clean
      * commit follows, all inside the cadence. Every row goes into {@code base_shadow} too.
+     * <p>
+     * {@code isHeadMissShaped} picks the route, as departNewestRowsOverSparseRoots does. Without
+     * it, B and the late row sit within a second above A, so a rebuild warming its state from one
+     * frame below the late row reads A's rows and more, and the plan takes the resume. With it,
+     * the batches start the day above every row, which their partition then holds alone, B sits
+     * more than twice the frame's width above A, and the late row just below B: that rebuild reads
+     * none of the rows between A's root and the frame under the late row a resume reads, and the
+     * plan takes the head-miss rebuild.
      *
+     * @param frameMinutes the width of the view's RANGE frame, in minutes
      * @return what the restart after the episode meets: {@link #OWED_SEAL_MARKER_LIVE} on the
      * resume route, whose head parked on B's root seals nothing inside the cadence. On the head-miss
-     * route, which cleared the head, and on a resume whose head carries no write time, every commit
-     * seals at once: {@link #OWED_SEAL_RESTORABLE} when the clean commit's seal landed, and
-     * {@link #OWED_SEAL_RETIRED} when the k commits made three failures in a row, which retired
-     * the timeline and armed a cooldown the clean commit's seal waits on
+     * route, which cleared the head, every commit seals at once: {@link #OWED_SEAL_RESTORABLE} when
+     * the clean commit's seal landed, and {@link #OWED_SEAL_RETIRED} when the k commits made three
+     * failures in a row, which retired the timeline and armed a cooldown the clean commit's seal
+     * waits on
      */
     private int failTheOwedSealOfALateRow(
             Rnd episodeRnd,
             LiveViewRefreshJob job,
             @Nullable LongHashSet usedTs,
-            int symCount
+            int symCount,
+            int frameMinutes,
+            boolean isHeadMissShaped
     ) throws Exception {
         final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
         Assert.assertNotNull(instance);
@@ -2382,13 +2396,19 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         final StringSink values = new StringSink();
         final long[] batchA = new long[4];
         setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
-        drawEpisodeBatch(episodeRnd, values, floorTs + 1 + episodeRnd.nextInt(1_000_000), usedTs, symCount, batchA, null);
+        final long batchAFromTs = isHeadMissShaped
+                ? floorTs - floorTs % Micros.DAY_MICROS + Micros.DAY_MICROS + 1 + episodeRnd.nextLong(Micros.SECOND_MICROS)
+                : floorTs + 1 + episodeRnd.nextInt(1_000_000);
+        drawEpisodeBatch(episodeRnd, values, batchAFromTs, usedTs, symCount, batchA, null);
         commitToTheBaseAndItsShadow(values, job);
         Assert.assertEquals("a root seals batch A", batchA[3], instance.getHeadCheckpointMaxTs());
         final long[] batchB = new long[4];
         values.clear();
         setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
-        drawEpisodeBatch(episodeRnd, values, batchA[3] + 2 + episodeRnd.nextInt(1_000_000), usedTs, symCount, batchB, null);
+        final long batchBFromTs = isHeadMissShaped
+                ? batchA[3] + (2L * frameMinutes + 1) * Micros.MINUTE_MICROS + 1 + episodeRnd.nextLong(Micros.SECOND_MICROS)
+                : batchA[3] + 2 + episodeRnd.nextInt(1_000_000);
+        drawEpisodeBatch(episodeRnd, values, batchBFromTs, usedTs, symCount, batchB, null);
         commitToTheBaseAndItsShadow(values, job);
         Assert.assertEquals("a root seals batch B", batchB[3], instance.getHeadCheckpointMaxTs());
         final long[] batchC = new long[4];
@@ -2402,19 +2422,29 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         final long sealFailuresBefore = instance.getCheckpointSealFailures();
         final long resetsBefore = instance.getCheckpointTimelineResets();
         final long faultsBefore = instance.getRefreshFaultCount();
-        final long runtimeRestoresBefore = instance.getCheckpointRuntimeRestores();
         final long markerBaseGeneration = publishedCheckpointGeneration(instance);
-        long lateTs = batchA[3] + 1 + episodeRnd.nextLong(batchB[0] - batchA[3] - 1);
-        while (usedTs != null && !usedTs.add(lateTs)) {
-            lateTs++;
+        long lateTs;
+        if (isHeadMissShaped) {
+            lateTs = batchB[0] - 1 - episodeRnd.nextLong(Micros.SECOND_MICROS);
+            while (usedTs != null && !usedTs.add(lateTs)) {
+                lateTs--;
+            }
+            Assert.assertTrue(
+                    "the frame under the late row sits above A's root",
+                    lateTs - frameMinutes * Micros.MINUTE_MICROS > batchA[3]
+            );
+        } else {
+            lateTs = batchA[3] + 1 + episodeRnd.nextLong(batchB[0] - batchA[3] - 1);
+            while (usedTs != null && !usedTs.add(lateTs)) {
+                lateTs++;
+            }
         }
-        Assert.assertTrue("the late row sits between batches A and B", lateTs < batchB[0]);
+        Assert.assertTrue("the late row sits between batches A and B", lateTs > batchA[3] && lateTs < batchB[0]);
         values.clear();
         appendEpisodeRow(values, lateTs, episodeRnd.nextInt(symCount), 1 + episodeRnd.nextInt(1000), episodeRnd.nextDouble() * 1000.0);
         final Runnable failTheSeal = () -> job.setCheckpointTimelineTestFailureStage(LiveViewCheckpointTimelineStoreWriter.TEST_FAIL_AFTER_METADATA_PUBLISH);
         final int k = episodeRnd.nextInt(3);
         final boolean isResumed;
-        final boolean isHeadWritten;
         long rowTs = batchC[3];
         try {
             hooks(job).setSimulateResumeHeadSealStart(failTheSeal);
@@ -2426,27 +2456,28 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 hooks(job).setSimulateHeadMissHeadSealStart(null);
             }
             isResumed = job.getStatsForTest().getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_RESUME_FROM_ANCHOR) > resumesBefore;
-            // An unfiltered run's rowless stretch added a base column, which the late row's repair
-            // meets as a refresh fault. The view takes it by restoring its runtime in place, and
-            // that restore stamps the head from the root it restored, with no write time.
-            final long driftFaults = instance.getRefreshFaultCount() - faultsBefore;
-            Assert.assertTrue("one fault at most, the drift's", driftFaults <= 1);
-            Assert.assertEquals(
-                    "the restore in place takes the drift",
-                    driftFaults,
-                    instance.getCheckpointRuntimeRestores() - runtimeRestoresBefore
-            );
-            isHeadWritten = instance.getLastCheckpointWrittenUs() != Numbers.LONG_NULL;
-            LOG.info().$("LV fuzz owed-seal episode [lateTs=").$ts(lateTs).$(", resumed=").$(isResumed)
-                    .$(", headWritten=").$(isHeadWritten).$(", k=").$(k).I$();
+            LOG.info().$("LV fuzz owed-seal episode [lateTs=").$ts(lateTs).$(", headMissShaped=").$(isHeadMissShaped)
+                    .$(", resumed=").$(isResumed).$(", k=").$(k).I$();
+            // The restart ahead of the episode compiled the view over every column the rowless
+            // stretch added to the base, so the repair meets no drift.
+            Assert.assertEquals("the late row's turn does not fault", faultsBefore, instance.getRefreshFaultCount());
             Assert.assertEquals(
                     "a resume from A's root or the head-miss rebuild repairs the late row",
                     1,
                     (isResumed ? 1 : 0) + countHeadMissRepairs(job) - headMissRepairsBefore
             );
+            Assert.assertEquals("the episode's shape picks the route", isHeadMissShaped, !isResumed);
+            Assert.assertEquals(
+                    "the resume parks the head on B's root, and the head-miss rebuild clears it",
+                    isResumed ? batchB[3] : Numbers.LONG_NULL,
+                    instance.getHeadCheckpointMaxTs()
+            );
             Assert.assertEquals("the closing seal fails", sealFailuresBefore + 1, instance.getCheckpointSealFailures());
             assertRepairMarker(instance, markerBaseGeneration, false);
             owedSealEpisodes++;
+            if (isHeadMissShaped) {
+                headMissOwedSealEpisodes++;
+            }
             for (int i = 0; i < k; i++) {
                 rowTs = commitAKeptRowToTheBaseAndItsShadow(episodeRnd, job, usedTs, symCount, rowTs);
             }
@@ -2454,21 +2485,15 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             job.setCheckpointTimelineTestFailureStage(0);
         }
         final long cleanTs = commitAKeptRowToTheBaseAndItsShadow(episodeRnd, job, usedTs, symCount, rowTs);
-        Assert.assertEquals(
-                "no fault past the drift's",
-                faultsBefore + instance.getCheckpointRuntimeRestores() - runtimeRestoresBefore,
-                instance.getRefreshFaultCount()
-        );
-        if (isResumed && isHeadWritten) {
+        Assert.assertEquals("no commit after the late row faults", faultsBefore, instance.getRefreshFaultCount());
+        if (isResumed) {
             // The resume parked the head on B's root, and nothing inside the cadence seals.
             Assert.assertEquals(batchB[3], instance.getHeadCheckpointMaxTs());
             Assert.assertEquals(sealFailuresBefore + 1, instance.getCheckpointSealFailures());
             assertRepairMarker(instance, markerBaseGeneration, false);
             return OWED_SEAL_MARKER_LIVE;
         }
-        // The head-miss rebuild cleared the head, and a head with no write time is one the restore
-        // of the runtime in place stamped from its root: either way every commit after the late
-        // row seals at once.
+        // The head-miss rebuild cleared the head, so every commit after the late row seals at once.
         Assert.assertEquals(sealFailuresBefore + 1 + k, instance.getCheckpointSealFailures());
         if (k < 2) {
             Assert.assertEquals("the clean commit's seal lands", cleanTs, instance.getHeadCheckpointMaxTs());
@@ -2672,20 +2697,6 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         drainWalQueue();
         driveRefreshToQuiescence(job);
         return rows.toString();
-    }
-
-    // dropTheOldestDayTheViewHolds, returning the first timestamp of the day it dropped, or
-    // LONG_NULL when it dropped nothing.
-    private long dropTheOldestDayTheViewHoldsReturningItsStart(
-            Rnd rnd,
-            LiveViewRefreshJob job,
-            String oracleOrderedSql,
-            String viewOrderedSql
-    ) throws Exception {
-        final long viewMinTs = queryTimestamp("SELECT min(ts) FROM lv");
-        return dropTheOldestDayTheViewHolds(rnd, job, oracleOrderedSql, viewOrderedSql) != null
-                ? viewMinTs - viewMinTs % Micros.DAY_MICROS
-                : Numbers.LONG_NULL;
     }
 
     // One random transparent base-DDL op: ADD a fresh unreferenced column, or
@@ -4323,13 +4334,15 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 try {
                     final boolean isHeadRestamped = departNewestRowsOverSparseRoots(rnd, job, engine.verifyTableName("base"), null, symCount, withWhere, n, sparseDepartureShape);
                     commitRowlessStretch(job, null, withWhere, isHeadRestamped);
-                    int owedSealOutcome = OWED_SEAL_NONE;
+                    String rowsBeforeTheSparseDrop = null;
                     long droppedDayTs = Numbers.LONG_NULL;
                     if (sparseDepartureShape != SPARSE_DEPARTURE_RETIRE) {
                         copyTheBaseToItsShadow(true);
-                        droppedDayTs = dropTheOldestDayTheViewHoldsReturningItsStart(rnd, job, oracleOrderedSql, viewOrderedSql);
-                        owedSealOutcome = failTheOwedSealOfALateRow(owedSealEpisodeRnd(rnd), job, null, symCount);
-                        departureOracleOrderedSql = shadowOracleOrderedSql;
+                        final long viewMinTs = queryTimestamp("SELECT min(ts) FROM lv");
+                        rowsBeforeTheSparseDrop = dropTheOldestDayTheViewHolds(rnd, job, oracleOrderedSql, viewOrderedSql);
+                        if (rowsBeforeTheSparseDrop != null) {
+                            droppedDayTs = viewMinTs - viewMinTs % Micros.DAY_MICROS;
+                        }
                     }
                     coverage.absorb(job);
                     job = Misc.free(job);
@@ -4337,15 +4350,35 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                     engine.buildViewGraphs();
                     job = new LiveViewRefreshJob(0, engine, 1);
                     driveRefreshToQuiescence(job);
-                    job = assertTheRestartAfterTheOwedSealEpisode(
-                            job,
-                            sparseDepartureShape,
-                            owedSealOutcome,
-                            droppedDayTs,
-                            oracleOrderedSql,
-                            shadowOracleOrderedSql,
-                            viewOrderedSql
-                    );
+                    // The restart after the departure and the stretch without rows: the departure's
+                    // own route, over any day the base has lost since, which the view keeps.
+                    assertSparseDepartureRestartRoute(sparseDepartureShape);
+                    assertDepartureOracle(oracleOrderedSql, viewOrderedSql, rowsBeforeTheSparseDrop);
+                    if (sparseDepartureShape != SPARSE_DEPARTURE_RETIRE) {
+                        final int owedSealOutcome = failTheOwedSealOfALateRow(
+                                owedSealEpisodeRnd(rnd),
+                                job,
+                                null,
+                                symCount,
+                                n,
+                                sparseDepartureShape == SPARSE_DEPARTURE_KEEP
+                        );
+                        departureOracleOrderedSql = shadowOracleOrderedSql;
+                        coverage.absorb(job);
+                        job = Misc.free(job);
+                        engine.getLiveViewRegistry().clear();
+                        engine.buildViewGraphs();
+                        job = new LiveViewRefreshJob(0, engine, 1);
+                        driveRefreshToQuiescence(job);
+                        job = assertTheRestartAfterTheOwedSealEpisode(
+                                job,
+                                owedSealOutcome,
+                                droppedDayTs,
+                                oracleOrderedSql,
+                                shadowOracleOrderedSql,
+                                viewOrderedSql
+                        );
+                    }
                     if (withWhere) {
                         commitRowlessCyclesAfterARestart(job, null);
                         coverage.absorb(job);
@@ -6262,34 +6295,54 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 try {
                     final boolean isHeadRestamped = departNewestRowsOverSparseRoots(rnd, job, baseToken, usedTs, symCount, withWhere, n, sparseDepartureShape);
                     commitRowlessStretch(job, usedTs, withWhere, isHeadRestamped);
-                    int owedSealOutcome = OWED_SEAL_NONE;
+                    String rowsBeforeTheSparseDrop = null;
                     long droppedDayTs = Numbers.LONG_NULL;
                     if (sparseDepartureShape != SPARSE_DEPARTURE_RETIRE) {
                         copyTheBaseToItsShadow(false);
-                        droppedDayTs = dropTheOldestDayTheViewHoldsReturningItsStart(rnd, job, oracleOrderedSql, viewOrderedSql);
+                        final long viewMinTs = queryTimestamp("SELECT min(ts) FROM lv");
+                        rowsBeforeTheSparseDrop = dropTheOldestDayTheViewHolds(rnd, job, oracleOrderedSql, viewOrderedSql);
+                        if (rowsBeforeTheSparseDrop != null) {
+                            droppedDayTs = viewMinTs - viewMinTs % Micros.DAY_MICROS;
+                        }
                     }
                     // The faults of the departure, the rowless stretch and the drop. The owed-seal
                     // episode accounts for its own.
                     assertNoRefreshFaults("lv");
-                    if (sparseDepartureShape != SPARSE_DEPARTURE_RETIRE) {
-                        owedSealOutcome = failTheOwedSealOfALateRow(owedSealEpisodeRnd(rnd), job, usedTs, symCount);
-                        departureOracleOrderedSql = shadowOracleOrderedSql;
-                    }
                     coverage.absorb(job);
                     job = Misc.free(job);
                     engine.getLiveViewRegistry().clear();
                     engine.buildViewGraphs();
                     job = new LiveViewRefreshJob(0, engine, 1);
                     driveRefreshToQuiescence(job);
-                    job = assertTheRestartAfterTheOwedSealEpisode(
-                            job,
-                            sparseDepartureShape,
-                            owedSealOutcome,
-                            droppedDayTs,
-                            oracleOrderedSql,
-                            shadowOracleOrderedSql,
-                            viewOrderedSql
-                    );
+                    // The restart after the departure and the stretch without rows: the departure's
+                    // own route, over any day the base has lost since, which the view keeps.
+                    assertSparseDepartureRestartRoute(sparseDepartureShape);
+                    assertDepartureOracle(oracleOrderedSql, viewOrderedSql, rowsBeforeTheSparseDrop);
+                    if (sparseDepartureShape != SPARSE_DEPARTURE_RETIRE) {
+                        final int owedSealOutcome = failTheOwedSealOfALateRow(
+                                owedSealEpisodeRnd(rnd),
+                                job,
+                                usedTs,
+                                symCount,
+                                n,
+                                sparseDepartureShape == SPARSE_DEPARTURE_KEEP
+                        );
+                        departureOracleOrderedSql = shadowOracleOrderedSql;
+                        coverage.absorb(job);
+                        job = Misc.free(job);
+                        engine.getLiveViewRegistry().clear();
+                        engine.buildViewGraphs();
+                        job = new LiveViewRefreshJob(0, engine, 1);
+                        driveRefreshToQuiescence(job);
+                        job = assertTheRestartAfterTheOwedSealEpisode(
+                                job,
+                                owedSealOutcome,
+                                droppedDayTs,
+                                oracleOrderedSql,
+                                shadowOracleOrderedSql,
+                                viewOrderedSql
+                        );
+                    }
                     if (withWhere) {
                         commitRowlessCyclesAfterARestart(job, usedTs);
                         coverage.absorb(job);

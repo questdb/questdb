@@ -79,6 +79,7 @@ import org.junit.Test;
 import java.lang.reflect.Field;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.regex.Pattern;
 
 import static io.questdb.cairo.lv.LiveViewRefreshStats.*;
 
@@ -2583,11 +2584,120 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testAKeyedOwedRootWhoseRowlessSealFailsLandsOnTheNextRowlessCycle() throws Exception {
+        // The cycle without rows past the cadence finds rows above the head and seals the frontier,
+        // and that seal fails on its data segment: the failure counts, the head stays on the root at
+        // 09:48, and nothing republishes that root, so the marker stays live. The failed seal leaves
+        // the cadence due, so the next cycle without rows seals the frontier again with the clock
+        // where it was, lands the owed root, and each restart restores over the hours the base lost.
+        final LiveViewCheckpointDiskFullFault fault = new LiveViewCheckpointDiskFullFault();
+        assertMemoryLeak(fault, () -> {
+            createSixteenAccountView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = commitTheKeyedOwedRootFixture(job);
+                final long generationBefore = publishedCheckpointGeneration(instance);
+                final long sealFailuresBefore = instance.getCheckpointSealFailures();
+                final long resetsBefore = instance.getCheckpointTimelineResets();
+                failTheKeyedOwedSeal(job, () -> fault.arm(LiveViewCheckpointDiskFullFault.OP_MMAP, LiveViewCheckpointLayout.DATA_DIR_NAME, 1));
+                fault.disarm();
+                Assert.assertEquals(sealFailuresBefore + 1, instance.getCheckpointSealFailures());
+                final long headBaseSeqTxn = instance.getHeadCheckpointBaseSeqTxn();
+                final LongList ladder = snapshotCheckpointLadder(instance);
+
+                hooks(job).setSimulateNoRowHeadCheckpointStart(
+                        () -> fault.arm(LiveViewCheckpointDiskFullFault.OP_MMAP, LiveViewCheckpointLayout.DATA_DIR_NAME, 1)
+                );
+                setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
+                dropBasePartition("2026-01-03T00", job);
+                hooks(job).setSimulateNoRowHeadCheckpointStart(null);
+                fault.disarm();
+                Assert.assertNotNull("the cycle's seal must reach its data segment", fault.getFailedFile());
+                Assert.assertEquals(LiveViewCheckpointLayout.DATA_DIR_NAME, LiveViewCheckpointDiskFullFault.kindOf(fault.getFailedFile()));
+                Assert.assertEquals("the cycle's seal fails", sealFailuresBefore + 2, instance.getCheckpointSealFailures());
+                Assert.assertEquals("two failures in a row retire nothing", resetsBefore, instance.getCheckpointTimelineResets());
+                Assert.assertEquals("the head stays on the root at 09:48", ts("2026-01-04T09:48:00.000000Z"), instance.getHeadCheckpointMaxTs());
+                Assert.assertEquals("and keeps its base coordinate", headBaseSeqTxn, instance.getHeadCheckpointBaseSeqTxn());
+                TestUtils.assertEquals("no root", ladder.toString(), snapshotCheckpointLadder(instance).toString());
+                assertRepairMarkerLive(instance, generationBefore);
+
+                dropBasePartition("2026-01-03T01", job);
+                final long frontierTs = ts("2026-01-04T10:48:00.000000Z");
+                Assert.assertEquals("the next cycle seals the frontier", frontierTs, instance.getHeadCheckpointMaxTs());
+                Assert.assertEquals("at the cycle's commit", lastTxSeqTxn(), instance.getHeadCheckpointBaseSeqTxn());
+                final LongList landed = snapshotCheckpointLadder(instance);
+                Assert.assertEquals("the owed root", ladder.size() + 2, landed.size());
+                Assert.assertEquals(frontierTs, landed.getQuick(landed.size() - 2));
+                // 320 seeded rows, 160 of 2026-01-04 from 00:00 to 09:00, 15 at 10:00 and the late row.
+                Assert.assertEquals("counts every row of the view", 496, landed.getQuick(landed.size() - 1));
+                Assert.assertEquals("the splice and the owed root", generationBefore + 2, publishedCheckpointGeneration(instance));
+                assertRepairMarkerStale(instance, generationBefore);
+                Assert.assertEquals("the seal that lands is no failure", sealFailuresBefore + 2, instance.getCheckpointSealFailures());
+                assertViewMatchesShadowRecompute();
+                assertNoRefreshFaults("lv");
+            }
+            for (int restart = 0; restart < 2; restart++) {
+                restartCycle();
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    driveRefreshToQuiescence(job);
+                }
+                assertRestoredFromTimeline("lv");
+                Assert.assertFalse(viewInstance().isCheckpointRecoveryBlocked());
+                assertViewMatchesShadowRecompute();
+            }
+        });
+    }
+
+    @Test
+    public void testAKeyedOwedRootWhoseRowlessSealsFailThreeTimesRetiresTheMarkerWithTheTimeline() throws Exception {
+        // The fault outlasts the closing seal and fails the seals of the next two cycles without
+        // rows at the frontier too: the third failure in a row retires the timeline, and the marker
+        // goes with it. Each restart then finds no timeline, and the rebuild from the applied base is
+        // refused over the hours the base lost: the view stops with every row it holds.
+        final LiveViewCheckpointDiskFullFault fault = new LiveViewCheckpointDiskFullFault();
+        assertMemoryLeak(fault, () -> {
+            createSixteenAccountView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = commitTheKeyedOwedRootFixture(job);
+                final long generationBefore = publishedCheckpointGeneration(instance);
+                final long sealFailuresBefore = instance.getCheckpointSealFailures();
+                final long resetsBefore = instance.getCheckpointTimelineResets();
+                failTheKeyedOwedSeal(job, () -> fault.arm(LiveViewCheckpointDiskFullFault.OP_MMAP, LiveViewCheckpointLayout.DATA_DIR_NAME, 1));
+                // The hook is one-shot, so each cycle arms the fault anew.
+                hooks(job).setSimulateNoRowHeadCheckpointStart(
+                        () -> fault.arm(LiveViewCheckpointDiskFullFault.OP_MMAP, LiveViewCheckpointLayout.DATA_DIR_NAME, 1)
+                );
+                setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
+                dropBasePartition("2026-01-03T00", job);
+                Assert.assertEquals(sealFailuresBefore + 2, instance.getCheckpointSealFailures());
+                assertRepairMarkerLive(instance, generationBefore);
+                hooks(job).setSimulateNoRowHeadCheckpointStart(
+                        () -> fault.arm(LiveViewCheckpointDiskFullFault.OP_MMAP, LiveViewCheckpointLayout.DATA_DIR_NAME, 1)
+                );
+                dropBasePartition("2026-01-03T01", job);
+                fault.disarm();
+                Assert.assertNotNull("the third seal must reach its data segment", fault.getFailedFile());
+                Assert.assertEquals("the third failure in a row", sealFailuresBefore + 3, instance.getCheckpointSealFailures());
+                Assert.assertEquals("retires the timeline", resetsBefore + 1, instance.getCheckpointTimelineResets());
+                Assert.assertEquals(Numbers.LONG_NULL, instance.getHeadCheckpointMaxTs());
+                try (Path dir = checkpointsDir(instance); Path timelinePath = new Path()) {
+                    LiveViewCheckpointLayout.timelinePath(timelinePath, dir);
+                    Assert.assertFalse("the timeline is gone", configuration.getFilesFacade().exists(timelinePath.$()));
+                    Assert.assertFalse("and the marker with it", LiveViewCheckpointRepairMarker.exists(configuration.getFilesFacade(), dir));
+                }
+                assertViewMatchesShadowRecompute();
+                assertNoRefreshFaults("lv");
+            }
+            assertRestartsBlocked("timeline is absent", SIXTEEN_ACCOUNT_HISTORY_FLOOR);
+        });
+    }
+
+    @Test
     public void testAKeyedOwedRootWhoseTableReadFailsOnARowlessCycleLandsOnTheNextOne() throws Exception {
         // A cooldown declines the keyed resume's closing seal, which leaves the owed state with no
         // failure on the streak. The cycle without rows past the cadence cannot read the view's
-        // table, so it publishes nothing and leaves the marker live; the next due cycle reads it and
-        // lands the owed root.
+        // table, so it logs the failed read, publishes nothing and leaves the marker live; the next
+        // due cycle reads it and lands the owed root.
+        final LogCapture capture = new LogCapture();
         final AtomicReference<String> failedOpenDir = new AtomicReference<>();
         final AtomicInteger failedOpens = new AtomicInteger();
         final TestFilesFacadeImpl ff = new TestFilesFacadeImpl() {
@@ -2604,50 +2714,66 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
                 return super.openRO(name);
             }
         };
-        assertMemoryLeak(ff, () -> {
-            createSixteenAccountView();
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                final LiveViewInstance instance = commitTheKeyedOwedRootFixture(job);
-                final long generationBefore = publishedCheckpointGeneration(instance);
-                final long sealFailuresBefore = instance.getCheckpointSealFailures();
-                // A cooldown that ends one microsecond on, so it holds for this seal alone.
-                failTheKeyedOwedSeal(job, () -> instance.setSealCooldownUntilUs(currentMicros + 1));
-                Assert.assertEquals("the declined seal is not a failed one", sealFailuresBefore, instance.getCheckpointSealFailures());
-                assertRepairMarkerLive(instance, generationBefore);
-                hooks(job).setSimulateNoRowHeadCheckpointStart(() -> {
-                    // No pooled reader may serve the read, so it opens the table's files.
-                    engine.releaseAllReaders();
-                    failedOpenDir.set(instance.getLiveViewToken().getDirName());
-                });
-                setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
-                dropBasePartition("2026-01-03T00", job);
-                hooks(job).setSimulateNoRowHeadCheckpointStart(null);
-                Assert.assertEquals("the cycle's read of the view's table fails", 1, failedOpens.get());
-                Assert.assertEquals("and publishes nothing", ts("2026-01-04T09:48:00.000000Z"), instance.getHeadCheckpointMaxTs());
-                Assert.assertEquals("a failed read is not a failed seal", sealFailuresBefore, instance.getCheckpointSealFailures());
-                assertRepairMarkerLive(instance, generationBefore);
-                dropBasePartition("2026-01-03T01", job);
-                Assert.assertEquals("the next due cycle seals the frontier", ts("2026-01-04T10:48:00.000000Z"), instance.getHeadCheckpointMaxTs());
-                Assert.assertEquals("the splice and the owed root", generationBefore + 2, publishedCheckpointGeneration(instance));
-                assertRepairMarkerStale(instance, generationBefore);
-                assertViewMatchesShadowRecompute();
-                assertNoRefreshFaults("lv");
-            }
-            for (int restart = 0; restart < 2; restart++) {
-                restartCycle();
+        try {
+            assertMemoryLeak(ff, () -> {
+                createSixteenAccountView();
                 try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                    driveRefreshToQuiescence(job);
+                    final LiveViewInstance instance = commitTheKeyedOwedRootFixture(job);
+                    final long generationBefore = publishedCheckpointGeneration(instance);
+                    final long sealFailuresBefore = instance.getCheckpointSealFailures();
+                    // A cooldown that ends one microsecond on, so it holds for this seal alone.
+                    failTheKeyedOwedSeal(job, () -> instance.setSealCooldownUntilUs(currentMicros + 1));
+                    Assert.assertEquals("the declined seal is not a failed one", sealFailuresBefore, instance.getCheckpointSealFailures());
+                    assertRepairMarkerLive(instance, generationBefore);
+                    hooks(job).setSimulateNoRowHeadCheckpointStart(() -> {
+                        // No pooled reader may serve the read, so it opens the table's files.
+                        engine.releaseAllReaders();
+                        failedOpenDir.set(instance.getLiveViewToken().getDirName());
+                    });
+                    setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
+                    capture.start();
+                    dropBasePartition("2026-01-03T00", job);
+                    hooks(job).setSimulateNoRowHeadCheckpointStart(null);
+                    Assert.assertEquals("the cycle's read of the view's table fails", 1, failedOpens.get());
+                    Assert.assertEquals("and publishes nothing", ts("2026-01-04T09:48:00.000000Z"), instance.getHeadCheckpointMaxTs());
+                    Assert.assertEquals("a failed read is not a failed seal", sealFailuresBefore, instance.getCheckpointSealFailures());
+                    assertRepairMarkerLive(instance, generationBefore);
+                    dropBasePartition("2026-01-03T01", job);
+                    capture.drain();
+                    capture.stop();
+                    Assert.assertEquals("the next due cycle seals the frontier", ts("2026-01-04T10:48:00.000000Z"), instance.getHeadCheckpointMaxTs());
+                    Assert.assertEquals("the splice and the owed root", generationBefore + 2, publishedCheckpointGeneration(instance));
+                    assertRepairMarkerStale(instance, generationBefore);
+                    // The failed read logs once, naming the open of the view table's _txn that
+                    // failed, and the read that lands logs nothing.
+                    Assert.assertEquals(
+                            1,
+                            capture.countOccurrences("could not read live view rows before advancing its head checkpoint base [view=lv, error=")
+                    );
+                    capture.assertLoggedRE("could not read live view rows before advancing its head checkpoint base \\[view=lv, "
+                            + "error=io\\.questdb\\.cairo\\.CairoException: \\[-?\\d+\\] could not open[^\\n]*"
+                            + Pattern.quote(Files.SEPARATOR + instance.getLiveViewToken().getDirName() + Files.SEPARATOR + TableUtils.TXN_FILE_NAME));
+                    assertViewMatchesShadowRecompute();
+                    assertNoRefreshFaults("lv");
                 }
-                assertRestoredFromTimeline("lv");
+                for (int restart = 0; restart < 2; restart++) {
+                    restartCycle();
+                    try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                        driveRefreshToQuiescence(job);
+                    }
+                    assertRestoredFromTimeline("lv");
+                    assertViewMatchesShadowRecompute();
+                }
+                // In order on the corrected account and an untouched one: each folds onto the state
+                // the restore took from the owed root.
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    commitToBothBases(row(4, 11, 30, "acct-1") + ", " + row(4, 11, 31, "acct-2"), job);
+                }
                 assertViewMatchesShadowRecompute();
-            }
-            // In order on the corrected account and an untouched one: each folds onto the state
-            // the restore took from the owed root.
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                commitToBothBases(row(4, 11, 30, "acct-1") + ", " + row(4, 11, 31, "acct-2"), job);
-            }
-            assertViewMatchesShadowRecompute();
-        });
+            });
+        } finally {
+            capture.stop();
+        }
     }
 
     @Test
@@ -2761,6 +2887,15 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
      * which the recompute over {@code tx_shadow} reproduces.
      */
     private void assertRestartsBlockedByTheRepairMarker(String historyFloor) throws Exception {
+        assertRestartsBlocked("prefix preservation repair marker present", historyFloor);
+    }
+
+    /**
+     * Restarts twice. Each restart rebuilds from the applied base because of {@code cause}, and the
+     * restatement guard refuses the rebuild on {@code historyFloor}: the view stops with every row
+     * it held, which the recompute over {@code tx_shadow} reproduces.
+     */
+    private void assertRestartsBlocked(String cause, String historyFloor) throws Exception {
         for (int restart = 0; restart < 2; restart++) {
             restartCycle();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -2775,7 +2910,7 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
             Assert.assertFalse("a refused rebuild writes no invalidation", instance.isInvalid());
             TestUtils.assertContains(
                     instance.getCheckpointRecoveryReason(),
-                    "would drop rows it retains [cause=prefix preservation repair marker present]: " + historyFloor
+                    "would drop rows it retains [cause=" + cause + "]: " + historyFloor
             );
             assertViewMatchesShadowRecompute();
         }

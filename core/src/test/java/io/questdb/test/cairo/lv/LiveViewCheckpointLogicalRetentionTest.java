@@ -2614,24 +2614,37 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
     @Test
     public void testHeadMissSealThatFailsOverAnOwedRootBlocksARestartBeforeAnyRow() throws Exception {
         // The head-miss rebuild's end-of-table splice keeps its newest root at 00:50, below the
-        // frontier 00:55, and its closing seal fails: the marker stays live, so a restart before
-        // any row rebuilds from the applied base, which the restatement guard refuses over the day
-        // the base lost, keeping every row.
+        // frontier 00:55, and its closing seal fails: the marker stays live, and the rebuild logs the
+        // frontier it owes a root and the splice's newest root once. A restart before any row
+        // rebuilds from the applied base, which the restatement guard refuses over the day the base
+        // lost, keeping every row.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
         final LiveViewCheckpointDiskFullFault fault = new LiveViewCheckpointDiskFullFault();
-        assertMemoryLeak(fault, () -> {
-            createHeadMissDepartureView();
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                driveSeedToCompletion(job, "lv");
-                final LiveViewInstance instance = commitFiveRowsAboveTheHeadMissRoot(job);
-                final long generationBefore = generation(instance);
-                failTheOwedHeadMissSeal(job, fault);
-                assertCheckpointLadder(instance, false, "2025-12-31T23:55:00.000000Z -> 1\n2026-01-01T00:50:00.000000Z -> 53\n");
-                assertRepairMarkerLive(instance, generationBefore);
-                assertNoRefreshFaults("lv");
-            }
-            assertRestartsBlockedByTheRepairMarker(headMissRowsWithTheLateRow(55), HEAD_MISS_OWED_ROOT_HISTORY_FLOOR);
-        });
+        final LogCapture capture = new LogCapture();
+        capture.start();
+        try {
+            assertMemoryLeak(fault, () -> {
+                createHeadMissDepartureView();
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    driveSeedToCompletion(job, "lv");
+                    final LiveViewInstance instance = commitFiveRowsAboveTheHeadMissRoot(job);
+                    final long generationBefore = generation(instance);
+                    failTheOwedHeadMissSeal(job, fault);
+                    assertCheckpointLadder(instance, false, "2025-12-31T23:55:00.000000Z -> 1\n2026-01-01T00:50:00.000000Z -> 53\n");
+                    assertRepairMarkerLive(instance, generationBefore);
+                    assertNoRefreshFaults("lv");
+                }
+                assertRestartsBlockedByTheRepairMarker(headMissRowsWithTheLateRow(55), HEAD_MISS_OWED_ROOT_HISTORY_FLOOR);
+            });
+            capture.drain();
+            Assert.assertEquals(
+                    1,
+                    capture.countOccurrences("live view O3 repair kept its repair marker, no root at the frontier [view=lv, "
+                            + "frontier=2026-01-01T00:55:00.000000Z, spliceHeadRootMaxTs=2026-01-01T00:50:00.000000Z]")
+            );
+        } finally {
+            capture.stop();
+        }
     }
 
     @Test
@@ -3122,10 +3135,23 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
     @Test
     public void testResumeSealThatFailsOverAnOwedRootKeepsEveryRowAcrossRestarts() throws Exception {
         // The resume's splice keeps its newest root at 00:02, below the frontier 00:04, and its
-        // closing seal fails: the marker stays live, a row inside the cadence seals nothing, and
-        // each restart rebuilds from the applied base, which the restatement guard refuses over the
-        // day the base lost. The view stops with every row it holds.
-        assertOwedResumeSealFaultBlocksTheRestarts(LiveViewCheckpointDiskFullFault.OP_ALLOCATE, false, false, true);
+        // closing seal fails: the marker stays live, and the repair logs the frontier it owes a root
+        // and the splice's newest root once. A row inside the cadence seals nothing, and each restart
+        // rebuilds from the applied base, which the restatement guard refuses over the day the base
+        // lost. The view stops with every row it holds.
+        final LogCapture capture = new LogCapture();
+        capture.start();
+        try {
+            assertOwedResumeSealFaultBlocksTheRestarts(LiveViewCheckpointDiskFullFault.OP_ALLOCATE, false, false, true);
+            capture.drain();
+            Assert.assertEquals(
+                    1,
+                    capture.countOccurrences("live view O3 repair kept its repair marker, no root at the frontier [view=lv, "
+                            + "frontier=2026-01-01T00:04:00.000000Z, spliceHeadRootMaxTs=2026-01-01T00:02:00.000000Z]")
+            );
+        } finally {
+            capture.stop();
+        }
     }
 
     @Test
