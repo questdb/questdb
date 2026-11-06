@@ -88,6 +88,13 @@ public class TableReferenceOutOfDateException extends RuntimeException implement
         return ex;
     }
 
+    public static TableReferenceOutOfDateException ofPivotInList(CharSequence value) {
+        TableReferenceOutOfDateException ex = new TableReferenceOutOfDateException();
+        ex.message.clear();
+        ex.message.put("cached query plan cannot be used because a PIVOT IN subquery returns other values [value=").put(value).put(']');
+        return ex;
+    }
+
     @Override
     public CharSequence getFlyweightMessage() {
         return message;

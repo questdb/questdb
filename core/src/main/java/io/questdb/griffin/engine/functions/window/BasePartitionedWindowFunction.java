@@ -38,6 +38,7 @@ import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.FunctionFlags;
 import io.questdb.griffin.engine.window.WindowAccumulatorDescriptor;
 import io.questdb.griffin.engine.window.WindowAccumulatorProjection;
 import io.questdb.std.LongList;
@@ -727,5 +728,25 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction
      */
     protected Map newCompactionScratch() {
         return null;
+    }
+
+    @Override
+    public boolean hasPerCallState() {
+        return super.hasPerCallState() || FunctionFlags.hasPerCallState(partitionByRecord);
+    }
+
+    @Override
+    public boolean isNonDeterministic() {
+        return super.isNonDeterministic() || FunctionFlags.isNonDeterministic(partitionByRecord);
+    }
+
+    @Override
+    public boolean isRandom() {
+        return super.isRandom() || FunctionFlags.isRandom(partitionByRecord);
+    }
+
+    @Override
+    public boolean isStableWithinExecution() {
+        return super.isStableWithinExecution() && FunctionFlags.isStableWithinExecution(partitionByRecord);
     }
 }

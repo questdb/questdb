@@ -176,13 +176,14 @@ public class PerQueryMemoryTrackerProviderTest {
         Assume.assumeTrue("requires -ea", areAssertionsEnabled());
 
         TestUtils.assertMemoryLeak(() -> {
-            // The covered-index decode path (PageFrameMemoryPool) charges the per-query tracker's native
-            // `used` at allocation but frees the buffers on global-only accounting on a LATER query, so no
-            // free path ever decrements `used` for covered bytes. reconcileCovered() at tracker teardown is
-            // the sole mechanism that removes that charge, leaving the pooled block clean. Without the
-            // close()/init() reconcileCovered() calls, the tracker returns to the pool with used > 0 and the
-            // next acquire trips init()'s recycle guard. Reproduce the covered scenario directly, without a
-            // real covering index (mirrors OSS PerQueryMemoryTracker's covered-recycle contract).
+            // A holder whose free may come after its query has ended, such as a reduce-task pool of the
+            // shared queues, charges the per-query tracker's native `used` at allocation and records the
+            // charge in the covered-bytes ledger; a free after the query ends is global-only, so no free
+            // path decrements `used` for it. reconcileCovered() at tracker teardown is the sole mechanism
+            // that removes that charge, leaving the pooled block clean. Without the close()/init()
+            // reconcileCovered() calls, the tracker returns to the pool with used > 0 and the next acquire
+            // trips init()'s recycle guard. Reproduce the late free directly (mirrors OSS
+            // PerQueryMemoryTracker's covered-recycle contract).
             try (PerQueryMemoryTrackerProvider provider = newProvider(0, 0, 0, 0)) {
                 MemoryTracker t = provider.acquire(SECURITY_CONTEXT, 1, MemoryTrackerWorkload.QUERY);
                 // trackerLive hands t back to the pool if anything below throws before its own close(); the
@@ -195,8 +196,7 @@ public class PerQueryMemoryTrackerProviderTest {
                         t.addCoveredBytes(256);
                         Assert.assertEquals(256, t.getUsed());
                     } finally {
-                        // Global-only free (no tracker), exactly as the covered buffers are freed by a later
-                        // query: `used` is intentionally left at 256.
+                        // Global-only free (no tracker), as a late free is: `used` is intentionally left at 256.
                         Unsafe.free(p, 256, MemoryTag.NATIVE_INDEX_READER);
                     }
                     Assert.assertEquals(256, t.getUsed());

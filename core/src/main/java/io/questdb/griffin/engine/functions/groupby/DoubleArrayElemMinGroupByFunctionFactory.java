@@ -78,6 +78,11 @@ public class DoubleArrayElemMinGroupByFunctionFactory implements FunctionFactory
         }
 
         @Override
+        public boolean isOrderSensitive() {
+            return false;
+        }
+
+        @Override
         protected void mergeOne(long destDataPtr, int destFi, double srcVal, int srcFi) {
             long addr = destDataPtr + (long) destFi * Double.BYTES;
             double destVal = Unsafe.getDouble(addr);

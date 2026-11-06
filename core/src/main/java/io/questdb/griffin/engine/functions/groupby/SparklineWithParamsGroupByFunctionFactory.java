@@ -44,6 +44,11 @@ public class SparklineWithParamsGroupByFunctionFactory implements FunctionFactor
     }
 
     @Override
+    public boolean requiresAscendingDesignatedTimestamp() {
+        return true;
+    }
+
+    @Override
     public Function newInstance(
             int position,
             ObjList<Function> args,

@@ -59,6 +59,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.RecordComparator;
+import io.questdb.griffin.engine.functions.FunctionFlags;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.orderby.SortKeyEncoder;
 import io.questdb.griffin.engine.window.WindowContext;
@@ -367,6 +368,26 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val(getName());
             PercentRankFunctionFactory.PercentRankNoOrderFunction.toSink0(sink, partitionByRecord);
+        }
+
+        @Override
+        public boolean hasPerCallState() {
+            return FunctionFlags.hasPerCallState(partitionByRecord);
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return FunctionFlags.isNonDeterministic(partitionByRecord);
+        }
+
+        @Override
+        public boolean isRandom() {
+            return FunctionFlags.isRandom(partitionByRecord);
+        }
+
+        @Override
+        public boolean isStableWithinExecution() {
+            return FunctionFlags.isStableWithinExecution(partitionByRecord);
         }
     }
 
@@ -895,6 +916,26 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
             } else {
                 SortKeyEncoder.buildRankMaps(symbolTableSource, rankMaps, recordComparator);
             }
+        }
+
+        @Override
+        public boolean hasPerCallState() {
+            return FunctionFlags.hasPerCallState(partitionByRecord);
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return FunctionFlags.isNonDeterministic(partitionByRecord);
+        }
+
+        @Override
+        public boolean isRandom() {
+            return FunctionFlags.isRandom(partitionByRecord);
+        }
+
+        @Override
+        public boolean isStableWithinExecution() {
+            return FunctionFlags.isStableWithinExecution(partitionByRecord);
         }
     }
 

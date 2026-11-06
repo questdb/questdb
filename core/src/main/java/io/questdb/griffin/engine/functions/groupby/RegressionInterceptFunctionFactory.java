@@ -75,5 +75,10 @@ public class RegressionInterceptFunctionFactory implements FunctionFactory {
         public String getName() {
             return "regr_intercept";
         }
+
+        @Override
+        public boolean isOrderSensitive() {
+            return false;
+        }
     }
 }

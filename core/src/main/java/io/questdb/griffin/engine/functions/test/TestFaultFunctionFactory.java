@@ -51,8 +51,11 @@ import java.util.concurrent.atomic.AtomicReference;
  * throw instead, so tests can fail a specific per-worker clone compilation
  * mid-loop. An init-time arm ({@link #armToFailAfterInits}) makes the Nth
  * {@code Function.init} call throw, so tests can fail a specific clone list's
- * cursor-open initialization after the owner initialized. Outside dev mode it
- * folds to the BOOLEAN constant true, so it is inert in production.
+ * cursor-open initialization after the owner initialized; its
+ * {@link #armToFailAfterInitsWithSqlException} variant throws the checked
+ * {@link SqlException} an init may throw instead of a {@link CairoException}.
+ * Outside dev mode it folds to the BOOLEAN constant true, so it is inert in
+ * production.
  */
 public class TestFaultFunctionFactory implements FunctionFactory {
     public static final String CALL = "test_fault()";
@@ -70,6 +73,7 @@ public class TestFaultFunctionFactory implements FunctionFactory {
     private static final AtomicInteger INIT_COUNTDOWN = new AtomicInteger(-1);
     private static final AtomicInteger INIT_PROBE_EPOCH = new AtomicInteger();
     private static volatile boolean isCloseFailureArmed;
+    private static volatile boolean isInitFailureSqlException;
     private static final AtomicReference<Throwable> LAST_COMPILE_FAILURE = new AtomicReference<>();
     private static final AtomicInteger OFFER_COUNT = new AtomicInteger();
     private static final AtomicInteger TRIGGERED = new AtomicInteger();
@@ -95,10 +99,16 @@ public class TestFaultFunctionFactory implements FunctionFactory {
     }
 
     public static void armToFailAfterInits(int successfulInits) {
+        isInitFailureSqlException = false;
         INIT_PROBE_EPOCH.incrementAndGet();
         OFFER_COUNT.set(0);
         TRIGGERED.set(0);
         INIT_COUNTDOWN.set(successfulInits);
+    }
+
+    public static void armToFailAfterInitsWithSqlException(int successfulInits) {
+        armToFailAfterInits(successfulInits);
+        isInitFailureSqlException = true;
     }
 
     public static int closeCalls() {
@@ -126,6 +136,7 @@ public class TestFaultFunctionFactory implements FunctionFactory {
         COUNTDOWN.set(-1);
         INIT_COUNTDOWN.set(-1);
         isCloseFailureArmed = false;
+        isInitFailureSqlException = false;
     }
 
     public static int faultsTriggered() {
@@ -205,10 +216,13 @@ public class TestFaultFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             if (INIT_COUNTDOWN.get() >= 0) {
                 if (INIT_COUNTDOWN.getAndDecrement() == 0) {
                     TRIGGERED.incrementAndGet();
+                    if (isInitFailureSqlException) {
+                        throw SqlException.$(0, "test_fault: injected init failure");
+                    }
                     throw CairoException.nonCritical().put("test_fault: injected init failure");
                 }
                 initProbeEpoch = INIT_PROBE_EPOCH.get();

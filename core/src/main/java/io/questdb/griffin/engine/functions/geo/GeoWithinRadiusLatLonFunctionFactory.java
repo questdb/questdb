@@ -266,6 +266,11 @@ public class GeoWithinRadiusLatLonFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean hasPerCallState() {
+            return latFunc.hasPerCallState() || lonFunc.hasPerCallState();
+        }
+
+        @Override
         public boolean isRandom() {
             return latFunc.isRandom() || lonFunc.isRandom();
         }
@@ -452,6 +457,15 @@ public class GeoWithinRadiusLatLonFunctionFactory implements FunctionFactory {
                     || centerLatFunc.isNonDeterministic()
                     || centerLonFunc.isNonDeterministic()
                     || radiusFunc.isNonDeterministic();
+        }
+
+        @Override
+        public boolean hasPerCallState() {
+            return latFunc.hasPerCallState()
+                    || lonFunc.hasPerCallState()
+                    || centerLatFunc.hasPerCallState()
+                    || centerLonFunc.hasPerCallState()
+                    || radiusFunc.hasPerCallState();
         }
 
         @Override

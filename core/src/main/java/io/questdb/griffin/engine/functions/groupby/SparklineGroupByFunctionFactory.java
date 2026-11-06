@@ -44,6 +44,11 @@ public class SparklineGroupByFunctionFactory implements FunctionFactory {
     }
 
     @Override
+    public boolean requiresAscendingDesignatedTimestamp() {
+        return true;
+    }
+
+    @Override
     public Function newInstance(
             int position,
             ObjList<Function> args,

@@ -65,4 +65,9 @@ public class CountDoubleVectorAggregateFunction extends AbstractCountVectorAggre
             return keyValueFunc.run(pRosti, keyAddress, valueAddress, frameRowCount, valueOffset);
         }
     }
+
+    @Override
+    public boolean isOrderSensitive() {
+        return false;
+    }
 }

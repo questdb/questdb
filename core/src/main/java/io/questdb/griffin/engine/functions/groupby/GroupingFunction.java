@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.functions.FunctionFlags;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.std.IntList;
@@ -93,6 +94,11 @@ public class GroupingFunction extends IntFunction implements GroupByFunction {
 
     public int getPosition() {
         return position;
+    }
+
+    @Override
+    public boolean hasPerCallState() {
+        return FunctionFlags.hasPerCallState(argFunctions);
     }
 
     @Override
@@ -167,6 +173,22 @@ public class GroupingFunction extends IntFunction implements GroupByFunction {
     public void initValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.INT);
+    }
+
+    @Override
+    public boolean isNonDeterministic() {
+        return FunctionFlags.isNonDeterministic(argFunctions);
+    }
+
+    @Override
+    public boolean isOrderSensitive() {
+        // every row of a grouping set gets the set's bitmask, whatever order the rows come in
+        return false;
+    }
+
+    @Override
+    public boolean isRandom() {
+        return FunctionFlags.isRandom(argFunctions);
     }
 
     public void setArgKeyPosition(int argIndex, int keyPosition) {

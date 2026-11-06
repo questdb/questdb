@@ -114,9 +114,10 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     protected DirectLongList auxPageAddresses;
     protected DirectLongList auxPageSizes;
     // Pool bind generation captured when boundPool was stamped. The pool bumps its
-    // generation when it reuses or closes buffers that records may still alias (buffer
-    // reuse for another frame, eviction, failed decode, bulk release), so a stale
-    // generation forces a rebind instead of reading another frame's or freed memory.
+    // generation when it closes a buffer that records may still alias (failed decode,
+    // budget eviction, row-filtered eviction, bulk release) and when it reuses an
+    // unpinned buffer's memory in place for a different frame (acquireBuffer), so a
+    // stale generation forces a rebind instead of a freed or repurposed read.
     protected long boundGeneration;
     // Pool that owns the parquet buffers this record currently points at, or null.
     // PageFrameMemoryPool.navigateTo() uses it to early-return only when the record
@@ -502,6 +503,10 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         return NullMemoryCMR.INSTANCE.getFloat(0);
     }
 
+    public byte getFrameFormat() {
+        return frameFormat;
+    }
+
     public int getFrameIndex() {
         return frameIndex;
     }
@@ -669,6 +674,10 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         return Rows.toRowID(frameIndex, rowIndex);
     }
 
+    public long getRowIndex() {
+        return rowIndex;
+    }
+
     @Override
     public short getShort(int columnIndex) {
         if (hasTypeCasts) {
@@ -821,13 +830,15 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         return TableUtils.NULL_LEN; // Column top.
     }
 
-    // Note: this method doesn't break caching in PageFrameMemoryPool
-    // as the method assumes that the record can't be used once
-    // the frame memory is switched to another frame.
+    // Note: this method doesn't pin the frame memory's buffer in PageFrameMemoryPool.
+    // Once the frame memory moves to another frame, the pool may repurpose or free
+    // that buffer; it bumps its bind generation when it does, so a later
+    // PageFrameMemoryPool.navigateTo(int, PageFrameMemoryRecord) rebinds this record
+    // instead of reading through the stale addresses.
     public void init(PageFrameMemory frameMemory) {
         this.frameIndex = frameMemory.getFrameIndex();
         this.frameFormat = frameMemory.getFrameFormat();
-        this.stableStrings = (frameFormat == PartitionFormat.NATIVE);
+        this.stableStrings = frameMemory.isStable();
         this.hasTypeCasts = frameMemory.hasColumnTypeCasts();
         this.rowIdOffset = frameMemory.getRowIdOffset();
         this.pageAddresses = frameMemory.getPageAddresses();
@@ -1596,9 +1607,14 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         return null; // Column top.
     }
 
+    /**
+     * Binds the record to a frame's columns. {@code isStable} tells whether the columns stay valid
+     * until the query ends, see {@link PageFrameMemory#isStable()}.
+     */
     void init(
             int frameIndex,
             byte frameFormat,
+            boolean isStable,
             long rowIdOffset,
             DirectLongList pageAddresses,
             DirectLongList auxPageAddresses,
@@ -1612,7 +1628,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     ) {
         this.frameIndex = frameIndex;
         this.frameFormat = frameFormat;
-        this.stableStrings = (frameFormat == PartitionFormat.NATIVE);
+        this.stableStrings = isStable;
         this.hasTypeCasts = hasTypeCasts;
         this.columnTops = columnTops;
         // The pool passes its own IntList by reference and mutates it in place on every

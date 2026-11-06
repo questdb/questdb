@@ -27,18 +27,22 @@ package io.questdb.griffin.engine.table;
 import io.questdb.MessageBus;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapRecordCursor;
 import io.questdb.cairo.map.ShardedMapCursor;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.async.AsyncQueryProgressState;
 import io.questdb.cairo.sql.async.QueryParallelFiberDispatcher;
 import io.questdb.cairo.sql.async.QueryParallelOwnerLoop;
+import io.questdb.cairo.sql.async.UnorderedPageFrameReducer;
 import io.questdb.cairo.sql.async.UnorderedPageFrameSequence;
 import io.questdb.cairo.sql.async.WorkStealingStrategy;
 import io.questdb.griffin.SqlException;
@@ -54,11 +58,14 @@ import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.std.DirectLongLongSortedList;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.tasks.GroupByLongTopKTask;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -78,6 +85,12 @@ class AsyncGroupByRecordCursor implements RecordCursor {
     private final VirtualRecord recordB;
     private final ObjList<Function> recordFunctions;
     private final ShardedMapCursor shardedCursor = new ShardedMapCursor();
+    // the base of an index gather, which a serial retry reopens, see gatherAndMerge()
+    private final RecordCursorFactory base;
+    // the reducer of an index gather's tasks, null for a GROUP BY over page frames
+    private final UnorderedPageFrameReducer gatherReducer;
+    private SqlExecutionContext executionContext;
+    private long serialRetries;
     private SqlExecutionCircuitBreaker circuitBreaker;
     private UnorderedPageFrameSequence<AsyncGroupByAtom> frameSequence;
     private boolean isDataMapBuilt;
@@ -89,8 +102,12 @@ class AsyncGroupByRecordCursor implements RecordCursor {
     public AsyncGroupByRecordCursor(
             @NotNull CairoEngine engine,
             @NotNull MessageBus messageBus,
-            @NotNull ObjList<Function> recordFunctions
+            @NotNull ObjList<Function> recordFunctions,
+            @Nullable UnorderedPageFrameReducer gatherReducer,
+            @NotNull RecordCursorFactory base
     ) {
+        this.gatherReducer = gatherReducer;
+        this.base = base;
         this.configuration = engine.getConfiguration();
         this.messageBus = messageBus;
         this.recordFunctions = recordFunctions;
@@ -122,6 +139,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
             } finally {
                 mapCursor = Misc.free(mapCursor);
                 isOpen = false;
+                executionContext = null;
             }
         }
     }
@@ -204,11 +222,60 @@ class AsyncGroupByRecordCursor implements RecordCursor {
         circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
         frameSequence.prepareForDispatch();
         frameSequence.getAtom().getFilterContext().initMemoryPools(frameSequence.getPageFrameAddressCache(), frameSequence.getMemoryTracker());
-        frameSequence.dispatchAndAwait();
+        if (gatherReducer == null) {
+            frameSequence.dispatchAndAwait();
+            mergeMaps();
+        } else {
+            gatherAndMerge();
+        }
+        recordA.of(mapCursor.getRecord());
+        recordB.of(mapCursor.getRecordB());
+        isDataMapBuilt = true;
+    }
 
+    /**
+     * Runs the tasks of an index gather on the workers and merges the maps they built. When either
+     * step hits the query's memory limit - each worker holds a map of the groups it met, and the
+     * merge, while it still holds those maps, shards them and builds the merged ones - the pass
+     * starts over on the query's thread alone, with one map that does not shard, as the serial
+     * GROUP BY over the same index scan would hold.
+     * <p>
+     * The retry opens the base again, so it leases a table reader anew and may read a later
+     * transaction than the failed pass did (or than the estimate of an {@code Index Or Scan}
+     * choice did): its rows are that transaction's, consistent in themselves. The failed pass's
+     * maps are freed first ({@code reset()} clears the atom), once no task of the pass runs:
+     * {@code dispatchRoundAndAwait()} and {@code mergeShards()} wait for their tasks whether they
+     * return or throw. {@link CairoException#isOutOfMemory()} also matches an RSS limit, not only
+     * the query's; the retry is then as likely to fail, and fails the same way.
+     */
+    private void gatherAndMerge() {
+        try {
+            frameSequence.dispatchRoundAndAwait(gatherReducer, getGatherTaskRowCounts());
+            mergeMaps();
+            return;
+        } catch (CairoException e) {
+            if (!e.isOutOfMemory()) {
+                throw e;
+            }
+            LOG.info().$("index gather GROUP BY hit the memory limit, retrying on the query thread [error=").$safe(e.getFlyweightMessage()).I$();
+        }
+        reopenForSerialPass();
+        frameSequence.runRoundLocally(gatherReducer, getGatherTaskRowCounts());
+        // the one map is the owner's: the merge takes it as the result
+        mergeMaps();
+    }
+
+    private LongList getGatherTaskRowCounts() {
+        return ((IndexGatherPageFrameCursor) frameSequence.getPageFrameCursor()).getTaskRowCounts();
+    }
+
+    private void mergeMaps() {
         final AsyncGroupByAtom atom = frameSequence.getAtom();
-
         final GroupByShardingContext shardingCtx = atom.getShardingContext();
+        if (atom.shouldShardToFinalize()) {
+            // the groups' merges and results are worth spreading over the workers, however few the groups
+            shardingCtx.shardAfterAggregation();
+        }
         if (!atom.isSharded()) {
             // No sharding was necessary, so the maps are small, and we merge them ourselves.
             ownerMap = shardingCtx.mergeOwnerMap();
@@ -232,10 +299,6 @@ class AsyncGroupByRecordCursor implements RecordCursor {
             mapCursor = shardedCursor;
             ownerMap = null;
         }
-
-        recordA.of(mapCursor.getRecord());
-        recordB.of(mapCursor.getRecordB());
-        isDataMapBuilt = true;
     }
 
     private void parallelLongTopK(DirectLongLongSortedList destList, Function longFunc) {
@@ -379,6 +442,23 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                 .I$();
     }
 
+    private void reopenForSerialPass() {
+        serialRetries++;
+        // free what the parallel pass built, as close() would, and open the base again
+        frameSequence.await();
+        frameSequence.reset();
+        isOpen = false;
+        try {
+            frameSequence.of(base, executionContext, PartitionFrameCursorFactory.ORDER_ASC);
+            of(frameSequence, executionContext);
+        } catch (SqlException e) {
+            throw CairoException.nonCritical().put(e.getFlyweightMessage());
+        }
+        frameSequence.getAtom().getShardingContext().disableSharding();
+        frameSequence.prepareForDispatch();
+        frameSequence.getAtom().getFilterContext().initMemoryPools(frameSequence.getPageFrameAddressCache(), frameSequence.getMemoryTracker());
+    }
+
     private void throwPostAggregationException() {
         circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
         if (postAggregationCircuitBreaker.hasError()) {
@@ -391,6 +471,11 @@ class AsyncGroupByRecordCursor implements RecordCursor {
         if (!isDataMapBuilt) {
             buildMap();
         }
+    }
+
+    @TestOnly
+    long getSerialRetries() {
+        return serialRetries;
     }
 
     MapRecordCursor initSharedMapCursor(ShardedMapCursor reusableSharded, MapRecordCursor cachedNonSharded) {
@@ -424,6 +509,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
             atom.reopen();
         }
         this.circuitBreaker = executionContext.getCircuitBreaker();
+        this.executionContext = executionContext;
         // Skip the group by functions: the atom initializes them in init(), before any frame is
         // dispatched, and donates the owner state to the per-worker clones. Re-initializing them
         // here would re-run stateful initialization, such as a cursor comparison re-executing its

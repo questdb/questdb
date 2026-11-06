@@ -296,6 +296,7 @@ public class ApproxPercentileLongGroupByFunctionFactoryTest extends AbstractCair
     public void testApproxPercentileWindowJoinEmptyWindow() throws Exception {
         // WINDOW JOIN resets the value with setEmpty() for every master row. The 00:10 trade has no
         // price in its window, so it must read as null rather than as the histogram of the first row.
+        // No size: with the percentiles parallel, the join runs as Async Window Join, which reports none.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE trades (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE prices (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -320,7 +321,6 @@ public class ApproxPercentileLongGroupByFunctionFactoryTest extends AbstractCair
                     """)
                     .noLeakCheck()
                     .noRandomAccess()
-                    .expectSize()
                     .timestamp("ts")
                     .returns("""
                             ts\tp\tp4\tm\tm4

@@ -34,6 +34,7 @@ import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
+import io.questdb.cairo.sql.RecordBlock;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -86,6 +87,7 @@ import io.questdb.std.Vect;
 import io.questdb.std.Zstd;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 /**
@@ -179,6 +181,14 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
      */
     private static final int WS_HEADER_MAX_BYTES = 10;
     /**
+     * Test-only: when true, cursor results are filled row by row through
+     * {@code QwpResultBatchBuffer.appendRow} even where the cursor offers
+     * {@link RecordBlock}s, so tests can compare the two fills byte for byte.
+     * Read once per batch.
+     */
+    @TestOnly
+    public static volatile boolean DEBUG_DISABLE_BLOCK_FILL = false;
+    /**
      * Test-only. When {@code > 0}, the next entry into {@link #resumeSend} (or
      * {@link #handleCredit} on the credit-suspended resume path) throws a
      * synthetic {@link io.questdb.cairo.CairoException} before calling
@@ -225,20 +235,34 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
     // builds the principal-qualified select cache key, see SelectCacheKey
     private final StringSink scopedSelectCacheKeySink = new StringSink();
     /**
-     * Per-worker cache of compiled {@link RecordCursorFactory} keyed by SQL text.
-     * {@code HttpServer.bind} calls {@code factory.newInstance()} once per HTTP
-     * worker, so each worker ends up with its own cache -- connections that land
-     * on the same worker share a hit, connections that land on different workers
-     * do not. Same cache shape as {@code HttpServer.selectCache}, separate
-     * instance; engine-level unification is a follow-up exercise.
+     * Cache of compiled {@link RecordCursorFactory} keyed by SQL text (plus bind types).
+     * {@code HttpServer.bind} calls {@code factory.newInstance()} once per HTTP worker; the
+     * default endpoints hand every worker's processor one cache, so a plan compiled on one
+     * worker is a hit on all of them (a connection's requests are served by whichever worker
+     * picks them up). A processor built without a shared cache owns a cache of its own.
+     * A factory is in the cache only while no cursor of it is open.
      */
     private final AssociativeCache<RecordCursorFactory> selectCache;
+    private final boolean ownsSelectCache;
     private final int sharedWorkerCount;
 
     public QwpEgressUpgradeProcessor(
             CairoEngine engine,
             HttpFullFatServerConfiguration httpConfiguration,
             int sharedWorkerCount
+    ) {
+        this(engine, httpConfiguration, sharedWorkerCount, null);
+    }
+
+    /**
+     * @param sharedSelectCache the select cache shared by the server's QWP egress processors, which
+     *                          the caller owns and frees; null for a cache of this processor's own
+     */
+    public QwpEgressUpgradeProcessor(
+            CairoEngine engine,
+            HttpFullFatServerConfiguration httpConfiguration,
+            int sharedWorkerCount,
+            @Nullable AssociativeCache<RecordCursorFactory> sharedSelectCache
     ) {
         this.engine = engine;
         this.httpConfiguration = httpConfiguration;
@@ -249,7 +273,16 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         this.recvBufferSize = httpConfiguration.getRecvBufferSize();
         this.maxSqlRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
         this.sharedWorkerCount = sharedWorkerCount;
-        this.selectCache = httpConfiguration.isQueryCacheEnabled()
+        this.ownsSelectCache = sharedSelectCache == null;
+        this.selectCache = sharedSelectCache != null ? sharedSelectCache : newSelectCache(httpConfiguration);
+    }
+
+    /**
+     * A select cache for the QWP egress processors of one server: concurrent, sized by the HTTP
+     * query-cache keys, or a no-op one when the HTTP query cache is disabled.
+     */
+    public static AssociativeCache<RecordCursorFactory> newSelectCache(HttpFullFatServerConfiguration httpConfiguration) {
+        return httpConfiguration.isQueryCacheEnabled()
                 ? new ConcurrentAssociativeCache<>(httpConfiguration.getConcurrentCacheConfiguration())
                 : NO_OP_SELECT_CACHE;
     }
@@ -424,7 +457,9 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
 
     @Override
     public void close() {
-        Misc.free(selectCache);
+        if (ownsSelectCache) {
+            Misc.free(selectCache);
+        }
     }
 
     @Override
@@ -935,18 +970,9 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         if (!state.isStreamingFactoryCacheable()) {
             return;
         }
-        RecordCursorFactory factory = state.detachStreamingFactory();
-        if (factory == null) {
-            return;
-        }
-        CharSequence sqlText = state.getStreamingSqlText();
-        if (sqlText == null) {
-            // Factory was detached but we have no SQL key to cache against.
-            // Shouldn't happen in the normal flow; belt-and-braces free.
-            Misc.free(factory);
-            return;
-        }
-        selectCache.put(sqlText, factory);
+        // The put itself happens in endStreaming, once the cursor is closed: the cache is shared by
+        // the network workers, and another worker may poll the factory as soon as it is in there.
+        state.cacheStreamingFactoryOnEnd(selectCache);
     }
 
     private void dispatchEgressMessage(
@@ -2129,12 +2155,39 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                 isCursorExhausted = rowsToAdd > 0 && frame == null;
             } else {
                 boolean hasMore = true;
-                while (rowsToAdd > 0 && (hasMore = cursor.hasNext())) {
-                    batchBuffer.appendRow(cursor.getRecord());
-                    rowsToAdd--;
-                    if (batchBuffer.currentBatchDeltaWireBytes() > dictBudgetWireBytes) {
-                        dictCapHit = true;
-                        break;
+                if (state.isStreamingCursorSupportingBlocks() && !DEBUG_DISABLE_BLOCK_FILL) {
+                    // Where the cursor offers a block of its next rows, fill the batch column by
+                    // column from it; otherwise, and for the row each hasNext() returns, row by
+                    // row. Both produce the same bytes and stop at the same row for the dictionary.
+                    int blockRows = 0;
+                    while (rowsToAdd > 0) {
+                        final RecordBlock block = cursor.peekRecordBlock(rowsToAdd);
+                        if (block != null) {
+                            final int taken = batchBuffer.appendBlock(block, dictBudgetWireBytes);
+                            cursor.skipRecordBlock(taken);
+                            rowsToAdd -= taken;
+                            blockRows += taken;
+                        } else if (hasMore = cursor.hasNext()) {
+                            batchBuffer.appendRow(cursor.getRecord());
+                            rowsToAdd--;
+                        } else {
+                            break;
+                        }
+                        if (batchBuffer.currentBatchDeltaWireBytes() > dictBudgetWireBytes) {
+                            dictCapHit = true;
+                            break;
+                        }
+                    }
+                    metrics.markBlockFillRows(blockRows);
+                } else {
+                    // a cursor that never offers blocks: row by row, with no per-row peek
+                    while (rowsToAdd > 0 && (hasMore = cursor.hasNext())) {
+                        batchBuffer.appendRow(cursor.getRecord());
+                        rowsToAdd--;
+                        if (batchBuffer.currentBatchDeltaWireBytes() > dictBudgetWireBytes) {
+                            dictCapHit = true;
+                            break;
+                        }
                     }
                 }
                 isCursorExhausted = !hasMore;

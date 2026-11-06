@@ -33,16 +33,23 @@ import io.questdb.std.ObjList;
 @SuppressWarnings("resource")
 class BinCaseFunction extends BinFunction implements CaseFunction {
     private final ObjList<Function> args;
+    private final CaseBranches.Values branches;
     private final CaseFunctionPicker picker;
 
-    public BinCaseFunction(CaseFunctionPicker picker, ObjList<Function> args) {
+    public BinCaseFunction(CaseFunctionPicker picker, ObjList<Function> args, CaseBranches.Values branches) {
         this.picker = picker;
         this.args = args;
+        this.branches = branches;
     }
 
     @Override
     public ObjList<Function> args() {
         return args;
+    }
+
+    @Override
+    public CaseBranches.Values branches() {
+        return branches;
     }
 
     @Override

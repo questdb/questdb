@@ -88,6 +88,11 @@ public class CountVectorAggregateFunction extends LongFunction implements Vector
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return false;
+    }
+
+    @Override
     public boolean merge(long pRostiA, long pRostiB) {
         return Rosti.keyedIntCountMerge(pRostiA, pRostiB, valueOffset);
     }

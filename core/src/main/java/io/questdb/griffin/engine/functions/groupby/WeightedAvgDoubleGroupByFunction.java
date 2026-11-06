@@ -26,13 +26,17 @@ package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
+import io.questdb.griffin.engine.groupby.GroupByBatchKernels;
 import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 public class WeightedAvgDoubleGroupByFunction extends DoubleFunction implements GroupByFunction, BinaryFunction {
@@ -43,6 +47,48 @@ public class WeightedAvgDoubleGroupByFunction extends DoubleFunction implements 
     public WeightedAvgDoubleGroupByFunction(@NotNull Function sampleArg, @NotNull Function weightArg) {
         this.sampleArg = sampleArg;
         this.weightArg = weightArg;
+    }
+
+    @Override
+    public void computeBatchKernel(MapValue mapValue, int rowCount, GroupByBatchKernels.Args args) {
+        final long samplesAddr = args.address(0);
+        final long weightsAddr = args.address(1);
+        final int sampleType = args.type(0);
+        final int weightType = args.type(1);
+        double sum = mapValue.getDouble(valueIndex);
+        double weightSum = mapValue.getDouble(valueIndex + 1);
+        if (sampleType == ColumnType.DOUBLE && weightType == ColumnType.DOUBLE) {
+            for (int i = 0; i < rowCount; i++) {
+                final double sample = Unsafe.getDouble(samplesAddr + ((long) i << 3));
+                final double weight = Unsafe.getDouble(weightsAddr + ((long) i << 3));
+                if (Numbers.isFinite(sample) && Numbers.isFinite(weight) && weight != 0.0) {
+                    sum += sample * weight;
+                    weightSum += weight;
+                }
+            }
+        } else if (sampleType == ColumnType.FLOAT && weightType == ColumnType.INT) {
+            for (int i = 0; i < rowCount; i++) {
+                final double sample = Unsafe.getFloat(samplesAddr + ((long) i << 2));
+                final int w = Unsafe.getInt(weightsAddr + ((long) i << 2));
+                // a NULL int weight is NaN, and so not finite
+                if (w != Numbers.INT_NULL && w != 0 && Numbers.isFinite(sample)) {
+                    final double weight = w;
+                    sum += sample * weight;
+                    weightSum += weight;
+                }
+            }
+        } else {
+            for (int i = 0; i < rowCount; i++) {
+                final double sample = GroupByBatchKernels.rawDouble(samplesAddr, sampleType, i);
+                final double weight = GroupByBatchKernels.rawDouble(weightsAddr, weightType, i);
+                if (Numbers.isFinite(sample) && Numbers.isFinite(weight) && weight != 0.0) {
+                    sum += sample * weight;
+                    weightSum += weight;
+                }
+            }
+        }
+        mapValue.putDouble(valueIndex, sum);
+        mapValue.putDouble(valueIndex + 1, weightSum);
     }
 
     @Override
@@ -59,6 +105,34 @@ public class WeightedAvgDoubleGroupByFunction extends DoubleFunction implements 
     }
 
     @Override
+    public void computeKeyedBatchKernel(
+            FlyweightPackedMapValue mapValue,
+            long baseValueAddr,
+            long batchAddr,
+            int rowCount,
+            GroupByBatchKernels.Args args
+    ) {
+        final long samplesAddr = args.address(0);
+        final long weightsAddr = args.address(1);
+        final long sumOffset = mapValue.getOffset(valueIndex);
+        final long weightOffset = mapValue.getOffset(valueIndex + 1);
+        for (int i = 0; i < rowCount; i++) {
+            final long encoded = Unsafe.getLong(batchAddr + ((long) i << 3));
+            final long valueAddr = baseValueAddr + Map.decodeBatchOffset(encoded);
+            final double sample = Unsafe.getDouble(samplesAddr + ((long) i << 3));
+            final double weight = Unsafe.getDouble(weightsAddr + ((long) i << 3));
+            final boolean valid = Numbers.isFinite(sample) && Numbers.isFinite(weight) && weight != 0.0;
+            if (Map.isNewBatchEntry(encoded)) {
+                Unsafe.putDouble(valueAddr + sumOffset, valid ? sample * weight : 0.0);
+                Unsafe.putDouble(valueAddr + weightOffset, valid ? weight : 0.0);
+            } else if (valid) {
+                Unsafe.putDouble(valueAddr + sumOffset, Unsafe.getDouble(valueAddr + sumOffset) + sample * weight);
+                Unsafe.putDouble(valueAddr + weightOffset, Unsafe.getDouble(valueAddr + weightOffset) + weight);
+            }
+        }
+    }
+
+    @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final double sample = sampleArg.getDouble(record);
         final double weight = weightArg.getDouble(record);
@@ -66,6 +140,21 @@ public class WeightedAvgDoubleGroupByFunction extends DoubleFunction implements 
             mapValue.addDouble(valueIndex, sample * weight);
             mapValue.addDouble(valueIndex + 1, weight);
         }
+    }
+
+    @Override
+    public Function getBatchKernelArg(int index) {
+        return index == 0 ? sampleArg : weightArg;
+    }
+
+    @Override
+    public int getBatchKernelArgCount() {
+        return 2;
+    }
+
+    @Override
+    public int getBatchKernelArgType(int index) {
+        return ColumnType.DOUBLE;
     }
 
     @Override
@@ -86,6 +175,11 @@ public class WeightedAvgDoubleGroupByFunction extends DoubleFunction implements 
     @Override
     public Function getRight() {
         return weightArg;
+    }
+
+    @Override
+    public boolean supportsRawKernelArgs() {
+        return true;
     }
 
     @Override
@@ -112,6 +206,11 @@ public class WeightedAvgDoubleGroupByFunction extends DoubleFunction implements 
 
     @Override
     public boolean isConstant() {
+        return false;
+    }
+
+    @Override
+    public boolean isOrderSensitive() {
         return false;
     }
 

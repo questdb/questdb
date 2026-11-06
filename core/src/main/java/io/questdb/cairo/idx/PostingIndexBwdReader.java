@@ -36,9 +36,14 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.TestOnly;
 
 public class PostingIndexBwdReader extends AbstractPostingIndexReader {
     private static final int MIN_BUFFER_CAPACITY = 4;
+    // detached cursors closed by their owner, for getDetachedCursor() to reuse; both lists are
+    // guarded by synchronized (freeDetachedCursors), as any thread may take or close one
+    private final ObjList<Cursor> freeDetachedCursors = new ObjList<>();
+    private final ObjList<NullCursor> freeDetachedNullCursors = new ObjList<>();
     private final ObjList<Cursor> freeCursors = new ObjList<>();
     private final ObjList<NullCursor> freeNullCursors = new ObjList<>();
 
@@ -83,6 +88,18 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             freeNullCursors.getQuick(i).releaseResources();
         }
         Misc.clear(freeNullCursors);
+        // super.close() closed the key file, so a detached cursor closed from now on sees
+        // !isOpen() under the lock and releases itself instead of pooling
+        synchronized (freeDetachedCursors) {
+            for (int i = 0, n = freeDetachedCursors.size(); i < n; i++) {
+                freeDetachedCursors.getQuick(i).releaseResources();
+            }
+            Misc.clear(freeDetachedCursors);
+            for (int i = 0, n = freeDetachedNullCursors.size(); i < n; i++) {
+                freeDetachedNullCursors.getQuick(i).releaseResources();
+            }
+            Misc.clear(freeDetachedNullCursors);
+        }
     }
 
     @Override
@@ -116,6 +133,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             // the reader's close() only drains freeNullCursors and would never
             // reclaim a cursor stranded mid-of().
             try {
+                nc.cursorCoverCount = cursorCoverCount(requiredCoverColumns);
                 nc.of(key, minValue, indexMaxValue);
             } catch (Throwable th) {
                 nc.releaseResources();
@@ -139,6 +157,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             // See the NullCursor branch above: release the cursor's native buffers
             // if of() throws so a mid-of() failure cannot strand them.
             try {
+                c.cursorCoverCount = cursorCoverCount(requiredCoverColumns);
                 c.of(key, minValue, indexMaxValue);
             } catch (Throwable th) {
                 c.releaseResources();
@@ -153,9 +172,10 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
     /**
      * Backward-iteration peer of
      * {@link PostingIndexFwdReader#getDetachedCursor(int, long, long, int[])}.
-     * Constructs a fresh, single-worker-owned cursor that never draws from or
-     * returns to the shared freeCursors pool; its {@link Cursor#close()} frees
-     * its own native scratch directly. Positioning is identical to
+     * Returns a single-worker-owned cursor that never draws from or returns to
+     * the shared freeCursors pool; it is reused through a synchronized
+     * per-reader detached pool, which its {@link Cursor#close()} returns it to
+     * (or frees its native scratch). Positioning is identical to
      * {@link #getCursor(int, long, long, int[])}; only the construct/close
      * lifecycle differs. The reader's shared state must have been made
      * read-only first via
@@ -177,12 +197,23 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
         long indexMaxValue = entryMaxValue >= 0 ? Math.min(maxValue, entryMaxValue) : maxValue;
 
         if (key == 0 && columnTop > 0 && minValue < columnTop) {
-            NullCursor nc = new NullCursor();
-            nc.isDetached = true;
-            // of() can throw (e.g. OOM growing the block buffer). A detached cursor is
-            // never in the reader's free list, so nothing else would reclaim it; release
-            // its native scratch on a mid-of() failure (mirrors getCursor).
+            NullCursor nc = null;
+            synchronized (freeDetachedCursors) {
+                if (freeDetachedNullCursors.size() > 0) {
+                    nc = freeDetachedNullCursors.popLast();
+                    nc.isPooled = false;
+                }
+            }
+            if (nc == null) {
+                nc = new NullCursor();
+                nc.isDetached = true;
+                assert DETACHED_CURSOR_NEWS.incrementAndGet() > 0;
+            }
+            // of() can throw (e.g. OOM growing the block buffer). The cursor is in no
+            // pool now, so nothing else would reclaim it; release its native scratch on
+            // a mid-of() failure (mirrors getCursor).
             try {
+                nc.cursorCoverCount = cursorCoverCount(requiredCoverColumns);
                 nc.of(key, minValue, indexMaxValue);
             } catch (Throwable th) {
                 nc.releaseResources();
@@ -196,9 +227,20 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
 
         if (key < keyCount) {
             openRequiredSidecars(requiredCoverColumns);
-            Cursor c = new Cursor();
-            c.isDetached = true;
+            Cursor c = null;
+            synchronized (freeDetachedCursors) {
+                if (freeDetachedCursors.size() > 0) {
+                    c = freeDetachedCursors.popLast();
+                    c.isPooled = false;
+                }
+            }
+            if (c == null) {
+                c = new Cursor();
+                c.isDetached = true;
+                assert DETACHED_CURSOR_NEWS.incrementAndGet() > 0;
+            }
             try {
+                c.cursorCoverCount = cursorCoverCount(requiredCoverColumns);
                 c.of(key, minValue, indexMaxValue);
             } catch (Throwable th) {
                 c.releaseResources();
@@ -210,6 +252,40 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
         return EmptyRowCursor.INSTANCE;
     }
 
+    /**
+     * Detached cursors waiting in this reader's detached pool, plain and NULL-key together.
+     */
+    @TestOnly
+    public int getFreeDetachedCursorCount() {
+        synchronized (freeDetachedCursors) {
+            return freeDetachedCursors.size() + freeDetachedNullCursors.size();
+        }
+    }
+
+    // Returns a closed detached cursor to its pool, with the same reset the owner pool
+    // makes, or frees it when the reader is closed or the pool is full.
+    private <T extends Cursor> void closeDetached(ObjList<T> pool, T cursor) {
+        if (cursor.isPooled) {
+            // closed twice
+            return;
+        }
+        cursor.closeCoveringResources();
+        if (cursor.efRankDirAddr != 0) {
+            Unsafe.free(cursor.efRankDirAddr, (long) cursor.efRankDirCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
+            cursor.efRankDirAddr = 0;
+            cursor.efRankDirCapacity = 0;
+        }
+        cursor.resetCoveringState();
+        synchronized (freeDetachedCursors) {
+            if (isOpen() && pool.size() < MAX_CACHED_FREE_CURSORS) {
+                cursor.isPooled = true;
+                pool.add(cursor);
+                return;
+            }
+        }
+        cursor.releaseResources();
+    }
+
     private class Cursor extends AbstractCoveringCursor {
         private final LongList builderEntries = new LongList();
         protected long efRankDirAddr;
@@ -218,9 +294,10 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
         protected long minValue;
         protected long next;
         // Set for cursors handed out by getDetachedCursor: a single worker owns
-        // this cursor and it was never drawn from freeCursors, so close() must
-        // free its native scratch directly and never push it back to the pool
-        // (which is racy under the concurrent same-reader decode this enables).
+        // this cursor and it is never drawn from freeCursors, so close() must
+        // never push it to that pool (which is racy under the concurrent
+        // same-reader decode this enables); it goes to the synchronized
+        // freeDetachedCursors pool instead, for the cursor's whole life.
         boolean isDetached;
         private long blockBufferAddr = 0;
         private int blockBufferCapacity = 0;
@@ -266,12 +343,10 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
         public void close() {
             // Detached cursors are owned by a single worker thread that is, by
             // design, NOT the reader's owning thread; they never touch the
-            // shared freeCursors pool. releaseResources() frees the block buffer,
-            // the EF rank directory, and all covering scratch -- the same native
-            // state the pool branch frees -- so skip both the operating-thread
-            // gate and the pool-push.
+            // shared freeCursors pool. They skip the operating-thread gate and
+            // return to the synchronized detached pool instead.
             if (isDetached) {
-                releaseResources();
+                closeDetached(freeDetachedCursors, this);
                 return;
             }
             // Re-pool only while the owning reader is still open (the pool retains
@@ -309,7 +384,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                         return false;
                     }
                     next = value;
-                    if (coverCount > 0) {
+                    if (cursorCoverCount > 0) {
                         sidecarOrdinal--;
                         cachedSidecarIdx = isCurrentGenDense
                                 ? sidecarStrideKeyStart + sidecarOrdinal
@@ -323,7 +398,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                     if (blockBufferPos >= 0) {
                         this.next = Unsafe.getLong(blockBufferAddr + (long) blockBufferPos * Long.BYTES);
                         blockBufferPos--;
-                        if (coverCount > 0) {
+                        if (cursorCoverCount > 0) {
                             sidecarOrdinal--;
                             cachedSidecarIdx = isCurrentGenDense
                                     ? sidecarStrideKeyStart + sidecarOrdinal
@@ -341,7 +416,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                         blockBufferPos--;
                         if (value <= maxValue) {
                             this.next = value;
-                            if (coverCount > 0) {
+                            if (cursorCoverCount > 0) {
                                 sidecarOrdinal--;
                                 cachedSidecarIdx = isCurrentGenDense
                                         ? sidecarStrideKeyStart + sidecarOrdinal
@@ -349,7 +424,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                             }
                             return true;
                         }
-                        if (coverCount > 0) sidecarOrdinal--;
+                        if (cursorCoverCount > 0) sidecarOrdinal--;
                     }
                 }
 
@@ -477,15 +552,15 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                     if (minD > 0) {
                         long over = (startValue - maxValue + minD - 1) / minD;
                         if (over >= remaining) {
-                            if (coverCount > 0) sidecarOrdinal -= remaining;
+                            if (cursorCoverCount > 0) sidecarOrdinal -= remaining;
                             remaining = 0;
                         } else {
                             startValue -= over * minD;
-                            if (coverCount > 0) sidecarOrdinal -= (int) over;
+                            if (cursorCoverCount > 0) sidecarOrdinal -= (int) over;
                             remaining -= (int) over;
                         }
                     } else {
-                        if (coverCount > 0) sidecarOrdinal -= remaining;
+                        if (cursorCoverCount > 0) sidecarOrdinal -= remaining;
                         remaining = 0;
                     }
                 }
@@ -738,7 +813,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             long countsAddr = strideAddr + PostingIndexUtils.STRIDE_MODE_PREFIX_SIZE;
             int totalValueCount = Unsafe.getInt(countsAddr + (long) localKey * Integer.BYTES);
             this.sidecarStrideKeyStart = 0;
-            if (coverCount > 0) {
+            if (cursorCoverCount > 0) {
                 int deltaKeyStartCount = 0;
                 for (int k = 0; k < localKey; k++) {
                     deltaKeyStartCount += Unsafe.getInt(countsAddr + (long) k * Integer.BYTES);
@@ -846,7 +921,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             // descending order, so it starts one past the key's last covered
             // value and decrements — hence "+ totalValueCount".
             // See SparseGenSidecarPrefixSum.
-            if (coverCount > 0) {
+            if (cursorCoverCount > 0) {
                 int sidecarBase = sidecarPrefixSum.baseOrdinal(
                         genLookup.getCacheVersion(), genCount, gen, start, countsBase, activeKeyCount, isFrozen());
                 this.sidecarOrdinal = sidecarBase + totalValueCount;
@@ -907,7 +982,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             // O(1) via the reader-scoped memo instead of an O(idx) scan of counts[]
             // on every cursor open; version-guarded on the gen snapshot. See the
             // sibling loadSparseGenByPrefixSum and SparseGenSidecarPrefixSum.
-            if (coverCount > 0) {
+            if (cursorCoverCount > 0) {
                 int sidecarBase = sidecarPrefixSum.baseOrdinal(
                         genLookup.getCacheVersion(), genCount, gen, idx, countsBase, activeKeyCount, isFrozen());
                 this.sidecarOrdinal = sidecarBase + totalValueCount;
@@ -961,6 +1036,9 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                     }
                 }
                 efHighWordIdx = efNumHighWords - 1;
+                if (maxValue < u - 1) {
+                    seekEF(baseAddr, efTotalCount, efNumHighWords);
+                }
                 isEFMode = true;
                 encodedBlockCount = 0;
                 isFlatMode = false;
@@ -1027,7 +1105,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
 
             // Adjust sidecar ordinal for trimmed trailing blocks — those values
             // are never iterated, so the ordinal must not count them.
-            if (endBlock < firstWord && coverCount > 0) {
+            if (endBlock < firstWord && cursorCoverCount > 0) {
                 int trailingTrimmedCount = 0;
                 for (int b = endBlock; b < firstWord; b++) {
                     trailingTrimmedCount += Unsafe.getByte(baseAddr + srcValueCountsOffset + b) & 0xFF;
@@ -1039,6 +1117,77 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             this.currentBlock = endBlock - 1;
             this.minBlock = startBlock;
             this.blockBufferPos = -1;
+        }
+
+        /**
+         * Positions the reverse EF decode at the high word holding the last ordinal whose value
+         * is {@code <= maxValue}, so a cursor opened for a page frame in the middle of the key's
+         * list does not decode (and discard) every value after the frame. Ranked blobs seek in
+         * O(log n) through the trailer's checkpoints (efLowerBound, then an O(1) step to the
+         * word holding that ordinal); legacy unranked blobs, whose rank
+         * directory the caller has just built, skip whole high words from the top. The decode
+         * resumes at a word boundary, exactly the state a from-the-top decode reaches there, and
+         * {@link #hasNext()} discards the at most 64 remaining values above maxValue as before.
+         */
+        private void seekEF(long baseAddr, int count, int numHighWords) {
+            int word;
+            int skipped = 0;
+            if (maxValue < 0) {
+                word = -1;
+                skipped = count;
+            } else if (isEFRanked) {
+                final long blobAddr = baseAddr + efBlobOffset;
+                final int end = PostingIndexUtils.efLowerBound(blobAddr, efBlobSize, maxValue + 1);
+                if (end == 0) {
+                    word = -1;
+                    skipped = count;
+                } else if (end > 0 && end < count) {
+                    // maxValue < universe - 1, so the last value lies above maxValue and end < count.
+                    // Start at the word holding ordinal end (or the zero that ends maxValue + 1's
+                    // high bucket): ordinal end - 1 is in that word or below it, and the decode
+                    // discards the ones of that word that lie above maxValue.
+                    final long packed = PostingIndexUtils.efLowerBoundWord(blobAddr, maxValue + 1, end);
+                    if (packed < 0) {
+                        // The high word is inconsistent with the validated ordinal (corrupt data):
+                        // keep the from-the-top walk, whose ranked decode reports the corruption.
+                        return;
+                    }
+                    word = (int) (packed >>> 32);
+                    final int through = (int) packed + Long.bitCount(Unsafe.getLong(baseAddr + efHighOffset + (long) word * Long.BYTES));
+                    skipped = count - Math.min(through, count);
+                } else {
+                    // end == count cannot happen: the caller seeks only when maxValue < u - 1, the
+                    // last value, so that value lies above maxValue.
+                    assert end != count : "EF lower bound past the last value [end=" + end + ", count=" + count + ']';
+                    // Unusable trailer: keep the from-the-top walk, whose ranked decode reports
+                    // the corruption.
+                    return;
+                }
+            } else {
+                // A word whose first value has a high part above maxValue's holds only values
+                // above maxValue (value >= high << L > maxValue).
+                final long maxHigh = maxValue >>> efL;
+                word = numHighWords - 1;
+                while (word >= 0) {
+                    final long bits = Unsafe.getLong(baseAddr + efHighOffset + (long) word * Long.BYTES);
+                    if (bits != 0) {
+                        final int firstRank = Unsafe.getInt(efRankDirAddr + (long) word * Integer.BYTES);
+                        final long firstHigh = (long) word * 64 + Long.numberOfTrailingZeros(bits) - firstRank;
+                        if (firstHigh <= maxHigh) {
+                            break;
+                        }
+                        skipped += Long.bitCount(bits);
+                    }
+                    word--;
+                }
+                skipped = Math.min(skipped, count);
+            }
+            efHighWordIdx = word;
+            // hasNext() decrements sidecarOrdinal once per value it discards above maxValue; the
+            // seek discards these values without visiting them, so account for them here.
+            if (cursorCoverCount > 0) {
+                sidecarOrdinal -= skipped;
+            }
         }
 
         void of(int key, long minValue, long maxValue) {
@@ -1109,9 +1258,9 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
         @Override
         public void close() {
             // See Cursor.close(): detached cursors bypass the operating-thread
-            // gate and the pool, freeing their own native scratch directly.
+            // gate and return to the synchronized detached pool.
             if (isDetached) {
-                releaseResources();
+                closeDetached(freeDetachedNullCursors, this);
                 return;
             }
             // See Cursor.close(): re-pool only while the reader is open and on the

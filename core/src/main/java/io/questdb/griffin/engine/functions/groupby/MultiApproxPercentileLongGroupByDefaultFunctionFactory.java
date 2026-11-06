@@ -56,6 +56,9 @@ public class MultiApproxPercentileLongGroupByDefaultFunctionFactory implements F
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         checkPercentileArray(args.getQuick(1), argPositions.getQuick(1));
+        if (ApproxPercentileLongSparseGroupByFunction.isEnabled(configuration)) {
+            return new MultiApproxPercentileLongSparseGroupByFunction(args.getQuick(0), args.getQuick(1), DEFAULT_PRECISION, argPositions.getQuick(1));
+        }
         return new MultiApproxPercentileLongGroupByFunction(args.getQuick(0), args.getQuick(1), DEFAULT_PRECISION, argPositions.getQuick(1));
     }
 }

@@ -132,6 +132,11 @@ public class BitXorByteGroupByFunction extends ByteFunction implements GroupByFu
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return false;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return UnaryFunction.super.isThreadSafe();
     }

@@ -123,6 +123,11 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
     // bind-variable TZ picks up its current value. Null means no TZ wrap.
     private Function tzFunc;
 
+    @Override
+    public int getScanDirection() {
+        return SCAN_DIRECTION_FORWARD;
+    }
+
     /**
      * Appends the fixed-width value header (LAST_KNOWN_TS_SLOT, PREV_ROWID_SLOT
      * - two LONGs) the cursor expects on every key entry. External map builders

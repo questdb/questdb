@@ -163,6 +163,11 @@ class AvgDecimal8Rescale256GroupByFunction extends Decimal256Function implements
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return false;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return false;
     }

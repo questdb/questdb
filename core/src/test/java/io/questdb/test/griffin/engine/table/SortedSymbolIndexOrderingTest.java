@@ -46,19 +46,23 @@ import org.junit.Test;
  * ORDER BY key, ts DESC (a backward index walk inside forward-ordered frames) made the same claim from the
  * same compile-time single-frame assumption, so they are covered here too.
  * <p>
- * Every test asserts the globally ordered result the SQL asks for; the plan assertions pin the
- * corrective sort the planner now emits, and the two controls pin the claims that survive.
+ * Every test asserts the globally ordered result the SQL asks for. Where the plan claims the order
+ * without a sort, it does so through a key-major walk (KeyMajorPageFrameRecordCursor), which reads
+ * each key across every frame of the scan rather than per frame; elsewhere the plan keeps a
+ * corrective sort, and the two controls pin the claims that survive.
  */
 public class SortedSymbolIndexOrderingTest extends AbstractCairoTest {
 
     private static final String ORDERED_QUERY = "SELECT s, ts FROM x WHERE ts IN '2024-01-01' ORDER BY s, ts";
+    // the key-major walk reads each key across every frame of the interval scan, composite pieces
+    // included, so it claims the order without a sort
     private static final String ORDERED_QUERY_PLAN = """
-            Encode sort light
-              keys: [s, ts]
-                PageFrame
-                    Row forward scan
-                    Interval forward scan on: x
-                      intervals: [("2024-01-01T00:00:00.000000Z","2024-01-01T23:59:59.999999Z")]
+            SortedSymbolIndex
+              keyMajor: true
+                Index forward scan on: s
+                  symbolOrder: asc
+                Interval forward scan on: x
+                  intervals: [("2024-01-01T00:00:00.000000Z","2024-01-01T23:59:59.999999Z")]
             """;
 
     @Test
@@ -67,14 +71,14 @@ public class SortedSymbolIndexOrderingTest extends AbstractCairoTest {
             createColumnTopSplitTable();
 
             final String query = "SELECT s, ts, v FROM x WHERE ts IN '2024-01-01' ORDER BY s, ts";
-            // no leaf claims the advice any more, so the planner sorts the whole interval scan
+            // the key-major walk reads each key across the column-top frames
             assertQuery(query).assertsPlan("""
-                    Encode sort light
-                      keys: [s, ts]
-                        PageFrame
-                            Row forward scan
-                            Interval forward scan on: x
-                              intervals: [("2024-01-01T00:00:00.000000Z","2024-01-01T23:59:59.999999Z")]
+                    SortedSymbolIndex
+                      keyMajor: true
+                        Index forward scan on: s
+                          symbolOrder: asc
+                        Interval forward scan on: x
+                          intervals: [("2024-01-01T00:00:00.000000Z","2024-01-01T23:59:59.999999Z")]
                     """);
             assertQuery(query).returns("""
                     s\tts\tv
@@ -101,12 +105,12 @@ public class SortedSymbolIndexOrderingTest extends AbstractCairoTest {
 
             final String query = "SELECT s, ts, v FROM x WHERE ts IN '2024-01-01' ORDER BY s, ts DESC";
             assertQuery(query).assertsPlan("""
-                    Encode sort light
-                      keys: [s, ts desc]
-                        PageFrame
-                            Row forward scan
-                            Interval forward scan on: x
-                              intervals: [("2024-01-01T00:00:00.000000Z","2024-01-01T23:59:59.999999Z")]
+                    SortedSymbolIndex
+                      keyMajor: true
+                        Index backward scan on: s
+                          symbolOrder: asc
+                        Interval forward scan on: x
+                          intervals: [("2024-01-01T00:00:00.000000Z","2024-01-01T23:59:59.999999Z")]
                     """);
             assertQuery(query).returns("""
                     s\tts\tv
@@ -393,13 +397,13 @@ public class SortedSymbolIndexOrderingTest extends AbstractCairoTest {
             createColumnTopSplitTable();
             final String query = "SELECT s, ts, v FROM x WHERE s = 'k1' AND ts IN '2024-01-01' ORDER BY s, ts DESC";
             assertQuery(query).assertsPlan("""
-                    Encode sort light
-                      keys: [s, ts desc]
-                        DeferredSingleSymbolFilterPageFrame
-                            Index forward scan on: s deferred: true
+                    FilterOnValues symbolOrder: asc
+                      keyMajor: true
+                        Cursor-order scan
+                            Index backward scan on: s deferred: true
                               filter: s='k1'
-                            Interval forward scan on: x
-                              intervals: [("2024-01-01T00:00:00.000000Z","2024-01-01T23:59:59.999999Z")]
+                        Interval forward scan on: x
+                          intervals: [("2024-01-01T00:00:00.000000Z","2024-01-01T23:59:59.999999Z")]
                     """);
             assertQuery(query).returns("""
                     s\tts\tv

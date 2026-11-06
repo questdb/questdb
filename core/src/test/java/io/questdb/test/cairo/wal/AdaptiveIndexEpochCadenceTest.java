@@ -32,16 +32,19 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.idx.PostingIndexUtils;
+import io.questdb.cairo.idx.PostingIndexWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
-import io.questdb.mp.SCSequence;
+import io.questdb.mp.ConcurrentQueue;
 import io.questdb.std.Numbers;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
+import io.questdb.tasks.PostingSealPurgeTask;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Test;
@@ -99,6 +102,11 @@ public class AdaptiveIndexEpochCadenceTest extends AbstractCairoTest {
         return params;
     }
 
+    @After
+    public void resetCoveringSealAppend() {
+        PostingIndexWriter.COVERING_SEAL_APPEND_DISABLED = false;
+    }
+
     @Test
     public void testNoInlineSavePoint() throws Exception {
         setUpAdaptive();
@@ -141,6 +149,9 @@ public class AdaptiveIndexEpochCadenceTest extends AbstractCairoTest {
         // point reads. Only the whole-partition rewrite reseals: with merge-append on (the harness default) a
         // covering index grows by a generation per commit and supersedes nothing. Pin the production default.
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+        // The native path's covered tail append grows a covering index the same way on a pure append. Pin the reseal
+        // path; resetCoveringSealAppend() restores the default.
+        PostingIndexWriter.COVERING_SEAL_APPEND_DISABLED = true;
         // Retry a held purge on every job run, so a released one is removed on the next run.
         node1.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY, 1);
         node1.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_LIMIT, 1);
@@ -225,19 +236,13 @@ public class AdaptiveIndexEpochCadenceTest extends AbstractCairoTest {
     // Consumes the posting seal-purge tasks published so far and returns how many there were. No purge
     // job runs in this harness, so this is the only consumer.
     private static long drainPurgeQueue() {
-        final SCSequence sub = engine.getMessageBus().getPostingSealPurgeSubSeq();
+        final ConcurrentQueue<PostingSealPurgeTask> queue = engine.getMessageBus().getPostingSealPurgeQueue();
+        final PostingSealPurgeTask task = new PostingSealPurgeTask();
         long n = 0;
-        while (true) {
-            final long cursor = sub.next();
-            if (cursor == -2) {
-                continue;
-            }
-            if (cursor < 0) {
-                return n;
-            }
-            sub.done(cursor);
+        while (queue.tryDequeue(task)) {
             n++;
         }
+        return n;
     }
 
     private static boolean exists(String file) {

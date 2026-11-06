@@ -165,9 +165,12 @@ public class AsyncGroupingSetsRecordCursorFactory extends AbstractRecordCursorFa
         return base;
     }
 
+    // Emits the entries of the per-set maps, not the base cursor's rows, so the output is
+    // map-ordered by construction. Forwarding base.getScanDirection() would restate the base's
+    // FORWARD as a false claim one level up (see AsyncGroupByRecordCursorFactory).
     @Override
     public int getScanDirection() {
-        return base.getScanDirection();
+        return SCAN_DIRECTION_OTHER;
     }
 
     @Override

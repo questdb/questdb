@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.cairo.vm.api.MemoryCARW;
@@ -109,6 +110,26 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
 
     default SingleSymbolFilter convertToSampleByIndexPageFrameCursorFactory() {
         return null;
+    }
+
+    /**
+     * A plan-time upper bound on the number of rows this factory's cursor returns, or -1 when the
+     * factory cannot tell. It must be cheap: it may read table metadata, partition row counts, the
+     * timestamps that bound an interval inside the partitions it touches and index metadata, but it
+     * must not open a record cursor or read column data beyond that. The planner uses it to choose
+     * between algorithms that return the same rows, so a wrong answer costs speed, never results.
+     * <p>
+     * The default answers -1. A factory that only drops rows by a predicate it cannot size keeps
+     * the default; the planner then asks its base factory, whose bound is still a bound.
+     * <p>
+     * A plan cached with the factory keeps the choice made from this estimate until the query is
+     * compiled again, however the table grows. Rows a live view holds in memory are not counted.
+     *
+     * @param executionContext the SQL execution context the query is compiled in
+     * @return an upper bound on the row count, or -1 when unknown
+     */
+    default long estimateRowCountUpperBound(SqlExecutionContext executionContext) {
+        return -1;
     }
 
     default PageFrameSequence<?> execute(SqlExecutionContext executionContext, SCSequence collectSubSeq, int order) throws SqlException {
@@ -224,6 +245,28 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     }
 
     /**
+     * Returns the scan direction of the rows this factory delivers THROUGH
+     * {@link #getPageFrameCursor(SqlExecutionContext, int)}, using the same constants as
+     * {@link #getScanDirection()}.
+     * <p>
+     * The two answers coincide for almost every factory, which is why the default simply
+     * forwards. They diverge only for a factory that picks between several delegates at open
+     * time and cannot offer all of them as page frames: {@link #getScanDirection()} must stay
+     * conservative across EVERY delegate it could open, because a record-cursor consumer may
+     * receive any of them, whereas a page-frame consumer can only ever receive one of the
+     * subset that has frames to give. Answering the conservative direction to a page-frame
+     * consumer refuses queries that the delegate making it conservative could not execute.
+     * <p>
+     * Ask this, not {@link #getScanDirection()}, whenever the caller is about to consume page
+     * frames. Ask {@link #getScanDirection()} everywhere else.
+     *
+     * @return the scan direction of this factory's page frames
+     */
+    default int getPageFrameScanDirection() {
+        return getScanDirection();
+    }
+
+    /**
      * Returns the direction of scanning used in this factory:
      * - {@link #SCAN_DIRECTION_FORWARD}, {@link #SCAN_DIRECTION_BACKWARD} - for regular data/interval frame scans
      * - {@link #SCAN_DIRECTION_OTHER} - for some index scans, e.g. cursor-order index lookup with multiple values
@@ -231,11 +274,60 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
      * Note: tables with designated timestamp keep rows in timestamp order, so:
      * - forward scan produces rows in ascending ts order
      * - backward scan produces rows in descending ts order
+     * <p>
+     * This method is deliberately abstract. {@link #SCAN_DIRECTION_FORWARD} is a positive claim that
+     * consumers act on - ORDER BY elision, window-order dismissal, ASOF/LT join eligibility, CTAS
+     * designated-timestamp inheritance and COPY export partitioning all read it. A default would let a
+     * factory make that claim by omission, so every implementation must state its answer explicitly.
      *
      * @return the scan direction
      */
-    default int getScanDirection() {
-        return SCAN_DIRECTION_FORWARD;
+    int getScanDirection();
+
+    /**
+     * Asks this factory to stop guaranteeing designated-timestamp order, in exchange
+     * for whatever that guarantee costs it. Returns true if it did.
+     * <p>
+     * A multi-key covering scan pays heavily for the guarantee: it k-way merges its
+     * per-key cursors by row id, and the merged frames interleave keys so they carry
+     * no resolved symbol key, which makes the async worker arm skip them and decode
+     * every row on the cursor thread.
+     * <p>
+     * Only a CONSUMER may call this, and only one that (a) consumes its base to
+     * exhaustion, so no early-exit-on-ordered-stream is given up, and (b) does not
+     * depend on row order for its results. A parallel GROUP BY / SAMPLE BY with no
+     * order-sensitive aggregate satisfies both. A LIMIT over an ordered scan does
+     * NOT -- it relies on the ordered stream to stop early, and losing that is
+     * O(limit) -> O(n log n).
+     * <p>
+     * After a successful call {@link #getScanDirection()} reports
+     * {@link #SCAN_DIRECTION_OTHER}, so anything above that trusts scan direction
+     * still sees the truth.
+     * <p>
+     * {@code groupByKeyColumns} carries the consumer's grouping columns, or null when it
+     * does not group (a not-keyed aggregate) or cannot describe them. A base may accept an
+     * order-sensitive consumer when the grouping is provably confined to one of its
+     * ordered runs -- a covering scan grouped by its own index column, where every group
+     * draws from one key's ascending posting list. The filter is shared scratch state:
+     * read it during the call, never retain it.
+     * <p>
+     * {@code framePassesPerFrame} is how many separate passes the consumer makes over EACH page
+     * frame it is handed -- 1 for a consumer that reads a frame once and updates every aggregate
+     * as it goes, N for one that dispatches N independent passes over the same frame. It is a
+     * structural property of the consumer, readable off its own dispatch loop, and it is passed
+     * because it is the base's per-frame cost MULTIPLIER: a base that trades fewer rows per frame
+     * for more frames pays this consumer's per-frame cost once per pass, so the density at which
+     * that trade stops paying scales with it. A consumer that does not know may pass 1, which is
+     * the value that makes a base most willing to accept -- so a base must not treat it as a
+     * safety input. It is a performance hint and nothing else; no correctness property may rest
+     * on it.
+     */
+    default boolean tryDisableTimestampOrdering(
+            boolean hasOrderSensitiveAggregates,
+            @Nullable ListColumnFilter groupByKeyColumns,
+            int framePassesPerFrame
+    ) {
+        return false;
     }
 
     /**
@@ -457,6 +549,26 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
      */
     default boolean supportsFilterStealing() {
         return false;
+    }
+
+    /**
+     * Whether {@link #getPageFrameCursor} returns an index-gather cursor
+     * ({@code IndexGatherPageFrameCursor}): page frames that hold every row of the scan, and tasks
+     * that read the rows a symbol list selects through a posting index. Only a consumer that reads
+     * rows through those tasks may open it; see {@code IndexGatherRecordCursorFactory}.
+     */
+    default boolean supportsIndexGatherFrames() {
+        return false;
+    }
+
+    /**
+     * Rows under which a parallel consumer of this factory's page frames reduces them all on the
+     * query's thread instead of dispatching them to the workers. The consumer decides it each time
+     * it opens, from the rows of the frames it has just built, so a cached plan follows the data.
+     * 0, the default, always dispatches.
+     */
+    default long getLocalReduceMaxRows(SqlExecutionContext executionContext) {
+        return 0;
     }
 
     /**

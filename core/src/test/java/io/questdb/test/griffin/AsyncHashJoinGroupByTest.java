@@ -2663,6 +2663,11 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
         }
 
         @Override
+        public int getScanDirection() {
+            return base.getScanDirection();
+        }
+
+        @Override
         public boolean recordCursorSupportsRandomAccess() {
             return base.recordCursorSupportsRandomAccess();
         }

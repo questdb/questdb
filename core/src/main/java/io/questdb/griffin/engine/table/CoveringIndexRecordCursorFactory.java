@@ -30,6 +30,8 @@ import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.CompositeAwarePartitionFrameCursor;
 import io.questdb.cairo.EmptySymbolMapReader;
 import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.IntervalPartitionFrameCursorFactory;
+import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.ScannedColumnTopProbe;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
@@ -41,6 +43,7 @@ import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.idx.AbstractPostingIndexReader;
 import io.questdb.cairo.idx.CoveringRowCursor;
 import io.questdb.cairo.idx.IndexReader;
+import io.questdb.cairo.map.Map;
 import io.questdb.cairo.sql.ColumnMapping;
 import io.questdb.cairo.sql.CoveredColumnDecoder;
 import io.questdb.cairo.sql.DataSource;
@@ -53,6 +56,7 @@ import io.questdb.cairo.sql.PartitionFrameCursor;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordBlock;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursor;
@@ -64,6 +68,9 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlHints;
 import io.questdb.griffin.engine.functions.constants.ArrayConstant;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.log.LogRecord;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -77,10 +84,14 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.ObjList;
+import io.questdb.std.Rows;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
+import io.questdb.std.str.Utf8StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -103,15 +114,169 @@ import java.util.Arrays;
  * then reads that list.
  */
 public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
+    /**
+     * Tests: covered frames produced lean (see CoveringPageFrameCursor.fillFrameForKeyLean()), and
+     * the (key, partition) fills the lean production left to the covering cursor, since the last reset.
+     */
+    @TestOnly
+    public static long[] getLeanCoveredFramesForTesting() {
+        return new long[]{CoveringPageFrameCursor.leanFramesForTesting, CoveringPageFrameCursor.leanFallbacksForTesting};
+    }
+
+    @TestOnly
+    public static void resetLeanCoveredFramesForTesting() {
+        CoveringPageFrameCursor.leanFramesForTesting = 0;
+        CoveringPageFrameCursor.leanFallbacksForTesting = 0;
+    }
+
     // Above this many resolved keys the multi-key covering cursors merge the
     // per-key heads with an O(log N) heap poll (like HeapRowCursorFactory on the
     // non-covering path) instead of the linear O(N) min-scan; at or below it the
     // linear scan wins for the small IN-lists it usually serves. See
     // MultiKeyCoveringCursor and effectiveHeapMergeMinKeys().
     static final int HEAP_MERGE_MIN_KEYS = 16;
+    // Strict upper bound on the page frames one covering execution may emit, in every frame mode.
+    //
+    // PageFrameMemoryRecord.getRowId() packs the frame's index within the
+    // PageFrameSequence into Rows.toRowID(frameIndex, rowIndex) = (frameIndex << 44) + rowIndex,
+    // and PageFrameSequence.buildAddressCache() increments that index once per emitted frame with
+    // no cap of its own. Past frame index 2^19 the shifted value overflows into the sign bit, and
+    // AT exactly 2^19 it equals Long.MIN_VALUE == Numbers.LONG_NULL -- which first()/last() and
+    // their siblings use as the "accumulator is empty" sentinel. Both mechanisms turn a signed
+    // row-id comparison into a silently wrong aggregate; past 2^20 the index no longer fits at
+    // all, and recordAt() reads a row of another frame. So the count must stay strictly below
+    // Rows.MAX_SAFE_PARTITION_INDEX. Strictly below, not at it: live views already reserve the
+    // top index as a slot sentinel (LiveViewPageFrameCursor.SLOT_PARTITION_INDEX,
+    // LiveViewRecordCursor.SLOT_FRAME_INDEX), leaving 0 .. MAX_SAFE_PARTITION_INDEX - 1 usable.
+    //
+    // Every mode reaches it through its row cap: a scan emits one frame per cap's worth of each
+    // (key, partition frame) pair's rows, so 2^19 frames of the default 65,536 rows are 34B rows,
+    // and a lowered cairo.sql.parallel.covering.frame.rows reaches it with far fewer. Per-key mode
+    // also reaches it through its pairs, the key count times the partition frames: 30 symbols over
+    // two years of hourly partitions is 525,600 (key, partition) pairs, and 1,024 symbols over 520
+    // daily windows is 532,480. Three mechanisms hold it: admitsPerKeyMode() takes per-key mode
+    // only for shapes whose frame bound is below it; CoveringPageFrameCursor.widenFramesUnderLimit()
+    // grows the row cap of a scan that has emitted FRAME_BUDGET_CHECK_FRAMES frames so that the
+    // rest of it fits; and CoveringPageFrameCursor.finalizeFrame() fails the query rather than emit
+    // a frame at the limit, which only a scan whose partition frames leave the widening no room,
+    // or one of trillions of rows, can reach. This is a correctness invariant derived from the
+    // row-id encoding, NOT a tuned constant, so it carries no test override.
+    static final int MAX_PAGE_FRAMES = Rows.MAX_SAFE_PARTITION_INDEX;
+    // The frames a covering execution emits before it checks that the rest of its scan fits
+    // under MAX_PAGE_FRAMES, see CoveringPageFrameCursor.widenFramesUnderLimit(): an eighth of the
+    // limit. An execution emits at most one frame per partition frame plus one per row cap's worth
+    // of its rows, so one that emits fewer, which at the default 65,536 rows per frame takes billions
+    // of selected rows, never computes the bound and keeps its configured frames; one that emits
+    // more leaves at least 7/8 of the limit to the rest of its scan.
+    static final int FRAME_BUDGET_CHECK_FRAMES = MAX_PAGE_FRAMES >> 3;
+    // The density below which per-key mode is a pessimisation, in rows per
+    // (key, partition-frame) pair, PER PASS THE CONSUMER MAKES OVER EACH FRAME.
+    //
+    // Per-key costs a FIXED cost per frame, independent of how many rows the frame carries, and
+    // emits one frame per non-empty pair, so its win is entirely a function of how many rows
+    // each pair holds. The crossover is that fixed cost divided by the per-row saving:
+    //
+    //     rowsPerPair* = fixedFrameCost / perRowSaving
+    //
+    // and the numerator belongs to the CONSUMER, not to this scan. That is why this is a base
+    // rather than the whole answer. The vectorized Rosti group by publishes one task per
+    // (frame, aggregate) pair -- see the nested `for (frameIndex) for (vafIndex)` dispatch in
+    // griffin/engine/groupby/vect/GroupByRecordCursorFactory.buildRosti() -- so its per-frame
+    // cost is proportional to the number of aggregate VALUES. The async group bys publish one
+    // task per frame and update every aggregate in a single row-wise pass, so theirs is not.
+    // Aggregate count still adds per-ROW cost there, but per-row cost is paid by BOTH modes and
+    // cancels out of the ratio above. So the crossover moves ~4x between a one-aggregate and a
+    // four-aggregate vectorized group by, and does not move at all between the same two on the
+    // async sites. A single constant cannot be right for both.
+    //
+    // Hence: effectivePerKeyMinRowsPerPair() = this x the consumer's declared passes per frame,
+    // which tryDisableTimestampOrdering() is told and this factory remembers.
+    //
+    // MEASURED, with the mode DRIVEN through setMinRowsPerKeyPartitionForTesting rather than
+    // inferred from the data, both arms over the same bytes in the same engine, each block
+    // checked against the mode counters and bookended by re-running the first arm, over all
+    // THREE offer sites and at one and four aggregates (K=16xP=128 and K=4xP=512, 8 workers,
+    // host load 24-30, best-of-15 after 5 warm-ups). Crossover, in rows per pair:
+    //
+    //     vectorized, 4 aggregates   330 - 350      (4 passes -> this x 4 = 256)
+    //     vectorized, 1 aggregate     75 -  90      (1 pass  -> this x 1 =  64)
+    //     async keyed, 4 aggregates   40 -  66      (1 pass)
+    //     async keyed, 1 aggregate   <32 -  80      (1 pass)
+    //     async not-keyed             36 -  58      (1 pass)
+    //
+    // Divided by the pass count, every one of those lands in 32-90, which is the claim this
+    // constant rests on: the pass count is what the crossover actually scales with, and once it
+    // is divided out a single base fits all five shapes. 64 is the largest power of two at or
+    // below every measured crossover per pass. The residual error is bounded and stated: the
+    // band a shape loses in is the gap between 64 x passes and that shape's own crossover, and
+    // the worst measured case is a one-aggregate query at 64-90 rows per pair, where per-key
+    // runs up to 1.31x SLOWER. Above the constant the win is large and grows: 2.2-4.4x at
+    // 192-384 rows per pair on four of the five shapes.
+    //
+    // The previous single value of 256 was this base x 4 with the x4 hidden: it was swept on a
+    // four-aggregate vectorized group by, the only shape for which it is right. On the other
+    // four it declined per-key where per-key measured 2.2-3.4x FASTER, including on this PR's
+    // own headline max() benchmark. 32, the value before that, is this base divided by 2 and was
+    // wrong in the other direction on every shape.
+    //
+    // Unlike MAX_PAGE_FRAMES this IS a tuned constant: getting it wrong costs speed,
+    // never correctness. That is exactly why it carries a test override and the ceiling does
+    // not, and why the two are separate gates rather than one predicate -- a correctness
+    // invariant must not be able to move when someone retunes a benchmark number. It is also
+    // why framePassesPerFrame may be a hint: a consumer that under-states it only makes this
+    // scan more willing to accept, which costs speed and nothing else.
+    //
+    // CoveringIndexPerKeyCrossoverPerfTest is the sweep, parameterised over the consumer shape,
+    // and re-runs on demand.
+    static final int PER_KEY_MIN_ROWS_PER_PAIR_BASE = 64;
     // Test-only crossover override; -1 means "use HEAP_MERGE_MIN_KEYS".
     @TestOnly
     static int heapMergeMinKeysOverride = -1;
+    // Test-only count of opens that granted per-key mode / fell back to the merge. Neither the
+    // plan nor the rows distinguish the two: the plan prints the plan-stable PERMISSION (see
+    // toPlan), the advertised scan direction is the union over both modes, and a merged answer is
+    // also the correct answer -- so a gate that wrongly fell back would leave every result
+    // assertion passing. These counters are how a TEST reads the mode an execution chose; a user
+    // reads the same fact, with the numbers behind it, from the debug record logFrameMode() writes.
+    // Reset with resetModeSelectionsForTesting().
+    @TestOnly
+    static volatile long mergedModeOpensForTesting;
+    @TestOnly
+    static volatile long perKeyModeOpensForTesting;
+    // Test-only snapshot of the last frame-mode decision, the fields of its debug record (see
+    // logFrameMode()), which tests do not see. Plain stores: written once per per-key-eligible
+    // open, read by the test thread after the query. Cleared by resetModeSelectionsForTesting().
+    @TestOnly
+    static int lastFrameModeCrossover;
+    @TestOnly
+    static long lastFrameModeFramesUpper;
+    @TestOnly
+    static long lastFrameModeKeys;
+    @TestOnly
+    static long lastFrameModePartitionsUpper;
+    @TestOnly
+    static boolean lastFrameModePerKey;
+    @TestOnly
+    static String lastFrameModeReason;
+    @TestOnly
+    static long lastFrameModeRowsPerPair;
+    @TestOnly
+    static CharSequence lastFrameModeTable;
+    // Test-only crossover override, as an ABSOLUTE rows-per-pair value: it replaces the whole of
+    // effectivePerKeyMinRowsPerPair(), pass count included, so a test that forces a mode gets the
+    // mode it asked for whatever consumer it happens to be driving. -1 means "derive it", 0 means
+    // "admit any density", which is how a test that is about the CEILING switches the heuristic
+    // out of the way. There is deliberately no equivalent for the ceiling.
+    @TestOnly
+    static int perKeyMinRowsPerPairOverride = -1;
+    // under this many scanned rows per (key, partition) seek, a small scan is read instead of the covering
+    // plan, see estimateSelection()
+    static final long COVERING_MIN_ROWS_PER_KEY_SEEK = 16_384;
+    // under this many scanned rows and COVERING_SEEK_RULE_MIN_SEEKS seeks either plan is quick, and the
+    // covering plan stays
+    static final long COVERING_SEEK_RULE_MIN_SCANNED_ROWS = 100_000;
+    static final long COVERING_SEEK_RULE_MIN_SEEKS = 16;
+    private static final Log LOG = LogFactory.getLog(CoveringIndexRecordCursorFactory.class);
     private static final ThreadLocal<MergeObserver> TEST_MERGE_OBSERVER = new ThreadLocal<>();
     // The plan this query would have got with /*+ no_covering *//*, held so a NULL key over a
     // partition that carries a column top can be served by it instead. Non-null only when the
@@ -119,6 +284,16 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     // factory that carries one advertises no page-frame cursor, because no index-scan backup
     // exposes frames.
     private final RecordCursorFactory backup;
+    // the rows of a large scan decoded on the workers, see setParallelRows()
+    static final long PARALLEL_ROWS_MIN = 262_144;
+    private final long[] parallelRowsEstimate = new long[2];
+    // the estimates' sample, see estimateSelection() and estimateRowsPerPair(), and their keys:
+    // the symbol keys a selection estimate resolves, and the sorted index keys both count
+    private final PostingEstimateSample estimateSample = new PostingEstimateSample();
+    private final IntList estimateIndexKeys = new IntList();
+    private final IntList estimateSymbolKeys = new IntList();
+    private RecordCursorFactory parallelRows;
+    private long parallelRowsOpens;
     private final IntList columnIndexes;
     private final CompositeAwarePartitionFrameCursor compositeFrameCursor = new CompositeAwarePartitionFrameCursor();
 
@@ -146,6 +321,44 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     private final SingleKeyCoveringCursor singleKeyCursor;
     private final SingleKeyCoveringPageFrameCursor singleKeyPageFrameCursor;
     private final Function symbolFunction;
+    // PERMISSION, not mode. True once a consumer has proved it needs no
+    // designated-timestamp order and has therefore released this factory from the
+    // guarantee, via tryDisableTimestampOrdering(). It is written once, during code
+    // generation, and is stable for the life of the (cached) plan, so every plan-time
+    // answer -- getScanDirection(), toPlan(), producesMaterializedPageFrames() -- reads
+    // THIS field.
+    // <p>
+    // Whether a given execution actually exercises the permission is a separate,
+    // per-execution decision taken in getPageFrameCursor() and recorded on
+    // MultiKeyCoveringPageFrameCursor.tsOrderedFrames. The permission is the union over
+    // both modes: merged is strictly MORE ordered than "no guarantee", so advertising the
+    // weaker answer and delivering the stronger one is pessimistic, never wrong.
+    // Always false for single-key and latestBy, which never merge in the first place.
+    // <p>
+    // The permission never outruns the CAPABILITY: tryDisableTimestampOrdering() refuses unless
+    // supportsPageFrameCursor() is true, so this field cannot be set on a factory that has no
+    // page-frame path to run per-key on. Without that check a backup-carrying factory -- which
+    // advertises no page frames at all -- could be granted the permission and would then report
+    // SCAN_DIRECTION_OTHER and print "frames: per-key (unordered)" for a mode it can never run.
+    // <p>
+    // A factory is always BORN timestamp-ordered: the field has no constructor argument, so
+    // tryDisableTimestampOrdering() is the only thing that can ever set it. That is what makes
+    // "unordered implies a consumer asked for it" structural rather than a convention every
+    // construction site happens to follow. There used to be a tsOrderedFrames constructor
+    // parameter, passed true at all five sites; it is gone because a knob nobody turns states
+    // a contract the code does not actually rely on.
+    private boolean unorderedFramesPermitted;
+    // How many passes the consumer that took the ordering opt-out makes over each page frame --
+    // its per-frame cost multiplier, and therefore this scan's crossover multiplier. See
+    // PER_KEY_MIN_ROWS_PER_PAIR_BASE.
+    //
+    // Written only by tryDisableTimestampOrdering(), beside unorderedFramesPermitted, and read
+    // only from effectivePerKeyMinRowsPerPair(). That pairing is what makes it safe to hold on
+    // the factory: the value is a property of the CONSUMER, which is fixed for the life of a
+    // compiled plan, unlike the density, which is a property of the DATA and so must be re-read
+    // per open. Born 1, and only ever read on a path that unorderedFramesPermitted already
+    // gates, so the born value is reachable only as the neutral multiplier.
+    private int framePassesPerFrame = 1;
     private int symbolKeyCache = SymbolTable.VALUE_NOT_FOUND;
 
     public CoveringIndexRecordCursorFactory(
@@ -243,6 +456,26 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     }
 
     /**
+     * The effective per-key density crossover for THIS factory's consumer: the test override when
+     * set, otherwise {@link #PER_KEY_MIN_ROWS_PER_PAIR_BASE} scaled by the passes that consumer
+     * makes over each frame. Zero admits any density, which switches the performance heuristic
+     * off without touching the correctness ceiling.
+     * <p>
+     * An instance method, not a static one, because the crossover is a function of the consumer
+     * and a covering scan has exactly one: whoever took the ordering opt-out. Saturating on the
+     * multiply, so a consumer reporting an absurd pass count declines per-key rather than
+     * wrapping negative and admitting everything -- the safe direction for a performance hint
+     * that arrives from outside.
+     */
+    int effectivePerKeyMinRowsPerPair() {
+        if (perKeyMinRowsPerPairOverride >= 0) {
+            return perKeyMinRowsPerPairOverride;
+        }
+        final long scaled = (long) PER_KEY_MIN_ROWS_PER_PAIR_BASE * framePassesPerFrame;
+        return scaled > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) scaled;
+    }
+
+    /**
      * Test-only count of covered rows EAGERLY materialized at frame production
      * (via the cursor's {@code writeCoveredRow}). The single-key path is
      * metadata-only (decode runs on the workers), so this stays 0 for a
@@ -268,9 +501,75 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         return hasAnyColumnTop(reader, writerIndex, null);
     }
 
+    /**
+     * Test-only count of {@code resumeKeyDrain()} calls since the last reset: how
+     * many times a (key, partition) drain was continued because the preceding
+     * frame hit {@code maxRowsPerFrame} rather than exhausting the key. Zero means
+     * every key fit in a single frame and the multi-chunk resume branch never ran
+     * -- which is the default for realistic row counts against the 1,000,000-row
+     * frame cap, and is exactly what a test using
+     * {@link #setMaxRowsPerFrameForTesting(int)} must rule out. Reset with
+     * {@link #resetKeyDrainResumesForTesting()}.
+     */
+    @TestOnly
+    public static long getKeyDrainResumesForTesting() {
+        return CoveringPageFrameCursor.keyDrainResumesForTesting;
+    }
+
+    @TestOnly
+    public static void resetKeyDrainResumesForTesting() {
+        CoveringPageFrameCursor.keyDrainResumesForTesting = 0;
+    }
+
     @TestOnly
     public static void clearMergeObserverForTesting() {
         TEST_MERGE_OBSERVER.remove();
+    }
+
+    /**
+     * Test-only count of page-frame opens that were PERMITTED to run unordered and fell back
+     * to the timestamp-ordered merge anyway. See {@link #mergedModeOpensForTesting} for why
+     * nothing else can observe the decision. Reset with
+     * {@link #resetModeSelectionsForTesting()}.
+     */
+    @TestOnly
+    public static long getMergedModeOpensForTesting() {
+        return mergedModeOpensForTesting;
+    }
+
+    /**
+     * Test-only count of page-frame opens that actually ran the per-key (unordered) scan.
+     * A test asserting that a shape still WINS per-key mode must assert on this and not on
+     * the plan: the plan prints the plan-stable permission and says nothing about the mode
+     * an execution chose, and a plan assertion has already survived three mutations that broke
+     * per-key mode outright.
+     */
+    @TestOnly
+    public static long getPerKeyModeOpensForTesting() {
+        return perKeyModeOpensForTesting;
+    }
+
+    /**
+     * Test-only read of {@link #PER_KEY_MIN_ROWS_PER_PAIR_BASE}, which is package-private in
+     * {@code io.questdb.griffin.engine.table} and so unreadable from the test package.
+     * <p>
+     * It exists so the density fixtures can be STATED as multiples of the shipped base instead of
+     * duplicating its value. A test that hard-codes the number instead is not pinned to it: it
+     * silently stops meaning what its javadoc says the moment the base moves, which is exactly
+     * what happened to the fixtures in this package when the crossover last changed. Multiply by
+     * the passes the test's own query makes over each frame to get the crossover that query
+     * actually faces -- see {@code effectivePerKeyMinRowsPerPair()}.
+     */
+    @TestOnly
+    public static int getPerKeyMinRowsPerPairBaseForTesting() {
+        return PER_KEY_MIN_ROWS_PER_PAIR_BASE;
+    }
+
+    @TestOnly
+    public static void resetModeSelectionsForTesting() {
+        perKeyModeOpensForTesting = 0;
+        mergedModeOpensForTesting = 0;
+        lastFrameModeReason = null;
     }
 
     /**
@@ -284,6 +583,21 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         heapMergeMinKeysOverride = n;
     }
 
+    /**
+     * Test-only hook that moves the per-key density crossover (see
+     * {@link #PER_KEY_MIN_ROWS_PER_PAIR_BASE} and the consumer's pass count). The value is
+     * ABSOLUTE: it replaces the derived crossover outright, pass count included, so a test that
+     * forces a mode does not have to know which consumer it is driving. Pass {@code 0} to admit
+     * any density -- what a test
+     * about the frame-count CEILING wants, since a sparse ceiling-probing fixture would
+     * otherwise be rejected by the heuristic and prove nothing about the bound. Pass
+     * {@code -1} to clear the override.
+     */
+    @TestOnly
+    public static void setMinRowsPerKeyPartitionForTesting(int n) {
+        perKeyMinRowsPerPairOverride = n;
+    }
+
     @TestOnly
     public static void setMergeObserverForTesting(MergeObserver observer) {
         TEST_MERGE_OBSERVER.set(observer);
@@ -291,6 +605,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
     @Override
     public void close() {
+        parallelRows = Misc.free(parallelRows);
         // The backup runs the same scan over the same table with the same key, so the two
         // share the partition-frame factory, the LATEST ON filter and the key functions rather
         // than duplicating them. The BACKUP owns that shared set -- there is no non-owning
@@ -394,6 +709,132 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         );
     }
 
+    /**
+     * Estimates, from the posting index's per-key row counts, the rows this scan selects and the
+     * rows a full scan of the same partition frames reads, from the sample
+     * {@link IndexGatherRecordCursorFactory#estimateSelection} reads for an index gather
+     * ({@link PostingEstimateSample}). It first counts the scanned rows from partition metadata
+     * alone, and stops there when they are fewer than {@code minScannedRows}. Then it probes at
+     * most 64 distinct partitions, evenly placed over the partitions with rows, and reads at most
+     * 4096 (frame, key) counts: NULL, when listed, as it is, and an even sample of the other keys,
+     * scaled up. A frame that has no posting reader, or whose counts the reader cannot give,
+     * counts every row as selected, which leans towards the scan. The selection is the probed
+     * frames' share extrapolated to the rows scanned. Clustered keys can be misestimated; that
+     * only changes the plan, never the rows.
+     * <p>
+     * The keys must be known now, without an execution's bind values: the estimate answers
+     * {@code false}, leaving the sink as it is, for a runtime-constant key (a bind variable),
+     * symbol patterns and LATEST BY.
+     *
+     * @param minScannedRows the scanned rows under which no estimate is needed
+     * @param sink           receives {selected, scanned}
+     * @return whether the sink holds an estimate: false when the keys are not known, or fewer than
+     * {@code minScannedRows} rows are scanned
+     */
+    public boolean estimateSelection(SqlExecutionContext executionContext, long minScannedRows, long[] sink) throws SqlException {
+        if (latestBy || patternKeys != null) {
+            return false;
+        }
+        if (keyValueFuncs != null) {
+            for (int i = 0, n = keyValueFuncs.size(); i < n; i++) {
+                if (keyValueFuncs.getQuick(i).isRuntimeConstant()) {
+                    return false;
+                }
+            }
+        } else if (symbolFunction == null || symbolFunction.isRuntimeConstant()) {
+            return false;
+        }
+        final PostingEstimateSample sample = estimateSample;
+        final IntList keys = estimateSymbolKeys;
+        long sampledScanned = 0;
+        long sampledSelected = 0;
+        try (PartitionFrameCursor frameCursor = dfcFactory.getCursor(executionContext, columnIndexes, PartitionFrameCursorFactory.ORDER_ASC)) {
+            final TableReader reader = frameCursor.getTableReader();
+            // the keys against the table's symbol map; a value it does not hold selects no rows
+            if (keyValueFuncs != null) {
+                resolveKeys(frameCursor, executionContext, keys);
+            } else {
+                keys.clear();
+                final int key = resolveKey(frameCursor, executionContext);
+                if (key != SymbolTable.VALUE_NOT_FOUND) {
+                    keys.add(key);
+                }
+            }
+            final int keyCount = keys.size();
+            // the scanned rows first, from partition metadata, without opening a partition
+            sample.walkMetadata(frameCursor);
+            final long scanned = sample.getScanned();
+            final long frameCount = sample.getFrameCount();
+            if (scanned < minScannedRows) {
+                sample.finish();
+                // A small scan needs no estimate unless the covering plan's per-key cost dominates it: one
+                // seek per (key, partition) for fewer than COVERING_MIN_ROWS_PER_KEY_SEEK scanned rows each
+                // (a narrow time interval over an IN list of several keys), where reading the interval is cheaper. Report the
+                // whole scan as selected, which picks the scan.
+                if (keyCount > 1 && dfcFactory instanceof IntervalPartitionFrameCursorFactory
+                        && (scanned >= COVERING_SEEK_RULE_MIN_SCANNED_ROWS || (long) keyCount * frameCount >= COVERING_SEEK_RULE_MIN_SEEKS)
+                        && scanned < (long) keyCount * frameCount * COVERING_MIN_ROWS_PER_KEY_SEEK) {
+                    sink[0] = scanned;
+                    sink[1] = scanned;
+                    return true;
+                }
+                return false;
+            }
+            if (sample.plan(toSortedIndexKeys(keys))) {
+                final boolean hasNull = sample.hasNull();
+                final int sampledKeyCount = sample.getSampledKeyCount();
+                final int countsPerFrame = sampledKeyCount + (hasNull ? 1 : 0);
+                frameCursor.toTop();
+                PartitionFrame frame;
+                while ((frame = sample.nextProbeFrame(frameCursor)) != null) {
+                    final long rowLo = frame.getRowLo();
+                    final long rowHi = frame.getRowHi();
+                    final long rows = rowHi - rowLo;
+                    sampledScanned += rows;
+                    final IndexReader indexReader = reader.getIndexReader(frame.getPartitionIndex(), indexColumnIndex, IndexReader.DIR_FORWARD);
+                    if (!(indexReader instanceof AbstractPostingIndexReader posting)) {
+                        sampledSelected += rows;
+                        continue;
+                    }
+                    final long callerHiInclusive = rowHi - 1;
+                    final long entryMax = posting.getEntryMaxValue();
+                    final long clampedMax = entryMax >= 0 ? Math.min(callerHiInclusive, entryMax) : callerHiInclusive;
+                    sample.addCounts(countsPerFrame);
+                    final long nullSelected = hasNull ? countOrRows(posting, 0, rows, rowLo, callerHiInclusive, clampedMax) : 0;
+                    long selected = 0;
+                    for (int k = 0; k < sampledKeyCount; k++) {
+                        selected += countOrRows(posting, sample.getSampledKey(k), rows, rowLo, callerHiInclusive, clampedMax);
+                    }
+                    sampledSelected += Math.min(nullSelected + sample.scaleNonNull(selected), rows);
+                }
+            }
+            sample.finish();
+            sink[0] = sampledScanned > 0 ? (long) ((double) sampledSelected * scanned / sampledScanned) : 0;
+            sink[1] = scanned;
+        }
+        return true;
+    }
+
+    // a key's rows in the frame; a count the index cannot give (a clipped legacy EF block)
+    // counts every row
+    private static long countOrRows(AbstractPostingIndexReader posting, int indexKey, long rows, long rowLo, long callerHiInclusive, long clampedMax) {
+        final long count = posting.estimateMatchesClamped(indexKey, rowLo, callerHiInclusive, clampedMax);
+        // LONG_NULL answers a negative key only, and index keys are >= 0
+        assert count != Numbers.LONG_NULL;
+        return count == AbstractPostingIndexReader.ESTIMATE_REJECT ? rows : count;
+    }
+
+    // the symbol keys as sorted index keys, in a list this factory reuses
+    private IntList toSortedIndexKeys(IntList symbolKeys) {
+        final IntList indexKeys = estimateIndexKeys;
+        indexKeys.clear();
+        for (int i = 0, n = symbolKeys.size(); i < n; i++) {
+            indexKeys.add(TableUtils.toIndexKey(symbolKeys.getQuick(i)));
+        }
+        indexKeys.sortGroups(1);
+        return indexKeys;
+    }
+
     private int resolveKey(PartitionFrameCursor frameCursor, SqlExecutionContext executionContext) throws SqlException {
         symbolFunction.init(frameCursor, executionContext);
         symbolKeyCache = frameCursor.getTableReader().getSymbolMapReader(indexColumnIndex).keyOf(symbolFunction.getStrA(null), symbolKeyCache);
@@ -415,6 +856,10 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        if (parallelRows != null && isParallelRowsWorthIt(executionContext)) {
+            parallelRowsOpens++;
+            return parallelRows.getCursor(executionContext);
+        }
         PartitionFrameCursor frameCursor = compositeFrameCursor.of(
                 dfcFactory.getCursor(
                         executionContext,
@@ -469,6 +914,13 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         }
     }
 
+    /**
+     * The indexed column's index in the table reader.
+     */
+    public int getIndexColumnIndex() {
+        return indexColumnIndex;
+    }
+
     @Override
     public RecordMetadata getMetadata() {
         return metadata;
@@ -494,7 +946,13 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             // queries to the serial path, so a backward scan must never reach here.
             throw CairoException.nonCritical().put("backward covering scan is not supported for multi-key index queries");
         }
-        int configMaxRows = executionContext.getPageFrameMaxRows();
+        // Frames of up to cairo.sql.parallel.covering.frame.rows rows: each holds one key's rows of
+        // one partition, which a worker reads, row ids and covered values, from the index, so a
+        // key with many rows in a partition spreads over the workers as an index gather's tasks do.
+        int configMaxRows = (int) Math.max(1, Math.min(
+                executionContext.getPageFrameMaxRows(),
+                executionContext.getCairoEngine().getConfiguration().getSqlParallelCoveringFrameRows()
+        ));
         PartitionFrameCursor frameCursor = compositeFrameCursor.of(
                 dfcFactory.getCursor(
                         executionContext,
@@ -507,13 +965,27 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             if (multiKeyPageFrameCursor != null) {
                 if (patternKeys != null) {
                     multiKeyPageFrameCursor.multiKeys = patternKeys;
+                    selectFrameMode(frameCursor, frameCursor.getTableReader(), patternKeys, configMaxRows);
                     multiKeyPageFrameCursor.of(frameCursor, configMaxRows, false, executionContext.getMemoryTracker());
                     return multiKeyPageFrameCursor;
                 }
                 resolveKeys(frameCursor, executionContext, multiKeyPageFrameCursor.multiKeys);
                 // A suppressed backup is exactly what leaves this page-frame cursor reachable
-                // for a null-capable key, so the promise is checked here too.
+                // for a null-capable key, so the promise is checked here too. It runs BEFORE
+                // mode selection: it throws, and the density estimate below walks the whole
+                // partition-frame cursor, so there is no point paying for a decision about a
+                // scan that is not going to run.
                 checkHintPromise(frameCursor, multiKeyPageFrameCursor.multiKeys.contains(SymbolTable.VALUE_IS_NULL));
+                // Per-key vs merged is decided HERE, per execution, and not where the
+                // permission was granted. This is the only point that holds the exact key
+                // set (resolved, deduped, VALUE_NOT_FOUND dropped -- the loop above just
+                // built it), the OPEN partition-frame cursor, and the intervals a runtime
+                // model resolved against this execution context. Code generation has none
+                // of the three: bind variables are still VALUE_NOT_FOUND there, dedup has
+                // not happened, and -- decisively -- factories are cached and re-executed,
+                // so any partition count read at compile time is a snapshot that goes stale
+                // as the table grows. A correctness bound cannot rest on that.
+                selectFrameMode(frameCursor, frameCursor.getTableReader(), multiKeyPageFrameCursor.multiKeys, configMaxRows);
                 // Always wire the frame cursor; callers may probe getSymbolTable()
                 // before iteration. Empty multiKeys list yields no frames.
                 multiKeyPageFrameCursor.of(frameCursor, configMaxRows, false, executionContext.getMemoryTracker());
@@ -524,11 +996,87 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             checkHintPromise(frameCursor, resolvedKey == SymbolTable.VALUE_IS_NULL);
             singleKeyPageFrameCursor.resolvedKey = resolvedKey;
             singleKeyPageFrameCursor.of(frameCursor, configMaxRows, descending, executionContext.getMemoryTracker());
+            singleKeyPageFrameCursor.setLeanProduction(executionContext.getCairoEngine().getConfiguration().isSqlParallelFrameDispatchEnabled());
             return singleKeyPageFrameCursor;
         } catch (Throwable th) {
             Misc.free(frameCursor);
             throw th;
         }
+    }
+
+    /**
+     * Tests: the partitions the last estimate of this factory opened, see
+     * {@link #estimateSelection} and {@code estimateRowsPerPair()}.
+     */
+    @TestOnly
+    public int getLastEstimateOpenedPartitions() {
+        return estimateSample.getOpenedPartitions();
+    }
+
+    /**
+     * Tests: the partitions the last estimate of this factory probed, in walk order.
+     */
+    @TestOnly
+    public IntList getLastEstimatePartitions() {
+        return estimateSample.getProbedPartitions();
+    }
+
+    /**
+     * Tests: the (frame, key) posting counts the last estimate of this factory read.
+     */
+    @TestOnly
+    public long getLastEstimateProbes() {
+        return estimateSample.getCounts();
+    }
+
+    /**
+     * Tests: the text of the last frame-mode debug record, written through the record's own
+     * formatter, or null when no open decided a frame mode since
+     * {@link #resetModeSelectionsForTesting()}.
+     */
+    @TestOnly
+    public static String getLastFrameModeForTesting() {
+        if (lastFrameModeReason == null) {
+            return null;
+        }
+        final Utf8StringSink sink = new Utf8StringSink();
+        putFrameMode(
+                sink,
+                lastFrameModeTable,
+                lastFrameModePerKey,
+                lastFrameModeReason,
+                lastFrameModeKeys,
+                lastFrameModePartitionsUpper,
+                lastFrameModeFramesUpper,
+                lastFrameModeRowsPerPair,
+                lastFrameModeCrossover
+        );
+        return sink.toString();
+    }
+
+    @TestOnly
+    public long getParallelRowsOpens() {
+        return parallelRowsOpens;
+    }
+
+    /**
+     * Takes the parallel plan of this scan's rows: an Async Filter that passes every row of this
+     * scan's page frames, decoded on the workers rather than on the cursor's thread. An open whose
+     * scan selects at least {@link #PARALLEL_ROWS_MIN} rows by the posting index's counts takes it,
+     * while the frames keep the scan's order; the factory frees it.
+     */
+    public void setParallelRows(RecordCursorFactory parallelRows) {
+        this.parallelRows = parallelRows;
+    }
+
+    // An open reads its rows through the parallel plan when the frames are ordered and the scan
+    // selects enough rows to pay for the dispatch.
+    private boolean isParallelRowsWorthIt(SqlExecutionContext executionContext) throws SqlException {
+        if (unorderedFramesPermitted || latestBy || !supportsPageFrameCursor()) {
+            return false;
+        }
+        return estimateSelection(executionContext, PARALLEL_ROWS_MIN, parallelRowsEstimate)
+                && parallelRowsEstimate[0] >= PARALLEL_ROWS_MIN;
     }
 
     @Override
@@ -543,7 +1091,20 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         // resolved key), so it is trivially ts-ordered. Only multi-key
         // latestBy breaks the order: it emits one row per key in key order,
         // not ts order, so it alone advertises no ordering.
-        final int own = latestBy && multiKeyCursor != null ? SCAN_DIRECTION_OTHER : SCAN_DIRECTION_FORWARD;
+        // Unordered multi-key emits one key's posting list per frame, so the
+        // stream is NOT ts-ascending and must not be advertised as such -- the
+        // same reason multi-key latestBy advertises no ordering.
+        // The per-key term reads the PERMISSION, not the per-execution mode: compile-time
+        // callers consult it before any open picks a mode, so the answer has to hold for every
+        // mode this factory could run. That union is SCAN_DIRECTION_OTHER, and an
+        // execution that falls back to the merge only delivers MORE order than advertised.
+        // No production reader of SCAN_DIRECTION_OTHER treats it as a positive enabler --
+        // every one reads it as "no guarantee, so refuse or fall back" -- and
+        // SCAN_DIRECTION_OTHER == 0, so even a careless == SCAN_DIRECTION_FORWARD test
+        // fails safe.
+        final int own = (unorderedFramesPermitted && multiKeyPageFrameCursor != null) || (latestBy && multiKeyCursor != null)
+                ? SCAN_DIRECTION_OTHER
+                : SCAN_DIRECTION_FORWARD;
         if (backup == null || backup.getScanDirection() == own) {
             return own;
         }
@@ -576,6 +1137,16 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         return supportsPageFrameCursor() && singleKeyPageFrameCursor != null;
     }
 
+    /**
+     * A parallel GROUP BY or filter over this scan's frames reduces them on the query's thread
+     * when they hold fewer than {@code cairo.sql.parallel.covering.local.max.rows} rows, counted
+     * each time it opens.
+     */
+    @Override
+    public long getLocalReduceMaxRows(SqlExecutionContext executionContext) {
+        return executionContext.getCairoEngine().getConfiguration().getSqlParallelCoveringLocalMaxRows();
+    }
+
     @Override
     public boolean supportsPageFrameCursor() {
         // A backup means this factory may serve the query from a plan that exposes no page
@@ -592,10 +1163,33 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
      * DIRECT_PAGE_FRAME parquet reader would export all-null covered columns. Reporting
      * false routes the single-key parquet export through the row-wise cursor path, which
      * decodes the covered columns the same way the query path does.
+     * <p>
+     * {@code unorderedFramesPermitted} is part of the answer for the same reason. Per-key mode is
+     * metadata-only BY CONSTRUCTION: {@code nextImplPerKey()} reuses the single-key fill
+     * precisely so every frame carries a real resolved symbol key and stays decodable on the
+     * worker arm. Reporting true there would hand a DIRECT_PAGE_FRAME reader the very
+     * placeholder addresses the single-key branch exists to keep away from it.
+     * <p>
+     * This MUST read the plan-stable permission and NOT the per-execution mode on
+     * {@code MultiKeyCoveringPageFrameCursor}. The earlier justification -- "the flag is
+     * written once, during code generation, and this method is consulted at execution time"
+     * -- lapsed when mode selection moved into {@link #getPageFrameCursor}:
+     * {@code ParquetExportMode.determineExportMode} calls this BEFORE the open, so the mode
+     * field is still carrying the previous execution's answer (or its initial value) at that
+     * moment. Reading the permission is the conservative direction: once unordered frames are
+     * permitted this answers false, and an execution that then chose the merge merely exports
+     * through the row-wise path it could have exported directly. The reverse mistake -- reading
+     * a stale "merged" mode and reporting true while the open goes per-key -- would publish
+     * placeholder addresses as data.
+     * <p>
+     * No consumer can reach the contradiction today: the permission is only granted under a
+     * GROUP BY, and the export path does not look through one. That is a reason to state the
+     * contract correctly, not a reason to leave it stated wrongly -- the failure mode is a
+     * silent all-null column, not an error.
      */
     @Override
     public boolean producesMaterializedPageFrames() {
-        return backup == null && multiKeyPageFrameCursor != null;
+        return backup == null && multiKeyPageFrameCursor != null && !unorderedFramesPermitted;
     }
 
     @Override
@@ -622,11 +1216,20 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 sink.putColumnName(q);
             }
         }
+        // The PERMISSION, not the mode: a plan is printed without opening a cursor, so this is
+        // the only answer available, and it is the honest one -- it states the frame-ordering
+        // contract the parent operator must be prepared for, which is exactly the union over
+        // the modes an execution may pick. See getScanDirection().
+        if (unorderedFramesPermitted && multiKeyPageFrameCursor != null) {
+            sink.attr("frames").val("per-key (unordered)");
+        }
         // The decode strategy is intentionally derivable from the filter shape below rather than
         // emitted as a separate attr (which would churn every covering-plan golden test): a single
         // equality ("sym = 'x'") is produced metadata-only at frame production and decoded in
         // parallel on the reduce workers, whereas an IN-list ("sym IN (...)") is decoded eagerly via
         // the multi-key merge. The parallelism itself surfaces on the parent async operator's plan.
+        // The "frames" attr above is the one exception: per-key reuses the single-key fill, so an
+        // IN-list printed with it is metadata-only too, which the filter shape alone cannot say.
         if (patternKeys != null) {
             sink.attr("filter").putColumnName(keyQueryPosition).val(" matches pattern");
         } else if (keyValueFuncs != null) {
@@ -634,6 +1237,65 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         } else {
             sink.attr("filter").putColumnName(keyQueryPosition).val('=').val(symbolFunction);
         }
+        // The partition frame cursor child is printed like the sibling non-covering path
+        // (FilterOnValuesRecordCursorFactory), so time-range pruning stays visible when a
+        // query moves onto the covering index: "Interval forward scan" means the bounds
+        // pruned partitions, "Frame forward scan" means they did not. RuntimeIntervalModel
+        // resolves intervals against the execution context, so bounds derived from a bind
+        // variable or scalar subquery print as concrete timestamps.
+        sink.child(dfcFactory);
+    }
+
+    @Override
+    public boolean tryDisableTimestampOrdering(
+            boolean hasOrderSensitiveAggregates,
+            @Nullable ListColumnFilter groupByKeyColumns,
+            int framePassesPerFrame
+    ) {
+        // Per-key mode lives ONLY on the page-frame path, so a factory that produces no page
+        // frames cannot run it and must not be granted it. Today that means a factory carrying a
+        // backup: supportsPageFrameCursor() conjoins backup == null, because the compiler cannot
+        // know which of the two delegates an open will pick, and no index-scan backup has frames.
+        // <p>
+        // No caller can currently reach that combination: all three sites that can make the offer
+        // -- the two offerUnorderedScan() calls in SqlCodeGenerator and the vectorized site that
+        // calls this method directly -- sit behind a supportsPageFrameCursor() test, so a
+        // backup-carrying base is routed to the serial group by before any offer is made. That is
+        // a property of ROUTING, though, held by the consumer, and the whole point of this method
+        // is that a safety-critical property must be DECLARED rather than inferred. The backup
+        // term in supportsPageFrameCursor() arrived in a6f64f5cfe (#7559) and is what opened this
+        // gap -- exactly the kind of change that shifts routing quietly. So the capability is
+        // checked here, where it is stated, rather than left to three call sites that happen to
+        // test it and every future one that may not.
+        // <p>
+        // It is checked BEFORE the field write: every plan-time reader -- getScanDirection(),
+        // toPlan(), producesMaterializedPageFrames() -- reads unorderedFramesPermitted, so a guard
+        // placed after the write would return false and still have flipped the declaration.
+        if (!supportsPageFrameCursor()) {
+            return false;
+        }
+        // Only the multi-key merge pays for ordering: single-key frames are already
+        // per-key, and multi-key latestBy has its own ordering contract.
+        if (latestBy || multiKeyPageFrameCursor == null) {
+            return false;
+        }
+        if (hasOrderSensitiveAggregates && !groupsByIndexKeyOnly(groupByKeyColumns)) {
+            return false;
+        }
+        // Grant the permission only. Whether an execution exercises it is decided per open,
+        // in getPageFrameCursor(): the sizes that make per-key mode legal (a frame count that
+        // stays inside the row-id encoding) and worthwhile are not knowable here, and a value
+        // read here would in any case be a compile-time snapshot baked into a cached plan.
+        //
+        // The pass count is the exception, and deliberately so: it describes the CONSUMER, which
+        // is the one thing about this decision that a cached plan may safely bake in, because it
+        // is fixed for the life of that plan. The density is not, which is why it is not kept
+        // here. Clamped at 1 rather than trusted: this is a performance hint from another
+        // factory, and the clamp is what keeps a nonsensical value from turning the density gate
+        // off altogether. See PER_KEY_MIN_ROWS_PER_PAIR_BASE.
+        this.framePassesPerFrame = Math.max(1, framePassesPerFrame);
+        unorderedFramesPermitted = true;
+        return true;
     }
 
     private static int[] buildRequiredIncludeIndices(int[] queryColToIncludeIdx) {
@@ -723,9 +1385,596 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         return null;
     }
 
+    /**
+     * True when the consumer's grouping-column FILTER contains exactly this scan's index
+     * column and nothing else.
+     * <p>
+     * <b>Why that is the safe condition.</b> Per-key mode delivers each key's rows
+     * partition-ascending with ascending row ids inside, so a grouping that includes the
+     * index key confines every group to one key's already-ordered posting list. Additional
+     * grouping terms only narrow those groups further -- they cannot reorder rows drawn from
+     * a single key's stream. That is what makes an order-sensitive aggregate
+     * (first()/last()) safe over an otherwise unordered (per-key) scan.
+     * <p>
+     * <b>What this method actually accepts, which is narrower.</b> It inspects the
+     * {@link ListColumnFilter}, which carries grouping COLUMNS only, and requires a column
+     * count of exactly one. A SAMPLE BY bucket is a key FUNCTION, not a column, and never
+     * enters the filter -- so {@code SELECT ts, first(value), param_id FROM t WHERE
+     * param_id IN (...) SAMPLE BY 10s}, grouped by the bucket AND the index key, presents
+     * here as {@code [param_id]} and is ACCEPTED. That is intentional: do not "fix" this to
+     * compare against the SQL-level grouping, or that case (which is safe, and works today)
+     * starts being rejected.
+     * <p>
+     * By the same count check, grouping by the index key plus another COLUMN --
+     * {@code GROUP BY param_id, sensor} -- is REJECTED today. Accepting it would be sound by
+     * the argument above, but this method does not do it, and nothing here should be read as
+     * a general superset rule. Relaxing it is a separate change with its own tests.
+     * <p>
+     * The filter indexes this reads are positions in the consumer's base metadata, which
+     * is this factory's own metadata, the same space {@link #keyQueryPosition} lives in.
+     */
+    private boolean groupsByIndexKeyOnly(@Nullable ListColumnFilter groupByKeyColumns) {
+        return groupByKeyColumns != null
+                && groupByKeyColumns.getColumnCount() == 1
+                && groupByKeyColumns.getColumnIndexFactored(0) == keyQueryPosition;
+    }
+
+    /**
+     * Pick this execution's frame mode and record it on the cursor. Merged is the answer
+     * whenever the permission was never granted, and the answer in every ambiguous case:
+     * it is the mode that exists today, the one whose ordering matches what the factory
+     * advertises, and the one that is correct at any size: its frames are at most one per
+     * partition frame plus the row cap's split, and the cursor widens the split to fit, see
+     * {@code CoveringPageFrameCursor.widenFramesUnderLimit()}.
+     * <p>
+     * The ceiling below is a CORRECTNESS invariant, not a tuning knob. Per-key mode emits one
+     * frame per non-empty (key, partition-frame) pair, so its frame count is the key count
+     * MULTIPLIED by the partition-frame count, which no row cap can shrink -- and the frame index
+     * is packed into the top 20 bits of every row id the async GROUP BY compares. See
+     * {@link #MAX_PAGE_FRAMES}.
+     * <p>
+     * The bound is
+     * <pre>frames &lt;= K * P_upper + rowsUpper / maxRowsPerFrame</pre>
+     * because {@code frames = SUM over non-empty pairs of ceil(rows(k,p) / maxRowsPerFrame)}
+     * and {@code ceil(a/m) <= 1 + a/m}. Every term is available here in O(1) or in two
+     * partition binary searches, and none of them may under-count:
+     * <ul>
+     *     <li>{@code K} is exact -- the caller has just resolved, deduped and dropped
+     *     VALUE_NOT_FOUND.</li>
+     *     <li>{@code P_upper} is the frame cursor's {@code getFrameCountUpperBound()}, which
+     *     never under-counts: the composite-aware wrapper adds a frame per composite piece
+     *     boundary to its delegate's bound, an interval delegate counts its (interval,
+     *     partition) pairs, and a full delegate its partitions. The partition count alone does
+     *     NOT bound an interval or a composite walk -- 520 daily windows in one YEAR partition
+     *     are 520 frames. Every cursor this factory opens answers; an unknown (-1) bound takes
+     *     the merge.</li>
+     *     <li>{@code rowsUpper} is {@code frameCursor.size()} when known; an interval cursor
+     *     answers -1 rather than counting rows it has not walked, so it falls back to the
+     *     reader's total row count, which bounds any interval subset of it. This closes the
+     *     one gap a "K * P dominates in practice" argument leaves open, namely a deployment
+     *     that shrinks cairo.sql.page.frame.max.rows far enough for the split term to matter.</li>
+     * </ul>
+     * Over-counting is the safe direction: it sends a borderline shape to the merge, which is
+     * correct, and never the reverse.
+     */
+    private void selectFrameMode(
+            PartitionFrameCursor frameCursor,
+            TableReader reader,
+            IntList keys,
+            int configMaxRows
+    ) {
+        if (!unorderedFramesPermitted) {
+            multiKeyPageFrameCursor.setTsOrderedFrames(true);
+            return;
+        }
+        final boolean perKey = admitsPerKeyMode(frameCursor, reader, keys, configMaxRows);
+        multiKeyPageFrameCursor.setTsOrderedFrames(!perKey);
+        if (perKey) {
+            perKeyModeOpensForTesting++;
+        } else {
+            mergedModeOpensForTesting++;
+        }
+    }
+
+    /**
+     * The per-execution frame-mode decision, as a DEBUG log record.
+     * <p>
+     * Nothing else surfaces it. {@code EXPLAIN} prints the plan-stable PERMISSION and must keep
+     * doing so -- a plan that changed with the data would be worse than one that is blind to it
+     * -- the advertised scan direction is the union over both modes, and a merged answer is also
+     * the correct answer, so a shape that fell back leaves every result identical. A user who
+     * wants to know which mode an execution took, and why, enables debug logging for this class.
+     * <p>
+     * DEBUG, because the record is written once per execution of every GROUP BY that may read per
+     * key, and at INFO that is a line per dashboard refresh. With debug off the record is a no-op
+     * and nothing is formatted. Every number the decision rests on is in the record, so it answers
+     * "why" and not just "which": {@code rowsPerPair} against {@code crossover} for the density
+     * gate, and {@code framesUpper} against {@code frameCeiling} for the correctness bound. A
+     * {@code rowsPerPair} of -1 means the estimate found no bounded answer.
+     * <p>
+     * Tests do not see debug records: {@link #getLastFrameModeForTesting()} formats the decision
+     * this method last stored through {@link #putFrameMode}, the formatter the record uses.
+     */
+    private void logFrameMode(
+            boolean perKey,
+            String reason,
+            long keyCount,
+            long partitionUpperBound,
+            long frameUpperBound,
+            long rowsPerPair,
+            int minRowsPerPair
+    ) {
+        final CharSequence tableName = dfcFactory.getTableToken().getTableName();
+        lastFrameModeTable = tableName;
+        lastFrameModePerKey = perKey;
+        lastFrameModeReason = reason;
+        lastFrameModeKeys = keyCount;
+        lastFrameModePartitionsUpper = partitionUpperBound;
+        lastFrameModeFramesUpper = frameUpperBound;
+        lastFrameModeRowsPerPair = rowsPerPair;
+        lastFrameModeCrossover = minRowsPerPair;
+        final LogRecord record = LOG.debug();
+        putFrameMode(record, tableName, perKey, reason, keyCount, partitionUpperBound, frameUpperBound, rowsPerPair, minRowsPerPair);
+        record.$();
+    }
+
+    // the text of the frame-mode record, see logFrameMode()
+    private static void putFrameMode(
+            Utf8Sink sink,
+            CharSequence tableName,
+            boolean perKey,
+            String reason,
+            long keyCount,
+            long partitionUpperBound,
+            long frameUpperBound,
+            long rowsPerPair,
+            int minRowsPerPair
+    ) {
+        sink.putAscii("covering scan frame mode [table=").put(tableName)
+                .putAscii(", mode=").putAscii(perKey ? "per-key" : "merged")
+                .putAscii(", reason=").putAscii(reason)
+                .putAscii(", keys=").put(keyCount)
+                .putAscii(", partitionsUpper=").put(partitionUpperBound)
+                .putAscii(", framesUpper=").put(frameUpperBound)
+                .putAscii(", frameCeiling=").put(MAX_PAGE_FRAMES)
+                .putAscii(", rowsPerPair=").put(rowsPerPair)
+                .putAscii(", crossover=").put(minRowsPerPair)
+                .putAscii(']');
+    }
+
+    private boolean admitsPerKeyMode(
+            PartitionFrameCursor frameCursor,
+            TableReader reader,
+            IntList keys,
+            int configMaxRows
+    ) {
+        final long keyCount = keys.size();
+        if (keyCount == 0) {
+            // No key resolved: the cursor emits nothing either way. Merged keeps the
+            // no-rows path on the mode the factory advertises without a special case.
+            logFrameMode(false, "no-keys", 0, -1, -1, -1, -1);
+            return false;
+        }
+        final long partitionUpperBound = frameCursor.getFrameCountUpperBound();
+        // The wrapper answers whenever its delegate does, and both delegates dfcFactory opens,
+        // the full and the interval cursors, answer once opened. The merge is the release-build
+        // answer to an unknown bound, because the partition count does not bound frames that
+        // windows or composite pieces split.
+        assert partitionUpperBound >= 0 : "frame cursor offers no frame-count upper bound";
+        if (partitionUpperBound < 0) {
+            logFrameMode(false, "frame-bound-unknown", keyCount, -1, -1, -1, -1);
+            return false;
+        }
+        final long scanRows = frameCursor.size();
+        final long rowsUpperBound = scanRows >= 0 ? scanRows : reader.size();
+        final int maxRowsPerFrame = CoveringPageFrameCursor.effectiveMaxRowsPerFrame(configMaxRows);
+        // Saturating: a pathological K * P overflows long only past 2^63, but the sum is
+        // written so that no intermediate can wrap back under the ceiling.
+        final long pairUpperBound = keyCount > 0 && partitionUpperBound > Long.MAX_VALUE / keyCount
+                ? Long.MAX_VALUE
+                : keyCount * partitionUpperBound;
+        final long splitTerm = maxRowsPerFrame > 0 ? rowsUpperBound / maxRowsPerFrame : Long.MAX_VALUE;
+        final long frameUpperBound = pairUpperBound > Long.MAX_VALUE - splitTerm
+                ? Long.MAX_VALUE
+                : pairUpperBound + splitTerm;
+        if (frameUpperBound >= MAX_PAGE_FRAMES) {
+            // The correctness ceiling. Checked FIRST, and entirely from O(1) metadata, so the
+            // shapes with the most (key, partition) pairs -- the ones whose density probe would
+            // cost the most -- never pay for one.
+            logFrameMode(false, "frame-ceiling", keyCount, partitionUpperBound, frameUpperBound, -1, -1);
+            return false;
+        }
+        final int minRowsPerPair = effectivePerKeyMinRowsPerPair();
+        if (minRowsPerPair <= 0) {
+            logFrameMode(true, "density-gate-off", keyCount, partitionUpperBound, frameUpperBound, -1, minRowsPerPair);
+            return true;
+        }
+        // -1 ("no bounded answer") compares false, i.e. falls back to the merge, which is the
+        // right default for every ambiguous case: it is the mode that exists today and the one
+        // whose ordering matches what the factory advertises.
+        final long rowsPerPair = estimateRowsPerPair(frameCursor, reader, keys);
+        final boolean perKey = rowsPerPair >= minRowsPerPair;
+        logFrameMode(perKey, "density", keyCount, partitionUpperBound, frameUpperBound, rowsPerPair, minRowsPerPair);
+        return perKey;
+    }
+
+    /**
+     * Estimated rows per EMITTED (key, partition-frame) pair, or {@code -1} when no bounded
+     * answer is available. This is the denominator of the performance crossover and the only
+     * input to either gate that is not free.
+     * <p>
+     * <b>Emitted pairs, not sampled pairs.</b> Per-key mode produces one frame per NON-EMPTY
+     * pair -- a key with no rows in a partition costs nothing, because
+     * {@code openForwardCoveringCursor} hands back an empty row cursor and the drain skips it.
+     * So the denominator counts only pairs the probe found rows in. Dividing by every sampled
+     * pair scores a shape by how many of its keys are absent rather than by how much work each
+     * emitted frame carries, and rejects shapes per-key wins by a wide margin: eight keys
+     * round-robined one per partition at 1000 rows each is 1000 rows per emitted frame, 3.9x the
+     * crossover, and scores 125 under the old denominator.
+     * <p>
+     * <b>Spread, not prefix.</b> The sample ({@link PostingEstimateSample}) spreads both axes
+     * evenly across their whole range rather than taking a prefix. A prefix sample of the
+     * partition axis reads the OLDEST partitions of a full scan, which is the one end whose
+     * density is systematically unrepresentative: a single leading partition holding a handful
+     * of rows drags the mean of a four-frame prefix far enough to flip the decision on an
+     * otherwise uniform table, a symbol commissioned partway through history scores zero on every
+     * partition that predates it, and a dense head above a long sparse tail is ADMITTED -- the
+     * exact inversion this gate exists to prevent.
+     * <p>
+     * <b>Budget and exactness.</b> The estimate probes at most 64 distinct partitions, the
+     * floor(j * G / min(G, 64))-th of the G partitions with frames, and reads at most 4096
+     * (frame, key) counts: kS = min(K, 4096 / min(G, 64)) keys per frame, up to
+     * 4096 / (min(G, 64) * kS) frames per probed partition. With G and K at most 64 every pair is
+     * probed and the answer is EXACT. Past that the estimate samples: NULL, when listed, counts
+     * as it is, and the other keys are an even sample whose rows and pairs both scale by the
+     * share of the keys they stand for. The newest partitions after the last target are never
+     * probed: keys that only they hold find no pair, and the open takes the merge.
+     * <p>
+     * <b>Cost.</b> Up to 4096 calls to {@code estimateMatchesClamped}, which answers from
+     * generation metadata with no O(rows) walk; one {@code getIndexReader} per probed frame, in at
+     * most 64 partitions, which both modes would open anyway; and two walks of the partition-frame
+     * cursor: one from partition metadata to count the partitions with frames, and one that stops
+     * after the last target. Frames the sample skips are requested with a saturated skip target,
+     * which the full cursors answer from partition metadata without opening the partition; the
+     * interval cursors ignore the skip target and resolve every frame, so for them the estimate
+     * roughly doubles frame resolution -- O(partitions), against a scan that is O(rows).
+     * <p>
+     * {@code estimateMatchesClamped} returns an exact count for a sealed generation and a
+     * conservative upper bound otherwise; over-counting biases toward per-key, which costs
+     * speed only. Its non-numeric answer -- {@code ESTIMATE_REJECT} for a clipped legacy
+     * unranked Elias-Fano blob with no bounded rank metadata -- means "no bounded answer", and
+     * so does a sample that found
+     * no usable frame, or no non-empty pair, at all. A frame without a posting reader (a
+     * partition that predates the column) is skipped, counted in neither.
+     * <p>
+     * The cursor is single-pass but rewindable, and it is rewound in a {@code finally} before
+     * the caller hands it to {@code MultiKeyCoveringPageFrameCursor.of()}. The same
+     * walk-then-{@code toTop()} shape is used by {@code SingleKeyCoveringCursor.size()} in this
+     * file and by {@code AdaptiveSymbolPatternRecordCursorFactory.estimate()}.
+     */
+    private long estimateRowsPerPair(
+            PartitionFrameCursor frameCursor,
+            TableReader reader,
+            IntList keys
+    ) {
+        final PostingEstimateSample sample = estimateSample;
+        long nullRows = 0;
+        long nullPairs = 0;
+        long rows = 0;
+        long pairs = 0;
+        try {
+            sample.walkMetadata(frameCursor);
+            if (!sample.plan(toSortedIndexKeys(keys))) {
+                return -1;
+            }
+            final boolean hasNull = sample.hasNull();
+            final int sampledKeyCount = sample.getSampledKeyCount();
+            final int countsPerFrame = sampledKeyCount + (hasNull ? 1 : 0);
+            frameCursor.toTop();
+            PartitionFrame frame;
+            while ((frame = sample.nextProbeFrame(frameCursor)) != null) {
+                final IndexReader indexReader = reader.getIndexReader(
+                        frame.getPartitionIndex(), indexColumnIndex, IndexReader.DIR_FORWARD);
+                if (!(indexReader instanceof AbstractPostingIndexReader posting)) {
+                    // A partition predating the index yields a non-posting null reader, which has
+                    // no metadata count. Drop it from BOTH numerator and denominator rather than
+                    // scoring it zero: scoring it zero would drag the mean down and reject on the
+                    // strength of a partition the estimate never actually looked at.
+                    continue;
+                }
+                // Bounds mirror the cheap-chunk fill and SingleKeyCoveringCursor.size(): the gen
+                // walk clamps the inclusive upper bound to min(rowHi - 1, entryMaxValue), while
+                // the implicit-null prefix (key 0) is clamped by columnTop only and so takes the
+                // UNCLAMPED rowHi - 1.
+                final long rowLo = frame.getRowLo();
+                final long callerHiInclusive = frame.getRowHi() - 1;
+                final long entryMax = posting.getEntryMaxValue();
+                final long clampedMax = entryMax >= 0 ? Math.min(callerHiInclusive, entryMax) : callerHiInclusive;
+                sample.addCounts(countsPerFrame);
+                // k = -1 is NULL, index key 0, counted as it is
+                for (int k = hasNull ? -1 : 0; k < sampledKeyCount; k++) {
+                    final long count = posting.estimateMatchesClamped(k < 0 ? 0 : sample.getSampledKey(k), rowLo, callerHiInclusive, clampedMax);
+                    // LONG_NULL answers a negative key only, and index keys are >= 0
+                    assert count != Numbers.LONG_NULL;
+                    if (count == AbstractPostingIndexReader.ESTIMATE_REJECT) {
+                        return -1;
+                    }
+                    if (count > 0) {
+                        if (k < 0) {
+                            nullRows += count;
+                            nullPairs++;
+                        } else {
+                            rows += count;
+                            pairs++;
+                        }
+                    }
+                }
+            }
+        } finally {
+            sample.finish();
+            frameCursor.toTop();
+        }
+        if (nullPairs + pairs == 0) {
+            // Either no usable frame, or the sampled keys hold no rows anywhere the sample
+            // looked. Both are "no bounded answer", and both fall back to the merge.
+            return -1;
+        }
+        if (!sample.isScaled()) {
+            return (nullRows + rows) / (nullPairs + pairs);
+        }
+        // the sampled keys' rows and pairs stand for all the non-NULL keys'; NULL's as they are
+        final double scale = sample.scaleOfNonNull();
+        return (long) ((nullRows + rows * scale) / (nullPairs + pairs * scale));
+    }
+
+    /**
+     * A run of a single-key covering scan's next rows, offered as a {@link RecordBlock}: the rows the
+     * posting cursor's decoded block holds next, whose covered values are consecutive in the
+     * generation's sidecar values (see {@link CoveringRowCursor#peekCoveredRun(int)}). Every
+     * column of the scan is a fixed-width covered column, read at its decoded block, or the indexed
+     * symbol, the key repeated: a scan with a var-size column offers no blocks. The rows' records
+     * ({@link #getRecordAt(int)}) are a {@link CoveringRecord} over the same values, so a block row
+     * reads as the cursor's record would.
+     */
+    private static class CoveringBlock implements RecordBlock, QuietCloseable {
+        private final long[] addresses;
+        private final int[] columnSizes;
+        private final int[] includeIndexes;
+        private final CoveringRecord record;
+        private final BlockValues values;
+        private int keyCapacity;
+        private long keyColumnAddr;
+        private int rowCount;
+
+        CoveringBlock(int[] queryColToIncludeIdx, RecordMetadata metadata) {
+            final int columnCount = queryColToIncludeIdx.length;
+            this.addresses = new long[columnCount];
+            this.columnSizes = new int[columnCount];
+            this.includeIndexes = queryColToIncludeIdx;
+            int maxInclude = -1;
+            for (int q = 0; q < columnCount; q++) {
+                final int includeIdx = queryColToIncludeIdx[q];
+                columnSizes[q] = includeIdx == -1 ? Integer.BYTES : ColumnType.sizeOf(metadata.getColumnType(q));
+                maxInclude = Math.max(maxInclude, includeIdx);
+            }
+            this.values = new BlockValues(maxInclude + 1);
+            this.record = new CoveringRecord(queryColToIncludeIdx, metadata);
+            this.record.of(values);
+        }
+
+        // every column is the indexed symbol or a fixed-width covered column
+        static boolean isEligible(int[] queryColToIncludeIdx, RecordMetadata metadata) {
+            if (queryColToIncludeIdx.length == 0) {
+                return false;
+            }
+            for (int q = 0, n = queryColToIncludeIdx.length; q < n; q++) {
+                final int includeIdx = queryColToIncludeIdx[q];
+                if (includeIdx < -1 || (includeIdx >= 0 && (ColumnType.isVarSize(metadata.getColumnType(q)) || ColumnType.sizeOf(metadata.getColumnType(q)) <= 0))) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        @Override
+        public void close() {
+            if (keyColumnAddr != 0) {
+                keyColumnAddr = Unsafe.free(keyColumnAddr, (long) keyCapacity * Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+                keyCapacity = 0;
+            }
+        }
+
+        @Override
+        public long getColumnAddress(int columnIndex) {
+            return addresses[columnIndex];
+        }
+
+        @Override
+        public long getColumnStride(int columnIndex) {
+            return columnSizes[columnIndex];
+        }
+
+        @Override
+        public Record getRecordAt(int row) {
+            values.row = row;
+            return record;
+        }
+
+        @Override
+        public int getRowCount() {
+            return rowCount;
+        }
+
+        boolean of(CoveringRowCursor cursor, int rows, int symbolKey) {
+            final int ordinal = cursor.getCoveredRunOrdinal();
+            if (ordinal < 0) {
+                return false;
+            }
+            for (int q = 0, n = addresses.length; q < n; q++) {
+                final int includeIdx = includeIndexes[q];
+                if (includeIdx == -1) {
+                    continue;
+                }
+                final long base = cursor.getCoveredBlockAddress(includeIdx);
+                if (base == 0) {
+                    return false;
+                }
+                final long address = base + (long) ordinal * columnSizes[q];
+                addresses[q] = address;
+                values.addresses[includeIdx] = address;
+            }
+            for (int q = 0, n = addresses.length; q < n; q++) {
+                if (includeIndexes[q] == -1) {
+                    if (keyCapacity < rows) {
+                        keyColumnAddr = Unsafe.realloc(keyColumnAddr, (long) keyCapacity * Integer.BYTES, (long) rows * Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+                        keyCapacity = rows;
+                    }
+                    for (int r = 0; r < rows; r++) {
+                        Unsafe.putInt(keyColumnAddr + (long) r * Integer.BYTES, symbolKey);
+                    }
+                    addresses[q] = keyColumnAddr;
+                }
+            }
+            record.setSymbolKey(symbolKey);
+            rowCount = rows;
+            return true;
+        }
+    }
+
+    /**
+     * The covered values of a {@link CoveringBlock}'s row, for its {@link CoveringRecord}: each
+     * include column's value at the block address the block resolved, for the row it was last
+     * positioned at. It serves fixed-width values only, as a block holds no other column.
+     */
+    private static class BlockValues implements CoveringRowCursor {
+        final long[] addresses;
+        int row;
+
+        BlockValues(int includeCount) {
+            this.addresses = new long[Math.max(1, includeCount)];
+        }
+
+        @Override
+        public ArrayView getCoveredArray(int includeIdx, int columnType) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public BinarySequence getCoveredBin(int includeIdx) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public long getCoveredBinLen(int includeIdx) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public byte getCoveredByte(int includeIdx) {
+            return Unsafe.getByte(addresses[includeIdx] + row);
+        }
+
+        @Override
+        public double getCoveredDouble(int includeIdx) {
+            return Unsafe.getDouble(addresses[includeIdx] + (long) row * Double.BYTES);
+        }
+
+        @Override
+        public float getCoveredFloat(int includeIdx) {
+            return Unsafe.getFloat(addresses[includeIdx] + (long) row * Float.BYTES);
+        }
+
+        @Override
+        public int getCoveredInt(int includeIdx) {
+            return Unsafe.getInt(addresses[includeIdx] + (long) row * Integer.BYTES);
+        }
+
+        @Override
+        public long getCoveredLong(int includeIdx) {
+            return Unsafe.getLong(addresses[includeIdx] + (long) row * Long.BYTES);
+        }
+
+        @Override
+        public long getCoveredLong128Hi(int includeIdx) {
+            return Unsafe.getLong(addresses[includeIdx] + (long) row * 16 + 8);
+        }
+
+        @Override
+        public long getCoveredLong128Lo(int includeIdx) {
+            return Unsafe.getLong(addresses[includeIdx] + (long) row * 16);
+        }
+
+        @Override
+        public long getCoveredLong256_0(int includeIdx) {
+            return Unsafe.getLong(addresses[includeIdx] + (long) row * 32);
+        }
+
+        @Override
+        public long getCoveredLong256_1(int includeIdx) {
+            return Unsafe.getLong(addresses[includeIdx] + (long) row * 32 + 8);
+        }
+
+        @Override
+        public long getCoveredLong256_2(int includeIdx) {
+            return Unsafe.getLong(addresses[includeIdx] + (long) row * 32 + 16);
+        }
+
+        @Override
+        public long getCoveredLong256_3(int includeIdx) {
+            return Unsafe.getLong(addresses[includeIdx] + (long) row * 32 + 24);
+        }
+
+        @Override
+        public short getCoveredShort(int includeIdx) {
+            return Unsafe.getShort(addresses[includeIdx] + (long) row * Short.BYTES);
+        }
+
+        @Override
+        public CharSequence getCoveredStrA(int includeIdx) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public CharSequence getCoveredStrB(int includeIdx) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Utf8Sequence getCoveredVarcharA(int includeIdx) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Utf8Sequence getCoveredVarcharB(int includeIdx) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public boolean hasNext() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public boolean isCoveredAvailable(int includeIdx) {
+            return true;
+        }
+
+        @Override
+        public long next() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public long seekToLast() {
+            throw new UnsupportedOperationException();
+        }
+    }
+
     private static abstract class CoveringCursor implements RecordCursor {
         protected final IntList columnIndexes;
         protected final CoveringRecord coveringRecord;
+        // the block peekRecordBlock() offers, null when this cursor offers none, see CoveringBlock
+        protected CoveringBlock block;
         protected final int indexColumnIndex;
         protected final boolean latestBy;
         protected final int[] requiredIncludeIndices;
@@ -761,6 +2010,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             // before freeing frameCursor).
             this.currentRowCursor = Misc.free(currentRowCursor);
             frameCursor = Misc.free(frameCursor);
+            Misc.free(block);
         }
 
         @Override
@@ -812,6 +2062,18 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         }
 
         @Override
+        public @Nullable RecordBlock peekRecordBlock(int maxRows) {
+            if (block == null || frameCursor == null || latestBy || currentRowCursor == null) {
+                return null;
+            }
+            final int rows = currentRowCursor.peekCoveredRun(maxRows);
+            if (rows <= 0 || !block.of(currentRowCursor, rows, coveringRecord.symbolKey)) {
+                return null;
+            }
+            return block;
+        }
+
+        @Override
         public long preComputedStateSize() {
             return 0;
         }
@@ -819,6 +2081,19 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         @Override
         public void recordAt(Record record, long atRowId) {
             throw new UnsupportedOperationException("CoveringIndex does not support random access");
+        }
+
+        @Override
+        public void skipRecordBlock(int rowCount) {
+            if (rowCount > 0) {
+                currentRowCursor.skipCoveredRun(rowCount);
+                coveringRecord.setRowId(currentRowCursor.next());
+            }
+        }
+
+        @Override
+        public boolean supportsRecordBlocks() {
+            return block != null && !latestBy;
         }
 
         @Override
@@ -910,6 +2185,10 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     symTablesCache[col] = tableReader.getSymbolMapReader(columnIndexes.getQuick(col));
                 }
                 coveringRecord.setIncludeSymbolTables(symTablesCache);
+            }
+            if (block != null) {
+                block.record.setSymbolTable(indexSymbolTable);
+                block.record.setIncludeSymbolTables(symbolIncludeCols != null ? symTablesCache : null);
             }
         }
 
@@ -1110,7 +2389,15 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     }
 
     private static abstract class CoveringPageFrameCursor implements TablePageFrameCursor {
+        // Frames past the bound widenFramesUnderLimit() computes: the backward lean scan's first
+        // chunks, which double from SingleKeyCoveringPageFrameCursor.DESC_LEAN_FIRST_CHUNK_ROWS up
+        // to the row cap, are at most log2(MAX_FRAME_ROWS / 1024) = 14 smaller frames.
+        private static final int FRAME_BUDGET_SLACK = 64;
         private static final int INITIAL_CAPACITY = 4096;
+        // The most rows a frame may hold: the batched GROUP BY packs frame-relative row indexes
+        // into 24 bits, see NativeFrameBoundaries.calculatePageFrameRowLimit().
+        private static final int MAX_FRAME_ROWS = Map.BATCH_ROW_INDEX_MASK + 1;
+        private static final int[] NO_KEYS = new int[0];
         // Identity sentinel returned by fillFrameForKeyCheap to mean "this layout is
         // MIXED / not metadata-resolvable -- fall back to the traverse", as distinct
         // from a genuine null ("(key, partition) exhausted"). Never escapes
@@ -1123,8 +2410,24 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         // there. See setMaxRowsPerFrameForTesting for the override convention.
         @TestOnly
         static volatile long coveredRowsWrittenForTesting;
+        // Test-only count of resumeKeyDrain() calls, i.e. the number of times a
+        // (key, partition) drain was picked up mid-way because the previous frame
+        // hit the row cap. It is the ONLY observable that distinguishes "this key
+        // fit in one frame" from "this key spanned many frames": nothing in the
+        // query plan, the result rows or the per-key frame stream says how many
+        // frames a key produced. Tests that shrink maxRowsPerFrame to reach the
+        // resume branch assert on it so they cannot pass vacuously. Reset with
+        // resetKeyDrainResumesForTesting().
+        @TestOnly
+        static volatile long keyDrainResumesForTesting;
         private static int maxRowsPerFrameOverride = -1;
+        // The row cap of this execution's next frame: the configured one, or more once
+        // widenFramesUnderLimit() raised it.
         protected int maxRowsPerFrame;
+        // The row cap this execution opened with, which toTop() restores.
+        private int configuredMaxRowsPerFrame;
+        // Frames this execution emitted since the last open or toTop(), see finalizeFrame().
+        private int framesEmitted;
         // Tracks all native allocations as (addr, size) pairs for bulk cleanup.
         // Each fillFrameForKey() call allocates fresh buffers so that
         // PageFrameAddressCache can hold addresses from multiple frames
@@ -1230,6 +2533,16 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         protected long cheapTotal;
         protected int pendingSymbolKey = -1;
         protected TableReader tableReader;
+        // With the frame dispatch switch on, a fresh forward single-key (key, partition) is
+        // produced without a covering cursor and without its boundary postings, see
+        // fillFrameForKeyLean(); the workers resolve what the frame needs when they decode it.
+        protected boolean leanProduction;
+        // tests: frames the lean production produced, and those it left to the cursor; counted under
+        // assert only, so production does not share the counters' cache line
+        @TestOnly
+        static volatile long leanFramesForTesting;
+        @TestOnly
+        static volatile long leanFallbacksForTesting;
 
         CoveringPageFrameCursor(
                 int indexColumnIndex,
@@ -1340,6 +2653,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             isExhausted = false;
             resetIterationState();
             freeBuffers();
+            // the scan starts over, so it emits its frames again, from the configured cap
+            maxRowsPerFrame = configuredMaxRowsPerFrame;
+            framesEmitted = 0;
         }
 
         protected long allocBuffer(long bytes) {
@@ -1527,6 +2843,50 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         }
 
         /**
+         * True while a (key, partition) is mid-drain. This is ONE logical state with
+         * TWO representations -- the cheap O(genCount) path records a chunk to resume
+         * ({@link #cheapChunkActive}), the MIXED/fallback traverse parks a cursor
+         * ({@link #pendingRowCursor}) -- and every caller must test both. The test
+         * lives here so no call site can test half of it.
+         * <p>
+         * <b>This is also the only valid "is this key finished in this partition?"
+         * test after a fill.</b> A null return means finished, but a NON-null return
+         * can equally mean finished: {@link #fillFrameForKeyCheap} clears the resume
+         * state when the frame it is returning was the key's last chunk. A caller
+         * that advances its key only on null therefore re-opens any key that fits in
+         * a single frame, and emits it forever. {@link SingleKeyCoveringPageFrameCursor}
+         * is immune only because its progress counter is the partition iterator
+         * rather than a key index.
+         */
+        protected final boolean isKeyMidDrain() {
+            return cheapChunkActive || pendingRowCursor != null;
+        }
+
+        /**
+         * Continue the parked (key, partition) drain. Callers must check
+         * {@link #isKeyMidDrain()} first; the parked state names its own key and
+         * partition, so a caller's current key is deliberately NOT consulted.
+         * <p>
+         * Two resume shapes: for the parked-cursor shape the row range is unused (the
+         * cursor owns it); for the cheap shape the cursor opened here is reader prep
+         * only and the stored rowLo/clamp drive selectKthMatch -- so pass cheapRowLo,
+         * making the prep cursor's minValue match and a defensive re-open use the
+         * correct range.
+         */
+        protected final @Nullable PageFrame resumeKeyDrain() {
+            assert isKeyMidDrain();
+            // Test-only: one mid-drain resume. Unconditional (not folded into an
+            // assert) so the count stays correct with -ea off. See
+            // getKeyDrainResumesForTesting -- a test that shrinks the frame cap to
+            // reach this branch has no other way to prove it got here.
+            keyDrainResumesForTesting++;
+            final long resumeRowLo = cheapChunkActive ? cheapRowLo : 0L;
+            return fillFrameForKey(
+                    pendingSymbolKey, pendingPartitionIndex,
+                    resumeRowLo, resumeRowLo, maxRowsPerFrame, true);
+        }
+
+        /**
          * Produce up to {@code rowCap} rows for {@code rawSymbolKey} in the given
          * partition's row range. If the key has more rows than the cap, the open
          * {@link RowCursor} is parked in {@link #pendingRowCursor}; the caller is
@@ -1549,6 +2909,15 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
          * materializes eagerly -- see {@code fillMergedFrame}.)
          */
         protected @Nullable PageFrame fillFrameForKey(int rawSymbolKey, int partitionIndex, long rowLo, long rowHi, int rowCap, boolean cheapEligible) {
+            if (leanProduction && cheapEligible && pendingRowCursor == null) {
+                final PageFrame lean = fillFrameForKeyLean(rawSymbolKey, partitionIndex, rowLo, rowHi, rowCap);
+                if (lean != SENTINEL_FALLBACK) {
+                    return lean;
+                }
+                // MIXED, or a reader the lean path does not read: the covering cursor's way below;
+                // counted for tests only, under assert, off the production path
+                assert leanFallbacksForTesting++ >= 0;
+            }
             // Open (or continue) the covering cursor. KEEPING this is load-bearing
             // even on the cheap path: getCursor -> reloadConditionally pre-extends
             // valueMem and openRequiredSidecars opens the sidecars, BOTH of which the
@@ -1587,6 +2956,107 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 clearCheapChunkState();
             }
             return fillFrameByTraverse(coveringCursor, rawSymbolKey, partitionIndex, rowCap);
+        }
+
+        /**
+         * The frame dispatch switch's production of a forward single-key (key, partition), on the
+         * query's thread: the partition's posting reader is prepared for the workers' detached
+         * cursors the way opening a covering cursor prepares it (reload, value memory, sidecars:
+         * {@link AbstractPostingIndexReader#warmForKeys}), without opening one, and the key is
+         * counted ({@code countMatchesClamped}); a chunk of the count becomes a metadata-only frame.
+         * The chunk's boundary postings, which {@link #fillFrameForKeyCheap} resolves here with two
+         * {@code selectKthMatch} calls, are not resolved: the frame's covered range runs from the
+         * chunk's first posting for a later chunk (one {@code selectKthMatch}), from the
+         * partition's first row for the first, and to the partition's end, and the worker that
+         * decodes the frame reads the frame's row count of the key's postings from there (see
+         * PageFrameMemoryPool.CoveringBuffers), which are the chunk's rows. Returns null when the
+         * (key, partition) is exhausted, {@link #SENTINEL_FALLBACK} when the reader is not a
+         * posting reader or the layout is MIXED: the caller then opens the covering cursor.
+         */
+        private @Nullable PageFrame fillFrameForKeyLean(int rawSymbolKey, int partitionIndex, long rowLo, long rowHi, int rowCap) {
+            final boolean resume = cheapChunkActive
+                    && pendingSymbolKey == rawSymbolKey
+                    && pendingPartitionIndex == partitionIndex;
+            final AbstractPostingIndexReader reader;
+            if (resume) {
+                reader = (AbstractPostingIndexReader) framePostingReader;
+            } else {
+                final IndexReader indexReader = tableReader.getIndexReader(partitionIndex, indexColumnIndex, IndexReader.DIR_FORWARD);
+                if (!(indexReader instanceof AbstractPostingIndexReader posting)) {
+                    return SENTINEL_FALLBACK;
+                }
+                reader = posting;
+                // what the covering cursor's open did for the workers' detached cursors
+                reader.warmForKeys(NO_KEYS, requiredIncludeIndices);
+                framePostingReader = reader;
+                framePostingCursorMinValue = rowLo;
+                pendingSymbolKey = rawSymbolKey;
+                pendingPartitionIndex = partitionIndex;
+            }
+            final int key = TableUtils.toIndexKey(rawSymbolKey);
+            final long clampedMax;
+            final long nullMax;
+            final long total;
+            final long chunkBase;
+            final long partitionRowLo;
+            if (resume) {
+                clampedMax = cheapClampedMax;
+                nullMax = cheapNullMax;
+                total = cheapTotal;
+                chunkBase = cheapChunkBase;
+                partitionRowLo = cheapRowLo;
+            } else {
+                // the bounds fillFrameForKeyCheap() and the covering cursor use, see there
+                final long callerHiInclusive = rowHi - 1;
+                final long entryMax = reader.getEntryMaxValue();
+                clampedMax = entryMax >= 0 ? Math.min(callerHiInclusive, entryMax) : callerHiInclusive;
+                nullMax = callerHiInclusive;
+                total = reader.countMatchesClamped(key, rowLo, nullMax, clampedMax);
+                if (total == Numbers.LONG_NULL) {
+                    clearCheapChunkState();
+                    return SENTINEL_FALLBACK;
+                }
+                chunkBase = 0;
+                partitionRowLo = rowLo;
+            }
+            final int count = (int) Math.min(rowCap, total - chunkBase);
+            if (count <= 0) {
+                clearCheapChunkState();
+                return null;
+            }
+            final long firstAbs;
+            if (chunkBase == 0) {
+                // no posting of the key precedes the first chunk's in the partition
+                firstAbs = partitionRowLo;
+            } else {
+                firstAbs = reader.selectKthMatch(key, partitionRowLo, nullMax, clampedMax, chunkBase);
+                if (firstAbs == Numbers.LONG_NULL) {
+                    clearCheapChunkState();
+                    return SENTINEL_FALLBACK;
+                }
+            }
+            if (chunkBase == 0) {
+                // as fillFrameForKeyCheap(): the per-key genLookup memo, before the readers freeze
+                reader.populateCacheForKey(key);
+            }
+            final long nextBase = chunkBase + count;
+            if (nextBase < total) {
+                cheapChunkActive = true;
+                cheapChunkBase = nextBase;
+                cheapClampedMax = clampedMax;
+                cheapNullMax = nullMax;
+                cheapRowLo = partitionRowLo;
+                cheapTotal = total;
+                pendingSymbolKey = rawSymbolKey;
+                pendingPartitionIndex = partitionIndex;
+                // the range ends at the partition's: the cheap resume reads nullMax as its end
+            } else {
+                clearCheapChunkState();
+            }
+            assert leanFramesForTesting++ >= 0;
+            // the range: from the chunk's first posting (or the partition's first row) to the
+            // partition's end; the decode reads the frame's count of postings from its start
+            return finalizeFrame(count, partitionIndex, rawSymbolKey, firstAbs, nullMax + 1, false);
         }
 
         /**
@@ -1800,8 +3270,19 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
          * arm ({@link PageFrameMemoryPool#patchCoveredFrameMemory}) decodes the
          * values and overrides these addresses. The non-address metadata below is
          * set identically in both cases.
+         * <p>
+         * Every frame of every mode passes here, so this is where the frame count is held below
+         * {@link #MAX_PAGE_FRAMES}: the scan's frames widen once it has emitted
+         * {@link #FRAME_BUDGET_CHECK_FRAMES} of them, see {@link #widenFramesUnderLimit()}, and a
+         * frame at the limit fails the query, which a wrong row id would otherwise answer.
          */
         protected PageFrame finalizeFrame(int count, int partitionIndex, int rawSymbolKey, long rowLo, long rowHi, boolean materialized) {
+            if (++framesEmitted >= MAX_PAGE_FRAMES) {
+                throw frameLimitExceeded();
+            }
+            if (framesEmitted == FRAME_BUDGET_CHECK_FRAMES) {
+                widenFramesUnderLimit();
+            }
             long symAddr = frameAddrs[queryColCount];
             for (int q = 0; q < queryColCount; q++) {
                 int includeIdx = queryColToIncludeIdx[q];
@@ -1981,6 +3462,34 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             pendingPartitionIndex = -1;
         }
 
+        /**
+         * The row cap a frame actually gets: the test override when set, otherwise the engine
+         * configuration value the execution context carried in. The per-key frame-count ceiling
+         * has to divide by this exact number, not by {@code configMaxRows}, or a test that
+         * shrinks the cap would compute a bound the execution then exceeds.
+         */
+        static int effectiveMaxRowsPerFrame(int configMaxRows) {
+            return maxRowsPerFrameOverride >= 0 ? maxRowsPerFrameOverride : configMaxRows;
+        }
+
+        // the error of a scan at the frame limit, out of finalizeFrame(), which every frame runs
+        private CairoException frameLimitExceeded() {
+            return CairoException.nonCritical()
+                    .put("covering index scan exceeds the page frames one query can address [table=")
+                    .put(tableReader.getTableToken().getTableName())
+                    .put(", limit=").put(MAX_PAGE_FRAMES)
+                    .put("], query fewer partitions or time intervals at a time");
+        }
+
+        /**
+         * The frames one partition frame takes besides the row cap's split of its rows, see
+         * {@link #widenFramesUnderLimit()}: one for a single key, and one for the merge, which holds
+         * every listed key's rows of a partition frame in the same frames.
+         */
+        long framesPerPartitionFrame() {
+            return 1;
+        }
+
         void of(
                 PartitionFrameCursor frameCursor,
                 int configMaxRows,
@@ -1996,7 +3505,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             this.memoryTracker = memoryTracker;
             this.frameCursor = frameCursor;
             this.tableReader = frameCursor.getTableReader();
-            this.maxRowsPerFrame = maxRowsPerFrameOverride >= 0 ? maxRowsPerFrameOverride : configMaxRows;
+            this.maxRowsPerFrame = effectiveMaxRowsPerFrame(configMaxRows);
+            this.configuredMaxRowsPerFrame = maxRowsPerFrame;
+            this.framesEmitted = 0;
             this.descending = descending;
             this.isExhausted = false;
             columnMapping.clear();
@@ -2006,6 +3517,58 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         }
 
         abstract void resetIterationState();
+
+        /**
+         * Raises the row cap of a scan that has emitted {@link #FRAME_BUDGET_CHECK_FRAMES} frames to
+         * the fewest rows per frame that keep all of its frames below {@link #MAX_PAGE_FRAMES}.
+         * <p>
+         * The rest of the scan emits at most one frame per (key, partition frame) pair it holds
+         * rows of, plus one per row cap's worth of those rows: {@code ceil(a / m) <= 1 + floor(a / m)}
+         * for {@code a >= 1}, and the floors sum to at most the floor of the sum. Bounding the pairs
+         * by the whole scan's, the frame cursor's {@code getFrameCountUpperBound()} times
+         * {@link #framesPerPartitionFrame()}, and the rows by the whole scan's, the cursor's size or
+         * the table's, over-counts, which is the safe direction; so does the slack, for the
+         * backward lean scan's first, smaller chunks. So with {@code m} the fewest rows for which
+         * {@code rows / m} is below what the limit leaves past the frames emitted, the pairs and
+         * the slack, the scan ends below the limit. The cap only grows, to at most
+         * {@link #MAX_FRAME_ROWS}. A scan whose frame cursor has no bound, or whose pairs alone use
+         * up the limit, keeps its cap, and {@link #finalizeFrame} fails it at the limit.
+         * <p>
+         * Once per execution, on the query's thread, before the frames go to the workers: the frames
+         * emitted before keep their rows, and the scan's later frames read the raised cap.
+         */
+        private void widenFramesUnderLimit() {
+            final long partitionFrameUpperBound = frameCursor.getFrameCountUpperBound();
+            // every cursor this factory opens answers, see admitsPerKeyMode()
+            assert partitionFrameUpperBound >= 0 : "frame cursor offers no frame-count upper bound";
+            if (partitionFrameUpperBound < 0 || partitionFrameUpperBound >= MAX_PAGE_FRAMES) {
+                // no bound, or the partition frames alone may fill the limit
+                return;
+            }
+            // fewer than 2^19 partition frames times at most 2^31 keys: no overflow
+            final long pairUpperBound = framesPerPartitionFrame() * partitionFrameUpperBound;
+            final long splitBudget = MAX_PAGE_FRAMES - framesEmitted - FRAME_BUDGET_SLACK - pairUpperBound;
+            if (splitBudget <= 0) {
+                return;
+            }
+            final long scanRows = frameCursor.size();
+            final long rowsUpperBound = scanRows >= 0 ? scanRows : tableReader.size();
+            final long rows = Math.min(rowsUpperBound / splitBudget + 1, MAX_FRAME_ROWS);
+            if (rows > maxRowsPerFrame) {
+                LOG.debug().$("covering scan widens its frames [table=").$(tableReader.getTableToken())
+                        .$(", framesEmitted=").$(framesEmitted)
+                        .$(", partitionFramesUpper=").$(partitionFrameUpperBound)
+                        .$(", rowsUpper=").$(rowsUpperBound)
+                        .$(", rows=").$(maxRowsPerFrame)
+                        .$(", widenedRows=").$(rows)
+                        .I$();
+                maxRowsPerFrame = (int) rows;
+            }
+        }
+
+        void setLeanProduction(boolean leanProduction) {
+            this.leanProduction = leanProduction;
+        }
     }
 
     /**
@@ -2732,6 +4295,20 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         private boolean isHeapMerge;
         private boolean isMergeObserved;
         private final MergeObserver mergeObserver;
+        // Per-key (unordered) iteration state, used only when tsOrderedFrames is
+        // false. Outer loop is partitions -- the partition frame cursor is single
+        // pass -- inner loop is keys, so each frame carries ONE resolved symbol
+        // key and the partitions themselves still arrive in ascending order.
+        private int perKeyIdx;
+        private int perKeyPartitionIndex = -1;
+        private long perKeyRowHi;
+        private long perKeyRowLo;
+        // The MODE this execution runs in, as distinct from the factory's plan-stable
+        // PERMISSION (CoveringIndexRecordCursorFactory.unorderedFramesPermitted). Set on
+        // every open by getPageFrameCursor(); merged (true) is the default and the answer
+        // in every ambiguous case, because it is the mode whose ordering matches what the
+        // factory advertises.
+        private boolean tsOrderedFrames = true;
 
         MultiKeyCoveringPageFrameCursor(
                 int indexColumnIndex,
@@ -2745,10 +4322,21 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             this.mergeObserver = mergeObserver;
         }
 
+        void setTsOrderedFrames(boolean value) {
+            this.tsOrderedFrames = value;
+        }
+
         @Override
         public void close() {
             closeMergeCursors();
             super.close();
+        }
+
+        // per-key mode emits each key's rows of a partition frame in frames of their own, the merge
+        // all keys' rows in the same frames
+        @Override
+        long framesPerPartitionFrame() {
+            return tsOrderedFrames ? 1 : Math.max(1, multiKeys.size());
         }
 
         @Override
@@ -2757,6 +4345,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             if (multiKeys.size() == 0) {
                 isExhausted = true;
                 return null;
+            }
+            if (!tsOrderedFrames) {
+                return nextImplPerKey();
             }
             while (true) {
                 if (mergePartitionIndex >= 0) {
@@ -2781,6 +4372,67 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         @Override
         void resetIterationState() {
             closeMergeCursors();
+            perKeyPartitionIndex = -1;
+            perKeyIdx = 0;
+        }
+
+        /**
+         * Unordered multi-key iteration: drain one key at a time within each
+         * partition, reusing the SINGLE-key fill. Every frame therefore carries a
+         * real resolved symbol key, so it stays metadata-only and the async worker
+         * arm decodes the covered values -- unlike {@link #fillMergedFrame}, whose
+         * key-interleaved frames report VALUE_NOT_FOUND, are skipped by the worker
+         * arm, and are consequently materialized on this thread.
+         * <p>
+         * Rows are ascending WITHIN a frame (a key's posting list is ascending),
+         * but frames are not globally timestamp-ordered, so this mode is legal only
+         * where the consumer does not require designated-timestamp order. The
+         * factory advertises that via {@code getScanDirection()}.
+         */
+        @Nullable
+        private PageFrame nextImplPerKey() {
+            final int n = multiKeys.size();
+            while (true) {
+                if (perKeyPartitionIndex >= 0) {
+                    while (perKeyIdx < n) {
+                        // Resume a parked drain before starting the next key: the
+                        // parked state owns the cursor and names its own key.
+                        final PageFrame result = isKeyMidDrain()
+                                ? resumeKeyDrain()
+                                : fillFrameForKey(
+                                multiKeys.getQuick(perKeyIdx), perKeyPartitionIndex,
+                                perKeyRowLo, perKeyRowHi, maxRowsPerFrame, true);
+                        // A null frame must mean the key finished, because only
+                        // !isKeyMidDrain() advances perKeyIdx. A fill that returned null
+                        // while still claiming to be mid-drain would spin this inner loop
+                        // forever on the same key -- a hung query with no error, which is
+                        // far harder to diagnose than a failed assertion.
+                        assert result != null || !isKeyMidDrain();
+                        // See isKeyMidDrain(): this -- NOT a null return -- is what
+                        // says the key is finished in this partition.
+                        if (!isKeyMidDrain()) {
+                            perKeyIdx++;
+                        }
+                        if (result != null) {
+                            // admitsPerKeyMode() admitted this execution only under a frame bound
+                            // below the ceiling, which the walk cannot exceed; finalizeFrame()
+                            // enforces it.
+                            return result;
+                        }
+                    }
+                    perKeyPartitionIndex = -1;
+                }
+                PartitionFrame partFrame = frameCursor.next();
+                if (partFrame == null) {
+                    isExhausted = true;
+                    return null;
+                }
+                framePartitionFormat = partFrame.getPartitionFormat();
+                perKeyPartitionIndex = partFrame.getPartitionIndex();
+                perKeyRowLo = partFrame.getRowLo();
+                perKeyRowHi = partFrame.getRowHi();
+                perKeyIdx = 0;
+            }
         }
 
         private void closeMergeCursors() {
@@ -2978,6 +4630,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                                 boolean latestBy, RecordMetadata metadata) {
             super(indexColumnIndex, queryColToIncludeIdx, requiredIncludeIndices, symbolIncludeCols, columnIndexes, latestBy, metadata);
             this.symbolKey = SymbolTable.VALUE_NOT_FOUND;
+            if (!latestBy && CoveringBlock.isEligible(queryColToIncludeIdx, metadata)) {
+                this.block = new CoveringBlock(queryColToIncludeIdx, metadata);
+            }
         }
 
         /**
@@ -3092,6 +4747,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     }
 
     private static class SingleKeyCoveringPageFrameCursor extends CoveringPageFrameCursor {
+        private static final long DESC_LEAN_FIRST_CHUNK_ROWS = 1024;
         int resolvedKey;
         // Backward-scan state: the partition currently being drained from its
         // high row-range downward, and the exclusive upper bound of the next
@@ -3099,6 +4755,19 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         private int descPartitionIndex = -1;
         private long descPartitionLo;
         private long descSubHi;
+        // Lean backward-scan state: the partition whose key's postings are emitted as metadata-only
+        // chunks from its last posting down, and how many of them are still to emit. A partition the
+        // lean way cannot count (a MIXED layout, a non-posting reader) takes the traverse above.
+        private AbstractPostingIndexReader descLeanReader;
+        private int descLeanPartitionIndex;
+        private long descLeanRemaining;
+        private long descLeanRowLo;
+        private long descLeanNullMax;
+        private long descLeanClampedMax;
+        // the postings of the lean backward scan's next chunk: a negative LIMIT takes few rows from
+        // the last frames, so the scan's first chunk is small and each next one twice the last's,
+        // up to maxRowsPerFrame
+        private long descLeanChunkRows = DESC_LEAN_FIRST_CHUNK_ROWS;
 
         SingleKeyCoveringPageFrameCursor(
                 int indexColumnIndex,
@@ -3124,20 +4793,10 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             if (descending) {
                 return nextImplDescending();
             }
-            // If a previous fillFrameForKey left this (key, partition) mid-drain,
-            // resume it before advancing the partition iterator. Two resume shapes:
-            // the cheap O(genCount) path (cheapChunkActive, no parked cursor) and the
-            // MIXED/fallback traverse (pendingRowCursor parked). For the parked-cursor
-            // shape the row range is unused (the cursor owns it); for the cheap shape
-            // the cursor opened here is for reader prep only and the stored rowLo/clamp
-            // drive selectKthMatch -- pass cheapRowLo so the prep cursor's minValue
-            // matches and a defensive re-open would use the correct range.
-            if (cheapChunkActive || pendingRowCursor != null) {
-                final long resumeRowLo = cheapChunkActive ? cheapRowLo : 0L;
-                PageFrame result = fillFrameForKey(
-                        pendingSymbolKey,
-                        pendingPartitionIndex,
-                        resumeRowLo, resumeRowLo, maxRowsPerFrame, true);
+            // If a previous fill left this (key, partition) mid-drain, resume it
+            // before advancing the partition iterator.
+            if (isKeyMidDrain()) {
+                PageFrame result = resumeKeyDrain();
                 if (result != null) {
                     return result;
                 }
@@ -3166,17 +4825,93 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         @Override
         void resetIterationState() {
             descPartitionIndex = -1;
+            descLeanRemaining = 0;
+            descLeanReader = null;
+            descLeanChunkRows = DESC_LEAN_FIRST_CHUNK_ROWS;
+        }
+
+        /**
+         * Opens a partition of the lean backward scan: counts the key's postings in
+         * [rowLo, rowHi) from the posting metadata, as the forward lean path does, and prepares
+         * the reader for the workers' detached cursors. False when the partition cannot be
+         * counted that way (not a posting reader, a MIXED layout): the traverse then reads it.
+         */
+        private boolean openLeanDescending(int partitionIndex, long rowLo, long rowHi) {
+            final IndexReader indexReader = tableReader.getIndexReader(partitionIndex, indexColumnIndex, IndexReader.DIR_FORWARD);
+            if (!(indexReader instanceof AbstractPostingIndexReader posting)) {
+                return false;
+            }
+            final int key = TableUtils.toIndexKey(resolvedKey);
+            // the bounds of fillFrameForKeyLean()
+            final long callerHiInclusive = rowHi - 1;
+            final long entryMax = posting.getEntryMaxValue();
+            final long clampedMax = entryMax >= 0 ? Math.min(callerHiInclusive, entryMax) : callerHiInclusive;
+            final long total = posting.countMatchesClamped(key, rowLo, callerHiInclusive, clampedMax);
+            if (total == Numbers.LONG_NULL) {
+                return false;
+            }
+            // what the covering cursor's open does for the workers' detached cursors, and the
+            // per-key genLookup memo: both before the first frame goes to a worker, as the chunks
+            // arrive last first
+            posting.warmForKeys(CoveringPageFrameCursor.NO_KEYS, requiredIncludeIndices);
+            if (total > 0) {
+                posting.populateCacheForKey(key);
+            }
+            descLeanReader = posting;
+            descLeanPartitionIndex = partitionIndex;
+            descLeanRemaining = total;
+            descLeanRowLo = rowLo;
+            descLeanNullMax = callerHiInclusive;
+            descLeanClampedMax = clampedMax;
+            return true;
+        }
+
+        /**
+         * The next chunk of the lean backward scan's partition, the highest not yet emitted: at
+         * most maxRowsPerFrame of the key's postings, as a metadata-only frame whose rows the
+         * worker decodes forward from the chunk's first posting.
+         */
+        private PageFrame nextLeanDescendingChunk() {
+            final long chunkRows = Math.min(descLeanChunkRows, Math.max(1, maxRowsPerFrame));
+            descLeanChunkRows = chunkRows * 2;
+            final int count = (int) Math.min(chunkRows, descLeanRemaining);
+            final long chunkBase = descLeanRemaining - count;
+            final long firstAbs;
+            if (chunkBase == 0) {
+                // no posting of the key precedes the partition's first chunk
+                firstAbs = descLeanRowLo;
+            } else {
+                firstAbs = descLeanReader.selectKthMatch(
+                        TableUtils.toIndexKey(resolvedKey), descLeanRowLo, descLeanNullMax, descLeanClampedMax, chunkBase);
+                if (firstAbs == Numbers.LONG_NULL) {
+                    // countMatchesClamped() and selectKthMatch() share their coverage predicate: a
+                    // counted partition resolves every k below its count
+                    throw CairoException.critical(0)
+                            .put("covering backward scan cannot resolve posting [k=").put(chunkBase)
+                            .put(", partitionIndex=").put(descLeanPartitionIndex).put(']');
+                }
+            }
+            descLeanRemaining = chunkBase;
+            framePostingReader = descLeanReader;
+            framePostingCursorMinValue = descLeanRowLo;
+            return finalizeFrame(count, descLeanPartitionIndex, resolvedKey, firstAbs, descLeanNullMax + 1, false);
         }
 
         /**
          * Backward scan for a negative LIMIT. The partition frame cursor was
          * opened ORDER_DESC, so it yields partitions from latest to earliest.
-         * Within each partition we split the row range [partitionLo,
-         * partitionHi) into sub-frames at most {@code maxRowsPerFrame} rows
-         * wide and emit the highest sub-frame first. Each sub-frame is read
-         * forward (ascending row ids), so rows stay ascending WITHIN a frame
-         * while the frames themselves arrive in descending order -- exactly
-         * what {@link AsyncFilteredNegativeLimitRecordCursor} expects from a
+         * With lean production a partition's postings of the key go out as
+         * metadata-only chunks of at most {@code maxRowsPerFrame} postings, the
+         * last chunk first (the scan's first chunks smaller, see descLeanChunkRows), each found from the posting metadata
+         * ({@link #openLeanDescending}, {@link #nextLeanDescendingChunk}), so
+         * reaching the tail costs O(genCount), not a walk of the key's rows.
+         * Otherwise, or for a partition that cannot be counted that way, we
+         * split the row range [partitionLo, partitionHi) into sub-frames at
+         * most {@code maxRowsPerFrame} rows wide and emit the highest sub-frame
+         * first. Either way each frame is read forward (ascending row ids), so
+         * rows stay ascending WITHIN a frame while the frames themselves arrive
+         * in descending order -- exactly what
+         * {@link AsyncFilteredNegativeLimitRecordCursor} expects from a
          * forward-scan-direction base. Because a sub-frame is at most
          * maxRowsPerFrame row ids wide it holds at most that many matching
          * rows, so a single fill (rowCap = MAX_VALUE) never parks a cursor.
@@ -3184,6 +4919,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         @Nullable
         private PageFrame nextImplDescending() {
             while (true) {
+                if (descLeanRemaining > 0) {
+                    return nextLeanDescendingChunk();
+                }
                 if (descPartitionIndex >= 0) {
                     while (descSubHi > descPartitionLo) {
                         // Math.max(1, ...) keeps each sub-frame at least one row wide
@@ -3216,6 +4954,10 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     return null;
                 }
                 framePartitionFormat = partFrame.getPartitionFormat();
+                if (leanProduction && openLeanDescending(partFrame.getPartitionIndex(), partFrame.getRowLo(), partFrame.getRowHi())) {
+                    // a partition without the key's postings leaves nothing to emit: on to the next
+                    continue;
+                }
                 descPartitionIndex = partFrame.getPartitionIndex();
                 descPartitionLo = partFrame.getRowLo();
                 descSubHi = partFrame.getRowHi();

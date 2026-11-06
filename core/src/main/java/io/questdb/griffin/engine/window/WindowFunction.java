@@ -232,6 +232,15 @@ public interface WindowFunction extends Function {
         return null;
     }
 
+    /**
+     * Called on a copy compiled without the function's PARTITION BY that computes one partition
+     * at a time, starting afresh (see {@link #toTop()}) at each: from then on it computes a
+     * partition's first row as the partitioned function does, where the two differ, so that its
+     * values are the partitioned function's bit for bit. A no-op where they do not differ.
+     */
+    default void adoptPartitionedArithmetic() {
+    }
+
     default void computeNext(Record record) {
     }
 

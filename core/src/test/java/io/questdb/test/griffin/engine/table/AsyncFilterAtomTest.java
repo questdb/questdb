@@ -39,6 +39,24 @@ public class AsyncFilterAtomTest extends AbstractCairoTest {
     private static final int SLOT_COUNT = 2;
 
     @Test
+    public void testCoveredFramesStartEagerAndUseConservativeThreshold() {
+        final AsyncFilterAtom atom = newAtom();
+
+        Assert.assertFalse(atom.shouldUseLateMaterialization(-1, false, true, false));
+        Assert.assertTrue(atom.shouldUseLateMaterialization(-1, true, false, false));
+
+        atom.getSelectivityStats(-1).update(0, 1_000);
+        Assert.assertFalse(atom.shouldUseLateMaterialization(-1, false, true, false));
+        atom.getSelectivityStats(-1).update(0, 1_000);
+        Assert.assertTrue(atom.shouldUseLateMaterialization(-1, false, true, false));
+
+        atom.getSelectivityStats(-1).clear();
+        atom.getSelectivityStats(-1).update(20, 1_000);
+        atom.getSelectivityStats(-1).update(20, 1_000);
+        Assert.assertFalse(atom.shouldUseLateMaterialization(-1, false, true, false));
+    }
+
+    @Test
     public void testPerWorkerFiltersUseSlotStatistics() {
         final AsyncFilterAtom atom = newAtomWithPerWorkerFilters();
 
@@ -46,10 +64,10 @@ public class AsyncFilterAtomTest extends AbstractCairoTest {
         // reads the shared stats. Every other thread holds a slot and reads its own.
         atom.getSelectivityStats(-1).update(100, 100);
         atom.getSelectivityStats(-1).update(100, 100);
-        Assert.assertFalse(atom.shouldUseLateMaterialization(-1, true, false));
+        Assert.assertFalse(atom.shouldUseLateMaterialization(-1, true, false, false));
 
         // A slot holder is unaffected by what the owner sampled.
-        Assert.assertTrue(atom.shouldUseLateMaterialization(0, true, false));
+        Assert.assertTrue(atom.shouldUseLateMaterialization(0, true, false, false));
     }
 
     @Test
@@ -72,7 +90,7 @@ public class AsyncFilterAtomTest extends AbstractCairoTest {
         // So MIN_SAMPLES frames settle the heuristic for the whole scan, whichever thread saw them.
         atom.getSelectivityStats(-1).update(100, 100);
         atom.getSelectivityStats(-1).update(100, 100);
-        Assert.assertFalse(atom.shouldUseLateMaterialization(-1, true, false));
+        Assert.assertFalse(atom.shouldUseLateMaterialization(-1, true, false, false));
     }
 
     private AsyncFilterAtom newAtom() {
