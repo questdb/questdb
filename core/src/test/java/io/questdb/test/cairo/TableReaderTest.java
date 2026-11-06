@@ -4954,38 +4954,22 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSharedSymbolCacheResumesAfterPartitionDrop() throws Exception {
+    public void testSharedSymbolCacheResumesAfterPartitionChange() throws Exception {
         assertMemoryLeak(() -> {
-            final int count = 4_096;
-            execute("CREATE TABLE cache_drop (s SYMBOL CAPACITY 8192 CACHE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
-            // 40 seconds apart, the rows span two days.
-            execute("INSERT INTO cache_drop SELECT 'value' || x, timestamp_sequence(0, 40_000_000) FROM long_sequence(" + count + ")");
-            final NativeMemoryBudget budget = engine.getSymbolMapCachePool().getBudget();
-            final long originalLimit = budget.getLimit();
-            TableReader older = engine.getReader("cache_drop");
-            try {
-                assertSymbolValues((SymbolMapReaderImpl) older.getSymbolMapReader(0), count);
-                final long dictionaryBytes = budget.getUsedBytes();
-                budget.setLimit(dictionaryBytes + dictionaryBytes / 2);
-                // The dictionary stays as it was, but readers opened after the drop cache a copy of their own.
-                execute("ALTER TABLE cache_drop DROP PARTITION LIST '1970-01-01'");
-                try (TableReader newer = engine.getReader("cache_drop")) {
-                    SymbolMapReaderImpl newerSymbols = (SymbolMapReaderImpl) newer.getSymbolMapReader(0);
-                    assertSymbolValues(newerSymbols, count);
-                    Assert.assertEquals(2, engine.getSymbolMapCachePool().getEntryCount());
-                    final int stoppedSize = newerSymbols.getCacheSize();
-                    Assert.assertTrue("cached " + stoppedSize, stoppedSize > 0 && stoppedSize < count);
-
-                    older = Misc.free(older);
-                    engine.releaseInactive();
-                    Assert.assertEquals(1, engine.getSymbolMapCachePool().getEntryCount());
-                    assertSymbolValues(newerSymbols, count);
-                    Assert.assertEquals(count, newerSymbols.getCacheSize());
-                    Assert.assertEquals(newerSymbols.getCacheAllocatedBytes(), budget.getUsedBytes());
+            for (String walMode : new String[]{"BYPASS WAL", "WAL"}) {
+                for (boolean isOlderReused : new boolean[]{true, false}) {
+                    assertSymbolCacheResumes(walMode, isOlderReused, false, 1, "ALTER TABLE cache_partitions DROP PARTITION LIST '1970-01-01'");
+                    assertSymbolCacheResumes(walMode, isOlderReused, false, 1, "ALTER TABLE cache_partitions DETACH PARTITION LIST '1970-01-01'");
+                    assertSymbolCacheResumes(walMode, isOlderReused, true, 2, "ALTER TABLE cache_partitions ATTACH PARTITION LIST '1970-01-01'");
+                    assertSymbolCacheResumes(
+                            walMode,
+                            isOlderReused,
+                            false,
+                            1,
+                            "ALTER TABLE cache_partitions SET TTL 1 DAY",
+                            "INSERT INTO cache_partitions VALUES ('value1', '1970-01-04')"
+                    );
                 }
-            } finally {
-                Misc.free(older);
-                budget.setLimit(originalLimit);
             }
         });
     }
@@ -5624,6 +5608,73 @@ public class TableReaderTest extends AbstractCairoTest {
         TestUtils.assertEquals(expected, r.getStrB(index));
         Assert.assertNotSame(r.getStrA(index), r.getStrB(index));
         Assert.assertEquals(expected.length(), r.getStrLen(index));
+    }
+
+    private static void assertSymbolCacheResumes(
+            String walMode,
+            boolean isOlderReused,
+            boolean isDetachedFirst,
+            int partitionCount,
+            String... changes
+    ) throws Exception {
+        final String context = walMode + ", reused=" + isOlderReused + ", " + changes[0];
+        final String table = "cache_partitions";
+        final int count = 4_096;
+        execute("CREATE TABLE " + table + " (s SYMBOL CAPACITY 8192 CACHE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY " + walMode);
+        // 40 seconds apart, the rows span two days.
+        execute("INSERT INTO " + table + " SELECT 'value' || x, timestamp_sequence(0, 40_000_000) FROM long_sequence(" + count + ")");
+        drainWalQueue();
+        if (isDetachedFirst) {
+            execute("ALTER TABLE " + table + " DETACH PARTITION LIST '1970-01-01'");
+            drainWalQueue();
+            final TableToken token = engine.verifyTableName(table);
+            try (Path detached = new Path(); Path attachable = new Path()) {
+                detached.of(configuration.getDbRoot()).concat(token).concat("1970-01-01").put(TableUtils.DETACHED_DIR_MARKER);
+                attachable.of(configuration.getDbRoot()).concat(token).concat("1970-01-01").put(configuration.getAttachPartitionSuffix());
+                Assert.assertTrue(context, Files.rename(detached.$(), attachable.$()) > -1);
+            }
+        }
+        final NativeMemoryBudget budget = engine.getSymbolMapCachePool().getBudget();
+        final long originalLimit = budget.getLimit();
+        TableReader older = engine.getReader(table);
+        try {
+            assertSymbolValues((SymbolMapReaderImpl) older.getSymbolMapReader(0), count);
+            final long dictionaryBytes = budget.getUsedBytes();
+            budget.setLimit(dictionaryBytes + dictionaryBytes / 2);
+            // The dictionary stays as it was, but readers opened after the change cache a copy of their own.
+            for (String change : changes) {
+                execute(change);
+            }
+            drainWalQueue();
+            try (TableReader newer = engine.getReader(table)) {
+                Assert.assertEquals(context, partitionCount, newer.getPartitionCount());
+                SymbolMapReaderImpl newerSymbols = (SymbolMapReaderImpl) newer.getSymbolMapReader(0);
+                assertSymbolValues(newerSymbols, count);
+                Assert.assertEquals(context, 2, engine.getSymbolMapCachePool().getEntryCount());
+                final int stoppedSize = newerSymbols.getCacheSize();
+                Assert.assertTrue(context + ", cached " + stoppedSize, stoppedSize > 0 && stoppedSize < count);
+
+                // A pooled reader keeps the old copy until a query reuses it or the pool closes it.
+                older = Misc.free(older);
+                assertSymbolValues(newerSymbols, count);
+                Assert.assertEquals(context, stoppedSize, newerSymbols.getCacheSize());
+                if (isOlderReused) {
+                    older = engine.getReader(table);
+                } else {
+                    engine.releaseInactive();
+                }
+                Assert.assertEquals(context, 1, engine.getSymbolMapCachePool().getEntryCount());
+                assertSymbolValues(newerSymbols, count);
+                Assert.assertEquals(context, count, newerSymbols.getCacheSize());
+                Assert.assertEquals(context, newerSymbols.getCacheAllocatedBytes(), budget.getUsedBytes());
+            }
+        } finally {
+            Misc.free(older);
+            budget.setLimit(originalLimit);
+        }
+        execute("DROP TABLE " + table);
+        drainWalQueue();
+        engine.releaseAllReaders();
     }
 
     private static void assertSymbolValues(SymbolMapReaderImpl symbols, int count) {
