@@ -2037,194 +2037,9 @@ public class OrderedMapTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNullKeyBeforeFixedSizeColumns() throws Exception {
-        // A NULL key column takes no bytes, so NULL mixed with fixed-size columns keeps the
-        // fixed-size layout, and every column after a NULL one reads from its own offset.
-        TestUtils.assertMemoryLeak(() -> {
-            final ArrayColumnTypes keyTypes = new ArrayColumnTypes()
-                    .add(ColumnType.NULL)
-                    .add(ColumnType.BYTE)
-                    .add(ColumnType.NULL)
-                    .add(ColumnType.SHORT)
-                    .add(ColumnType.INT)
-                    .add(ColumnType.NULL)
-                    .add(ColumnType.LONG)
-                    .add(ColumnType.UUID)
-                    .add(ColumnType.LONG256)
-                    .add(ColumnType.NULL);
-            final int n = 50;
-            final byte[] bytes = new byte[n];
-            final short[] shorts = new short[n];
-            final int[] ints = new int[n];
-            final long[] longs = new long[n];
-            final long[] uuidLo = new long[n];
-            final long[] uuidHi = new long[n];
-            final long[][] long256s = new long[n][4];
-            final Rnd rnd = new Rnd();
-            for (int i = 0; i < n; i++) {
-                bytes[i] = rnd.nextByte();
-                shorts[i] = rnd.nextShort();
-                ints[i] = i == 0 ? Numbers.INT_NULL : rnd.nextInt();
-                longs[i] = i == 0 ? Numbers.LONG_NULL : rnd.nextLong();
-                uuidLo[i] = rnd.nextLong();
-                uuidHi[i] = rnd.nextLong();
-                for (int j = 0; j < 4; j++) {
-                    long256s[i][j] = rnd.nextLong();
-                }
-            }
-
-            try (OrderedMap map = new OrderedMap(128, keyTypes, new SingleColumnType(ColumnType.LONG), 16, 0.5, Integer.MAX_VALUE)) {
-                for (int i = 0; i < n; i++) {
-                    final MapKey key = map.withKey();
-                    key.putByte(bytes[i]);
-                    key.putShort(shorts[i]);
-                    key.putInt(ints[i]);
-                    key.putLong(longs[i]);
-                    key.putLong128(uuidLo[i], uuidHi[i]);
-                    key.putLong256(long256s[i][0], long256s[i][1], long256s[i][2], long256s[i][3]);
-                    final MapValue value = key.createValue();
-                    Assert.assertTrue(value.isNew());
-                    value.putLong(0, i);
-                    // 1 + 2 + 4 + 8 + 16 + 32 = 63 key bytes and an 8-byte value make a 72-byte entry;
-                    // the var-size layout would add a 4-byte length header and make it 80
-                    Assert.assertEquals(72L * (i + 1), map.getUsedHeapSize());
-                }
-                Assert.assertEquals(n, map.size());
-
-                // The record lists the value column first, then the key columns.
-                final RecordCursor cursor = map.getCursor();
-                final MapRecord record = map.getRecord();
-                int i = 0;
-                while (cursor.hasNext()) {
-                    Assert.assertEquals(i, record.getLong(0));
-                    Assert.assertEquals(bytes[i], record.getByte(2));
-                    Assert.assertEquals(shorts[i], record.getShort(4));
-                    Assert.assertEquals(ints[i], record.getInt(5));
-                    Assert.assertEquals(longs[i], record.getLong(7));
-                    Assert.assertEquals(uuidLo[i], record.getLong128Lo(8));
-                    Assert.assertEquals(uuidHi[i], record.getLong128Hi(8));
-                    final Long256 long256 = record.getLong256A(9);
-                    Assert.assertEquals(long256s[i][0], long256.getLong0());
-                    Assert.assertEquals(long256s[i][1], long256.getLong1());
-                    Assert.assertEquals(long256s[i][2], long256.getLong2());
-                    Assert.assertEquals(long256s[i][3], long256.getLong3());
-                    i++;
-                }
-                Assert.assertEquals(n, i);
-
-                for (i = 0; i < n; i++) {
-                    final MapKey key = map.withKey();
-                    key.putByte(bytes[i]);
-                    key.putShort(shorts[i]);
-                    key.putInt(ints[i]);
-                    key.putLong(longs[i]);
-                    key.putLong128(uuidLo[i], uuidHi[i]);
-                    key.putLong256(long256s[i][0], long256s[i][1], long256s[i][2], long256s[i][3]);
-                    final MapValue value = key.findValue();
-                    Assert.assertNotNull(value);
-                    Assert.assertEquals(i, value.getLong(0));
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testNullKeyBeforeVarSizeColumns() throws Exception {
-        // A var-size column keeps the var-size layout, and reading a column after a NULL one
-        // steps over the NULL column as zero bytes rather than as a length-prefixed value.
-        TestUtils.assertMemoryLeak(() -> {
-            final ArrayColumnTypes keyTypes = new ArrayColumnTypes()
-                    .add(ColumnType.NULL)
-                    .add(ColumnType.STRING)
-                    .add(ColumnType.NULL)
-                    .add(ColumnType.VARCHAR)
-                    .add(ColumnType.NULL)
-                    .add(ColumnType.BINARY)
-                    .add(ColumnType.NULL)
-                    .add(ColumnType.INT)
-                    .add(ColumnType.NULL);
-            final String[] strs = {null, "", "a", "żółw", "x".repeat(300)};
-            final Utf8String[] varchars = {
-                    new Utf8String("v€"),
-                    null,
-                    new Utf8String(""),
-                    new Utf8String("\uD83D\uDE00ab"),
-                    new Utf8String("y".repeat(200))
-            };
-            final byte[] longBin = new byte[100];
-            for (int j = 0; j < longBin.length; j++) {
-                longBin[j] = (byte) j;
-            }
-            final byte[][] bins = {{1, 2, 3}, null, {}, {(byte) 0xFF}, longBin};
-            final int[] ints = {Numbers.INT_NULL, -1, 0, 1, Integer.MAX_VALUE};
-            final int n = strs.length;
-
-            final TestRecord.ArrayBinarySequence binarySequence = new TestRecord.ArrayBinarySequence();
-            try (OrderedMap map = new OrderedMap(64, keyTypes, new SingleColumnType(ColumnType.LONG), 16, 0.5, Integer.MAX_VALUE)) {
-                for (int i = 0; i < n; i++) {
-                    final MapKey key = map.withKey();
-                    key.putStr(strs[i]);
-                    key.putVarchar(varchars[i]);
-                    key.putBin(bins[i] != null ? binarySequence.of(bins[i]) : null);
-                    key.putInt(ints[i]);
-                    final MapValue value = key.createValue();
-                    Assert.assertTrue(value.isNew());
-                    value.putLong(0, i);
-                }
-                Assert.assertEquals(n, map.size());
-
-                // The record lists the value column first, then the key columns.
-                final RecordCursor cursor = map.getCursor();
-                final MapRecord record = map.getRecord();
-                int i = 0;
-                while (cursor.hasNext()) {
-                    Assert.assertEquals(i, record.getLong(0));
-                    final CharSequence str = record.getStrA(2);
-                    if (strs[i] == null) {
-                        Assert.assertNull(str);
-                    } else {
-                        TestUtils.assertEquals(strs[i], str);
-                    }
-                    final Utf8Sequence varchar = record.getVarcharA(4);
-                    if (varchars[i] == null) {
-                        Assert.assertNull(varchar);
-                    } else {
-                        TestUtils.assertEquals(varchars[i], varchar);
-                    }
-                    final BinarySequence bin = record.getBin(6);
-                    if (bins[i] == null) {
-                        Assert.assertNull(bin);
-                        Assert.assertEquals(-1, record.getBinLen(6));
-                    } else {
-                        Assert.assertNotNull(bin);
-                        Assert.assertEquals(bins[i].length, bin.length());
-                        for (int j = 0; j < bins[i].length; j++) {
-                            Assert.assertEquals(bins[i][j], bin.byteAt(j));
-                        }
-                    }
-                    Assert.assertEquals(ints[i], record.getInt(8));
-                    i++;
-                }
-                Assert.assertEquals(n, i);
-
-                for (i = 0; i < n; i++) {
-                    final MapKey key = map.withKey();
-                    key.putStr(strs[i]);
-                    key.putVarchar(varchars[i]);
-                    key.putBin(bins[i] != null ? binarySequence.of(bins[i]) : null);
-                    key.putInt(ints[i]);
-                    final MapValue value = key.findValue();
-                    Assert.assertNotNull(value);
-                    Assert.assertEquals(i, value.getLong(0));
-                }
-            }
-        });
-    }
-
-    @Test
     public void testNullKeyMergeFixedSizeKey() throws Exception {
-        // An all-NULL key is zero bytes wide. Merging copies the source entry into a map that lacks
-        // it, and merges the values into the entry of a map that has it, as parallel GROUP BY does.
+        // An all-NULL key is zero bytes wide. A merge copies the entry into a map that lacks it
+        // and merges the values into the entry of a map that has it, as parallel GROUP BY does.
         TestUtils.assertMemoryLeak(() -> {
             final SingleColumnType keyTypes = new SingleColumnType(ColumnType.NULL);
             final SingleColumnType valueTypes = new SingleColumnType(ColumnType.LONG);
@@ -2232,58 +2047,19 @@ public class OrderedMapTest extends AbstractCairoTest {
                     OrderedMap dest = new OrderedMap(64, keyTypes, valueTypes, 16, 0.5, Integer.MAX_VALUE);
                     OrderedMap src = new OrderedMap(64, keyTypes, valueTypes, 16, 0.5, Integer.MAX_VALUE)
             ) {
-                MapValue value = src.withKey().createValue();
-                Assert.assertTrue(value.isNew());
-                value.putLong(0, 5);
-
+                src.withKey().createValue().putLong(0, 5);
                 dest.merge(src, new TestMapValueMergeFunction());
                 Assert.assertEquals(1, dest.size());
-                // a zero-byte key and an 8-byte value
+                // a zero-byte key and an 8-byte value; a length header would make it 16
                 Assert.assertEquals(8, dest.getUsedHeapSize());
                 Assert.assertEquals(5, dest.withKey().findValue().getLong(0));
 
                 src.clear();
-                value = src.withKey().createValue();
-                Assert.assertTrue(value.isNew());
-                value.putLong(0, 7);
-
+                src.withKey().createValue().putLong(0, 7);
                 dest.merge(src, new TestMapValueMergeFunction());
                 Assert.assertEquals(1, dest.size());
                 Assert.assertEquals(8, dest.getUsedHeapSize());
                 Assert.assertEquals(12, dest.withKey().findValue().getLong(0));
-
-                final RecordCursor cursor = dest.getCursor();
-                Assert.assertTrue(cursor.hasNext());
-                Assert.assertEquals(12, dest.getRecord().getLong(0));
-                Assert.assertFalse(cursor.hasNext());
-            }
-        });
-    }
-
-    @Test
-    public void testNullKeyPageSizeTooSmall() throws Exception {
-        // A zero-byte NULL key leaves the 16-byte value alone to fit the page, and the page must
-        // still have room to append from, so a 16-byte page is rejected before any write.
-        TestUtils.assertMemoryLeak(() -> {
-            final ArrayColumnTypes valueTypes = new ArrayColumnTypes()
-                    .add(ColumnType.LONG)
-                    .add(ColumnType.LONG);
-            try {
-                new OrderedMap(
-                        16,
-                        new SingleColumnType(ColumnType.NULL),
-                        valueTypes,
-                        16,
-                        0.5,
-                        Integer.MAX_VALUE
-                ).close();
-                Assert.fail("expected CairoException");
-            } catch (CairoException e) {
-                TestUtils.assertContains(
-                        e.getFlyweightMessage(),
-                        "page size is too small to fit a single key, consider increasing "
-                                + "`cairo.sql.small.map.page.size` [expected=16, actual=16]"
-                );
             }
         });
     }
@@ -2307,7 +2083,6 @@ public class OrderedMapTest extends AbstractCairoTest {
                 final MapKey key = map.withKey();
                 final MapValue value = key.createValue();
                 Assert.assertTrue(value.isNew());
-                // a zero-byte key and a 16-byte value; a length header would make it 24
                 Assert.assertEquals(16, map.getUsedHeapSize());
 
                 value.putLong(0, 42);

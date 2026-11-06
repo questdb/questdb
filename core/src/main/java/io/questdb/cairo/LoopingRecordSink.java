@@ -380,9 +380,6 @@ public class LoopingRecordSink implements RecordSink {
                 func.getDecimal256(r, decimal256);
                 w.putDecimal256(decimal256);
                 break;
-            case ColumnType.NULL:
-                // ignore: a NULL key takes no bytes, as in the generated sinks
-                break;
             default:
                 throw new IllegalArgumentException("Unexpected function type: " + ColumnType.nameOf(type));
         }
