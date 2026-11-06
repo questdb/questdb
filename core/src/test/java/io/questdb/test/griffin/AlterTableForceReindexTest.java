@@ -24,15 +24,22 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.O3PartitionPurgeJob;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.std.Files;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -266,6 +273,91 @@ public class AlterTableForceReindexTest extends AbstractCairoTest {
         assertRebuildsParquetPartitions(true);
     }
 
+    @Test
+    public void testRewriteAfterFailedReindexCleanupKeepsLinkedIndexFiles() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "-1.0");
+        final LeftoverReindexDirFacade ff = new LeftoverReindexDirFacade();
+        assertMemoryLeak(ff, () -> {
+            execute("create table t (ts timestamp, x long, s symbol index, b symbol index, p symbol index type posting) timestamp(ts) partition by day bypass wal");
+            execute("insert into t select dateadd('h', x::int, '2024-01-01T00:00:00.000000Z'), x, 'k' || (x % 3), 'k' || (x % 3), 'k' || (x % 3) from long_sequence(30)");
+            execute("alter table t convert partition to parquet list '2024-01-01'");
+            releaseSavePointHolds("t");
+
+            final String oldDir = partitionDirs()[0];
+            final String newDir;
+            try (TableWriter writer = getWriter("t")) {
+                newDir = "2024-01-01." + writer.getTxn();
+            }
+            // Reindexing s alone links b's and p's live index files into the new directory
+            ff.failOpenRw = "/" + newDir + "/s.";
+            ff.failRmdir = "/" + newDir;
+            try {
+                execute("alter table t force reindex parquet column s");
+                Assert.fail("the index rebuild must fail");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "could not open read-write");
+            }
+            Assert.assertEquals(1, ff.openRwFailures);
+            Assert.assertEquals(1, ff.rmdirFailures);
+
+            final File oldVersion = new File(tableDir(), oldDir);
+            final File[] indexFiles = oldVersion.listFiles((dir, name) -> name.startsWith("b.") || name.startsWith("p."));
+            Assert.assertNotNull(indexFiles);
+            Assert.assertTrue(indexFiles.length > 0);
+            final byte[][] before = new byte[indexFiles.length][];
+            for (int i = 0; i < indexFiles.length; i++) {
+                before[i] = java.nio.file.Files.readAllBytes(indexFiles[i].toPath());
+            }
+
+            // the open reader keeps the old version on disk
+            try (TableReader ignore = getReader("t")) {
+                execute("insert into t values ('2024-01-01T02:30:00.000000Z', 999, 'k1', 'k1', 'k1')");
+                for (int i = 0; i < indexFiles.length; i++) {
+                    Assert.assertArrayEquals(indexFiles[i].getName(), before[i], java.nio.file.Files.readAllBytes(indexFiles[i].toPath()));
+                }
+            }
+            assertQuery("select count() from t where b = 'k1' and ts in '2024-01-01'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n9\n");
+            assertQuery("select count() from t where p = 'k1' and ts in '2024-01-01'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n9\n");
+        });
+    }
+
+    @Test
+    public void testRewriteAfterFailedReindexCleanupManyRows() throws Exception {
+        // 40 rows into the first row group: the rewritten group outgrows the original one
+        assertRewriteAfterFailedReindexCleanup(
+                "insert into t select dateadd('m', x::int, '2024-01-01T02:00:00.000000Z'), 1000 + x, 'k1' from long_sequence(40)",
+                """
+                        count\tmin\tmax\tsum
+                        63\t1\t1040\t41096
+                        """,
+                """
+                        count
+                        48
+                        """
+        );
+    }
+
+    @Test
+    public void testRewriteAfterFailedReindexCleanupOneRow() throws Exception {
+        assertRewriteAfterFailedReindexCleanup(
+                "insert into t values ('2024-01-01T02:30:00.000000Z', 999, 'k1')",
+                """
+                        count\tmin\tmax\tsum
+                        24\t1\t999\t1275
+                        """,
+                """
+                        count
+                        9
+                        """
+        );
+    }
+
     private static void deleteIndexKeyFile(String partitionDir, String column) {
         engine.releaseAllReaders();
         final File keyFile = new File(new File(tableDir(), partitionDir), column + ".k");
@@ -281,6 +373,19 @@ public class AlterTableForceReindexTest extends AbstractCairoTest {
 
     private static File tableDir() {
         return new File(configuration.getDbRoot().toString(), engine.verifyTableName("t").getDirName());
+    }
+
+    private void assertDay1Rows(String expectedDay1, String expectedK1Count) throws Exception {
+        assertQuery("select count(), min(x), max(x), sum(x) from t where ts in '2024-01-01'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns(expectedDay1);
+        assertQuery("select count() from t where s = 'k1' and ts in '2024-01-01'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns(expectedK1Count);
     }
 
     private void assertIndexQueries(String expected) throws Exception {
@@ -367,6 +472,53 @@ public class AlterTableForceReindexTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * A FORCE REINDEX whose index rebuild fails and whose cleanup cannot remove the new directory version (as on
+     * Windows, where a reader holds the linked files open) leaves that directory behind, holding hard links to the
+     * live data.parquet and _pm. The next O3 rewrite of the partition reuses the directory name: it must write fresh
+     * files there, not overwrite the committed version through the links.
+     */
+    private void assertRewriteAfterFailedReindexCleanup(String o3Insert, String expectedDay1, String expectedK1Count) throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        // every O3 merge into a parquet partition takes the rewrite path
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "-1.0");
+        final LeftoverReindexDirFacade ff = new LeftoverReindexDirFacade();
+        assertMemoryLeak(ff, () -> {
+            execute("create table t (ts timestamp, x long, s symbol index) timestamp(ts) partition by day bypass wal");
+            // day 1: x 1-23, 6 row groups; day 2: x 24-30
+            execute("insert into t select dateadd('h', x::int, '2024-01-01T00:00:00.000000Z'), x, 'k' || (x % 3) from long_sequence(30)");
+            execute("alter table t convert partition to parquet list '2024-01-01'");
+            releaseSavePointHolds("t");
+
+            final String newDir;
+            try (TableWriter writer = getWriter("t")) {
+                newDir = "2024-01-01." + writer.getTxn();
+            }
+            ff.failOpenRw = "/" + newDir + "/s.";
+            ff.failRmdir = "/" + newDir;
+            try {
+                execute("alter table t force reindex parquet");
+                Assert.fail("the index rebuild must fail");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "could not open read-write");
+            }
+            Assert.assertEquals(1, ff.openRwFailures);
+            Assert.assertEquals(1, ff.rmdirFailures);
+            Assert.assertTrue("the cleanup must leave the new directory behind", new File(tableDir(), newDir).exists());
+
+            execute(o3Insert);
+            assertDay1Rows(expectedDay1, expectedK1Count);
+
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+            releaseSavePointHolds("t");
+            try (O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, 1)) {
+                purgeJob.drain(0);
+            }
+            assertDay1Rows(expectedDay1, expectedK1Count);
+        });
+    }
+
     private void createTable(boolean isWal) throws Exception {
         execute("create table t (ts timestamp, x long, v long, b symbol index, p symbol index type posting, c symbol) timestamp(ts) partition by day "
                 + (isWal ? "wal" : "bypass wal"));
@@ -398,6 +550,36 @@ public class AlterTableForceReindexTest extends AbstractCairoTest {
         public int getState(long millis, long fd) {
             Assert.assertEquals("a reindex must not time out", Long.MAX_VALUE, millis);
             return ++stateCheckCount > 1 ? state : STATE_OK;
+        }
+    }
+
+    // Fails once the open of a file under failOpenRw, and once the removal of the directory ending with failRmdir
+    private static class LeftoverReindexDirFacade extends TestFilesFacadeImpl {
+        private volatile String failOpenRw;
+        private volatile String failRmdir;
+        private int openRwFailures;
+        private int rmdirFailures;
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            final String term = failOpenRw;
+            if (term != null && Utf8s.containsAscii(name, term)) {
+                failOpenRw = null;
+                openRwFailures++;
+                return -1;
+            }
+            return super.openRW(name, opts);
+        }
+
+        @Override
+        public boolean rmdir(Path name, boolean haltOnError) {
+            final String term = failRmdir;
+            if (term != null && (Utf8s.endsWithAscii(name, term) || Utf8s.endsWithAscii(name, term + Files.SEPARATOR))) {
+                failRmdir = null;
+                rmdirFailures++;
+                return false;
+            }
+            return super.rmdir(name, haltOnError);
         }
     }
 }

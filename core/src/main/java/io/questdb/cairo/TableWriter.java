@@ -8613,7 +8613,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     if (PostingIndexUtils.hasInitialisedKeyFileHeader(ff, path.$())) {
                         return;
                     }
-                    ff.removeQuiet(path.$());
+                    removeExistingOrFail(ff, path.$());
                 } else {
                     if (ff.exists(path.$())) {
                         return;
@@ -8622,7 +8622,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             } else if (!force && ff.exists(path.$())) {
                 return;
             } else {
-                ff.removeQuiet(path.$());
+                removeExistingOrFail(ff, path.$());
             }
 
             // reuse memory column object to create index and close it at the end
@@ -8648,7 +8648,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             } finally {
                 ddlMem.close();
             }
-            if (!ff.touch(valueFileName(indexType, path.trimTo(plen), columnName, columnNameTxn, 0L))) {
+            // A fresh key file needs a fresh value file, not one an older version may share through a hard link
+            final LPSZ valueFile = valueFileName(indexType, path.trimTo(plen), columnName, columnNameTxn, 0L);
+            removeExistingOrFail(ff, valueFile);
+            if (!ff.touch(valueFile)) {
                 LOG.error().$("could not create index [name=").$(path)
                         .$(", errno=").$(ff.errno())
                         .I$();

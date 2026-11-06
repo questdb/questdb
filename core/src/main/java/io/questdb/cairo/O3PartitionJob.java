@@ -2377,13 +2377,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         setPathForNativePartition(newPath, timestampType, partitionBy, partitionTimestamp, txn);
                         ff.mkdirs(newPath.slash(), cairoConfiguration.getMkDirMode());
                         newPath.concat(PARQUET_PARTITION_NAME).$();
-                        writerFd = TableUtils.openRW(ff, newPath.$(), LOG, opts);
+                        writerFd = TableUtils.openRWFresh(ff, newPath.$(), LOG, opts);
                         writerFdOs = Files.detach(writerFd);
                         writerFd = -1;
                         writeFileSize = 0;
                         // Open _pm in the new directory.
                         newPath.parent().concat(PARQUET_METADATA_FILE_NAME).$();
-                        parquetMetaFd = TableUtils.openRW(ff, newPath.$(), LOG, opts);
+                        parquetMetaFd = TableUtils.openRWFresh(ff, newPath.$(), LOG, opts);
                         parquetMetaFdOs = Files.detach(parquetMetaFd);
                         parquetMetaFd = -1;
                     } else {
@@ -2960,11 +2960,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             .put("could not create parquet compaction staging directory [path=").put(dstPartitionDir).put(']');
                 }
                 dstPartitionDir.trimTo(dstDirLen).concat(PARQUET_PARTITION_NAME).$();
-                writerFd = TableUtils.openRW(ff, dstPartitionDir.$(), LOG, opts);
+                writerFd = TableUtils.openRWFresh(ff, dstPartitionDir.$(), LOG, opts);
                 writerFdOs = Files.detach(writerFd);
                 writerFd = -1;
                 dstPartitionDir.trimTo(dstDirLen).concat(PARQUET_METADATA_FILE_NAME).$();
-                parquetMetaFd = TableUtils.openRW(ff, dstPartitionDir.$(), LOG, opts);
+                parquetMetaFd = TableUtils.openRWFresh(ff, dstPartitionDir.$(), LOG, opts);
                 parquetMetaFdOs = Files.detach(parquetMetaFd);
                 parquetMetaFd = -1;
             } catch (Throwable e) {
