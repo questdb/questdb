@@ -31,6 +31,7 @@ import io.questdb.test.TestServerMain;
 import io.questdb.test.cutlass.qwp.AbstractQwpBootstrapTest;
 import io.questdb.test.tools.TestUtils;
 import io.questdb.test.tools.TlsProxyRule;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
@@ -134,6 +135,40 @@ public class QwpWebSocketSenderTlsE2ETest extends AbstractQwpBootstrapTest {
                         "SELECT sum(value) FROM tls_multi_row",
                         "sum\n4950\n"
                 );
+            }
+        });
+    }
+
+    @Test
+    public void testTlsPerRowFlushNewSymbolPerRow() throws Exception {
+        // A producer that flushes every row runs ahead of the I/O thread, so
+        // the client packs bursts of frames into one TLS write; each frame
+        // carries a symbol-dictionary delta, so a lost or reordered frame
+        // surfaces as a wrong or NULL symbol.
+        final int rows = 1_000;
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startFragmented(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
+            )) {
+                int tlsPort = tlsProxy.getListeningPort();
+
+                try (QwpWebSocketSender sender = (QwpWebSocketSender) Sender.fromConfig("wss::addr=localhost:" + tlsPort + ";tls_verify=unsafe_off;")) {
+                    for (int i = 0; i < rows; i++) {
+                        sender.table("tls_per_row")
+                                .symbol("sym", "s" + i)
+                                .longColumn("id", i)
+                                .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
+                        sender.flush();
+                    }
+                    Assert.assertTrue("every frame must be acked", sender.drain(120_000));
+                }
+
+                serverMain.awaitTable("tls_per_row");
+                TestUtils.assertEventually(() -> serverMain.assertSql(
+                        "SELECT count() n, count_distinct(id) ids, count_distinct(sym) syms,"
+                                + " sum(CASE WHEN sym = concat('s', id) THEN 1 ELSE 0 END) matched FROM tls_per_row",
+                        "n\tids\tsyms\tmatched\n" + rows + "\t" + rows + "\t" + rows + "\t" + rows + "\n"
+                ));
             }
         });
     }
