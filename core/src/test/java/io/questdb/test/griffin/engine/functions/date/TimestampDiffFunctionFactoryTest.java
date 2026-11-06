@@ -860,6 +860,26 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
     }
 
     @Test
+    public void testUnknownConstantPeriodReturnsLongNull() throws Exception {
+        // datediff() is a long-valued function; an invalid constant unit must yield
+        // a LONG null rather than the timestamp driver's TIMESTAMP-typed null, else
+        // result-set metadata misreports the column type to PG/HTTP clients. See #7022.
+        assertQuery("select datediff('q', 0::timestamp, 1::timestamp) dd, typeOf(datediff('q', 0::timestamp, 1::timestamp)) tp")
+                .expectSize()
+                .returns("""
+                        dd\ttp
+                        null\tLONG
+                        """);
+
+        assertQuery("select datediff('q', 0::timestamp_ns, 1::timestamp_ns) dd, typeOf(datediff('q', 0::timestamp_ns, 1::timestamp_ns)) tp")
+                .expectSize()
+                .returns("""
+                        dd\ttp
+                        null\tLONG
+                        """);
+    }
+
+    @Test
     public void testUnknownPeriod() throws Exception {
         assertMemoryLeak(() -> call('/', 1587275359886758L, 1587275364886758L).andAssert(Double.NaN, 0.0001));
     }
