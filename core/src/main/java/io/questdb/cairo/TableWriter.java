@@ -2082,9 +2082,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         for (int i = 0, n = pendingParquetToNativeConversions.size(); i < n; i += 3) {
             if (pendingParquetToNativeConversions.getQuick(i + 2) != 0L) {
                 final long partitionTimestamp = pendingParquetToNativeConversions.getQuick(i);
-                closeActivePartition(false);
-                // A merge-append table keeps columns[] closed on its last partition whatever its format.
-                openLastPartitionAndSetAppendPosition(partitionTimestamp);
+                // The decode rebuilt posting indexes with the ALTER's pending txn. As in finishO3Commit,
+                // skip writer-open recovery until the final metadata commit publishes those entries.
+                o3FinishInFlight = true;
+                try {
+                    closeActivePartition(false);
+                    // A merge-append table keeps columns[] closed on its last partition whatever its format.
+                    openLastPartitionAndSetAppendPosition(partitionTimestamp);
+                } finally {
+                    o3FinishInFlight = false;
+                }
             }
         }
     }
