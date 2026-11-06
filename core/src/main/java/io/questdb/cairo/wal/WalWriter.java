@@ -110,7 +110,7 @@ import static io.questdb.cairo.wal.WalUtils.*;
 import static io.questdb.cairo.wal.seq.TableSequencer.FENCE_REJECTED;
 import static io.questdb.cairo.wal.seq.TableSequencer.NO_TXN;
 
-public class WalWriter extends WalWriterBase implements TableWriterAPI {
+public class WalWriter extends WalWriterBase implements TableWriterAPI, WalColumnSink {
     private static final long COLUMN_DELETED_NULL_FLAG = Long.MAX_VALUE;
     private static final Log LOG = LogFactory.getLog(WalWriter.class);
     private static final int MEM_TAG = MemoryTag.MMAP_TABLE_WAL_WRITER;
@@ -161,6 +161,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     private ConversionSymbolMapWriter conversionSymbolMap;
     private ConversionSymbolTable conversionSymbolTable;
     private long currentTxnStartRowNum = -1;
+    private boolean hasOpenColumnarWrite;
     // The highest seqTxn this writer sequenced under a group window whose batched device flush has not run yet;
     // -1 when nothing is pending. Guarded by the writer monitor, as are the two fields below: the committing
     // thread sets it, and both the committing thread and the background flusher read and clear it.
@@ -292,6 +293,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                     "custom event types must be in reserved range 64..127, got: " + txnType
             );
         }
+        throwIfInColumnarWrite("append custom event");
         try {
             // A custom event is an ordering barrier. Publish any rows appended before it as a
             // DATA transaction first; otherwise the custom event would receive the earlier
@@ -324,6 +326,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
     @Override
     public long apply(AlterOperation alterOp, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
+        throwIfInColumnarWrite("alter table");
         alterOp.authorize();
         // Flush the pending batch first. A structural change's endMetadataChangeEntry() syncs the sequencer log
         // with MS_SYNC, which would put this record on the device ahead of earlier data commits whose files are
@@ -339,6 +342,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     // Returns table transaction number
     @Override
     public long apply(UpdateOperation operation) {
+        throwIfInColumnarWrite("update table");
         operation.authorize();
         if (inTransaction()) {
             throw CairoException.critical(0).put("cannot update table with uncommitted inserts [table=")
@@ -364,6 +368,34 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         //   put it into the SQL event as a requirement for running the SQL.
         //   when the WAL event is processed we would need to query the exact
         //   versions of each table involved in the join when running the SQL.
+    }
+
+    /**
+     * Opens a block of column writes. A commit or a structure change can leave a segment
+     * roll pending, and addColumn() defers opening a new column's files until that roll,
+     * so this method rolls first. A failed roll latches the writer distressed.
+     */
+    @Override
+    public void beginColumnarWrite() {
+        checkDistressed();
+        if (hasOpenColumnarWrite) {
+            throw CairoException.nonCritical().put("already in columnar write mode");
+        }
+        // The roll opens an empty segment without copying rows, so it must never find
+        // uncommitted rows: the flag is set only after a commit and by
+        // rollUncommittedToNewSegment with nothing uncommitted. QWP commit batching
+        // keeps rows uncommitted across blocks and relies on this.
+        assert !rollSegmentOnNextRow || getUncommittedRowCount() == 0;
+        try {
+            if (rollSegmentOnNextRow) {
+                rollSegment();
+                rollSegmentOnNextRow = false;
+            }
+        } catch (Throwable e) {
+            distressed = true;
+            throw e;
+        }
+        hasOpenColumnarWrite = true;
     }
 
     @Override
@@ -519,9 +551,10 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     }
 
     /**
-     * Returns the data memory for a column. Used by columnar appender.
+     * Returns the data memory for a column, for columnar writes through {@link WalColumnSink}.
      */
-    MemoryMA getDataColumn(int column) {
+    @Override
+    public MemoryMA getDataColumn(int column) {
         assert column < columnCount : "Column index is out of bounds: " + column + " >= " + columnCount;
         return columns.getQuick(getDataColumnOffset(column));
     }
@@ -539,6 +572,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     /**
      * Returns the current row count in this segment.
      */
+    @Override
     public long getSegmentRowCount() {
         return segmentRowCount;
     }
@@ -553,6 +587,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         return initialSymbolCounts.get(columnIndex);
     }
 
+    @Override
     public SymbolMapReader getSymbolMapReader(int columnIndex) {
         return symbolMapReaders.getQuick(columnIndex);
     }
@@ -567,6 +602,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     }
 
     public void goActive(long maxStructureVersion) {
+        throwIfInColumnarWrite("apply structure changes");
         try {
             applyMetadataChangeLog(maxStructureVersion);
         } catch (CairoException e) {
@@ -599,7 +635,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
      * {@code cancelColumnarWrite}; also true after a cancel that failed to rewind.
      */
     public boolean isInColumnarWrite() {
-        return columnarAppender != null && columnarAppender.isInColumnarWrite();
+        return hasOpenColumnarWrite;
     }
 
     @Override
@@ -652,6 +688,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             @Nullable LongList refreshIntervals,
             long refreshIntervalsBaseTxn
     ) {
+        throwIfInColumnarWrite("reset mat view state");
         try {
             lastSegmentTxn = events.appendMatViewInvalidate(
                     lastRefreshBaseTxn,
@@ -681,8 +718,11 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     }
 
     public void rollSegment() {
+        throwIfInColumnarWrite("roll segment");
         try {
             openNewSegment();
+            // the new segment satisfies a roll that a structure change left pending for the next row
+            rollSegmentOnNextRow = false;
         } catch (Throwable e) {
             distressed = true;
             if (sequencer.isDataSyncFailureFatal(e)) {
@@ -712,7 +752,12 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         }
         try {
             if (isInColumnarWrite()) {
-                columnarAppender.cancelColumnarWrite();
+                if (columnarAppender != null && columnarAppender.isInColumnarWrite()) {
+                    // the appender resets its own state and cancels through this writer
+                    columnarAppender.cancelColumnarWrite();
+                } else {
+                    cancelColumnarWrite();
+                }
             }
             // Flush the pending batch, so a clean handoff (pool return or close) leaves the frontier on disk
             // for the next acquirer and any durable-ack consumer. rollback0() rewinds only uncommitted rows, so
@@ -776,9 +821,10 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     }
 
     /**
-     * Marks a column as having been written up to the specified row.
-     * Used by columnar appender.
+     * Marks a column as having been written up to the specified row. Columnar writes
+     * through {@link WalColumnSink} call it after writing a column.
      */
+    @Override
     public void setRowValueNotNullColumnar(int columnIndex, long lastWrittenRow) {
         rowValueIsNotNull.setQuick(columnIndex, lastWrittenRow);
     }
@@ -805,7 +851,8 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
      * columnar appender carries, and keeps the driver's message. The try/catch adds nothing to
      * the accepting path.
      */
-    void validateDesignatedTimestampBounds(long timestamp) {
+    @Override
+    public void validateDesignatedTimestampBounds(long timestamp) {
         try {
             timestampDriver.validateBounds(timestamp);
         } catch (CairoException e) {
@@ -846,6 +893,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
      * rebased table parks instead of spinning.
      */
     public void commitRebaseSeed() {
+        throwIfInColumnarWrite("commit rebase seed");
         try {
             // Each appendData + getSequencerTxn pair is one sequencer transaction (segment_txn 0 and 1 ->
             // seqTxn 1 and 2). Both seeds are identical 0-row commits, so no per-txn state needs resetting
@@ -894,6 +942,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
     @Override
     public void truncateSoft() {
+        throwIfInColumnarWrite("truncate table");
         try {
             lastSegmentTxn = events.truncate();
             final int syncedMode = syncAdaptiveEventsBeforeSequencing();
@@ -1187,7 +1236,8 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         return tally > threshold;
     }
 
-    void checkDistressed() {
+    @Override
+    public void checkDistressed() {
         if (sequencer.isDurabilityFailed()) {
             distressed = true;
             throw new CairoError("engine is poisoned by a failed durability barrier");
@@ -2827,16 +2877,25 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     }
 
     /**
-     * Cancels a columnar write operation. Package-private for columnar appender.
+     * Cancels a columnar write operation.
      */
-    void cancelColumnarWrite(long startRowId) {
-        setAppendPosition(startRowId);
+    @Override
+    public void cancelColumnarWrite() {
+        if (!hasOpenColumnarWrite) {
+            return;
+        }
+        setAppendPosition(segmentRowCount);
+        hasOpenColumnarWrite = false;
     }
 
     /**
-     * Finishes a columnar write operation. Package-private for columnar appender.
+     * Finishes a columnar write operation.
      */
-    void finishColumnarWrite(int rowCount, long minTimestamp, long maxTimestamp, boolean outOfOrder) {
+    @Override
+    public void finishColumnarWrite(int rowCount, long minTimestamp, long maxTimestamp, boolean outOfOrder) {
+        if (!hasOpenColumnarWrite) {
+            throw CairoException.nonCritical().put("not in columnar write mode");
+        }
         // Fill in nulls for any columns that weren't written
         long lastExpectedRow = segmentRowCount + rowCount - 1;
         for (int i = 0; i < columnCount; i++) {
@@ -2873,21 +2932,24 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
         // Update row count
         segmentRowCount += rowCount;
+        hasOpenColumnarWrite = false;
     }
 
     /**
-     * Returns the aux memory for a column. Used by columnar appender.
+     * Returns the aux memory for a column, for columnar writes through {@link WalColumnSink}.
      */
-    MemoryMA getAuxColumn(int column) {
+    @Override
+    public MemoryMA getAuxColumn(int column) {
         assert column < columnCount : "Column index is out of bounds: " + column + " >= " + columnCount;
         return columns.getQuick(getAuxColumnOffset(column));
     }
 
     /**
-     * Marks a symbol column as containing a NULL value. Package-private for
-     * columnar appender so the WAL event includes the null flag change.
+     * Marks a symbol column as containing a NULL value, so that the WAL event
+     * includes the null flag change.
      */
-    void markSymbolMapNull(int columnIndex) {
+    @Override
+    public void markSymbolMapNull(int columnIndex) {
         if (!symbolMapNullFlags.get(columnIndex)) {
             symbolMapNullFlags.set(columnIndex, true);
             symbolMapNullFlagsChanged.set(columnIndex, true);
@@ -2895,14 +2957,15 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     }
 
     /**
-     * Resolves a symbol value to its key. Package-private for columnar appender.
+     * Resolves a symbol value to its key.
      *
      * @param columnIndex     the column index
      * @param symbolValue     the symbol value to resolve
      * @param symbolMapReader the symbol map reader
      * @return the symbol key
      */
-    int resolveSymbol(int columnIndex, CharSequence symbolValue, SymbolMapReader symbolMapReader) {
+    @Override
+    public int resolveSymbol(int columnIndex, CharSequence symbolValue, SymbolMapReader symbolMapReader) {
         if (symbolValue == null) {
             markSymbolMapNull(columnIndex);
             return SymbolTable.VALUE_IS_NULL;

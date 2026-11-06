@@ -4109,6 +4109,35 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRollSegmentClearsPendingRoll() throws Exception {
+        // a structure change applied to a writer whose segment holds committed rows and no uncommitted ones leaves
+        // a roll pending for the next row; an explicit roll must satisfy it, or the next row rolls a second time and
+        // the explicitly opened segment stays empty
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(testName.getMethodName());
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                TableWriter.Row row = walWriter.newRow(0);
+                row.putByte(0, (byte) 1);
+                row.append();
+                walWriter.commit();
+                assertEquals(0, walWriter.getSegmentId());
+
+                addColumn(walWriter, "c", ColumnType.INT);
+                assertEquals(0, walWriter.getSegmentId());
+
+                walWriter.rollSegment();
+                assertEquals(1, walWriter.getSegmentId());
+
+                row = walWriter.newRow(0);
+                row.putByte(0, (byte) 2);
+                row.append();
+                walWriter.commit();
+                assertEquals("the explicit roll did not clear the pending roll", 1, walWriter.getSegmentId());
+            }
+        });
+    }
+
+    @Test
     public void testRollToNextSegment() throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = testName.getMethodName();
@@ -5318,7 +5347,7 @@ public class WalWriterTest extends AbstractCairoTest {
     public void testTenantCloseRunsPoolBookkeepingWhenColumnarCancelFails() throws Exception {
         // M2 follow-up: cleanupBeforeClose() also cancels a pending columnar
         // write, via WalColumnarRowAppender.cancelColumnarWrite() ->
-        // WalWriter.cancelColumnarWrite(startRowId) -> setAppendPosition() --
+        // WalWriter.cancelColumnarWrite() -> setAppendPosition() --
         // the same IO-performing rollback call as
         // testTenantCloseRunsPoolBookkeepingWhenRollbackFails(). Before the
         // distressed latch was added to cleanupBeforeClose(), this path had
