@@ -34,7 +34,9 @@ import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.model.CompiledTickExpression;
 import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.jit.JitUtil;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
@@ -46,6 +48,7 @@ import io.questdb.test.cairo.TestTickCalendarService;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -2016,7 +2019,7 @@ public class IntervalFilterTest extends AbstractCairoTest {
             final LongList expected = new LongList();
             final LongList actual = new LongList();
             for (int i = 0; i < 4_500; i++) {
-                final String tick = randomTickString(rnd, tickSink, true);
+                final String tick = randomTickString(rnd, tickSink, true, false);
                 expected.clear();
                 actual.clear();
                 IntervalUtils.parseTickExpr(timestampDriver, unmergedConfiguration, tick, 0, tick.length(), 0, expected, sink);
@@ -2088,7 +2091,7 @@ public class IntervalFilterTest extends AbstractCairoTest {
             for (int i = 0; i < 450; i++) {
                 final long now = Micros.toMicros(2023, 12, 28, 0, 0) + rnd.nextLong(25 * Micros.DAY_MICROS);
                 setCurrentMicros(now);
-                final String bindValue = randomTickString(rnd, tickSink, true);
+                final String bindValue = randomTickString(rnd, tickSink, true, false);
                 bindVariableService.clear();
                 bindVariableService.setStr("p", bindValue);
 
@@ -2515,7 +2518,7 @@ public class IntervalFilterTest extends AbstractCairoTest {
             boolean hasNestedZoneAndFilter = false;
             boolean hasNestedMergeBeforeLastValue = false;
             for (int i = 0; i < 4_500; i++) {
-                final String tick = randomTickString(rnd, tickSink, true);
+                final String tick = randomTickString(rnd, tickSink, true, false);
                 final Matcher timeList = timeListPattern.matcher(tick);
                 if (timeList.matches()) {
                     final int valueCount = countValues(timeList.group(4));
@@ -2598,6 +2601,46 @@ public class IntervalFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRandomTickStringCoversDateVariableListWithTouchingLeavesOnJit() throws Exception {
+        // testIntervalScanMatchesRowFilter runs the JIT bound of a list that holds a date variable
+        // and static elements, which counts each run of touching static intervals once, only on the
+        // lists that randomTickString builds. So it must build such a list whose static leaves
+        // touch, as the 600 tenths of a second of a time list value do, and that the JIT runs while
+        // the compiled list holds more IR entries than the IN list threshold (10): a bound of one
+        // interval per entry would send it to the Java filter.
+        Assume.assumeTrue(JitUtil.isJitSupported());
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        // case 6 with tenths of a second
+        final Pattern tenthsPattern = Pattern.compile("\\[\\$today,2024-01-(\\d\\d|\\[\\d\\d\\.\\.\\d\\d])T\\[[^]]+]:\\[00\\.\\.59]\\.\\[0\\.\\.9]].*");
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE x (k INT, tm #TIMESTAMP, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                    timestampType.getTypeName()
+            );
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            final TimestampDriver timestampDriver = timestampType.getDriver();
+            final int threshold = configuration.getSqlJitMaxInListSizeThreshold();
+            final StringSink tickSink = new StringSink();
+            boolean hasTouchingTenthsOnJit = false;
+            for (int i = 0; i < 4_500 && !hasTouchingTenthsOnJit; i++) {
+                final String tick = randomTickString(rnd, tickSink, true, true);
+                if (!tenthsPattern.matcher(tick).matches()) {
+                    continue;
+                }
+                try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(timestampDriver, configuration, tick, 0, tick.length(), 0)) {
+                    if (compiled.getElementCount() <= threshold) {
+                        continue;
+                    }
+                }
+                try (RecordCursorFactory factory = select("SELECT k FROM x WHERE tm IN '" + tick + "'")) {
+                    hasTouchingTenthsOnJit = factory.usesCompiledFilter();
+                }
+            }
+            Assert.assertTrue("$today and touching tenths of more IR entries than the IN list threshold on the JIT", hasTouchingTenthsOnJit);
+        });
+    }
+
+    @Test
     public void testRandomTickStringExceedsMaxIntervalsFromListStart() throws Exception {
         // testIncrementalMergeMatchesUnmergedParse catches an incremental merge that counts the
         // earlier elements' intervals against the cap (1,024) only if randomTickString builds
@@ -2623,7 +2666,7 @@ public class IntervalFilterTest extends AbstractCairoTest {
             boolean hasLargerFirstOverCap = false;
             boolean hasSmallerFirstOverCap = false;
             for (int i = 0; i < 4_500; i++) {
-                final String tick = randomTickString(rnd, tickSink, true);
+                final String tick = randomTickString(rnd, tickSink, true, false);
                 final boolean isLargerFirst = tick.startsWith("[2024-[01..02]");
                 if (tick.indexOf('#') >= 0 || (!isLargerFirst && !tick.contains(",2024-[01..02]"))) {
                     continue;
@@ -2681,7 +2724,7 @@ public class IntervalFilterTest extends AbstractCairoTest {
 
     private static void putRandomPredicate(Rnd rnd, StringSink sink, StringSink tickSink) {
         // %c stands for the timestamp column
-        switch (rnd.nextInt(12)) {
+        switch (rnd.nextInt(14)) {
             case 0 -> sink.put("%c < now()");
             case 1 -> sink.put("%c >= now()");
             case 2 -> sink.put("%c > dateadd('h', ").put(-rnd.nextInt(100)).put(", now())");
@@ -2696,15 +2739,25 @@ public class IntervalFilterTest extends AbstractCairoTest {
                 // first carries no day filter, which is what can leave it without intervals.
                 final String runtime = rnd.nextBoolean() ? "%c IN '$today'" : "%c IN :p";
                 final boolean isRuntimeFirst = rnd.nextBoolean();
-                final String tick = "%c IN '" + randomTickString(rnd, tickSink, isRuntimeFirst) + '\'';
+                final String tick = "%c IN '" + randomTickString(rnd, tickSink, isRuntimeFirst, false) + '\'';
                 sink.put('(').put(isRuntimeFirst ? runtime : tick).put(" OR ").put(isRuntimeFirst ? tick : runtime).put(')');
             }
             case 9 -> {
-                final String tick = randomTickString(rnd, tickSink, true);
+                final String tick = randomTickString(rnd, tickSink, true, false);
+                sink.put("%c NOT IN '").put(tick).put('\'');
+            }
+            // $today in one list with static elements. On tm, the JIT checks as many intervals as
+            // $today and the runs of the static intervals can yield.
+            case 10 -> {
+                final String tick = randomTickString(rnd, tickSink, true, true);
+                sink.put("%c IN '").put(tick).put('\'');
+            }
+            case 11 -> {
+                final String tick = randomTickString(rnd, tickSink, true, true);
                 sink.put("%c NOT IN '").put(tick).put('\'');
             }
             default -> {
-                final String tick = randomTickString(rnd, tickSink, true);
+                final String tick = randomTickString(rnd, tickSink, true, false);
                 sink.put("%c IN '").put(tick).put('\'');
             }
         }
@@ -2743,14 +2796,22 @@ public class IntervalFilterTest extends AbstractCairoTest {
 
     // A tick string over the days of January 2024, in one case also of February, that both the
     // interval scan and the row filter resolve: lists, ranges, times, durations, repetitions,
-    // fixed offsets, day filters, time lists with bracketed suffixes and nested time lists.
-    private static String randomTickString(Rnd rnd, StringSink sink, boolean isDayFilterAllowed) {
+    // fixed offsets, day filters, time lists with bracketed suffixes and nested time lists. With
+    // hasDateVariable, $today opens the list of the elements, and both evaluate the list through a
+    // CompiledTickExpression. That compiles each static element on its own and takes no
+    // repetition, so the list leaves out case 7, whose later element exceeds the cap (1,024)
+    // without the day that covers it, and the repetition of a time.
+    private static String randomTickString(Rnd rnd, StringSink sink, boolean isDayFilterAllowed, boolean hasDateVariable) {
         sink.clear();
         final int day = 1 + rnd.nextInt(20);
         boolean hasTime = rnd.nextBoolean();
         boolean isZoneAllowed = true;
         int listDurationMinutes = 0;
-        switch (rnd.nextInt(9)) {
+        int shape = rnd.nextInt(hasDateVariable ? 8 : 9);
+        if (hasDateVariable && shape == 7) {
+            shape = 8;
+        }
+        switch (shape) {
             case 0 -> sink.put("2024-01-").put(twoDigits(day));
             case 1 -> {
                 sink.put("2024-01-[").put(twoDigits(day));
@@ -2873,6 +2934,17 @@ public class IntervalFilterTest extends AbstractCairoTest {
                 sink.put(']');
             }
         }
+        if (hasDateVariable) {
+            // $today joins the list, or makes a list with the single element
+            final String elements = sink.toString();
+            sink.clear();
+            sink.put("[$today,");
+            if (elements.charAt(0) == '[') {
+                sink.put(elements, 1, elements.length());
+            } else {
+                sink.put(elements).put(']');
+            }
+        }
         if (hasTime) {
             sink.put('T').put(twoDigits(rnd.nextInt(24))).put(":00");
         }
@@ -2893,7 +2965,12 @@ public class IntervalFilterTest extends AbstractCairoTest {
         if (hasTime) {
             switch (rnd.nextInt(3)) {
                 case 0 -> sink.put(';').put(1 + rnd.nextInt(30)).put('h');
-                case 1 -> sink.put(';').put(1 + rnd.nextInt(5)).put("h;1d;").put(1 + rnd.nextInt(4));
+                case 1 -> {
+                    sink.put(';').put(1 + rnd.nextInt(5)).put('h');
+                    if (!hasDateVariable) {
+                        sink.put(";1d;").put(1 + rnd.nextInt(4));
+                    }
+                }
                 default -> {
                 }
             }

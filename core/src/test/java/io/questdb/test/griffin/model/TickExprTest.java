@@ -1171,6 +1171,19 @@ public class TickExprTest {
     }
 
     @Test
+    public void testCompiledTickExprMaxIntervalCountMergesOneUnitStaticIntervals() throws SqlException {
+        // A microsecond is one unit of TIMESTAMP, so each of the two static leaves is an interval
+        // with lo == hi, which is not empty, and the second starts one unit after the first. The
+        // compiler keeps an IR entry for each, and the bound counts them as one run, next to the
+        // date variable. In TIMESTAMP_NS, each leaf spans 1,000 units. On the Monday 2024-01-08,
+        // evaluate() yields that day and the two leaves as one interval.
+        final LongList expected = new LongList();
+        addLocalDays(expected, LocalDate.of(2024, 1, 8), LocalDate.of(2024, 1, 9), ZoneOffset.UTC);
+        addLocalBlock(expected, LocalDateTime.of(2024, 1, 15, 10, 0), ZoneOffset.UTC, 2);
+        assertCompiledTickExprIntervals("[$today, 2024-01-15T10:00:00.000000, 2024-01-15T10:00:00.000001]", 3, 2, expected);
+    }
+
+    @Test
     public void testCompiledTickExprMaxIntervalCountMergesStaticIntervals() throws SqlException {
         // The compiler writes one STATIC entry per bracket leaf, day or list value, and evaluate()
         // merges the intervals that overlap or touch. The bound counts the runs that the static
