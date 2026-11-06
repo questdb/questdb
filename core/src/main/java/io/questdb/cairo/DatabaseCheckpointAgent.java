@@ -93,7 +93,6 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
     private final ObjList<TxnScoreboard> scoreboards = new ObjList<>();
     private final AtomicLong startedAtTimestamp = new AtomicLong(Numbers.LONG_NULL); // Numbers.LONG_NULL means no ongoing checkpoint
     private final GrowOnlyTableNameRegistryStore tableNameRegistryStore; // protected with #lock
-    private final TxReader txReader;
     private boolean hasRecoveredCheckpoint;
     private boolean hasRecoveredCheckpointTrigger;
     private boolean isBackupCheckpoint; // protected with #lock
@@ -108,7 +107,6 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
         this.ff = configuration.getFilesFacade();
         this.metadata = WalWriterMetadata.newSequencerMetadataSink(ff);
         this.tableNameRegistryStore = new GrowOnlyTableNameRegistryStore(ff);
-        this.txReader = new TxReader(configuration.getFilesFacade());
     }
 
     @TestOnly
