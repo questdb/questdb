@@ -43,6 +43,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -290,6 +291,16 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         public void longTopK(DirectLongLongSortedList list, int columnIndex) {
             buildMapConditionally();
             ((MapRecordCursor) baseCursor).longTopK(list, getFunctions().getQuick(columnIndex));
+        }
+
+        @Override
+        public SymbolTable getSymbolTable(int columnIndex) {
+            return primaryCursor.getSymbolTable(columnIndex);
+        }
+
+        @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return primaryCursor.newSymbolTable(columnIndex);
         }
 
         @Override
