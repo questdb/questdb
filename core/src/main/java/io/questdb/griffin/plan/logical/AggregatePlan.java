@@ -25,6 +25,7 @@
 package io.questdb.griffin.plan.logical;
 
 import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 import io.questdb.std.ObjectFactory;
 
 /**
@@ -32,6 +33,7 @@ import io.questdb.std.ObjectFactory;
  */
 public final class AggregatePlan extends GroupingPlan {
     public static final ObjectFactory<AggregatePlan> FACTORY = AggregatePlan::new;
+    private final ObjList<IntList> groupingSets = new ObjList<>();
     private final IntList sharedInputIds = new IntList();
     private final IntList sharedSourceIds = new IntList();
     private Algorithm algorithm;
@@ -46,6 +48,7 @@ public final class AggregatePlan extends GroupingPlan {
     @Override
     public void clear() {
         super.clear();
+        groupingSets.clear();
         sharedInputIds.clear();
         sharedSourceIds.clear();
         algorithm = null;
@@ -73,6 +76,15 @@ public final class AggregatePlan extends GroupingPlan {
     public Algorithm getAlgorithm() {
         checkPhysicalRead("AggregatePlan.algorithm");
         return algorithm;
+    }
+
+    /**
+     * The grouping sets of a ROLLUP, CUBE or GROUPING SETS: each lists the indexes of the grouping keys the set groups
+     * by, and the rows of the set read every other key as NULL. Empty for any other aggregate. A key outside some set
+     * is a plain input column that no other key reads, so rolling it up nulls that key alone.
+     */
+    public ObjList<IntList> getGroupingSets() {
+        return groupingSets;
     }
 
     /**
@@ -148,6 +160,11 @@ public final class AggregatePlan extends GroupingPlan {
         return sharedSourceIds;
     }
 
+    @Override
+    public boolean hasGroupingSets() {
+        return groupingSets.size() > 0;
+    }
+
     /**
      * Whether other consumers read the aggregate's rows: decorrelation domains that re-read it through their shared
      * source, see {@link #getSharedConsumerCount()}, or domain reads of the decorrelation domain, see
@@ -205,6 +222,7 @@ public final class AggregatePlan extends GroupingPlan {
     @Override
     public void visitFacts(PlanFactRecorder visitor) {
         super.visitFacts(visitor);
+        visitor.facts("groupingSets", groupingSets);
         visitor.columnIds("sharedInputIds", sharedInputIds);
         visitor.columnIds("sharedSourceIds", sharedSourceIds);
         visitor.fact("algorithm", algorithm);

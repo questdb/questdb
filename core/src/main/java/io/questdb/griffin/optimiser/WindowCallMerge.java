@@ -42,7 +42,6 @@ import io.questdb.griffin.plan.logical.PlanExpressionVisitor;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.SortPlan;
 import io.questdb.griffin.plan.logical.TreeWalk;
-import io.questdb.griffin.plan.logical.TypeExpression;
 import io.questdb.griffin.plan.logical.WindowPlan;
 import io.questdb.griffin.plan.logical.WindowSpec;
 import io.questdb.std.Chars;
@@ -162,20 +161,6 @@ final class WindowCallMerge implements OptimiserPass, PlanExpressionVisitor, Exp
         };
     }
 
-    private static boolean isSameCall(FunctionExpression call, FunctionExpression other) {
-        if (call.getOverload() != other.getOverload() || call.getFunctionFlags() != other.getFunctionFlags()
-                || call.isProjectedOffset() != other.isProjectedOffset() || call.isSetOperation() != other.isSetOperation()
-                || call.getArgumentCount() != other.getArgumentCount()) {
-            return false;
-        }
-        for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
-            if (!isSameExpression(call.argumentAt(i), other.argumentAt(i))) {
-                return false;
-            }
-        }
-        return true;
-    }
-
     /**
      * Two ordering columns are the same when equal deterministic expressions compute them, as select aliases
      * of one expression do.
@@ -186,23 +171,7 @@ final class WindowCallMerge implements OptimiserPass, PlanExpressionVisitor, Exp
         }
         final BoundExpression definition = definitionOf(columnId, scope);
         final BoundExpression other = definitionOf(otherId, scope);
-        return definition != null && other != null && !LogicalPlans.isVolatile(definition) && isSameExpression(definition, other);
-    }
-
-    private static boolean isSameExpression(BoundExpression expression, BoundExpression other) {
-        if (expression.getClass() != other.getClass() || expression.getDataType() != other.getDataType()) {
-            return false;
-        }
-        return switch (expression) {
-            case ColumnExpression column -> column.getColumnId() == ((ColumnExpression) other).getColumnId()
-                    && column.isCast() == ((ColumnExpression) other).isCast();
-            case ConstantExpression constant -> constant.isSameValue((ConstantExpression) other);
-            case BindVariableExpression variable ->
-                    Chars.equals(variable.getName(), ((BindVariableExpression) other).getName());
-            case TypeExpression _ -> true;
-            case FunctionExpression call -> isSameCall(call, (FunctionExpression) other);
-            default -> false;
-        };
+        return definition != null && other != null && !LogicalPlans.isVolatile(definition) && LogicalPlans.isSameExpression(definition, other);
     }
 
     private static boolean isSameLiveViewDescription(LiveViewWindowDescription description, LiveViewWindowDescription other) {
@@ -225,7 +194,7 @@ final class WindowCallMerge implements OptimiserPass, PlanExpressionVisitor, Exp
         }
         for (int i = 0, n = spec.getPartitionBy().size(); i < n; i++) {
             if (LogicalPlans.isVolatile(spec.getPartitionBy().getQuick(i))
-                    || !isSameExpression(spec.getPartitionBy().getQuick(i), other.getPartitionBy().getQuick(i))) {
+                    || !LogicalPlans.isSameExpression(spec.getPartitionBy().getQuick(i), other.getPartitionBy().getQuick(i))) {
                 return false;
             }
         }
@@ -272,7 +241,7 @@ final class WindowCallMerge implements OptimiserPass, PlanExpressionVisitor, Exp
             callComparisonCount++;
             final WindowPlan owner = candidate < count ? window : (WindowPlan) lowerWindows.getQuick(candidate - count);
             final int ownerIndex = candidate < count ? candidate : lowerCallIndexes.getQuick(candidate - count);
-            if ((equal < 0 || candidate < equal) && isSameCall(call, owner.getFunctions().getQuick(ownerIndex))
+            if ((equal < 0 || candidate < equal) && LogicalPlans.isSameCall(call, owner.getFunctions().getQuick(ownerIndex))
                     && isSameSpec(spec, owner.getSpecs().getQuick(ownerIndex), scope)) {
                 equal = candidate;
             }
@@ -285,7 +254,7 @@ final class WindowCallMerge implements OptimiserPass, PlanExpressionVisitor, Exp
     }
 
     /**
-     * A hash that agrees with {@link #isSameCall} and {@link #isSameSpec}: calls that merge hash equally.
+     * A hash that agrees with {@link LogicalPlans#isSameCall} and {@link #isSameSpec}: calls that merge hash equally.
      */
     private int hashCall(FunctionExpression call, WindowSpec spec, LogicalPlan scope) {
         int hash = hashCall(call);

@@ -1704,7 +1704,9 @@ public class UnionAllCastTest extends AbstractCairoTest {
 
     @Test
     public void testGeoSameStorageNarrowsToPrefix() throws Exception {
-        // each pair shares a storage width (GEOBYTE, GEOSHORT, GEOINT, GEOLONG) and differs in precision
+        // Each pair shares a storage width (GEOBYTE, GEOSHORT, GEOINT, GEOLONG) and differs in
+        // precision. The set operation keeps the coarser precision, so the wider value must be
+        // cut to its leading bits, the cell that contains it.
         assertMemoryLeak(() -> {
             final String[][] pairs = {
                     {"3b", "5b", "##101", "##10111", "101"},

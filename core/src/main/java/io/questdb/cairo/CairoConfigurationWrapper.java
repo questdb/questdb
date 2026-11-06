@@ -1446,6 +1446,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlMaxGroupingSets() {
+        return getDelegate().getSqlMaxGroupingSets();
+    }
+
+    @Override
     public int getSqlMaxNegativeLimit() {
         return getDelegate().getSqlMaxNegativeLimit();
     }
@@ -2068,11 +2073,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isReadOnlyInstance() {
         return getDelegate().isReadOnlyInstance();
-    }
-
-    @Override
-    public boolean isSqlLatestOnHoistEnabled() {
-        return getDelegate().isSqlLatestOnHoistEnabled();
     }
 
     @Override

@@ -271,7 +271,7 @@ public final class LogicalPlans {
      * that is a {@code min}, {@code max}, {@code first} or {@code last} of a direct column reference; null otherwise.
      */
     public static ColumnExpression endpointColumn(AggregatePlan aggregate) {
-        if (aggregate.getGroupingExpressions().size() != 0 || aggregate.getAggregates().size() != 1) {
+        if (aggregate.getGroupingExpressions().size() != 0 || aggregate.hasGroupingSets() || aggregate.getAggregates().size() != 1) {
             return null;
         }
         final FunctionExpression call = aggregate.getAggregates().getQuick(0);
@@ -318,12 +318,37 @@ public final class LogicalPlans {
     }
 
     /**
+     * The scan under the single-input chain of the plan when its read of the table applies an EXPIRE ROWS policy; null
+     * otherwise.
+     */
+    public static ScanPlan expiringScan(LogicalPlan plan) {
+        while (!(plan instanceof ScanPlan) && plan != null && plan.inputCount() == 1) {
+            plan = plan.inputAt(0);
+        }
+        return plan instanceof ScanPlan scan && scan.getExpiryPolicy() != null ? scan : null;
+    }
+
+    /**
+     * The index of the grouping key that computes the expression, an argument of a {@link #isGroupingCall GROUPING
+     * call}, or -1 when none does.
+     */
+    public static int groupingArgumentKeyIndex(GroupingPlan grouping, BoundExpression argument) {
+        final ObjList<BoundExpression> keys = grouping.getGroupingExpressions();
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            if (isSameExpression(keys.getQuick(i), argument)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /**
      * The index of the first grouping key that is a reference to the column, or -1 when none is.
      */
     public static int groupingColumnIndex(GroupingPlan grouping, int columnId) {
         final ObjList<BoundExpression> keys = grouping.getGroupingExpressions();
         for (int i = 0, n = keys.size(); i < n; i++) {
-            if (keys.getQuick(i) instanceof ColumnExpression column && column.getColumnId() == columnId) {
+            if (keys.getQuick(i) instanceof ColumnExpression column && column.getColumnId() == columnId && isColumnKey(grouping, column)) {
                 return i;
             }
         }
@@ -452,6 +477,14 @@ public final class LogicalPlans {
     }
 
     /**
+     * True when the GROUP BY map stores the key by the column it reads. A cast of a column under grouping sets is a
+     * computed key: rolling up that column elsewhere in the key list must not null the cast.
+     */
+    public static boolean isColumnKey(GroupingPlan grouping, BoundExpression key) {
+        return key instanceof ColumnExpression column && !(column.isCast() && grouping.hasGroupingSets());
+    }
+
+    /**
      * True when the projection selects each of its columns as a distinct plain column reference.
      */
     public static boolean isColumnOnlyProjection(ProjectPlan project) {
@@ -506,7 +539,7 @@ public final class LogicalPlans {
      * True when the aggregate only counts its input rows, which the generator does without reading them.
      */
     public static boolean isCount(AggregatePlan aggregate) {
-        if (aggregate.getGroupingExpressions().size() != 0) {
+        if (aggregate.getGroupingExpressions().size() != 0 || aggregate.hasGroupingSets()) {
             return false;
         }
         final ObjList<FunctionExpression> aggregates = aggregate.getAggregates();
@@ -542,6 +575,13 @@ public final class LogicalPlans {
             case 'n', 'u', 'U', 'T', 's', 'm', 'h', 'H', 'd', 'w' -> true;
             default -> false;
         };
+    }
+
+    /**
+     * True when the call is GROUPING() or GROUPING_ID(), whose value the grouping set of the row decides.
+     */
+    public static boolean isGroupingCall(FunctionExpression call) {
+        return call.isAggregate() && (SqlKeywords.isGroupingKeyword(call.getName()) || SqlKeywords.isGroupingIdKeyword(call.getName()));
     }
 
     /**
@@ -601,6 +641,19 @@ public final class LogicalPlans {
             return isKeyEqualityOr(call.argumentAt(0), columnId) && isKeyEqualityOr(call.argumentAt(1), columnId);
         }
         return isKeyEquality(expression, columnId);
+    }
+
+    /**
+     * True when every grouping set of the aggregate groups by the key, so that no row reads it as a rolled-up NULL.
+     */
+    public static boolean isKeyInEveryGroupingSet(AggregatePlan aggregate, int keyIndex) {
+        final ObjList<IntList> sets = aggregate.getGroupingSets();
+        for (int i = 0, n = sets.size(); i < n; i++) {
+            if (!sets.getQuick(i).contains(keyIndex)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
@@ -719,6 +772,43 @@ public final class LogicalPlans {
      */
     public static boolean isResultStable(LogicalPlan plan, boolean isParallelGroupByEnabled, IntHashSet readColumnIds) {
         return (stability(plan, isParallelGroupByEnabled, readColumnIds) & RESULT_STABLE) != 0;
+    }
+
+    /**
+     * True when the calls are the same one over the same arguments, see {@link #isSameExpression}.
+     */
+    public static boolean isSameCall(FunctionExpression call, FunctionExpression other) {
+        if (call.getOverload() != other.getOverload() || call.getFunctionFlags() != other.getFunctionFlags()
+                || call.isProjectedOffset() != other.isProjectedOffset() || call.isSetOperation() != other.isSetOperation()
+                || call.getArgumentCount() != other.getArgumentCount()) {
+            return false;
+        }
+        for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
+            if (!isSameExpression(call.argumentAt(i), other.argumentAt(i))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * True when the expressions have the same structure over the same columns and values. An expression of another
+     * kind, such as a sub-query, is never the same.
+     */
+    public static boolean isSameExpression(BoundExpression expression, BoundExpression other) {
+        if (expression.getClass() != other.getClass() || expression.getDataType() != other.getDataType()) {
+            return false;
+        }
+        return switch (expression) {
+            case ColumnExpression column -> column.getColumnId() == ((ColumnExpression) other).getColumnId()
+                    && column.isCast() == ((ColumnExpression) other).isCast();
+            case ConstantExpression constant -> constant.isSameValue((ConstantExpression) other);
+            case BindVariableExpression variable ->
+                    Chars.equals(variable.getName(), ((BindVariableExpression) other).getName());
+            case TypeExpression _ -> true;
+            case FunctionExpression call -> isSameCall(call, (FunctionExpression) other);
+            default -> false;
+        };
     }
 
     /**

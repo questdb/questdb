@@ -29,5 +29,9 @@ package io.questdb.griffin.plan.logical;
  * another aggregate, a constant, an interpolation between the neighbouring buckets, or not at all.
  */
 public enum FillMode {
+    /**
+     * The column is no fill value: gap rows repeat it, as they repeat a grouping key.
+     */
+    KEY,
     LINEAR, NONE, NULL, PREV, PREV_COLUMN, VALUE
 }

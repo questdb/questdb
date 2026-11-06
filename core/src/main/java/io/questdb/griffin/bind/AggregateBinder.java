@@ -33,6 +33,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.SqlUtil;
+import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
@@ -54,14 +55,17 @@ import io.questdb.griffin.plan.logical.SampleByPlan;
 import io.questdb.griffin.plan.logical.SortDirection;
 import io.questdb.griffin.plan.logical.SortPlan;
 import io.questdb.griffin.plan.logical.WindowPlan;
+import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.Chars;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.IntHashSet;
+import io.questdb.std.IntList;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.StringSink;
 
 import static io.questdb.griffin.bind.BindContext.*;
 import static io.questdb.griffin.bind.OrderBinder.orderProjectionIndex;
@@ -73,6 +77,10 @@ final class AggregateBinder implements Mutable {
     private final IntObjHashMap<ExpressionNode> columnSpellings = new IntObjHashMap<>();
     private final CairoConfiguration configuration;
     private final BindContext ctx;
+    private final IntList groupingKeyIndexes = new IntList();
+    private final StringSink groupingSetForm = new StringSink();
+    private final CharSequenceHashSet groupingSetForms = new CharSequenceHashSet();
+    private final IntList groupingSetKeys = new IntList();
     private final ExpressionNode normalizedCount;
     private final OrderBinder orderBinder;
     private final SampleByBinder sampleByBinder;
@@ -98,6 +106,10 @@ final class AggregateBinder implements Mutable {
     @Override
     public void clear() {
         columnSpellings.clear();
+        groupingKeyIndexes.clear();
+        groupingSetForm.clear();
+        groupingSetForms.clear();
+        groupingSetKeys.clear();
     }
 
     private static boolean containsNode(ExpressionNode expression, ExpressionNode node) {
@@ -137,6 +149,15 @@ final class AggregateBinder implements Mutable {
             }
         }
         return true;
+    }
+
+    private static boolean hasEmptyGroupingSet(ObjList<IntList> groupingSets) {
+        for (int i = 0, n = groupingSets.size(); i < n; i++) {
+            if (groupingSets.getQuick(i).size() == 0) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static boolean hasUnprojectedGroupingKey(GroupingPlan aggregate, ProjectPlan project) {
@@ -276,6 +297,67 @@ final class AggregateBinder implements Mutable {
         aggregate.getOutput().add(ctx.planNodes.nextColumnId(), ctx.createOutputName(requestedName != null ? requestedName : aggregateOutputName(expression, model)),
                 bound.getDataType(), index < 0 ? null : input.getMetadata(index), false);
         aggregate.getOutput().setSymbolTableStatic(aggregate.getOutput().getColumnCount() - 1, index >= 0 && input.isSymbolTableStatic(index));
+    }
+
+    /**
+     * Keys the rows of each grouping set apart for a FILL, by a hidden GROUPING_ID() over the keys some set rolls up.
+     * A rolled-up key reads as NULL, or as false and 0 for BOOLEAN, BYTE, SHORT and CHAR, so rows of two sets can show
+     * equal keys, and the fill keys its gap rows by the columns it reads.
+     */
+    private void addGroupingSetFillKey(
+            QueryModel source, AggregatePlan aggregate, ObjList<ExpressionNode> groupBy, OutputSchema aggregateScope, SqlExecutionContext executionContext
+    ) throws SqlException {
+        final BindScope scope = ctx.scope();
+        final IntList rolledKeys = groupingSetKeys;
+        rolledKeys.clear();
+        for (int k = 0, n = aggregate.getGroupingExpressions().size(); k < n; k++) {
+            if (!LogicalPlans.isKeyInEveryGroupingSet(aggregate, k)) {
+                rolledKeys.add(k);
+            }
+        }
+        final int argumentCount = rolledKeys.size();
+        if (argumentCount == 0) {
+            return;
+        }
+        final int position = scope.groupingNodes.getQuick(rolledKeys.getQuick(0)).position;
+        if (argumentCount > 31) {
+            final int group = groupingKeyIndexes.indexOf(rolledKeys.getQuick(31), 0, groupingKeyIndexes.size());
+            throw SqlException.$(groupBy.getQuick(group).position, "SAMPLE BY FILL with grouping sets supports at most 31 rolled-up keys");
+        }
+        final ExpressionNode call = ctx.bindingExpressions.next().of(ExpressionNode.FUNCTION, "grouping_id", 0, position);
+        call.paramCount = argumentCount;
+        if (argumentCount == 1) {
+            call.rhs = scope.groupingNodes.getQuick(rolledKeys.getQuick(0));
+        } else if (argumentCount == 2) {
+            call.lhs = scope.groupingNodes.getQuick(rolledKeys.getQuick(0));
+            call.rhs = scope.groupingNodes.getQuick(rolledKeys.getQuick(1));
+        } else {
+            for (int a = argumentCount - 1; a >= 0; a--) {
+                call.args.add(scope.groupingNodes.getQuick(rolledKeys.getQuick(a)));
+            }
+        }
+        final BoundExpression bound = ctx.functionBinder.bindGroupByExpression(call, aggregateScope, sourceAlias(source), executionContext);
+        aggregate.getAggregates().add((FunctionExpression) bound);
+        aggregate.getOutput().add(ctx.planNodes.nextColumnId(), ctx.createOutputName("grouping_set_fill_key"), bound.getDataType(), false);
+    }
+
+    /**
+     * Adds the SAMPLE BY bucket as the next grouping key, under the name of the select expression at
+     * {@code timestampIndex}, or of the timestamp when -1.
+     */
+    private void addSampleByBucket(QueryModel model, QueryModel source, GroupingPlan aggregate, BoundExpression bucket, int timestampIndex) throws SqlException {
+        final BindScope scope = ctx.scope();
+        final OutputSchema input = aggregate.getChild().getOutput();
+        final ExpressionNode timestamp = timestampIndex < 0 ? sampleByBinder.sampleByTimestamp(input, source.getSampleBy().position)
+                : scope.aggregateSelectExpressions.getQuick(timestampIndex);
+        final CharSequence name = timestampIndex < 0
+                ? SqlUtil.createColumnAlias(ctx.characterStore, input.getColumnName(sampleByBinder.sampleByTimestampIndex(input)), -1,
+                model.getAliasToColumnMap(), scope.aliasSequences, false)
+                : model.getColumns().getQuick(timestampIndex).getName();
+        scope.groupingNodes.add(timestamp);
+        aggregate.setBucketKeyIndex(aggregate.getGroupingExpressions().size());
+        aggregate.getGroupingExpressions().add(bucket);
+        aggregate.getOutput().add(ctx.planNodes.nextColumnId(), ctx.createOutputName(name), bucket.getDataType(), false);
     }
 
     /**
@@ -602,6 +684,96 @@ final class AggregateBinder implements Mutable {
         return true;
     }
 
+    /**
+     * Binds a GROUPING() or GROUPING_ID() call, whose every argument names a grouping key the way a GROUP BY list does:
+     * by column, by select alias or by the expression. The argument then computes the same value as its key, which is
+     * how the generator finds the key of the argument.
+     */
+    private BoundExpression bindGroupingCall(
+            ExpressionNode call, QueryModel model, QueryModel source, GroupingPlan aggregate, OutputSchema aggregateScope, SqlExecutionContext executionContext
+    ) throws SqlException {
+        if (!aggregate.hasGroupingSets()) {
+            throw groupingCallOutsideGroupingSets(call);
+        }
+        final BindScope scope = ctx.scope();
+        scope.substitutionNodes.clear();
+        scope.aggregateSubstitutions.clear();
+        ExpressionNode nonKey = null;
+        for (int i = 0, n = call.operandCount(); i < n; i++) {
+            final ExpressionNode argument = call.operandAt(i);
+            if (argument == null) {
+                continue;
+            }
+            final ExpressionNode expression = argument.type == ExpressionNode.LITERAL ? resolveGroupBy(argument, model) : argument;
+            final int keyIndex = findGroupingExpression(expression, source, aggregate);
+            if (keyIndex < 0) {
+                nonKey = nonKey == null || argument.position < nonKey.position ? argument : nonKey;
+            } else if (keyIndex == aggregate.getBucketKeyIndex()) {
+                scope.substitutionNodes.add(argument);
+                scope.aggregateSubstitutions.add(ctx.functionBinder.bind(scope.sampleByBucketNode, aggregateScope, sourceAlias(source), executionContext));
+            } else if (expression != argument) {
+                scope.substitutionNodes.add(argument);
+                scope.aggregateSubstitutions.add(ctx.functionBinder.bindValue(expression, aggregateScope, sourceAlias(source), executionContext));
+            }
+        }
+        final BoundExpression bound = ctx.functionBinder.bindGroupByExpression(call, aggregateScope, sourceAlias(source),
+                scope.substitutionNodes, scope.aggregateSubstitutions, executionContext);
+        if (nonKey != null) {
+            throw SqlException.$(nonKey.position, nonKey.type == ExpressionNode.LITERAL
+                    ? "argument must be a grouping key column" : "argument must be a column reference");
+        }
+        return bound;
+    }
+
+    /**
+     * Binds the keys and sets of a ROLLUP, CUBE or GROUPING SETS: the keys of the GROUP BY list, each once, then the
+     * SAMPLE BY bucket, which every set groups by. The parser lists a set by positions in the GROUP BY list, the plan by
+     * keys. A name of the SAMPLE BY timestamp in the list names the bucket.
+     */
+    private void bindGroupingSets(
+            QueryModel model, QueryModel source, AggregatePlan aggregate, ObjList<ExpressionNode> groupBy, ObjList<IntList> groupingSets,
+            BoundExpression sampleByBucket, SqlExecutionContext executionContext
+    ) throws SqlException {
+        for (int s = 0, n = groupingSets.size(); s < n; s++) {
+            aggregate.getGroupingSets().add(ctx.planNodes.groupingSets.next());
+        }
+        final OutputSchema input = aggregate.getChild().getOutput();
+        final IntList keyIndexes = groupingKeyIndexes;
+        keyIndexes.clear();
+        for (int i = 0, n = groupBy.size(); i < n; i++) {
+            final ExpressionNode group = groupBy.getQuick(i);
+            final ExpressionNode expression = resolveGroupBy(group, model);
+            if (sampleByBucket != null && expression.type == ExpressionNode.LITERAL && sampleByBinder.referencesSampleByTimestamp(expression, input, source)) {
+                keyIndexes.add(-1);
+            } else {
+                addGroupingExpression(expression, explicitGroupingName(group, expression, model), false, model, source, aggregate, executionContext);
+                keyIndexes.add(findGroupingExpression(expression, source, aggregate));
+            }
+        }
+        if (sampleByBucket != null) {
+            addSampleByBucket(model, source, aggregate, sampleByBucket, lastSelectedTimestamp(source, input));
+        }
+        final int bucketKeyIndex = aggregate.getBucketKeyIndex();
+        for (int s = 0, n = groupingSets.size(); s < n; s++) {
+            final IntList positions = groupingSets.getQuick(s);
+            final IntList set = aggregate.getGroupingSets().getQuick(s);
+            for (int i = 0, m = positions.size(); i < m; i++) {
+                final int keyIndex = keyIndexes.getQuick(positions.getQuick(i));
+                set.add(keyIndex < 0 ? bucketKeyIndex : keyIndex);
+            }
+            if (bucketKeyIndex >= 0) {
+                set.add(bucketKeyIndex);
+            }
+        }
+        for (int i = 0, n = groupBy.size(); i < n; i++) {
+            final int keyIndex = keyIndexes.getQuick(i);
+            if (keyIndex >= 0 && !LogicalPlans.isKeyInEveryGroupingSet(aggregate, keyIndex)
+                    && !LogicalPlans.isColumnKey(aggregate, aggregate.getGroupingExpressions().getQuick(keyIndex))) {
+                throw SqlException.$(groupBy.getQuick(i).position, GroupByUtils.EXPRESSION_GROUPING_KEY_MESSAGE);
+            }
+        }
+    }
+
     private void collectAggregateOrderSubstitutions(
             ExpressionNode expression, QueryModel source, GroupingPlan aggregate,
             ProjectPlan project, int visibleCount
@@ -782,31 +954,16 @@ final class AggregateBinder implements Mutable {
         final BindScope scope = ctx.scope();
         final OutputSchema input = aggregate.getChild().getOutput();
         int firstTimestampIndex = -1;
-        int timestampIndex = -1;
-        for (int i = 0, n = scope.aggregateSelectExpressions.size(); i < n; i++) {
-            final ExpressionNode expression = scope.aggregateSelectExpressions.getQuick(i);
-            if (sampleByBinder.referencesSampleByTimestamp(expression, input, source)) {
-                if (firstTimestampIndex < 0) {
-                    firstTimestampIndex = i;
-                }
-                if (expression.type == ExpressionNode.LITERAL) {
-                    timestampIndex = i;
-                }
+        for (int i = 0, n = scope.aggregateSelectExpressions.size(); i < n && firstTimestampIndex < 0; i++) {
+            if (sampleByBinder.referencesSampleByTimestamp(scope.aggregateSelectExpressions.getQuick(i), input, source)) {
+                firstTimestampIndex = i;
             }
         }
+        final int timestampIndex = lastSelectedTimestamp(source, input);
         // The bucket stays at the first timestamp position, named after the last alias.
         for (int i = 0, n = scope.aggregateSelectExpressions.size(); i <= n; i++) {
             if (i == firstTimestampIndex || i == n && firstTimestampIndex < 0) {
-                final ExpressionNode timestamp = timestampIndex < 0 ? sampleByBinder.sampleByTimestamp(input, source.getSampleBy().position)
-                        : scope.aggregateSelectExpressions.getQuick(timestampIndex);
-                final CharSequence name = timestampIndex < 0
-                        ? SqlUtil.createColumnAlias(ctx.characterStore, input.getColumnName(sampleByBinder.sampleByTimestampIndex(input)), -1,
-                        model.getAliasToColumnMap(), scope.aliasSequences, false)
-                        : model.getColumns().getQuick(timestampIndex).getName();
-                scope.groupingNodes.add(timestamp);
-                aggregate.setBucketKeyIndex(aggregate.getGroupingExpressions().size());
-                aggregate.getGroupingExpressions().add(bucket);
-                aggregate.getOutput().add(ctx.planNodes.nextColumnId(), ctx.createOutputName(name), bucket.getDataType(), false);
+                addSampleByBucket(model, source, aggregate, bucket, timestampIndex);
             } else if (i < n) {
                 final ExpressionNode expression = scope.aggregateSelectExpressions.getQuick(i);
                 if (!sampleByBinder.referencesSampleByTimestamp(expression, input, source)) {
@@ -1120,7 +1277,7 @@ final class AggregateBinder implements Mutable {
     ) throws SqlException {
         final BindScope scope = ctx.scope();
         final ObjList<ExpressionNode> groupBy = blockGroupBy(model, source);
-        if (groupBy.size() == 0 || hasUnprojectedGroupingKey(aggregate, selected)) {
+        if (groupBy.size() == 0 || aggregate.hasGroupingSets() || hasUnprojectedGroupingKey(aggregate, selected)) {
             return true;
         }
         for (int i = 0, n = model.getColumns().size(); i < n; i++) {
@@ -1165,6 +1322,20 @@ final class AggregateBinder implements Mutable {
             }
         }
         return false;
+    }
+
+    /**
+     * The select expression that last names the SAMPLE BY timestamp, or -1 when none does.
+     */
+    private int lastSelectedTimestamp(QueryModel source, OutputSchema input) throws SqlException {
+        final ObjList<ExpressionNode> selected = ctx.scope().aggregateSelectExpressions;
+        for (int i = selected.size() - 1; i > -1; i--) {
+            final ExpressionNode expression = selected.getQuick(i);
+            if (expression.type == ExpressionNode.LITERAL && sampleByBinder.referencesSampleByTimestamp(expression, input, source)) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     private void projectSampleByKeys(SampleByPlan sampleBy, QueryModel model, boolean isJoin) {
@@ -1225,6 +1396,56 @@ final class AggregateBinder implements Mutable {
             }
         }
         return false;
+    }
+
+    /**
+     * Decorrelation keys an aggregate by the outer columns its query level reads, and no grouping set could roll them up.
+     */
+    private void rejectCorrelatedGroupingSets(LogicalPlan plan, QueryModel model, QueryModel source, ObjList<ExpressionNode> groupBy) throws SqlException {
+        final ObjList<OutputSchema> outerScopes = ctx.scope().outerScopes;
+        if (outerScopes.size() == 0) {
+            return;
+        }
+        final IntList readIds = ctx.tmpOuterColumns;
+        final int base = readIds.size();
+        try {
+            ctx.planReadIds.collectSubtreeReadIds(plan, readIds);
+            for (int i = base, n = readIds.size(); i < n; i++) {
+                for (int s = 0, m = outerScopes.size(); s < m; s++) {
+                    if (outerScopes.getQuick(s).getColumnIndexById(readIds.getQuick(i)) >= 0) {
+                        final int groupByPosition = blockGroupByPosition(model, source);
+                        throw SqlException.$(groupByPosition > 0 ? groupByPosition : groupBy.size() > 0 ? groupBy.getQuick(0).position : source.getSampleBy().position,
+                                "correlated GROUPING SETS are not supported with LATERAL");
+                    }
+                }
+            }
+        } finally {
+            readIds.setPos(base);
+        }
+    }
+
+    /**
+     * The fill tells the rows of two sets apart by the sets' GROUPING_ID(), which two sets with the same keys share. A
+     * hash over sorted, distinct keys spares comparing every pair of a large CUBE.
+     */
+    private void rejectDuplicateGroupingSets(QueryModel source, AggregatePlan aggregate) throws SqlException {
+        final ObjList<IntList> sets = aggregate.getGroupingSets();
+        groupingSetForms.clear();
+        for (int s = 0, n = sets.size(); s < n; s++) {
+            final IntList keys = groupingSetKeys;
+            keys.clear();
+            keys.addAll(sets.getQuick(s));
+            keys.sortGroups(1);
+            groupingSetForm.clear();
+            for (int k = 0, m = keys.size(); k < m; k++) {
+                if (k == 0 || keys.getQuick(k) != keys.getQuick(k - 1)) {
+                    groupingSetForm.put(keys.getQuick(k)).put(',');
+                }
+            }
+            if (!groupingSetForms.add(groupingSetForm)) {
+                throw SqlException.$(source.getSampleByFill().getQuick(0).position, "SAMPLE BY FILL is not supported with duplicate grouping sets");
+            }
+        }
     }
 
     private ExpressionNode resolveDistinctOrderOrdinal(
@@ -1297,7 +1518,7 @@ final class AggregateBinder implements Mutable {
                 || source.getTableName() == null || source.getJoinModels().size() != 1
                 || model.getJoinModels().size() != 1 || model.getWhereClause() != null
                 || model.getSampleBy() != null || source.getSampleBy() != null
-                || aggregate.getGroupingExpressions().size() != 0 || scope.aggregateNodes.size() != 1) {
+                || aggregate.getGroupingExpressions().size() != 0 || aggregate.hasGroupingSets() || scope.aggregateNodes.size() != 1) {
             return false;
         }
         final ExpressionNode expression = scope.aggregateNodes.getQuick(0);
@@ -1452,7 +1673,10 @@ final class AggregateBinder implements Mutable {
         scope.clearAggregateNodes();
         scope.aggregateProjectionExpressions.clear();
         scope.groupingNodes.clear();
-        final boolean isDistinctRetained = model.isDistinct() && !(isGroupingSelect(model) && (!isOrderBound || !hasAggregateOrder(source)));
+        final ObjList<IntList> groupingSets = blockGroupingSets(model, source);
+        // DISTINCT stays over grouping sets: a set's row repeats another's when a key that the first set groups by is NULL.
+        final boolean isDistinctRetained = model.isDistinct()
+                && (groupingSets != null || !(isGroupingSelect(model) && (!isOrderBound || !hasAggregateOrder(source))));
         scope.aggregateSelectExpressions.clear();
         for (int i = 0, n = model.getColumns().size(); i < n; i++) {
             final ExpressionNode expression = selectExpressions == null
@@ -1464,13 +1688,16 @@ final class AggregateBinder implements Mutable {
             scope.aggregateOrderExpressions.add(orders.getQuick(i));
         }
         final ObjList<ExpressionNode> groupBy = blockGroupBy(model, source);
-        scope.isImplicitAggregation = groupBy.size() == 0 && sampleBy == null
+        final boolean isGroupingExplicit = hasBlockGrouping(model, source);
+        scope.isImplicitAggregation = !isGroupingExplicit && sampleBy == null
                 && !(input instanceof HorizonJoinPlan) && ctx.hasAggregation(model, source);
-        aggregate.setExplicitGrouping(groupBy.size() > 0);
+        aggregate.setExplicitGrouping(isGroupingExplicit);
         aggregate.setDirectTableInput(hasDirectTableInput(source));
-        aggregate.setKeySpellingKept(groupBy.size() > 0);
+        aggregate.setKeySpellingKept(isGroupingExplicit);
         scope.referenceScope.clear();
-        if (aggregate instanceof SampleByPlan cursor) {
+        if (groupingSets != null) {
+            bindGroupingSets(model, source, (AggregatePlan) aggregate, groupBy, groupingSets, sampleByBucket, executionContext);
+        } else if (aggregate instanceof SampleByPlan cursor) {
             collectSampleByCursorGrouping(model, source, cursor, executionContext);
         } else if (sampleByBucket != null) {
             collectSampleByGrouping(model, source, aggregate, sampleByBucket, executionContext);
@@ -1518,7 +1745,7 @@ final class AggregateBinder implements Mutable {
         // normalization. A dependency already available from a grouped key can
         // stay above the aggregate; an additional input dependency becomes a key.
         final boolean isHorizonJoin = input instanceof HorizonJoinPlan;
-        if ((groupBy.size() == 0 || isHorizonJoin) && isOrderBound) {
+        if ((!isGroupingExplicit || isHorizonJoin) && isOrderBound) {
             final boolean hasSelectAliases = model.isDistinct() && !ctx.hasAggregation(model, source);
             final boolean hasVirtualSelection = hasAggregateComputation()
                     || sampleByBucket != null && hasTimestampComputation(input.getOutput(), source);
@@ -1564,7 +1791,9 @@ final class AggregateBinder implements Mutable {
             final ExpressionNode call = isCountDistinctRewritten
                     ? normalizedCount.of(ExpressionNode.FUNCTION, "count", expression.precedence, expression.position)
                     : orderBinder.rowCountCall(expression);
-            final BoundExpression bound = ctx.functionBinder.bindGroupByExpression(call, aggregateScope, sourceAlias(source), executionContext);
+            final BoundExpression bound = isGroupingCall(call)
+                    ? bindGroupingCall(call, model, source, aggregate, aggregateScope, executionContext)
+                    : ctx.functionBinder.bindGroupByExpression(call, aggregateScope, sourceAlias(source), executionContext);
             if (bound instanceof FunctionExpression function && function.isAggregate()) {
                 if (LogicalPlans.readsOnlyOuterColumns(function)) {
                     throw SqlException.$(expression.position, "aggregate functions are not allowed in FROM clause of their own query level");
@@ -1572,7 +1801,7 @@ final class AggregateBinder implements Mutable {
                 aggregate.getAggregates().add(function);
                 i++;
             } else {
-                if (groupBy.size() > 0) {
+                if (isGroupingExplicit) {
                     throw SqlException.$(model.getModelPosition(), "not enough columns in group by");
                 }
                 scope.groupingNodes.add(expression);
@@ -1585,6 +1814,10 @@ final class AggregateBinder implements Mutable {
             final ExpressionNode expression = scope.aggregateNodes.getQuick(i);
             final FunctionExpression bound = aggregate.getAggregates().getQuick(i);
             aggregate.getOutput().add(ctx.planNodes.nextColumnId(), ctx.createOutputName(aggregateOutputName(expression, model)), bound.getDataType(), false);
+        }
+        if (groupingSets != null && SampleByBinder.isFillPlanned(source) && !SampleByBinder.isEveryFillNone(source)) {
+            rejectDuplicateGroupingSets(source, (AggregatePlan) aggregate);
+            addGroupingSetFillKey(source, (AggregatePlan) aggregate, groupBy, aggregateScope, executionContext);
         }
 
         if (aggregate instanceof SampleByPlan cursor) {
@@ -1624,10 +1857,10 @@ final class AggregateBinder implements Mutable {
                     }
                     final int index = LogicalPlans.groupingColumnIndex(aggregate, schema.getColumnId(k));
                     if (index < 0) {
-                        if (groupBy.size() > 0) {
+                        if (groupBy.size() > 0 && (groupingSets == null || !hasEmptyGroupingSet(groupingSets))) {
                             throw SqlException.$(0, "not enough columns in group by");
                         }
-                        throw SqlException.$(expression.position, "column must appear in GROUP BY clause or aggregate function");
+                        throw SqlException.$(expression.position + Chars.indexOfLastUnquoted(expression.token, '.') + 1, "column must appear in GROUP BY clause or aggregate function");
                     }
                     final OutputSchema output = aggregate.getOutput();
                     ctx.addProjection(project, ctx.planNodes.columns.next().of(output.getColumnId(index), output.getColumnType(index), expression.position),
@@ -1658,6 +1891,9 @@ final class AggregateBinder implements Mutable {
                 : bindAggregateOrder(model, source, aggregate, project, orders, executionContext);
         if (aggregate instanceof SampleByPlan cursor) {
             projectSampleByKeys(cursor, model, source.getJoinModels().size() > 1);
+        }
+        if (groupingSets != null) {
+            rejectCorrelatedGroupingSets(result, model, source, groupBy);
         }
         return result;
     }

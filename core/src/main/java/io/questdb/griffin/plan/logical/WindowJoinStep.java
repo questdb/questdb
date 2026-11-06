@@ -41,8 +41,6 @@ public final class WindowJoinStep implements PlanFactSource {
     private final OutputSchema masterScope = new OutputSchema();
     private final OutputSchema scope = new OutputSchema();
     private Algorithm algorithm;
-    private CharSequence expiryViewName;
-    private int expiryViewPosition;
     private BoundExpression filter;
     private long hi;
     private BoundExpression hiExpression;
@@ -63,8 +61,6 @@ public final class WindowJoinStep implements PlanFactSource {
 
     @Override
     public void clear() {
-        expiryViewName = null;
-        expiryViewPosition = 0;
         aggregateColumnIds.clear();
         aggregates.clear();
         masterScope.clear();
@@ -209,23 +205,6 @@ public final class WindowJoinStep implements PlanFactSource {
 
     public boolean isTableSource() {
         return isTableSource;
-    }
-
-    /**
-     * The materialized view this step reads through its EXPIRE ROWS policy, as the caller wrote it; null for any other
-     * slave.
-     */
-    public CharSequence getExpiryViewName() {
-        return expiryViewName;
-    }
-
-    public int getExpiryViewPosition() {
-        return expiryViewPosition;
-    }
-
-    public void setExpiryView(CharSequence expiryViewName, int expiryViewPosition) {
-        this.expiryViewName = expiryViewName;
-        this.expiryViewPosition = expiryViewPosition;
     }
 
     public WindowJoinStep of(LogicalPlan slave, CharSequence masterAlias, CharSequence slaveAlias, boolean isIncludePrevailing, int position) {

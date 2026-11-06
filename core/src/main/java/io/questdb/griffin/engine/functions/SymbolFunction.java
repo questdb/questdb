@@ -42,6 +42,7 @@ import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -259,13 +260,8 @@ public abstract class SymbolFunction implements Function, SymbolTable {
 
     @Override
     public final int getVarcharSize(Record rec) {
-        final CharSequence value = getStrA(rec);
-        if (value == null) {
-            return TableUtils.NULL_LEN;
-        }
-        utf8SinkA.clear();
-        utf8SinkA.put(value);
-        return utf8SinkA.size();
+        final CharSequence cs = getSymbol(rec);
+        return cs != null ? Utf8s.utf8Bytes(cs) : TableUtils.NULL_LEN;
     }
 
     /**

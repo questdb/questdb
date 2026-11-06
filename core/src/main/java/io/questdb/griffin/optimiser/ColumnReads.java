@@ -256,7 +256,9 @@ final class ColumnReads implements Mutable {
                 final IntList sources = fill.getSourceColumnIds();
                 final ObjList<FillMode> modes = fill.getModes();
                 for (int i = 0, n = targets.size(); i < n; i++) {
-                    if (readColumnIds.contains(targets.getQuick(i))) {
+                    if (modes.getQuick(i) == FillMode.KEY) {
+                        readColumnIds.add(targets.getQuick(i));
+                    } else if (readColumnIds.contains(targets.getQuick(i))) {
                         int entry = i;
                         while (entry >= 0 && modes.getQuick(entry) == FillMode.PREV_COLUMN) {
                             final int source = sources.getQuick(entry);
@@ -293,7 +295,7 @@ final class ColumnReads implements Mutable {
      * True when the aggregate computes only the count of its input rows.
      */
     boolean isRowCount(AggregatePlan aggregate) {
-        if (aggregate.getGroupingExpressions().size() > 0) {
+        if (aggregate.getGroupingExpressions().size() > 0 || aggregate.hasGroupingSets()) {
             return false;
         }
         FunctionExpression count = null;

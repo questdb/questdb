@@ -27,6 +27,7 @@ package io.questdb.griffin.optimiser;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.IndexType;
+import io.questdb.cairo.RowExpiryUtil;
 import io.questdb.cairo.sql.TableAccessInfo;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -97,6 +98,8 @@ import org.jetbrains.annotations.Nullable;
  * cannot carry.
  */
 final class OperatorPlanning implements Mutable {
+    // The parallel GROUP BY over grouping sets needs one map per set for the owner and for each worker.
+    private static final int PARALLEL_GROUPING_SETS_MAP_BUDGET = 256;
     private static final PlanVisitor SHARED_CONSUMERS = plan -> {
         if (plan instanceof AggregatePlan aggregate && aggregate.getSharedSource() != null
                 && sharedTarget(aggregate.getSharedSource().getInput()) instanceof AggregatePlan target) {
@@ -375,13 +378,16 @@ final class OperatorPlanning implements Mutable {
      * over page frames of a table whose parquet partitions store no column in a converted type, which the vectorised
      * one cannot read, else the parallel one when every key and aggregate function supports parallelism and the base
      * exposes page frames or a filter the GROUP BY steals, unless a keyless aggregate stops early over an unfiltered
-     * base; serial otherwise, as is a consumer that re-reads a shared source's cursor.
+     * base; serial otherwise, as is a consumer that re-reads a shared source's cursor. The parallel GROUP BY over
+     * grouping sets also needs workers and a bounded number of maps.
      */
     private AggregatePlan.Algorithm aggregateAlgorithm(AggregatePlan aggregate, LogicalPlan base) {
         final SqlExecutionContext executionContext = context.getExecutionContext();
         final JoinInput source = aggregate.getSharedSource();
+        final int workerCount = executionContext.getSharedQueryWorkerCount();
         if (!executionContext.isParallelGroupByEnabled() || source != null
-                && PhysicalProperties.supportsSharedCursors(source.getInput()) != PhysicalProperties.Capability.NO) {
+                && PhysicalProperties.supportsSharedCursors(source.getInput()) != PhysicalProperties.Capability.NO
+                || aggregate.hasGroupingSets() && (workerCount == 0 || aggregate.getGroupingSets().size() > PARALLEL_GROUPING_SETS_MAP_BUDGET / (workerCount + 1))) {
             return AggregatePlan.Algorithm.SERIAL;
         }
         final boolean isPageFrameSource = isPageFrameSource(base);
@@ -1094,9 +1100,10 @@ final class OperatorPlanning implements Mutable {
             final boolean isParallel = executionContext.isParallelWindowJoinEnabled() && (hasPageFrames || isFilterStolen)
                     && isParallelWindowJoinStep(step);
             if (!isParallel && !isKnownYes(PhysicalProperties.supportsTimeFrameCursor(step.getSlave()))) {
-                if (step.getExpiryViewName() != null) {
-                    throw SqlException.position(step.getExpiryViewPosition())
-                            .put("right side of window join cannot be materialized view '").put(step.getExpiryViewName())
+                final ScanPlan expiring = step.isTableSource() ? LogicalPlans.expiringScan(step.getSlave()) : null;
+                if (expiring != null) {
+                    throw SqlException.position(expiring.getPosition())
+                            .put("right side of window join cannot be materialized view '").put(expiring.getTableToken().getTableName())
                             .put("' because its EXPIRE ROWS policy is not a cutoff on the designated timestamp");
                 }
                 throw SqlException.position(step.getPosition()).put("right side of window join must be a table, not sub-query");
@@ -1398,13 +1405,14 @@ final class OperatorPlanning implements Mutable {
         for (int i = 0, n = slaves.size(); i < n; i++) {
             final HorizonJoinSlave slave = slaves.getQuick(i);
             if (!isKnownYes(PhysicalProperties.supportsHorizonSlaveTimeFrameCursor(slave.getInput()))) {
-                if (slave.getExpiryViewName() != null) {
+                final ScanPlan expiring = slave.isTableSource() ? LogicalPlans.expiringScan(slave.getInput()) : null;
+                if (expiring != null) {
                     // A join that takes a per-row filter off its right-hand side accepts a value WHEN policy, so the
                     // cause it reports is a KEEP or window-function policy, which has no per-row filter to take.
-                    throw SqlException.position(slave.getExpiryViewPosition())
-                            .put("right-hand side of HORIZON JOIN cannot be materialized view '").put(slave.getExpiryViewName())
+                    throw SqlException.position(expiring.getPosition())
+                            .put("right-hand side of HORIZON JOIN cannot be materialized view '").put(expiring.getTableToken().getTableName())
                             .put("' because its EXPIRE ROWS policy ")
-                            .put(slave.isExpiryStructuralPolicy() ? "uses KEEP or a window function" : "is not a cutoff on the designated timestamp");
+                            .put(RowExpiryUtil.isStructuralPolicy(expiring.getExpiryPolicy()) ? "uses KEEP or a window function" : "is not a cutoff on the designated timestamp");
                 }
                 throw SqlException.$(slave.getPosition(), "right-hand side of HORIZON JOIN can only be a table with an optional filter");
             }
@@ -1613,8 +1621,8 @@ final class OperatorPlanning implements Mutable {
      * function supports parallelism, and a keyless aggregate that stops early reads a filtered base.
      */
     static boolean isParallelGroupBy(AggregatePlan aggregate, LogicalPlan base) {
-        return hasParallelFunctions(aggregate)
-                && !(aggregate.getGroupingExpressions().size() == 0 && hasEarlyExit(aggregate.getAggregates()) && !hasFilter(base));
+        return hasParallelFunctions(aggregate) && !(aggregate.getGroupingExpressions().size() == 0
+                && (aggregate.hasGroupingSets() || hasEarlyExit(aggregate.getAggregates()) && !hasFilter(base)));
     }
 
     /**

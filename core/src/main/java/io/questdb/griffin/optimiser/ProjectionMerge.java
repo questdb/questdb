@@ -217,7 +217,8 @@ final class ProjectionMerge implements OptimiserPass {
      */
     private void absorbColumnProject(AggregatePlan aggregate) {
         final ProjectPlan inner = absorbableProject(aggregate.getChild());
-        if (inner == null) {
+        // The projection keeps two keys over one column apart: nulling either alone rolls it up.
+        if (inner == null || aggregate.hasGroupingSets() && LogicalPlans.hasRepeatedColumn(inner, tmpIds)) {
             return;
         }
         final ObjList<BoundExpression> keys = aggregate.getGroupingExpressions();
@@ -350,6 +351,10 @@ final class ProjectionMerge implements OptimiserPass {
         }
         for (int i = 0, n = calls.size(); i < n; i++) {
             calls.setQuick(i, (FunctionExpression) context.getRewriter().remapColumns(calls.getQuick(i), project));
+        }
+        final int timestampIndex = project.getOutput().getColumnIndexById(aggregate.getTimestampColumnId());
+        if (timestampIndex >= 0) {
+            aggregate.setTimestampColumnId(((ColumnExpression) project.getExpressions().getQuick(timestampIndex)).getColumnId());
         }
         final IntList sharedIds = aggregate.getSharedInputIds();
         for (int i = 0, n = sharedIds.size(); i < n; i++) {

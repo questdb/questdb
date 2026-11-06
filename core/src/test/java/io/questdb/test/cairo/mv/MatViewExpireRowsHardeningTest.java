@@ -43,6 +43,7 @@ import io.questdb.cairo.pool.AbstractMultiTenantPool;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.wal.WalWriter;
@@ -315,6 +316,24 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExplainCreateOverPoliciedViewRejected() throws Exception {
+        // EXPLAIN binds the query the statement would materialize, so it fails as the statement does.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (sym SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE MATERIALIZED VIEW mv_policied AS (SELECT * FROM base) EXPIRE ROWS WHEN v < 2.0");
+            drainWalAndMatViewQueues();
+            final String matView = "EXPLAIN CREATE MATERIALIZED VIEW mv_chained AS (SELECT * FROM mv_policied)";
+            assertExceptionNoLeakCheck(matView, matView.indexOf("mv_policied"),
+                    "cannot materialize view 'mv_chained': source materialized view 'mv_policied' has an active EXPIRE ROWS policy");
+            final String liveView = "EXPLAIN CREATE LIVE VIEW lv_blocked FLUSH EVERY 1s START FROM NOW AS "
+                    + "SELECT ts, v, count(*) OVER (PARTITION BY sym ORDER BY ts "
+                    + "ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM mv_policied";
+            assertExceptionNoLeakCheck(liveView, liveView.indexOf("mv_policied"),
+                    "cannot materialize view 'lv_blocked': source materialized view 'mv_policied' has an active EXPIRE ROWS policy");
+        });
+    }
+
+    @Test
     public void testExpiryPolicyMarkSurvivesCommitFailureAfterMetaSwap() throws Exception {
         // rewriteAndSwapMetadata renames the new _meta into place, and every reader that opens the table's
         // metadata from then on sees the new policy. The _txn/_todo commit that follows can still fail (a
@@ -365,7 +384,7 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
                     execute("create materialized view stranded_affected_mv as (select * from mv)");
                 } catch (SqlException e) {
                     affectedCreateDeferred = true;
-                    TestUtils.assertContains(e.getFlyweightMessage(), "too many row-expiry policy changes during compilation");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "too many row-expiry policy changes during materialized view compilation");
                 }
                 Assert.assertTrue("CREATE over the stranded source must exhaust bounded drift retries",
                         affectedCreateDeferred);
@@ -1748,9 +1767,7 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
                     + "ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM mv_open");
             Assert.assertNotNull("a materialized view must be a legal live view base", engine.getTableTokenIfExists("lv_open"));
 
-            // The position lands on the base table name. By this point the read filter has
-            // swapped that table for a sub-query, but the alias it leaves behind still carries
-            // the offset the name had in the original text.
+            // The position lands on the base table name.
             assertExceptionNoLeakCheck(
                     "CREATE LIVE VIEW lv_blocked FLUSH EVERY 1s START FROM NOW AS "
                             + "SELECT ts, v, count(*) OVER (PARTITION BY sym ORDER BY ts "
@@ -2037,7 +2054,7 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
                     execute("create materialized view b as (select * from a)");
                 } catch (SqlException e) {
                     rejected = true;
-                    TestUtils.assertContains(e.getFlyweightMessage(), "too many row-expiry policy changes during compilation");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "too many row-expiry policy changes during materialized view compilation");
                 }
                 Assert.assertTrue("CREATE must be rejected while a's policy change is in flight", rejected);
                 Assert.assertNull("the half-created dependent must be rolled back", engine.getTableTokenIfExists("b"));
@@ -3477,6 +3494,78 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testPolicyReadsAskSelectOnTheColumnsTheyRead() throws Exception {
+        // Policy, then the columns of: setting it, a read of sym, a read through a sub-query, a filter on another
+        // column, and a read through a view that reads only sym.
+        final String[][] policies = {
+                {"KEEP LATEST PARTITION BY k", "[k,ts]", "[sym,k,ts]", "[ts,k]", "[sym,secret,k,ts]", "[k]"},
+                {"WHEN v < 2.0", "[v]", "[v,sym]", "[v,ts]", "[v,sym,secret]", "[v]"},
+                {"WHEN ts < '2025-01-01T00:00:01.000000Z'", "[ts]", "[ts,sym]", "[ts]", "[ts,sym,secret]", "[ts]"},
+                {"KEEP HIGHEST ON v PARTITION BY k", "[v,k]", "[sym,v,k,ts]", "[ts,v,k]", "[sym,secret,v,k,ts]", "[k,v,ts]"},
+                {"KEEP 1 HIGHEST ON v PARTITION BY k", "[k,v,ts]", "[sym,k,v,ts]", "[ts,k,v]", "[sym,secret,k,v,ts]", "[k,v,ts]"},
+                {"WHEN v < max(v) OVER (PARTITION BY k)", "[v,k]", "[sym,v,k,ts]", "[ts,v,k]", "[sym,secret,v,k,ts]", "[k,v,ts]"},
+        };
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (sym SYMBOL, k SYMBOL, v DOUBLE, secret INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base VALUES
+                    ('A', 'K', 1.0, 30, '2025-01-01T00:00:00.000000Z'),
+                    ('B', 'K', 3.0, 10, '2025-01-01T00:00:01.000000Z'),
+                    ('C', 'Z', 4.0, 40, '2025-01-01T00:00:02.000000Z')""");
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base)");
+            drainWalAndMatViewQueues();
+            final RecordSelectSecurityContext security = new RecordSelectSecurityContext();
+            try (SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1).with(security, bindVariableService, null, -1, null)) {
+                for (String[] policy : policies) {
+                    execute("CREATE VIEW exposed AS (SELECT sym FROM mv)");
+                    drainWalAndViewQueues();
+                    final String alter = "ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS " + policy[0];
+                    security.asked = null;
+                    execute(alter, context);
+                    Assert.assertEquals(alter, policy[1], security.asked);
+                    drainWalQueue();
+
+                    final boolean isLatest = policy[0].startsWith("KEEP LATEST");
+                    assertSelectAsked(security, context, "SELECT sym FROM mv", policy[2]);
+                    assertSelectAsked(security, context, "SELECT sym FROM '*!*mv'", policy[2]);
+                    assertSelectAsked(security, context, "SELECT count() FROM (SELECT ts FROM mv)", policy[3]);
+                    assertSelectAsked(security, context, "SELECT sym FROM mv WHERE secret > 0", policy[4]);
+                    assertSelectAsked(security, context, "SELECT sym FROM exposed ORDER BY sym", policy[5]);
+                    assertSelectAsked(security, context, "SELECT count() FROM exposed", policy[5]);
+
+                    for (String source : new String[]{"mv", "'*!*mv'", "exposed"}) {
+                        assertQuery("SELECT sym FROM " + source + " ORDER BY sym").withContext(context).noLeakCheck()
+                                .expectSize(isLatest).returns("sym\nB\nC\n");
+                    }
+                    assertQuery("SELECT count() FROM (SELECT ts FROM mv)").withContext(context).noLeakCheck()
+                            .expectSize().noRandomAccess().returns("count\n2\n");
+                    assertQuery("SELECT count() FROM exposed").withContext(context).noLeakCheck()
+                            .expectSize().noRandomAccess().returns("count\n2\n");
+
+                    execute("DROP VIEW exposed");
+                    drainWalAndViewQueues();
+                    execute("ALTER MATERIALIZED VIEW mv DROP EXPIRE");
+                    drainWalQueue();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testReferencesPassThroughProjectionsTheBinderAdds() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (sym SYMBOL, k SYMBOL, v DOUBLE, secret INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            final RecordSelectSecurityContext security = new RecordSelectSecurityContext();
+            try (SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1).with(security, bindVariableService, null, -1, null)) {
+                assertSelectAsked(security, context, "SELECT sym FROM base ORDER BY v", "[sym,v]");
+                assertSelectAsked(security, context, "SELECT sym FROM base ORDER BY v + 1", "[sym,v]");
+                assertSelectAsked(security, context, "SELECT sym, max(v) OVER (PARTITION BY concat(k, 'x')) m FROM base", "[sym,v,k]");
+                assertSelectAsked(security, context, "SELECT sym FROM (SELECT sym, ts FROM base) TIMESTAMP(ts)", "[sym,ts]");
+            }
+        });
+    }
+
     private static void assertExpiryClassification(
             SqlCompiler compiler,
             TableMetadata metadata,
@@ -3693,6 +3782,13 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
     // refresh state.
     // Runs the cleanup on a view whose policy shows each reader their own rows, and checks that it
     // deletes nothing: alice keeps her 5 rows, admin keeps 3, and all 8 rows stay on disk.
+    private void assertSelectAsked(RecordSelectSecurityContext security, SqlExecutionContext context, String sql, String expected) throws Exception {
+        security.asked = null;
+        try (RecordCursorFactory factory = select(sql, context); RecordCursor ignored = factory.getCursor(context)) {
+            Assert.assertEquals(sql, expected, security.asked);
+        }
+    }
+
     private void assertSessionPredicateCleanupSkipped(String predicate) throws Exception {
         setCurrentMicros(JAN_10);
         final SqlExecutionContextImpl aliceContext = new SqlExecutionContextImpl(engine, 1).with(
@@ -3800,6 +3896,15 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
             if (isDenied) {
                 throw CairoException.authorization().put("permission denied [select on mv(v)]");
             }
+        }
+    }
+
+    private static final class RecordSelectSecurityContext extends AllowAllSecurityContext {
+        private String asked;
+
+        @Override
+        public void authorizeSelect(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
+            asked = columnNames.toString();
         }
     }
 }

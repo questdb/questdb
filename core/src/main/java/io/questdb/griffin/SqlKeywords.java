@@ -477,6 +477,14 @@ public class SqlKeywords {
                 && (tok.charAt(2) | 32) == 'v';
     }
 
+    public static boolean isCubeKeyword(CharSequence tok) {
+        return tok.length() == 4
+                && (tok.charAt(0) | 32) == 'c'
+                && (tok.charAt(1) | 32) == 'u'
+                && (tok.charAt(2) | 32) == 'b'
+                && (tok.charAt(3) | 32) == 'e';
+    }
+
     public static boolean isCumulativeKeyword(CharSequence tok) {
         return tok.length() == 10
                 && (tok.charAt(0) | 32) == 'c'
@@ -1042,6 +1050,33 @@ public class SqlKeywords {
                 && (tok.charAt(2) | 32) == 'o'
                 && (tok.charAt(3) | 32) == 'u'
                 && (tok.charAt(4) | 32) == 'p';
+    }
+
+    public static boolean isGroupingIdKeyword(CharSequence tok) {
+        return tok.length() == 11
+                && (tok.charAt(0) | 32) == 'g'
+                && (tok.charAt(1) | 32) == 'r'
+                && (tok.charAt(2) | 32) == 'o'
+                && (tok.charAt(3) | 32) == 'u'
+                && (tok.charAt(4) | 32) == 'p'
+                && (tok.charAt(5) | 32) == 'i'
+                && (tok.charAt(6) | 32) == 'n'
+                && (tok.charAt(7) | 32) == 'g'
+                && tok.charAt(8) == '_'
+                && (tok.charAt(9) | 32) == 'i'
+                && (tok.charAt(10) | 32) == 'd';
+    }
+
+    public static boolean isGroupingKeyword(CharSequence tok) {
+        return tok.length() == 8
+                && (tok.charAt(0) | 32) == 'g'
+                && (tok.charAt(1) | 32) == 'r'
+                && (tok.charAt(2) | 32) == 'o'
+                && (tok.charAt(3) | 32) == 'u'
+                && (tok.charAt(4) | 32) == 'p'
+                && (tok.charAt(5) | 32) == 'i'
+                && (tok.charAt(6) | 32) == 'n'
+                && (tok.charAt(7) | 32) == 'g';
     }
 
     public static boolean isGroupsKeyword(CharSequence tok) {
@@ -2125,6 +2160,16 @@ public class SqlKeywords {
         return tok.length() == 1 && tok.charAt(0) == ')';
     }
 
+    public static boolean isRollupKeyword(CharSequence tok) {
+        return tok.length() == 6
+                && (tok.charAt(0) | 32) == 'r'
+                && (tok.charAt(1) | 32) == 'o'
+                && (tok.charAt(2) | 32) == 'l'
+                && (tok.charAt(3) | 32) == 'l'
+                && (tok.charAt(4) | 32) == 'u'
+                && (tok.charAt(5) | 32) == 'p';
+    }
+
     public static boolean isRowKeyword(CharSequence tok) {
         return tok.length() == 3
                 && (tok.charAt(0) | 32) == 'r'
@@ -2246,6 +2291,14 @@ public class SqlKeywords {
                 && (tok.charAt(0) | 32) == 's'
                 && (tok.charAt(1) | 32) == 'e'
                 && (tok.charAt(2) | 32) == 't';
+    }
+
+    public static boolean isSetsKeyword(CharSequence tok) {
+        return tok.length() == 4
+                && (tok.charAt(0) | 32) == 's'
+                && (tok.charAt(1) | 32) == 'e'
+                && (tok.charAt(2) | 32) == 't'
+                && (tok.charAt(3) | 32) == 's';
     }
 
     public static boolean isShowKeyword(CharSequence tok) {

@@ -866,14 +866,15 @@ final class FilterPushdown implements OptimiserPass {
     }
 
     /**
-     * Maps each output column of the aggregate that a grouping key passes through to the input column it reads;
-     * returns whether one does.
+     * Maps each output column of the aggregate that a grouping key passes through to the input column it reads, unless
+     * a grouping set rolls the key up, whose rows no input row of that value decides; returns whether one does.
      */
     private boolean mapGroupingKeys(AggregatePlan aggregate) {
         columnMap.clear();
         final ObjList<BoundExpression> grouping = aggregate.getGroupingExpressions();
         for (int i = 0, n = grouping.size(); i < n; i++) {
-            if (grouping.getQuick(i) instanceof ColumnExpression column && column.isDirectReference()) {
+            if (grouping.getQuick(i) instanceof ColumnExpression column && column.isDirectReference()
+                    && LogicalPlans.isKeyInEveryGroupingSet(aggregate, i)) {
                 columnMap.put(aggregate.getOutput().getColumnId(i), column.getColumnId());
             }
         }

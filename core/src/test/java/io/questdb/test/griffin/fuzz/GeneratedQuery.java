@@ -49,6 +49,10 @@ import io.questdb.std.ObjList;
  * {@code fencedSql}, when not null, is the same query with its filters held above a fence that
  * filter pushdown does not cross and that keeps every row, so QueryRunner can compare it with the
  * query whose filters the planner pushed down.
+ * <p>
+ * {@code referenceSql}, when set, is an independent rewrite of the query that must return the same
+ * rows, such as the UNION ALL of plain GROUP BYs that {@code GroupingSetsClause} writes for a
+ * grouping sets query. QueryRunner compares the two when both compile and run.
  */
 public record GeneratedQuery(
         String sql,
@@ -57,11 +61,12 @@ public record GeneratedQuery(
         ObjList<String> bindNames,
         ObjList<String> bindValues,
         QueryShape shape,
-        String fencedSql
+        String fencedSql,
+        String referenceSql
 ) {
 
     public GeneratedQuery(String sql, boolean deterministic) {
-        this(sql, deterministic, null, null, null, QueryShape.SIMPLE, null);
+        this(sql, deterministic, null, null, null, QueryShape.SIMPLE, null, null);
     }
 
     public boolean hasBind() {
@@ -69,14 +74,18 @@ public record GeneratedQuery(
     }
 
     public GeneratedQuery withBind(String bindSql, ObjList<String> bindNames, ObjList<String> bindValues) {
-        return new GeneratedQuery(this.sql, this.deterministic, bindSql, bindNames, bindValues, this.shape, this.fencedSql);
+        return new GeneratedQuery(this.sql, this.deterministic, bindSql, bindNames, bindValues, this.shape, this.fencedSql, this.referenceSql);
     }
 
     public GeneratedQuery withFencedSql(String fencedSql) {
-        return new GeneratedQuery(this.sql, this.deterministic, this.bindSql, this.bindNames, this.bindValues, this.shape, fencedSql);
+        return new GeneratedQuery(this.sql, this.deterministic, this.bindSql, this.bindNames, this.bindValues, this.shape, fencedSql, this.referenceSql);
+    }
+
+    public GeneratedQuery withReference(String referenceSql) {
+        return new GeneratedQuery(this.sql, this.deterministic, this.bindSql, this.bindNames, this.bindValues, this.shape, this.fencedSql, referenceSql);
     }
 
     public GeneratedQuery withShape(QueryShape shape) {
-        return new GeneratedQuery(this.sql, this.deterministic, this.bindSql, this.bindNames, this.bindValues, shape, this.fencedSql);
+        return new GeneratedQuery(this.sql, this.deterministic, this.bindSql, this.bindNames, this.bindValues, shape, this.fencedSql, this.referenceSql);
     }
 }

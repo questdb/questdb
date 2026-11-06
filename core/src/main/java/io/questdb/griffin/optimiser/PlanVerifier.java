@@ -147,6 +147,9 @@ public final class PlanVerifier {
     public static final String OUTPUT_FORWARDING = "output does not forward the input columns";
     public static final String OUTPUT_TIMESTAMP = "designated timestamp differs from the input's";
     public static final String PREDICATE_CONSTANT = "constant predicate is not folded to a literal";
+    public static final String GROUPING_CALL = "GROUPING call reads no grouping key of its grouping sets";
+    public static final String GROUPING_SET_KEY = "grouping set lists an index that is no grouping key";
+    public static final String GROUPING_SET_ROLLUP = "grouping set rolls up a key that is no column of its own";
     public static final String PREDICATE_TYPE = "predicate is not BOOLEAN";
     public static final String PROJECT_COUNTS = "projection column reference counts are stale";
     public static final String PROJECT_SHAPE = "projection expression count differs from its output";
@@ -627,12 +630,48 @@ public final class PlanVerifier {
             if (plain.getSharedInputIds().size() != plain.getSharedSourceIds().size()) {
                 fail(SHARED_SOURCE_IDS);
             }
+            groupingSets(plain);
         }
         if (aggregate instanceof SampleByPlan sample) {
             noColumnReads(sample.getFrom());
             noColumnReads(sample.getTo());
             for (int i = 0, n = sample.getFillValues().size(); i < n; i++) {
                 noColumnReads(sample.getFillValues().getQuick(i));
+            }
+        }
+    }
+
+    private void groupingSets(AggregatePlan aggregate) {
+        final ObjList<BoundExpression> keys = aggregate.getGroupingExpressions();
+        final ObjList<IntList> sets = aggregate.getGroupingSets();
+        for (int s = 0, n = sets.size(); s < n; s++) {
+            final IntList set = sets.getQuick(s);
+            for (int i = 0, m = set.size(); i < m; i++) {
+                if (set.getQuick(i) < 0 || set.getQuick(i) >= keys.size()) {
+                    fail(GROUPING_SET_KEY);
+                }
+            }
+        }
+        for (int k = 0, n = keys.size(); k < n; k++) {
+            if (!LogicalPlans.isKeyInEveryGroupingSet(aggregate, k)) {
+                if (!LogicalPlans.isColumnKey(aggregate, keys.getQuick(k))
+                        || LogicalPlans.groupingColumnIndex(aggregate, ((ColumnExpression) keys.getQuick(k)).getColumnId()) != k) {
+                    fail(GROUPING_SET_ROLLUP);
+                }
+            }
+        }
+        final ObjList<FunctionExpression> values = aggregate.getAggregates();
+        for (int i = 0, n = values.size(); i < n; i++) {
+            final FunctionExpression value = values.getQuick(i);
+            if (LogicalPlans.isGroupingCall(value)) {
+                if (!aggregate.hasGroupingSets()) {
+                    fail(GROUPING_CALL);
+                }
+                for (int a = 0, m = value.getArgumentCount(); a < m; a++) {
+                    if (LogicalPlans.groupingArgumentKeyIndex(aggregate, value.argumentAt(a)) < 0) {
+                        fail(GROUPING_CALL);
+                    }
+                }
             }
         }
     }

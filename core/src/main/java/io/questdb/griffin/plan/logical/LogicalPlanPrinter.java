@@ -313,6 +313,10 @@ public final class LogicalPlanPrinter {
             case AggregatePlan aggregate -> {
                 sink.put("Aggregate\n");
                 printGrouping(aggregate, depth);
+                if (aggregate.hasGroupingSets()) {
+                    attribute(depth, "groupingSets");
+                    sink.put(aggregate.getGroupingSets()).put('\n');
+                }
             }
             case SampleByPlan sample -> {
                 sink.put("SampleBy\n");

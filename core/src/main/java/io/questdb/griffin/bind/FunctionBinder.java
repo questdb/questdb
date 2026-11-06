@@ -264,8 +264,19 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
             ObjList<? extends BoundExpression> replacementColumns,
             SqlExecutionContext executionContext
     ) throws SqlException {
+        return bindGroupByExpression(node, input, null, replacementNodes, replacementColumns, executionContext);
+    }
+
+    public BoundExpression bindGroupByExpression(
+            ExpressionNode node,
+            OutputSchema input,
+            CharSequence inputAlias,
+            ObjList<ExpressionNode> replacementNodes,
+            ObjList<? extends BoundExpression> replacementColumns,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
         assert ctx.isAggregate(node);
-        return bind(node, BindingRole.GROUP_BY_EXPRESSION, input, null, ColumnType.UNDEFINED, replacementNodes, replacementColumns, null, executionContext);
+        return bind(node, BindingRole.GROUP_BY_EXPRESSION, input, inputAlias, ColumnType.UNDEFINED, replacementNodes, replacementColumns, null, executionContext);
     }
 
     /**

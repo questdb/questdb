@@ -67,6 +67,7 @@ import io.questdb.griffin.plan.logical.GroupingPlan;
 import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
+import io.questdb.griffin.plan.logical.LogicalPlans;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.SampleByPlan;
@@ -121,6 +122,18 @@ final class SampleByBinder {
         return timestampId < 0 && input instanceof JoinPlan join
                 ? join.getInputs().getQuick(0).getSourceOutput().getTimestampColumnId()
                 : timestampId;
+    }
+
+    private static int groupingSetsSourcePosition(QueryModel source) {
+        if (source.getTableNameExpr() != null) {
+            return source.getTableNameExpr().position;
+        }
+        return source.getNestedModel() != null ? source.getNestedModel().getModelPosition() : source.getModelPosition();
+    }
+
+    private static boolean isPlainTableRead(QueryModel source, LogicalPlan input) {
+        return source.getTableNameExpr() != null
+                && LogicalPlans.expiringScan(input instanceof JoinPlan join ? join.getInputs().getQuick(0).getInput() : input) == null;
     }
 
     private static boolean hasLinearFill(QueryModel source) {
@@ -516,12 +529,36 @@ final class SampleByBinder {
         throw SqlException.$(value.position, "column not found in SELECT list: ").put(value.token);
     }
 
+    /**
+     * True when the plan delivers its rows by a descending sort, which loses the designated timestamp as an input of a
+     * SAMPLE BY.
+     */
+    private static boolean isDescendingInput(LogicalPlan plan) {
+        while (plan instanceof ProjectPlan || plan instanceof FilterPlan || plan instanceof LimitPlan) {
+            plan = plan.inputAt(0);
+        }
+        return plan instanceof SortPlan sort && sort.getDirections().getQuick(0) == SortDirection.DESCENDING;
+    }
+
+    /**
+     * The number of aggregates that take a FILL value: gap rows repeat a GROUPING call, as they repeat a grouping key.
+     */
+    private static int fillValueCount(ObjList<FunctionExpression> aggregates) {
+        int count = 0;
+        for (int i = 0, n = aggregates.size(); i < n; i++) {
+            if (!LogicalPlans.isGroupingCall(aggregates.getQuick(i))) {
+                count++;
+            }
+        }
+        return count;
+    }
+
     private void validateFill(
             ObjList<FunctionExpression> aggregates, ObjList<ExpressionNode> aggregateNodes, ObjList<ExpressionNode> fill
     ) throws SqlException {
         final int fillCount = fill.size();
         if (configuration.isValidateSampleByFillType()) {
-            if (fillCount > 1 && fillCount < aggregates.size()) {
+            if (fillCount > 1 && fillCount < fillValueCount(aggregates)) {
                 boolean hasNone = false;
                 for (int i = 0; i < fillCount; i++) {
                     hasNone |= SqlKeywords.isNoneKeyword(fill.getQuick(i).token);
@@ -530,10 +567,13 @@ final class SampleByBinder {
                     throw SqlException.$(fill.getQuick(0).position, "not enough fill values");
                 }
             }
+            int fillIndex = 0;
             for (int i = 0, n = aggregates.size(); i < n; i++) {
-                final ExpressionNode fillValue = fill.getQuick(Math.min(i, fillCount - 1));
-                ctx.functionBinder.validateSampleByFill(aggregates.getQuick(i), fillValue.token,
-                        fillValue.position, aggregateNodes.getQuick(i));
+                if (!LogicalPlans.isGroupingCall(aggregates.getQuick(i))) {
+                    final ExpressionNode fillValue = fill.getQuick(Math.min(fillIndex++, fillCount - 1));
+                    ctx.functionBinder.validateSampleByFill(aggregates.getQuick(i), fillValue.token,
+                            fillValue.position, aggregateNodes.getQuick(i));
+                }
             }
         }
         if (fillCount > 1) {
@@ -552,8 +592,10 @@ final class SampleByBinder {
         if (timestampIndex < 0 && (source.getSampleByFrom() != null || source.getSampleByTo() != null)) {
             throw SqlException.$(sampleBy.position, "Sample by requires a designated TIMESTAMP");
         }
-        if (source.getGroupBy().size() > 0) {
-            throw SqlException.$(source.getGroupBy().getQuick(0).position, "SELECT query must not contain both GROUP BY and SAMPLE BY");
+        if (source.getGroupByPosition() > 0) {
+            final ObjList<ExpressionNode> groupBy = source.getGroupBy();
+            throw SqlException.$(groupBy.size() > 0 && groupBy.getQuick(0).position > source.getGroupByPosition()
+                    ? groupBy.getQuick(0).position : source.getGroupByPosition(), "SELECT query must not contain both GROUP BY and SAMPLE BY");
         }
         boolean hasAggregate = false;
         ExpressionNode wildcard = null;
@@ -572,7 +614,7 @@ final class SampleByBinder {
             throw SqlException.$(sampleBy.position, "at least one aggregation function must be present in 'select' clause");
         }
         if (timestampIndex < 0) {
-            throw SqlException.$(source.getModelPosition(), source.getJoinModels().size() > 1
+            throw SqlException.$(source.hasGroupingSets() ? groupingSetsSourcePosition(source) : source.getModelPosition(), source.getJoinModels().size() > 1
                     ? "TIMESTAMP column is required but not provided"
                     : "base query does not provide designated TIMESTAMP column");
         }
@@ -615,12 +657,30 @@ final class SampleByBinder {
         return fill.size() > 1 || fill.size() == 1 && !SqlKeywords.isNoneKeyword(fill.getQuick(0).token);
     }
 
+    /**
+     * True when every FILL value is NONE, which emits no gap row even where FILL lists several and fails to bind.
+     */
+    static boolean isEveryFillNone(QueryModel source) {
+        final ObjList<ExpressionNode> fill = source.getSampleByFill();
+        for (int i = 0, n = fill.size(); i < n; i++) {
+            if (!SqlKeywords.isNoneKeyword(fill.getQuick(i).token)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     static boolean isFillPlanned(QueryModel source) {
         return hasFill(source) && !hasLinearFill(source);
     }
 
-    static boolean requiresSampleByCursor(QueryModel source) {
-        return requiresSampleByCursorAlignment(source) || source.getTableNameExpr() == null && (source.getTimestamp() == null
+    /**
+     * True when the SAMPLE BY runs in its own cursor rather than as a GROUP BY over the bucket: for an alignment only the
+     * cursor has, and over any source but a plain table read. A read under an EXPIRE ROWS policy is a sub-query of the
+     * view to the SAMPLE BY, which keeps the order and the timestamp the cursor publishes to the consumers above it.
+     */
+    static boolean requiresSampleByCursor(QueryModel source, LogicalPlan input) {
+        return requiresSampleByCursorAlignment(source) || !isPlainTableRead(source, input) && (source.getTimestamp() == null
                 || source.getSampleByFrom() != null || source.getSampleByTo() != null || hasFill(source));
     }
 
@@ -678,8 +738,8 @@ final class SampleByBinder {
         if ((timezone == null || isSubDay && from != null || !isSubDay) && offset != null && offset != SqlParser.ZERO_OFFSET) {
             plan.setOffset(bindSampleByOffset(offset, executionContext));
         }
-        final int aggregateCount = aggregate.getAggregates().size();
-        final boolean isBroadcast = fillCount < aggregateCount;
+        final ObjList<FunctionExpression> aggregates = aggregate.getAggregates();
+        final boolean isBroadcast = fillCount < fillValueCount(aggregates);
         if (isBroadcast) {
             final ExpressionNode only = fillCount == 1 ? signedFillLiteral(fill.getQuick(0)) : null;
             if (only != null && SqlKeywords.isPrevKeyword(only.token) && only.type != ExpressionNode.LITERAL) {
@@ -693,10 +753,19 @@ final class SampleByBinder {
             }
         }
         final int keyCount = aggregate.getGroupingExpressions().size();
-        for (int i = 0; i < aggregateCount; i++) {
-            final int fillIndex = isBroadcast ? 0 : i;
-            final ExpressionNode expression = signedFillLiteral(fill.getQuick(fillIndex));
+        int nextFillIndex = 0;
+        for (int i = 0, n = aggregates.size(); i < n; i++) {
             final int targetId = output.getColumnId(keyCount + i);
+            if (LogicalPlans.isGroupingCall(aggregates.getQuick(i))) {
+                plan.getTargetColumnIds().add(targetId);
+                plan.getModes().add(FillMode.KEY);
+                plan.getValues().add(null);
+                plan.getSourceColumnIds().add(-1);
+                plan.getTokens().add(aggregates.getQuick(i).getName());
+                continue;
+            }
+            final int fillIndex = isBroadcast ? 0 : nextFillIndex++;
+            final ExpressionNode expression = signedFillLiteral(fill.getQuick(fillIndex));
             final int targetType = output.getColumnType(keyCount + i);
             FillMode mode = FillMode.VALUE;
             int sourceId = -1;
@@ -709,7 +778,7 @@ final class SampleByBinder {
                     token = expression.rhs.token;
                     sourcePosition = expression.rhs.position;
                     int sourceIndex = -1;
-                    for (int k = 0, n = output.getColumnCount(); k < n; k++) {
+                    for (int k = 0, count = output.getColumnCount(); k < count; k++) {
                         if (isNameSpelling(token, output.getColumnName(k))) {
                             sourceIndex = k;
                             break;
@@ -759,6 +828,31 @@ final class SampleByBinder {
             }
         }
         return plan;
+    }
+
+    /**
+     * Grouping sets lower a SAMPLE BY to a GROUP BY over the bucket, which needs a calendar grid known at compile time,
+     * and fill the rows of each set apart, which leaves no previous row to read for PREV and LINEAR.
+     */
+    void validateGroupingSets(QueryModel source) throws SqlException {
+        final ExpressionNode sampleBy = source.getSampleBy();
+        if (source.getSampleByOffset() == null) {
+            throw SqlException.$(sampleBy.position, "SAMPLE BY with grouping sets requires calendar alignment");
+        }
+        if (source.getSampleByUnit() != null) {
+            throw SqlException.$(sampleBy.position, "SAMPLE BY with grouping sets requires a constant interval");
+        }
+        final ExpressionNode from = source.getSampleByFrom();
+        if (from != null && from.type != ExpressionNode.CONSTANT) {
+            throw SqlException.$(from.position, "non-literal FROM bounds are not supported with SAMPLE BY grouping sets");
+        }
+        final ObjList<ExpressionNode> fill = source.getSampleByFill();
+        for (int i = 0, n = fill.size(); i < n; i++) {
+            final ExpressionNode value = fill.getQuick(i);
+            if (SqlKeywords.isPrevKeyword(value.token) || SqlKeywords.isLinearKeyword(value.token)) {
+                throw SqlException.$(value.position, "FILL(PREV) and FILL(LINEAR) are not supported with ROLLUP, CUBE, or GROUPING SETS");
+            }
+        }
     }
 
     SampleByPlan bindSampleBy(
@@ -813,6 +907,9 @@ final class SampleByBinder {
         final OutputSchema input = sourcePlan.getOutput();
         final ExpressionNode sampleBy = source.getSampleBy();
         validateSampleByQuery(model, source, input, true);
+        if (source.hasGroupingSets() && isDescendingInput(sourcePlan)) {
+            throw SqlException.$(groupingSetsSourcePosition(source), "base query does not provide designated TIMESTAMP column");
+        }
         final ExpressionNode from = source.getSampleByFrom();
         final int timestampType = input.getColumnType(sampleByTimestampIndex(input));
         markTimestampSubqueries(source, timestampType);
@@ -834,6 +931,7 @@ final class SampleByBinder {
         final CharacterStoreEntry interval = ctx.characterStore.newEntry();
         interval.put('\'').put(sampleBy.token).put('\'');
         floor.args.add(ctx.bindingExpressions.next().of(ExpressionNode.CONSTANT, interval.toImmutable(), 0, sampleBy.position));
+        scope.sampleByBucketNode = floor;
         final BoundExpression bucket;
         try {
             bucket = ctx.functionBinder.bind(floor, input, sourceAlias(source), executionContext);

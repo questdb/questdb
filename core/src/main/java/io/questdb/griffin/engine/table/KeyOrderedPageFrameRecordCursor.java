@@ -105,15 +105,15 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
     private final RecordCursor.Counter countCounter = new RecordCursor.Counter();
     private final int decodedRowSize;
     // The model of the decode cache and of the windows of a gather that the choice of a direct read runs, see
-    // isDirectModelCheaper(int, long, long), in triples for each page frame: the page frame used before and the page
-    // frame used after it in the cache, -1 for none, so that a page frame is in the cache when it is its head or has one
-    // before it, and the window of the gather that decoded it last, -1 before the first. The choice of the passes of the
-    // keys holds here the page frames each key shares with the key before it, see isKeyPassCheaper(long, int, long).
-    private final DirectIntList frameModel;
+    // isDirectModelCheaper(int, long, long).
+    private final KeyOrderedDecodeModel decodeModel = new KeyOrderedDecodeModel();
     // The rows of a window of a read ordered by keys that one pass over the page frames gathers, when its Parquet page
     // frames do not stay decoded across the passes of the keys, see isGatherRequired().
     private final KeyOrderedRowChain gatheredRows;
     private final KeyOrderedRowCursorFactory keyOrderedFactory;
+    // The page frames each key shares with the key before it, which the choice of the passes of the keys counts, see
+    // isKeyPassCheaper(long, int, long).
+    private final DirectIntList keySharedFrames;
     // The cumulative counts of the index for the keys the gathered read counted, in key order: the rows of the keys of
     // a read that the index orders, and a bound on them otherwise.
     private final DirectLongList keyRowCounts;
@@ -261,7 +261,7 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
             collectedKeyRuns = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT, true);
             collectedRows = new DirectIntList(16, MemoryTag.NATIVE_DEFAULT, true);
             collectedRuns = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT, true);
-            frameModel = new DirectIntList(0, MemoryTag.NATIVE_DEFAULT, true);
+            keySharedFrames = new DirectIntList(0, MemoryTag.NATIVE_DEFAULT, true);
             gatheredRows = new KeyOrderedRowChain(configuration, metadata, this);
             keyRowCounts = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT, true);
             scanRuns = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT, true);
@@ -458,7 +458,8 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
         toTopCollectedRows();
         symbolKeyIndexes.setMemoryTracker(memoryTracker);
         windowStarts.setMemoryTracker(memoryTracker);
-        frameModel.setMemoryTracker(memoryTracker);
+        decodeModel.setMemoryTracker(memoryTracker);
+        keySharedFrames.setMemoryTracker(memoryTracker);
         windowFrameFlags.setMemoryTracker(memoryTracker);
         scanRuns.setMemoryTracker(memoryTracker);
         rowFrameRun = -1;
@@ -754,7 +755,8 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
         Misc.free(collectedKeyRuns);
         Misc.free(collectedRows);
         Misc.free(collectedRuns);
-        Misc.free(frameModel);
+        Misc.free(decodeModel);
+        Misc.free(keySharedFrames);
         Misc.free(keyRowCounts);
         Misc.free(scanRuns);
         scanRunCounters.clear();
@@ -1722,16 +1724,7 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
      * all page frames for every window.
      */
     private boolean isDirectModelCheaper(int capacity, long windowRows, long maxDecodes) {
-        final int frameCount = frameAddressCache.getFrameCount();
-        frameModel.reopen();
-        frameModel.setCapacity(3L * frameCount);
-        frameModel.setPos(3L * frameCount);
-        frameModel.zero(-1);
-        int head = -1;
-        int tail = -1;
-        int cachedCount = 0;
-        long directDecodes = 0;
-        long gatherDecodes = 0;
+        decodeModel.of(frameAddressCache.getFrameCount(), capacity);
         long position = 0;
         for (int key = 0; key < keyCount; key++) {
             final int indexKey = keyOrderedFactory.getIndexKey(key);
@@ -1752,60 +1745,23 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
                         if (frame == lastFrame && window == lastWindow || frameAddressCache.getFrameFormat(frame) != PartitionFormat.PARQUET) {
                             continue;
                         }
-                        final long model = 3L * frame;
-                        if (frameModel.get(model + 2) != window) {
-                            frameModel.set(model + 2, window);
-                            gatherDecodes++;
-                        }
+                        decodeModel.readInWindow(frame, window);
                         lastWindow = window;
                         if (frame == lastFrame) {
                             continue;
                         }
                         lastFrame = frame;
-                        final int prev = frameModel.get(model);
-                        if (frame == head || prev >= 0) {
-                            if (frame == tail) {
-                                continue;
-                            }
-                            final int next = frameModel.get(model + 1);
-                            if (frame == head) {
-                                head = next;
-                            } else {
-                                frameModel.set(3L * prev + 1, next);
-                            }
-                            frameModel.set(3L * next, prev);
-                        } else {
-                            if (++directDecodes > maxDecodes) {
-                                return false;
-                            }
-                            if (cachedCount == capacity) {
-                                final int evicted = head;
-                                head = frameModel.get(3L * evicted + 1);
-                                frameModel.set(3L * evicted + 1, -1);
-                                if (head < 0) {
-                                    tail = -1;
-                                } else {
-                                    frameModel.set(3L * head, -1);
-                                }
-                            } else {
-                                cachedCount++;
-                            }
+                        decodeModel.moveTo(frame);
+                        if (decodeModel.getDirectDecodes() > maxDecodes) {
+                            return false;
                         }
-                        frameModel.set(model, tail);
-                        frameModel.set(model + 1, -1);
-                        if (tail < 0) {
-                            head = frame;
-                        } else {
-                            frameModel.set(3L * tail + 1, frame);
-                        }
-                        tail = frame;
                     }
                 } finally {
                     Misc.free(rows);
                 }
             }
         }
-        return directDecodes <= gatherDecodes;
+        return decodeModel.getDirectDecodes() <= decodeModel.getGatherDecodes();
     }
 
     /**
@@ -1829,7 +1785,7 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
         try {
             return isDirectModelCheaper(getScatteredFrameCapacity(), windowRows, windowCount * parquetFrameCount);
         } finally {
-            frameModel.close();
+            decodeModel.close();
         }
     }
 
@@ -1927,10 +1883,10 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
         long uncountedFrameCount = parquetFrameCount;
         toTopFrames();
         try {
-            frameModel.reopen();
-            frameModel.setCapacity(passCount);
-            frameModel.setPos(passCount);
-            frameModel.zero(0);
+            keySharedFrames.reopen();
+            keySharedFrames.setCapacity(passCount);
+            keySharedFrames.setPos(passCount);
+            keySharedFrames.zero(0);
             while (uncountedFrameCount > 0) {
                 if (windowDecodes + uncountedFrameCount * windowCount < keyDecodes - cachedDecodes) {
                     return false;
@@ -1950,8 +1906,8 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
                     }
                     keyDecodes++;
                     if (lastKey >= 0 && getCumulativeIndexRowCount(lastKey) == getKeyPosition(k)) {
-                        final int sharedFrameCount = frameModel.get(k - key) + 1;
-                        frameModel.set(k - key, sharedFrameCount);
+                        final int sharedFrameCount = keySharedFrames.get(k - key) + 1;
+                        keySharedFrames.set(k - key, sharedFrameCount);
                         if (sharedFrameCount <= frameCapacity) {
                             cachedDecodes++;
                         } else if (sharedFrameCount == frameCapacity + 1) {
@@ -1976,7 +1932,7 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
             }
             return isCheaper;
         } finally {
-            frameModel.close();
+            keySharedFrames.close();
             toTopFrames();
         }
     }

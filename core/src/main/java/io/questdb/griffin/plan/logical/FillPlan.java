@@ -85,8 +85,8 @@ public final class FillPlan extends ForwardingPlan {
     }
 
     /**
-     * The fill of each target column: {@link FillMode#NULL}, {@link FillMode#PREV}, {@link FillMode#PREV_COLUMN} or
-     * {@link FillMode#VALUE}.
+     * The fill of each target column: {@link FillMode#KEY}, {@link FillMode#NULL}, {@link FillMode#PREV},
+     * {@link FillMode#PREV_COLUMN} or {@link FillMode#VALUE}.
      */
     public ObjList<FillMode> getModes() {
         return modes;

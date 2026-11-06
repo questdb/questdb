@@ -107,7 +107,17 @@ public class SqlUtil {
             ObjectPool<QueryColumn> queryColumnPool,
             ObjectPool<ExpressionNode> expressionNodePool
     ) throws SqlException {
-        model.addColumn(nextColumn(queryColumnPool, expressionNodePool, "*", "*", true, 0));
+        addSelectStar(model, queryColumnPool, expressionNodePool, 0);
+    }
+
+    // The position is where an error about the implied projection points.
+    public static void addSelectStar(
+            QueryModel model,
+            ObjectPool<QueryColumn> queryColumnPool,
+            ObjectPool<ExpressionNode> expressionNodePool,
+            int position
+    ) throws SqlException {
+        model.addColumn(nextColumn(queryColumnPool, expressionNodePool, "*", "*", true, position));
         model.setArtificialStar(true);
     }
 

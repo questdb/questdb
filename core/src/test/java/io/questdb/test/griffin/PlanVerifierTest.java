@@ -1260,6 +1260,33 @@ public class PlanVerifierTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupingCallOutsideGroupingSets() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE sets (a INT, v INT)");
+            assertAlgorithmContradicts("SELECT a, GROUPING(a) g, sum(v) s FROM sets GROUP BY ROLLUP(a)", AggregatePlan.class,
+                    aggregate -> aggregate.getGroupingSets().clear(), PlanVerifier.GROUPING_CALL);
+        });
+    }
+
+    @Test
+    public void testGroupingSetListsNoKey() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE sets (a INT, v INT)");
+            assertAlgorithmContradicts("SELECT a, sum(v) s FROM sets GROUP BY ROLLUP(a)", AggregatePlan.class,
+                    aggregate -> aggregate.getGroupingSets().getQuick(0).add(1), PlanVerifier.GROUPING_SET_KEY);
+        });
+    }
+
+    @Test
+    public void testGroupingSetRollsUpComputedKey() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE sets (a INT, b INT, v INT)");
+            assertAlgorithmContradicts("SELECT a + 1 k, b, sum(v) s FROM sets GROUP BY k, ROLLUP(b)", AggregatePlan.class,
+                    aggregate -> aggregate.getGroupingSets().getQuick(1).clear(), PlanVerifier.GROUPING_SET_ROLLUP);
+        });
+    }
+
+    @Test
     public void testSampleByBucketKeyStale() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE sampled (sym SYMBOL, x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");

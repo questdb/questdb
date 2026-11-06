@@ -165,6 +165,7 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
     private AggregatePlan cloneAggregate(AggregatePlan aggregate) {
         final AggregatePlan clone = planNodes.aggregates.next().of(aggregate.getChild(), aggregate.getPosition());
         cloneGrouping(aggregate, clone);
+        clone.getGroupingSets().addAll(aggregate.getGroupingSets());
         clone.getSharedInputIds().addAll(aggregate.getSharedInputIds());
         clone.getSharedSourceIds().addAll(aggregate.getSharedSourceIds());
         if (aggregate.getSharedSource() != null) {
@@ -222,7 +223,7 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
                 final JoinKey key = slave.getKeys().getQuick(k);
                 slaveClone.addKey(key.getMasterColumnId(), key.getSlaveColumnId(), key.getPosition());
             }
-            slaveClone.setExpiryView(slave.getExpiryViewName(), slave.getExpiryViewPosition(), slave.isExpiryStructuralPolicy());
+            slaveClone.setTableSource(slave.isTableSource());
             clone.getSlaves().add(slaveClone);
         }
         return clone;
@@ -348,6 +349,7 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
         clone.getReferencedColumnNames().addAll(scan.getReferencedColumnNames());
         clone.getReferencedColumnPositions().addAll(scan.getReferencedColumnPositions());
         clone.getSourceColumnIndexes().addAll(scan.getSourceColumnIndexes());
+        clone.setExpiryPolicy(scan.getExpiryPolicy());
         clone.setHints(scan.getHints());
         if (scan.isSequencedUpdate()) {
             clone.markSequencedUpdate();
@@ -418,7 +420,6 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
             stepClone.setLo(step.getLo(), step.getLoExpression(), step.getLoSign(), step.getLoTimeUnit(), step.getLoPosition());
             stepClone.setHi(step.getHi(), step.getHiExpression(), step.getHiSign(), step.getHiTimeUnit(), step.getHiPosition());
             stepClone.setTableSource(step.isTableSource());
-            stepClone.setExpiryView(step.getExpiryViewName(), step.getExpiryViewPosition());
             clone.getSteps().add(stepClone);
             if (sourceFacts != null) {
                 sourceFacts.pair(step, stepClone);

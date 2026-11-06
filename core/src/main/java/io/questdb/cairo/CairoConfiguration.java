@@ -1159,6 +1159,8 @@ public interface CairoConfiguration {
 
     int getSqlMapMaxResizes();
 
+    int getSqlMaxGroupingSets();
+
     int getSqlMaxNegativeLimit();
 
     int getSqlModelPoolCapacity();
@@ -1629,10 +1631,6 @@ public interface CairoConfiguration {
     // planner always reads a LATEST ON over a scalar EXPIRE ROWS read from the table directly. Tests
     // override it to false in a CairoConfiguration subclass to obtain the un-rewritten plan, which
     // LatestByHoistEquivalenceTest compares against, shape by shape.
-    default boolean isSqlLatestOnHoistEnabled() {
-        return true;
-    }
-
     boolean isSqlJitDebugEnabled();
 
     boolean isSqlLatestByJitEnabled();

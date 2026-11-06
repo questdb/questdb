@@ -26,8 +26,6 @@ package io.questdb.test.cairo.mv;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoTable;
-import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.RowExpiryCleanupJob;
@@ -2523,36 +2521,6 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testReadFilterMemoizesWindowColumnListOnCairoTable() throws Exception {
-        // The window read-filter's outer projection CSV is derived once per CairoTable instance; every
-        // later compile reads the memo. Proven by planting a narrower projection: a fresh compile serves
-        // only the planted columns.
-        assertMemoryLeak(() -> {
-            execute("create table base (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
-            execute("create materialized view mv as (select * from base) expire rows keep highest on v partition by k");
-            drainWalAndMatViewQueues();
-
-            printSql("select * from mv");
-            TestUtils.assertEquals("k\tv\tts\n", sink);
-
-            final CairoTable table;
-            try (MetadataCacheReader ro = engine.getMetadataCache().readLock()) {
-                table = ro.getTable(engine.verifyTableName("mv"));
-            }
-            assertNotNull(table);
-            assertEquals("\"k\",\"v\",\"ts\"", table.getExpiryQuotedColumnsCsv());
-
-            table.setExpiryQuotedColumnsCsv("\"k\",\"ts\"");
-            printSql("select * from mv where true");
-            TestUtils.assertEquals("k\tts\n", sink);
-
-            table.setExpiryQuotedColumnsCsv(null);
-            printSql("select * from mv where not false");
-            TestUtils.assertEquals("k\tv\tts\n", sink);
-        });
-    }
-
-    @Test
     public void testPassthroughFlagPersistedInDefinitionFile() throws Exception {
         // The passthrough flag drives refresh REPLACE_RANGE chunking and the SET EXPIRE advisory for
         // aggregating views, so it must survive a definition reload: assert it via the live graph and by
@@ -3299,11 +3267,11 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
                 }
                 assertEquals(viewSqls[i], created, sortedDependencies(dependencies));
             }
-            // the "*" of v0 lets the view cover columns added to t later; v1 and v2 read mv through the
-            // policy's synthetic "SELECT * FROM mv WHERE ...", which adds the policy column v
+            // the "*" of v0 lets the view cover columns added to t later; v1 and v2 read mv through its
+            // policy, which adds the policy column v
             assertDependencies("v0", "{t=[*, k, status, ts, x]}");
-            assertDependencies("v1", "{mv=[*, k, v]}");
-            assertDependencies("v2", "{mv=[*, k, v], t=[k, status, ts]}");
+            assertDependencies("v1", "{mv=[k, v]}");
+            assertDependencies("v2", "{mv=[k, v], t=[k, status, ts]}");
         });
     }
 

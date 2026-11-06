@@ -1227,7 +1227,7 @@ final class WindowBinder {
     }
 
     boolean isAggregationFree(QueryModel model, QueryModel source) {
-        if (blockGroupBy(model, source).size() > 0) {
+        if (hasBlockGrouping(model, source)) {
             return false;
         }
         for (int i = 0, n = model.getColumns().size(); i < n; i++) {

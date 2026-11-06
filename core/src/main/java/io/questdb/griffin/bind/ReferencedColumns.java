@@ -100,8 +100,13 @@ final class ReferencedColumns implements ExpressionVisitor, PlanExpressionVisito
                 final OutputSchema output = project.getOutput();
                 for (int i = 0, n = output.getColumnCount(); i < n; i++) {
                     final int index = positions.keyIndex(output.getColumnId(i));
-                    if (index < 0 && project.getExpressions().getQuick(i) instanceof ColumnExpression column) {
-                        reference(column.getColumnId(), positions.valueAt(index));
+                    if (index < 0) {
+                        final BoundExpression expression = project.getExpressions().getQuick(i);
+                        if (expression instanceof ColumnExpression column) {
+                            reference(column.getColumnId(), positions.valueAt(index));
+                        } else {
+                            expression.walk(this);
+                        }
                     }
                 }
             }

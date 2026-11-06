@@ -36,24 +36,19 @@ import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
-import io.questdb.test.cairo.CairoTestConfiguration;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.BeforeClass;
 import org.junit.Test;
 
 /**
- * Differential test for the {@code LATEST ON} hoist ({@code SqlBinder.hoistExpiringLatestRead}),
- * which reads a {@code LATEST ON} over a parser-generated scalar-expiry wrapper from the table
- * directly. Plain tables, ordinary views and materialized views without expiry must keep their plans.
+ * Differential test for a {@code LATEST ON} over a read of a scalar EXPIRE ROWS policy, which reads the table directly
+ * because {@code ExpiryReadBinder} binds the policy as a filter over the table's scan. Plain tables, ordinary views and
+ * materialized views without expiry must keep their plans.
  * <p>
- * The rewrite drops the sub-query layers and carries a hand-picked set of attributes up from the
- * table model. Every attribute it does not carry - an alias, a {@code timestamp(...)} override, a
- * LIMIT, an ORDER BY, a join - it discards silently unless a guard rejects the shape first, and a
- * guard can only be written for an attribute somebody thought of. So this test checks the rewrite's
- * outcome rather than its preconditions: it runs each shape twice, once with the rewrite on and once
- * with it off, and compares the two. An attribute nobody guarded shows up as a difference whether or
- * not anybody predicted it.
+ * The direct read has to mean what the same query means over a sub-query of the view. An attribute of the query that
+ * the direct read treats differently - an alias, a {@code timestamp(...)} override, a LIMIT, an ORDER BY, a join - shows
+ * up as a difference whether or not anybody predicted it. So this test runs each shape twice, once as written and once
+ * with each read of the view spelled as a sub-query, and compares the two.
  * <p>
  * The expiry cases use four lists:
  * <ul>
@@ -106,7 +101,9 @@ public class LatestByHoistEquivalenceTest extends AbstractCairoTest {
             "SELECT ts, sym, v FROM et LATEST ON ts PARTITION BY sym",
             "SELECT * FROM et x WHERE x.v > 15 LATEST ON ts PARTITION BY sym",
             "SELECT * FROM et LATEST ON ts PARTITION BY sym UNION ALL SELECT * FROM et",
-            "SELECT * FROM et LATEST ON ts PARTITION BY sym ORDER BY v LIMIT 1"
+            "SELECT * FROM et LATEST ON ts PARTITION BY sym ORDER BY v LIMIT 1",
+            // the join's leading input reads the table directly, as a plain table under LATEST ON does
+            "SELECT * FROM et JOIN j ON (v = w) LATEST ON ts PARTITION BY sym"
     );
 
     /**
@@ -170,7 +167,6 @@ public class LatestByHoistEquivalenceTest extends AbstractCairoTest {
             // but must still obey timestamp choice and join semantics.
             "SELECT * FROM et LATEST ON ts2 PARTITION BY sym",
             "SELECT * FROM et x TIMESTAMP(ts2) LATEST ON ts PARTITION BY sym",
-            "SELECT * FROM et JOIN j ON (v = w) LATEST ON ts PARTITION BY sym",
             // LATEST ON names a timestamp column that is not the table's designated one, so the
             // direct read - which always uses the designated one - would answer a different question
             "SELECT * FROM (SELECT * FROM t) LATEST ON ts2 PARTITION BY sym",
@@ -216,22 +212,6 @@ public class LatestByHoistEquivalenceTest extends AbstractCairoTest {
             "SELECT ts, count() FROM (SELECT * FROM et LATEST ON ts PARTITION BY sym) SAMPLE BY 1d",
             "SELECT ts, count() FROM (SELECT * FROM en LATEST ON ts PARTITION BY sym) SAMPLE BY 1d",
     };
-
-    private static boolean isHoistEnabled = true;
-
-    @BeforeClass
-    public static void setUpStatic() throws Exception {
-        // The hoist has no production property - it is always on in a running server. Override the
-        // seam so this test can obtain the un-rewritten plan to compare against.
-        configurationFactory = (root, telemetry, overrides) ->
-                new CairoTestConfiguration(root, telemetry, overrides) {
-                    @Override
-                    public boolean isSqlLatestOnHoistEnabled() {
-                        return isHoistEnabled;
-                    }
-                };
-        AbstractCairoTest.setUpStatic();
-    }
 
     @Test
     public void testOuterTimestampOverrideCompilesTheSameWithAndWithoutTheHoist() throws Exception {
@@ -306,7 +286,7 @@ public class LatestByHoistEquivalenceTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testOrdinaryReadsKeepPlansWithAndWithoutHoist() throws Exception {
+    public void testOrdinaryReadsKeepPlansAfterExpiringRead() throws Exception {
         assertMemoryLeak(() -> {
             createFixture();
             createExpiryFixture();
@@ -314,9 +294,6 @@ public class LatestByHoistEquivalenceTest extends AbstractCairoTest {
             execute("CREATE MATERIALIZED VIEW plain_mv AS (SELECT * FROM t), INDEX(sym)");
             drainWalAndMatViewQueues();
 
-            // Compile expiry first to exercise model-pool reuse: its provenance must not leak into
-            // the following ordinary reads. A query-level 'contains expiry' gate would also be wrong.
-            Assert.assertNull(run("SELECT * FROM et LATEST ON ts PARTITION BY sym", true).error);
             for (String sql : ORDINARY_SHAPES) {
                 assertUnchanged(sql);
             }
@@ -426,7 +403,6 @@ public class LatestByHoistEquivalenceTest extends AbstractCairoTest {
                         for (int sourceIndex = 0; sourceIndex < 2; sourceIndex++) {
                             final String source = sourceIndex == 0 ? "(SELECT * FROM plain WHERE v > 990.0)" : "plain_view";
                             final String sql = "SELECT k, v FROM " + source + " LATEST ON ts PARTITION BY " + key + " ORDER BY k";
-                            assertUnchanged(sql);
                             assertQuery(sql).noLeakCheck().expectSize()
                                     .withPlanContaining("LatestBy light")
                                     .withPlanContaining(jitMode == SqlJitMode.JIT_MODE_ENABLED && JitUtil.isJitSupported()
@@ -495,15 +471,19 @@ public class LatestByHoistEquivalenceTest extends AbstractCairoTest {
         }
     }
 
+    /**
+     * A compile of an expiring read leaves nothing behind in the pools that changes how the query compiles.
+     */
     private static void assertUnchanged(String sql) {
-        final Outcome enabled = run(sql, true);
-        final Outcome disabled = run(sql, false);
-        Assert.assertEquals("compilation changed: " + sql, disabled.error, enabled.error);
-        Assert.assertNull("query must compile: " + sql, enabled.error);
-        Assert.assertEquals("unexpected hoist: " + sql, disabled.plan, enabled.plan);
-        Assert.assertEquals("projection changed: " + sql, disabled.columns, enabled.columns);
-        Assert.assertEquals("timestamp changed: " + sql, disabled.tsColumn, enabled.tsColumn);
-        Assert.assertEquals("rows changed: " + sql, disabled.rows.toString(), enabled.rows.toString());
+        final Outcome before = run(sql, true);
+        Assert.assertNull(run("SELECT * FROM et LATEST ON ts PARTITION BY sym", true).error);
+        final Outcome after = run(sql, true);
+        Assert.assertEquals("compilation changed: " + sql, before.error, after.error);
+        Assert.assertNull("query must compile: " + sql, after.error);
+        Assert.assertEquals("plan changed: " + sql, before.plan, after.plan);
+        Assert.assertEquals("projection changed: " + sql, before.columns, after.columns);
+        Assert.assertEquals("timestamp changed: " + sql, before.tsColumn, after.tsColumn);
+        Assert.assertEquals("rows changed: " + sql, before.rows.toString(), after.rows.toString());
     }
 
     private static void createExpiryFixture() throws Exception {
@@ -565,8 +545,11 @@ public class LatestByHoistEquivalenceTest extends AbstractCairoTest {
         return sql.substring(lo, hi);
     }
 
-    private static Outcome run(String sql, boolean isHoist) {
-        isHoistEnabled = isHoist;
+    /**
+     * The query reading the view as written, or, for {@code isDirect} false, through a sub-query of the view.
+     */
+    private static Outcome run(String written, boolean isDirect) {
+        final String sql = isDirect ? written : written.replaceAll("\\b(et|en)\\b", "(SELECT * FROM $1)");
         final Outcome outcome = new Outcome();
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
@@ -599,8 +582,6 @@ public class LatestByHoistEquivalenceTest extends AbstractCairoTest {
             outcome.plan = planSink.toString();
         } catch (Throwable e) {
             outcome.error = e.getMessage() == null ? e.getClass().getName() : e.getMessage();
-        } finally {
-            isHoistEnabled = true;
         }
         return outcome;
     }

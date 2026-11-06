@@ -165,6 +165,13 @@ public abstract sealed class GroupingPlan extends UnaryPlan permits AggregatePla
     }
 
     /**
+     * True when each input row groups once per grouping set, see {@link AggregatePlan#getGroupingSets()}.
+     */
+    public boolean hasGroupingSets() {
+        return false;
+    }
+
+    /**
      * True when an otherwise identity projection above keeps a grouping key's GROUP BY spelling
      * where the SELECT list names it in a different case.
      */

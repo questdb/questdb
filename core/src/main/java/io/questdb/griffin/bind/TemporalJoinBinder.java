@@ -792,6 +792,9 @@ final class TemporalJoinBinder {
         if (source.getSampleBy() != null) {
             throw SqlException.$(source.getSampleBy().position, "SAMPLE BY cannot be used with HORIZON JOIN");
         }
+        if (blockGroupingSets(model, source) != null) {
+            throw SqlException.$(blockGroupByPosition(model, source), "ROLLUP, CUBE and GROUPING SETS are not supported with HORIZON JOIN");
+        }
         rejectWindows(model, source, "WINDOW functions are not allowed in HORIZON JOIN queries");
         final ObjList<QueryColumn> selected = model.getColumns();
         final ObjList<ExpressionNode> groupBy = blockGroupBy(model, source);
@@ -861,9 +864,8 @@ final class TemporalJoinBinder {
             final CharSequence slaveAlias = sourceAlias(occurrence);
             final LogicalPlan slave = binder.bindSource(occurrence, executionContext);
             final HorizonJoinSlave step = ctx.planNodes.horizonJoinSlaves.next().of(slave, slaveAlias, occurrence.getJoinKeywordPosition());
-            if (occurrence.getExpiryViewNameExpr() != null) {
-                step.setExpiryView(occurrence.getExpiryViewNameExpr().token, occurrence.getExpiryViewNameExpr().position, occurrence.isExpiryStructuralPolicy());
-            }
+            step.setTableSource(occurrence.getNestedModel() == null && occurrence.getTableNameExpr() != null
+                    && occurrence.getTableNameExpr().type == ExpressionNode.LITERAL);
             plan.getSlaves().add(step);
             final OutputSchema slaveOutput = slave.getOutput();
             JoinBinder.validateTimeSeriesTimestamps(step.getPosition(), masterOutput.getColumnId(masterTimestampIndex), slave);
@@ -961,9 +963,6 @@ final class TemporalJoinBinder {
                     occurrence.getWindowJoinContext().isIncludePrevailing(), occurrence.getJoinKeywordPosition());
             step.setTableSource(occurrence.getNestedModel() == null && occurrence.getTableNameExpr() != null
                     && occurrence.getTableNameExpr().type == ExpressionNode.LITERAL);
-            if (occurrence.getExpiryViewNameExpr() != null) {
-                step.setExpiryView(occurrence.getExpiryViewNameExpr().token, occurrence.getExpiryViewNameExpr().position);
-            }
             plan.getSteps().add(step);
         }
         final ObjList<PivotForColumn> forColumns = model.getPivotForColumns();
@@ -1023,6 +1022,9 @@ final class TemporalJoinBinder {
                     continue;
                 }
                 final ExpressionNode node = bindScope.aggregateNodes.getQuick(i);
+                if (isGroupingCall(node)) {
+                    throw groupingCallOutsideGroupingSets(node);
+                }
                 final BoundExpression bound = ctx.functionBinder.bindGroupByExpression(node, scope, null, executionContext);
                 if (!(bound instanceof FunctionExpression function) || !function.isAggregate()) {
                     throw SqlException.$(node.position, "expected aggregate function");
@@ -1045,8 +1047,8 @@ final class TemporalJoinBinder {
     ) throws SqlException {
         final BindScope scope = ctx.scope();
         final ObjList<ExpressionNode> groupBy = blockGroupBy(model, source);
-        if (groupBy.size() > 0) {
-            throw SqlException.$(groupBy.getQuick(0).position, "GROUP BY cannot be used with WINDOW JOIN");
+        if (hasBlockGrouping(model, source)) {
+            throw SqlException.$(groupBy.size() > 0 ? groupBy.getQuick(0).position : blockGroupByPosition(model, source), "GROUP BY cannot be used with WINDOW JOIN");
         }
         final WindowJoinPlan plan = bindWindowJoin(model, model.getColumns(), null, source, where, executionContext);
         final OutputSchema output = plan.getOutput();

@@ -159,6 +159,9 @@ final class OrderPlanning implements OptimiserPass {
      * between them: the aggregate emits one row per key, so no tie of the sort keeps the order of the aggregate's input.
      */
     private static boolean isKeyOrdered(SortPlan sort, AggregatePlan aggregate) {
+        if (aggregate.hasGroupingSets()) {
+            return false;
+        }
         for (int k = 0, n = aggregate.getGroupingExpressions().size(); k < n; k++) {
             if (!isSortKey(sort, aggregate.getOutput().getColumnId(k))) {
                 return false;
@@ -184,7 +187,7 @@ final class OrderPlanning implements OptimiserPass {
 
     private static boolean isSingleRow(LogicalPlan plan) {
         plan = LogicalPlans.skipProjectsAndFilters(plan);
-        return plan instanceof AggregatePlan aggregate && aggregate.getGroupingExpressions().size() == 0;
+        return plan instanceof AggregatePlan aggregate && aggregate.getGroupingExpressions().size() == 0 && !aggregate.hasGroupingSets();
     }
 
     /**

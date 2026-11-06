@@ -27,11 +27,9 @@ package io.questdb.griffin;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.IndexType;
-import io.questdb.cairo.MetadataCache;
 import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
@@ -41,10 +39,10 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.mv.MatViewDefinition;
-import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.griffin.engine.functions.json.JsonExtractTypedFunctionFactory;
+import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.engine.ops.CreateLiveViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateLiveViewOperationBuilderImpl;
 import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilder;
@@ -79,7 +77,6 @@ import io.questdb.std.GenericLexer;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.IntStack;
-import io.questdb.std.IntLongHashMap;
 import io.questdb.std.LowerCaseAsciiCharSequenceHashSet;
 import io.questdb.std.LowerCaseAsciiCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
@@ -273,38 +270,10 @@ public class SqlParser {
     // it, see MAX_DECLARED_VARIABLE_NODES.
     private int declaredVariableNodeCount;
     private int digit;
-    // Track tables currently being wrapped by the row-expiry filter, so the synthetic inner
-    // "SELECT * FROM t WHERE ..." resolves "t" as a plain table instead of recursing forever.
-    // The key is the caller's own spelling of the name, re-emitted verbatim into the synthetic inner query.
-    // Lookups ignore case, as the table registry does: a policy subquery or a SQL view body can name the
-    // table in a different case from the read, and it must still read the table without the policy rather
-    // than apply the policy a second time. A case-distinct sibling table cannot exist, so no other table
-    // matches the key.
-    private final LowerCaseCharSequenceHashSet expiringTablesBeingExpanded = new LowerCaseCharSequenceHashSet();
-    // The execution context of the current parse, consulted for the PER-TABLE read-filter decision
-    // (the mat-view refresh context keeps the filter on every table except the base). Null when parse()
-    // was invoked without a context; rowExpiryReadPolicy is the decision then.
-    private SqlExecutionContext expiryFilterExecutionContext;
-    // CairoTable whose EXPIRE ROWS predicate was last looked up from the metadata cache (null when the
-    // lookup fell back to authoritative metadata). Carries the per-instance memo of derived read-filter
-    // artifacts (flip eligibility, quoted column CSV); the instance's policy-relevant state (predicate,
-    // timestamp, columns) is immutable per hydration, so it is safe to hold beyond the cache read lock.
-    private CairoTable expiryPolicyTable;
     // The view whose new window WHEN policy validateWindowExpiryPredicate() is parsing: the only object a
     // sub-query of that policy may read. Null at CREATE, where the view does not exist yet.
     private TableToken expiryPredicateTarget;
-    // Designated timestamp column of the table whose EXPIRE ROWS predicate was last looked up (set by
-    // lookupExpiryPredicate), so the keep-filter rewrite can null-safely flip only timestamp comparisons.
-    private CharSequence expiryTimestampColumnName;
     private boolean isParsingExpiryPredicate;
-    // For each table (by id) whose EXPIRE ROWS policy this parse read straight from the table metadata while a
-    // SET/DROP EXPIRE was still in flight: the metadata version that read saw. Binding compares it
-    // against the version of the table it reads and rejects the compile if they differ, so a filter chosen from the
-    // old policy is never paired with a reader on the new one. Empty unless a policy change is running at the
-    // same time as this compile.
-    private final IntLongHashMap pendingExpiryReadVersions = new IntLongHashMap();
-    // The context-less parser path is always an ordinary/internal parse and therefore retains FILTER.
-    private ExpiryReadPolicy rowExpiryReadPolicy = ExpiryReadPolicy.FILTER;
     private boolean pivotMode = false;
     // the principal of the statement being parsed, see isExpandableView()
     private SecurityContext securityContext;
@@ -1504,7 +1473,6 @@ public class SqlParser {
         pivotSubQueryModelsInAuditedView.clear();
         viewAuditModelPool.clear();
         viewsBeingCompiled.clear();
-        expiringTablesBeingExpanded.clear();
         auditedViewDepth = 0;
         viewExpansionDepth = 0;
         viewReferencePosition = 0;
@@ -1645,222 +1613,6 @@ public class SqlParser {
         viewModel.setOriginatingViewNameExpr(viewExpr);
         viewModel.setViewNameExpr(viewExpr);
         return viewModel;
-    }
-
-    /**
-     * Rewrites a table reference that carries an EXPIRE ROWS policy into a nested
-     * {@code SELECT * FROM "t" WHERE <keep-filter>} sub-query, so expired rows become invisible to
-     * all reads. Mirrors {@link #compileViewQuery(QueryModel, TableToken, int)} and the
-     * expiring-view draft's expandExpiringView. The caller MUST have already added {@code tableName}
-     * to {@link #expiringTablesBeingExpanded} so the synthetic inner {@code FROM "t"} resolves as a
-     * plain table rather than re-expanding (infinite recursion).
-     * <p>
-     * Every synthetic sub-query here parses with no declarations in scope. The keep-filter is enforcement
-     * text that DDL validated on its own terms, so the declarations a read happens to carry must stay out
-     * of it: column names may legally start with {@code '@'}, and a declared name matching one substitutes
-     * a reader-supplied expression into the filter. Under a policy such as {@code ts < @c} the filter would
-     * then compare against whatever the query declared instead of against the column, and the read would
-     * hand itself expired rows. Declarations still reach everything the caller wrote around the reference,
-     * which keeps {@code DECLARE @x := 5 SELECT * FROM mv WHERE v > @x} working: the caller's own model
-     * holds them.
-     */
-    private void expandExpiringTable(
-            QueryModel model,
-            CharSequence tableName,
-            String predicate,
-            CharSequence designatedTimestampColumn,
-            int position,
-            SqlParserCallback sqlParserCallback
-    ) throws SqlException {
-        // Captured before any nested parse: sub-query parsing recurses back into table resolution, which
-        // overwrites the lookup fields when it meets another policied table.
-        final CairoTable policyTable = expiryPolicyTable;
-        if (RowExpiryUtil.isKeepLatest(predicate)) {
-            // Relative "KEEP LATEST" retention (passthrough mat views): hide all but the latest row per key
-            // by rewriting the reference into "SELECT * FROM "t" LATEST ON "<ts>" PARTITION BY <cols>". The
-            // PARTITION BY list is stored as raw text (quoting preserved); the timestamp is always the
-            // table's designated timestamp. LATEST ON cannot share a query level with WHERE, so isolating it
-            // in this inner sub-query is exactly right: any outer predicate filters the already-latest rows.
-            final CharSequence keys = RowExpiryUtil.keepLatestKeys(predicate);
-            final String latestSql = "SELECT * FROM " + RowExpiryUtil.quoteIdentifier(tableName) + " LATEST ON "
-                    + RowExpiryUtil.quoteIdentifier(designatedTimestampColumn) + " PARTITION BY " + keys;
-            final GenericLexer latestLexer = viewLexers.next();
-            latestLexer.of(latestSql);
-            final QueryModel latestSubQuery = parseAsSubQuery(latestLexer, null, false, sqlParserCallback, null, true);
-            model.setNestedModel(latestSubQuery);
-            model.setNestedModelIsSubQuery(true);
-            if (model.getAlias() == null) {
-                model.setAlias(literal(tableName, position));
-            }
-            return;
-        }
-
-        if (RowExpiryUtil.isKeepBy(predicate) || RowExpiryUtil.isWindow(predicate)) {
-            // Window-based retention (keep-max/min, top-N, or an explicit window WHEN). The keep-filter
-            // references a window function, illegal in a plain WHERE, so compute it as a boolean column in an
-            // inner projection over the WHOLE view and filter on it in the outer query. Base columns are
-            // enumerated so the synthetic keep column never leaks through the caller's SELECT *.
-            //
-            // The inner "SELECT *, CASE ..." projection drops the designated-timestamp property (the extra
-            // synthetic column makes it a general projection, not a passthrough), so re-assert it with a
-            // timestamp("<ts>") clause on the sub-query -- otherwise a downstream timestamp-requiring operator
-            // over a window-policied view (ASOF/LT/SPLICE JOIN) fails to compile with "TIMESTAMP column is
-            // required but not provided". The scalar and KEEP LATEST rewrites keep the designation naturally
-            // (SELECT * / LATEST ON), so only this branch needs it.
-            final String windowPredicate = RowExpiryUtil.windowPredicate(predicate, designatedTimestampColumn);
-            // The quoted column CSV is a pure function of the CairoTable's column list; memoize it on the
-            // instance so repeated compiles skip the rebuild. The cache-miss path (policyTable == null, the
-            // brief pre-hydration window) still derives it from authoritative metadata per compile.
-            String columnsCsv = policyTable != null ? policyTable.getExpiryQuotedColumnsCsv() : null;
-            if (columnsCsv == null) {
-                columnsCsv = policyTable != null ? buildQuotedColumnList(policyTable) : buildQuotedColumnList(tableName);
-                if (policyTable != null) {
-                    policyTable.setExpiryQuotedColumnsCsv(columnsCsv);
-                }
-            }
-            final String windowSql = "SELECT " + columnsCsv + " FROM (SELECT *, CASE WHEN ("
-                    + windowPredicate + ") THEN false ELSE true END " + RowExpiryUtil.KEEP_COLUMN + " FROM "
-                    + RowExpiryUtil.quoteIdentifier(tableName) + ") timestamp("
-                    + RowExpiryUtil.quoteIdentifier(designatedTimestampColumn) + ") WHERE " + RowExpiryUtil.KEEP_COLUMN;
-            final GenericLexer windowLexer = viewLexers.next();
-            windowLexer.of(windowSql);
-            final QueryModel windowSubQuery = parseAsSubQuery(windowLexer, null, false, sqlParserCallback, null, true);
-            model.setNestedModel(windowSubQuery);
-            model.setNestedModelIsSubQuery(true);
-            if (model.getAlias() == null) {
-                model.setAlias(literal(tableName, position));
-            }
-            return;
-        }
-
-        // Quote the table name so names that need quoting (or look like keywords) parse correctly. The
-        // reference becomes "SELECT * FROM "t" WHERE <keep-filter>" so only rows that have NOT expired are
-        // visible. The keep-filter is parsed inline (so the sub-query model processes it like any WHERE);
-        // see keepFilterWhereText for the NULL-operand and partition-pruning details.
-        final String syntheticSql = "SELECT * FROM " + RowExpiryUtil.quoteIdentifier(tableName) + " WHERE "
-                + keepFilterWhereText(predicate);
-
-        final GenericLexer subLexer = viewLexers.next();
-        subLexer.of(syntheticSql);
-
-        final QueryModel subQuery = parseAsSubQuery(subLexer, null, false, sqlParserCallback, null, true);
-        model.setNestedModel(subQuery);
-        model.setNestedModelIsSubQuery(true);
-        if (model.getAlias() == null) {
-            model.setAlias(literal(tableName, position));
-        }
-    }
-
-    /**
-     * Builds the quoted, comma-separated column list of the given cached table, for the window
-     * read-filter's outer projection (so the synthetic {@link RowExpiryUtil#KEEP_COLUMN} is not exposed
-     * through SELECT *).
-     */
-    private static String buildQuotedColumnList(CairoTable table) {
-        final StringSink sink = new StringSink();
-        final ObjList<CharSequence> names = table.getColumnNames();
-        for (int i = 0, n = names.size(); i < n; i++) {
-            if (i > 0) {
-                sink.putAscii(',');
-            }
-            sink.put(RowExpiryUtil.quoteIdentifier(names.getQuick(i)));
-        }
-        return sink.toString();
-    }
-
-    /**
-     * Name-based variant of {@link #buildQuotedColumnList(CairoTable)}: reads from the in-memory metadata
-     * cache, falling back to the authoritative table metadata on a cache miss -- exactly as
-     * {@link #lookupExpiryPredicate} does. The two MUST agree: the read path reaches this only after
-     * {@code lookupExpiryPredicate} returned a (window/keep-by) predicate, which itself uses the fallback,
-     * so during the brief startup window before the cache hydrates the predicate is non-null while the
-     * cache has no entry; without the same fallback here the column list would be empty and the rewrite
-     * would emit {@code SELECT  FROM (...)} and fail every read of the view until hydration caught up.
-     */
-    private String buildQuotedColumnList(CharSequence tableName) {
-        final StringSink sink = new StringSink();
-        final TableToken tt = cairoEngine.getTableTokenIfExists(tableName);
-        if (tt == null) {
-            return sink.toString();
-        }
-        try (MetadataCacheReader metadataRO = cairoEngine.getMetadataCache().readLock()) {
-            final CairoTable table = metadataRO.getTable(tt);
-            if (table != null) {
-                return buildQuotedColumnList(table);
-            }
-        }
-        // Cache miss (brief startup window before MetadataCache hydration): fall back to the authoritative
-        // table metadata so the column list matches the predicate that lookupExpiryPredicate already resolved.
-        try (TableMetadata metadata = cairoEngine.getTableMetadata(tt)) {
-            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-                if (i > 0) {
-                    sink.putAscii(',');
-                }
-                sink.put(RowExpiryUtil.quoteIdentifier(metadata.getColumnName(i)));
-            }
-        } catch (CairoException ignore) {
-            // Table concurrently dropped/renamed: getTableMetadata throws on open (before the loop), so the
-            // sink is empty; return that empty list and the caller's read fails closed rather than exposing
-            // rows (same posture as lookupExpiryPredicate treating this as "no policy").
-        }
-        return sink.toString();
-    }
-
-    /**
-     * Returns the keep-filter WHERE-clause text for an EXPIRE ROWS predicate — the rows that have NOT
-     * expired. A row expires only when the predicate is TRUE, so the keep-filter keeps every row whose
-     * predicate result is anything else, which {@code NOT (predicate)} spells for every predicate shape. Over a
-     * comparison of the designated timestamp, {@link IntervalExtractor} reads an interval out of that {@code NOT}
-     * and prunes partitions, see its negated range comparison.
-     * <p>
-     * What happens to a row whose predicate operand is NULL follows QuestDB's two-valued comparison
-     * semantics, which the keep-filter reports rather than overrides: a comparison against NULL is FALSE,
-     * so {@code v < 2.0} keeps a row whose {@code v} is NULL, while a predicate that is TRUE on a NULL
-     * operand expires it. {@code NOT (v >= 2.0)} is such a predicate ({@code NULL >= 2.0} is FALSE, so the
-     * {@code NOT} is TRUE), and so are {@code v != 2.0} and {@code v IS NULL}. {@code v < 2.0} and
-     * {@code NOT (v >= 2.0)} therefore express DIFFERENT policies for NULL rows although they read as the
-     * same rule, and the expired NULL rows are physically deleted by the cleanup sweep, which keeps the same
-     * rows through a {@code CASE} wrap of its own ({@link RowExpiryUtil#buildRowExpiryKeepFilter} explains
-     * why the sweep spells it differently). {@code MatViewExpireRowsTest.testExpireScalarNullRowsFollowPredicateTruthValue}
-     * pins this across the spellings.
-     */
-    private static String keepFilterWhereText(String predicate) {
-        return "NOT (" + predicate.trim() + ")";
-    }
-
-    /**
-     * Returns the EXPIRE ROWS predicate for the given table token, or null if the token is null, is not a
-     * materialized view (the only object type that can carry a policy), or carries no policy. Uses the
-     * in-memory metadata cache
-     * ({@link io.questdb.cairo.MetadataCache#readLock()} + map lookup): a shared read lock plus a
-     * hash-map get, no pool borrow, no file I/O on a cache hit. See class/PR notes for the
-     * cache-miss caveat.
-     */
-    private String lookupExpiryPredicate(TableToken tableToken, ExpiryReadPolicy expiryReadPolicy) {
-        expiryPolicyTable = null;
-        expiryTimestampColumnName = null;
-        final MetadataCache metadataCache = cairoEngine.getMetadataCache();
-        if (expiryReadPolicy == ExpiryReadPolicy.REJECT && metadataCache.isExpiryPolicyUpdatePending(tableToken)) {
-            throw ExpiryPolicyVersionChangedException.INSTANCE;
-        }
-        final MetadataCache.ExpiryPolicyInfo policy;
-        try {
-            policy = metadataCache.lookupExpiryPolicy(tableToken);
-        } catch (CairoException e) {
-            if (expiryReadPolicy == ExpiryReadPolicy.REJECT && metadataCache.isExpiryPolicyUpdatePending(tableToken)) {
-                throw ExpiryPolicyVersionChangedException.INSTANCE;
-            }
-            throw e;
-        }
-        if (expiryReadPolicy == ExpiryReadPolicy.REJECT && policy.isPending()) {
-            throw ExpiryPolicyVersionChangedException.INSTANCE;
-        }
-        expiryPolicyTable = policy.getCachedTable();
-        expiryTimestampColumnName = policy.getTimestampName();
-        if (policy.isPending()) {
-            pendingExpiryReadVersions.put(tableToken.getTableId(), policy.getMetadataVersion());
-        }
-        return policy.getPredicate();
     }
 
     /**
@@ -2159,6 +1911,156 @@ public class SqlParser {
     }
 
     /**
+     * Checks that all columns in the combined GROUP BY list do not mix
+     * qualified (t.a) and unqualified (a) references to the same column.
+     * The grouping set machinery deduplicates by raw token text, so
+     * mixed forms would create separate entries and incorrect sets.
+     */
+    private static void checkMixedQualification(ObjList<ExpressionNode> groupByColumns) throws SqlException {
+        // O(N²) but N is the number of GROUP BY columns, bounded at ~31 by the
+        // GROUPING_ID bitmask width. Not worth a HashSet for such small N.
+        for (int i = 0, n = groupByColumns.size(); i < n; i++) {
+            ExpressionNode a = groupByColumns.getQuick(i);
+            for (int j = i + 1; j < n; j++) {
+                ExpressionNode b = groupByColumns.getQuick(j);
+                if (isSameColumnMixedQualification(a.token, b.token)) {
+                    throw SqlException.$(b.position, "mixing qualified and unqualified references to the same column");
+                }
+            }
+        }
+    }
+
+    /**
+     * Validates that all nodes in the list are column references (LITERAL).
+     * Rejects expressions in ROLLUP/CUBE/GROUPING SETS to avoid ambiguity
+     * in set membership resolution.
+     */
+    private static void ensureColumnReferences(ObjList<ExpressionNode> columns) throws SqlException {
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            ExpressionNode node = columns.getQuick(i);
+            if (node.type != ExpressionNode.LITERAL) {
+                throw SqlException.$(node.position, GroupByUtils.EXPRESSION_GROUPING_KEY_MESSAGE);
+            }
+        }
+    }
+
+    private static void guardAgainstLatestOnWithGroupingSets(QueryModel model, int kwPos) throws SqlException {
+        if (model.getLatestBy().size() > 0) {
+            throw SqlException.$(kwPos, "LATEST ON is not supported with GROUPING SETS, ROLLUP, or CUBE");
+        }
+    }
+
+    /**
+     * Returns true if two column tokens refer to the same column but one
+     * is qualified (t.col) and the other is not (col).
+     */
+    private static boolean isSameColumnMixedQualification(CharSequence a, CharSequence b) {
+        int aDot = Chars.indexOf(a, '.');
+        int bDot = Chars.indexOf(b, '.');
+        if ((aDot < 0) == (bDot < 0)) {
+            // Both qualified or both unqualified - no mixed issue
+            return false;
+        }
+        // One is qualified, the other is not. Compare the column name
+        // part of the qualified token with the full unqualified token.
+        if (aDot >= 0) {
+            return Chars.equalsIgnoreCase(b, a, aDot + 1, a.length());
+        } else {
+            return Chars.equalsIgnoreCase(a, b, bDot + 1, b.length());
+        }
+    }
+
+    private static void expandCube(QueryModel model, int startIdx, int cubeColumnCount, int position, int maxGroupingSets) throws SqlException {
+        // 2^N subsets, from the full set (all bits set) down to empty set (0)
+        int totalSets = 1 << cubeColumnCount;
+        if (totalSets > maxGroupingSets) {
+            throw SqlException.$(position, "CUBE produces too many grouping sets (")
+                    .put(totalSets).put(", maximum ").put(maxGroupingSets).put(')');
+        }
+        for (int mask = totalSets - 1; mask >= 0; mask--) {
+            IntList set = new IntList();
+            for (int bit = 0; bit < cubeColumnCount; bit++) {
+                if ((mask & (1 << (cubeColumnCount - 1 - bit))) != 0) {
+                    set.add(startIdx + bit);
+                }
+            }
+            model.addGroupingSet(set);
+        }
+    }
+
+    /**
+     * Expands CUBE with composite plain columns prepended to every set.
+     * GROUP BY a, CUBE(b, c) -> sets: (a,b,c), (a,b), (a,c), (a).
+     */
+    private static void expandCubeComposite(QueryModel model, int plainCount, int rollupStart, int cubeColumnCount, int position, int maxGroupingSets) throws SqlException {
+        int totalSets = 1 << cubeColumnCount;
+        if (totalSets > maxGroupingSets) {
+            throw SqlException.$(position, "CUBE produces too many grouping sets (")
+                    .put(totalSets).put(", maximum ").put(maxGroupingSets).put(')');
+        }
+        for (int mask = totalSets - 1; mask >= 0; mask--) {
+            IntList set = new IntList();
+            // Add all plain columns first
+            for (int i = 0; i < plainCount; i++) {
+                set.add(i);
+            }
+            for (int bit = 0; bit < cubeColumnCount; bit++) {
+                if ((mask & (1 << (cubeColumnCount - 1 - bit))) != 0) {
+                    set.add(rollupStart + bit);
+                }
+            }
+            model.addGroupingSet(set);
+        }
+    }
+
+    /**
+     * Expands ROLLUP into grouping sets. ROLLUP(a, b, c) generates:
+     * (a,b,c), (a,b), (a), ().
+     *
+     * @param model             query model to add grouping sets to
+     * @param startIdx          index of the first ROLLUP column in model.groupBy
+     * @param rollupColumnCount number of ROLLUP columns
+     */
+    private static void expandRollup(QueryModel model, int startIdx, int rollupColumnCount, int position, int maxGroupingSets) throws SqlException {
+        int totalSets = rollupColumnCount + 1;
+        if (totalSets > maxGroupingSets) {
+            throw SqlException.$(position, "ROLLUP produces too many grouping sets (")
+                    .put(totalSets).put(", maximum ").put(maxGroupingSets).put(')');
+        }
+        // N+1 sets: from all columns down to empty set
+        for (int setSize = rollupColumnCount; setSize >= 0; setSize--) {
+            IntList set = new IntList();
+            for (int j = 0; j < setSize; j++) {
+                set.add(startIdx + j);
+            }
+            model.addGroupingSet(set);
+        }
+    }
+
+    /**
+     * Expands ROLLUP with composite plain columns prepended to every set.
+     * GROUP BY a, ROLLUP(b, c) -> sets: (a,b,c), (a,b), (a).
+     */
+    private static void expandRollupComposite(QueryModel model, int plainCount, int rollupStart, int rollupColumnCount, int position, int maxGroupingSets) throws SqlException {
+        int totalSets = rollupColumnCount + 1;
+        if (totalSets > maxGroupingSets) {
+            throw SqlException.$(position, "ROLLUP produces too many grouping sets (")
+                    .put(totalSets).put(", maximum ").put(maxGroupingSets).put(')');
+        }
+        for (int setSize = rollupColumnCount; setSize >= 0; setSize--) {
+            IntList set = new IntList();
+            // Add all plain columns first
+            for (int i = 0; i < plainCount; i++) {
+                set.add(i);
+            }
+            for (int j = 0; j < setSize; j++) {
+                set.add(rollupStart + j);
+            }
+            model.addGroupingSet(set);
+        }
+    }
+
+    /**
      * Decides what {@code tok}, read while capturing an EXPIRE ROWS clause body, does to that body: it
      * either ends it (CLEANUP starts the cadence sub-clause; WITH / IN VOLUME / DEDUP UPSERT or an
      * edition-specific suffix belong to the CREATE TABLE tail) or is content of it. The WHEN caller only
@@ -2363,7 +2265,7 @@ public class SqlParser {
     // True while the parse is in the text of the window WHEN policy that validateWindowExpiryPredicate()
     // checks, and not in the current policy or a view body that a read of the view expands.
     private boolean isParsingOwnExpiryPredicateText() {
-        return isParsingExpiryPredicate && viewExpansionDepth == 0 && expiringTablesBeingExpanded.size() == 0;
+        return isParsingExpiryPredicate && viewExpansionDepth == 0;
     }
 
     /**
@@ -2513,12 +2415,16 @@ public class SqlParser {
         return tok;
     }
 
+    private CharSequence optTokAfterGroupingSets(GenericLexer lexer) throws SqlException {
+        CharSequence tok = optTok(lexer);
+        if (tok != null && Chars.equals(tok, ',')) {
+            throw SqlException.$(lexer.lastTokenPosition(),
+                    "grouping items after ROLLUP, CUBE, or GROUPING SETS are not supported");
+        }
+        return tok;
+    }
+
     private ExecutionModel parse0(GenericLexer lexer, SqlExecutionContext executionContext, SqlParserCallback sqlParserCallback) throws SqlException {
-        // Capture the read-filter toggle for this whole parse (the row-expiry cleanup job disables it).
-        // The context is also kept for the per-table refinement: the mat-view refresh context keeps the
-        // filter on every table except the base.
-        rowExpiryReadPolicy = executionContext.getExpiryReadPolicy();
-        expiryFilterExecutionContext = executionContext;
         // ANCHOR is a live-view-only clause. A live-view re-compile (the refresh
         // worker, the startup graph build, CREATE's own validating compile of the
         // stored SELECT) parses the view's SELECT as a plain query with this flag
@@ -3115,15 +3021,7 @@ public class SqlParser {
         } else {
             lexer.unparseLast();
         }
-        final ExpiryReadPolicy previousExpiryReadPolicy = executionContext.getExpiryReadPolicy();
-        final CharSequence previousMaterializingViewName = executionContext.getExpiryMaterializingViewName();
-        final QueryModel queryModel;
-        executionContext.setExpiryReadPolicy(ExpiryReadPolicy.REJECT, liveViewName);
-        try {
-            queryModel = parseDml(lexer, lexer.getPosition(), sqlParserCallback);
-        } finally {
-            executionContext.setExpiryReadPolicy(previousExpiryReadPolicy, previousMaterializingViewName);
-        }
+        final QueryModel queryModel = parseDml(lexer, lexer.getPosition(), sqlParserCallback);
         if (hasParens) {
             expectTok(lexer, ")");
         }
@@ -4326,21 +4224,13 @@ public class SqlParser {
 
             // Parse SELECT for the sake of basic SQL validation.
             // It'll be compiled and optimized later, at the execution phase.
-            final ExpiryReadPolicy previousExpiryReadPolicy = executionContext.getExpiryReadPolicy();
-            final CharSequence previousMaterializingViewName = executionContext.getExpiryMaterializingViewName();
-            final QueryModel queryModel;
-            executionContext.setExpiryReadPolicy(ExpiryReadPolicy.REJECT, matViewName);
-            try {
-                if (isWithKeyword(tok)) {
-                    parseWithClauses(lexer, topLevelWithModel, sqlParserCallback, null);
-                    // CTEs require SELECT to be specified
-                    expectTok(lexer, "select");
-                }
-                lexer.unparseLast();
-                queryModel = parseDml(lexer, lexer.getPosition(), sqlParserCallback);
-            } finally {
-                executionContext.setExpiryReadPolicy(previousExpiryReadPolicy, previousMaterializingViewName);
+            if (isWithKeyword(tok)) {
+                parseWithClauses(lexer, topLevelWithModel, sqlParserCallback, null);
+                // CTEs require SELECT to be specified
+                expectTok(lexer, "select");
             }
+            lexer.unparseLast();
+            final QueryModel queryModel = parseDml(lexer, lexer.getPosition(), sqlParserCallback);
             final int endOfQuery = enclosedInParentheses ? lexer.getPosition() - 1 : lexer.getPosition();
 
             tableNames.clear();
@@ -5768,11 +5658,14 @@ public class SqlParser {
                 model.setShowKind(showKind);
             }
         } else {
+            // The implied SELECT * reads the table named here.
+            final int starPosition = lexer.lastTokenPosition();
             lexer.unparseLast();
             SqlUtil.addSelectStar(
                     model,
                     queryColumnPool,
-                    expressionNodePool
+                    expressionNodePool,
+                    starPosition
             );
         }
 
@@ -5996,6 +5889,9 @@ public class SqlParser {
                                     && target.getNestedModel() == null
                                     && target.getSampleBy() == null
                                     && target.getGroupBy().size() == 0
+                                    // GROUPING SETS (()) has no GROUP BY key, so the shorthand
+                                    // "(t GROUP BY GROUPING SETS (()))" must keep its sub-query too
+                                    && !target.hasGroupingSets()
                                     // SUBSAMPLE lives on the sub-query model; collapsing would discard it
                                     // silently, so the shorthand "(t SUBSAMPLE ...)" must keep its sub-query
                                     && target.getSubsample() == null
@@ -6153,6 +6049,41 @@ public class SqlParser {
             expectSample(lexer, model, sqlParserCallback);
             tok = optTok(lexer);
 
+            // support SAMPLE BY 1h ROLLUP(symbol, side)
+            if (tok != null && (isRollupKeyword(tok) || isCubeKeyword(tok))) {
+                int kwPos = lexer.lastTokenPosition();
+                guardAgainstLatestOnWithGroupingSets(model, kwPos);
+                boolean isRollup = isRollupKeyword(tok);
+                ObjList<ExpressionNode> columnList = parseParenthesizedColumnList(lexer, model, sqlParserCallback);
+                if (columnList.size() == 0) {
+                    throw SqlException.$(kwPos, (isRollup ? "ROLLUP" : "CUBE") + " requires at least one column");
+                }
+                ensureColumnReferences(columnList);
+                checkMixedQualification(columnList);
+                if (!isRollup && columnList.size() > 15) {
+                    throw SqlException.$(kwPos, "CUBE supports at most 15 columns");
+                }
+                int startIdx = model.getGroupBy().size();
+                for (int i = 0, n = columnList.size(); i < n; i++) {
+                    model.addGroupBy(columnList.getQuick(i));
+                }
+                int maxSets = configuration.getSqlMaxGroupingSets();
+                if (isRollup) {
+                    expandRollup(model, startIdx, columnList.size(), kwPos, maxSets);
+                } else {
+                    expandCube(model, startIdx, columnList.size(), kwPos, maxSets);
+                }
+                tok = optTok(lexer);
+            } else if (tok != null && isGroupingKeyword(tok)) {
+                guardAgainstLatestOnWithGroupingSets(model, lexer.lastTokenPosition());
+                CharSequence next = tok(lexer, "'SETS'");
+                if (!isSetsKeyword(next)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "expected SETS after GROUPING");
+                }
+                parseExplicitGroupingSets(lexer, model, sqlParserCallback);
+                tok = optTok(lexer);
+            }
+
             ExpressionNode fromNode = null, toNode = null;
             // support `SAMPLE BY 5m FROM foo TO bah`
             if (tok != null && isFromKeyword(tok)) {
@@ -6245,24 +6176,15 @@ public class SqlParser {
         // expect [group by]
 
         if (tok != null && isGroupKeyword(tok)) {
+            final int groupByPosition = lexer.lastTokenPosition();
             if (hasPivot) {
                 QueryModel parentModel = queryModelPool.next();
                 parentModel.setNestedModel(model);
                 model = parentModel;
             }
             expectBy(lexer);
-            do {
-                tokIncludingLocalBrace(lexer, "literal");
-                lexer.unparseLast();
-                ExpressionNode n = expr(lexer, model, sqlParserCallback, model.getDecls());
-                if (n == null || (n.type != ExpressionNode.LITERAL && n.type != ExpressionNode.CONSTANT && n.type != ExpressionNode.FUNCTION && n.type != ExpressionNode.OPERATION)) {
-                    throw SqlException.$(n == null ? lexer.lastTokenPosition() : n.position, "literal expected");
-                }
-
-                model.addGroupBy(n);
-
-                tok = optTok(lexer);
-            } while (tok != null && Chars.equals(tok, ','));
+            model.setGroupByPosition(groupByPosition);
+            tok = parseGroupByColumns(lexer, model, sqlParserCallback);
         }
 
         // expect [window]
@@ -6573,6 +6495,242 @@ public class SqlParser {
             throw SqlException.position(volumeKwPos).put("'in volume' is not supported on Windows");
         }
         tableOpBuilder.setVolumeAlias(GenericLexer.unquote(tok), lexer.lastTokenPosition());
+    }
+
+    /**
+     * Parses GROUP BY columns, handling ROLLUP, CUBE, and GROUPING SETS syntax.
+     * Returns the next unconsumed token (or null).
+     *
+     * <p>Supported forms:
+     * <ul>
+     *   <li>{@code GROUP BY a, b} - plain GROUP BY (no grouping sets)</li>
+     *   <li>{@code GROUP BY ROLLUP(a, b)} - desugared to GROUPING SETS ((a,b), (a), ())</li>
+     *   <li>{@code GROUP BY CUBE(a, b)} - desugared to GROUPING SETS ((a,b), (a), (b), ())</li>
+     *   <li>{@code GROUP BY GROUPING SETS ((a,b), (a), ())} - explicit grouping sets</li>
+     *   <li>{@code GROUP BY a, ROLLUP(b, c)} - composite: plain cols added to every set</li>
+     * </ul>
+     */
+    private CharSequence parseGroupByColumns(
+            GenericLexer lexer,
+            QueryModel model,
+            SqlParserCallback sqlParserCallback
+    ) throws SqlException {
+        CharSequence tok = tokIncludingLocalBrace(lexer, "literal");
+
+        // Check for grouping syntax only when its required following token is present.
+        boolean isRollup = isRollupKeyword(tok);
+        boolean isCube = isCubeKeyword(tok);
+        boolean isGrouping = isGroupingKeyword(tok);
+        int firstTokenPosition = lexer.lastTokenPosition();
+        boolean firstTokenLookedAhead = (isRollup || isCube || isGrouping);
+        if ((isRollup || isCube) && hasGroupingSyntaxLookahead(lexer, tok, firstTokenPosition, "(")) {
+            int kwPos = firstTokenPosition;
+            guardAgainstLatestOnWithGroupingSets(model, kwPos);
+            ObjList<ExpressionNode> columns = parseParenthesizedColumnList(lexer, model, sqlParserCallback);
+            if (columns.size() == 0) {
+                throw SqlException.$(kwPos, isRollup ? "ROLLUP requires at least one column" : "CUBE requires at least one column");
+            }
+            ensureColumnReferences(columns);
+            checkMixedQualification(columns);
+            if (!isRollup && columns.size() > 15) {
+                throw SqlException.$(kwPos, "CUBE supports at most 15 columns");
+            }
+            for (int i = 0, n = columns.size(); i < n; i++) {
+                model.addGroupBy(columns.getQuick(i));
+            }
+            int maxSets = configuration.getSqlMaxGroupingSets();
+            if (isRollup) {
+                expandRollup(model, 0, columns.size(), kwPos, maxSets);
+            } else {
+                expandCube(model, 0, columns.size(), kwPos, maxSets);
+            }
+            return optTokAfterGroupingSets(lexer);
+        }
+
+        if (isGrouping && hasGroupingSyntaxLookahead(lexer, tok, firstTokenPosition, "SETS")) {
+            int kwPos = firstTokenPosition;
+            guardAgainstLatestOnWithGroupingSets(model, kwPos);
+            tok = optTok(lexer);
+            // hasGroupingSyntaxLookahead() has already matched SETS.
+            assert tok != null && isSetsKeyword(tok);
+            parseExplicitGroupingSets(lexer, model, sqlParserCallback);
+            return optTokAfterGroupingSets(lexer);
+        }
+
+        // Plain GROUP BY parsing - may contain ROLLUP/CUBE after plain columns (composite)
+        if (!firstTokenLookedAhead) {
+            lexer.unparseLast();
+        }
+        ObjList<ExpressionNode> plainColumns = new ObjList<>();
+        boolean firstPlainTokenLookedAhead = firstTokenLookedAhead;
+        do {
+            if (!firstPlainTokenLookedAhead) {
+                tok = tokIncludingLocalBrace(lexer, "literal");
+            }
+            // Check whether the current token starts composite grouping syntax.
+            boolean isCompositeRollup = isRollupKeyword(tok);
+            boolean isCompositeCube = isCubeKeyword(tok);
+            boolean isGroupingCandidate = isGroupingKeyword(tok);
+            int kwPos = lexer.lastTokenPosition();
+            boolean isFirstPlainToken = firstPlainTokenLookedAhead;
+            firstPlainTokenLookedAhead = false;
+            boolean compositeLookedAhead = false;
+            if (!isFirstPlainToken && isGroupingCandidate) {
+                compositeLookedAhead = true;
+                if (hasGroupingSyntaxLookahead(lexer, tok, kwPos, "SETS")) {
+                    throw SqlException.$(kwPos, "GROUPING SETS must be the only GROUP BY item, list the other keys in each set");
+                }
+            }
+            if (!isFirstPlainToken && (isCompositeRollup || isCompositeCube)) {
+                compositeLookedAhead = true;
+                if (hasGroupingSyntaxLookahead(lexer, tok, kwPos, "(")) {
+                    guardAgainstLatestOnWithGroupingSets(model, kwPos);
+                    boolean isRollupSyntax = isCompositeRollup;
+                    int plainCount = plainColumns.size();
+                    for (int i = 0; i < plainCount; i++) {
+                        model.addGroupBy(plainColumns.getQuick(i));
+                    }
+                    ObjList<ExpressionNode> rollupCols = parseParenthesizedColumnList(lexer, model, sqlParserCallback);
+                    if (rollupCols.size() == 0) {
+                        throw SqlException.$(kwPos, isRollupSyntax ? "ROLLUP requires at least one column" : "CUBE requires at least one column");
+                    }
+                    ensureColumnReferences(rollupCols);
+                    if (!isRollupSyntax && rollupCols.size() > 15) {
+                        throw SqlException.$(kwPos, "CUBE supports at most 15 columns");
+                    }
+                    int rollupStart = plainCount;
+                    for (int i = 0, n = rollupCols.size(); i < n; i++) {
+                        model.addGroupBy(rollupCols.getQuick(i));
+                    }
+                    // Check all columns (plain + rollup) for mixed qualification
+                    checkMixedQualification(model.getGroupBy());
+                    int maxSets = configuration.getSqlMaxGroupingSets();
+                    if (isRollupSyntax) {
+                        expandRollupComposite(model, plainCount, rollupStart, rollupCols.size(), kwPos, maxSets);
+                    } else {
+                        expandCubeComposite(model, plainCount, rollupStart, rollupCols.size(), kwPos, maxSets);
+                    }
+                    return optTokAfterGroupingSets(lexer);
+                }
+            }
+
+            ExpressionNode n;
+            boolean isTokenAlreadyRewound = (isFirstPlainToken && firstTokenLookedAhead) || compositeLookedAhead;
+            if (!isTokenAlreadyRewound) {
+                if (isGroupingCandidate) {
+                    lexer.backTo(kwPos, tok);
+                } else {
+                    lexer.unparseLast();
+                }
+            }
+            n = expr(lexer, model, sqlParserCallback, model.getDecls());
+            if (n == null || (n.type != ExpressionNode.LITERAL && n.type != ExpressionNode.CONSTANT && n.type != ExpressionNode.FUNCTION && n.type != ExpressionNode.OPERATION)) {
+                throw SqlException.$(n == null ? lexer.lastTokenPosition() : n.position, "literal expected");
+            }
+            plainColumns.add(n);
+
+            tok = optTok(lexer);
+        } while (tok != null && Chars.equals(tok, ','));
+
+        // Plain GROUP BY - no ROLLUP/CUBE/GROUPING SETS
+        for (int i = 0, n = plainColumns.size(); i < n; i++) {
+            model.addGroupBy(plainColumns.getQuick(i));
+        }
+        return tok;
+    }
+
+    private boolean hasGroupingSyntaxLookahead(GenericLexer lexer, CharSequence token, int tokenPosition, CharSequence expected) throws SqlException {
+        final CharSequence nextToken = SqlUtil.fetchNext(lexer);
+        final boolean matches = nextToken != null && Chars.equalsIgnoreCase(nextToken, expected);
+        if (matches) {
+            lexer.unparseLast();
+        } else {
+            lexer.backTo(tokenPosition, token);
+        }
+        return matches;
+    }
+
+    /**
+     * Parses explicit GROUPING SETS ((a, b), (a), ()).
+     * The outer parentheses and inner sets with their parentheses.
+     * <p>
+     * Like ROLLUP/CUBE, explicit GROUPING SETS only accept column
+     * references - expressions are rejected to avoid ambiguity in
+     * set membership resolution.
+     */
+    private void parseExplicitGroupingSets(
+            GenericLexer lexer,
+            QueryModel model,
+            SqlParserCallback sqlParserCallback
+    ) throws SqlException {
+        expectTok(lexer, '(');
+        // Track column name to index mapping for deduplication.
+        // Dedup uses raw token text; mixing qualified (t.a) and unqualified
+        // (a) references to the same column is rejected below.
+        LowerCaseCharSequenceIntHashMap columnIndex = new LowerCaseCharSequenceIntHashMap();
+
+        do {
+            // As in PostgreSQL, the list holds at least one set and no trailing comma. Unlike
+            // PostgreSQL, every element is parenthesized: (a), not a. The empty set is "()".
+            // Use tokIncludingLocalBrace to avoid subQueryMode swallowing ')'
+            CharSequence tok = tokIncludingLocalBrace(lexer, "'('");
+            expectTok(tok, lexer.lastTokenPosition(), '(');
+
+            IntList setIndices = new IntList();
+            // Use tokIncludingLocalBrace to avoid subQueryMode swallowing ')'
+            tok = tokIncludingLocalBrace(lexer, "column or ')'");
+            if (!Chars.equals(tok, ')')) {
+                // Non-empty set
+                lexer.unparseLast();
+                do {
+                    ExpressionNode n = expr(lexer, model, sqlParserCallback, model.getDecls());
+                    if (n == null || n.type != ExpressionNode.LITERAL) {
+                        throw n == null
+                                ? SqlException.$(lexer.lastTokenPosition(), "column reference expected")
+                                : SqlException.$(n.position, GroupByUtils.EXPRESSION_GROUPING_KEY_MESSAGE);
+                    }
+
+                    // Detect mixed qualified/unqualified references to the
+                    // same column (e.g., both "a" and "t.a"). The dedup map
+                    // uses raw token text, so these would create separate
+                    // entries and produce incorrect grouping sets.
+                    for (int ci = 0, cn = columnIndex.size(); ci < cn; ci++) {
+                        CharSequence existing = columnIndex.keys().getQuick(ci);
+                        if (existing != null && isSameColumnMixedQualification(n.token, existing)) {
+                            throw SqlException.$(n.position, "mixing qualified and unqualified references to the same column");
+                        }
+                    }
+                    int idx = columnIndex.keyIndex(n.token);
+                    if (idx >= 0) {
+                        int pos = model.getGroupBy().size();
+                        model.addGroupBy(n);
+                        columnIndex.putAt(idx, n.token, pos);
+                        setIndices.add(pos);
+                    } else {
+                        setIndices.add(columnIndex.valueAt(idx));
+                    }
+
+                    // Use tokIncludingLocalBrace to avoid subQueryMode swallowing ')'
+                    tok = tokIncludingLocalBrace(lexer, "',' or ')'");
+                    if (Chars.equals(tok, ')')) {
+                        break;
+                    }
+                    expectTok(tok, lexer.lastTokenPosition(), ',');
+                } while (true);
+            }
+            model.addGroupingSet(setIndices);
+            int maxSets = configuration.getSqlMaxGroupingSets();
+            if (model.getGroupingSets().size() > maxSets) {
+                throw SqlException.$(lexer.lastTokenPosition(), "too many grouping sets (maximum " + maxSets + ")");
+            }
+
+            // Use tokIncludingLocalBrace to avoid subQueryMode swallowing ')'
+            tok = tokIncludingLocalBrace(lexer, "',' or ')'");
+            if (Chars.equals(tok, ')')) {
+                break;
+            }
+            expectTok(tok, lexer.lastTokenPosition(), ',');
+        } while (true);
     }
 
     private ExecutionModel parseInsert(
@@ -7111,6 +7269,39 @@ public class SqlParser {
         if (tok != null) {
             lexer.unparseLast();
         }
+    }
+
+    /**
+     * Parses a parenthesized comma-separated list of column expressions: (a, b, c).
+     * Used by ROLLUP and CUBE parsing.
+     */
+    private ObjList<ExpressionNode> parseParenthesizedColumnList(
+            GenericLexer lexer,
+            QueryModel model,
+            SqlParserCallback sqlParserCallback
+    ) throws SqlException {
+        expectTok(lexer, '(');
+        ObjList<ExpressionNode> columns = new ObjList<>();
+        // Use tokIncludingLocalBrace to avoid subQueryMode swallowing ')'
+        CharSequence tok = tokIncludingLocalBrace(lexer, "column or ')'");
+        if (Chars.equals(tok, ')')) {
+            return columns;
+        }
+        lexer.unparseLast();
+        do {
+            ExpressionNode n = expr(lexer, model, sqlParserCallback, model.getDecls());
+            if (n == null || (n.type != ExpressionNode.LITERAL && n.type != ExpressionNode.CONSTANT && n.type != ExpressionNode.FUNCTION && n.type != ExpressionNode.OPERATION)) {
+                throw SqlException.$(n == null ? lexer.lastTokenPosition() : n.position, "literal expected");
+            }
+            columns.add(n);
+            // Use tokIncludingLocalBrace to avoid subQueryMode swallowing ')'
+            tok = tokIncludingLocalBrace(lexer, "',' or ')'");
+            if (Chars.equals(tok, ')')) {
+                break;
+            }
+            expectTok(tok, lexer.lastTokenPosition(), ',');
+        } while (true);
+        return columns;
     }
 
     /**
@@ -7663,71 +7854,10 @@ public class SqlParser {
                 throw SqlException.$(expr.position, "function, literal or constant is expected");
         }
 
-        // Read-time row-expiry filter (approach A): if this resolved to a plain table (not a CTE,
-        // not a table-function) that carries an EXPIRE ROWS policy, transparently rewrite the
-        // reference into a nested "SELECT * FROM t WHERE <keep-filter>" so expired rows are hidden
-        // from every read. This is the single chokepoint for plain-table resolution: both the FROM
-        // branch (parseFromClause) and the JOIN branch funnel through parseSelectFrom, and the inner
-        // tables of sub-queries/CTE bodies recurse back here too. The CTE *reference* case set a
-        // nested model above (tableNameExpr stays null), so it is naturally skipped. A reference
-        // spelled with the no-rowid marker resolves to the same table, see expiryLookupName().
         final ExpressionNode resolvedTableNameExpr = model.getTableNameExpr();
         if (resolvedTableNameExpr != null && isParsingOwnExpiryPredicateText()) {
             rejectExpiryPredicateForeignRead(resolvedTableNameExpr);
         }
-        if (resolvedTableNameExpr == null || resolvedTableNameExpr.type != ExpressionNode.LITERAL) {
-            return;
-        }
-        if (cairoEngine.getMetadataCache().mayHaveExpiryPolicy()) {
-            // Normalise to the unquoted name so the recursion guard matches regardless of quoting:
-            // the outer reference may be "from t" while the synthetic inner is "from \"t\"".
-            final CharSequence unquotedName = expiryLookupName(resolvedTableNameExpr.token);
-            // Guard against the synthetic inner "SELECT * FROM t" re-expanding (infinite recursion).
-            if (!expiringTablesBeingExpanded.contains(unquotedName)) {
-                final TableToken tt = cairoEngine.getTableTokenIfExists(unquotedName);
-                final String predicate;
-                if (tt != null && !tt.isView()) {
-                    final ExpiryReadPolicy expiryReadPolicy = getExpiryReadPolicyFor(tt);
-                    if (expiryReadPolicy != ExpiryReadPolicy.RAW
-                            && cairoEngine.getMetadataCache().mayTableHaveExpiryPolicy(tt)
-                            && (predicate = lookupExpiryPredicate(tt, expiryReadPolicy)) != null) {
-                        if (expiryReadPolicy == ExpiryReadPolicy.REJECT) {
-                            final CharSequence dependentName = expiryFilterExecutionContext.getExpiryMaterializingViewName();
-                            assert dependentName != null;
-                            throw SqlException.materializationExpiryConflict(
-                                    resolvedTableNameExpr.position,
-                                    dependentName,
-                                    tt.getTableName()
-                            );
-                        }
-                        final CharSequence designatedTimestampColumn = expiryTimestampColumnName;
-                        final int position = resolvedTableNameExpr.position;
-                        model.setTableNameExpr(null);
-                        model.setExpiryViewNameExpr(literal(tt.getTableName(), position));
-                        model.setExpiryStructuralPolicy(RowExpiryUtil.isStructuralPolicy(predicate));
-                        // The set stores references, not copies, and unquote() of a quoted token yields a
-                        // view over the (transient) lexer buffer; store a stable String, like
-                        // viewsBeingCompiled does, so the key survives the nested parse.
-                        final String guardKey = Chars.toString(unquotedName);
-                        expiringTablesBeingExpanded.add(guardKey);
-                        try {
-                            expandExpiringTable(model, guardKey, predicate, designatedTimestampColumn, position, sqlParserCallback);
-                        } finally {
-                            expiringTablesBeingExpanded.remove(guardKey);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // The read-filter decision for one resolved table: the context's per-table refinement when a
-    // context is present (the mat-view refresh context keeps the filter on every table except the
-    // base), the parse-global flag otherwise.
-    private ExpiryReadPolicy getExpiryReadPolicyFor(TableToken tableToken) {
-        return expiryFilterExecutionContext == null
-                ? rowExpiryReadPolicy
-                : expiryFilterExecutionContext.getExpiryReadPolicy(tableToken);
     }
 
     private int parseSymbolCapacity(GenericLexer lexer) throws SqlException {
@@ -9293,6 +9423,20 @@ public class SqlParser {
             SqlUtil.collectAllTableNames(m, tableNames, null);
             final boolean baseTableQueried = tableNames.contains(baseTableName);
             final int queriedTableCount = tableNames.size();
+            if (m.hasGroupingSets()) {
+                // A SAMPLE BY grouping sets clause has no GROUP keyword, so the error points at
+                // its first key instead, or at the SAMPLE BY interval when the only set is ().
+                final int position;
+                if (m.getGroupByPosition() > 0) {
+                    position = m.getGroupByPosition();
+                } else if (m.getGroupBy().size() > 0) {
+                    position = m.getGroupBy().getQuick(0).position;
+                } else {
+                    position = m.getSampleBy().position;
+                }
+                throw SqlException.position(position)
+                        .put("ROLLUP, CUBE and GROUPING SETS are not supported for materialized views");
+            }
             if (baseTableQueried) {
                 if (m.getSampleBy() != null && m.getSampleByOffset() == null) {
                     throw SqlException.position(m.getSampleBy().position + m.getSampleBy().token.length() + 1)
@@ -9553,13 +9697,6 @@ public class SqlParser {
         aliasSequenceMap.clear();
         pivotAliasMap.clear();
         clearRecordedViews();
-        // Hygiene: parse() always re-derives these from the execution context, but reset them here too so a
-        // reused parser never carries a stale row-expiry gate/timestamp between compilations.
-        rowExpiryReadPolicy = ExpiryReadPolicy.FILTER;
-        expiryFilterExecutionContext = null;
-        expiryPolicyTable = null;
-        expiryTimestampColumnName = null;
-        pendingExpiryReadVersions.clear();
         securityContext = null;
     }
 
@@ -9599,6 +9736,39 @@ public class SqlParser {
         return expr(lexer, model, sqlParserCallback, null, null);
     }
 
+    /**
+     * Parses an expression of a stored EXPIRE ROWS policy for the read that binding applies it to. No declaration is in
+     * scope: the policy is enforcement text DDL validated on its own terms, while a column name may legally start with
+     * {@code '@'}, so a declared name matching one would substitute a reader-supplied expression into the filter.
+     */
+    ExpressionNode parseExpiryExpression(CharSequence text, SqlParserCallback sqlParserCallback) throws SqlException {
+        final GenericLexer expiryLexer = viewLexers.next();
+        expiryLexer.of(text);
+        return expr(expiryLexer, (QueryModel) null, sqlParserCallback);
+    }
+
+    /**
+     * Parses the {@code <timestamp> PARTITION BY <columns>} of a stored KEEP LATEST policy into a model of its own.
+     */
+    QueryModel parseExpiryLatestBy(CharSequence text, int position) throws SqlException {
+        final GenericLexer expiryLexer = viewLexers.next();
+        expiryLexer.of(text);
+        final QueryModel model = queryModelPool.next();
+        model.setModelPosition(position);
+        parseLatestByNew(expiryLexer, model);
+        return model;
+    }
+
+    /**
+     * Parses a query binding composes for a stored window policy, with no declaration in scope, see
+     * {@link #parseExpiryExpression}.
+     */
+    QueryModel parseExpiryQuery(CharSequence text, SqlParserCallback sqlParserCallback) throws SqlException {
+        final GenericLexer expiryLexer = viewLexers.next();
+        expiryLexer.of(text);
+        return parseAsSubQuery(expiryLexer, null, false, sqlParserCallback, null, true);
+    }
+
     // test only
     @TestOnly
     void expr(GenericLexer lexer, ExpressionParserListener listener, SqlParserCallback sqlParserCallback) throws SqlException {
@@ -9627,10 +9797,6 @@ public class SqlParser {
     @TestOnly
     int getWithClausesCopyPoolCapacity() {
         return withClausesCopyPool.getCapacity();
-    }
-
-    IntLongHashMap getPendingExpiryReadVersions() {
-        return pendingExpiryReadVersions;
     }
 
     /**

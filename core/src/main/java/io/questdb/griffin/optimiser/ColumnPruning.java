@@ -115,6 +115,13 @@ final class ColumnPruning implements OptimiserPass {
         this.tmpSchema = tmpSchema;
     }
 
+    /**
+     * True when the plan passes the rows of its input through, or a subset of them, with the columns of its input.
+     */
+    private static boolean isRowSelection(LogicalPlan plan) {
+        return plan instanceof FilterPlan || plan instanceof SortPlan || plan instanceof LimitPlan || plan instanceof LatestByPlan;
+    }
+
     @Override
     public LogicalPlan apply(LogicalPlan plan) throws SqlException {
         prune(plan);
@@ -139,8 +146,7 @@ final class ColumnPruning implements OptimiserPass {
         final LogicalPlan top = windowJoin != null ? windowJoin.getMaster() : project.getChild();
         LogicalPlan input = top;
         boolean hasWindow = false;
-        while (input instanceof FilterPlan || input instanceof SortPlan || input instanceof LimitPlan
-                || input instanceof LatestByPlan || input instanceof WindowPlan) {
+        while (isRowSelection(input) || input instanceof WindowPlan) {
             hasWindow |= input instanceof WindowPlan;
             input = input.inputAt(0);
         }
@@ -202,8 +208,7 @@ final class ColumnPruning implements OptimiserPass {
     private void alignLatestByInput(ProjectPlan project) {
         LogicalPlan input = project.getChild();
         boolean hasLatestBy = false;
-        while (input instanceof FilterPlan || input instanceof SortPlan || input instanceof LimitPlan || input instanceof LatestByPlan
-                || input instanceof ProjectPlan inner && LogicalPlans.isColumnProjection(inner)) {
+        while (isRowSelection(input) || input instanceof ProjectPlan inner && LogicalPlans.isColumnProjection(inner)) {
             hasLatestBy |= input instanceof LatestByPlan;
             input = input.inputAt(0);
         }
@@ -241,12 +246,12 @@ final class ColumnPruning implements OptimiserPass {
     private boolean isColumnPermutation(ProjectPlan project) {
         final OutputSchema input = project.getChild().getOutput();
         final int count = project.getExpressions().size();
-        if (count != input.getColumnCount() || !LogicalPlans.isColumnProjection(project)
-                || LogicalPlans.hasRepeatedColumn(project, retainedProjectOutputIds)) {
+        if (count != input.getColumnCount() || !LogicalPlans.isColumnProjection(project)) {
             return false;
         }
         for (int i = 0; i < count; i++) {
-            if (input.getColumnIndexById(((ColumnExpression) project.getExpressions().getQuick(i)).getColumnId()) < 0) {
+            final int columnId = ((ColumnExpression) project.getExpressions().getQuick(i)).getColumnId();
+            if (input.getColumnIndexById(columnId) < 0 || LogicalPlans.isColumnSelectedBefore(project, i, columnId)) {
                 return false;
             }
         }
@@ -274,7 +279,7 @@ final class ColumnPruning implements OptimiserPass {
 
     private void permuteColumnsBelow(ProjectPlan project) {
         LogicalPlan input = project.getChild();
-        while (input instanceof FilterPlan || input instanceof SortPlan || input instanceof LimitPlan || input instanceof LatestByPlan) {
+        while (isRowSelection(input)) {
             input = input.inputAt(0);
         }
         if (input instanceof ProjectPlan inner) {

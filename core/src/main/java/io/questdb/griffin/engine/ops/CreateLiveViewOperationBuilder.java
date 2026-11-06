@@ -45,5 +45,7 @@ public interface CreateLiveViewOperationBuilder extends ExecutionModel {
         return CREATE_LIVE_VIEW;
     }
 
+    CharSequence getViewName();
+
     void setSelectModel(QueryModel selectModel);
 }

@@ -199,7 +199,7 @@ public final class PlanToFactoryRules {
      */
     public static boolean hasVectorShape(AggregatePlan plan) {
         final ObjList<BoundExpression> keys = plan.getGroupingExpressions();
-        if (keys.size() != 1 || vectorKey(keys.getQuick(0)) == null) {
+        if (keys.size() != 1 || plan.hasGroupingSets() || vectorKey(keys.getQuick(0)) == null) {
             return false;
         }
         for (int i = 0, n = plan.getAggregates().size(); i < n; i++) {
@@ -503,7 +503,8 @@ public final class PlanToFactoryRules {
      * BY into; null otherwise.
      */
     public static ScanPlan latestByScan(LatestByPlan latest) {
-        return LogicalPlans.scanThroughFilter(latest.getChild());
+        final ScanPlan scan = LogicalPlans.scanThroughFilter(latest.getChild());
+        return scan != null && scan.getNativeTimestampColumnId() == latest.getTimestampColumnId() ? scan : null;
     }
 
     /**

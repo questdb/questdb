@@ -52,7 +52,9 @@ import io.questdb.griffin.engine.groupby.CountRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.DistinctRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.DistinctTimeSeriesRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.GroupByNotKeyedRecordCursorFactory;
+import io.questdb.griffin.engine.functions.groupby.GroupingFunction;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
+import io.questdb.griffin.engine.groupby.GroupingSetsRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.TimestampEndpointRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.vect.CountVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.GroupByRecordCursorFactory;
@@ -62,6 +64,7 @@ import io.questdb.griffin.engine.join.JoinRecordMetadata;
 import io.questdb.griffin.engine.table.AsyncFilterResources;
 import io.questdb.griffin.engine.table.AsyncGroupByNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncGroupingSetsRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinProjectionRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinRecordCursorFactory;
@@ -164,7 +167,7 @@ public final class AggregateFactoryGenerator {
         final ObjList<BoundExpression> keys = plan.getGroupingExpressions();
         for (int i = 0, n = keys.size(); i < n; i++) {
             final BoundExpression key = keys.getQuick(i);
-            if (!(key instanceof ColumnExpression)) {
+            if (!LogicalPlans.isColumnKey(plan, key)) {
                 final Function function = instantiator.instantiate(key, input, inputMetadata, executionContext);
                 keyFunctions.add(function);
                 final int slot = valueTypes.getColumnCount() + keyTypes.getColumnCount() + 1;
@@ -259,6 +262,19 @@ public final class AggregateFactoryGenerator {
         }
     }
 
+    private static void setGroupingArgumentKeys(AggregatePlan plan, ObjList<GroupByFunction> functions) {
+        final ObjList<FunctionExpression> calls = plan.getAggregates();
+        for (int i = 0, n = calls.size(); i < n; i++) {
+            final FunctionExpression call = calls.getQuick(i);
+            if (LogicalPlans.isGroupingCall(call)) {
+                final GroupingFunction function = (GroupingFunction) functions.getQuick(i);
+                for (int a = 0, m = call.getArgumentCount(); a < m; a++) {
+                    function.setArgKeyPosition(a, LogicalPlans.groupingArgumentKeyIndex(plan, call.argumentAt(a)));
+                }
+            }
+        }
+    }
+
     private static ObjList<ObjList<Function>> workerKeys(
             GenerationFrame frame,
             AggregatePlan plan,
@@ -271,7 +287,7 @@ public final class AggregateFactoryGenerator {
         final ObjList<BoundExpression> functionKeys = frame.expressions;
         functionKeys.clear();
         for (int i = 0, n = keys.size(); i < n; i++) {
-            if (!(keys.getQuick(i) instanceof ColumnExpression)) {
+            if (!LogicalPlans.isColumnKey(plan, keys.getQuick(i))) {
                 functionKeys.add(keys.getQuick(i));
             }
         }
@@ -326,6 +342,10 @@ public final class AggregateFactoryGenerator {
             }
             final AsyncFilterResources filterResources = filter != null ? filter.adopt() : new AsyncFilterResources();
             isAdopted = true;
+            if (plan.hasGroupingSets()) {
+                return generateGroupingSets(plan, base, metadata, columnFilter, keyTypes, valueTypes, aggregates, workerAggregates,
+                        keyFunctions, workerKeys, recordFunctions, filterResources, isParallel, executionContext);
+            }
             return generateGroupBy(
                     base, metadata, columnFilter, keyTypes, valueTypes, aggregates, workerAggregates,
                     keyFunctions, workerKeys, recordFunctions, filterResources, sharedRecordFunctions, isParallel, executionContext
@@ -345,6 +365,50 @@ public final class AggregateFactoryGenerator {
             }
             throw th;
         }
+    }
+
+    /**
+     * Builds the GROUP BY over the grouping sets of the plan, which owns its arguments even when construction fails. The
+     * map nulls a key the set rolls up by the column the key reads, and a computed key is in every set.
+     */
+    private RecordCursorFactory generateGroupingSets(
+            AggregatePlan plan,
+            RecordCursorFactory base,
+            RecordMetadata metadata,
+            ListColumnFilter columnFilter,
+            ArrayColumnTypes keyTypes,
+            ArrayColumnTypes valueTypes,
+            ObjList<GroupByFunction> aggregates,
+            @Nullable ObjList<ObjList<GroupByFunction>> workerAggregates,
+            ObjList<Function> keyFunctions,
+            @Nullable ObjList<ObjList<Function>> workerKeys,
+            ObjList<Function> recordFunctions,
+            AsyncFilterResources filterResources,
+            boolean isParallel,
+            SqlExecutionContext executionContext
+    ) {
+        final OutputSchema input = plan.getChild().getOutput();
+        final ObjList<BoundExpression> keys = plan.getGroupingExpressions();
+        final IntList keyColumnIndices = new IntList(keys.size());
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            final BoundExpression key = keys.getQuick(i);
+            keyColumnIndices.add(LogicalPlans.isColumnKey(plan, key) ? input.getColumnIndexById(((ColumnExpression) key).getColumnId()) : -1);
+        }
+        setGroupingArgumentKeys(plan, aggregates);
+        if (workerAggregates != null) {
+            for (int i = 0, n = workerAggregates.size(); i < n; i++) {
+                setGroupingArgumentKeys(plan, workerAggregates.getQuick(i));
+            }
+        }
+        if (isParallel) {
+            return new AsyncGroupingSetsRecordCursorFactory(
+                    executionContext.getCairoEngine(), asm, configuration, executionContext.getMessageBus(), base, metadata,
+                    columnFilter, keyTypes, valueTypes, aggregates, workerAggregates, keyFunctions, workerKeys, recordFunctions,
+                    filterResources, plan.getGroupingSets(), keyColumnIndices, executionContext.getSharedQueryWorkerCount()
+            );
+        }
+        return new GroupingSetsRecordCursorFactory(asm, configuration, base, columnFilter, keyTypes, valueTypes, metadata, aggregates,
+                keyFunctions, recordFunctions, plan.getGroupingSets(), keyColumnIndices);
     }
 
     /**
@@ -578,7 +642,8 @@ public final class AggregateFactoryGenerator {
         // map those physical key slots back to the logical key order.
         int lastIndex = -1;
         for (int i = 0, n = keys.size(); i < n; i++) {
-            if (keys.getQuick(i) instanceof ColumnExpression column && column.getColumnId() != bucketColumnId) {
+            if (LogicalPlans.isColumnKey(plan, keys.getQuick(i)) && keys.getQuick(i) instanceof ColumnExpression column
+                    && column.getColumnId() != bucketColumnId) {
                 final int index = input.getColumnIndexById(column.getColumnId());
                 // The map stores a column repeated consecutively as one key.
                 if (index != lastIndex) {

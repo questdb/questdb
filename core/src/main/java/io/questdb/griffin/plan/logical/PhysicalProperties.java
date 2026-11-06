@@ -324,7 +324,7 @@ public final class PhysicalProperties {
     }
 
     private static int aggregate(AggregatePlan aggregate) {
-        final Capability isKeyed = Capability.of(aggregate.getGroupingExpressions().size() > 0);
+        final Capability isKeyed = Capability.of(aggregate.getGroupingExpressions().size() > 0 && !aggregate.hasGroupingSets());
         final PlanToFactoryRules.AggregateFactory factory = PlanToFactoryRules.aggregateFactory(aggregate);
         if (factory == PlanToFactoryRules.AggregateFactory.HORIZON) {
             return computed(isKeyed, ScanDirection.FORWARD, capability(derive(((HorizonJoinPlan) aggregate.getChild()).getMaster(), null), LONG_SEQUENCE));
@@ -357,10 +357,11 @@ public final class PhysicalProperties {
 
     /**
      * Whether the GROUP BY serves shared cursors: the vectorised and the keyed parallel one always do; the serial and
-     * the keyless parallel one only when other consumers read the aggregate, see {@link AggregatePlan#hasSharedConsumers()}.
+     * the keyless parallel one only when other consumers read the aggregate, see {@link AggregatePlan#hasSharedConsumers()};
+     * the one over grouping sets never does.
      */
     private static Capability aggregateSharedCursors(AggregatePlan aggregate) {
-        if (PlanToFactoryRules.aggregateFactory(aggregate) != PlanToFactoryRules.AggregateFactory.GROUP_BY) {
+        if (PlanToFactoryRules.aggregateFactory(aggregate) != PlanToFactoryRules.AggregateFactory.GROUP_BY || aggregate.hasGroupingSets()) {
             return Capability.NO;
         }
         return switch (aggregate.getAlgorithm()) {
@@ -386,7 +387,7 @@ public final class PhysicalProperties {
         if (factory != PlanToFactoryRules.AggregateFactory.GROUP_BY) {
             return -1;
         }
-        if (aggregate.getAlgorithm() == null && aggregate.getGroupingExpressions().size() == 1
+        if (aggregate.getAlgorithm() == null && aggregate.getGroupingExpressions().size() == 1 && !aggregate.hasGroupingSets()
                 && capability(derive(aggregate.getChild(), null), PAGE_FRAMES) != Capability.NO) {
             return UNKNOWN_TIMESTAMP;
         }
@@ -407,7 +408,8 @@ public final class PhysicalProperties {
         return switch (plan) {
             case FilterPlan filter -> filter.getChild();
             case ProjectPlan project -> project.getChild();
-            case AggregatePlan aggregate -> aggregate.getGroupingExpressions().size() > 0 ? aggregate.getChild() : null;
+            case AggregatePlan aggregate ->
+                    aggregate.getGroupingExpressions().size() > 0 && !aggregate.hasGroupingSets() ? aggregate.getChild() : null;
             case DistinctPlan distinct -> distinct.getChild();
             case SortPlan sort -> sort.getChild();
             case WindowPlan window -> window.getChild();
@@ -1053,7 +1055,7 @@ public final class PhysicalProperties {
             case AggregatePlan aggregate -> {
                 if (PlanToFactoryRules.aggregateFactory(aggregate) != PlanToFactoryRules.AggregateFactory.GROUP_BY
                         || aggregate.getAlgorithm() == AggregatePlan.Algorithm.HASH_JOIN
-                        || aggregate.getGroupingExpressions().size() == 0) {
+                        || aggregate.getGroupingExpressions().size() == 0 || aggregate.hasGroupingSets()) {
                     yield Capability.NO;
                 }
                 final int type = aggregate.getOutput().getColumnType(columnIndex);

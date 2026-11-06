@@ -63,7 +63,6 @@ import io.questdb.std.Chars;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
-import io.questdb.std.IntLongHashMap;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.Mutable;
@@ -88,9 +87,6 @@ final class BindContext implements Mutable {
     // that it reads as a call. clear() leaves the sink as it is: the caller that arms it disarms it.
     ObjList<String> bareNoArgCallNames;
     IntList bareNoArgCallPositions;
-    // Shared with the parser: for each table, the metadata version it read an EXPIRE ROWS policy at while a policy
-    // change was in flight, see checkExpiryReadVersion().
-    IntLongHashMap pendingExpiryReadVersions;
     // The models binding now that a regular view inlined into the query, see promoteNoArgFunctions().
     int viewTextDepth;
     final FunctionInstantiator functionInstantiator;
@@ -167,6 +163,35 @@ final class BindContext implements Mutable {
 
     static ObjList<ExpressionNode> blockGroupBy(QueryModel model, QueryModel source) {
         return source.getGroupBy().size() > 0 && !source.isPivot() ? source.getGroupBy() : model.getGroupBy();
+    }
+
+    /**
+     * The position of the GROUP BY keyword of the query block, 0 without one: the grouping sets of a SAMPLE BY have none.
+     */
+    static int blockGroupByPosition(QueryModel model, QueryModel source) {
+        return source.getGroupByPosition() > 0 && !source.isPivot() ? source.getGroupByPosition() : model.getGroupByPosition();
+    }
+
+    /**
+     * The grouping sets of the query block, as the parser lists them over {@link #blockGroupBy}, null without any.
+     */
+    static ObjList<IntList> blockGroupingSets(QueryModel model, QueryModel source) {
+        return source.hasGroupingSets() && !source.isPivot() ? source.getGroupingSets() : model.getGroupingSets();
+    }
+
+    static SqlException groupingCallOutsideGroupingSets(ExpressionNode call) {
+        return SqlException.$(call.position, "GROUPING() / GROUPING_ID() can only be used with GROUPING SETS, ROLLUP, or CUBE");
+    }
+
+    /**
+     * True when the query block states its grouping: GROUP BY keys, or grouping sets, of which {@code ()} has no key.
+     */
+    static boolean hasBlockGrouping(QueryModel model, QueryModel source) {
+        return blockGroupBy(model, source).size() > 0 || blockGroupingSets(model, source) != null;
+    }
+
+    static boolean isGroupingCall(ExpressionNode node) {
+        return node.type == ExpressionNode.FUNCTION && (SqlKeywords.isGroupingKeyword(node.token) || SqlKeywords.isGroupingIdKeyword(node.token));
     }
 
     /**
@@ -432,7 +457,7 @@ final class BindContext implements Mutable {
      * Whether the block aggregates: it groups, or a selected or ORDER BY expression holds an aggregate.
      */
     boolean hasAggregation(QueryModel model, QueryModel source) {
-        if (blockGroupBy(model, source).size() > 0) {
+        if (hasBlockGrouping(model, source)) {
             return true;
         }
         for (int i = 0, n = model.getColumns().size(); i < n; i++) {
@@ -467,6 +492,7 @@ final class BindContext implements Mutable {
             project.getExpressions().add(planNodes.columns.next().of(output.getColumnId(i), output.getColumnType(i), position));
         }
         project.getOutput().copyFrom(output);
+        project.markImplied();
         return project;
     }
 
@@ -498,20 +524,6 @@ final class BindContext implements Mutable {
             throw new IllegalStateException("bound root has no prepared function");
         }
         return preparedFunctions.root(entry);
-    }
-
-    /**
-     * The metadata version the parser read an EXPIRE ROWS policy of the table at, while a policy change was in flight,
-     * must be the version binding reads: the policy epoch can read the same value before and after the change, while
-     * the metadata version cannot. A table it moved past has a stale keep-filter, so the statement parses again.
-     */
-    void checkExpiryReadVersion(int tableId, long metadataVersion) {
-        if (pendingExpiryReadVersions != null && pendingExpiryReadVersions.size() > 0) {
-            final long parsedMetadataVersion = pendingExpiryReadVersions.get(tableId);
-            if (parsedMetadataVersion != -1 && parsedMetadataVersion != metadataVersion) {
-                throw ExpiryPolicyVersionChangedException.INSTANCE;
-            }
-        }
     }
 
     /**

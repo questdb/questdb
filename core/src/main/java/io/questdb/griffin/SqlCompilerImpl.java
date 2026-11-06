@@ -41,6 +41,7 @@ import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.IndexBuilder;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.ListColumnFilter;
+import io.questdb.cairo.MetadataCache;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.OperationCodes;
 import io.questdb.cairo.PartitionBy;
@@ -349,9 +350,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             // for COMPILE VIEW, what we care about is validating view dependencies
             compileViewContext = new ViewCompilerExecutionContext(engine, 1);
             binder = newBinder(functionParser, scopes, expressionRewriter, functionInstantiator);
-            // The same map the parser fills in, so that binding rejects a statement whose EXPIRE ROWS keep-filter
-            // comes from a metadata version the table has moved past.
-            binder.setPendingExpiryReadVersions(parser.getPendingExpiryReadVersions());
             optimiser = new SqlOptimiser(configuration, characterStore, engine.getFunctionFactoryCache(), planNodePools, temporaries,
                     planReadIds, expressionRewriter, binder.getCallBinder(), functionInstantiator, functionSources, planTables);
         } catch (Throwable th) {
@@ -949,6 +947,18 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     @TestOnly
     public SqlBinder newStandaloneBinder(FunctionParser parser) {
         return newBinder(parser, new BindScopeStack(), newExpressionRewriter(parser), newFunctionInstantiator(parser));
+    }
+
+    public ExpressionNode parseExpiryExpression(CharSequence text, SqlParserCallback parserCallback) throws SqlException {
+        return parser.parseExpiryExpression(text, parserCallback);
+    }
+
+    public QueryModel parseExpiryLatestBy(CharSequence text, int position) throws SqlException {
+        return parser.parseExpiryLatestBy(text, position);
+    }
+
+    public QueryModel parseExpiryQuery(CharSequence text, SqlParserCallback parserCallback) throws SqlException {
+        return parser.parseExpiryQuery(text, parserCallback);
     }
 
     @Override
@@ -4584,7 +4594,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             boolean generateCompileViewEvents,
             @Nullable LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> viewDependencies
     ) throws SqlException {
-        // Re-parse and re-bind here when a racing EXPIRE ROWS change invalidates the parser's policy
+        // Re-parse and re-bind here when a racing EXPIRE ROWS change invalidates the binder's policy
         // decision. Ordinary compilation owns this retry. Materializing compilation entered in REJECT mode
         // propagates the signal to its outer CREATE or refresh guard so one event cannot consume two budgets.
         // Bounded so a burst of policy changes cannot loop forever.
@@ -4726,7 +4736,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 executionContext.getSecurityContext().authorizeMatViewCreate();
                 final CreateMatViewOperationBuilder createMatViewBuilder = (CreateMatViewOperationBuilder) model;
                 if (createMatViewBuilder.getQueryModel() != null) {
-                    compileQuery(createMatViewBuilder.getQueryModel(), executionContext);
+                    compileMaterializedQuery(createMatViewBuilder.getQueryModel(), createMatViewBuilder.getTableName(), executionContext);
                 }
                 return;
             case ExecutionModel.CREATE_LIVE_VIEW:
@@ -4740,7 +4750,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 if (createLiveViewBuilder.getQueryModel() != null) {
                     executionContext.setLiveViewCompile(true);
                     try {
-                        compileQuery(createLiveViewBuilder.getQueryModel(), executionContext);
+                        compileMaterializedQuery(createLiveViewBuilder.getQueryModel(), createLiveViewBuilder.getViewName(), executionContext);
                     } finally {
                         executionContext.setLiveViewCompile(false);
                     }
@@ -4748,6 +4758,35 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 return;
         }
         compileExecutionModel0(executionContext, model);
+    }
+
+    /**
+     * A live view cannot read a base under an EXPIRE ROWS policy, whichever spelling names the base. Creating the view
+     * compiles its query on its own, which reports a read of the base at the position of that text, so this reports it
+     * at the position of the statement first.
+     */
+    private void rejectExpiringLiveViewBase(CreateLiveViewOperation op, SqlExecutionContext executionContext) throws SqlException {
+        final CharSequence baseName = op.getBaseTableName();
+        final TableToken base = executionContext.getVisibleTableTokenIfExists(
+                Chars.startsWith(baseName, QueryModel.NO_ROWID_MARKER) ? baseName.subSequence(QueryModel.NO_ROWID_MARKER.length(), baseName.length()) : baseName);
+        final MetadataCache metadataCache = engine.getMetadataCache();
+        if (base != null && metadataCache.mayTableHaveExpiryPolicy(base) && metadataCache.lookupExpiryPolicy(base).getPredicate() != null) {
+            throw SqlException.materializationExpiryConflict(op.getBaseTableNamePosition(), op.getViewName(), base.getTableName());
+        }
+    }
+
+    /**
+     * Binds the query of a materialized or live view, which cannot read a source under an EXPIRE ROWS policy.
+     */
+    private void compileMaterializedQuery(QueryModel queryModel, CharSequence viewName, SqlExecutionContext executionContext) throws SqlException {
+        final ExpiryReadPolicy previousExpiryReadPolicy = executionContext.getExpiryReadPolicy();
+        final CharSequence previousMaterializingViewName = executionContext.getExpiryMaterializingViewName();
+        executionContext.setExpiryReadPolicy(ExpiryReadPolicy.REJECT, viewName);
+        try {
+            compileQuery(queryModel, executionContext);
+        } finally {
+            executionContext.setExpiryReadPolicy(previousExpiryReadPolicy, previousMaterializingViewName);
+        }
     }
 
     private RecordCursorFactory compileExplainWithExpiryPolicyRetries(
@@ -6072,6 +6111,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
             // validate base table exists and is WAL; a base table the principal may not see fails like a
             // missing one, before the checks below can disclose what kind of object it is
+            rejectExpiringLiveViewBase(op, executionContext);
             final TableToken baseTableToken = executionContext.getVisibleTableTokenIfExists(op.getBaseTableName());
             if (baseTableToken == null) {
                 throw SqlException.$(op.getBaseTableNamePosition(), "base table does not exist [name=").put(op.getBaseTableName()).put(']');
@@ -7881,7 +7921,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     /**
      * Compiles (and opens) the query a read of a policied object runs for a structural policy, spelled the
-     * way {@link SqlParser} rewrites a reference to the view: a {@code LATEST ON} sub-query for KEEP LATEST,
+     * way {@code ExpiryReadBinder} binds a read of the view: a {@code LATEST ON} sub-query for KEEP LATEST,
      * a projection-CASE keep query for KEEP HIGHEST/LOWEST and window WHEN. Any compile or bind error - an
      * unknown column, a key type or spelling the rewrite cannot use, window syntax - surfaces as a clear
      * "invalid EXPIRE ROWS policy".
@@ -7903,9 +7943,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      * columns, so a caller who can read the view through a policy can also set it. At ALTER the probe reads
      * the view without its current policy (see {@link #validateAlterRelativePolicy}), so replacing a policy
      * asks for SELECT on the new policy's columns and not on the replaced policy's. ALTER needs the narrow
-     * projection, because it probes the existing view under the caller's column grants. CREATE selects every
-     * column: it probes the view's defining SELECT, whose columns CREATE requires anyway, and a narrow
-     * projection would let the optimiser drop columns inside that query too.
+     * projection, because it probes the existing view under the caller's column grants, and the binder asks for
+     * SELECT on every column a query level states. CREATE selects every column: it probes the view's defining
+     * SELECT, whose columns CREATE requires anyway, and a narrow projection would let the optimiser drop columns
+     * inside that query too.
      * <p>
      * A narrow probe does not carry the view's other columns through {@code LATEST ON} or the keep
      * projection. {@code RowExpiryPolicyAcceptanceTest} covers that: it sets each policy of its matrix
@@ -7922,12 +7963,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final String sql;
         if (RowExpiryUtil.isKeepLatest(predicate)) {
             final CharSequence keys = RowExpiryUtil.keepLatestKeys(predicate);
-            sql = "SELECT " + (isNarrowProjection ? keys : "*") + " FROM (SELECT * FROM " + source + " LATEST ON "
+            final CharSequence selection = isNarrowProjection ? keys : "*";
+            sql = "SELECT " + selection + " FROM (SELECT " + selection + " FROM " + source + " LATEST ON "
                     + RowExpiryUtil.quoteIdentifier(designatedTs) + " PARTITION BY " + keys + ") LIMIT 0";
         } else {
             final String windowPred = RowExpiryUtil.windowPredicate(predicate, designatedTs);
-            sql = "SELECT " + (isNarrowProjection ? RowExpiryUtil.KEEP_COLUMN : "*") + " FROM (SELECT *, CASE WHEN ("
-                    + windowPred + ") THEN false ELSE true END " + RowExpiryUtil.KEEP_COLUMN + " FROM " + source
+            sql = "SELECT " + (isNarrowProjection ? RowExpiryUtil.KEEP_COLUMN : "*") + " FROM (SELECT " + (isNarrowProjection ? "" : "*, ")
+                    + "CASE WHEN (" + windowPred + ") THEN false ELSE true END " + RowExpiryUtil.KEEP_COLUMN + " FROM " + source
                     + ") WHERE " + RowExpiryUtil.KEEP_COLUMN + " LIMIT 0";
         }
         try (SqlCompiler compiler = engine.getSqlCompiler()) {

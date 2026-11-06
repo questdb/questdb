@@ -115,7 +115,7 @@ public final class ProjectPlan extends UnaryPlan {
 
     /**
      * True when the query text names none of the projection's columns: it stands for a bare table name, which SQL
-     * reads as the table rather than as {@code SELECT *}.
+     * reads as the table rather than as {@code SELECT *}, or the binder adds it over its input.
      */
     public boolean isImplied() {
         return isImplied;

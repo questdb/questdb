@@ -177,7 +177,7 @@ public final class RowExpiryUtil {
      * <p>
      * The cleanup sweep runs this text. DDL validation binds {@link #buildStrictBindKeepFilter} instead,
      * whose {@code switch} is stricter about operand types, so every policy it accepts also binds here.
-     * Reads express the same keep set as {@code NOT (<predicate>)} ({@code SqlParser.keepFilterWhereText}),
+     * Reads express the same keep set as {@code NOT (<predicate>)} ({@code ExpiryReadBinder.keepFilterText}),
      * which the JIT compiler can turn into machine code where a {@code CASE} cannot. Both spellings mean
      * "the predicate is not TRUE" and keep exactly the same rows, including rows whose operand is NULL;
      * {@code RowExpiryFuzzTest} checks the sweep against the read for randomised data, which is what holds
@@ -187,7 +187,7 @@ public final class RowExpiryUtil {
      * A NULL operand follows QuestDB's two-valued comparison semantics: {@code v < 2.0} is FALSE for a
      * NULL {@code v} and keeps the row, while {@code NOT (v >= 2.0)}, {@code v != 2.0} and
      * {@code v IS NULL} are TRUE for it, so this sweep deletes it. Spellings that read as the same rule
-     * can thus differ on NULL rows; see {@code SqlParser.keepFilterWhereText} for the full account.
+     * can thus differ on NULL rows; see {@code ExpiryReadBinder.keepFilterText} for the full account.
      */
     public static String buildRowExpiryKeepFilter(String predicate) {
         return "CASE WHEN ((" + predicate.trim() + ") AND true) THEN false ELSE true END";

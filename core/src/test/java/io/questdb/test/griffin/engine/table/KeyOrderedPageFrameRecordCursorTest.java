@@ -44,6 +44,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
 import io.questdb.griffin.engine.table.AbstractPageFrameRecordCursor;
+import io.questdb.griffin.engine.table.KeyOrderedDecodeModel;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorImpl;
 import io.questdb.griffin.engine.window.CachedWindowLightRecordCursorFactory;
 import io.questdb.std.LongList;
@@ -66,6 +67,44 @@ public class KeyOrderedPageFrameRecordCursorTest extends AbstractCairoTest {
     // one-byte payloads, then wider ones in steps, the last far wider than the windows of the steps before it expect
     private static final String STAIRCASE_PAYLOAD = """
             CASE WHEN x <= 200 THEN 'a' WHEN x <= 4_700 THEN rpad('w', 46, 'w') WHEN x <= 7_400 THEN rpad('w', 88, 'w') ELSE rpad('w', 1_024, 'w') END""";
+
+    @Test
+    public void testDecodeModelCountsDecodesOfCacheAndWindows() throws Exception {
+        assertMemoryLeak(() -> {
+            try (KeyOrderedDecodeModel model = new KeyOrderedDecodeModel()) {
+                // frames 0, 1 and 2 decode, 0 stays cached, and 2 evicts 1, 1 evicts 0, 0 evicts 1 again
+                model.of(4, 2);
+                for (int frame : new int[]{0, 1, 0, 0, 2, 1, 2, 0}) {
+                    model.moveTo(frame);
+                }
+                Assert.assertEquals(5, model.getDirectDecodes());
+
+                // a cache of one page frame keeps only the last one
+                model.of(2, 1);
+                for (int frame : new int[]{0, 0, 1, 0}) {
+                    model.moveTo(frame);
+                }
+                Assert.assertEquals(3, model.getDirectDecodes());
+
+                // a hit in the middle of the cache moves the page frame last, so the head goes first
+                model.of(4, 3);
+                for (int frame : new int[]{0, 1, 2, 1, 3, 0, 1}) {
+                    model.moveTo(frame);
+                }
+                Assert.assertEquals(5, model.getDirectDecodes());
+
+                // each page frame decodes once for each window that reads it
+                model.of(2, 2);
+                model.readInWindow(0, 0);
+                model.readInWindow(1, 0);
+                model.readInWindow(0, 0);
+                model.readInWindow(0, 1);
+                model.readInWindow(1, 1);
+                Assert.assertEquals(4, model.getGatherDecodes());
+                Assert.assertEquals(0, model.getDirectDecodes());
+            }
+        });
+    }
 
     @Test
     public void testCachedRowGroupsOfManyKeysGatherInOneWindow() throws Exception {

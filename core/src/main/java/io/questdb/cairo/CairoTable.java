@@ -38,7 +38,6 @@ public class CairoTable implements Sinkable {
     private boolean dedup;
     private long expiryCleanupIntervalMicros;
     private String expiryPredicate;
-    private volatile String expiryQuotedColumnsCsv;
     private boolean hasParquetPartitions;
     private int matViewRefreshLimitHoursOrMonths;
     private int matViewTimerInterval;
@@ -80,7 +79,6 @@ public class CairoTable implements Sinkable {
         expiryPredicate = fromTab.getExpiryPredicate();
         expiryCleanupIntervalMicros = fromTab.getExpiryCleanupIntervalMicros();
         // A rename changes neither the predicate nor the columns, so the memoized derivations stay valid.
-        expiryQuotedColumnsCsv = fromTab.expiryQuotedColumnsCsv;
         tableFormat = fromTab.getTableFormat();
         softLink = fromTab.isSoftLink();
         dedup = fromTab.hasDedup();
@@ -122,10 +120,6 @@ public class CairoTable implements Sinkable {
 
     public String getExpiryPredicate() {
         return expiryPredicate;
-    }
-
-    public String getExpiryQuotedColumnsCsv() {
-        return expiryQuotedColumnsCsv;
     }
 
     public int getId() {
@@ -229,10 +223,6 @@ public class CairoTable implements Sinkable {
     public void setExpiry(String expiryPredicate, long expiryCleanupIntervalMicros) {
         this.expiryPredicate = expiryPredicate;
         this.expiryCleanupIntervalMicros = expiryCleanupIntervalMicros;
-    }
-
-    public void setExpiryQuotedColumnsCsv(String expiryQuotedColumnsCsv) {
-        this.expiryQuotedColumnsCsv = expiryQuotedColumnsCsv;
     }
 
     public void setHasParquetPartitions(boolean hasParquetPartitions) {

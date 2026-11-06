@@ -147,11 +147,13 @@ public class QueryModel implements Mutable, ExecutionModel, Sinkable {
     // The model the declaration of a declared sub-query parsed: this model itself, or the one it copies.
     private QueryModel declaredQuery;
     private boolean distinct = false;
-    private ExpressionNode expiryViewNameExpr;
     private boolean explicitTimestamp;
     private boolean isCommaJoin;
+    private int groupByPosition;
+    // Each IntList contains indices into groupBy for columns active in that grouping set.
+    // Empty IntList = empty set () = grand total. Null means no GROUPING SETS syntax.
+    private ObjList<IntList> groupingSets;
     private boolean isCteModel;
-    private boolean isExpiryStructuralPolicy;
     private boolean isUpdateModel;
     private ExpressionNode joinCriteria;
     private int joinKeywordPosition;
@@ -241,6 +243,13 @@ public class QueryModel implements Mutable, ExecutionModel, Sinkable {
         groupBy.add(node);
     }
 
+    public void addGroupingSet(IntList columnIndices) {
+        if (groupingSets == null) {
+            groupingSets = new ObjList<>();
+        }
+        groupingSets.add(columnIndices);
+    }
+
     public void addHint(CharSequence key, CharSequence value) {
         hintsMap.put(key, value);
     }
@@ -293,6 +302,8 @@ public class QueryModel implements Mutable, ExecutionModel, Sinkable {
         orderByDirection.clear();
         orderByPosition = 0;
         groupBy.clear();
+        groupByPosition = 0;
+        groupingSets = null;
         whereClause = null;
         nestedModel = null;
         tableNameExpr = null;
@@ -323,8 +334,6 @@ public class QueryModel implements Mutable, ExecutionModel, Sinkable {
         isUpdateModel = false;
         isCommaJoin = false;
         isCteModel = false;
-        isExpiryStructuralPolicy = false;
-        expiryViewNameExpr = null;
         modelType = ExecutionModel.QUERY;
         standaloneUnnest = false;
         unnestColumnAliases.clear();
@@ -427,16 +436,20 @@ public class QueryModel implements Mutable, ExecutionModel, Sinkable {
      * reference into the keep-filter sub-query, so that planning can name the view when the rewritten read cannot
      * serve an operator that needs a plain table. Null for any other model.
      */
-    public ExpressionNode getExpiryViewNameExpr() {
-        return expiryViewNameExpr;
-    }
-
     public ObjList<ExpressionNode> getExpressionModels() {
         return expressionModels;
     }
 
     public ObjList<ExpressionNode> getGroupBy() {
         return groupBy;
+    }
+
+    public int getGroupByPosition() {
+        return groupByPosition;
+    }
+
+    public ObjList<IntList> getGroupingSets() {
+        return groupingSets;
     }
 
     @NotNull
@@ -681,6 +694,10 @@ public class QueryModel implements Mutable, ExecutionModel, Sinkable {
         return timestamp != null && explicitTimestamp;
     }
 
+    public boolean hasGroupingSets() {
+        return groupingSets != null && groupingSets.size() > 0;
+    }
+
     /**
      * A hash of this sub-query that agrees with {@link #isSameSubQuery}: sub-queries that are the same hash equally.
      */
@@ -716,15 +733,6 @@ public class QueryModel implements Mutable, ExecutionModel, Sinkable {
 
     public boolean isExplicitTimestamp() {
         return explicitTimestamp;
-    }
-
-    /**
-     * True on the model that carries {@link #getExpiryViewNameExpr()} when the view's EXPIRE ROWS policy is a KEEP or
-     * window-function policy (see {@code RowExpiryUtil.isStructuralPolicy}). Such a policy decides each row against
-     * the other rows of the view, so its read has no per-row filter that a join could take off and apply on its own.
-     */
-    public boolean isExpiryStructuralPolicy() {
-        return isExpiryStructuralPolicy;
     }
 
     public boolean isNestedModelIsSubQuery() {
@@ -828,16 +836,12 @@ public class QueryModel implements Mutable, ExecutionModel, Sinkable {
         this.explicitTimestamp = explicitTimestamp;
     }
 
-    public void setExpiryStructuralPolicy(boolean isExpiryStructuralPolicy) {
-        this.isExpiryStructuralPolicy = isExpiryStructuralPolicy;
-    }
-
-    public void setExpiryViewNameExpr(ExpressionNode expiryViewNameExpr) {
-        this.expiryViewNameExpr = expiryViewNameExpr;
-    }
-
     public void setIsCommaJoin(boolean isCommaJoin) {
         this.isCommaJoin = isCommaJoin;
+    }
+
+    public void setGroupByPosition(int groupByPosition) {
+        this.groupByPosition = groupByPosition;
     }
 
     public void setIsCteModel(boolean isCteModel) {

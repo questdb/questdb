@@ -348,9 +348,9 @@ final class SampleByFactoryGenerator {
                             + SampleBySortStrategy.toString(sortStrategy));
                 };
                 final boolean isMaterialized = sortStrategy == SampleBySortStrategy.FULL_ENCODED
-                        || sortStrategy == SampleBySortStrategy.FULL_RECORDCHAIN;
+                        || sortStrategy == SampleBySortStrategy.FULL_RECORDCHAIN
+                        || !groupByFactory.recordCursorSupportsRandomAccess();
                 assert !isEncoded || SortKeyEncoder.isSupported(sortMetadata, listColumnFilterA);
-                assert isMaterialized || groupByFactory.recordCursorSupportsRandomAccess();
                 final RecordCursorFactory base = groupByFactory;
                 groupByFactory = null;
                 groupByFactory = sortGenerator.generateSort(sortMetadata, base, listColumnFilterA, null, -1, isEncoded, isMaterialized);
@@ -719,6 +719,10 @@ final class SampleByFactoryGenerator {
                     constants.add(NullConstant.NULL);
                 } else {
                     switch (plan.getModes().getQuick(entry)) {
+                        case KEY -> {
+                            modes.add(SampleByFillRecordCursorFactory.FILL_KEY);
+                            constants.add(NullConstant.NULL);
+                        }
                         case NULL -> {
                             modes.add(SampleByFillRecordCursorFactory.FILL_CONSTANT);
                             constants.add(NullConstant.NULL);

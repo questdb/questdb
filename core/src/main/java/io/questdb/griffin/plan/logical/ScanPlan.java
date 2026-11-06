@@ -64,6 +64,7 @@ public final class ScanPlan extends LogicalPlan {
     private final LongList staticIntervals = new LongList();
     private AccessPath accessPath;
     private int depth;
+    private String expiryPolicy;
     private int hints;
     private int indexColumnId = -1;
     private SortDirection indexDirection = SortDirection.ASCENDING;
@@ -113,6 +114,7 @@ public final class ScanPlan extends LogicalPlan {
         nativeTimestampType = ColumnType.UNDEFINED;
         tableToken = null;
         viewName = null;
+        expiryPolicy = null;
         viewPosition = -1;
         isUpdate = false;
         isSequencedUpdate = false;
@@ -224,6 +226,13 @@ public final class ScanPlan extends LogicalPlan {
         }
         return requestedOrder.isEmpty() || isNativeTimestampOrderRequested()
                 && requestedOrder.getDirections().getQuick(0) == scanDirection ? limitLo : null;
+    }
+
+    /**
+     * The stored EXPIRE ROWS policy that the read of this table applies; null for any other read.
+     */
+    public String getExpiryPolicy() {
+        return expiryPolicy;
     }
 
     public int getHints() {
@@ -634,6 +643,10 @@ public final class ScanPlan extends LogicalPlan {
         excludedKeys.addAll(keys);
     }
 
+    public void setExpiryPolicy(String expiryPolicy) {
+        this.expiryPolicy = expiryPolicy;
+    }
+
     public void setHints(int hints) {
         this.hints = hints;
     }
@@ -763,6 +776,7 @@ public final class ScanPlan extends LogicalPlan {
         visitor.fact("scanDirection", scanDirection);
         visitor.facts("staticIntervals", staticIntervals);
         visitor.fact("tableToken", tableToken);
+        visitor.fact("expiryPolicy", expiryPolicy);
         visitor.fact("viewName", viewName);
         visitor.fact("viewPosition", viewPosition);
     }

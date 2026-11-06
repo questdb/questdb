@@ -27,6 +27,7 @@ package io.questdb.griffin.plan.logical;
 import io.questdb.ParanoiaState;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.griffin.StaticTypeFunction;
+import io.questdb.std.IntList;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjectFactory;
 import io.questdb.std.ObjectPool;
@@ -54,6 +55,7 @@ public final class PlanNodePools implements Mutable {
     public final ObjectPool<FilterPlan> filters;
     public final ObjectPool<FunctionSourcePlan> functionSources;
     public final ObjectPool<FunctionExpression> functions;
+    public final ObjectPool<IntList> groupingSets;
     public final ObjectPool<HashJoinAggregation> hashJoinAggregations;
     public final ObjectPool<HorizonJoinPlan> horizonJoinPlans;
     public final ObjectPool<HorizonJoinSlave> horizonJoinSlaves;
@@ -101,6 +103,7 @@ public final class PlanNodePools implements Mutable {
         this.filters = new ObjectPool<>(FilterPlan.FACTORY, 4, planCapacity);
         this.functionSources = new ObjectPool<>(FunctionSourcePlan.FACTORY, 4, planCapacity);
         this.functions = new ObjectPool<>(FunctionExpression.FACTORY, 16, expressionCapacity);
+        this.groupingSets = new ObjectPool<>(IntList::new, 8, planCapacity);
         this.hashJoinAggregations = new ObjectPool<>(HashJoinAggregation.FACTORY, 2, planCapacity);
         this.horizonJoinPlans = new ObjectPool<>(HorizonJoinPlan.FACTORY, 2, planCapacity);
         this.horizonJoinSlaves = new ObjectPool<>(HorizonJoinSlave.FACTORY, 2, planCapacity);
@@ -137,6 +140,7 @@ public final class PlanNodePools implements Mutable {
         fills.clear();
         filters.clear();
         functionSources.clear();
+        groupingSets.clear();
         hashJoinAggregations.clear();
         horizonJoinPlans.clear();
         horizonJoinSlaves.clear();

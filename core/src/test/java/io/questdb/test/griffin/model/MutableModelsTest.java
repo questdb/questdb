@@ -233,8 +233,6 @@ public class MutableModelsTest {
         model.setWhereClause(newExpressionNode());
         model.addOrderBy(newExpressionNode(), QueryModel.ORDER_DIRECTION_DESCENDING);
         model.addGroupBy(newExpressionNode());
-        model.setExpiryStructuralPolicy(true);
-        model.setExpiryViewNameExpr(newExpressionNode());
         // Setup HorizonJoinContext
         HorizonJoinContext hjc = model.getHorizonJoinContext();
         hjc.setMode(HorizonJoinContext.MODE_RANGE);

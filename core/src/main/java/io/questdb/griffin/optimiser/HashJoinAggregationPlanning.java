@@ -521,7 +521,7 @@ final class HashJoinAggregationPlanning implements Mutable {
      */
     HashJoinAggregation plan(AggregatePlan aggregate) throws SqlException {
         clear();
-        if (aggregate.getSharedSource() != null || aggregate.hasSharedConsumers() || aggregate.getAggregates().size() == 0
+        if (aggregate.getSharedSource() != null || aggregate.hasSharedConsumers() || aggregate.hasGroupingSets() || aggregate.getAggregates().size() == 0
                 || !OperatorPlanning.hasParallelFunctions(aggregate)) {
             return null;
         }

@@ -435,7 +435,7 @@ final class AccessPathPlanning {
      * index, whose predicate, if any, the intervals implement whole and leave non-empty.
      */
     private boolean planPosting(AggregatePlan aggregate) throws SqlException {
-        if (aggregate.getAggregates().size() != 0 || aggregate.getGroupingExpressions().size() != 1
+        if (aggregate.getAggregates().size() != 0 || aggregate.getGroupingExpressions().size() != 1 || aggregate.hasGroupingSets()
                 || !(aggregate.getGroupingExpressions().getQuick(0) instanceof ColumnExpression key)
                 || key.getDataType() != ColumnType.SYMBOL || !context.getExecutionContext().isCoveringIndexEnabled()) {
             return false;
