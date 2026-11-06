@@ -31,6 +31,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.RowExpiryUtil;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
@@ -83,7 +84,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
     private int compressionLevel;
     private CopyExportContext copyContext;
     private int dataPageSize;
-    private String explicitSelectText = null;
+    private @Nullable String explicitSelectText = null;
     private String fileName;
     private MessageBus messageBus;
     private int parquetVersion;
@@ -110,7 +111,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         CopyExportContext.ExportTaskEntry entry = copyContext.assignExportEntry(
                 securityContext,
-                sourceTableName != null ? sourceTableName : explicitSelectText,
+                this.sourceTableName != null ? this.sourceTableName : this.explicitSelectText,
                 this.fileName,
                 null,
                 CopyExportContext.CopyTrigger.SQL
@@ -118,28 +119,45 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
         long copyID = entry.getId();
         RecordCursorFactory selectFactory = null;
         CreateTableOperationImpl createOp = null;
+        // Every routing decision this execution makes lives in locals. The parsed COPY source stays in
+        // sourceTableName / explicitSelectText, so a cached factory resolves the same source on every call.
+        String resolvedSelectText = this.explicitSelectText;
+        String taskTableName = this.sourceTableName;
         int exportPartitionBy = partitionBy;
-        // This execution keeps its routing values in locals, so a factory that a PG Wire named statement keeps
-        // resolves the same source on every call.
-        String resolvedSelectText = explicitSelectText;
-        String taskTableName = sourceTableName;
         try {
-            if (sourceTableName != null) {
+            if (this.sourceTableName != null) {
                 TableToken tableToken = executionContext.getTableTokenIfExists(sourceTableName);
                 if (tableToken == null) {
                     throw SqlException.tableDoesNotExist(tableOrSelectTextPos, sourceTableName);
                 }
-                // A composite partition keeps dead rows between its live pieces, so its live row count is no longer its
-                // file extent.
+                // A table that carries an EXPIRE ROWS policy must export through the SELECT path: the read
+                // filter that hides expired rows lives in the parser, so a table-reader export would write
+                // out rows the table itself no longer returns. A composite partition keeps dead rows between
+                // its live pieces, so its live row count is no longer its file extent, and it needs the SELECT
+                // path as well. Re-partitioning needs the SELECT path too.
+                final boolean mayHaveExpiryPolicy = executionContext.getCairoEngine()
+                        .getMetadataCache().mayTableHaveExpiryPolicy(tableToken);
                 final boolean hasCompositePartitions = hasCompositePartitions(executionContext, tableToken);
-                if (partitionBy != -1 || hasCompositePartitions) {
+                if (partitionBy != -1 || mayHaveExpiryPolicy || hasCompositePartitions) {
                     try (TableMetadata meta = executionContext.getCairoEngine().getTableMetadata(tableToken)) {
-                        int tablePartitionBy = meta.getPartitionBy();
-                        if (partitionBy == -1) {
+                        final int tablePartitionBy = meta.getPartitionBy();
+                        final String expiryPredicate = meta.getExpiryPredicate();
+                        final boolean hasExpiryPolicy = expiryPredicate != null && !expiryPredicate.isEmpty();
+                        if (partitionBy == -1 && (hasCompositePartitions || hasExpiryPolicy)) {
+                            // A default export keeps the table's own partitioning, so the output layout is
+                            // the same whether or not the table needs the SELECT path.
                             exportPartitionBy = tablePartitionBy;
-                            resolvedSelectText = CopyExportRequestTask.selectAllText(sourceTableName);
-                        } else if (tablePartitionBy != partitionBy || hasCompositePartitions) {
-                            resolvedSelectText = CopyExportRequestTask.selectAllText(sourceTableName);
+                        }
+                        final boolean isSelectPathRequired = hasExpiryPolicy
+                                || hasCompositePartitions
+                                || (partitionBy != -1 && tablePartitionBy != partitionBy);
+                        if (isSelectPathRequired) {
+                            // The source name is a catalog identifier, and the compiler reads this value as SQL.
+                            // Quoting it keeps the query pointing at the very table the token above resolved:
+                            // a name with a space, a hyphen, a keyword or a leading digit is one identifier here,
+                            // exactly as it is in the catalog. The COPY target itself arrives in any of three
+                            // quoting forms, so the parsed token cannot serve as SQL text either.
+                            resolvedSelectText = RowExpiryUtil.quoteIdentifier(sourceTableName);
                         }
                     }
                 }
@@ -200,6 +218,9 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                         Misc.free(rcf);
                     }
                 } catch (SqlException ex) {
+                    // Positions map back onto the COPY source token. A quoted source name is one character
+                    // longer than a bare one, which the mapping ignores: the table is resolved before this
+                    // compilation, so an ordinary source-name error never reaches here.
                     ex.setPosition(ex.getPosition() + tableOrSelectTextPos);
                     throw ex;
                 } catch (CairoException ex) {
