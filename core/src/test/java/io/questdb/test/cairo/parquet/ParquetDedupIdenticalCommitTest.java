@@ -35,12 +35,17 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.fuzz.O3ParquetPathCounts;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
 import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -50,7 +55,8 @@ import java.util.concurrent.atomic.AtomicReference;
  * non-key values must leave a parquet partition untouched, as the native merge does:
  * same name txn, same file size, no dead bytes, no leftover rewrite directory. A
  * commit that changes any value (including NULL vs non-NULL) must still merge.
- * Every test compares pq against its native twin nat.
+ * Every test compares pq against its native twin nat, or against the rows its
+ * inserts put there.
  */
 public class ParquetDedupIdenticalCommitTest extends AbstractCairoTest {
 
@@ -219,6 +225,106 @@ public class ParquetDedupIdenticalCommitTest extends AbstractCairoTest {
             // FLOAT buffer, and the rewrite copies eagerly (materialized), then the
             // identical commit abandons it
             assertIdenticalCommitIsNoop("SELECT * FROM nat WHERE ts BETWEEN '2024-01-01T16:00' AND '2024-01-01T22:00'", true);
+        });
+    }
+
+    /**
+     * An identical commit leaves the partition's covering index files as they are, byte for byte: they still
+     * describe the partition, and a compaction of it may have hard-linked them into its staging directory.
+     */
+    @Test
+    public void testIdenticalCommitLeavesCoveringIndexFilesUntouched() throws Exception {
+        assertMemoryLeak(() -> {
+            createTwins();
+            execute("ALTER TABLE nat ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (d)");
+            execute("ALTER TABLE pq ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (d)");
+            drainWalQueue();
+            final String indexFilesBefore = pqSymIndexFiles();
+            final O3ParquetPathCounts paths = new O3ParquetPathCounts();
+            assertIdenticalCommitIsNoop("SELECT * FROM nat WHERE ts BETWEEN '2024-01-01T08:00' AND '2024-01-01T12:00'", false);
+            Assert.assertEquals(
+                    "inPlace=0, rewrite=0, dropInPlace=0, dropRewrite=0, replaceNoop=0, replaceRemoval=0, dedupIdentical=1",
+                    paths.toString()
+            );
+            Assert.assertEquals("an identical commit wrote the covering index files", indexFilesBefore, pqSymIndexFiles());
+            for (String sym : new String[]{"s0", "s1", "s2"}) {
+                final String lookup = "SELECT sym, d, ts FROM %s WHERE sym = '" + sym + "'";
+                assertQuery(String.format(lookup, "pq")).noLeakCheck().assertsPlanContaining("CoveringIndex");
+                assertSqlCursors(String.format(lookup, "nat"), String.format(lookup, "pq"));
+            }
+        });
+    }
+
+    /**
+     * One commit that leaves day 1 (parquet) as it is and changes every other day: a row lands in day 2 (parquet,
+     * two row groups, updated in place), day 3 (parquet, one row group, rewritten) and day 4 (native, appended).
+     * Each changed partition still gets its covering index rebuilt over its new version; without it a lookup reads
+     * that partition's covered values as NULL.
+     */
+    @Test
+    public void testIdenticalCommitStillResealsChangedPartitions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (a INT, s SYMBOL INDEX TYPE POSTING INCLUDE (a), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts)");
+            execute("""
+                    INSERT INTO m(a, s, ts) VALUES
+                    (1, 'k1', '2020-01-01T00:00:00.000Z'), (2, 'k2', '2020-01-01T02:00:00.000Z'),
+                    (3, 'k1', '2020-01-01T04:00:00.000Z'), (4, 'k2', '2020-01-01T06:00:00.000Z'),
+                    (5, 'k1', '2020-01-01T08:00:00.000Z'), (6, 'k2', '2020-01-01T10:00:00.000Z'),
+                    (7, 'k1', '2020-01-01T12:00:00.000Z'), (8, 'k2', '2020-01-01T14:00:00.000Z'),
+                    (11, 'k1', '2020-01-02T00:00:00.000Z'), (12, 'k2', '2020-01-02T02:00:00.000Z'),
+                    (13, 'k1', '2020-01-02T04:00:00.000Z'), (14, 'k2', '2020-01-02T06:00:00.000Z'),
+                    (15, 'k1', '2020-01-02T08:00:00.000Z'), (16, 'k2', '2020-01-02T10:00:00.000Z'),
+                    (17, 'k1', '2020-01-02T12:00:00.000Z'), (18, 'k2', '2020-01-02T14:00:00.000Z'),
+                    (21, 'k1', '2020-01-03T00:00:00.000Z'), (22, 'k2', '2020-01-03T02:00:00.000Z'),
+                    (31, 'k1', '2020-01-04T00:00:00.000Z')
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE m CONVERT PARTITION TO PARQUET WHERE ts < '2020-01-04'");
+            drainWalQueue();
+
+            final O3ParquetPathCounts paths = new O3ParquetPathCounts();
+            execute("""
+                    INSERT INTO m(a, s, ts) VALUES
+                    (1, 'k1', '2020-01-01T00:00:00.000Z'), (2, 'k2', '2020-01-01T02:00:00.000Z'),
+                    (101, 'k2', '2020-01-02T03:00:00.000Z'),
+                    (102, 'k2', '2020-01-03T03:00:00.000Z'),
+                    (201, 'k2', '2020-01-04T03:00:00.000Z')
+                    """);
+            drainWalQueue();
+            Assert.assertFalse("m suspended", engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("m")));
+            Assert.assertEquals(
+                    "inPlace=1, rewrite=1, dropInPlace=0, dropRewrite=0, replaceNoop=0, replaceRemoval=0, dedupIdentical=1",
+                    paths.toString()
+            );
+
+            assertQuery("SELECT a, s, ts FROM m WHERE s = 'k2'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .inferRandomAccess()
+                    .withPlanContaining("CoveringIndex")
+                    .timestamp("ts")
+                    .returns("""
+                            a\ts\tts
+                            2\tk2\t2020-01-01T02:00:00.000000Z
+                            4\tk2\t2020-01-01T06:00:00.000000Z
+                            6\tk2\t2020-01-01T10:00:00.000000Z
+                            8\tk2\t2020-01-01T14:00:00.000000Z
+                            12\tk2\t2020-01-02T02:00:00.000000Z
+                            101\tk2\t2020-01-02T03:00:00.000000Z
+                            14\tk2\t2020-01-02T06:00:00.000000Z
+                            16\tk2\t2020-01-02T10:00:00.000000Z
+                            18\tk2\t2020-01-02T14:00:00.000000Z
+                            22\tk2\t2020-01-03T02:00:00.000000Z
+                            102\tk2\t2020-01-03T03:00:00.000000Z
+                            201\tk2\t2020-01-04T03:00:00.000000Z
+                            """);
+            // (2 + 4 + 6 + 8) + (12 + 101 + 14 + 16 + 18) + (22 + 102) + 201
+            assertQuery("SELECT sum(a) FROM m WHERE s = 'k2'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .withPlanContaining("CoveringIndex")
+                    .returns("sum\n506\n");
         });
     }
 
@@ -464,6 +570,36 @@ public class ParquetDedupIdenticalCommitTest extends AbstractCairoTest {
             }
         }
         return count;
+    }
+
+    /**
+     * The index files of sym in pq's day 1 directory, one "name length hash" line each, by name.
+     */
+    private static String pqSymIndexFiles() throws IOException {
+        final String partitionDir;
+        try (TableReader reader = engine.getReader("pq"); Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(reader.getTableToken().getDirName());
+            TableUtils.setPathForNativePartition(
+                    path,
+                    reader.getMetadata().getTimestampType(),
+                    reader.getPartitionedBy(),
+                    reader.getTxFile().getPartitionTimestampByIndex(0),
+                    reader.getTxFile().getPartitionNameTxn(0)
+            );
+            partitionDir = path.toString();
+        }
+        final String[] names = new File(partitionDir).list();
+        Assert.assertNotNull(partitionDir, names);
+        Arrays.sort(names);
+        final StringBuilder files = new StringBuilder();
+        for (String name : names) {
+            if (name.startsWith("sym.")) {
+                final byte[] content = Files.readAllBytes(Paths.get(partitionDir, name));
+                files.append(name).append(' ').append(content.length).append(' ').append(Arrays.hashCode(content)).append('\n');
+            }
+        }
+        Assert.assertTrue("no key file in " + files, files.indexOf("sym.pk") >= 0);
+        return files.toString();
     }
 
     private void assertChangedCommitMerges(String select, boolean isRewriteExpected, String probe, String expected) throws Exception {

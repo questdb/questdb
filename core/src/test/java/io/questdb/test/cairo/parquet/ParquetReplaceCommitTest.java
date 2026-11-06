@@ -48,6 +48,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.fuzz.O3ParquetPathCounts;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -55,6 +56,9 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -739,6 +743,35 @@ public class ParquetReplaceCommitTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * The covering twin of {@link #testMissingDataIsNoop}: the no-op leaves the partition's covering index files as
+     * they are, byte for byte, since they still describe it and a compaction may have hard-linked them into its
+     * staging directory.
+     */
+    @Test
+    public void testMissingDataIsNoopLeavesCoveringIndexFilesUntouched() throws Exception {
+        assertMemoryLeak(() -> {
+            createTwins(false);
+            execute("ALTER TABLE nat ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (d)");
+            execute("ALTER TABLE pq ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (d)");
+            drainWalQueue();
+            final long txnBefore = partitionNameTxn("pq", 0);
+            final long sizeBefore = parquetFileSize("pq", 0);
+            final String indexFilesBefore = indexFiles("pq", 0, "sym");
+            final O3ParquetPathCounts paths = new O3ParquetPathCounts();
+            replaceBoth("2024-01-01T22:30:00.000000Z", "2024-01-01T23:30:00.000000Z");
+            assertTwinsEqual();
+            Assert.assertEquals(
+                    "inPlace=0, rewrite=0, dropInPlace=0, dropRewrite=0, replaceNoop=1, replaceRemoval=0, dedupIdentical=0",
+                    paths.toString()
+            );
+            Assert.assertEquals(txnBefore, partitionNameTxn("pq", 0));
+            Assert.assertEquals(sizeBefore, parquetFileSize("pq", 0));
+            Assert.assertEquals("a no-op replace commit wrote the covering index files", indexFilesBefore, indexFiles("pq", 0, "sym"));
+            assertCoveringLookupsEqualTwin();
+        });
+    }
+
     @Test
     public void testMostOfPartitionReplaceRewritesCleanFile() throws Exception {
         assertMemoryLeak(() -> {
@@ -1203,6 +1236,41 @@ public class ParquetReplaceCommitTest extends AbstractCairoTest {
     }
 
     /**
+     * One replace commit over three partitions: its range holds none of day 1's rows (parquet, left unchanged), all of
+     * day 2's (parquet, removed) and day 3's first row (native, replaced by a new one). Only the unchanged partition
+     * keeps its covering index files as they are; the removed one leaves nothing to index, and the native one gets its
+     * index rebuilt.
+     */
+    @Test
+    public void testSpansUnchangedRemovedAndNativePartitionsKeepsCoveringIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            createTwins(false);
+            execute("ALTER TABLE nat ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (d)");
+            execute("ALTER TABLE pq ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (d)");
+            drainWalQueue();
+            final String day1IndexFilesBefore = indexFiles("pq", 0, "sym");
+            final O3ParquetPathCounts paths = new O3ParquetPathCounts();
+            replaceBoth("2024-01-01T22:30:00.000000Z", "2024-01-03T01:00:00.000000Z", "2024-01-03T00:30:00.000000Z");
+            assertTwinsEqual();
+            Assert.assertEquals(
+                    "inPlace=0, rewrite=0, dropInPlace=0, dropRewrite=0, replaceNoop=1, replaceRemoval=1, dedupIdentical=0",
+                    paths.toString()
+            );
+            assertQuery("SELECT name, numRows, isParquet FROM table_partitions('pq')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            name\tnumRows\tisParquet
+                            2024-01-01\t12\ttrue
+                            2024-01-03\t12\tfalse
+                            """);
+            Assert.assertEquals("a no-op replace commit wrote the covering index files", day1IndexFilesBefore, indexFiles("pq", 0, "sym"));
+            assertCoveringLookupsEqualTwin();
+        });
+    }
+
+    /**
      * Changes column types on nat and pq, one conversion of each kind the parquet merge
      * finishes in Java or Rust: fixed to fixed (id INT to LONG, d DOUBLE to FLOAT), var to
      * var (v VARCHAR to STRING), symbol to var (sym to VARCHAR) and var to fixed (s STRING to
@@ -1281,6 +1349,36 @@ public class ParquetReplaceCommitTest extends AbstractCairoTest {
                 return super.mmap(fd, len, offset, flags, memoryTag);
             }
         };
+    }
+
+    /**
+     * The index files of {@code columnName} in the partition's directory, one "name length hash" line each, by name.
+     */
+    private static String indexFiles(String table, int partitionIndex, String columnName) throws IOException {
+        final String partitionDir;
+        try (TableReader reader = engine.getReader(table); Path path = new Path()) {
+            path.of(root).concat(reader.getTableToken().getDirName());
+            TableUtils.setPathForNativePartition(
+                    path,
+                    reader.getMetadata().getTimestampType(),
+                    reader.getPartitionedBy(),
+                    reader.getPartitionTimestampByIndex(partitionIndex),
+                    reader.getTxFile().getPartitionNameTxn(partitionIndex)
+            );
+            partitionDir = path.toString();
+        }
+        final String[] names = new File(partitionDir).list();
+        Assert.assertNotNull(partitionDir, names);
+        Arrays.sort(names);
+        final StringBuilder files = new StringBuilder();
+        for (String name : names) {
+            if (name.startsWith(columnName + ".")) {
+                final byte[] content = Files.readAllBytes(Paths.get(partitionDir, name));
+                files.append(name).append(' ').append(content.length).append(' ').append(Arrays.hashCode(content)).append('\n');
+            }
+        }
+        Assert.assertTrue("no key file in " + files, files.indexOf(columnName + ".pk") >= 0);
+        return files.toString();
     }
 
     private static long parquetFileSize(String table, int partitionIndex) {
@@ -1441,6 +1539,17 @@ public class ParquetReplaceCommitTest extends AbstractCairoTest {
         Assert.assertEquals(0, parquetUnusedBytes("nat", 0));
         Assert.assertTrue("pq=" + pqSize + ", fresh=" + freshSize, pqSize <= freshSize + freshSize / 10);
         assertSqlCursors("nat", "pq");
+    }
+
+    /**
+     * Each sym key looked up in pq through its covering index, INCLUDE (d), returns what the same lookup returns on nat.
+     */
+    private void assertCoveringLookupsEqualTwin() throws Exception {
+        for (String sym : new String[]{"s0", "s1", "s2"}) {
+            final String lookup = "SELECT sym, d, ts FROM %s WHERE sym = '" + sym + "'";
+            assertQuery(String.format(lookup, "pq")).noLeakCheck().assertsPlanContaining("CoveringIndex");
+            assertSqlCursors(String.format(lookup, "nat"), String.format(lookup, "pq"));
+        }
     }
 
     /**

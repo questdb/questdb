@@ -31,8 +31,10 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.DebugUtils;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.O3ParquetCounters;
 import io.questdb.cairo.O3PartitionJob;
 import io.questdb.cairo.O3PartitionPurgeJob;
+import io.questdb.cairo.PartitionCompactionRequestQueue;
 import io.questdb.cairo.PartitionCompactionScanJob;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
@@ -117,6 +119,7 @@ public class FuzzRunner {
     private static final int SNAPSHOT_SAMPLE_ROWS = 16;
     private static final int SNAPSHOT_TAIL_ROWS = 16;
     private final TableSequencerAPI.TableSequencerCallback checkNoSuspendedTablesRef;
+    private final AtomicLong noopCommitsDuringParquetRebuild = new AtomicLong();
     private final Map<TableReader, ReaderSnapshot> readerSnapshots = Collections.synchronizedMap(new IdentityHashMap<>());
     protected int initialRowCount;
     protected int partitionCount;
@@ -545,6 +548,27 @@ public class FuzzRunner {
         return calls;
     }
 
+    /**
+     * Reads every covering index of {@code tableName} back through its covered values: each key's covering lookup must
+     * equal the same lookup with covering disabled and a scan that reads no index.
+     */
+    public void assertCoveredValuesMatchUnindexed(String tableName) throws SqlException {
+        final ObjList<String> indexedSymbolColumns = new ObjList<>();
+        try (TableReader reader = getReader(tableName)) {
+            final TableReaderMetadata metadata = reader.getMetadata();
+            for (int columnIndex = 0, n = metadata.getColumnCount(); columnIndex < n; columnIndex++) {
+                if (ColumnType.isSymbol(metadata.getColumnType(columnIndex)) && metadata.isColumnIndexed(columnIndex)) {
+                    indexedSymbolColumns.add(metadata.getColumnName(columnIndex));
+                }
+            }
+        }
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            for (int i = 0, n = indexedSymbolColumns.size(); i < n; i++) {
+                checkCoveredValueScan(compiler, tableName, indexedSymbolColumns.getQuick(i), true);
+            }
+        }
+    }
+
     public void assertRandomIndexes(String tableNameNoWal, String tableNameWal, Rnd rnd) throws SqlException {
         try (TableReader reader = getReader(tableNameNoWal)) {
             if (reader.size() > 0) {
@@ -700,6 +724,15 @@ public class FuzzRunner {
 
     public FailureFileFacade getFileFacade() {
         return ff;
+    }
+
+    /**
+     * The commits that left a parquet partition unchanged - dedup re-sends identical to it, and replace ranges that
+     * held none of its rows - which WAL apply landed between a requested parquet rebuild's build and its swap. See
+     * {@link #requestParquetConversionDuringApply}.
+     */
+    public long getNoopCommitsDuringParquetRebuild() {
+        return noopCommitsDuringParquetRebuild.get();
     }
 
     /**
@@ -995,8 +1028,9 @@ public class FuzzRunner {
 
     /**
      * Per WAL apply step of {@link #applyWal}, the probability of asking {@link PartitionCompactionScanJob} to convert
-     * a random partition to parquet, with WAL apply landing between the conversion's build and its swap - see
-     * {@link #requestParquetConversionDuringApply}. 0, the default, draws nothing from the apply seed.
+     * a random partition to parquet, or to rebuild it when it is parquet already, with WAL apply landing between the
+     * request's build and its swap - see {@link #requestParquetConversionDuringApply}. 0, the default, draws nothing
+     * from the apply seed.
      */
     public void setParquetConversionRequestProb(double parquetConversionRequestProb) {
         this.parquetConversionRequestProb = parquetConversionRequestProb;
@@ -1307,7 +1341,8 @@ public class FuzzRunner {
     private void checkCoveredValueScan(
             SqlCompiler compiler,
             String tableName,
-            String symbolColumnName
+            String symbolColumnName,
+            boolean isEveryKeyComparedUnindexed
     ) throws SqlException {
         final StringSink projection = new StringSink();
         if (!buildCoveredProjection(tableName, symbolColumnName, projection)) {
@@ -1331,7 +1366,7 @@ public class FuzzRunner {
             // a plan that reads no index.
             assertCoveredCursors(compiler, tableName, symbolColumnName, projection,
                     " where \"" + symbolColumnName + "\" = " + (value.isEmpty() ? "null" : "'" + value + "'"),
-                    value.isEmpty());
+                    isEveryKeyComparedUnindexed || value.isEmpty());
         }
         if (checked == MAX_COVERED_KEYS_CHECKED) {
             LOG.info().$("covered value check capped at ").$(MAX_COVERED_KEYS_CHECKED)
@@ -1360,7 +1395,7 @@ public class FuzzRunner {
             // Now let's do backward order assertion
             String orderBy = " order by " + tsColumnName + " desc";
             TestUtils.assertSqlCursors(compiler, sqlExecutionContext, expectedTableName + indexedWhereClause + orderBy + limit, actualTableName + indexedWhereClause + orderBy + limit, LOG);
-            checkCoveredValueScan(compiler, actualTableName, symbolColumnName);
+            checkCoveredValueScan(compiler, actualTableName, symbolColumnName, false);
             checkCoveredNullScanOverInterval(compiler, actualTableName, symbolColumnName, tsColumnName, rnd, recordCount);
         }
     }
@@ -1909,13 +1944,16 @@ public class FuzzRunner {
     }
 
     /**
-     * Asks the compaction job to convert a random partition of {@code tableName} to parquet, and runs WAL apply in
-     * the window between the conversion's build, off a reader snapshot, and its swap: the moment the build's reader
-     * goes back to the pool, a pool listener applies up to three WAL apply steps before the job publishes the swap.
-     * The swap must then refuse a partition the apply changed, or it installs data the apply has overwritten - a
-     * DEDUP upsert whose O3 split was squashed back in place keeps the name txn and the row count. Half the time
-     * the drain's readers are released first, since a reader pinning the partition keeps the squash off it, and
-     * half the time the partition is the one {@link #setParquetConversionRequestHint} names.
+     * Asks the compaction job to convert a random partition of {@code tableName} to parquet, or to rebuild it when it
+     * is parquet already, and runs WAL apply in the window between the request's build, off a reader snapshot, and
+     * its swap: the moment the build's reader goes back to the pool, a pool listener applies up to three WAL apply
+     * steps before the job publishes the swap. The swap must then refuse a partition the apply changed, or it installs
+     * data the apply has overwritten - a DEDUP upsert whose O3 split was squashed back in place keeps the name txn and
+     * the row count. A rebuild that carries the partition's index files over as hard links shares them with the live
+     * directory, so a commit in the window that leaves the partition unchanged, and so passes the swap's staleness
+     * check, must not write them; {@link #getNoopCommitsDuringParquetRebuild} counts those commits. Half the time the
+     * drain's readers are released first, since a reader pinning the partition keeps the squash off it, and half the
+     * time the partition is the one {@link #setParquetConversionRequestHint} names.
      */
     private void requestParquetConversionDuringApply(
             Rnd applyRnd,
@@ -1927,6 +1965,7 @@ public class FuzzRunner {
     ) {
         final TableToken tableToken = engine.verifyTableName(tableName);
         final long logicalPartitionTimestamp;
+        final boolean isParquetRebuild;
         try (TableReader reader = getReaderWithRetries(tableName, null)) {
             assert reader != null;
             final TxReader txFile = reader.getTxFile();
@@ -1941,16 +1980,23 @@ public class FuzzRunner {
             } else {
                 logicalPartitionTimestamp = txFile.getLogicalPartitionTimestamp(partitionTimestamp);
             }
+            // A parquet partition is never converted again; the job rebuilds it instead when it is not compact.
+            final int partitionIndex = txFile.getPartitionIndex(logicalPartitionTimestamp);
+            isParquetRebuild = partitionIndex > -1 && txFile.isPartitionParquet(partitionIndex);
         }
         final int applySteps = 1 + applyRnd.nextInt(3);
         if (applyRnd.nextBoolean()) {
             rdr1.goPassive();
             rdr2.goPassive();
         }
-        if (!engine.getPartitionCompactionRequestQueue().tryRequestParquetConversion(tableToken, logicalPartitionTimestamp)) {
+        final PartitionCompactionRequestQueue requestQueue = engine.getPartitionCompactionRequestQueue();
+        final boolean isRequested = isParquetRebuild
+                ? requestQueue.tryRequest(tableToken, logicalPartitionTimestamp)
+                : requestQueue.tryRequestParquetConversion(tableToken, logicalPartitionTimestamp);
+        if (!isRequested) {
             return;
         }
-        LOG.info().$("fuzz parquet conversion request during WAL apply [table=").$(tableToken)
+        LOG.info().$("fuzz parquet ").$(isParquetRebuild ? "rebuild" : "conversion").$(" request during WAL apply [table=").$(tableToken)
                 .$(", logicalPartitionTimestamp=").$(logicalPartitionTimestamp)
                 .$(", applySteps=").$(applySteps)
                 .I$();
@@ -1981,8 +2027,14 @@ public class FuzzRunner {
                 // The build's reader just went passive and the swap is not published yet.
                 final Thread applier = new Thread(() -> {
                     try {
+                        final long noopCommitsBefore = O3ParquetCounters.getDedupIdenticalCount() + O3ParquetCounters.getReplaceNoopCount();
                         for (int i = 0; i < applySteps; i++) {
                             walApplyJob.run();
+                        }
+                        if (isParquetRebuild) {
+                            noopCommitsDuringParquetRebuild.addAndGet(
+                                    O3ParquetCounters.getDedupIdenticalCount() + O3ParquetCounters.getReplaceNoopCount() - noopCommitsBefore
+                            );
                         }
                     } catch (Throwable th) {
                         errors.add(th);

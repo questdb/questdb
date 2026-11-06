@@ -34,6 +34,7 @@ import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.TxReader;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -47,6 +48,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.LongHashSet;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjIntHashMap;
@@ -336,6 +338,120 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         });
     }
 
+    /**
+     * Commits that leave a parquet partition as it is - re-sends of rows it holds, and replace ranges that hold none of
+     * its rows - land while a requested rebuild of the partition sits between its build and its swap. The covering
+     * index is added after in-place O3 updates made while no symbol was indexed, so the files keep no index row map
+     * and the rebuild carries the index files into staging as hard links, which the commits must leave alone. The
+     * rebuilds must land, the commits must change no row, and every covering lookup must equal a scan that reads no
+     * index.
+     */
+    @Test
+    public void testNoopCommitsDuringRequestedParquetRebuild() throws Exception {
+        assertMemoryLeak(() -> {
+            final Rnd rnd = generateRandomAndProps();
+            // Several row groups per partition, each wider than the up to 5 rows a timestamp holds, and no dead-bytes
+            // rewrite, so the O3 rows below update the parquet partitions in place; no WAL lag, so a commit the
+            // rebuild's window applies reaches the partitions there.
+            final int rowGroupSize = 6 + rnd.nextInt(27);
+            setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, rowGroupSize);
+            setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "1.0");
+            setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, Long.MAX_VALUE);
+            setProperty(PropertyKey.CAIRO_WAL_MAX_LAG_SIZE, 0);
+
+            final String tableName = getTestName();
+            execute("create table " + tableName + " (ts timestamp, commit int, s symbol) timestamp(ts) partition by DAY WAL dedup upsert keys(ts, s)");
+            final int keyCount = 1 + rnd.nextInt(4);
+            // Half the time the trailing slot stays null: a NULL key at every timestamp.
+            final String[] symbols = new String[keyCount + (rnd.nextBoolean() ? 1 : 0)];
+            for (int i = 0; i < keyCount; i++) {
+                symbols[i] = "k" + i;
+            }
+            final long start = parseFloorPartialTimestamp("2020-02-24T04:30");
+            final long delta = Micros.MINUTE_MICROS * 15;
+            final int count = 4 * 24 * 5;
+            final long gridEnd = start + count * delta;
+            final Utf8StringSink sink = new Utf8StringSink();
+
+            final ObjList<FuzzTransaction> transactions = new ObjList<>();
+            try {
+                generateInsertsTransactions(transactions, 1, start, delta, count, 1, symbols, rnd, ColumnType.SYMBOL);
+                applyWal(transactions, tableName, 1, rnd);
+                transactions.clear();
+                maybeConvertToParquet(tableName, true);
+                final LongList parquetPartitions = parquetPartitionTimestamps(tableName);
+                Assert.assertTrue("no parquet partition to rebuild", parquetPartitions.size() > 0);
+
+                // New keys inside a row group of every parquet partition, while no symbol is indexed: in-place updates
+                // that leave dead bytes and no index row map.
+                final FuzzTransaction inPlaceUpdates = new FuzzTransaction();
+                for (int i = 0, n = parquetPartitions.size(); i < n; i++) {
+                    for (int r = 0, rn = 1 + rnd.nextInt(3); r < rn; r++) {
+                        final long ts = randomInsideRowGroupTimestamp(rnd, parquetPartitions.getQuick(i), start, delta, gridEnd, symbols.length, rowGroupSize);
+                        inPlaceUpdates.operationList.add(new FuzzStableInsertOperation(ts, 2, symbols[rnd.nextInt(keyCount)], ColumnType.SYMBOL, sink));
+                    }
+                }
+                transactions.add(inPlaceUpdates);
+                // Applied with no compaction sweep, which would drop the dead bytes before the requests below.
+                fuzzer.applyToWal(transactions, tableName, 1, rnd);
+                drainWalQueue();
+                transactions.clear();
+
+                final String postingType = switch (rnd.nextInt(3)) {
+                    case 0 -> "POSTING";
+                    case 1 -> "POSTING DELTA";
+                    default -> "POSTING EF";
+                };
+                execute("alter table " + tableName + " alter column s add index type " + postingType + " include (commit)");
+                drainWalQueue();
+                execute("create table " + tableName + "_expected as (select * from " + tableName + ") timestamp(ts) partition by DAY BYPASS WAL");
+                final String parquetNameTxnsBefore = parquetPartitionNameTxns(tableName);
+
+                // The first commit re-sends rows of every parquet partition, so the first request's window applies a
+                // no-op to whichever partition it rebuilds.
+                final FuzzTransaction resendToEveryParquetPartition = new FuzzTransaction();
+                for (int i = 0, n = parquetPartitions.size(); i < n; i++) {
+                    final long from = randomGridTimestamp(rnd, parquetPartitions.getQuick(i), start, delta, gridEnd);
+                    addIdenticalResend(resendToEveryParquetPartition, from, 1 + rnd.nextInt(8), delta, gridEnd, symbols, sink);
+                }
+                transactions.add(resendToEveryParquetPartition);
+                for (int i = 0, n = rnd.nextInt(10); i < n; i++) {
+                    final FuzzTransaction transaction = new FuzzTransaction();
+                    if (rnd.nextBoolean()) {
+                        // Any rows of the grid, the native last partition's included.
+                        addIdenticalResend(transaction, start + rnd.nextInt(count) * delta, 1 + rnd.nextInt(96), delta, gridEnd, symbols, sink);
+                    } else {
+                        // Between two rows of a parquet partition, and the commit brings none.
+                        final long lo = randomGridTimestamp(rnd, parquetPartitions.getQuick(rnd.nextInt(parquetPartitions.size())), start, delta, gridEnd)
+                                + Micros.MINUTE_MICROS;
+                        transaction.setReplaceRange(lo, lo + 4 * Micros.MINUTE_MICROS);
+                    }
+                    transactions.add(transaction);
+                }
+
+                fuzzer.setParquetConversionRequestProb(1.0);
+                final O3ParquetPathCounts counts = new O3ParquetPathCounts();
+                applyWal(transactions, tableName, 1, rnd);
+                counts.log(LOG, getTestName());
+
+                Assert.assertTrue(
+                        "no commit that leaves a partition unchanged landed in a requested rebuild's window: " + counts,
+                        fuzzer.getNoopCommitsDuringParquetRebuild() > 0
+                );
+                Assert.assertEquals(
+                        "a commit changed a parquet partition: " + counts,
+                        0,
+                        counts.getWritten() + counts.getDropInPlace() + counts.getDropRewrite() + counts.getReplaceRemoval()
+                );
+                Assert.assertNotEquals("no requested rebuild landed", parquetNameTxnsBefore, parquetPartitionNameTxns(tableName));
+                TestUtils.assertSqlCursors(engine, sqlExecutionContext, tableName + "_expected", tableName, LOG);
+                fuzzer.assertCoveredValuesMatchUnindexed(tableName);
+            } finally {
+                Misc.freeObjListAndClear(transactions);
+            }
+        });
+    }
+
     @Test
     public void testRandomColumnsDedupMultipleKeyCol() throws Exception {
         Rnd rnd = generateRandomAndProps();
@@ -509,6 +625,63 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         );
 
         runFuzzWithRepeatDedup(rnd, conversionRequestProb);
+    }
+
+    /**
+     * Adds to {@code transaction} a copy of the rows {@link #generateInsertsTransactions} wrote with commit 1, every
+     * symbol at each of {@code timestampCount} grid timestamps from {@code from}, stopping at {@code gridEnd}.
+     */
+    private static void addIdenticalResend(
+            FuzzTransaction transaction,
+            long from,
+            int timestampCount,
+            long delta,
+            long gridEnd,
+            String[] symbols,
+            Utf8StringSink sink
+    ) {
+        for (long ts = from, end = Math.min(from + timestampCount * delta, gridEnd); ts < end; ts += delta) {
+            for (String symbol : symbols) {
+                transaction.operationList.add(new FuzzStableInsertOperation(ts, 1, symbol, ColumnType.SYMBOL, sink));
+            }
+        }
+    }
+
+    /**
+     * A random timestamp of the grid {@code start + i * delta}, ending before {@code gridEnd}, inside the day that
+     * starts at {@code dayStart}.
+     */
+    private static long randomGridTimestamp(Rnd rnd, long dayStart, long start, long delta, long gridEnd) {
+        final long first = start + (Math.max(dayStart, start) - start + delta - 1) / delta * delta;
+        final long end = Math.min(dayStart + Micros.DAY_MICROS, gridEnd);
+        return first + rnd.nextInt((int) ((end - first + delta - 1) / delta)) * delta;
+    }
+
+    /**
+     * A random timestamp halfway between two grid timestamps of the day starting at {@code dayStart} whose rows share a
+     * row group of the day's parquet file, which holds {@code rowsPerTimestamp} rows at each grid timestamp in row
+     * groups of {@code rowGroupSize} rows. A row there merges into that row group, never into a gap between two.
+     */
+    private static long randomInsideRowGroupTimestamp(
+            Rnd rnd,
+            long dayStart,
+            long start,
+            long delta,
+            long gridEnd,
+            int rowsPerTimestamp,
+            int rowGroupSize
+    ) {
+        assert rowGroupSize > rowsPerTimestamp;
+        final long first = start + (Math.max(dayStart, start) - start + delta - 1) / delta * delta;
+        final long end = Math.min(dayStart + Micros.DAY_MICROS, gridEnd);
+        final int gapCount = (int) ((end - first + delta - 1) / delta) - 1;
+        // The gap after the k-th timestamp holds a row group boundary when the k timestamps' rows fill whole row
+        // groups; the first gap never does, as a row group is wider than one timestamp's rows.
+        int k = 1 + rnd.nextInt(gapCount);
+        while ((long) k * rowsPerTimestamp % rowGroupSize == 0) {
+            k = k % gapCount + 1;
+        }
+        return first + (k - 1) * delta + delta / 2;
     }
 
     private void addDuplicates(ObjList<FuzzTransaction> transactions, Rnd rnd, IntList upsertKeyIndexes) {
@@ -812,6 +985,35 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     }
 
     /**
+     * Each parquet partition's timestamp and name txn: a rebuild that lands moves the name txn.
+     */
+    private String parquetPartitionNameTxns(String tableName) {
+        final StringSink nameTxns = new StringSink();
+        try (TableReader reader = getReader(tableName)) {
+            final TxReader txFile = reader.getTxFile();
+            for (int i = 0, n = txFile.getPartitionCount(); i < n; i++) {
+                if (txFile.isPartitionParquet(i)) {
+                    nameTxns.put(txFile.getPartitionTimestampByIndex(i)).put('.').put(txFile.getPartitionNameTxn(i)).put(',');
+                }
+            }
+        }
+        return nameTxns.toString();
+    }
+
+    private LongList parquetPartitionTimestamps(String tableName) {
+        final LongList timestamps = new LongList();
+        try (TableReader reader = getReader(tableName)) {
+            final TxReader txFile = reader.getTxFile();
+            for (int i = 0, n = txFile.getPartitionCount(); i < n; i++) {
+                if (txFile.isPartitionParquet(i)) {
+                    timestamps.add(txFile.getPartitionTimestampByIndex(i));
+                }
+            }
+        }
+        return timestamps;
+    }
+
+    /**
      * Half the runs ask the compaction job to convert random partitions to parquet while WAL apply lands between a
      * conversion's build and its swap; the caller turns the requests on for the upserts, so a swap that installs a
      * build the upserts overwrote fails the assertions. Those runs turn merge-append off half the time, the
@@ -1077,6 +1279,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                             upsertKeyNames,
                             tableNameDedup
                     );
+                    // The skip leaves each partition's covering index as the last real change built it.
+                    fuzzer.assertCoveredValuesMatchUnindexed(tableNameDedup);
 
                 } finally {
                     sharedWorkerPool.halt();

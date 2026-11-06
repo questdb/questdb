@@ -19328,6 +19328,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // commits leave [0] == [6]; splits overwrite [0] with the new split's
             // ts but leave [6] pointing at the shrunk main partition.
             long dataPartitionTimestamp = Unsafe.getLong(blockAddress + 6 * Long.BYTES);
+            long parquetFileSize = Unsafe.getLong(blockAddress + 7 * Long.BYTES);
 
             // Pure-append O3: no rewrite, no split, partition only grew. In this
             // case no rowid in [columnTop, partitionSize) was reassigned a new
@@ -19339,8 +19340,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     && o3SplitPartitionSize == 0
                     && newPartitionSize >= oldPartitionSize;
 
-            if (partitionTimestamp != -1L && sealPostingIndexForPartition(partitionTimestamp, canSkipRebuildForPartition, coveringState, oldPartitionSize, newPartitionSize)) {
-                anyPartitionProcessed = true;
+            if (partitionTimestamp != -1L) {
+                // A parquet partition the write left as it was publishes no file size: a dedup commit identical
+                // to it (new size -1), or a replace range that held none of its rows (size kept). Its file, name
+                // txn and _cv are unchanged, so its committed covering sidecars still describe it. A reseal would
+                // append to the key file a compaction may have hard-linked into its staging directory, and the
+                // swap, which sees no name txn or file size move, would install a key file naming value files
+                // the new directory lacks.
+                boolean isParquetPartitionUnchanged = !partitionMutates
+                        && parquetFileSize == -1
+                        && txWriter.isPartitionParquetByPartitionTimestamp(partitionTimestamp);
+                assert !isParquetPartitionUnchanged || newPartitionSize < 0 || newPartitionSize == oldPartitionSize
+                        : "parquet partition row count changed without a new file [newSize=" + newPartitionSize
+                        + ", oldSize=" + oldPartitionSize + ']';
+                if (!isParquetPartitionUnchanged
+                        && sealPostingIndexForPartition(partitionTimestamp, canSkipRebuildForPartition, coveringState, oldPartitionSize, newPartitionSize)) {
+                    anyPartitionProcessed = true;
+                }
             }
             if (dataPartitionTimestamp != -1L && dataPartitionTimestamp != partitionTimestamp
                     && sealPostingIndexForPartition(dataPartitionTimestamp, false)) {
