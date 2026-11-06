@@ -219,8 +219,7 @@ fn prepare_column_meta<'a>(
 
     let col_desc = parquet_meta_reader.column_descriptor(column_idx)?;
     let col_type_code = col_desc.col_type;
-    let sidecar_column_type = ColumnType::new_raw(col_type_code)
-        .ok_or_else(|| fmt_err!(InvalidType, "unknown column type code: {}", col_type_code))?;
+    let sidecar_column_type = ColumnType::try_from(col_type_code)?;
 
     let (column_type, original_column_type) =
         resolve_decode_column_type(sidecar_column_type, to_column_type, column_idx)?;
@@ -997,6 +996,96 @@ mod tests {
     // -----------------------------------------------------------------------
     // decode_row_group
     // -----------------------------------------------------------------------
+
+    #[test]
+    fn decode_invalid_sidecar_column_type() -> ParquetResult<()> {
+        for code in [-1, 0, 255] {
+            let mut writer = ParquetMetaWriter::new();
+            writer.add_column("x", 0, code, ColumnFlags::new(), 0, PHYS_INT64, 0, 0);
+            let mut rg = RowGroupBlockBuilder::new(1);
+            rg.set_num_rows(1);
+            let mut chunk = ColumnChunkRaw::zeroed();
+            chunk.num_values = 1;
+            rg.set_column_chunk(0, chunk)?;
+            writer.add_row_group(rg);
+            let (pm_bytes, file_size) = writer.finish()?;
+            let reader = ParquetMetaReader::from_file_size(&pm_bytes, file_size)?;
+            let tas = crate::allocator::TestAllocatorState::new();
+            let mut ctx = DecodeContext::new(std::ptr::null(), 0);
+            let mut bufs = RowGroupBuffers::new(tas.allocator());
+            let col_pairs = [(0, ColumnType::new(ColumnTypeTag::Long, 0))];
+            // Type validation must precede accessing page bytes on both mmap and
+            // buffered (remote) reads, including filtered and multi-group reads.
+            for is_buffered in [false, true] {
+                let source = || {
+                    if is_buffered {
+                        ColumnChunkSource::Buffers(&[0, 0])
+                    } else {
+                        ColumnChunkSource::File(&[0])
+                    }
+                };
+                let err =
+                    decode_row_group(&mut ctx, &mut bufs, source(), &reader, &col_pairs, 0, 0, 1)
+                        .unwrap_err();
+                assert!(
+                    err.to_string().contains("column type")
+                        || err.to_string().contains("column tag"),
+                    "{err}"
+                );
+                let err = decode_row_group_filtered::<false>(
+                    &mut ctx,
+                    &mut bufs,
+                    source(),
+                    &reader,
+                    0,
+                    &col_pairs,
+                    0,
+                    0,
+                    1,
+                    &[0],
+                )
+                .unwrap_err();
+                assert!(
+                    err.to_string().contains("column type")
+                        || err.to_string().contains("column tag"),
+                    "{err}"
+                );
+                let err = decode_row_group_filtered::<true>(
+                    &mut ctx,
+                    &mut bufs,
+                    source(),
+                    &reader,
+                    0,
+                    &col_pairs,
+                    0,
+                    0,
+                    1,
+                    &[0],
+                )
+                .unwrap_err();
+                assert!(
+                    err.to_string().contains("column type")
+                        || err.to_string().contains("column tag"),
+                    "{err}"
+                );
+            }
+            let err = decode_row_group_range(
+                &mut ctx,
+                &mut bufs,
+                ColumnChunkSource::File(&[0]),
+                &reader,
+                &col_pairs,
+                0,
+                0,
+            )
+            .unwrap_err();
+            assert!(
+                err.to_string().contains("column type") || err.to_string().contains("column tag"),
+                "{err}"
+            );
+        }
+        Ok(())
+    }
 
     #[test]
     fn decode_single_timestamp_column() -> ParquetResult<()> {
