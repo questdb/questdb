@@ -407,8 +407,8 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         while (remainingKeys.size() > 0 && (frame = frameCursor.next()) != null) {
             circuitBreaker.statefulThrowExceptionIfTripped();
             final IndexReader indexReader = frame.getIndexReader(columnIndex, IndexReader.DIR_BACKWARD);
-            final long partitionLo = frame.getPartitionLo();
-            final long partitionHi = frame.getPartitionHi() - 1;
+            final long indexRowLo = frame.getIndexRowLo();
+            final long indexRowHi = frame.getIndexRowHi() - 1;
             final int invertedFrameIndex = Rows.MAX_SAFE_PARTITION_INDEX - frameIndex;
             final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
             recordA.init(frameMemory);
@@ -417,12 +417,13 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                 final int key = remainingKeys.getQuick(i);
                 try (RowCursor cursor = indexReader.getCursor(
                         key,
-                        partitionLo,
-                        partitionHi,
+                        indexRowLo,
+                        indexRowHi,
                         null,
                         frameMemory.getSourceRowResolver()
                 )) {
                     if (cursor.hasNext()) {
+                        // Relative to indexRowLo, so already frame-relative, as the native scan returns it.
                         final long row = cursor.next();
                         recordA.setRowIndex(row);
                         if (matchesPrefixes()) {

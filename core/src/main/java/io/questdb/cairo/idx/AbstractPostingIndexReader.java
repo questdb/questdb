@@ -575,6 +575,10 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         return keyMem.getFd() != -1;
     }
 
+    /**
+     * A {@code null} columnVersionReader names covering sidecars with {@link TableUtils#COLUMN_NAME_TXN_NONE}, as a
+     * self-contained index bundle does.
+     */
     @Override
     public void of(
             CairoConfiguration configuration,
@@ -1263,7 +1267,9 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                     continue;
                 }
                 sidecarColumnTypes.add(metadata.getColumnType(denseIdx));
-                sidecarCovTs.add(columnVersionReader.getColumnNameTxn(partitionTimestamp, writerIdx));
+                sidecarCovTs.add(columnVersionReader != null
+                        ? columnVersionReader.getColumnNameTxn(partitionTimestamp, writerIdx)
+                        : TableUtils.COLUMN_NAME_TXN_NONE);
             }
             coverCount = count;
         } catch (Throwable e) {
@@ -2156,7 +2162,11 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                     valueFileTxn
             );
             if (!ff.exists(pcFile)) {
-                return;
+                // The writer published bytes for this slot, so the file must exist: a miss would read as NULLs.
+                // No ENOENT errno: callers treat that as a transient or dropped-file condition, and this is neither.
+                throw CairoException.critical(0)
+                        .put("covering index data is missing, rebuild the index or use the no_covering hint [file=")
+                        .put(pcFile).put(']');
             }
             // Use the chain-published end offset rather than ff.length(fd):
             // the file may be page-pre-allocated past valid data, and the

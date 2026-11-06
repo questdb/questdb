@@ -349,6 +349,8 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
                     adjustedLo = partitionHi - (physicalHi - adjustedPhysicalLo);
                     fillNativeAddresses(base, adjustedPhysicalLo, physicalHi);
                 }
+                final int rowGroupLo = TablePageFrameCursor.toWindowRow(reader, reenterPartitionIndex, window, adjustedLo - windowStartRow);
+                final int rowGroupHi = TablePageFrameCursor.toWindowRow(reader, reenterPartitionIndex, window, partitionHi - windowStartRow);
 
                 if (adjustedLo > partitionLo) {
                     reenterPartitionLo = partitionLo;
@@ -367,9 +369,9 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
                 frame.partitionHi = partitionHi;
                 frame.partitionIndex = reenterPartitionIndex;
                 frame.partitionLo = adjustedLo;
-                frame.rowGroupHi = Math.toIntExact(partitionHi - windowStartRow);
+                frame.rowGroupHi = rowGroupHi;
                 frame.rowGroupIndex = window;
-                frame.rowGroupLo = Math.toIntExact(adjustedLo - windowStartRow);
+                frame.rowGroupLo = rowGroupLo;
                 return frame;
             }
             baseStartRow = Math.addExact(baseStartRow, baseRows);
@@ -637,6 +639,8 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
                         : Long.MIN_VALUE;
                 adjustedLo = Math.max(Math.max(partitionLo, targetGroupStart), frameLimitedLo);
             }
+            final int rowGroupLo = TablePageFrameCursor.toWindowRow(reader, reenterPartitionIndex, targetGroup, adjustedLo - targetGroupStart);
+            final int rowGroupHi = TablePageFrameCursor.toWindowRow(reader, reenterPartitionIndex, targetGroup, partitionHi - targetGroupStart);
             if (adjustedLo > partitionLo) {
                 this.reenterPartitionLo = partitionLo;
                 this.reenterPartitionHi = adjustedLo;
@@ -649,14 +653,15 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
 
             frame.partitionLo = adjustedLo;
             frame.partitionHi = partitionHi;
-            frame.pieceShift = 0;
+            // Symbol indexes store index rows, see ParquetMetaFileReader#getRowGroupIndexRowLo.
+            frame.pieceShift = metadata.getRowGroupIndexRowLo(targetGroup, targetGroupStart) - targetGroupStart;
             frame.skipSkeleton = false;
             frame.format = PartitionFormat.PARQUET;
             setFramePartitionFrameState(requiresMaterialization);
             frame.parquetMetaDecoder = reenterParquetDecoder;
             frame.rowGroupIndex = targetGroup;
-            frame.rowGroupLo = (int) (adjustedLo - targetGroupStart);
-            frame.rowGroupHi = (int) (partitionHi - targetGroupStart);
+            frame.rowGroupLo = rowGroupLo;
+            frame.rowGroupHi = rowGroupHi;
             frame.partitionIndex = reenterPartitionIndex;
             // Update cache to avoid re-scanning skipped row groups on next call
             cachedRowGroupIndex = targetGroup;

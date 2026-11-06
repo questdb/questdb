@@ -58,11 +58,9 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long timestampMergeIndexSize,
             long srcDataFixFd,
             long srcDataFixAddr,
-            long srcDataFixOffset,
             long srcDataFixSize,
             long srcDataVarFd,
             long srcDataVarAddr,
-            long srcDataVarOffset,
             long srcDataVarSize,
             long srcDataLo,
             long srcDataHi,
@@ -133,12 +131,10 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                             columnType,
                             timestampMergeIndexAddr,
                             timestampMergeIndexSize / TIMESTAMP_MERGE_ENTRY_BYTES,
-                            // this is a hack, when we have column top we can have only of the two:
-                            // srcDataFixOffset, when we had to shift data to back-fill nulls or
-                            // srcDataTopOffset - if we kept the column top
-                            // when one value is present the other will be 0
-                            srcDataFixAddr + srcDataFixOffset - srcDataTop,
-                            srcDataVarAddr + srcDataVarOffset,
+                            // srcDataTop is the column top offset when the merge kept the column top, so row numbers
+                            // address the data past it, and 0 when the merge materialized the column top
+                            srcDataFixAddr - srcDataTop,
+                            srcDataVarAddr,
                             srcOooFixAddr,
                             srcOooVarAddr,
                             dstAuxAddr + dstFixOffset,
@@ -171,8 +167,8 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         copyData(
                                 tableWriter.getFilesFacade(),
                                 columnType,
-                                srcDataFixAddr + srcDataFixOffset,
-                                srcDataVarAddr + srcDataVarOffset,
+                                srcDataFixAddr,
+                                srcDataVarAddr,
                                 srcDataLo,
                                 srcDataHi,
                                 dstAuxAddr + dstFixOffset,
@@ -272,11 +268,9 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         final long timestampMergeIndexSize = task.getTimestampMergeIndexSize();
         final long srcDataFixFd = task.getSrcDataFixFd();
         final long srcDataFixAddr = task.getSrcDataFixAddr();
-        final long srcDataFixOffset = task.getSrcDataFixOffset();
         final long srcDataFixSize = task.getSrcDataFixSize();
         final long srcDataVarFd = task.getSrcDataVarFd();
         final long srcDataVarAddr = task.getSrcDataVarAddr();
-        final long srcDataVarOffset = task.getSrcDataVarOffset();
         final long srcDataVarSize = task.getSrcDataVarSize();
         final long srcDataTop = task.getSrcDataTop();
         final long srcDataLo = task.getSrcDataLo();
@@ -329,11 +323,9 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                     timestampMergeIndexSize,
                     srcDataFixFd,
                     srcDataFixAddr,
-                    srcDataFixOffset,
                     srcDataFixSize,
                     srcDataVarFd,
                     srcDataVarAddr,
-                    srcDataVarOffset,
                     srcDataVarSize,
                     srcDataLo,
                     srcDataHi,
@@ -650,6 +642,51 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 );
             }
 
+            // A merge that materialized the column top left scratch past the destination's logical end, see
+            // O3OpenColumnJob.mergeFixColumn(). Trim it before the sync, so the sync does not write it out.
+            // Windows cannot truncate a mapped file, so a failed attempt is retried after the unmap.
+            try {
+                try {
+                    O3Utils.unmap(ff, srcDataFixAddr, srcDataFixSize);
+                } finally {
+                    O3Utils.unmap(ff, srcDataVarAddr, srcDataVarSize);
+                }
+            } catch (Throwable th) {
+                // Same as a failed release below: the commit must fail, and the column still counts down.
+                LOG.error()
+                        .$("release error [table=").$(tableWriter.getTableToken())
+                        .$(", e=").$(th)
+                        .I$();
+                tableWriter.o3BumpErrorCount(th);
+                unmapAndCloseAllPartsComplete(
+                        columnCounter,
+                        timestampMergeIndexAddr,
+                        timestampMergeIndexSize,
+                        srcDataFixFd,
+                        0,
+                        0,
+                        srcDataVarFd,
+                        0,
+                        0,
+                        srcTimestampFd,
+                        srcTimestampAddr,
+                        srcTimestampSize,
+                        dstFixFd,
+                        dstFixAddr,
+                        dstFixSize,
+                        dstVarFd,
+                        dstVarAddr,
+                        dstVarSize,
+                        0,
+                        0,
+                        tableWriter
+                );
+                throw th;
+            }
+            final boolean hasDstScratch = dstFixFd > 0 && srcDataFixFd == -dstFixFd;
+            final long dstFixFileSize = TableUtils.alignedSize(Math.abs(dstFixSize));
+            final boolean isScratchTrimmed = !hasDstScratch || ff.truncate(dstFixFd, dstFixFileSize);
+
             // The writer's own grade, not the raw global mode: a table held at SYNC pending adaptive
             // enrolment must flush here even though the instance runs ADAPTIVE.
             final int commitMode = tableWriter.getEffectiveCommitMode();
@@ -661,11 +698,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         timestampMergeIndexAddr,
                         timestampMergeIndexSize,
                         srcDataFixFd,
-                        srcDataFixAddr,
-                        srcDataFixSize,
                         srcDataVarFd,
-                        srcDataVarAddr,
-                        srcDataVarSize,
                         dstFixFd,
                         dstFixAddr,
                         dstFixSize,
@@ -682,21 +715,33 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             }
 
             try {
-                unmapAndCloseColumn(
-                        ff,
-                        srcDataFixFd,
-                        srcDataFixAddr,
-                        srcDataFixSize,
-                        srcDataVarFd,
-                        srcDataVarAddr,
-                        srcDataVarSize,
-                        dstFixFd,
-                        dstFixAddr,
-                        dstFixSize,
-                        dstVarFd,
-                        dstVarAddr,
-                        dstVarSize
-                );
+                try {
+                    O3Utils.unmap(ff, dstFixAddr, dstFixSize);
+                    if (!isScratchTrimmed && !ff.truncate(dstFixFd, dstFixFileSize)) {
+                        // harmless, readers never look past the partition's row count
+                        LOG.info().$("could not trim column top scratch [fd=").$(dstFixFd)
+                                .$(", size=").$(dstFixFileSize)
+                                .$(", errno=").$(ff.errno())
+                                .I$();
+                    }
+                } finally {
+                    // src and dstFix memory is already unmapped, only close their fds
+                    unmapAndCloseColumn(
+                            ff,
+                            srcDataFixFd,
+                            0,
+                            0,
+                            srcDataVarFd,
+                            0,
+                            0,
+                            dstFixFd,
+                            0,
+                            0,
+                            dstVarFd,
+                            dstVarAddr,
+                            dstVarSize
+                    );
+                }
             } catch (Throwable th) {
                 // A double close or a failed munmap means the O3 bookkeeping is off, so the commit must
                 // fail. The column still counts down: without its count the partition never completes.
@@ -747,11 +792,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long timestampMergeIndexAddr,
             long timestampMergeIndexSize,
             long srcDataFixFd,
-            long srcDataFixAddr,
-            long srcDataFixSize,
             long srcDataVarFd,
-            long srcDataVarAddr,
-            long srcDataVarSize,
             long dstFixFd,
             long dstFixAddr,
             long dstFixSize,
@@ -793,11 +834,11 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                     timestampMergeIndexAddr,
                     timestampMergeIndexSize,
                     srcDataFixFd,
-                    srcDataFixAddr,
-                    srcDataFixSize,
+                    0,
+                    0,
                     srcDataVarFd,
-                    srcDataVarAddr,
-                    srcDataVarSize,
+                    0,
+                    0,
                     srcTimestampFd,
                     srcTimestampAddr,
                     srcTimestampSize,

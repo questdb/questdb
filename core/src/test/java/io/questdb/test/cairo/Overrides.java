@@ -39,10 +39,12 @@ import io.questdb.cutlass.qwp.codec.QwpServerInfoProvider;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.Rnd;
 import io.questdb.std.RostiAllocFacade;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.test.AbstractCairoTest;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assume;
 
 import java.util.HashMap;
@@ -54,11 +56,18 @@ import static io.questdb.cairo.DebugUtils.LOG;
 public class Overrides {
 
     /**
+     * Pins the commit mode of every fuzz test class, to reproduce a failure under the mode its log names. Unset,
+     * each fuzz test class draws its own - see {@link #pickFuzzCommitMode}.
+     */
+    public static final String FUZZ_COMMIT_MODE = System.getProperty("questdb.test.fuzz.commit.mode");
+
+    /**
      * Commit mode every test runs under, unless it sets one itself. The suite runs ADAPTIVE while the shipped
      * default ({@link CommitMode#DEFAULT}) is NOSYNC, so the durable path is exercised everywhere; sweep the other
      * way with {@code -Dquestdb.test.commit.mode=nosync}. CI ({@code ci/templates/select-test-commit-mode.yml})
      * splits the jobs of a test shard between NOSYNC and ADAPTIVE and swaps them on the next run, so a test that
-     * needs one mode pins it. Every path that builds a test configuration reads this: here,
+     * needs one mode pins it. A fuzz test class ignores it and draws its own mode, see {@link #getTestCommitMode()}.
+     * Every path that builds a test configuration reads this: here,
      * {@code DefaultTestCairoConfiguration} and {@code AbstractBootstrapTest}'s server.conf;
      * {@code TestCommitModeSwitchTest} fails if another path skips it.
      */
@@ -73,6 +82,9 @@ public class Overrides {
      */
     public static final boolean TEST_COMMIT_MODE_EXPLICIT = System.getProperty("questdb.test.commit.mode") != null;
     private static final BuildInformationHolder buildInformationHolder = new BuildInformationHolder();
+    private static final String[] FUZZ_COMMIT_MODES = {"nosync", "async", "sync", "adaptive"};
+    // The running fuzz test class's own commit mode; null outside a fuzz test class.
+    private static volatile String fuzzCommitMode;
 
     /**
      * Skips the calling test unless the suite runs ADAPTIVE.
@@ -96,7 +108,8 @@ public class Overrides {
      * @param allowed one or more {@link CommitMode} constants
      */
     public static void assumeCommitMode(int... allowed) {
-        final int actual = CommitMode.fromString(TEST_COMMIT_MODE);
+        final String testCommitMode = getTestCommitMode();
+        final int actual = CommitMode.fromString(testCommitMode);
         for (int i = 0; i < allowed.length; i++) {
             if (allowed[i] == actual) {
                 return;
@@ -107,8 +120,8 @@ public class Overrides {
             names.append(i == 0 ? "" : "/").append(CommitMode.toString(allowed[i]));
         }
         Assume.assumeTrue(
-                "requires commit mode " + names + ", suite runs " + TEST_COMMIT_MODE
-                        + " (-Dquestdb.test.commit.mode)",
+                "requires commit mode " + names + ", test runs " + testCommitMode
+                        + " (-Dquestdb.test.commit.mode, -Dquestdb.test.fuzz.commit.mode)",
                 false
         );
     }
@@ -126,6 +139,49 @@ public class Overrides {
      */
     public static void assumeDurableCommitMode() {
         assumeCommitMode(CommitMode.SYNC, CommitMode.ASYNC, CommitMode.ADAPTIVE);
+    }
+
+    /**
+     * The commit mode the running fuzz test class drew, or {@code null} outside a fuzz test class. A test base that
+     * pins its own mode rather than reading {@link #getTestCommitMode()} takes this one instead when it is set.
+     */
+    public static @Nullable String getFuzzCommitMode() {
+        return fuzzCommitMode;
+    }
+
+    /**
+     * The commit mode the running test configures: a fuzz test class's own draw, else the suite's
+     * {@link #TEST_COMMIT_MODE}.
+     */
+    public static String getTestCommitMode() {
+        final String mode = fuzzCommitMode;
+        return mode != null ? mode : TEST_COMMIT_MODE;
+    }
+
+    /**
+     * Whether {@code testClass} is a fuzz test, which runs under a commit mode of its own rather than the suite's.
+     */
+    public static boolean isFuzzTest(@Nullable Class<?> testClass) {
+        return testClass != null && testClass.getSimpleName().contains("Fuzz");
+    }
+
+    /**
+     * Draws a fuzz test class's commit mode from every mode, independently of {@link #TEST_COMMIT_MODE}: the suite
+     * sweeps only NOSYNC and ADAPTIVE, and a fuzz class should also meet SYNC and ASYNC. {@link #FUZZ_COMMIT_MODE}
+     * pins the draw.
+     */
+    public static String pickFuzzCommitMode(Rnd rnd) {
+        if (FUZZ_COMMIT_MODE == null) {
+            return FUZZ_COMMIT_MODES[rnd.nextInt(FUZZ_COMMIT_MODES.length)];
+        }
+        if (CommitMode.fromString(FUZZ_COMMIT_MODE) == CommitMode.UNKNOWN) {
+            throw new IllegalArgumentException("questdb.test.fuzz.commit.mode must name a commit mode, was: " + FUZZ_COMMIT_MODE);
+        }
+        return FUZZ_COMMIT_MODE;
+    }
+
+    public static void setFuzzCommitMode(@Nullable String mode) {
+        fuzzCommitMode = mode;
     }
 
     private final Properties defaultProperties = new Properties();
