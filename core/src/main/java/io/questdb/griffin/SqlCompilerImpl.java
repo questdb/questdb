@@ -7723,7 +7723,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     /**
-     * Binds {@link RowExpiryUtil#buildStrictBindKeepFilter} and refuses the policy when that fails. The
+     * Binds {@link RowExpiryUtil#buildKeepCase} and refuses the policy when that fails. The
      * strict form's type rules refuse a cross-type equality such as {@code s = 12345} on a {@code STRING}
      * column, which binds on its own but casts every value to {@code INT} once rows are evaluated: every
      * read and every sweep of the view would fail on the first non-numeric value, with an error that names
@@ -7749,7 +7749,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         Function f = null;
         try {
             clear();
-            lexer.of(RowExpiryUtil.buildStrictBindKeepFilter(Chars.toString(predicate)));
+            lexer.of(RowExpiryUtil.buildKeepCase(Chars.toString(predicate)));
             f = functionParser.parseFunction(parser.expr(lexer, (QueryModel) null, this), metadata, executionContext);
             f = Misc.free(f);
             // A bare <column> = <constant> has to compare values of one kind. A number compared with a text column
@@ -7967,9 +7967,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             sql = "SELECT " + selection + " FROM (SELECT " + selection + " FROM " + source + " LATEST ON "
                     + RowExpiryUtil.quoteIdentifier(designatedTs) + " PARTITION BY " + keys + ") LIMIT 0";
         } else {
-            final String windowPred = RowExpiryUtil.windowPredicate(predicate, designatedTs);
+            final String keepCase = RowExpiryUtil.buildKeepCase(RowExpiryUtil.windowPredicate(predicate, designatedTs));
             sql = "SELECT " + (isNarrowProjection ? RowExpiryUtil.KEEP_COLUMN : "*") + " FROM (SELECT " + (isNarrowProjection ? "" : "*, ")
-                    + "CASE WHEN (" + windowPred + ") THEN false ELSE true END " + RowExpiryUtil.KEEP_COLUMN + " FROM " + source
+                    + keepCase + " " + RowExpiryUtil.KEEP_COLUMN + " FROM " + source
                     + ") WHERE " + RowExpiryUtil.KEEP_COLUMN + " LIMIT 0";
         }
         try (SqlCompiler compiler = engine.getSqlCompiler()) {

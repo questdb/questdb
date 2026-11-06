@@ -161,22 +161,12 @@ final class BindContext implements Mutable {
         isSetOperationBranch = false;
     }
 
-    static ObjList<ExpressionNode> blockGroupBy(QueryModel model, QueryModel source) {
-        return source.getGroupBy().size() > 0 && !source.isPivot() ? source.getGroupBy() : model.getGroupBy();
-    }
-
     /**
-     * The position of the GROUP BY keyword of the query block, 0 without one: the grouping sets of a SAMPLE BY have none.
+     * The model that holds the grouping of the query block: its source, unless that is a pivot, whose GROUP BY belongs
+     * to the pivot. Its GROUP BY position is 0 without the keyword: the grouping sets of a SAMPLE BY have none.
      */
-    static int blockGroupByPosition(QueryModel model, QueryModel source) {
-        return source.getGroupByPosition() > 0 && !source.isPivot() ? source.getGroupByPosition() : model.getGroupByPosition();
-    }
-
-    /**
-     * The grouping sets of the query block, as the parser lists them over {@link #blockGroupBy}, null without any.
-     */
-    static ObjList<IntList> blockGroupingSets(QueryModel model, QueryModel source) {
-        return source.hasGroupingSets() && !source.isPivot() ? source.getGroupingSets() : model.getGroupingSets();
+    static QueryModel groupingBlock(QueryModel model, QueryModel source) {
+        return source.isPivot() ? model : source;
     }
 
     static SqlException groupingCallOutsideGroupingSets(ExpressionNode call) {
@@ -187,7 +177,8 @@ final class BindContext implements Mutable {
      * True when the query block states its grouping: GROUP BY keys, or grouping sets, of which {@code ()} has no key.
      */
     static boolean hasBlockGrouping(QueryModel model, QueryModel source) {
-        return blockGroupBy(model, source).size() > 0 || blockGroupingSets(model, source) != null;
+        final QueryModel block = groupingBlock(model, source);
+        return block.getGroupBy().size() > 0 || block.hasGroupingSets();
     }
 
     static boolean isGroupingCall(ExpressionNode node) {

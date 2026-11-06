@@ -677,9 +677,13 @@ final class SampleByBinder {
     /**
      * True when the SAMPLE BY runs in its own cursor rather than as a GROUP BY over the bucket: for an alignment only the
      * cursor has, and over any source but a plain table read. A read under an EXPIRE ROWS policy is a sub-query of the
-     * view to the SAMPLE BY, which keeps the order and the timestamp the cursor publishes to the consumers above it.
+     * view to the SAMPLE BY, which keeps the order and the timestamp the cursor publishes to the consumers above it, and
+     * its streaming. Grouping sets group over the bucket whatever the source, since each set repeats the rows.
      */
     static boolean requiresSampleByCursor(QueryModel source, LogicalPlan input) {
+        if (source.hasGroupingSets()) {
+            return false;
+        }
         return requiresSampleByCursorAlignment(source) || !isPlainTableRead(source, input) && (source.getTimestamp() == null
                 || source.getSampleByFrom() != null || source.getSampleByTo() != null || hasFill(source));
     }

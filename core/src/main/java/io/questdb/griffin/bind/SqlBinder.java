@@ -571,7 +571,7 @@ public final class SqlBinder implements Mutable {
             sampleByBinder.validateGroupingSets(source);
         }
         final GroupingPlan sampleBy = source.getSampleBy() == null ? null
-                : !source.hasGroupingSets() && SampleByBinder.requiresSampleByCursor(source, sourcePlan) ? sampleByBinder.bindSampleBy(model, source, sourcePlan, executionContext)
+                : SampleByBinder.requiresSampleByCursor(source, sourcePlan) ? sampleByBinder.bindSampleBy(model, source, sourcePlan, executionContext)
                   : ctx.planNodes.aggregates.next();
         final BoundExpression sampleByBucket = sampleBy instanceof AggregatePlan aggregate
                 ? sampleByBinder.bindSampleByBucket(model, source, sourcePlan, aggregate, executionContext) : null;
@@ -915,7 +915,7 @@ public final class SqlBinder implements Mutable {
             final PlanTable table = ctx.planTables.acquire(token, tableName.position, executionContext);
             final String expiryPredicate = expiryPolicy == null ? null : expiryReadBinder.predicateAt(expiryPolicy, table.getMetadataVersion());
             if (expiryPredicate != null && ExpiryReadBinder.isQueryPolicy(expiryPredicate)) {
-                return bindTimestamp(expiryReadBinder.bindQueryRead(table, expiryPolicy, source.getViewNameExpr(), tableName.position, executionContext), source);
+                return bindTimestamp(expiryReadBinder.bindQueryRead(table.getTableToken(), expiryPolicy, source.getViewNameExpr(), tableName.position, executionContext), source);
             }
             final ScanPlan scan = bindScan(source, tableName, table.getTableToken(), table.getMetadataVersion());
             for (int i = 0, n = table.getColumnCount(); i < n; i++) {
@@ -966,28 +966,20 @@ public final class SqlBinder implements Mutable {
         }
         input = orderBinder.projectBeforeDeclaredOrder(input);
         final OutputSchema output = input.getOutput();
-        final int index = getColumnIndexQuiet(output, timestamp.token);
-        if (index < 0) {
-            throw SqlException.invalidColumn(timestamp.position, timestamp.token);
-        }
-        if (!ColumnType.isTimestamp(output.getColumnType(index))) {
-            throw SqlException.$(timestamp.position, "not a TIMESTAMP");
-        }
+        final int index = timestampIndex(output, timestamp.token, timestamp.position);
         if (input instanceof ScanPlan) {
             // SQL can designate another timestamp. Partition intervals still use
             // the table's native timestamp, retained separately on the scan.
             output.setTimestampIndex(index);
             return input;
         }
-        // LATEST ON names the column it reads and keeps the order of its input; only a SAMPLE BY of the block buckets on it.
-        if (source.getLatestBy().size() > 0 && !source.isExplicitTimestamp() && source.getSampleBy() == null) {
+        // LATEST ON names the column it reads and keeps the order of its input; only a SAMPLE BY of the block buckets on
+        // it, and only a column the input does not designate needs declaring for that.
+        if (source.getLatestBy().size() > 0 && !source.isExplicitTimestamp()
+                && (source.getSampleBy() == null || output.getTimestampIndex() == index)) {
             return input;
         }
-        // A declaration changes metadata and observes the subquery's order, so a projection marks that boundary.
-        final ProjectPlan project = ctx.identityProjection(input, timestamp.position);
-        project.getOutput().setTimestampIndex(index);
-        project.markTimestampDeclaration();
-        return project;
+        return declareTimestamp(input, index, timestamp.position);
     }
 
     private boolean collectCursorColumns(QueryModel model) {
@@ -1459,6 +1451,20 @@ public final class SqlBinder implements Mutable {
     }
 
     /**
+     * The index of the column a {@code timestamp(...)} clause names, which has to be a timestamp.
+     */
+    static int timestampIndex(OutputSchema output, CharSequence name, int position) throws SqlException {
+        final int index = getColumnIndexQuiet(output, name);
+        if (index < 0) {
+            throw SqlException.invalidColumn(position, name);
+        }
+        if (!ColumnType.isTimestamp(output.getColumnType(index))) {
+            throw SqlException.$(position, "not a TIMESTAMP");
+        }
+        return index;
+    }
+
+    /**
      * Binds the block's source: its joins, or its single source; promotes the select-list names that call a
      * no-argument function.
      */
@@ -1709,6 +1715,17 @@ public final class SqlBinder implements Mutable {
     ExpressionNode copyWhereClause(QueryModel source) {
         return source.getWhereClause() == null ? null
                 : SqlUtil.optimiseBooleanNot(ExpressionNode.deepClone(ctx.bindingExpressions, source.getWhereClause()), ctx.bindingExpressions);
+    }
+
+    /**
+     * Designates the input's column at {@code index}. A declaration changes metadata and observes the input's order,
+     * so a projection marks that boundary.
+     */
+    ProjectPlan declareTimestamp(LogicalPlan input, int index, int position) {
+        final ProjectPlan project = ctx.identityProjection(input, position);
+        project.getOutput().setTimestampIndex(index);
+        project.markTimestampDeclaration();
+        return project;
     }
 
     /**

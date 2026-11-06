@@ -1588,8 +1588,8 @@ public class LatestByTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByNonIndexedSubQueryKeepsDesignatedTimestamp() throws Exception {
-        // SAMPLE BY written at the same query level can preserve the designation through its own
-        // rewrites. Keep this working without the general latest-by hoist. The dataset puts key order
+        // SAMPLE BY written at the same query level preserves the designation over the ordinary plan.
+        // The dataset puts key order
         // (x, y) out of step with latest-timestamp order.
         assertMemoryLeak(() -> {
             execute("create table nb (i int, s symbol, ts timestamp) timestamp(ts) partition by DAY");
@@ -1615,7 +1615,7 @@ public class LatestByTest extends AbstractCairoTest {
     @Test
     public void testLatestByIndexedSubQueryQualifiedFilterStaysCorrect() throws Exception {
         // Qualified predicates at either level keep their alias scope and the ordinary light plan.
-        // An index alone must not opt an ordinary sub-query into the scalar-expiry hoist.
+        // An index alone must not turn an ordinary sub-query into a direct read.
         assertMemoryLeak(() -> {
             execute("create table tab (v double, sym symbol index, ts timestamp) timestamp(ts) partition by DAY");
             execute("insert into tab values (10.0,'CC','1970-01-01T00:00:00.000000Z'),"

@@ -52,17 +52,17 @@ import org.junit.Test;
  * <p>
  * The expiry cases use four lists:
  * <ul>
- *     <li>{@link #HOISTED} - the rewrite fires. Its plan must differ from the un-rewritten one, and
- *     the projection (column names, types and order), the rows and the designated timestamp must all
- *     survive it.</li>
- *     <li>{@link #NOT_HOISTED} - the rewrite must leave the shape alone, so both plans must be
- *     identical. This is what pins the guards: a guard that stops rejecting its shape changes that
- *     shape's plan and the two stop matching. Comparing rows alone would not catch it, because a
- *     wrongly hoisted query often returns the same rows on a small fixture.</li>
- *     <li>{@link #NEEDS_HOIST} - the shape need not compile without the rewrite. The direct read
- *     publishes a designated timestamp that the sub-query form does not, so the rewrite is what lets
- *     SAMPLE BY and the timestamp joins compile over it at all.</li>
- *     <li>{@link #ROWS_MAY_DIFFER} - the rewrite fires and the two forms return different rows. Only an
+ *     <li>{@link #DIRECT_READ_SHAPES} - the read is direct. Its plan must differ from the sub-query form's,
+ *     and the projection (column names, types and order), the rows and the designated timestamp must all
+ *     match it.</li>
+ *     <li>{@link #SAME_PLAN_SHAPES} - the read must not be direct, so both plans must be identical. This is
+ *     what pins the guards: a guard that stops rejecting its shape changes that shape's plan and the two
+ *     stop matching. Comparing rows alone would not catch it, because a wrong direct read often returns
+ *     the same rows on a small fixture.</li>
+ *     <li>{@link #DIRECT_READ_ONLY_SHAPES} - the shape need not compile through a sub-query. The direct read
+ *     publishes a designated timestamp that the sub-query form does not, which is what lets SAMPLE BY and
+ *     the timestamp joins compile over it at all.</li>
+ *     <li>{@link #ROWS_MAY_DIFFER} - the read is direct and the two forms return different rows. Only an
  *     unordered LIMIT does this, and both answers are correct; everything except the rows is still
  *     compared.</li>
  * </ul>
@@ -72,22 +72,22 @@ import org.junit.Test;
  * <p>
  * The designated timestamp may appear where there was none, but must never move to another column or
  * disappear. That is the {@code timestamp(ts2)} defect, which changes no row and so is invisible to a
- * result comparison on its own. On the shapes where the un-hoisted form publishes no timestamp at all
+ * result comparison on its own. On the shapes where the sub-query form publishes no timestamp at all
  * there is nothing to compare against, so the check falls back to the column named by
- * {@code LATEST ON} - the only one the rewrite is allowed to publish.
+ * {@code LATEST ON} - the only one the direct read is allowed to publish.
  * <p>
- * Extending this is one line: a shape the rewrite must handle, or must leave alone, goes in the
- * matching list and is compared against the un-rewritten plan from then on.
+ * Extending this is one line: a shape that must read directly, or must not, goes in the matching list
+ * and is compared against its sub-query form from then on.
  * <p>
- * The same query shapes without expiry must retain identical plans, rows and metadata with the
- * rewrite enabled or disabled. This checks the scope boundary independently of individual guards.
+ * The same query shapes without expiry must retain identical plans, rows and metadata whether or not an
+ * expiring read compiled before them. This checks the scope boundary independently of individual guards.
  */
-public class LatestByHoistEquivalenceTest extends AbstractCairoTest {
+public class LatestByOverPolicyEquivalenceTest extends AbstractCairoTest {
 
     /**
-     * Shapes the rewrite fires on. Plans must differ; projection, rows and timestamp must not.
+     * Shapes that read directly. Plans must differ; projection, rows and timestamp must not.
      */
-    private static final ObjList<String> HOISTED = new ObjList<>(
+    private static final ObjList<String> DIRECT_READ_SHAPES = new ObjList<>(
             "SELECT * FROM et LATEST ON ts PARTITION BY sym",
             "SELECT * FROM en LATEST ON ts PARTITION BY sym",
             "SELECT * FROM et WHERE v > 15 LATEST ON ts PARTITION BY sym",
@@ -107,7 +107,7 @@ public class LatestByHoistEquivalenceTest extends AbstractCairoTest {
     );
 
     /**
-     * Former general-purpose hoist candidates. Without expiry, every plan must now stay unchanged.
+     * Shapes over tables without expiry, whose plans an expiring read must leave unchanged.
      */
     private static final String[] ORDINARY_SHAPES = {
             "SELECT * FROM (SELECT * FROM t) LATEST ON ts PARTITION BY sym",
@@ -132,25 +132,25 @@ public class LatestByHoistEquivalenceTest extends AbstractCairoTest {
             "SELECT ts, sym, v FROM (SELECT v, sym, ts, ts2 FROM t) LATEST ON ts PARTITION BY sym",
             // an alias on the sub-query, qualifying the outer filter
             "SELECT * FROM (SELECT * FROM t) x WHERE x.v > 15 LATEST ON ts PARTITION BY sym",
-            // SAMPLE BY at the same query level can compile through its own rewrites.
+            // SAMPLE BY at the same query level.
             "SELECT ts, count() FROM (SELECT * FROM t) LATEST ON ts PARTITION BY sym SAMPLE BY 1d",
             "SELECT ts, count() FROM (SELECT * FROM n) LATEST ON ts PARTITION BY sym SAMPLE BY 1d",
-            // A CTE referenced twice; neither arm opts into scalar-expiry hoisting.
+            // A CTE referenced twice; neither arm reads a policy.
             "WITH c AS (SELECT * FROM t) SELECT * FROM c LATEST ON ts PARTITION BY sym UNION ALL SELECT * FROM c",
             // an ORDER BY above the LATEST ON decides the row a LIMIT keeps, so both forms agree
             "SELECT * FROM (SELECT * FROM t) LATEST ON ts PARTITION BY sym ORDER BY v LIMIT 1",
     };
 
     /**
-     * Shapes the rewrite fires on where it also changes which rows come back. A LIMIT with no ORDER BY
+     * Shapes that read directly where the two forms also return different rows. A LIMIT with no ORDER BY
      * keeps the first N rows in whatever order the factory emits them, and the two forms emit in
      * different orders: the sub-query form one row per partition key in map-insertion order, the direct
      * read in timestamp order. Both answers are correct - the query does not ask for an order - so the
      * rows are deliberately not compared here. Everything else still has to survive: the plan must
      * change, and the projection, the row count and the designated timestamp must not.
      * <p>
-     * This is the one place where upgrading to the rewrite is visible to a caller as a different answer
-     * rather than a different plan. A LIMIT lands on the model above the LATEST ON
+     * This is the one place where the direct read is visible to a caller as a different answer rather
+     * than a different plan. A LIMIT lands on the model above the LATEST ON
      * ({@code SqlParser.parseDml0} moves it up out of the FROM clause), so the read below it cannot see it.
      */
     private static final String[] ROWS_MAY_DIFFER = {
@@ -160,9 +160,9 @@ public class LatestByHoistEquivalenceTest extends AbstractCairoTest {
     };
 
     /**
-     * Shapes the rewrite must leave alone. Both plans must be identical.
+     * Shapes that must not read directly. Both plans must be identical.
      */
-    private static final String[] NOT_HOISTED = {
+    private static final String[] SAME_PLAN_SHAPES = {
             // Parser provenance is necessary, not sufficient: these directly reach a marked read
             // but must still obey timestamp choice and join semantics.
             "SELECT * FROM et LATEST ON ts2 PARTITION BY sym",
@@ -187,7 +187,7 @@ public class LatestByHoistEquivalenceTest extends AbstractCairoTest {
             "SELECT * FROM (SELECT sym, ts, max(v) v, max(ts2) ts2 FROM t SAMPLE BY 1d) LATEST ON ts PARTITION BY sym",
             // LATEST ON applies to the join output, not to the table under it
             "SELECT * FROM (SELECT * FROM t) JOIN j ON (v = w) LATEST ON ts PARTITION BY sym",
-            // an alias on the table model qualifying that model's own filter: the rewrite would drop
+            // an alias on the table model qualifying that model's own filter: a direct read would drop
             // the model the prefix resolves against
             "SELECT * FROM (SELECT * FROM t x WHERE x.v > 15) LATEST ON ts PARTITION BY sym",
             // projections that are not the table's full identity column list
@@ -205,82 +205,82 @@ public class LatestByHoistEquivalenceTest extends AbstractCairoTest {
     };
 
     /**
-     * Shapes that need not compile without the rewrite, but must compile with it.
+     * Shapes that need not compile through a sub-query, but must compile as a direct read.
      */
-    private static final String[] NEEDS_HOIST = {
+    private static final String[] DIRECT_READ_ONLY_SHAPES = {
             "SELECT * FROM (SELECT * FROM et LATEST ON ts PARTITION BY sym) ASOF JOIN u",
             "SELECT ts, count() FROM (SELECT * FROM et LATEST ON ts PARTITION BY sym) SAMPLE BY 1d",
             "SELECT ts, count() FROM (SELECT * FROM en LATEST ON ts PARTITION BY sym) SAMPLE BY 1d",
     };
 
     @Test
-    public void testOuterTimestampOverrideCompilesTheSameWithAndWithoutTheHoist() throws Exception {
+    public void testOuterTimestampOverrideCompilesTheSameDirectlyAndThroughSubQuery() throws Exception {
         // A timestamp(...) on the LATEST ON model does not reach the sub-query form's factory, so a
-        // SAMPLE BY above it has no timestamp to run on and the query does not compile. The hoist must
-        // not turn that into a compiling query: the direct read publishes the table's designated
-        // timestamp, so SAMPLE BY would silently run on ts instead of the declared ts2. The shape
-        // compiles under neither setting, so it fits none of the lists above.
+        // SAMPLE BY above it has no timestamp to run on and the query does not compile. The direct read must
+        // not turn that into a compiling query: it publishes the table's designated timestamp, so SAMPLE BY
+        // would silently run on ts instead of the declared ts2. The shape compiles in neither form, so it
+        // fits none of the lists above.
         assertMemoryLeak(() -> {
             createFixture();
             createExpiryFixture();
             final String sql = "SELECT ts, count() FROM (et x TIMESTAMP(ts2) "
                     + "LATEST ON ts PARTITION BY sym) SAMPLE BY 1d";
-            final Outcome hoisted = run(sql, true);
-            final Outcome plain = run(sql, false);
-            Assert.assertNotNull("the hoist made this shape compile: " + sql, hoisted.error);
-            Assert.assertEquals("the hoist changed how this shape is rejected: " + sql,
-                    plain.error, hoisted.error);
+            final Outcome direct = run(sql, true);
+            final Outcome subQuery = run(sql, false);
+            Assert.assertNotNull("the direct read made this shape compile: " + sql, direct.error);
+            Assert.assertEquals("the direct read changed how this shape is rejected: " + sql,
+                    subQuery.error, direct.error);
         });
     }
 
     @Test
-    public void testHoistPreservesProjectionRowsAndTimestamp() throws Exception {
+    public void testDirectReadPreservesProjectionRowsAndTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             createFixture();
             createExpiryFixture();
 
-            for (int i = 0, n = HOISTED.size(); i < n; i++) {
-                final String sql = HOISTED.getQuick(i);
-                final Outcome hoisted = run(sql, true);
-                final Outcome plain = run(sql, false);
-                Assert.assertNull("the hoist broke a query: " + sql + "\n  " + hoisted.error, hoisted.error);
-                Assert.assertNull("does not compile un-hoisted, so it belongs in NEEDS_HOIST: " + sql
-                        + "\n  " + plain.error, plain.error);
-                Assert.assertNotEquals("no longer hoisted, so this shape now covers nothing: " + sql,
-                        plain.plan, hoisted.plan);
-                Assert.assertEquals("projection changed: " + sql, plain.columns, hoisted.columns);
-                Assert.assertEquals("rows changed: " + sql, plain.rows.toString(), hoisted.rows.toString());
-                assertTimestampSurvives(sql, plain, hoisted);
+            for (int i = 0, n = DIRECT_READ_SHAPES.size(); i < n; i++) {
+                final String sql = DIRECT_READ_SHAPES.getQuick(i);
+                final Outcome direct = run(sql, true);
+                final Outcome subQuery = run(sql, false);
+                Assert.assertNull("the direct read broke a query: " + sql + "\n  " + direct.error, direct.error);
+                Assert.assertNull("does not compile through a sub-query, so it belongs in DIRECT_READ_ONLY_SHAPES: " + sql
+                        + "\n  " + subQuery.error, subQuery.error);
+                Assert.assertNotEquals("no longer a direct read, so this shape now covers nothing: " + sql,
+                        subQuery.plan, direct.plan);
+                Assert.assertEquals("projection changed: " + sql, subQuery.columns, direct.columns);
+                Assert.assertEquals("rows changed: " + sql, subQuery.rows.toString(), direct.rows.toString());
+                assertTimestampSurvives(sql, subQuery, direct);
             }
 
             for (String query : ROWS_MAY_DIFFER) {
                 final String sql = expirySql(query);
-                final Outcome hoisted = run(sql, true);
-                final Outcome plain = run(sql, false);
-                Assert.assertNull("the hoist broke a query: " + sql + "\n  " + hoisted.error, hoisted.error);
-                Assert.assertNull("does not compile un-hoisted, so it belongs in NEEDS_HOIST: " + sql
-                        + "\n  " + plain.error, plain.error);
-                Assert.assertNotEquals("no longer hoisted, so this shape now covers nothing: " + sql,
-                        plain.plan, hoisted.plan);
-                Assert.assertEquals("projection changed: " + sql, plain.columns, hoisted.columns);
-                Assert.assertEquals("row count changed: " + sql, plain.rows.size(), hoisted.rows.size());
-                assertTimestampSurvives(sql, plain, hoisted);
+                final Outcome direct = run(sql, true);
+                final Outcome subQuery = run(sql, false);
+                Assert.assertNull("the direct read broke a query: " + sql + "\n  " + direct.error, direct.error);
+                Assert.assertNull("does not compile through a sub-query, so it belongs in DIRECT_READ_ONLY_SHAPES: " + sql
+                        + "\n  " + subQuery.error, subQuery.error);
+                Assert.assertNotEquals("no longer a direct read, so this shape now covers nothing: " + sql,
+                        subQuery.plan, direct.plan);
+                Assert.assertEquals("projection changed: " + sql, subQuery.columns, direct.columns);
+                Assert.assertEquals("row count changed: " + sql, subQuery.rows.size(), direct.rows.size());
+                assertTimestampSurvives(sql, subQuery, direct);
             }
 
-            for (String query : NOT_HOISTED) {
+            for (String query : SAME_PLAN_SHAPES) {
                 final String sql = expirySql(query);
-                final Outcome hoisted = run(sql, true);
-                final Outcome plain = run(sql, false);
-                Assert.assertNull("does not compile, so it pins no guard: " + sql + "\n  " + plain.error, plain.error);
-                Assert.assertNull("the hoist broke a query: " + sql + "\n  " + hoisted.error, hoisted.error);
-                Assert.assertEquals("the hoist fired on a shape it must leave alone: " + sql,
-                        plain.plan, hoisted.plan);
+                final Outcome direct = run(sql, true);
+                final Outcome subQuery = run(sql, false);
+                Assert.assertNull("does not compile, so it pins no guard: " + sql + "\n  " + subQuery.error, subQuery.error);
+                Assert.assertNull("the direct read broke a query: " + sql + "\n  " + direct.error, direct.error);
+                Assert.assertEquals("a shape that must not read directly did: " + sql,
+                        subQuery.plan, direct.plan);
             }
 
-            for (String query : NEEDS_HOIST) {
+            for (String query : DIRECT_READ_ONLY_SHAPES) {
                 final String sql = expirySql(query);
-                final Outcome hoisted = run(sql, true);
-                Assert.assertNull("does not compile even with the hoist: " + sql + "\n  " + hoisted.error, hoisted.error);
+                final Outcome direct = run(sql, true);
+                Assert.assertNull("does not compile as a direct read: " + sql + "\n  " + direct.error, direct.error);
             }
         });
     }
@@ -297,7 +297,7 @@ public class LatestByHoistEquivalenceTest extends AbstractCairoTest {
             for (String sql : ORDINARY_SHAPES) {
                 assertUnchanged(sql);
             }
-            for (String sql : NOT_HOISTED) {
+            for (String sql : SAME_PLAN_SHAPES) {
                 assertUnchanged(sql);
             }
             assertUnchanged("SELECT * FROM plain_view WHERE v > 15 LATEST ON ts PARTITION BY v");
@@ -310,7 +310,7 @@ public class LatestByHoistEquivalenceTest extends AbstractCairoTest {
 
     @Test
     public void testScalarExpiryFilterMergesWithQueryFilter() throws Exception {
-        // The hoist ANDs the policy's keep filter with the query's own WHERE. The newest A row is expired,
+        // The read ANDs the policy's keep filter with the query's own WHERE. The newest A row is expired,
         // so both queries must return the older one. The newest B row has a NULL v, which the policy keeps:
         // the keep filter reaches the direct read as NOT (v < 2.0), not as the inverted v >= 2.0, which is
         // false for a NULL v.
@@ -423,7 +423,7 @@ public class LatestByHoistEquivalenceTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTimestampExpiryStillHoistsAfterPolicyChanges() throws Exception {
+    public void testTimestampPolicyReadsDirectlyAfterPolicyChanges() throws Exception {
         assertMemoryLeak(() -> {
             createFixture();
             execute("CREATE MATERIALIZED VIEW et AS (SELECT * FROM t), INDEX(sym)");
@@ -456,18 +456,18 @@ public class LatestByHoistEquivalenceTest extends AbstractCairoTest {
     }
 
     /**
-     * The un-hoisted form publishes no designated timestamp for many of these shapes - that is what the
-     * rewrite is for - so there is nothing to compare against on those. The rewrite fires only when
+     * The sub-query form publishes no designated timestamp for many of these shapes - that is what the
+     * direct read is for - so there is nothing to compare against on those. A read is direct only when
      * {@code LATEST ON} names the table's designated timestamp, so that column is the only one the
      * direct read may publish. Checking it that way covers the shapes a plain comparison says nothing
      * about, which is where a {@code timestamp(ts2)} defect would otherwise hide: it changes no row.
      */
-    private static void assertTimestampSurvives(String sql, Outcome plain, Outcome hoisted) {
-        if (plain.tsColumn != null) {
-            Assert.assertEquals("designated timestamp changed: " + sql, plain.tsColumn, hoisted.tsColumn);
-        } else if (hoisted.tsColumn != null) {
-            Assert.assertEquals("the hoist published a timestamp on the wrong column: " + sql,
-                    latestOnColumn(sql), hoisted.tsColumn);
+    private static void assertTimestampSurvives(String sql, Outcome subQuery, Outcome direct) {
+        if (subQuery.tsColumn != null) {
+            Assert.assertEquals("designated timestamp changed: " + sql, subQuery.tsColumn, direct.tsColumn);
+        } else if (direct.tsColumn != null) {
+            Assert.assertEquals("the direct read published a timestamp on the wrong column: " + sql,
+                    latestOnColumn(sql), direct.tsColumn);
         }
     }
 
@@ -488,8 +488,8 @@ public class LatestByHoistEquivalenceTest extends AbstractCairoTest {
 
     private static void createExpiryFixture() throws Exception {
         // The policy hides the newest BB and CC rows and keeps the NULL-v AA row. A shape whose own WHERE
-        // the hoist ANDs with the policy's keep filter therefore returns different rows if the rewrite
-        // drops that filter, and the comparison against the un-rewritten form catches it.
+        // the read ANDs with the policy's keep filter therefore returns different rows if the direct read
+        // drops that filter, and the comparison against the sub-query form catches it.
         execute("CREATE MATERIALIZED VIEW et AS (SELECT * FROM t), INDEX(sym) EXPIRE ROWS WHEN v > 25");
         execute("CREATE MATERIALIZED VIEW en AS (SELECT * FROM n) EXPIRE ROWS WHEN v > 25");
         drainWalAndMatViewQueues();
@@ -504,7 +504,7 @@ public class LatestByHoistEquivalenceTest extends AbstractCairoTest {
                 (30.0, 'BB', '1970-01-03T00:00:00.000000Z', '1970-01-02T00:00:00.000000Z'),
                 (40.0, 'CC', '1970-01-04T00:00:00.000000Z', '1970-01-01T00:00:00.000000Z'),
                 (null, 'AA', '1970-01-05T00:00:00.000000Z', null)""");
-        // a union arm carrying a LATER row for an existing key, so hoisting past the union would
+        // a union arm carrying a LATER row for an existing key, so reading past the union would
         // change the rows and not merely the plan
         execute("CREATE TABLE t2 (v DOUBLE, sym SYMBOL INDEX, ts TIMESTAMP, ts2 TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
         execute("INSERT INTO t2 VALUES (99.0, 'BB', '1970-01-09T00:00:00.000000Z', null)");

@@ -104,8 +104,8 @@ public final class RowExpiryUtil {
 
     /**
      * Synthetic boolean column name used by the projection-CASE read filter / cleanup for window and keep-by
-     * policies: the inner projection computes {@code CASE WHEN (<pred>) THEN false ELSE true END} as this
-     * column and the outer query filters on it. Unlikely to collide with a real user column.
+     * policies: a projection computes {@link #buildKeepCase} as this column and a filter over it reads it.
+     * Unlikely to collide with a real user column.
      */
     public static final String KEEP_COLUMN = "__qdb_re_keep";
 
@@ -175,7 +175,7 @@ public final class RowExpiryUtil {
      * {@code AndFunctionFactory} drops a constant {@code true} operand when it builds the function, so
      * the wrapper adds no per-row work.
      * <p>
-     * The cleanup sweep runs this text. DDL validation binds {@link #buildStrictBindKeepFilter} instead,
+     * The cleanup sweep runs this text. DDL validation binds {@link #buildKeepCase} instead,
      * whose {@code switch} is stricter about operand types, so every policy it accepts also binds here.
      * Reads express the same keep set as {@code NOT (<predicate>)} ({@code ExpiryReadBinder.keepFilterText}),
      * which the JIT compiler can turn into machine code where a {@code CASE} cannot. Both spellings mean
@@ -194,18 +194,22 @@ public final class RowExpiryUtil {
     }
 
     /**
-     * Builds the scalar-WHEN keep-rows filter in its bare form,
-     * {@code CASE WHEN (<predicate>) THEN false ELSE true END}, for DDL validation to bind. This form binds
-     * under stricter type rules than {@link #buildRowExpiryKeepFilter}: {@code SqlParser.rewriteCase}
-     * compiles a single-branch {@code CASE WHEN (<column> = <constant>)} into a {@code switch}, which
-     * requires the two operands to have the same type where {@code =} converts one of them. So a predicate
-     * that binds here also binds in {@link #buildRowExpiryKeepFilter}, while a cross-type equality such as
-     * {@code s = 12345} on a {@code STRING} column binds only there.
+     * Builds the keep-rows expression in its bare form, {@code CASE WHEN (<predicate>) THEN false ELSE true END},
+     * which has two uses. A window or keep-by policy evaluates it as its {@link #KEEP_COLUMN}, since a predicate
+     * that holds a window function never takes the {@code switch} form below.
      * <p>
-     * Only the bind outcome of this form is meaningful. Evaluated, the {@code switch} narrows the constant to
-     * the column's type and matches rows that {@code =} does not, so survivors are never computed with it.
+     * DDL validation binds it over a scalar predicate. This form binds under stricter type rules than
+     * {@link #buildRowExpiryKeepFilter}: {@code SqlParser.rewriteCase} compiles a single-branch
+     * {@code CASE WHEN (<column> = <constant>)} into a {@code switch}, which requires the two operands to have
+     * the same type where {@code =} converts one of them. So a predicate that binds here also binds in
+     * {@link #buildRowExpiryKeepFilter}, while a cross-type equality such as {@code s = 12345} on a
+     * {@code STRING} column binds only there.
+     * <p>
+     * Over a scalar predicate only the bind outcome is meaningful. Evaluated, the {@code switch} narrows the
+     * constant to the column's type and matches rows that {@code =} does not, so the survivors of a scalar
+     * policy are never computed with it.
      */
-    public static String buildStrictBindKeepFilter(String predicate) {
+    public static String buildKeepCase(String predicate) {
         return "CASE WHEN (" + predicate.trim() + ") THEN false ELSE true END";
     }
 

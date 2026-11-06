@@ -1627,10 +1627,6 @@ public interface CairoConfiguration {
 
     boolean isReadOnlyInstance();
 
-    // Test-only seam, with no backing production property: always true in a running server, so the
-    // planner always reads a LATEST ON over a scalar EXPIRE ROWS read from the table directly. Tests
-    // override it to false in a CairoConfiguration subclass to obtain the un-rewritten plan, which
-    // LatestByHoistEquivalenceTest compares against, shape by shape.
     boolean isSqlJitDebugEnabled();
 
     boolean isSqlLatestByJitEnabled();

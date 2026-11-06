@@ -50,20 +50,18 @@ import io.questdb.std.ObjList;
  * the stored value from the map record.</p>
  */
 public class GroupingFunction extends IntFunction implements GroupByFunction {
-    private final IntList argColumnIndices;
     private final ObjList<Function> argFunctions;
     private final IntList argKeyPositions;
     private int currentValue;
     private int[] perSetValues;
     private int valueIndex;
 
-    public GroupingFunction(IntList argColumnIndices, ObjList<Function> argFunctions) {
-        this.argColumnIndices = argColumnIndices;
+    public GroupingFunction(ObjList<Function> argFunctions) {
         // FunctionParser clears its scratch args list after the factory returns.
         // Keep our own list so close() releases the argument functions we own.
         this.argFunctions = new ObjList<>(argFunctions);
-        this.argKeyPositions = new IntList(argColumnIndices.size());
-        this.argKeyPositions.setAll(argColumnIndices.size(), -1);
+        this.argKeyPositions = new IntList(argFunctions.size());
+        this.argKeyPositions.setAll(argFunctions.size(), -1);
     }
 
     @Override
@@ -112,14 +110,14 @@ public class GroupingFunction extends IntFunction implements GroupByFunction {
         for (int s = 0; s < setCount; s++) {
             IntList activeKeys = groupingSets.getQuick(s);
             int result = 0;
-            for (int a = 0, nArgs = argColumnIndices.size(); a < nArgs; a++) {
+            for (int a = 0, nArgs = argKeyPositions.size(); a < nArgs; a++) {
                 int keyPos = argKeyPositions.getQuick(a);
                 assert keyPos >= 0;
                 // The key is rolled up (1) when the set does not group by it, active (0)
                 // otherwise. GroupingIdFunctionFactory caps the arguments at 31, so the
                 // result fits an INT however many keys the query has.
                 if (!activeKeys.contains(keyPos)) {
-                    result |= 1 << (argColumnIndices.size() - 1 - a);
+                    result |= 1 << (nArgs - 1 - a);
                 }
             }
             perSetValues[s] = result;
@@ -158,16 +156,11 @@ public class GroupingFunction extends IntFunction implements GroupByFunction {
     @Override
     public void toPlan(PlanSink sink) {
         sink.val("grouping(");
-        for (int i = 0, n = argColumnIndices.size(); i < n; i++) {
+        for (int i = 0, n = argFunctions.size(); i < n; i++) {
             if (i > 0) {
                 sink.val(',');
             }
-            int columnIndex = argColumnIndices.getQuick(i);
-            if (columnIndex >= 0) {
-                sink.putColumnName(columnIndex);
-            } else {
-                argFunctions.getQuick(i).toPlan(sink);
-            }
+            argFunctions.getQuick(i).toPlan(sink);
         }
         sink.val(')');
     }

@@ -663,6 +663,26 @@ public class GroupingSetsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupByKeyWithWindowJoinFailsAtTheKey() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP) TIMESTAMP(ts)");
+            final String query = "SELECT t.ts FROM t WINDOW JOIN t t2 RANGE BETWEEN 1 SECOND PRECEDING AND 1 SECOND FOLLOWING GROUP BY t.ts";
+            assertQuery(query).fails(query.lastIndexOf("t.ts"), "GROUP BY cannot be used with WINDOW JOIN");
+        });
+    }
+
+    @Test
+    public void testSampleByGroupingSetsWithWindowJoinRejectsSampleBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k SYMBOL, ts TIMESTAMP) TIMESTAMP(ts)");
+            final String join = "SELECT t.ts FROM t WINDOW JOIN t t2 RANGE BETWEEN 1 SECOND PRECEDING AND 1 SECOND FOLLOWING SAMPLE BY ";
+            for (String grouping : new String[]{"1d GROUPING SETS (())", "1d ROLLUP(k)", "1d CUBE(k)", "1d GROUPING SETS ((k), ())"}) {
+                assertQuery(join + grouping).fails(join.length(), "SAMPLE BY cannot be used with WINDOW JOIN");
+            }
+        });
+    }
+
+    @Test
     public void testEmptyGroupingSetWithWindowJoinFailsWithoutCrashing() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP) TIMESTAMP(ts)");
@@ -1220,6 +1240,30 @@ public class GroupingSetsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupingFunctionPlanPrintsArguments() throws Exception {
+        // Both functions print as grouping(...), each argument as the column it reads or as its expression.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k SYMBOL, s SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            final String[][] cases = {
+                    {"SELECT k, GROUPING(k) g, count() c FROM t GROUP BY ROLLUP(k)", "values: [grouping(k),count(*)]"},
+                    {"SELECT k, s, GROUPING_ID(k, s) g, count() c FROM t GROUP BY CUBE(k, s)", "values: [grouping(k,s),count(*)]"},
+                    {"SELECT k x, GROUPING(k) g, count() c FROM t GROUP BY ROLLUP(k)", "values: [grouping(k),count(*)]"},
+                    {"SELECT t.k, GROUPING(t.k) g, count() c FROM t GROUP BY ROLLUP(t.k)", "values: [grouping(k),count(*)]"},
+                    {"SELECT v + 1 p, k, GROUPING(v + 1) g, GROUPING_ID(v + 1, k) gi, count() c FROM t GROUP BY v + 1, ROLLUP(k)", "values: [grouping(v+1),grouping(v+1,k),count(*)]"},
+                    {"SELECT ts, k, GROUPING_ID(k, ts) g, sum(v) sv FROM t SAMPLE BY 1d ROLLUP(k)", "values: [grouping(k,timestamp_floor_utc('1d',ts)),sum(v)]"}
+            };
+            for (int mode = 0; mode < 2; mode++) {
+                sqlExecutionContext.setParallelGroupByEnabled(mode == 1);
+                for (String[] testCase : cases) {
+                    assertQuery(testCase[0])
+                            .withContext(sqlExecutionContext)
+                            .assertsPlanContaining(testCase[1]);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testGroupingFunctionRollup() throws Exception {
         assertMemoryLeak(() -> {
             execute(
@@ -1757,6 +1801,90 @@ public class GroupingSetsTest extends AbstractCairoTest {
                     7,
                     "GROUPING() requires exactly one column argument"
             );
+        });
+    }
+
+    @Test
+    public void testGroupByAfterPivotSampleByRejected() throws Exception {
+        // A SAMPLE BY after a PIVOT groups the block as it does without one, so a GROUP BY after it is the same
+        // conflict. It must not leave the SAMPLE BY ignored, which would count the pivot's rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k SYMBOL, s SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('x', 'a', 1, '2024-01-01T00:00:00Z'),
+                        ('y', 'a', 4, '2024-01-02T02:00:00Z')
+                    """);
+            final String message = "SELECT query must not contain both GROUP BY and SAMPLE BY";
+            final String pivot = "FROM t PIVOT (sum(v) FOR s IN ('a', 'b') GROUP BY k, ts) ";
+            // As without the PIVOT, the position is the first key that follows the keyword, or else the keyword.
+            String sql = "SELECT k, sum(a) sa " + pivot + "SAMPLE BY 1d GROUP BY k";
+            assertQuery(sql).fails(sql.lastIndexOf('k'), message);
+            sql = "SELECT count() c " + pivot + "SAMPLE BY 1d GROUP BY ROLLUP(k)";
+            assertQuery(sql).fails(sql.lastIndexOf('k'), message);
+            sql = "SELECT count() c " + pivot + "SAMPLE BY 1d GROUP BY GROUPING SETS (())";
+            assertQuery(sql).fails(sql.lastIndexOf("GROUP BY"), message);
+            sql = "SELECT count() c " + pivot + "SAMPLE BY 1d ROLLUP(k) GROUP BY GROUPING SETS (())";
+            assertQuery(sql).fails(sql.lastIndexOf("GROUP BY"), message);
+            sql = "SELECT count() c " + pivot + "SAMPLE BY 1d ROLLUP(k) GROUP BY k";
+            assertQuery(sql).fails(sql.lastIndexOf("GROUP BY"), message);
+            // Each clause alone stays what it was: the GROUP BY groups the pivot's rows.
+            assertGroupingSetsQuery("""
+                    c
+                    2
+                    """, "SELECT count() c " + pivot + "GROUP BY GROUPING SETS (())");
+        });
+    }
+
+    @Test
+    public void testGroupingOverPivot() throws Exception {
+        // The GROUP BY inside a PIVOT belongs to the pivot, not to the query block that reads it, and
+        // not to the HORIZON JOIN the pivot reads. Only a GROUP BY after the pivot groups the block.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k SYMBOL, s SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('x', 'a', 1, '2024-01-01T00:00:00Z'),
+                        ('x', 'b', 2, '2024-01-01T01:00:00Z'),
+                        ('y', 'a', 4, '2024-01-02T02:00:00Z')
+                    """);
+            createHorizonJoinTables();
+            final String pivot = "FROM t PIVOT (sum(v) FOR s IN ('a', 'b') GROUP BY k) ";
+            for (int mode = 0; mode < 2; mode++) {
+                sqlExecutionContext.setParallelGroupByEnabled(mode == 1);
+                assertGroupingSetsQuery("""
+                        k\ta
+                        x\t1
+                        y\t4
+                        """, "SELECT k, a " + pivot + "ORDER BY k");
+                assertGroupingSetsQuery("""
+                        k\tc
+                        x\t1
+                        y\t1
+                        """, "SELECT k, count() c " + pivot + "ORDER BY k");
+                assertGroupingSetsQuery("""
+                        k\tsa
+                        x\t1
+                        y\t4
+                        """, "SELECT k, sum(a) sa " + pivot + "GROUP BY k ORDER BY k");
+                assertGroupingSetsQuery("""
+                        k\tsa\tg
+                        x\t1\t0
+                        y\t4\t0
+                        \t5\t1
+                        """, "SELECT k, sum(a) sa, GROUPING(k) g " + pivot + "GROUP BY ROLLUP(k) ORDER BY g, k");
+                assertGroupingSetsQuery("""
+                        c
+                        2
+                        """, "SELECT count() c " + pivot + "GROUP BY GROUPING SETS (())");
+                // Trade A (qty 1) sees price 10 and trade B (qty 2) price 20, at both offsets.
+                assertGroupingSetsQuery("""
+                        h.offset\t1\t2
+                        0\t10.0\t20.0
+                        1000000\t10.0\t20.0
+                        """, "SELECT * FROM trades t HORIZON JOIN prices p ON (t.sym = p.sym) LIST (0, 1s) AS h "
+                        + "PIVOT (sum(price) FOR qty IN (1, 2) GROUP BY h.offset) ORDER BY 1");
+            }
         });
     }
 
@@ -2984,6 +3112,9 @@ public class GroupingSetsTest extends AbstractCairoTest {
                 sqlExecutionContext.setParallelGroupByEnabled(i == 1);
                 for (String[] column : columns) {
                     assertRolledUpKeyMatchesReference(column[0], "CASE WHEN 1 = 0 THEN " + column[0] + " END", "kt");
+                    assertQuery("SELECT " + column[0] + ", grouping(" + column[0] + ") g, count() n FROM kt GROUP BY ROLLUP(" + column[0] + ")")
+                            .withContext(sqlExecutionContext)
+                            .assertsPlanContaining("grouping(" + column[0] + ")");
                 }
                 // CASE takes no INTERVAL, so the reference builds the NULL interval directly, and the
                 // cursor comparison has no INTERVAL case, so the two compare as printed text.

@@ -377,17 +377,18 @@ view row, whatever time range it asks for: about 66 MB on a 4M-row view.
 
 A SAMPLE BY directly over a view with a policy runs in the SAMPLE BY cursor,
 where a plain table read gets a parallel GROUP BY over the bucket
-(`SampleByBinder.requiresSampleByCursor()`). The read loses the parallel plan
-even when the policy hides no rows. On an 8M-row view with 4 query workers:
+(`SampleByBinder.requiresSampleByCursor()`). A sub-query written by hand over a
+plain table gets the same plan, and `GROUP BY timestamp_floor('1h', ts)` keeps
+the parallel one. The cursor loses on a query read to its end whose buckets hold
+many rows per key, such as an unkeyed one. On an 8M-row view with 1,000 keys,
+4 query workers and the policy `WHEN v < -1`:
 
-| Query over the view | No policy | `WHEN ts < dateadd('d', -30, now())` |
+| Query over the view | Cursor | Parallel GROUP BY |
 | --- | --- | --- |
-| `SELECT k, sum(v) FROM mv SAMPLE BY 1h` | parallel, 72 ms | single-threaded, 179 ms |
-
-The gap grows with the worker count: 1.3x at 2 workers, 2.4x at 4 and about 4x
-at 8. These timings predate the planner rewrite; both plans keep the same shape.
-A sub-query written by hand over a plain table gets the same plan, and
-`GROUP BY timestamp_floor('1h', ts)` keeps the parallel one.
+| `SELECT ts, count(), sum(v) FROM mv SAMPLE BY 1h` | 53 ms | 22 ms |
+| `SELECT ts, k, sum(v) FROM mv SAMPLE BY 1h` | 123 ms, 0.1 MB | 154 ms, 161 MB |
+| `SELECT ts, k, sum(v) FROM mv SAMPLE BY 1m` | 137 ms, 0.1 MB | 409 ms, 513 MB |
+| `SELECT ts, count() FROM mv SAMPLE BY 1h LIMIT 10` | 0.3 ms | 18 ms |
 
 Under a value policy such as `WHEN v < -1`, `count()` evaluates the filter on
 every row: 4.3 ms at 8M rows against under 0.1 ms with no policy. `max(ts)`,
@@ -395,13 +396,13 @@ every row: 4.3 ms at 8M rows against under 0.1 ms with no policy. `max(ts)`,
 need.
 
 - **Why accepted:** `requiresSampleByCursor()` treats a policied read as it treats
-  any sub-query, because the cursor keeps the order and the designated timestamp
-  it publishes to the consumers above it. Lowering the SAMPLE BY to a GROUP BY
-  loses the timestamp a `LATEST ON` at the same level publishes, and queries that
-  compile today would stop compiling.
-- **Follow-up:** let the parallel SAMPLE BY read through a policy's filter or
-  interval, and through a `SELECT * FROM t WHERE ...` sub-query, once the GROUP BY
-  publishes the same timestamp.
+  any sub-query. The cursor streams: it emits a bucket as it closes, so a `LIMIT`
+  or a client that stops early reads only the rows of the buckets it gets, and a
+  keyed query holds the keys of one bucket rather than of every bucket. The
+  parallel plan has to read every row first and hold every group, which also makes
+  a keyed query slower unless each bucket holds many rows per key.
+- **Follow-up:** run the parallel plan for an unkeyed SAMPLE BY with no `LIMIT`
+  above it, which needs the binder to see the consumers of the SAMPLE BY.
 
 ### Fixed thresholds reclaim through the survivor scan
 
@@ -490,7 +491,7 @@ latest-by is unchanged.
   again. The cost comes from the current implementation, not from expiry
   semantics. Widening the path as a general performance optimisation would spread
   the cost to unrelated queries.
-- **Pinned by:** `LatestByHoistEquivalenceTest` runs each shape as written and
+- **Pinned by:** `LatestByOverPolicyEquivalenceTest` runs each shape as written and
   with each read of the view spelled as a sub-query, and compares plans, rows,
   projections and timestamp metadata: shapes on the direct path change plans, and
   the others keep identical plans. Its
@@ -500,7 +501,7 @@ latest-by is unchanged.
   composite keys, ordinary sub-queries and SQL views, JIT on and off;
   `testOrdinaryReadsKeepPlansAfterExpiringRead` covers a mixed ordinary and expiry
   UNION and materialized views without expiry; and
-  `testTimestampExpiryStillHoistsAfterPolicyChanges` covers installing and dropping
+  `testTimestampPolicyReadsDirectlyAfterPolicyChanges` covers installing and dropping
   a timestamp policy. `MatViewExpireRowsTest` covers downstream SAMPLE BY and ASOF
   without an index. `LatestByTest` and `ExplainPlanTest` pin the ordinary plans and
   ordering. These assert plans and results, not wall-clock speed.

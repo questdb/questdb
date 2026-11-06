@@ -25,6 +25,7 @@
 package io.questdb.griffin.bind;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MetadataCache;
 import io.questdb.cairo.RowExpiryUtil;
 import io.questdb.cairo.TableToken;
@@ -38,20 +39,21 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ExpressionVisitor;
+import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.LogicalPlan;
-import io.questdb.griffin.plan.logical.PlanTable;
+import io.questdb.griffin.plan.logical.OutputSchema;
+import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.griffin.plan.logical.TreeWalk;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.Mutable;
-import io.questdb.std.str.StringSink;
 
 /**
  * Binds the read of a materialized view under an EXPIRE ROWS policy, so that expired rows are invisible to every read
  * of the view. A policy on a value binds as a filter over the scan, and KEEP LATEST as a LATEST ON over it. A window
- * policy references a window function, which only a projection computes, so it binds as a query that a boolean column
- * of the whole view filters.
+ * policy references a window function, which only a projection computes, so it binds as a query that computes a boolean
+ * column of the whole view, and a filter over that column.
  * <p>
  * The policy and the metadata version of the table come from the one binding, so a filter chosen from an old policy is
  * never paired with a reader on the new one: a version that moved on while a policy change is in flight rejects the
@@ -78,17 +80,6 @@ final class ExpiryReadBinder implements Mutable {
         this.ctx = ctx;
         this.binder = binder;
         this.compiler = compiler;
-    }
-
-    private static String buildQuotedColumnList(PlanTable table) {
-        final StringSink sink = new StringSink();
-        for (int i = 0, n = table.getColumnCount(); i < n; i++) {
-            if (i > 0) {
-                sink.putAscii(',');
-            }
-            sink.put(RowExpiryUtil.quoteIdentifier(table.getColumnName(i)));
-        }
-        return sink.toString();
     }
 
     /**
@@ -141,33 +132,37 @@ final class ExpiryReadBinder implements Mutable {
 
     /**
      * Binds the read of the table under a window policy: the keep-filter references a window function, illegal in a
-     * plain WHERE, so an inner projection over the WHOLE view computes it as a boolean column, and the outer query
-     * filters on it. The outer query enumerates the columns of the table, so the keep column never leaks through the
-     * caller's SELECT *. The inner projection drops the designated timestamp, the extra column making it a general
-     * projection, so the {@code timestamp()} clause asserts it again for what requires the timestamp over the read. The
-     * query's selections read a column only as what reads the view asks for it, or as the policy reads it: they are
-     * implied, as a {@code SELECT *} a query leaves out, so a read asks for no SELECT on the rest of the view.
+     * plain WHERE, so a query over the WHOLE view computes it as a boolean column, which a filter reads and a projection
+     * then drops, so the keep column never leaks through the caller's SELECT *. The query drops the designated
+     * timestamp, the extra column making it a general projection, so the read declares it again for what requires the
+     * timestamp over the read. The query's selections read a column only as what reads the view asks for it, or as the
+     * policy reads it: they are implied, as a {@code SELECT *} a query leaves out, so a read asks for no SELECT on the
+     * rest of the view.
      */
-    LogicalPlan bindQueryRead(PlanTable table, MetadataCache.ExpiryPolicyInfo policy, ExpressionNode viewName, int position, SqlExecutionContext executionContext) throws SqlException {
-        final TableToken token = table.getTableToken();
-        final String timestamp = RowExpiryUtil.quoteIdentifier(policy.getTimestampName());
-        final String sql = "SELECT " + buildQuotedColumnList(table) + " FROM (SELECT *, CASE WHEN ("
-                + RowExpiryUtil.windowPredicate(policy.getPredicate(), policy.getTimestampName()) + ") THEN false ELSE true END "
-                + RowExpiryUtil.KEEP_COLUMN + " FROM " + RowExpiryUtil.quoteIdentifier(token.getTableName()) + ") timestamp("
-                + timestamp + ") WHERE " + RowExpiryUtil.KEEP_COLUMN;
+    LogicalPlan bindQueryRead(TableToken token, MetadataCache.ExpiryPolicyInfo policy, ExpressionNode viewName, int position, SqlExecutionContext executionContext) throws SqlException {
+        final String sql = "SELECT *, " + RowExpiryUtil.buildKeepCase(RowExpiryUtil.windowPredicate(policy.getPredicate(), policy.getTimestampName()))
+                + " " + RowExpiryUtil.KEEP_COLUMN + " FROM " + RowExpiryUtil.quoteIdentifier(token.getTableName());
+        final LogicalPlan keepQuery;
         beginBinding(token, policy.getPredicate(), position);
         try {
             final QueryModel query = compiler.parseExpiryQuery(sql, binder.getParserCallback());
-            for (QueryModel model = query; model != null; model = model.getNestedModel()) {
-                model.setArtificialStar(true);
-            }
-            if (viewName != null) {
-                query.setViewNameExpr(viewName);
-            }
-            return binder.bindQuery(query, executionContext);
+            query.setArtificialStar(true);
+            query.setViewNameExpr(viewName);
+            keepQuery = binder.bindQuery(query, executionContext);
         } finally {
             endBinding(token);
         }
+        final OutputSchema output = keepQuery.getOutput();
+        final int keepIndex = output.getColumnCount() - 1;
+        final FilterPlan filter = ctx.planNodes.filters.next().of(
+                binder.declareTimestamp(keepQuery, SqlBinder.timestampIndex(output, policy.getTimestampName(), position), position),
+                ctx.planNodes.columns.next().of(output.getColumnId(keepIndex), ColumnType.BOOLEAN, position),
+                position
+        );
+        final ProjectPlan read = ctx.identityProjection(filter, position);
+        read.getExpressions().remove(keepIndex);
+        read.getOutput().remove(keepIndex);
+        return read;
     }
 
     /**

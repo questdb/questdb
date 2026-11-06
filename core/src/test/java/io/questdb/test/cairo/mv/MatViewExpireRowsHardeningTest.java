@@ -1391,7 +1391,7 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
 
     @Test
     public void testPredicateThatOnlyFailsWhenWrappedRejected() throws Exception {
-        // Validation binds the predicate wrapped as (RowExpiryUtil.buildStrictBindKeepFilter)
+        // Validation binds the predicate wrapped as (RowExpiryUtil.buildKeepCase)
         //
         //   CASE WHEN (<predicate>) THEN false ELSE true END
         //
@@ -3503,9 +3503,9 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
                 {"KEEP LATEST PARTITION BY k", "[k,ts]", "[sym,k,ts]", "[ts,k]", "[sym,secret,k,ts]", "[k]", "[k,ts]"},
                 {"WHEN v < 2.0", "[v]", "[v,sym]", "[v,ts]", "[v,sym,secret]", "[v]", "[v]"},
                 {"WHEN ts < '2025-01-01T00:00:01.000000Z'", "[ts]", "[ts,sym]", "[ts]", "[ts,sym,secret]", "[ts]", "[ts]"},
-                {"KEEP HIGHEST ON v PARTITION BY k", "[v,k]", "[sym,v,k,ts]", "[ts,v,k]", "[sym,secret,v,k,ts]", "[k,v,ts]", "[v,k,sym,secret,ts]"},
+                {"KEEP HIGHEST ON v PARTITION BY k", "[v,k]", "[sym,v,k,ts]", "[v,ts,k]", "[sym,v,secret,k,ts]", "[k,v,ts]", "[v,k,sym,secret,ts]"},
                 {"KEEP 1 HIGHEST ON v PARTITION BY k", "[k,v,ts]", "[sym,k,v,ts]", "[ts,k,v]", "[sym,secret,k,v,ts]", "[k,v,ts]", "[k,v,ts,sym,secret]"},
-                {"WHEN v < max(v) OVER (PARTITION BY k)", "[v,k]", "[sym,v,k,ts]", "[ts,v,k]", "[sym,secret,v,k,ts]", "[k,v,ts]", "[v,k,sym,secret,ts]"},
+                {"WHEN v < max(v) OVER (PARTITION BY k)", "[v,k]", "[sym,v,k,ts]", "[v,ts,k]", "[sym,v,secret,k,ts]", "[k,v,ts]", "[v,k,sym,secret,ts]"},
         };
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (sym SYMBOL, k SYMBOL, v DOUBLE, secret INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -3564,6 +3564,64 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
                 assertSelectAsked(security, context, "SELECT sym FROM base ORDER BY v + 1", "[sym,v]");
                 assertSelectAsked(security, context, "SELECT sym, max(v) OVER (PARTITION BY concat(k, 'x')) m FROM base", "[sym,v,k]");
                 assertSelectAsked(security, context, "SELECT sym FROM (SELECT sym, ts FROM base) TIMESTAMP(ts)", "[sym,ts]");
+            }
+        });
+    }
+
+    @Test
+    public void testWindowPolicyReadShape() throws Exception {
+        final String plan = """
+                SelectedRecord
+                    Filter filter: __qdb_re_keep
+                        VirtualRecord
+                          functions: [sym,k,v,secret,ts,ts2,case([v<max,false,true])]
+                            CachedWindowLight
+                              unorderedFunctions: [max(v) over (partition by [k])]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: mv
+                """;
+        final String rows = """
+                sym\tk\tv\tsecret\tts\tts2
+                B\tK\t3.0\t10\t2025-01-01T00:00:01.000000Z\t2025-01-06T00:00:00.000000Z
+                C\tZ\t4.0\t40\t2025-01-01T00:00:02.000000Z\t2025-01-07T00:00:00.000000Z
+                """;
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (sym SYMBOL, k SYMBOL, v DOUBLE, secret INT, ts TIMESTAMP, ts2 TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base VALUES
+                    ('A', 'K', 1.0, 30, '2025-01-01T00:00:00.000000Z', '2025-01-05T00:00:00.000000Z'),
+                    ('B', 'K', 3.0, 10, '2025-01-01T00:00:01.000000Z', '2025-01-06T00:00:00.000000Z'),
+                    ('C', 'Z', 4.0, 40, '2025-01-01T00:00:02.000000Z', '2025-01-07T00:00:00.000000Z')""");
+            execute("CREATE TABLE other (__qdb_re_keep INT, k SYMBOL, ots TIMESTAMP) TIMESTAMP(ots) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO other VALUES
+                    (1, 'K', '2025-01-01T00:00:00.000000Z'),
+                    (2, 'Z', '2025-01-01T00:00:01.000000Z')""");
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) EXPIRE ROWS KEEP HIGHEST ON v PARTITION BY k");
+            drainWalAndMatViewQueues();
+
+            for (String read : new String[]{"SELECT * FROM mv", "mv"}) {
+                assertQuery(read).noLeakCheck().timestamp("ts").withPlan(plan).returns(rows);
+            }
+            assertQuery("SELECT * FROM mv TIMESTAMP(ts2)").noLeakCheck().timestamp("ts2").withPlan(plan).returns(rows);
+            assertQuery("SELECT * FROM mv ORDER BY ts DESC LIMIT 1").noLeakCheck().timestampDesc("ts").returns("""
+                    sym\tk\tv\tsecret\tts\tts2
+                    C\tZ\t4.0\t40\t2025-01-01T00:00:02.000000Z\t2025-01-07T00:00:00.000000Z
+                    """);
+            assertQuery("SELECT m.sym, m.ts, o.__qdb_re_keep FROM mv m JOIN other o ON m.k = o.k").noLeakCheck().noRandomAccess().returns("""
+                    sym\tts\t__qdb_re_keep
+                    B\t2025-01-01T00:00:01.000000Z\t1
+                    C\t2025-01-01T00:00:02.000000Z\t2
+                    """);
+
+            assertExceptionNoLeakCheck("SELECT __qdb_re_keep FROM mv", 7, "Invalid column: __qdb_re_keep", sqlExecutionContext);
+            assertExceptionNoLeakCheck("SELECT * FROM mv WHERE __qdb_re_keep", 23, "Invalid column: __qdb_re_keep", sqlExecutionContext);
+            assertExceptionNoLeakCheck("SELECT * FROM mv TIMESTAMP(v)", 27, "not a TIMESTAMP", sqlExecutionContext);
+
+            final RecordSelectSecurityContext security = new RecordSelectSecurityContext();
+            try (SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1).with(security, bindVariableService, null, -1, null)) {
+                assertSelectAsked(security, context, "SELECT DISTINCT k FROM mv", "[k,v,ts]");
             }
         });
     }

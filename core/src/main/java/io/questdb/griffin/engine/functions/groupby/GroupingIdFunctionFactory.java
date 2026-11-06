@@ -29,7 +29,6 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.columns.ColumnFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -65,12 +64,6 @@ public class GroupingIdFunctionFactory implements FunctionFactory {
             throw SqlException.$(position, "GROUPING_ID() supports at most 31 arguments");
         }
 
-        IntList columnIndices = new IntList(args.size());
-        for (int i = 0, n = args.size(); i < n; i++) {
-            Function arg = args.getQuick(i);
-            columnIndices.add(arg instanceof ColumnFunction columnFunction ? columnFunction.getColumnIndex() : -1);
-        }
-
-        return new GroupingFunction(columnIndices, args);
+        return new GroupingFunction(args);
     }
 }

@@ -792,13 +792,14 @@ final class TemporalJoinBinder {
         if (source.getSampleBy() != null) {
             throw SqlException.$(source.getSampleBy().position, "SAMPLE BY cannot be used with HORIZON JOIN");
         }
-        if (blockGroupingSets(model, source) != null) {
-            throw SqlException.$(blockGroupByPosition(model, source), "ROLLUP, CUBE and GROUPING SETS are not supported with HORIZON JOIN");
+        final QueryModel groupingBlock = groupingBlock(model, source);
+        if (groupingBlock.hasGroupingSets()) {
+            throw SqlException.$(groupingBlock.getGroupByPosition(), "ROLLUP, CUBE and GROUPING SETS are not supported with HORIZON JOIN");
         }
         rejectWindows(model, source, "WINDOW functions are not allowed in HORIZON JOIN queries");
         final ObjList<QueryColumn> selected = model.getColumns();
-        final ObjList<ExpressionNode> groupBy = blockGroupBy(model, source);
-        if (groupBy.size() > 0 && !model.isPivot()) {
+        final ObjList<ExpressionNode> groupBy = groupingBlock.getGroupBy();
+        if (groupBy.size() > 0) {
             validateHorizonGroupBy(selected, groupBy);
         }
         int offsetIndex = -1;
@@ -1046,9 +1047,10 @@ final class TemporalJoinBinder {
             SqlExecutionContext executionContext
     ) throws SqlException {
         final BindScope scope = ctx.scope();
-        final ObjList<ExpressionNode> groupBy = blockGroupBy(model, source);
-        if (hasBlockGrouping(model, source)) {
-            throw SqlException.$(groupBy.size() > 0 ? groupBy.getQuick(0).position : blockGroupByPosition(model, source), "GROUP BY cannot be used with WINDOW JOIN");
+        final QueryModel groupingBlock = groupingBlock(model, source);
+        final ObjList<ExpressionNode> groupBy = groupingBlock.getGroupBy();
+        if (source.getSampleBy() == null && hasBlockGrouping(model, source)) {
+            throw SqlException.$(groupBy.size() > 0 ? groupBy.getQuick(0).position : groupingBlock.getGroupByPosition(), "GROUP BY cannot be used with WINDOW JOIN");
         }
         final WindowJoinPlan plan = bindWindowJoin(model, model.getColumns(), null, source, where, executionContext);
         final OutputSchema output = plan.getOutput();

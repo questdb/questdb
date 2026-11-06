@@ -6177,7 +6177,7 @@ public class SqlParser {
 
         if (tok != null && isGroupKeyword(tok)) {
             final int groupByPosition = lexer.lastTokenPosition();
-            if (hasPivot) {
+            if (hasPivot && model.isPivot()) {
                 QueryModel parentModel = queryModelPool.next();
                 parentModel.setNestedModel(model);
                 model = parentModel;

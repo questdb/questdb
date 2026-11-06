@@ -983,7 +983,7 @@ final class AggregateBinder implements Mutable {
 
     private CharSequence distinctGroupingName(int index, QueryModel model, QueryModel source, GroupingPlan aggregate) throws SqlException {
         final BindScope scope = ctx.scope();
-        final ObjList<ExpressionNode> groupBy = blockGroupBy(model, source);
+        final ObjList<ExpressionNode> groupBy = groupingBlock(model, source).getGroupBy();
         for (int i = 0, n = groupBy.size(); i < n; i++) {
             final ExpressionNode group = groupBy.getQuick(i);
             if (findGroupingExpression(resolveGroupBy(group, model), source, aggregate) == index) {
@@ -1210,7 +1210,7 @@ final class AggregateBinder implements Mutable {
             }
             return false;
         }
-        final ObjList<ExpressionNode> groupBy = blockGroupBy(model, source);
+        final ObjList<ExpressionNode> groupBy = groupingBlock(model, source).getGroupBy();
         for (int i = 0, n = groupBy.size(); i < n; i++) {
             final ExpressionNode group = resolveGroupBy(groupBy.getQuick(i), model);
             if (!isSelectedExpression(group, model) && (group.type != ExpressionNode.LITERAL || isOmittedSourceColumn(group, model, source, input))) {
@@ -1276,7 +1276,7 @@ final class AggregateBinder implements Mutable {
             QueryModel model, QueryModel source, GroupingPlan aggregate, ProjectPlan selected
     ) throws SqlException {
         final BindScope scope = ctx.scope();
-        final ObjList<ExpressionNode> groupBy = blockGroupBy(model, source);
+        final ObjList<ExpressionNode> groupBy = groupingBlock(model, source).getGroupBy();
         if (groupBy.size() == 0 || aggregate.hasGroupingSets() || hasUnprojectedGroupingKey(aggregate, selected)) {
             return true;
         }
@@ -1413,7 +1413,7 @@ final class AggregateBinder implements Mutable {
             for (int i = base, n = readIds.size(); i < n; i++) {
                 for (int s = 0, m = outerScopes.size(); s < m; s++) {
                     if (outerScopes.getQuick(s).getColumnIndexById(readIds.getQuick(i)) >= 0) {
-                        final int groupByPosition = blockGroupByPosition(model, source);
+                        final int groupByPosition = groupingBlock(model, source).getGroupByPosition();
                         throw SqlException.$(groupByPosition > 0 ? groupByPosition : groupBy.size() > 0 ? groupBy.getQuick(0).position : source.getSampleBy().position,
                                 "correlated GROUPING SETS are not supported with LATERAL");
                     }
@@ -1673,7 +1673,8 @@ final class AggregateBinder implements Mutable {
         scope.clearAggregateNodes();
         scope.aggregateProjectionExpressions.clear();
         scope.groupingNodes.clear();
-        final ObjList<IntList> groupingSets = blockGroupingSets(model, source);
+        final QueryModel groupingBlock = groupingBlock(model, source);
+        final ObjList<IntList> groupingSets = groupingBlock.getGroupingSets();
         // DISTINCT stays over grouping sets: a set's row repeats another's when a key that the first set groups by is NULL.
         final boolean isDistinctRetained = model.isDistinct()
                 && (groupingSets != null || !(isGroupingSelect(model) && (!isOrderBound || !hasAggregateOrder(source))));
@@ -1687,7 +1688,7 @@ final class AggregateBinder implements Mutable {
         for (int i = 0, n = orders.size(); i < n; i++) {
             scope.aggregateOrderExpressions.add(orders.getQuick(i));
         }
-        final ObjList<ExpressionNode> groupBy = blockGroupBy(model, source);
+        final ObjList<ExpressionNode> groupBy = groupingBlock.getGroupBy();
         final boolean isGroupingExplicit = hasBlockGrouping(model, source);
         scope.isImplicitAggregation = !isGroupingExplicit && sampleBy == null
                 && !(input instanceof HorizonJoinPlan) && ctx.hasAggregation(model, source);
@@ -2059,7 +2060,7 @@ final class AggregateBinder implements Mutable {
     }
 
     void validateGroupByKeys(QueryModel model, QueryModel source) throws SqlException {
-        final ObjList<ExpressionNode> groupBy = blockGroupBy(model, source);
+        final ObjList<ExpressionNode> groupBy = groupingBlock(model, source).getGroupBy();
         for (int i = 0, n = groupBy.size(); i < n; i++) {
             final ExpressionNode group = groupBy.getQuick(i);
             final ExpressionNode expression = resolveGroupBy(group, model);
