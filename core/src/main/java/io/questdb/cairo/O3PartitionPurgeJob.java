@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.log.LogRecord;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.Job;
 import io.questdb.std.CharSequenceObjHashMap;
@@ -57,6 +58,7 @@ import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
 public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPurgeTask> implements Closeable {
 
     private final static Log LOG = LogFactory.getLog(O3PartitionPurgeJob.class);
+    private static final long MAX_RETRY_DELAY_MICROS = 300_000_000L;
     private static final long RETRY_DELAY_MICROS = 5_000_000L;
     private final CairoConfiguration configuration;
     private final PartitionDeltaWriter deltaWriter;
@@ -70,6 +72,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
     private final TxReader txnReader;
     private final DurableEpochManifest.TxnSectionCache txnSectionCache;
     private boolean hasPendingPartitions;
+    private boolean isRetrying;
 
     public O3PartitionPurgeJob(CairoEngine engine) {
         super(engine.getMessageBus().getO3PurgeDiscoveryQueue(), engine.getMessageBus().getO3PurgeDiscoverySubSeq());
@@ -129,11 +132,15 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
         retryQueue.poll();
         // A throw out of the discovery keeps the task queued, or its map entry would block every later retry.
         boolean isPending = true;
+        isRetrying = true;
         try {
             isPending = discoverPartitions(task);
         } finally {
+            isRetrying = false;
             if (isPending) {
-                task.nextRunTimestamp = microsecondClock.getTicks() + RETRY_DELAY_MICROS;
+                // A pin can outlast many retries, and every clone holds its own entry for the table.
+                task.retryDelayMicros = Math.min(task.retryDelayMicros * 2, MAX_RETRY_DELAY_MICROS);
+                task.nextRunTimestamp = microsecondClock.getTicks() + task.retryDelayMicros;
                 retryQueue.add(task);
             } else {
                 retryByTableDir.remove(task.getTableToken().getDirName());
@@ -243,7 +250,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             LOG.info().$("partition purge deferred to the next writer open [table=").$(tableToken).I$();
             return;
         }
-        LOG.info().$("processing [table=").$(tableToken).I$();
+        scanLog().$("processing [table=").$(tableToken).I$();
         Path path = Path.getThreadLocal(root).concat(tableToken);
         int plimit = path.size();
         partitionList.clear();
@@ -325,7 +332,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             txnSectionCache.clear();
             Misc.free(txnScoreboard);
         }
-        LOG.info().$("processed [table=").$(tableToken).I$();
+        scanLog().$("processed [table=").$(tableToken).I$();
     }
 
     private void processDetachedPartition(
@@ -540,7 +547,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                     );
                 } else {
                     hasPendingPartitions = true;
-                    LOG.info().$("cannot purge overwritten partition directory, locked for reading path=")
+                    scanLog().$("cannot purge overwritten partition directory, locked for reading path=")
                             .$substr(tableRootLen - tableToken.getDirNameUtf8().size() - 1, path).I$();
                 }
             }
@@ -574,6 +581,11 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
         }
     }
 
+    // The notification's scan reports a pinned table; its retries stay quiet until they purge something.
+    private LogRecord scanLog() {
+        return isRetrying ? LOG.debug() : LOG.info();
+    }
+
     @Override
     protected boolean doRun(long cursor, WorkerContext workerContext) {
         final O3PartitionPurgeTask task = queue.get(cursor);
@@ -583,7 +595,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                 RetryTask retryTask = retryByTableDir.get(tableDirName);
                 if (retryTask == null) {
                     retryTask = new RetryTask();
-                    retryTask.nextRunTimestamp = microsecondClock.getTicks() + RETRY_DELAY_MICROS;
+                    retryTask.nextRunTimestamp = microsecondClock.getTicks() + retryTask.retryDelayMicros;
                     retryByTableDir.put(tableDirName, retryTask);
                     retryQueue.add(retryTask);
                 }
@@ -599,5 +611,6 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
 
     private static class RetryTask extends O3PartitionPurgeTask {
         private long nextRunTimestamp;
+        private long retryDelayMicros = RETRY_DELAY_MICROS;
     }
 }
