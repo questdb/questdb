@@ -176,6 +176,13 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     private long lastReplaceRangeLowTs = 0;
     private long lastTxnMaxTimestamp = -1;
     private byte lastTxnType = WalTxnType.DATA;
+    // What rollbackToSavepoint() restores: the transaction's bounds and its row count
+    // at markSavepoint(). The row count is relative to currentTxnStartRowNum, which a
+    // segment roll moves.
+    private long savepointMaxTimestamp = -1;
+    private long savepointMinTimestamp = Long.MAX_VALUE;
+    private boolean savepointOutOfOrder = false;
+    private long savepointRows;
     private long segmentRowCount = -1;
     private long totalSegmentsRowCount;
     private long totalSegmentsSize;
@@ -602,6 +609,23 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         return columnarAppender != null && columnarAppender.isInColumnarWrite();
     }
 
+    /**
+     * Marks the point of the uncommitted transaction that {@link #rollbackToSavepoint()}
+     * goes back to: its row count and its timestamp bounds. A later mark replaces this
+     * one. The savepoint belongs to the transaction it is marked in, and a commit or a
+     * rollback ends it. A structure change between the mark and the rollback keeps the
+     * row count right but leaves its metadata in place, so callers must not make one.
+     * Performs no I/O, and does not refuse a distressed writer: the next append and the
+     * rollback do.
+     */
+    public void markSavepoint() {
+        assert !isInColumnarWrite() : "markSavepoint called during columnar write";
+        savepointRows = segmentRowCount - currentTxnStartRowNum;
+        savepointMinTimestamp = txnMinTimestamp;
+        savepointMaxTimestamp = txnMaxTimestamp;
+        savepointOutOfOrder = txnOutOfOrder;
+    }
+
     @Override
     public TableWriter.Row newRow() {
         return newRow(0L);
@@ -697,6 +721,34 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     public void rollback() {
         throwIfInColumnarWrite("rollback");
         rollback0();
+    }
+
+    /**
+     * Drops the rows appended since {@link #markSavepoint()} and restores the transaction's
+     * timestamp bounds as they were at the mark; the rows before the mark stay uncommitted.
+     * Also drops the values of a row that was started and neither appended nor cancelled,
+     * as {@link #rollback()} does. Symbol keys that the dropped rows added stay in the
+     * transaction's symbol maps, as they do after a cancelled row. Refuses a writer mid
+     * columnar write and a distressed one; a failure distresses the writer.
+     */
+    public void rollbackToSavepoint() {
+        throwIfInColumnarWrite("rollback to savepoint");
+        checkDistressed();
+        try {
+            final long savepointRowNum = currentTxnStartRowNum + savepointRows;
+            assert segmentRowCount >= savepointRowNum : "rows before the savepoint were committed or rolled back";
+            if (segmentRowCount > savepointRowNum || hasDirtyColumns(savepointRowNum)) {
+                setAppendPosition(savepointRowNum);
+                segmentRowCount = savepointRowNum;
+                txnMinTimestamp = savepointMinTimestamp;
+                txnMaxTimestamp = savepointMaxTimestamp;
+                txnOutOfOrder = savepointOutOfOrder;
+            }
+        } catch (Throwable th) {
+            // The columns may be at inconsistent positions: the pool must not reuse this writer.
+            distressed = true;
+            throw th;
+        }
     }
 
     protected final void cleanupBeforeClose() {
