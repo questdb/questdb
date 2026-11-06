@@ -61,7 +61,7 @@ public class GroupByFunctionTest extends AbstractCairoTest {
                         " from long_sequence(100)" +
                         "), index(seller), index(buyer) timestamp(delivery_start_utc)")
                 .timestamp("y_utc_15m")
-                .expectSize()
+                .noRandomAccess()
                 .returns("""
                         y_utc_15m\ty_sf_position_mw
                         1970-01-01T00:00:00.000000Z\t-0.2246301342497259
@@ -3025,6 +3025,43 @@ public class GroupByFunctionTest extends AbstractCairoTest {
                         sum
                         null
                         """);
+    }
+
+    @Test
+    public void testVectorNSumDoubleCompensatesAcrossFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, d DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                        ('2024-01-01T00', 1e16), ('2024-01-01T01', 1), ('2024-01-01T02', 1), ('2024-01-01T03', 1),
+                        ('2024-01-01T04', 1), ('2024-01-01T05', 1), ('2024-01-01T06', 1), ('2024-01-01T07', 1),
+                        ('2024-01-01T08', 'Infinity'::double), ('2024-01-01T09', '-Infinity'::double), ('2024-01-02', -1e16)""");
+            assertQuery("SELECT nsum(d) FROM x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("vectorized: true")
+                    .returns("""
+                            nsum
+                            7.0
+                            """);
+
+            execute("ALTER TABLE x ADD COLUMN k INT");
+            execute("""
+                    INSERT INTO x VALUES
+                        ('2024-01-03T00', 2, null), ('2024-01-03T01', 1, 1), ('2024-01-03T02', -1e16, 1),
+                        ('2024-01-03T03', 1e16, 1), ('2024-01-03T04', 'Infinity'::double, 2), ('2024-01-03T05', 3, 2)""");
+            assertQuery("SELECT k, nsum(d) FROM x ORDER BY k")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("GroupBy vectorized: true")
+                    .returns("""
+                            k\tnsum
+                            null\t9.0
+                            1\t1.0
+                            2\t3.0
+                            """);
+        });
     }
 
     @Test

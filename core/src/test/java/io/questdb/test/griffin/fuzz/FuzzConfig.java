@@ -38,6 +38,7 @@ public final class FuzzConfig {
     public static final String DIFF_JIT_PROP = "questdb.fuzz.diff.jit";
     public static final String DIFF_MAP_PAGE_PROP = "questdb.fuzz.diff.mappage";
     public static final String DIFF_SHADOW_PROP = "questdb.fuzz.diff.shadow";
+    public static final String DIFF_STREAM_PROP = "questdb.fuzz.diff.stream";
     public static final String DUMP_PROP = "questdb.fuzz.dump";
     public static final String FAULTS_PROP = "questdb.fuzz.faults";
     public static final String FAULT_PARALLEL_PROP = "questdb.fuzz.fault.parallel";
@@ -74,11 +75,13 @@ public final class FuzzConfig {
     // QueryFuzzTest checks that precondition before it asserts a shape generated anything, so those
     // runs stay green instead of failing a working generator.
     private static final int DEFAULT_NUM_QUERIES = 1_000;
+    private static final int MAX_SMALL_PAGE_FRAME_ROWS = 32;
 
     private final boolean isDiffFusedEnabled;
     private final boolean isDiffJitEnabled;
     private final boolean isDiffMapPageEnabled;
     private final boolean isDiffShadowEnabled;
+    private final boolean isDiffStreamEnabled;
     private final boolean isFaultInjectionEnabled;
     private final boolean isGroupingSetsEnabled;
     private final boolean isHashJoinEnabled;
@@ -97,11 +100,14 @@ public final class FuzzConfig {
     private final int minColumnsPerTable;
     private final int numQueries;
     private final int numTables;
+    private final int pageFrameMaxRows;
     private final int rowsPerTable;
     private final long stepMicros;
     private final String tsStart;
 
     public FuzzConfig(Rnd rnd) {
+        // Half of the runs cut each day of at most 48 rows into frames, so that buckets cross frames.
+        this.pageFrameMaxRows = rnd.nextBoolean() ? 1 + rnd.nextInt(MAX_SMALL_PAGE_FRAME_ROWS) : 0;
         // At least two: QueryGenerator gates every join shape (TEMPORAL, HORIZON, WINDOW JOIN) on
         // tables.size() >= 2, so a single-table run generated none of them at all - whatever the
         // query budget - and one run in three drew exactly one table. No shape needs a lone table
@@ -125,6 +131,8 @@ public final class FuzzConfig {
         // compares the results (see QueryRunner). Pass -Dquestdb.fuzz.diff.fused=false to drop
         // the comparison and keep the shape.
         this.isDiffFusedEnabled = Boolean.parseBoolean(System.getProperty(DIFF_FUSED_PROP, "true"));
+        // Runs every query whose plan uses the stream GROUP BY again with it off and compares the results.
+        this.isDiffStreamEnabled = Boolean.parseBoolean(System.getProperty(DIFF_STREAM_PROP, "true"));
         // Reruns every differential query with a map page of a few hundred bytes at most and
         // compares the results (see QueryRunner). Pass -Dquestdb.fuzz.diff.mappage=false
         // to drop the comparison.
@@ -215,6 +223,10 @@ public final class FuzzConfig {
         return numTables;
     }
 
+    public int getPageFrameMaxRows() {
+        return pageFrameMaxRows;
+    }
+
     public int getRowsPerTable() {
         return rowsPerTable;
     }
@@ -241,6 +253,10 @@ public final class FuzzConfig {
 
     public boolean isDiffShadowEnabled() {
         return isDiffShadowEnabled;
+    }
+
+    public boolean isDiffStreamEnabled() {
+        return isDiffStreamEnabled;
     }
 
     public boolean isFaultInjectionEnabled() {

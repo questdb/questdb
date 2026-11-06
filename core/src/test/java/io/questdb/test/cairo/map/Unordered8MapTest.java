@@ -70,6 +70,41 @@ public class Unordered8MapTest extends AbstractCairoTest {
     Decimal128 decimal128 = new Decimal128();
     Decimal256 decimal256 = new Decimal256();
 
+    private static void assertCursorVisits(MapRecordCursor cursor, HashMap<Long, Long> oracle) {
+        cursor.toTop();
+        final MapRecord record = cursor.getRecord();
+        final MapRecord recordB = cursor.getRecordB();
+        final HashMap<Long, Long> seen = new HashMap<>();
+        while (cursor.hasNext()) {
+            final long key = record.getLong(1);
+            Assert.assertNull("visited twice: " + key, seen.put(key, record.getLong(0)));
+            cursor.recordAt(recordB, record.getRowId());
+            Assert.assertEquals(key, recordB.getLong(1));
+        }
+        Assert.assertFalse(cursor.hasNext());
+        Assert.assertEquals(oracle, seen);
+    }
+
+    private static HashMap<Long, Long> fillWithRandomKeys(Unordered8Map map, Rnd rnd, int count, boolean hasZeroKey) {
+        final HashMap<Long, Long> oracle = new HashMap<>();
+        if (hasZeroKey && count > 0) {
+            final MapKey key = map.withKey();
+            key.putLong(0);
+            key.createValue().putLong(0, -7);
+            oracle.put(0L, -7L);
+        }
+        while (oracle.size() < count) {
+            final long l = rnd.nextLong();
+            if (l != 0) {
+                final MapKey key = map.withKey();
+                key.putLong(l);
+                key.createValue().putLong(0, l ^ 3);
+                oracle.put(l, l ^ 3);
+            }
+        }
+        return oracle;
+    }
+
     @Test
     public void testAllValueTypes() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
@@ -265,6 +300,48 @@ public class Unordered8MapTest extends AbstractCairoTest {
 
                 map.clear();
                 Assert.assertEquals(0, map.size());
+            }
+        });
+    }
+
+    @Test
+    public void testCursorVisitsEveryEntryOnce() throws Exception {
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        TestUtils.assertMemoryLeak(() -> {
+            final int[][] capacitiesAndCounts = {
+                    {64, 0}, {64, 1}, {64, 2}, {64, 3}, {64, 51}, {64, 64}, {64, 65}, {64, 200},
+                    {16_384, 1}, {16_384, 2_047}, {16_384, 2_048}, {16_384, 2_049}, {16_384, 13_000}
+            };
+            for (int[] capacityAndCount : capacitiesAndCounts) {
+                for (int trial = 0; trial < 8; trial++) {
+                    final boolean hasZeroKey = (trial & 1) == 1;
+                    try (Unordered8Map map = new Unordered8Map(ColumnType.LONG, new SingleColumnType(ColumnType.LONG), capacityAndCount[0], 0.8, Integer.MAX_VALUE)) {
+                        final HashMap<Long, Long> oracle = fillWithRandomKeys(map, rnd, capacityAndCount[1], hasZeroKey);
+                        final MapRecordCursor cursor = map.getCursor();
+                        assertCursorVisits(cursor, oracle);
+                        assertCursorVisits(cursor, oracle);
+
+                        // A reader that stops halfway restarts from the first entry.
+                        cursor.toTop();
+                        for (int i = 0, n = oracle.size() / 2; i < n; i++) {
+                            Assert.assertTrue(cursor.hasNext());
+                        }
+                        final RecordCursor.Counter counter = new RecordCursor.Counter();
+                        cursor.calculateSize(null, counter);
+                        Assert.assertEquals(oracle.size() - oracle.size() / 2, counter.get());
+                        Assert.assertFalse(cursor.hasNext());
+                        assertCursorVisits(cursor, oracle);
+
+                        // A cleared map must not leak entries that the cursor already collected.
+                        cursor.toTop();
+                        if (!oracle.isEmpty()) {
+                            Assert.assertTrue(cursor.hasNext());
+                        }
+                        map.clear();
+                        final HashMap<Long, Long> newOracle = fillWithRandomKeys(map, rnd, capacityAndCount[1] / 2 + 1, !hasZeroKey);
+                        assertCursorVisits(map.getCursor(), newOracle);
+                    }
+                }
             }
         });
     }

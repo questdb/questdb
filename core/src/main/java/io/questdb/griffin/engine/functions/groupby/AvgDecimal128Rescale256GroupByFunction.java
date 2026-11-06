@@ -285,4 +285,9 @@ class AvgDecimal128Rescale256GroupByFunction extends Decimal256Function implemen
         }
         return false;
     }
+
+    @Override
+    public boolean isStateSelfContained() {
+        return true;
+    }
 }

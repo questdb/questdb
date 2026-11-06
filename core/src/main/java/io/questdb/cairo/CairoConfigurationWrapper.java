@@ -2146,6 +2146,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSqlStreamGroupByEnabled() {
+        return getDelegate().isSqlStreamGroupByEnabled();
+    }
+
+    @Override
     public boolean isSqlWindowCachedLightEnabled() {
         return getDelegate().isSqlWindowCachedLightEnabled();
     }

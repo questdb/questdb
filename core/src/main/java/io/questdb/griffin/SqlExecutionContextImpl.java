@@ -126,6 +126,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private Rnd random;
     private ResourcePoolSupervisor<TableReader> readerPoolSupervisor;
     private long requestFd = -1;
+    private boolean streamGroupByEnabled;
     private TableFunctionView tableFunctionView;
     private boolean useSimpleCircuitBreaker;
     private boolean validationOnly = false;
@@ -152,6 +153,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         parallelWindowJoinEnabled = cairoConfiguration.isSqlParallelWindowJoinEnabled() && sharedQueryWorkerCount > 0;
         parallelReadParquetEnabled = cairoConfiguration.isSqlParallelReadParquetEnabled() && sharedQueryWorkerCount > 0;
         parquetRowGroupPruningEnabled = cairoConfiguration.isSqlParquetRowGroupPruningEnabled();
+        streamGroupByEnabled = cairoConfiguration.isSqlStreamGroupByEnabled();
         telemetry = cairoEngine.getTelemetry();
         telemetryFacade = telemetry.isEnabled() ? this::doStoreTelemetry : this::storeTelemetryNoOp;
         // default set to micro
@@ -538,6 +540,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public boolean isStreamGroupByEnabled() {
+        return streamGroupByEnabled;
+    }
+
+    @Override
     public boolean isTimestampRequired() {
         return timestampRequiredStack.notEmpty() && timestampRequiredStack.peek() == 1;
     }
@@ -795,6 +802,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void setReaderPoolSupervisor(@Nullable ResourcePoolSupervisor<TableReader> supervisor) {
         this.readerPoolSupervisor = supervisor;
+    }
+
+    @Override
+    public void setStreamGroupByEnabled(boolean isEnabled) {
+        this.streamGroupByEnabled = isEnabled;
     }
 
     @Override

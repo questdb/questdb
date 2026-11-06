@@ -179,4 +179,9 @@ public class MaxLongGroupByFunction extends LongFunction implements GroupByFunct
     public boolean supportsParallelism() {
         return UnaryFunction.super.supportsParallelism();
     }
+
+    @Override
+    public boolean isStateSelfContained() {
+        return true;
+    }
 }

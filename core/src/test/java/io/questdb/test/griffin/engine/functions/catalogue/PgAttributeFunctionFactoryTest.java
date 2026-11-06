@@ -392,6 +392,7 @@ public class PgAttributeFunctionFactoryTest extends AbstractCairoTest {
         assertQuery("pg_catalog.pg_attribute order by 1 limit 1;")
                 .ddl("create table x(a int)")
                 .mutateWith("create table y(a double, b string)")
+                .expectSize()
                 .returns("""
                         attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef
                         1\ta\t1\t23\tfalse\t-1\t4\t\tfalse\ttrue

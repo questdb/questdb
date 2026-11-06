@@ -60,6 +60,10 @@ public class TestMatchFunctionFactory implements FunctionFactory {
         return openCounter.get();
     }
 
+    public static int getTopCounter() {
+        return topCounter.get();
+    }
+
     public static boolean isClosed() {
         return closeCount.get() == 1;
     }

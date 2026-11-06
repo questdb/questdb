@@ -669,6 +669,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long sqlSortValueMaxBytes;
     private final int sqlSortValuePageSize;
     private final int sqlStrFunctionBufferMaxSize;
+    private final boolean sqlStreamGroupByEnabled;
     private final boolean sqlSymbolPatternIndexEnabled;
     private final int sqlSymbolPatternIndexThreshold;
     private final long subsampleMaxRows;
@@ -1879,7 +1880,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             warnIfMaxBytesBelowPageSize(properties, env,
                     PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES, this.sqlSortLightValueMaxBytes,
                     PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_PAGE_SIZE, this.sqlSortLightValuePageSize);
-            this.sqlHashJoinValuePageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_PAGE_SIZE, 16777216);
+            // divisor-only RecordChain page, as sort.value.page.size below.
+            this.sqlHashJoinValuePageSize = Math.max(1, getIntSize(properties, env, PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_PAGE_SIZE, 16777216));
             this.sqlHashJoinValueMaxPages = getIntSize(properties, env, PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_MAX_PAGES, Integer.MAX_VALUE);
             this.sqlLatestByJitEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_LATEST_BY_JIT_ENABLED, true);
             this.sqlLatestByRowCount = getInt(properties, env, PropertyKey.CAIRO_SQL_LATEST_BY_ROW_COUNT, 1000);
@@ -2652,6 +2654,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlParallelWindowJoinEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_JOIN_ENABLED, defaultParallelSqlEnabled);
             this.sqlParallelGroupByEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, defaultParallelSqlEnabled);
             this.sqlParallelHashJoinGroupByEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_ENABLED, defaultParallelSqlEnabled);
+            this.sqlStreamGroupByEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_STREAM_GROUPBY_ENABLED, true);
             this.sqlParallelHashJoinGroupByBuildParallelMinRows = getLong(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 300_000);
             if (sqlParallelHashJoinGroupByBuildParallelMinRows < 0) {
                 throw ServerConfigurationException.forInvalidKey(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS.getPropertyPath(),
@@ -6394,6 +6397,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isSqlParquetRowGroupPruningEnabled() {
             return sqlParquetRowGroupPruningEnabled;
+        }
+
+        @Override
+        public boolean isSqlStreamGroupByEnabled() {
+            return sqlStreamGroupByEnabled;
         }
 
         @Override

@@ -71,7 +71,8 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
             CairoConfiguration configuration,
             RecordMetadata metadata,
             IntList sortColumnFilter,
-            RecordSink recordSink
+            RecordSink recordSink,
+            long valueMaxBytes
     ) {
         try {
             this.encoder = new SortKeyEncoder(metadata, sortColumnFilter);
@@ -88,9 +89,9 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
                     MemoryTag.NATIVE_DEFAULT,
                     PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath()
             );
-            final long valuePageSize = configuration.getSqlSortValuePageSize();
+            final long valuePageSize = Math.min(configuration.getSqlSmallMapPageSize(), configuration.getSqlSortValuePageSize());
             // RecordChain ceilPow2's the page before allocating; divide by the rounded unit to honor the cap.
-            final long valueMaxPagesFromBytes = Math.max(1L, configuration.getSqlSortValueMaxBytes() / Numbers.ceilPow2(valuePageSize));
+            final long valueMaxPagesFromBytes = Math.max(1L, valueMaxBytes / Numbers.ceilPow2(valuePageSize));
             this.recordChain = new RecordChain(
                     metadata,
                     recordSink,
@@ -262,9 +263,9 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
         if (count > 1) {
             if (isVariable) {
                 long heapAddr = keyHeap.getAppendOffset() == 0 ? 0 : keyHeap.addressOf(0);
-                Vect.sortEncodedVarEntries(entryMem.getAddress(), count, heapAddr, parallelThreshold);
+                Vect.sortEncodedVarEntries(entryMem.getAddress(), count, heapAddr, parallelThreshold, 0, 0);
             } else {
-                Vect.sortEncodedEntries(entryMem.getAddress(), count, keyType.keyLength() / Long.BYTES, parallelThreshold);
+                Vect.sortEncodedEntries(entryMem.getAddress(), count, keyType.keyLength() / Long.BYTES, parallelThreshold, 0, 0);
             }
             circuitBreaker.statefulThrowExceptionIfTrippedNoThrottleOrYield();
         }

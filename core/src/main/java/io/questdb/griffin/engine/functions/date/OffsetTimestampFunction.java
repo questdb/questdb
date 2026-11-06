@@ -58,6 +58,12 @@ class OffsetTimestampFunction extends TimestampFunction implements UnaryFunction
     }
 
     @Override
+    public boolean preservesTimestampOrder() {
+        return timestamp.getType() == getType()
+                && offset <= Long.MAX_VALUE - timestampDriver.getMaxDesignatedTimestamp();
+    }
+
+    @Override
     public int invertTimestampInterval(Interval io) {
         return MonotonicTimestampFunction.invertConstantShift(io, offset, shiftInputCeiling(getType()));
     }

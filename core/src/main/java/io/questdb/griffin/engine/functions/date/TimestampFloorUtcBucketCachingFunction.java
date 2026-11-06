@@ -165,7 +165,7 @@ abstract class TimestampFloorUtcBucketCachingFunction extends TimestampFunction 
             long offset
     ) {
         // the micro driver floors nanosecond strides in a nanosecond domain, so its buckets
-        // are not guaranteed to repeat at a fixed micro width
+        // repeat at a fixed micro width only for some strides
         if (unit == 'n' && !ColumnType.isTimestampNano(timestampDriver.getTimestampType())) {
             return 0;
         }

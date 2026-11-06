@@ -197,4 +197,9 @@ public class FirstDoubleGroupByFunction extends DoubleFunction implements GroupB
     public boolean supportsParallelism() {
         return UnaryFunction.super.supportsParallelism();
     }
+
+    @Override
+    public boolean isStateSelfContained() {
+        return true;
+    }
 }

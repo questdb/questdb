@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.date;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -41,6 +42,32 @@ import io.questdb.std.Numbers;
 final class TimestampFloorFunctions {
 
     private TimestampFloorFunctions() {
+    }
+
+    static boolean preservesOrder(char unit, int stride, int timestampType, long shift) {
+        final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+        final long day = driver.fromDays(1);
+        return shift >= -day && shift <= day
+                && shift <= Long.MAX_VALUE - driver.getMaxDesignatedTimestamp()
+                && (shift >= 0 || stride == 1 || (unit != 'M' && unit != 'y'))
+                && preservesOrder(unit, stride, timestampType);
+    }
+
+    static boolean preservesOrder(char unit, int stride, int timestampType) {
+        final long second = ColumnType.isTimestampNano(timestampType) ? 1_000_000_000L : 1_000_000L;
+        final long width = switch (unit) {
+            case 'n' -> ColumnType.isTimestampNano(timestampType) ? 1 : 0;
+            case 'u', 'U' -> second / 1_000_000;
+            case 'T' -> second / 1_000;
+            case 's' -> second;
+            case 'm' -> 60 * second;
+            case 'h' -> 3_600 * second;
+            case 'd' -> 86_400 * second;
+            case 'w' -> ColumnType.isTimestampNano(timestampType) ? 0 : 604_800 * second;
+            default -> 0;
+        };
+        return width > 0 ? stride > 0 && stride <= Long.MAX_VALUE / width
+                : stride > 0 && (unit == 'M' || unit == 'y');
     }
 
     static class TimestampFloorFunction extends TimestampFunction implements UnaryFunction, MonotonicTimestampFunction {
@@ -72,6 +99,12 @@ final class TimestampFloorFunctions {
         @Override
         public Function getTimestampArg() {
             return arg;
+        }
+
+        @Override
+        public boolean preservesTimestampOrder() {
+            return arg.getType() == getType()
+                    && (!ColumnType.isTimestampNano(getType()) || (!Chars.equals(unit, "millennium") && !Chars.equals(unit, "week")));
         }
 
         @Override
@@ -169,6 +202,12 @@ final class TimestampFloorFunctions {
         @Override
         public Function getTimestampArg() {
             return arg;
+        }
+
+        @Override
+        public boolean preservesTimestampOrder() {
+            return arg.getType() == getType()
+                    && preservesOrder(Chars.equals(unit, "week") ? 'w' : TimestampFloorFunction.ceilUnitChar(unit), stride, getType());
         }
 
         @Override

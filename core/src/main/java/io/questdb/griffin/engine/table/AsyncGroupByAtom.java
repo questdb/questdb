@@ -290,7 +290,7 @@ public class AsyncGroupByAtom implements StatefulAtom, PerWorkerLockOwner, Close
         CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
-    private static Throwable closePerWorkerFunctions(Throwable cleanupFailure, ObjList<? extends ObjList<? extends Function>> perWorkerFunctions) {
+    static Throwable closePerWorkerFunctions(Throwable cleanupFailure, ObjList<? extends ObjList<? extends Function>> perWorkerFunctions) {
         if (perWorkerFunctions != null) {
             for (int i = 0, n = perWorkerFunctions.size(); i < n; i++) {
                 final ObjList<? extends Function> functions = perWorkerFunctions.getQuick(i);

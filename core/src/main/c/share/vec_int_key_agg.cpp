@@ -228,10 +228,10 @@ kIntMaxDouble(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong pDouble, jlong 
                 return JNI_FALSE;
             }
             *reinterpret_cast<int32_t *>(pKey) = key;
-            *reinterpret_cast<jdouble *>(pVal) = std::isnan(d) ? D_MIN : d;
+            *reinterpret_cast<jdouble *>(pVal) = d < D_MAX ? d : D_MIN;
         } else {
             const jdouble old = *reinterpret_cast<jdouble *>(pVal);
-            *reinterpret_cast<jdouble *>(pVal) = MAX(std::isnan(d) ? D_MIN : d, old);
+            *reinterpret_cast<jdouble *>(pVal) = MAX(d < D_MAX ? d : D_MIN, old);
         }
     }
     return JNI_TRUE;
@@ -370,10 +370,10 @@ kIntMinDouble(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong pDouble, jlong 
                 return JNI_FALSE;
             }
             *reinterpret_cast<int32_t *>(pKey) = key;
-            *reinterpret_cast<jdouble *>(pVal) = std::isnan(d) ? D_MAX : d;
+            *reinterpret_cast<jdouble *>(pVal) = d > D_MIN ? d : D_MAX;
         } else {
             const jdouble old = *reinterpret_cast<jdouble *>(pVal);
-            *reinterpret_cast<jdouble *>(pVal) = MIN((std::isnan(d) ? D_MAX : d), old);
+            *reinterpret_cast<jdouble *>(pVal) = MIN((d > D_MIN ? d : D_MAX), old);
         }
     }
     return JNI_TRUE;
@@ -615,6 +615,17 @@ kIntSumLong256WrapUp(jlong pRosti, jint valueOffset, jlong n0, jlong n1, jlong n
     return JNI_TRUE;
 }
 
+static inline void nsum_add(unsigned char *dest, int32_t value_offset, int32_t c_offset, jdouble x, jdouble xc) {
+    const jdouble sum = *reinterpret_cast<jdouble *>(dest + value_offset);
+    const jdouble t = sum + x;
+    if (std::abs(sum) >= std::abs(x)) {
+        *reinterpret_cast<jdouble *>(dest + c_offset) += (sum - t) + x + xc;
+    } else {
+        *reinterpret_cast<jdouble *>(dest + c_offset) += (x - t) + sum + xc;
+    }
+    *reinterpret_cast<jdouble *>(dest + value_offset) = t;
+}
+
 static jboolean
 kIntNSumDouble(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong pDouble, jlong count, jint valueOffset) {
     auto map = reinterpret_cast<rosti_t *>(pRosti);
@@ -627,6 +638,7 @@ kIntNSumDouble(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong pDouble, jlong
         MM_PREFETCH_T0(pd + i + 8);
         const int32_t key = to_int(pKeys, i);
         const jdouble d = pd[i];
+        const bool finite = std::isfinite(d);
         auto res = find(map, key);
         auto dest = map->slots_ + res.first;
         if (PREDICT_FALSE(res.second)) {
@@ -634,20 +646,12 @@ kIntNSumDouble(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong pDouble, jlong
                 return JNI_FALSE;
             }
             *reinterpret_cast<int32_t *>(dest) = key;
-            *reinterpret_cast<jdouble *>(dest + value_offset) = std::isnan(d) ? 0 : d;
+            *reinterpret_cast<jdouble *>(dest + value_offset) = finite ? d : 0;
             *reinterpret_cast<jdouble *>(dest + c_offset) = 0.;
-            *reinterpret_cast<jlong *>(dest + count_offset) = std::isnan(d) ? 0 : 1;
-        } else {
-            const jdouble sum = *reinterpret_cast<jdouble *>(dest + value_offset);
-            const jdouble x = std::isnan(d) ? 0 : d;
-            const jdouble t = sum + x;
-            if (std::abs(sum) >= x) {
-                *reinterpret_cast<jdouble *>(dest + c_offset) += (sum - t) + x;
-            } else {
-                *reinterpret_cast<jdouble *>(dest + c_offset) += (x - t) + sum;
-            }
-            *reinterpret_cast<jdouble *>(dest + value_offset) = t;
-            *reinterpret_cast<jlong *>(dest + count_offset) += std::isnan(d) ? 0 : 1;
+            *reinterpret_cast<jlong *>(dest + count_offset) = finite ? 1 : 0;
+        } else if (finite) {
+            nsum_add(dest, value_offset, c_offset, d, 0.);
+            *reinterpret_cast<jlong *>(dest + count_offset) += 1;
         }
     }
     return JNI_TRUE;
@@ -1325,14 +1329,7 @@ Java_io_questdb_std_Rosti_keyedIntNSumDoubleMerge(JNIEnv *env, jclass cl, jlong 
                 *reinterpret_cast<jlong *>(dest + count_offset) = count;
             } else {
                 // do not check for nans in merge, because we can't have them in map
-                const jdouble sum = *reinterpret_cast<jdouble *>(dest + value_offset);
-                const jdouble t = sum + d;
-                if (std::abs(sum) >= d) {
-                    *reinterpret_cast<jdouble *>(dest + c_offset) += (sum - t) + d;
-                } else {
-                    *reinterpret_cast<jdouble *>(dest + c_offset) += (d - t) + sum;
-                }
-                *reinterpret_cast<jdouble *>(dest + value_offset) = t;
+                nsum_add(dest, value_offset, c_offset, d, *reinterpret_cast<jdouble *>(src + c_offset));
                 *reinterpret_cast<jlong *>(dest + count_offset) += count;
             }
         }
@@ -1347,23 +1344,6 @@ Java_io_questdb_std_Rosti_keyedIntNSumDoubleWrapUp(JNIEnv *env, jclass cl, jlong
     const auto value_offset = map->value_offsets_[valueOffset];
     const auto c_offset = map->value_offsets_[valueOffset + 1];
     const auto count_offset = map->value_offsets_[valueOffset + 2];
-    const auto capacity = map->capacity_;
-    const auto ctrl = map->ctrl_;
-    const auto shift = map->slot_size_shift_;
-    const auto slots = map->slots_;
-
-    for (size_t i = 0; i < capacity; i++) {
-        ctrl_t c = ctrl[i];
-        if (c > -1) {
-            const auto src = slots + (i << shift);
-            auto count = *reinterpret_cast<jlong *>(src + count_offset);
-            if (PREDICT_FALSE(count == 0)) {
-                *reinterpret_cast<jdouble *>(src + value_offset) = D_NAN;
-            } else {
-                *reinterpret_cast<jdouble *>(src + value_offset) += *reinterpret_cast<jdouble *>(src + c_offset);
-            }
-        }
-    }
 
     // populate null value
     if (valueAtNullCount > 0) {
@@ -1380,15 +1360,25 @@ Java_io_questdb_std_Rosti_keyedIntNSumDoubleWrapUp(JNIEnv *env, jclass cl, jlong
             *reinterpret_cast<jdouble *>(dest + c_offset) = valueAtNullC;
             *reinterpret_cast<jlong *>(dest + count_offset) = valueAtNullCount;
         } else {
-            const jdouble sum = *reinterpret_cast<jdouble *>(dest + value_offset);
-            const jdouble t = sum + valueAtNull;
-            if (std::abs(sum) >= valueAtNull) {
-                *reinterpret_cast<jdouble *>(dest + c_offset) += (sum - t) + valueAtNull;
+            nsum_add(dest, value_offset, c_offset, valueAtNull, valueAtNullC);
+            *reinterpret_cast<jlong *>(dest + count_offset) += valueAtNullCount;
+        }
+    }
+
+    const auto capacity = map->capacity_;
+    const auto ctrl = map->ctrl_;
+    const auto shift = map->slot_size_shift_;
+    const auto slots = map->slots_;
+    for (size_t i = 0; i < capacity; i++) {
+        ctrl_t c = ctrl[i];
+        if (c > -1) {
+            const auto src = slots + (i << shift);
+            auto count = *reinterpret_cast<jlong *>(src + count_offset);
+            if (PREDICT_FALSE(count == 0)) {
+                *reinterpret_cast<jdouble *>(src + value_offset) = D_NAN;
             } else {
-                *reinterpret_cast<jdouble *>(dest + c_offset) += (valueAtNull - t) + sum;
+                *reinterpret_cast<jdouble *>(src + value_offset) += *reinterpret_cast<jdouble *>(src + c_offset);
             }
-            *reinterpret_cast<jdouble *>(dest + value_offset) = t;
-            *reinterpret_cast<jlong *>(dest + count_offset) += 1;
         }
     }
     return JNI_TRUE;

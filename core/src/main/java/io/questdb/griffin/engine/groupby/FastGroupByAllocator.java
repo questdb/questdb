@@ -45,6 +45,8 @@ import org.jetbrains.annotations.Nullable;
  * calls. This comes at the cost of memory fragmentation.
  */
 public class FastGroupByAllocator implements GroupByAllocator {
+    // A sharded map owns hundreds of allocators, most of which hold a few KB.
+    private static final long INITIAL_CHUNK_SIZE = 4 * 1024;
     private final boolean aligned;
     // Holds <ptr, size> pairs.
     private final DirectLongLongHashMap chunks;
@@ -57,6 +59,7 @@ public class FastGroupByAllocator implements GroupByAllocator {
     // degrade to the global-only overloads in that case.
     @Nullable
     private MemoryTracker memoryTracker;
+    private long nextChunkSize;
     private long ptr;
 
     public FastGroupByAllocator(long defaultChunkSize, long maxChunkSize) {
@@ -72,6 +75,7 @@ public class FastGroupByAllocator implements GroupByAllocator {
         this.maxChunkSize = maxChunkSize;
         this.aligned = aligned;
         this.chunks = new DirectLongLongHashMap(8, 0.7, 0, 0, MemoryTag.NATIVE_GROUP_BY_FUNCTION, openOnInit);
+        this.nextChunkSize = Math.min(INITIAL_CHUNK_SIZE, defaultChunkSize);
     }
 
     // Allocated chunks total (bytes).
@@ -130,8 +134,9 @@ public class FastGroupByAllocator implements GroupByAllocator {
             return allocatedPtr;
         }
 
-        long chunkSize = Math.max(size, defaultChunkSize);
+        long chunkSize = Math.max(size, nextChunkSize);
         long allocatedPtr = Unsafe.malloc(chunkSize, MemoryTag.NATIVE_GROUP_BY_FUNCTION, memoryTracker);
+        nextChunkSize = Math.min(2 * nextChunkSize, defaultChunkSize);
         chunks.put(allocatedPtr, chunkSize);
         allocated += chunkSize;
         ptr = alignMaybe(allocatedPtr + size);
@@ -212,6 +217,7 @@ public class FastGroupByAllocator implements GroupByAllocator {
             chunks.clear();
         }
         allocated = 0;
+        nextChunkSize = Math.min(INITIAL_CHUNK_SIZE, defaultChunkSize);
         ptr = lim = 0;
     }
 

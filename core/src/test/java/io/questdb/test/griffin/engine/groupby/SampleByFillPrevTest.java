@@ -30,6 +30,122 @@ import org.junit.Test;
 public class SampleByFillPrevTest extends AbstractCairoTest {
 
     @Test
+    public void testNanosecondStrideOnMicrosTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE fu AS (
+                        SELECT (1_704_067_200_000_000 + x * 7 + (x / 10) * 50)::TIMESTAMP ts, (x % 2)::SYMBOL k, x v
+                        FROM long_sequence(3_000)
+                    ) TIMESTAMP(ts) PARTITION BY HOUR
+                    """);
+            final String[][] strides = {{"1n", "1U"}, {"500n", "1U"}, {"1000n", "1U"}, {"3000n", "3U"}, {"7000n", "7U"}, {"11000n", "11U"}};
+            final String[] fills = {"", " FILL(NONE)", " FILL(NULL)", " FILL(PREV)", " FILL(0)", " FILL(LINEAR)"};
+            final String[][] modifiers = {
+                    {"", ""},
+                    {" FROM '2024-01-01'", ""},
+                    {"", " ALIGN TO CALENDAR WITH OFFSET '00:15'"},
+                    {"", " ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'"}
+            };
+            for (String[] stride : strides) {
+                for (String fill : fills) {
+                    for (String[] modifier : modifiers) {
+                        final String tail = modifier[0] + fill + modifier[1];
+                        final String keyless = "SELECT ts, avg(v), sum(v), count() FROM fu SAMPLE BY $stride" + tail;
+                        assertSqlCursors(keyless.replace("$stride", stride[1]), keyless.replace("$stride", stride[0]));
+                        final String keyed = "SELECT ts, k, avg(v), sum(v), count() FROM fu SAMPLE BY $stride" + tail + " ORDER BY ts, k";
+                        assertSqlCursors(keyed.replace("$stride", stride[1]), keyed.replace("$stride", stride[0]));
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testNanosecondStrideOnNanosTableFills() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE fn (ts TIMESTAMP_NS, v LONG) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO fn VALUES ('1970-01-01T00:00:00.000000000Z', 1), ('1970-01-01T00:00:00.000005000Z', 2)");
+            assertQuery("SELECT ts, sum(v) s FROM fn SAMPLE BY 2500n FILL(NULL)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\ts
+                            1970-01-01T00:00:00.000000000Z\t1
+                            1970-01-01T00:00:00.000002500Z\tnull
+                            1970-01-01T00:00:00.000005000Z\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testUnevenNanosecondStrideOnMicrosTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE fu AS (SELECT (x - 1)::TIMESTAMP ts, (x % 2)::SYMBOL k, x v FROM long_sequence(10)) TIMESTAMP(ts) PARTITION BY DAY");
+            // 2500n puts the buckets at 0, 2500, 5000 and 7500 nanoseconds, or 0, 2, 5 and 7 whole microseconds.
+            assertQuery("SELECT ts, count() c FROM fu SAMPLE BY 2500n")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tc
+                            1970-01-01T00:00:00.000000Z\t3
+                            1970-01-01T00:00:00.000002Z\t2
+                            1970-01-01T00:00:00.000005Z\t3
+                            1970-01-01T00:00:00.000007Z\t2
+                            """);
+            assertQuery("SELECT ts, count() c FROM fu SAMPLE BY 2500n FILL(NONE)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tc
+                            1970-01-01T00:00:00.000000Z\t3
+                            1970-01-01T00:00:00.000002Z\t2
+                            1970-01-01T00:00:00.000005Z\t3
+                            1970-01-01T00:00:00.000007Z\t2
+                            """);
+            // 1500n puts the buckets at 0, 1500, 3000, 4500, 6000, 7500 and 9000 nanoseconds, or 0, 1, 3, 4, 6, 7 and 9
+            // whole microseconds. They hold the microseconds 0-1, 2, 3-4, 5, 6-7, 8 and 9. The fill steps through every
+            // microsecond.
+            assertQuery("SELECT ts, count() c FROM fu SAMPLE BY 1500n FILL(NULL)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tc
+                            1970-01-01T00:00:00.000000Z\t2
+                            1970-01-01T00:00:00.000001Z\t1
+                            1970-01-01T00:00:00.000002Z\tnull
+                            1970-01-01T00:00:00.000003Z\t2
+                            1970-01-01T00:00:00.000004Z\t1
+                            1970-01-01T00:00:00.000005Z\tnull
+                            1970-01-01T00:00:00.000006Z\t2
+                            1970-01-01T00:00:00.000007Z\t1
+                            1970-01-01T00:00:00.000008Z\tnull
+                            1970-01-01T00:00:00.000009Z\t1
+                            """);
+            // FILL(LINEAR) runs on the sampler's grid alone.
+            assertSqlCursors("SELECT ts, avg(v) a FROM fu SAMPLE BY 2U FILL(LINEAR)", "SELECT ts, avg(v) a FROM fu SAMPLE BY 2500n FILL(LINEAR)");
+            final String message = "FILL does not support this stride on a microsecond timestamp, use a whole number of microseconds";
+            for (String stride : new String[]{"2001n", "2500n", "3500n", "7999n"}) {
+                for (String fill : new String[]{"NULL", "PREV", "0"}) {
+                    final String keyless = "SELECT ts, count() c FROM fu SAMPLE BY " + stride + " FILL(" + fill + ")";
+                    assertExceptionNoLeakCheck(keyless, keyless.indexOf(stride), message);
+                    final String keyed = "SELECT ts, k, count() c FROM fu SAMPLE BY " + stride + " FILL(" + fill + ")";
+                    assertExceptionNoLeakCheck(keyed, keyed.indexOf(stride), message);
+                }
+            }
+            // The table still works after the errors.
+            assertQuery("SELECT count() c FROM fu")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("c\n10\n");
+        });
+    }
+
+    @Test
     public void testFillPrevAcceptPrevToSelfPrev() throws Exception {
         assertMemoryLeak(() -> {
             // FILL(PREV(b), PREV): a references b, and b is bare PREV
@@ -763,16 +879,16 @@ public class SampleByFillPrevTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .returns("""
                             ts\tsym\tfirst
-                            2024-01-01T00:00:00.000000Z\tA\t12.34
                             2024-01-01T00:00:00.000000Z\tB\t99.99
-                            2024-01-01T01:00:00.000000Z\tA\t12.34
+                            2024-01-01T00:00:00.000000Z\tA\t12.34
                             2024-01-01T01:00:00.000000Z\tB\t99.99
+                            2024-01-01T01:00:00.000000Z\tA\t12.34
                             2024-01-01T02:00:00.000000Z\tA\t
                             2024-01-01T02:00:00.000000Z\tB\t99.99
-                            2024-01-01T03:00:00.000000Z\tA\t
                             2024-01-01T03:00:00.000000Z\tB\t99.99
-                            2024-01-01T04:00:00.000000Z\tA\t56.78
+                            2024-01-01T03:00:00.000000Z\tA\t
                             2024-01-01T04:00:00.000000Z\tB\t11.11
+                            2024-01-01T04:00:00.000000Z\tA\t56.78
                             """);
         });
     }
@@ -795,12 +911,12 @@ public class SampleByFillPrevTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .returns("""
                             ts\tsym\tfirst
-                            2024-01-01T00:00:00.000000Z\tA\t1234567890.123456789
                             2024-01-01T00:00:00.000000Z\tB\t0.000000001
-                            2024-01-01T01:00:00.000000Z\tA\t1234567890.123456789
+                            2024-01-01T00:00:00.000000Z\tA\t1234567890.123456789
                             2024-01-01T01:00:00.000000Z\tB\t0.000000001
-                            2024-01-01T02:00:00.000000Z\tA\t1234567890.123456789
+                            2024-01-01T01:00:00.000000Z\tA\t1234567890.123456789
                             2024-01-01T02:00:00.000000Z\tB\t0.000000001
+                            2024-01-01T02:00:00.000000Z\tA\t1234567890.123456789
                             2024-01-01T03:00:00.000000Z\tA\t9876543210.987654321
                             2024-01-01T03:00:00.000000Z\tB\t0.000000001
                             """);
@@ -1024,10 +1140,9 @@ public class SampleByFillPrevTest extends AbstractCairoTest {
             // At 01:00: London gap -> prev = gcpuuz, Paris gap -> prev = u09tvw
             // At 02:00: London data = gcpvn0, Paris gap -> prev = u09tvw
             assertQuery("SELECT ts, city, first(g) FROM geo_weather " +
-                    "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR")
+                    "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR ORDER BY ts, city")
                     .noLeakCheck()
                     .timestamp("ts")
-                    .noRandomAccess()
                     .returns("""
                             ts\tcity\tfirst
                             2024-01-01T00:00:00.000000Z\tLondon\tgcpuuz
@@ -1622,16 +1737,13 @@ public class SampleByFillPrevTest extends AbstractCairoTest {
                             Sample By Fill
                               stride: '1h'
                               fill: mixed
-                                Encode sort light
+                                Async Stream Group By workers: 1
                                   keys: [ts]
-                                    Async Group By workers: 1
-                                      keys: [ts]
-                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                      values: [sum(val),first(sym)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: x
+                                  keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                  values: [sum(val),first(sym)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: x
                             """);
         });
     }
@@ -1648,10 +1760,9 @@ public class SampleByFillPrevTest extends AbstractCairoTest {
                     "('K1', 3.0, 'C', '2024-01-01T02:00:00.000000Z')");
             // At 01:00: K1 gap -> sum=prev(1.0), sym=null; K2 gap -> sum=prev(2.0), sym=null
             // At 02:00: K1 data -> sum=3.0, sym=C; K2 gap -> sum=prev(2.0), sym=null
-            assertQuery("SELECT ts, key, sum(val), first(sym) FROM x SAMPLE BY 1h FILL(PREV, NULL) ALIGN TO CALENDAR")
+            assertQuery("SELECT ts, key, sum(val), first(sym) FROM x SAMPLE BY 1h FILL(PREV, NULL) ALIGN TO CALENDAR ORDER BY ts, key")
                     .noLeakCheck()
                     .timestamp("ts")
-                    .noRandomAccess()
                     .returns("""
                             ts\tkey\tsum\tfirst
                             2024-01-01T00:00:00.000000Z\tK1\t1.0\tA
@@ -1768,16 +1879,13 @@ public class SampleByFillPrevTest extends AbstractCairoTest {
                             Sample By Fill
                               stride: '1h'
                               fill: prev
-                                Encode sort light
+                                Async Stream Group By workers: 1
                                   keys: [ts]
-                                    Async Group By workers: 1
-                                      keys: [ts]
-                                      keyFunctions: [timestamp_floor_utc('1h',ts,null,'00:00','Europe/Berlin')]
-                                      values: [sum(val)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: x
+                                  keyFunctions: [timestamp_floor_utc('1h',ts,null,'00:00','Europe/Berlin')]
+                                  values: [sum(val)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: x
                             """);
         });
     }
@@ -1796,10 +1904,9 @@ public class SampleByFillPrevTest extends AbstractCairoTest {
             // At 01:00 gap: both keys emit fill rows with m=k (not null).
             // At 02:00 gap for key=2: m=2 (mirrors the key value).
             assertQuery("SELECT ts, k, sum(val) AS s, last(mirror) AS m " +
-                    "FROM x SAMPLE BY 1h FILL(PREV, PREV(k)) ALIGN TO CALENDAR")
+                    "FROM x SAMPLE BY 1h FILL(PREV, PREV(k)) ALIGN TO CALENDAR ORDER BY ts, k")
                     .noLeakCheck()
                     .timestamp("ts")
-                    .noRandomAccess()
                     .returns("""
                             ts\tk\ts\tm
                             2024-01-01T00:00:00.000000Z\t1\t10.0\t100
@@ -1918,10 +2025,9 @@ public class SampleByFillPrevTest extends AbstractCairoTest {
                         ('2024-01-01T04:00:00.000000Z', 'B', 6.0, 60.0)""");
             assertQuery("""
                     SELECT a + b, k FROM (
-                        SELECT k, sum(x) a, sum(y) b FROM t SAMPLE BY 1h FILL(PREV)
-                    )""")
+                        SELECT k, sum(x) a, sum(y) b, ts FROM t SAMPLE BY 1h FILL(PREV)
+                    ) ORDER BY ts, k""")
                     .noLeakCheck()
-                    .noRandomAccess()
                     .returns("""
                             column\tk
                             11.0\tA
@@ -2319,11 +2425,10 @@ public class SampleByFillPrevTest extends AbstractCairoTest {
                     "('K1', 'A', '2024-01-01T00:00:00.000000Z')," +
                     "('K2', 'B', '2024-01-01T00:00:00.000000Z')," +
                     "('K1', 'C', '2024-01-01T02:00:00.000000Z')");
-            final String query = "SELECT ts, key, first(sym) FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR";
+            final String query = "SELECT ts, key, first(sym) FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR ORDER BY ts, key";
             assertQuery(query)
                     .noLeakCheck()
                     .timestamp("ts")
-                    .noRandomAccess()
                     .returns("""
                             ts\tkey\tfirst
                             2024-01-01T00:00:00.000000Z\tK1\tA
@@ -2428,10 +2533,10 @@ public class SampleByFillPrevTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .returns("""
                             ts\tkey\tfirst
-                            2024-01-01T00:00:00.000000Z\tK1\t11111111-1111-1111-1111-111111111111
                             2024-01-01T00:00:00.000000Z\tK2\t22222222-2222-2222-2222-222222222222
-                            2024-01-01T01:00:00.000000Z\tK1\t11111111-1111-1111-1111-111111111111
+                            2024-01-01T00:00:00.000000Z\tK1\t11111111-1111-1111-1111-111111111111
                             2024-01-01T01:00:00.000000Z\tK2\t22222222-2222-2222-2222-222222222222
+                            2024-01-01T01:00:00.000000Z\tK1\t11111111-1111-1111-1111-111111111111
                             2024-01-01T02:00:00.000000Z\tK1\t33333333-3333-3333-3333-333333333333
                             2024-01-01T02:00:00.000000Z\tK2\t22222222-2222-2222-2222-222222222222
                             """);

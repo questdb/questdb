@@ -100,11 +100,9 @@ public class TimestampFloorUtcBucketCachingFunctionTest extends AbstractCairoTes
     private static final String[] STRIDES = {
             "250T", "1s", "5s", "1m", "15m", "17m", "1h", "7h", "1d", "3d",
             // not cached on a micro column: a bucket too narrow to hold several timestamps,
-            // calendar units and nanosecond strides. The micro driver floors the latter in a
-            // nanosecond domain, where a non-zero offset moves the buckets of a whole-micro
-            // stride (7000n and 11_000n are 7 and 11 micros wide) off the grid that the cache's
-            // fixed-width arithmetic assumes. A nano column caches all of them except the
-            // calendar units and 5n, which is too narrow there as well.
+            // calendar units and nanosecond strides, which the micro driver floors in a
+            // nanosecond domain. A nano column caches all of them except the calendar units
+            // and 5n, which is too narrow there as well.
             "1U", "1w", "1M", "1y", "5n", "500n", "7000n", "11_000n",
     };
 
@@ -601,18 +599,15 @@ public class TimestampFloorUtcBucketCachingFunctionTest extends AbstractCairoTes
                                 .withContext(sqlExecutionContext)
                                 .noLeakCheck()
                                 .timestamp("ts")
-                                .expectSize()
+                                .noRandomAccess()
                                 .withPlan("""
-                                        Encode sort light
+                                        Async Stream Group By workers: 4
                                           keys: [ts]
-                                            Async Group By workers: 4
-                                              keys: [ts]
-                                              keyFunctions: [timestamp_floor_utc('%s',ts,null,'00:00','Europe/Berlin')]
-                                              values: [count(*)]
-                                              filter: null
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: x
+                                          keyFunctions: [timestamp_floor_utc('%s',ts,null,'00:00','Europe/Berlin')]
+                                          values: [count(*)]
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: x
                                         """.formatted(stride))
                                 .returns(expected);
                     },

@@ -45,8 +45,8 @@ JNIEXPORT jdouble JNICALL Java_io_questdb_std_Vect_sumDoubleKahan(JNIEnv *env, j
     return sumDoubleKahan_Vanilla((double *) pDouble, count);
 }
 
-JNIEXPORT jdouble JNICALL Java_io_questdb_std_Vect_sumDoubleNeumaier(JNIEnv *env, jclass cl, jlong pDouble, jlong count) {
-    return sumDoubleNeumaier_Vanilla((double *) pDouble, count);
+JNIEXPORT jdouble JNICALL Java_io_questdb_std_Vect_sumDoubleNeumaier(JNIEnv *env, jclass cl, jlong pDouble, jlong count, jlong pC) {
+    return sumDoubleNeumaier_Vanilla((double *) pDouble, count, (double *) pC);
 }
 
 JNIEXPORT jdouble JNICALL Java_io_questdb_std_Vect_minDouble(JNIEnv *env, jclass cl, jlong pDouble, jlong count) {

@@ -55,6 +55,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -288,6 +289,16 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         return sqlExecutionContext.getCircuitBreaker();
     }
 
+    @TestOnly
+    public int getDispatchedFrameCount() {
+        return dispatchStartFrameIndex;
+    }
+
+    @TestOnly
+    public int getReducedFrameCount() {
+        return reduceFinishedCounter.get();
+    }
+
     public int getFrameCount() {
         return frameCount;
     }
@@ -365,6 +376,36 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
     }
 
     /**
+     * Publishes frames up to the limit without stealing, so that the workers keep reducing while the
+     * caller works through the frames it collected.
+     */
+    public void dispatchAhead(int dispatchLimit) {
+        final PageFrameReduceDispatcher dispatcher = messageBus.getPageFrameReduceDispatcher();
+        if (!isActive() || (dispatcher != null && !dispatcher.tryAcquirePublication())) {
+            return;
+        }
+        try {
+            final MPSequence reducePubSeq = messageBus.getPageFrameReducePubSeq(shard);
+            final int collectedFrameCount = collectedFrameIndex + 1;
+            while (dispatchStartFrameIndex < frameCount && dispatchStartFrameIndex - collectedFrameCount < dispatchLimit) {
+                final long cursor = reducePubSeq.next();
+                if (cursor == -1) {
+                    return;
+                }
+                if (cursor > -1) {
+                    reduceQueue.get(cursor).of(this, dispatchStartFrameIndex, false);
+                    reducePubSeq.done(cursor);
+                    dispatchStartFrameIndex++;
+                }
+            }
+        } finally {
+            if (dispatcher != null) {
+                dispatcher.releasePublication();
+            }
+        }
+    }
+
+    /**
      * This method is not thread safe. It's always invoked on a single "query owner" thread.
      * <p>
      * Returns a cursor that points either to the reduce queue or to the local reduce task.
@@ -416,11 +457,16 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                     if (dispatchStartFrameIndex == collectedFrameIndex + 1) {
                         return -2;
                     }
-                } else if (dispatch(dispatchLimit, countOnly)) {
-                    // We have dispatched something, so let's try to collect it.
-                    continue;
-                } else if (dispatcher != null && !isActive()) {
-                    continue;
+                } else {
+                    final int dispatchedBefore = dispatchStartFrameIndex;
+                    // A finished frame can sit behind a ring slot held by a fiber that needs this carrier to finish.
+                    if (dispatch(dispatchLimit, countOnly) && (!canPark || dispatchStartFrameIndex > dispatchedBefore)) {
+                        // We have dispatched something, so let's try to collect it.
+                        continue;
+                    }
+                    if (dispatcher != null && !isActive()) {
+                        continue;
+                    }
                 }
                 if (dispatchStartFrameIndex == collectedFrameIndex + 1) {
                     reduceLocally(countOnly);

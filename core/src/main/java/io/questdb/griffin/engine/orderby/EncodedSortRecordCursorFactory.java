@@ -47,7 +47,8 @@ public class EncodedSortRecordCursorFactory extends AbstractRecordCursorFactory 
             RecordMetadata metadata,
             RecordCursorFactory base,
             RecordSink recordSink,
-            ListColumnFilter sortColumnFilter
+            ListColumnFilter sortColumnFilter,
+            long valueMaxBytes
     ) {
         super(metadata);
         this.base = base;
@@ -55,7 +56,8 @@ public class EncodedSortRecordCursorFactory extends AbstractRecordCursorFactory 
                 configuration,
                 metadata,
                 sortColumnFilter,
-                recordSink
+                recordSink,
+                valueMaxBytes
         );
         this.sortColumnFilter = sortColumnFilter;
     }

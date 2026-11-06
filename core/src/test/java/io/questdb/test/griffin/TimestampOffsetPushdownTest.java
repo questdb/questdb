@@ -1409,12 +1409,11 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     "left side of time series join has no timestamp"
             );
 
-            // An outer ORDER BY drops the ORDER BY that SAMPLE BY adds to its own sub-query, so the
-            // rows that reach the projection are no longer in timestamp order.
+            // Stream aggregation preserves timestamp order through the projection.
             assertQuery("SELECT dateadd('s', 1, ts) x FROM (SELECT ts, count() c FROM trades SAMPLE BY 2s) ORDER BY x LIMIT 3")
                     .noLeakCheck()
                     .timestamp("x")
-                    .expectSize()
+                    .noRandomAccess()
                     .returns("""
                             x
                             2024-01-01T00:00:01.000000Z
@@ -1423,10 +1422,11 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                             """);
 
             // Controls: a sub-query that keeps the row order still gives dateadd() a designated
-            // timestamp, and a bare timestamp over a GROUP BY still sorts.
+            // timestamp.
             assertQuery("SELECT dateadd('s', 1, ts) x FROM (SELECT ts, count() c FROM trades SAMPLE BY 2s) LIMIT 3")
                     .noLeakCheck()
                     .timestamp("x")
+                    .noRandomAccess()
                     .returns("""
                             x
                             2024-01-01T00:00:01.000000Z
@@ -1465,7 +1465,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
             assertQuery("SELECT ts x FROM (SELECT ts, avg(price) a FROM trades) ORDER BY x LIMIT 1")
                     .noLeakCheck()
                     .timestamp("x")
-                    .expectSize()
+                    .noRandomAccess()
                     .returns("""
                             x
                             2024-01-01T00:00:00.000000Z
@@ -3964,15 +3964,15 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .timestamp("x")
                     .withPlan("""
-                            Encode sort light
+                            Encode sort
                               keys: [x]
                                 VirtualRecord
                                   functions: [dateadd('s',1,ts),sym]
                                     Filter filter: dateadd('s',1,ts)<2024-01-01T00:00:25.000000Z
                                         Limit value: 100 skip-rows-max: 0 take-rows-max: 100
-                                            Async Group By workers: 1
+                                            Async Stream Group By workers: 1
+                                              segmentKey: ts
                                               keys: [ts,sym]
-                                              filter: null
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: trades
@@ -4339,18 +4339,16 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     .withPlan("""
                             VirtualRecord
                               functions: [dateadd('s',1,ts),c]
-                                Encode sort light
-                                  keys: [ts]
-                                    Filter filter: dateadd('s',1,ts)<2024-01-01T00:01:30.000000Z
-                                        Async Group By workers: 1
-                                          keys: [ts]
-                                          keyFunctions: [timestamp_floor_utc('1m',ts)]
-                                          values: [count(*)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: trades
+                                Filter filter: dateadd('s',1,ts)<2024-01-01T00:01:30.000000Z
+                                    Async Stream Group By workers: 1
+                                      keys: [ts]
+                                      keyFunctions: [timestamp_floor_utc('1m',ts)]
+                                      values: [count(*)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: trades
                             """)
+                    .noRandomAccess()
                     .returns("""
                             x\tc
                             2024-01-01T00:00:01.000000Z\t6
@@ -4371,16 +4369,15 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     ORDER BY x
                     """)
                     .noLeakCheck()
-                    .expectSize()
                     .timestamp("x")
                     .withPlan("""
-                            Encode sort light
+                            Encode sort
                               keys: [x]
                                 VirtualRecord
                                   functions: [dateadd('s',1,ts),sym]
-                                    Async Group By workers: 1
+                                    Async Stream Group By workers: 1
+                                      segmentKey: ts
                                       keys: [ts,sym]
-                                      filter: null
                                         PageFrame
                                             Row forward scan
                                             Interval forward scan on: trades

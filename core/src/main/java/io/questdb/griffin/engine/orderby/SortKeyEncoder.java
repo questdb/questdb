@@ -280,14 +280,15 @@ public class SortKeyEncoder implements QuietCloseable {
         return key < 0 ? 0 : ((DirectIntList) rankMap).get(key);
     }
 
-    public static void throwSortHeapOverflow(long maxEntryMemBytes) {
-        throw LimitOverflowException.instance()
+    public static void throwSortHeapOverflow(long maxEntryMemBytes, boolean isLightValueBound) {
+        final CairoException e = LimitOverflowException.instance()
                 .put("limit of ").put(maxEntryMemBytes)
                 .put(" memory exceeded in EncodedSort (raise ")
-                .put(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath())
-                .put(" or ")
-                .put(PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath())
-                .put(')');
+                .put(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath());
+        if (isLightValueBound) {
+            e.put(" or ").put(PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath());
+        }
+        throw e.put(')');
     }
 
     @Override

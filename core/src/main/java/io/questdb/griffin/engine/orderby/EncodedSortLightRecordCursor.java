@@ -244,7 +244,7 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor, RecordCurs
         long maxEntryMemBytes = maxEntries * entrySize;
         if (estimatedSize > 0) {
             if (estimatedSize > maxEntries) {
-                SortKeyEncoder.throwSortHeapOverflow(maxEntryMemBytes);
+                SortKeyEncoder.throwSortHeapOverflow(maxEntryMemBytes, true);
             }
             entryMem.setCapacity(estimatedSize * longsPerEntry);
         }
@@ -263,7 +263,7 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor, RecordCurs
                 entryMem.skip(longsPerEntry);
                 count++;
                 if (count * entrySize + keyHeap.getAppendOffset() > maxEntryMemBytes) {
-                    SortKeyEncoder.throwSortHeapOverflow(maxEntryMemBytes);
+                    SortKeyEncoder.throwSortHeapOverflow(maxEntryMemBytes, true);
                 }
             }
         } else if (estimatedSize > 0) {
@@ -278,7 +278,7 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor, RecordCurs
             while (baseCursor.hasNext()) {
                 circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 if (count >= maxEntries) {
-                    SortKeyEncoder.throwSortHeapOverflow(maxEntryMemBytes);
+                    SortKeyEncoder.throwSortHeapOverflow(maxEntryMemBytes, true);
                 }
                 entryMem.ensureCapacity(longsPerEntry);
                 long addr = entryMem.getAppendAddress();
@@ -291,9 +291,9 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor, RecordCurs
         if (count > 1) {
             if (isVariable) {
                 long heapAddr = keyHeap.getAppendOffset() == 0 ? 0 : keyHeap.addressOf(0);
-                Vect.sortEncodedVarEntries(entryMem.getAddress(), count, heapAddr, parallelThreshold);
+                Vect.sortEncodedVarEntries(entryMem.getAddress(), count, heapAddr, parallelThreshold, 0, 0);
             } else {
-                Vect.sortEncodedEntries(entryMem.getAddress(), count, keyType.keyLength() / Long.BYTES, parallelThreshold);
+                Vect.sortEncodedEntries(entryMem.getAddress(), count, keyType.keyLength() / Long.BYTES, parallelThreshold, 0, 0);
             }
             circuitBreaker.statefulThrowExceptionIfTrippedNoThrottleOrYield();
         }

@@ -151,6 +151,12 @@ import java.nio.file.Paths;
  *         rows. The run asserts that the fused plan ran on enough of the
  *         comparisons whose query compiled to rule out a planner that has
  *         stopped selecting it.</li>
+ *     <li>{@code -Dquestdb.fuzz.diff.stream=true|false} &mdash; run every
+ *         query whose plan uses the stream GROUP BY a second time with it
+ *         disabled and compare against the hash GROUP BY (default true). Inner
+ *         SAMPLE BY subqueries put the stream plan under LATEST ON, joins and
+ *         LIMIT. The run asserts that the axis compared at least one query
+ *         once SAMPLE BY reaches the sample floor.</li>
  *     <li>{@code -Dquestdb.fuzz.diff.mappage=true|false} &mdash; run every
  *         query once more, and an equi-join GROUP BY query several more times,
  *         with {@code cairo.sql.small.map.page.size} cut to between 8 and 512
@@ -295,7 +301,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                     "('2024-01-01T00:00:00', 'a', " + nearMax + "), " +
                     "('2024-01-01T00:01:00', 'a', " + nearMax + ")");
 
-            QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, false, false, null, true, new ObjList<>(), null);
+            QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, false, false, false, null, true, new ObjList<>(), null);
 
             QueryRunner.Result avgResult = runner.run(
                     new GeneratedQuery("SELECT avg(d) OVER (PARTITION BY g ORDER BY ts) c FROM t", true));
@@ -570,7 +576,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 // surfaces a failed axis, so the regression assertion is that the
                 // run is not failed; without isPlannerSensitivityAsymmetry the
                 // storage axis would report a divergence and the run would fail.
-                final QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, true, false, null, false, tables, null);
+                final QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, true, false, false, null, false, tables, null);
                 final QueryRunner.Result result = runner.run(new GeneratedQuery(String.format(horizonJoin, "p", "p"), true));
                 Assert.assertFalse(
                         "storage divergence must be tolerated, not failed: "
@@ -599,7 +605,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
             final String nines = "9".repeat(76);
             execute("INSERT INTO cmp VALUES (" + nines + "m, 1.0m), (-" + nines + "m, 1.0m)");
 
-            QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, false, false, null, true, new ObjList<>(), null);
+            QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, false, false, false, null, true, new ObjList<>(), null);
             QueryRunner.Result result = runner.run(
                     new GeneratedQuery("SELECT count() c FROM cmp WHERE a > b", true));
             Assert.assertFalse("comparison must not be skipped: " + result.getSkipReason(), result.isSkipped());
@@ -909,8 +915,21 @@ public class QueryFuzzTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, mergeAppendEnabled);
         LOG.info().$("merge-append coin [mergeAppendEnabled=").$(mergeAppendEnabled).I$();
 
+        // The tables hold too few rows to pass the default sharding threshold.
+        if (rnd.nextBoolean()) {
+            final int shardingThreshold = 1 + rnd.nextInt(8);
+            node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, shardingThreshold);
+            LOG.info().$("sharding threshold coin [threshold=").$(shardingThreshold).I$();
+        }
+
+        if (config.getPageFrameMaxRows() > 0) {
+            node1.setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 1);
+            node1.setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, config.getPageFrameMaxRows());
+        }
+
         LOG.info().$("fuzz config: tables=").$(config.getNumTables())
                 .$(", rows=").$(config.getRowsPerTable())
+                .$(", pageFrameMaxRows=").$(config.getPageFrameMaxRows())
                 .$(", queries=").$(config.getNumQueries())
                 .$(", diffJit=").$(config.isDiffJitEnabled())
                 .$(", diffShadow=").$(config.isDiffShadowEnabled())
@@ -924,6 +943,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 .$(", windowJoin=").$(config.isWindowJoinEnabled())
                 .$(", hashJoin=").$(config.isHashJoinEnabled())
                 .$(", diffFused=").$(config.isDiffFusedEnabled())
+                .$(", diffStream=").$(config.isDiffStreamEnabled())
                 .$(", diffMapPage=").$(config.isDiffMapPageEnabled())
                 .$(", hashJoinPayload=").$(config.getHashJoinPayloadLayout() != null ? config.getHashJoinPayloadLayout().name() : "rule")
                 .$(", hashJoinBuild=").$(config.getHashJoinBuildMode().name())
@@ -962,6 +982,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 config.isDiffJitEnabled(),
                 config.isDiffShadowEnabled(),
                 config.isDiffFusedEnabled(),
+                config.isDiffStreamEnabled(),
                 config.isDiffMapPageEnabled() ? node1.getConfigurationOverrides() : null,
                 config.isVerifyCursorEnabled(),
                 tables,
@@ -1146,6 +1167,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 .$(generatedByShape[QueryShape.HASH_JOIN_GROUP_BY.ordinal()]).$(" equi-join GROUP BY queries; ")
                 .$(runner.getBuildChoiceRuns()).$(" runs picked the build per execution")
                 .$();
+        LOG.info().$("fuzz stream axis: ").$(runner.getStreamAxisRuns()).$(" comparisons against the hash GROUP BY").$();
         LOG.info().$("fuzz map page axis: ").$(runner.getMapPageAxisRuns()).$(" comparisons").$();
         LOG.info().$("fuzz reference axis: ").$(runner.getReferenceAxisRuns()).$(" comparisons across ")
                 .$(generatedByShape[QueryShape.GROUPING_SETS.ordinal()]).$(" grouping sets queries")
@@ -1231,6 +1253,13 @@ public class QueryFuzzTest extends AbstractCairoTest {
                         isFusedShareImplausible(fusedSelected, fusedCompleted)
                 );
             }
+        }
+        // Guard the stream on/off axis against going vacuous: SAMPLE BY plans the stream GROUP BY by default.
+        if (config.isDiffStreamEnabled() && generatedByShape[QueryShape.SAMPLE_BY.ordinal()] >= MIN_SHAPE_QUERIES_FOR_ACCEPT_FLOOR) {
+            Assert.assertTrue(
+                    "no SAMPLE BY of " + generatedByShape[QueryShape.SAMPLE_BY.ordinal()] + " used the stream GROUP BY; the stream on/off axis looks vacuous",
+                    runner.getStreamAxisRuns() > 0
+            );
         }
         // Guard the reference axis against going vacuous. It compares only when a grouping sets
         // query and its UNION ALL rewrite both run, so a rewrite that stops compiling would leave

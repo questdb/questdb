@@ -147,10 +147,10 @@ double sumDouble_Vanilla(double *d, int64_t count) {
     bool hasData = false;
     for (; d < lim; d++) {
         const double v = *d;
-        if (!std::isnan(v)) {
-            sum += v;
-            hasData = true;
-        }
+        const bool isValue = !std::isnan(v);
+        // Adding -0.0 keeps the sum, and selecting it here keeps the select off the sum's dependency chain.
+        sum += isValue ? v : -0.0;
+        hasData |= isValue;
     }
     return hasData ? sum : NAN;
 }
@@ -160,11 +160,11 @@ double sumDoubleAcc_Vanilla(double *d, int64_t count, int64_t *accCount) {
     double sum = 0;
     int64_t c = 0;
     for (; d < lim; d++) {
-        double v = *d;
-        if (!std::isnan(v)) {
-            sum += v;
-            ++c;
-        }
+        const double v = *d;
+        const bool isValue = !std::isnan(v);
+        // Adding -0.0 keeps the sum, and selecting it here keeps the select off the sum's dependency chain.
+        sum += isValue ? v : -0.0;
+        c += isValue;
     }
     *accCount = c;
     return c > 0 ? sum : NAN;
@@ -191,7 +191,8 @@ double sumDoubleKahan_Vanilla(double *d, int64_t count) {
     return hasData ? sum : NAN;
 }
 
-double sumDoubleNeumaier_Vanilla(double *d, int64_t count) {
+double sumDoubleNeumaier_Vanilla(double *d, int64_t count, double *pC) {
+    *pC = 0.;
     if (count == 0) {
         return NAN;
     }
@@ -201,7 +202,7 @@ double sumDoubleNeumaier_Vanilla(double *d, int64_t count) {
     bool hasData = false;
     for (; d < lim; d++) {
         const double input = *d;
-        if (input == input) {
+        if (std::isfinite(input)) {
             double t = sum + input;
             if (std::abs(sum) >= std::abs(input)) {
                 c += (sum - t) + input;
@@ -212,7 +213,8 @@ double sumDoubleNeumaier_Vanilla(double *d, int64_t count) {
             hasData = true;
         }
     }
-    return hasData ? sum + c : NAN;
+    *pC = c;
+    return hasData ? sum : NAN;
 }
 
 double minDouble_Vanilla(double *d, int64_t count) {
@@ -224,7 +226,7 @@ double minDouble_Vanilla(double *d, int64_t count) {
     double *pd = d;
     for (; pd < ext; pd++) {
         double x = *pd;
-        if (!std::isnan(x) && x < min) {
+        if (x < min && x > D_MIN) {
             min = x;
         }
     }
@@ -243,7 +245,7 @@ double maxDouble_Vanilla(double *d, int64_t count) {
     double *pd = d;
     for (; pd < ext; pd++) {
         double x = *pd;
-        if (!std::isnan(x) && x > max) {
+        if (x > max && x < D_MAX) {
             max = x;
         }
     }

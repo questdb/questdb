@@ -472,7 +472,7 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
         }
     }
 
-    private static int computeBatchColumnIndex(GroupByFunction func, RecordMetadata baseMetadata) {
+    static int computeBatchColumnIndex(GroupByFunction func, RecordMetadata baseMetadata) {
         if (!func.supportsBatchComputation()) {
             return AsyncGroupByNotKeyedAtom.BATCH_NOT_ELIGIBLE;
         }
