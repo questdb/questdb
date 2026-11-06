@@ -1074,6 +1074,7 @@
                                     <release>${qdbr.release}</release>
                                     <copyTo>${project.build.directory}/classes/io/questdb/bin/${platform.dir.name}</copyTo>
                                     <environmentVariables>
+                                        <CARGO_PROFILE_DEV_OPT_LEVEL>1</CARGO_PROFILE_DEV_OPT_LEVEL>
                                         <RUSTFLAGS>${qdbr.rustflags}</RUSTFLAGS>
                                     </environmentVariables>
                                 </configuration>
