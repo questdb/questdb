@@ -39,7 +39,6 @@ import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.view.ViewDefinition;
-import io.questdb.cairo.view.ViewGraph;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.wal.WalUtils;
@@ -94,7 +93,6 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
     private final ObjList<TxnScoreboard> scoreboards = new ObjList<>();
     private final AtomicLong startedAtTimestamp = new AtomicLong(Numbers.LONG_NULL); // Numbers.LONG_NULL means no ongoing checkpoint
     private final GrowOnlyTableNameRegistryStore tableNameRegistryStore; // protected with #lock
-    private final TxReader txReader;
     private boolean hasRecoveredCheckpoint;
     private boolean hasRecoveredCheckpointTrigger;
     private boolean isBackupCheckpoint; // protected with #lock
@@ -109,7 +107,6 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
         this.ff = configuration.getFilesFacade();
         this.metadata = WalWriterMetadata.newSequencerMetadataSink(ff);
         this.tableNameRegistryStore = new GrowOnlyTableNameRegistryStore(ff);
-        this.txReader = new TxReader(configuration.getFilesFacade());
     }
 
     @TestOnly
@@ -423,39 +420,20 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                     }
 
                                     if (tableToken.isView()) {
-                                        final ViewGraph viewGraph = engine.getViewGraph();
-                                        ViewDefinition viewDefinition;
-                                        long lastTxn = -1;
-
-                                        viewDefinition = viewGraph.getViewDefinition(tableToken);
+                                        final ViewDefinition viewDefinition = engine.getViewGraph().getViewDefinition(tableToken);
                                         if (viewDefinition != null) {
-
+                                            final long lastTxn = viewDefinition.getSeqTxn();
                                             matViewFileWriter.of(path.trimTo(rootLen).concat(ViewDefinition.VIEW_DEFINITION_FILE_NAME).$());
                                             ViewDefinition.append(viewDefinition, matViewFileWriter);
 
-                                            // Write table _txn file to checkpoint. Read it safely, it can be changing on view alters.
-                                            try (var trdr = txReader.ofRO(
-                                                    path.of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
-                                                    ColumnType.TIMESTAMP_MICRO,
-                                                    PartitionBy.NOT_APPLICABLE
-                                            )) {
-                                                TableUtils.safeReadTxn(
-                                                        trdr,
-                                                        configuration.getMillisecondClock(),
-                                                        configuration.getSpinLockTimeout()
-                                                );
-                                                if (trdr.seqTxn == viewDefinition.getSeqTxn()) {
-                                                    lastTxn = trdr.seqTxn;
-                                                    // Dump _txn file to checkpoint
-                                                    path.of(checkpointRoot)
-                                                            .concat(configuration.getDbDirectory()).concat(tableToken)
-                                                            .concat(TXN_FILE_NAME)
-                                                            .$();
-                                                    mem.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
-                                                    trdr.dumpTo(mem);
-                                                    mem.close(false);
-                                                }
-                                            }
+                                            // A regular view has no stored rows: its captured definition is its entire state.
+                                            // ALTER publishes that definition before WAL apply updates the live _txn, and
+                                            // another ALTER can move WAL apply past it. Build an empty _txn at the captured
+                                            // seqTxn instead of requiring the live file to match. The physical txn starts at
+                                            // zero; incremental backups identify view changes by seqTxn.
+                                            mem.smallFile(ff, path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+                                            TableUtils.createTxn(mem, 0, 0L, lastTxn, 0L, 0L, 0L, 0L, 0L);
+                                            mem.close(false);
 
                                             tableNameRegistryStore.logAddTable(tableToken);
                                             path.trimTo(rootLen).concat(WalUtils.SEQ_DIR);
