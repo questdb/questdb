@@ -54,7 +54,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 /**
  * Concurrency/stress fuzz for EXPIRE ROWS on passthrough materialized views, built on the standard parallel
  * WAL fuzz harness ({@link AbstractFuzzTest} / {@link FuzzRunner}). The base table is hammered by the usual
- * multi-threaded fuzz transactions (inserts, O3, REPLACE inserts, cancels, rollbacks, nulls) while, in the
+ * multi-threaded fuzz transactions (inserts, O3, cancels, rollbacks, nulls) while, in the
  * background, mat-view refresh jobs, WAL apply, an EXPIRE cleanup job (optionally), a SET/DROP EXPIRE policy
  * churn job (optionally) and read queries all run against the SAME policied view at once.
  * <ul>
@@ -255,9 +255,9 @@ public class MatViewRowExpiryFuzzTest extends AbstractFuzzTest {
             predicate = m.getExpiryPredicate();
         }
 
-        // Inserts / O3 / REPLACE / cancel / rollback / nulls only -- NO structural ops, truncate or partition
-        // drop. Those either invalidate the view or give the base columns the view does not have, which
-        // breaks the keep-set comparison.
+        // Inserts / O3 / cancel / rollback / nulls only -- NO structural ops, truncate or partition drop.
+        // Those either invalidate the view or give the base columns the view does not have, which breaks the
+        // keep-set comparison.
         fuzzer.setFuzzCounts(
                 rnd.nextBoolean(),
                 rnd.nextInt(600),
@@ -287,7 +287,10 @@ public class MatViewRowExpiryFuzzTest extends AbstractFuzzTest {
                 // measure the base's TTL, not the policy. TTL on the VIEW composes with the policy and
                 // MatViewExpireRowsTest.testTtl* covers it deterministically.
                 0.0,   // setTtl
-                0.10,  // replaceInsert
+                // replaceInsert: off, as in MatViewFuzzTest until its gap-aware oracle. A replace commit can
+                // empty a whole base partition and remove it; the partition clip then keeps the view's rows
+                // there, so the view differs from the keep-set of the final base on purpose.
+                0.0,   // replaceInsert
                 0.10   // symbolAccessValidation
         );
         setFuzzProperties(rnd);

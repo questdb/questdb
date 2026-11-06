@@ -88,6 +88,23 @@ public class FixedOffsetIntervalIterator extends SampleByIntervalIterator {
     }
 
     @Override
+    protected boolean clampToInterval(long intervalLo, long intervalHi) {
+        if (timestampLo < sampler.round(intervalLo)) {
+            // The step-group starts before the interval's first bucket (in the gap
+            // before it). Snap forward to the interval's bucket floor.
+            snapToCluster(intervalLo);
+            return false;
+        }
+        // The step-group starts inside the interval's buckets. Cap its high boundary to
+        // the ceiling of the interval's last bucket so it does not run past the interval.
+        final long ceil = sampler.nextTimestamp(sampler.round(intervalHi));
+        if (timestampHi > ceil) {
+            timestampHi = ceil;
+        }
+        return true;
+    }
+
+    @Override
     protected boolean next0() {
         if (timestampHi == maxTimestamp) {
             return false;

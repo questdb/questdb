@@ -8418,71 +8418,26 @@ public class MatViewTest extends AbstractCairoTest {
         disableCompositePartitionRandomisation();
         // End-to-end test for cairo.mat.view.refresh.max.clusters: with 5
         // disjoint inserts and the cap forced down to 2, clustering must
-        // collapse the 5 intervals into 2 clusters, producing exactly 2
-        // REPLACE_RANGE commits on the mat-view table instead of 5. Reading
-        // the mat-view's writer txn before and after the refresh is the
-        // only observable that distinguishes "cap took effect" from
-        // "clustering ran but didn't merge anything" -- intervals are
-        // cleared post-refresh regardless of cluster count, so the cache
-        // size assertion alone is cap-independent.
+        // collapse the 5 intervals into 2 clusters. Reading the mat-view's
+        // writer txn before and after the refresh is the only observable
+        // that distinguishes "cap took effect" from "clustering ran but
+        // didn't merge anything" -- intervals are cleared post-refresh
+        // regardless of cluster count, so the cache size assertion alone is
+        // cap-independent.
         setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, 1_000_000);
         setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_PERIOD, "5s");
         setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_MAX_CLUSTERS, 2);
         assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp(
-                    "create table base_price (price double, ts #TIMESTAMP) timestamp(ts) partition by DAY WAL"
-            );
-            execute(
-                    "create materialized view price_1h refresh manual as " +
-                            "select ts, last(price) as price from base_price sample by 1h;"
-            );
-            // Initial seed + refresh to clear cache.
-            execute("insert into base_price(price, ts) values (1.0, '2024-01-01T00:01')");
-            currentMicros = parseFloorPartialTimestamp("2099-01-01T01:01:01.000000Z");
-            final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
-            execute("refresh materialized view price_1h incremental;");
-            drainMatViewTimerQueue(timerJob);
-            drainQueues();
-
-            // 5 disjoint inserts widely apart -- each becomes its own cached
-            // interval at refresh-intervals-update time.
-            execute("insert into base_price(price, ts) values (2.0, '2024-02-01T00:01')");
-            execute("insert into base_price(price, ts) values (3.0, '2024-03-01T00:01')");
-            execute("insert into base_price(price, ts) values (4.0, '2024-04-01T00:01')");
-            execute("insert into base_price(price, ts) values (5.0, '2024-05-01T00:01')");
-            execute("insert into base_price(price, ts) values (6.0, '2024-06-01T00:01')");
-
-            currentMicros += 6 * Micros.SECOND_MICROS;
-            drainMatViewTimerQueue(timerJob);
-            drainQueues();
-
-            // Pre-refresh: 5 cached interval pairs (10 longs). Clustering
-            // happens inside findRefreshIntervals during the refresh itself,
-            // so this snapshot is taken before the cap kicks in.
-            final TableToken viewToken = engine.getTableTokenIfExists("price_1h");
-            final MatViewState viewState = engine.getMatViewStateStore().getViewState(viewToken);
-            Assert.assertNotNull(viewState);
-            Assert.assertEquals(10, viewState.getRefreshIntervals().size());
-
-            final long txnBefore = engine.getTableSequencerAPI()
-                    .getTxnTracker(viewToken).getWriterTxn();
-            execute("refresh materialized view price_1h incremental;");
-            drainMatViewTimerQueue(timerJob);
-            drainQueues();
-            final long txnAfter = engine.getTableSequencerAPI()
-                    .getTxnTracker(viewToken).getWriterTxn();
-
-            // Cap of 2 must produce exactly 2 REPLACE_RANGE commits.
-            // Without the cap (or with cap >= 5) the same workload produces
-            // 5 commits -- this delta is the observable that proves the
-            // config knob is doing work.
-            Assert.assertEquals(
-                    "max-clusters cap of 2 must collapse 5 intervals into 2 commits",
-                    2L,
-                    txnAfter - txnBefore
-            );
-            Assert.assertEquals(0, viewState.getRefreshIntervals().size());
-            Assert.assertEquals(-1, viewState.getRefreshIntervalsBaseTxn());
+            // A base partitioned by day holds the five inserts in five partitions with gaps
+            // between them. The cap still merges the five cached intervals into 2 clusters,
+            // and the partition clip splits them again at every gap, one REPLACE_RANGE commit
+            // per partition, so the cap does not bound the commits here.
+            assertMaxClustersCapCommits("DAY", "price_1h", 5);
+            // All five inserts land in the one 2024 partition of a base partitioned by year,
+            // so the 2 clusters produce exactly 2 REPLACE_RANGE commits. Without the cap (or
+            // with cap >= 5) the same workload produces 5 commits -- this delta is the
+            // observable that proves the config knob is doing work.
+            assertMaxClustersCapCommits("YEAR", "price_1h_dense", 2);
         });
     }
 
@@ -12688,9 +12643,10 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testPassthroughRefreshAfterBaseEmptiedRunsOneQuery() throws Exception {
         // A REPLACE commit that leaves the base table empty gives the refresh step estimate no rows to size
-        // from. The refresh covers the replaced range in one query, which reads nothing, and its REPLACE_RANGE
-        // commit removes the view rows. The step counts buckets, and a passthrough view's refresh bucket is
-        // one microsecond, so the replaced range here spans about 10,000 buckets.
+        // from. The step counts buckets, and a passthrough view's refresh bucket is one microsecond, so the
+        // replaced range here spans about 10,000 buckets. The commit also removes the base's only partition,
+        // so the partition clip leaves the refresh nothing to recompute: it runs no query at all, keeps the
+        // view's rows, and still moves the view's refresh position to the base's last transaction.
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
                     "create table base_price (" +
@@ -12716,13 +12672,27 @@ public class MatViewTest extends AbstractCairoTest {
                 drainQueues();
                 logCapture.drain();
                 // QueryProgress logs refreshMinTs only for a refresh query.
-                logCapture.assertOnlyOnce("exe \\[id=[^\\n]*refreshMinTs=");
+                Assert.assertEquals(0, logCapture.countLoggedRE("exe \\[id=[^\\n]*refreshMinTs="));
             } finally {
                 logCapture.stop();
             }
 
             assertQuery("select count() from base_price").noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
-            assertPassthroughMatchesBase();
+            final String fractionSuffix = ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? "000Z" : "000000Z";
+            assertQuery("price_copy order by ts, sym, price")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("sym\tprice\tts\n" +
+                            "gbpusd\t1.32\t2024-09-10T00:00:00.001" + fractionSuffix + "\n" +
+                            "gbpusd\t1.323\t2024-09-10T00:00:00.005" + fractionSuffix + "\n");
+            assertQuery("select view_status, refresh_base_table_txn = base_table_txn caught_up from materialized_views where view_name = 'price_copy'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            view_status\tcaught_up
+                            valid\ttrue
+                            """);
         });
     }
 
@@ -14598,6 +14568,74 @@ public class MatViewTest extends AbstractCairoTest {
                 .expectSize()
                 .noLeakCheck()
                 .returns(expected);
+    }
+
+    private void assertMaxClustersCapCommits(String basePartitionBy, String viewName, long expectedCommits) throws Exception {
+        final String baseName = viewName + "_base";
+        executeWithRewriteTimestamp(
+                "create table " + baseName + " (price double, ts #TIMESTAMP) timestamp(ts) partition by " + basePartitionBy + " WAL"
+        );
+        execute(
+                "create materialized view " + viewName + " refresh manual as " +
+                        "select ts, last(price) as price from " + baseName + " sample by 1h;"
+        );
+        // Initial seed + refresh to clear cache.
+        execute("insert into " + baseName + "(price, ts) values (1.0, '2024-01-01T00:01')");
+        currentMicros = Math.max(currentMicros, parseFloorPartialTimestamp("2099-01-01T01:01:01.000000Z")) + Micros.MINUTE_MICROS;
+        final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
+        execute("refresh materialized view " + viewName + " incremental;");
+        drainMatViewTimerQueue(timerJob);
+        drainQueues();
+
+        // 5 disjoint inserts widely apart -- each becomes its own cached
+        // interval at refresh-intervals-update time.
+        execute("insert into " + baseName + "(price, ts) values (2.0, '2024-02-01T00:01')");
+        execute("insert into " + baseName + "(price, ts) values (3.0, '2024-03-01T00:01')");
+        execute("insert into " + baseName + "(price, ts) values (4.0, '2024-04-01T00:01')");
+        execute("insert into " + baseName + "(price, ts) values (5.0, '2024-05-01T00:01')");
+        execute("insert into " + baseName + "(price, ts) values (6.0, '2024-06-01T00:01')");
+
+        currentMicros += 6 * Micros.SECOND_MICROS;
+        drainMatViewTimerQueue(timerJob);
+        drainQueues();
+
+        // Pre-refresh: 5 cached interval pairs (10 longs). Clustering
+        // happens inside findRefreshIntervals during the refresh itself,
+        // so this snapshot is taken before the cap kicks in.
+        final TableToken viewToken = engine.getTableTokenIfExists(viewName);
+        final MatViewState viewState = engine.getMatViewStateStore().getViewState(viewToken);
+        Assert.assertNotNull(viewState);
+        Assert.assertEquals(10, viewState.getRefreshIntervals().size());
+
+        final long txnBefore = engine.getTableSequencerAPI()
+                .getTxnTracker(viewToken).getWriterTxn();
+        execute("refresh materialized view " + viewName + " incremental;");
+        drainMatViewTimerQueue(timerJob);
+        drainQueues();
+        final long txnAfter = engine.getTableSequencerAPI()
+                .getTxnTracker(viewToken).getWriterTxn();
+
+        Assert.assertEquals(
+                "max-clusters cap of 2 over a base partitioned by " + basePartitionBy,
+                expectedCommits,
+                txnAfter - txnBefore
+        );
+        Assert.assertEquals(0, viewState.getRefreshIntervals().size());
+        Assert.assertEquals(-1, viewState.getRefreshIntervalsBaseTxn());
+        // The view holds every row the base holds, whichever way the refresh committed them.
+        assertQuery(viewName)
+                .timestamp("ts")
+                .expectSize()
+                .noLeakCheck()
+                .returns(replaceExpectedTimestamp("""
+                        ts\tprice
+                        2024-01-01T00:00:00.000000Z\t1.0
+                        2024-02-01T00:00:00.000000Z\t2.0
+                        2024-03-01T00:00:00.000000Z\t3.0
+                        2024-04-01T00:00:00.000000Z\t4.0
+                        2024-05-01T00:00:00.000000Z\t5.0
+                        2024-06-01T00:00:00.000000Z\t6.0
+                        """));
     }
 
     private void assertPassthroughMatchesBase() throws Exception {

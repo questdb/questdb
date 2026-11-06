@@ -107,6 +107,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private final FixedOffsetIntervalIterator fixedOffsetIterator = new FixedOffsetIntervalIterator();
     private final DependentViewGraph graph;
     private final LongList intervals = new LongList();
+    // Scratch list for the union of the base's partition ranges used by the partition clip.
+    private final LongList partitionIntervals = new LongList();
     private final int maxRefreshRetryAttempts;
     private final MicrosecondClock microsecondClock;
     private final RefreshContext refreshContext = new RefreshContext();
@@ -603,6 +605,52 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             intervals.add(lo, hi);
             IntervalUtils.intersectInPlace(intervals, intervals.size() - 2);
         }
+    }
+
+    /**
+     * Intersects {@code workingIntervals} (sorted, disjoint, inclusive [lo, hi] pairs that lie within
+     * {@code [minTs, maxTs]}) with the union of the base reader's partition ranges, in place. A partition
+     * covers the half-open range {@code [partitionTs, partitionCeil)}, so its inclusive range is
+     * {@code [partitionTs, partitionCeil - 1]}. The reader lists partitions in ascending timestamp order,
+     * so the ranges come out sorted: the parts of a split partition, and contiguous partitions, merge into
+     * one range, and a missing partition leaves a gap between ranges. On return, {@code workingIntervals}
+     * holds only the parts that overlap an existing base partition, and is empty when none does.
+     */
+    private void clipToPartitionRanges(
+            @NotNull TableReader baseTableReader,
+            @NotNull TimestampDriver.TimestampCeilMethod partitionCeilMethod,
+            @NotNull LongList workingIntervals,
+            long minTs,
+            long maxTs
+    ) {
+        partitionIntervals.clear();
+        final int partitionCount = baseTableReader.getPartitionCount();
+        // The partitions before the one that holds minTs end before minTs, and those that start after maxTs
+        // begin after it, so neither can overlap the working intervals and the scan skips them. An incremental
+        // refresh then reads one or two partitions, however many the base has.
+        for (int i = Math.max(0, baseTableReader.getPartitionIndexByTimestamp(minTs)); i < partitionCount; i++) {
+            final long partitionTs = baseTableReader.getPartitionTimestampByIndex(i);
+            if (partitionTs > maxTs) {
+                break;
+            }
+            final long partitionHi = partitionCeilMethod.ceil(partitionTs) - 1;
+            final int size = partitionIntervals.size();
+            // Merge a partition that overlaps the previous range (the next part of a split partition) or
+            // starts right after it (the next partition, with no gap), so that a dense base yields one
+            // range. The previous range ends at a partition ceiling minus one, so the + 1 cannot overflow.
+            if (size > 0 && partitionTs <= partitionIntervals.getQuick(size - 1) + 1) {
+                if (partitionHi > partitionIntervals.getQuick(size - 1)) {
+                    partitionIntervals.setQuick(size - 1, partitionHi);
+                }
+            } else {
+                partitionIntervals.add(partitionTs, partitionHi);
+            }
+        }
+        // Without a partition in range, partitionIntervals is empty and the intersection empties
+        // workingIntervals, so nothing is left to refresh.
+        final int dividerIndex = workingIntervals.size();
+        workingIntervals.addAll(partitionIntervals);
+        IntervalUtils.intersectInPlace(workingIntervals, dividerIndex);
     }
 
     // A refresh that fixed its base reader, or is about to compile the view's SQL, stops without writing when an
@@ -1271,6 +1319,42 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             }
         }
 
+        // Partition clip. Every non-FULL refresh except the view's first build (incremental, the
+        // min..max recompute after missing WAL files, period timer, user RANGE) recomputes only the
+        // buckets that overlap an existing base partition, so its REPLACE_RANGE commits never delete
+        // view rows in a range the base no longer holds, such as partitions that TTL dropped. The clip
+        // intersects the working intervals with the base reader's partition ranges; the gaps between
+        // partitions become gaps in the working intervals, and the interval iterator commits a
+        // separate replace range on each side of a gap. It changes only the job-owned scratch list,
+        // never the cached intervals in MatViewState.getRefreshIntervals(). FULL rebuilds every row, and
+        // the first build, which runs while the refresh position is -1, has no rows to keep, so both
+        // skip the clip and recompute the base's whole [minTs, maxTs] in one contiguous range.
+        final boolean isFirstBuild = incrementalRefresh && lastRefreshTxn == -1;
+        if ((incrementalRefresh || rangeRefresh) && !isFirstBuild && minTs <= maxTs) {
+            final TimestampDriver.TimestampCeilMethod partitionCeilMethod =
+                    driver.getPartitionCeilMethod(baseTableReader.getPartitionedBy());
+            // Refresh runs only on WAL bases, and a WAL table is always partitioned by time.
+            assert partitionCeilMethod != null;
+            if (refreshIntervals == null) {
+                // No working intervals (min..max recompute, period timer, user RANGE): the clip starts
+                // from [minTs, maxTs]. clusteredIntervals is free, since only the branch that leaves
+                // refreshIntervals non-null fills it.
+                clusteredIntervals.clear();
+                clusteredIntervals.add(minTs, maxTs);
+                refreshIntervals = clusteredIntervals;
+            }
+            clipToPartitionRanges(baseTableReader, partitionCeilMethod, refreshIntervals, minTs, maxTs);
+            if (refreshIntervals.size() > 0) {
+                minTs = refreshIntervals.getQuick(0);
+                maxTs = refreshIntervals.getQuick(refreshIntervals.size() - 1);
+            } else {
+                // No base partition overlaps the working intervals. Nothing is left to recompute, and
+                // refreshNoIntervals() still commits the base txn and the period the refresh reached.
+                minTs = Long.MAX_VALUE;
+                maxTs = Long.MIN_VALUE;
+            }
+        }
+
         if (minTs <= maxTs) {
             final TimestampSampler timestampSampler = viewDefinition.getTimestampSampler();
             final long approxBucketSize = timestampSampler.getApproxBucketSize();
@@ -1290,8 +1374,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             //
             // Note: refreshIntervals may have been mutated since clustering by
             // the period-mat-view branch (unionIntervals/intersectIntervals
-            // above). We compute per-cluster steps from the current list,
-            // since that is what the iterator is about to receive.
+            // above) and by the partition clip. We compute per-cluster steps
+            // from the current list, since that is what the iterator is about
+            // to receive.
             refreshContext.approxBucketSize = approxBucketSize;
             refreshContext.refreshIntervals = refreshIntervals;
             refreshContext.naturalStep = step;

@@ -959,7 +959,12 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 5 + rnd.nextInt(10)
         );
 
-        // Easy, no column manipulations
+        // Easy, no column manipulations. The oracle compares each view with its SQL run on the current
+        // base, so the fuzzer generates no operation that removes base partitions under a view's rows:
+        // the partition clip keeps those rows, and the view then differs from the base on purpose. Partition
+        // drops and TTL stay off, and so do replace commits, which remove every partition they empty.
+        // Without such gaps, the min..max recompute after missing WAL files covers the same buckets with
+        // and without the clip, so the missing-WAL flag stays random.
         fuzzer.setFuzzProbabilities(
                 0.0,
                 0.0,
@@ -975,7 +980,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 truncateProb,
                 0.0,
                 0.0,
-                0.1,
+                0.0,
                 0.0
         );
         setProperty(PropertyKey.DEBUG_MAT_VIEW_REFRESH_MISSING_WAL_FILES_FATAL, String.valueOf(rnd.nextBoolean()));

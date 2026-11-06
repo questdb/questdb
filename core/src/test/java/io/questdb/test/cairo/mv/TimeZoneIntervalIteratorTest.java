@@ -408,6 +408,250 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
     }
 
     @Test
+    public void testFuzzPerClusterAcrossDstShifts() throws Exception {
+        // Europe/Berlin moves its clocks forward on 2021-03-28 and back on 2021-10-31.
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        final TimeZoneRules tzRules = timestampDriver.getTimezoneRules(DateLocaleFactory.EN_LOCALE, "Europe/Berlin");
+        for (int i = 0; i < 200; i++) {
+            testFuzzPerCluster(
+                    rnd,
+                    tzRules,
+                    timestampDriver.parseFloorLiteral("2021-03-26T10:03:00.000000Z"),
+                    timestampDriver.parseFloorLiteral("2021-03-30T12:01:00.000000Z")
+            );
+            testFuzzPerCluster(
+                    rnd,
+                    tzRules,
+                    timestampDriver.parseFloorLiteral("2021-10-29T10:03:00.000000Z"),
+                    timestampDriver.parseFloorLiteral("2021-11-02T12:01:00.000000Z")
+            );
+        }
+    }
+
+    @Test
+    public void testFuzzPerClusterUtc() throws Exception {
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        final TimeZoneRules tzRules = timestampDriver.getTimezoneRules(DateLocaleFactory.EN_LOCALE, "UTC");
+        for (int i = 0; i < 200; i++) {
+            testFuzzPerCluster(
+                    rnd,
+                    tzRules,
+                    timestampDriver.parseFloorLiteral("2024-03-03T12:01:01.000000Z"),
+                    timestampDriver.parseFloorLiteral("2024-03-20T12:01:01.000000Z")
+            );
+        }
+    }
+
+    @Test
+    public void testStepGroupCapsAtIntervalCeilAcrossDstGap() throws Exception {
+        // The same shape as testStepGroupCapsAtIntervalCeilUtc, but anchored at real local days that
+        // straddle Europe/Berlin's spring-forward (2021-03-28T01:00:00Z, local 02:00 -> 03:00).
+        // Interval 1 is local [2021-03-27T00:00, 2021-03-28T00:00) (CET, +1h); the gap holds the
+        // DST transition; interval 2 is local [2021-03-29T00:00, 2021-03-30T00:00) (CEST, +2h).
+        // The cap must still end the first interval's step-group at its local-day ceiling, and the
+        // snap across the gap must re-anchor to the post-transition +2h offset.
+        final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
+        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(timestampDriver, 1, 'h', 0);
+
+        final LongList intervals = new LongList();
+        intervals.add(
+                timestampDriver.parseFloorLiteral("2021-03-26T23:00:00.000000Z"),
+                timestampDriver.parseFloorLiteral("2021-03-27T23:00:00.000000Z") - 1
+        );
+        intervals.add(
+                timestampDriver.parseFloorLiteral("2021-03-28T22:00:00.000000Z"),
+                timestampDriver.parseFloorLiteral("2021-03-29T22:00:00.000000Z") - 1
+        );
+
+        final LongList stepPerCluster = new LongList();
+        stepPerCluster.add(10L);
+        stepPerCluster.add(10L);
+
+        iterator.of(
+                timestampDriver,
+                sampler,
+                timestampDriver.getTimezoneRules(DateLocaleFactory.EN_LOCALE, "Europe/Berlin"),
+                0,
+                intervals,
+                timestampDriver.parseFloorLiteral("2021-03-26T23:00:00.000000Z"),
+                timestampDriver.parseFloorLiteral("2021-03-29T22:00:00.000000Z") - 1,
+                stepPerCluster
+        );
+
+        final LongList expected = new LongList();
+        expected.add(timestampDriver.parseFloorLiteral("2021-03-26T23:00:00.000000Z"), timestampDriver.parseFloorLiteral("2021-03-27T09:00:00.000000Z"));
+        expected.add(timestampDriver.parseFloorLiteral("2021-03-27T09:00:00.000000Z"), timestampDriver.parseFloorLiteral("2021-03-27T19:00:00.000000Z"));
+        // capped at the first interval's local-day ceiling (local 2021-03-28T00:00 = UTC 23:00)
+        expected.add(timestampDriver.parseFloorLiteral("2021-03-27T19:00:00.000000Z"), timestampDriver.parseFloorLiteral("2021-03-27T23:00:00.000000Z"));
+        // snapped across the gap to the +2h post-transition interval
+        expected.add(timestampDriver.parseFloorLiteral("2021-03-28T22:00:00.000000Z"), timestampDriver.parseFloorLiteral("2021-03-29T08:00:00.000000Z"));
+        expected.add(timestampDriver.parseFloorLiteral("2021-03-29T08:00:00.000000Z"), timestampDriver.parseFloorLiteral("2021-03-29T18:00:00.000000Z"));
+        expected.add(timestampDriver.parseFloorLiteral("2021-03-29T18:00:00.000000Z"), timestampDriver.parseFloorLiteral("2021-03-29T22:00:00.000000Z"));
+        assertStepGroups(iterator, expected);
+    }
+
+    @Test
+    public void testStepGroupCapsAtIntervalCeilUtc() throws Exception {
+        // UTC analogue of FixedOffsetIntervalIteratorTest.testStepGroupCapsAtIntervalCeilAcrossGap:
+        // two day-wide intervals [0h, 24h) and [48h, 72h) with a 10 one-hour-bucket step cap the
+        // third step-group at 24h instead of overrunning to 30h across the gap.
+        final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
+        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(timestampDriver, 1, 'h', 0);
+
+        final LongList intervals = new LongList();
+        intervals.add(timestampDriver.fromHours(0), timestampDriver.fromHours(24) - 1);
+        intervals.add(timestampDriver.fromHours(48), timestampDriver.fromHours(72) - 1);
+
+        final LongList stepPerCluster = new LongList();
+        stepPerCluster.add(10L);
+        stepPerCluster.add(10L);
+
+        iterator.of(
+                timestampDriver,
+                sampler,
+                timestampDriver.getTimezoneRules(DateLocaleFactory.EN_LOCALE, "UTC"),
+                0,
+                intervals,
+                timestampDriver.fromHours(0),
+                timestampDriver.fromHours(72) - 1,
+                stepPerCluster
+        );
+
+        final LongList expected = new LongList();
+        expected.add(timestampDriver.fromHours(0), timestampDriver.fromHours(10));
+        expected.add(timestampDriver.fromHours(10), timestampDriver.fromHours(20));
+        expected.add(timestampDriver.fromHours(20), timestampDriver.fromHours(24)); // capped, not 30h
+        expected.add(timestampDriver.fromHours(48), timestampDriver.fromHours(58));
+        expected.add(timestampDriver.fromHours(58), timestampDriver.fromHours(68));
+        expected.add(timestampDriver.fromHours(68), timestampDriver.fromHours(72));
+        assertStepGroups(iterator, expected);
+    }
+
+    @Test
+    public void testStepGroupCrossingFallBackCapsAtIntervalCeil() throws Exception {
+        // Europe/Berlin moves its clocks back at 2021-10-31T01:00:00Z: local 03:00 CEST (+2h) becomes
+        // 02:00 CET (+1h), so local 02:00-03:00 happens twice. Interval 1 is UTC
+        // [2021-10-30T20:00, 2021-10-31T06:00), local [22:00 CEST, 07:00 CET). Its first step-group
+        // of 10 local one-hour buckets, local [22:00, 08:00), spans 11 real hours across the shift and
+        // would end at 07:00Z; the cap ends it at the local ceiling of the interval's last bucket,
+        // 07:00 CET = 06:00Z. Interval 2, UTC [2021-11-01T00:00, 05:00), lies after a gap.
+        final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
+        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(timestampDriver, 1, 'h', 0);
+
+        final LongList intervals = new LongList();
+        intervals.add(
+                timestampDriver.parseFloorLiteral("2021-10-30T20:00:00.000000Z"),
+                timestampDriver.parseFloorLiteral("2021-10-31T06:00:00.000000Z") - 1
+        );
+        intervals.add(
+                timestampDriver.parseFloorLiteral("2021-11-01T00:00:00.000000Z"),
+                timestampDriver.parseFloorLiteral("2021-11-01T05:00:00.000000Z") - 1
+        );
+
+        final LongList stepPerCluster = new LongList();
+        stepPerCluster.add(10L);
+        stepPerCluster.add(10L);
+
+        iterator.of(
+                timestampDriver,
+                sampler,
+                timestampDriver.getTimezoneRules(DateLocaleFactory.EN_LOCALE, "Europe/Berlin"),
+                0,
+                intervals,
+                intervals.getQuick(0),
+                intervals.getQuick(3),
+                stepPerCluster
+        );
+
+        final LongList expected = new LongList();
+        // capped at local 07:00 CET, not 08:00 CET = 07:00Z
+        expected.add(timestampDriver.parseFloorLiteral("2021-10-30T20:00:00.000000Z"), timestampDriver.parseFloorLiteral("2021-10-31T06:00:00.000000Z"));
+        // snapped across the gap
+        expected.add(timestampDriver.parseFloorLiteral("2021-11-01T00:00:00.000000Z"), timestampDriver.parseFloorLiteral("2021-11-01T05:00:00.000000Z"));
+        assertStepGroups(iterator, expected);
+    }
+
+    @Test
+    public void testStepGroupCrossingSpringForwardCapsAtIntervalCeil() throws Exception {
+        // Europe/Berlin moves its clocks forward at 2021-03-28T01:00:00Z: local 02:00 CET (+1h) becomes
+        // 03:00 CEST (+2h), so local 02:00-03:00 never happens. Interval 1 is UTC
+        // [2021-03-27T12:00, 2021-03-28T05:00), local [13:00 CET, 07:00 CEST). Its second step-group
+        // of 10 local one-hour buckets, local [23:00, 09:00), spans 9 real hours across the shift and
+        // would end at 07:00Z; the cap ends it at the local ceiling of the interval's last bucket,
+        // 07:00 CEST = 05:00Z. Interval 2, UTC [2021-03-29T00:00, 10:00), lies after a gap.
+        final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
+        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(timestampDriver, 1, 'h', 0);
+
+        final LongList intervals = new LongList();
+        intervals.add(
+                timestampDriver.parseFloorLiteral("2021-03-27T12:00:00.000000Z"),
+                timestampDriver.parseFloorLiteral("2021-03-28T05:00:00.000000Z") - 1
+        );
+        intervals.add(
+                timestampDriver.parseFloorLiteral("2021-03-29T00:00:00.000000Z"),
+                timestampDriver.parseFloorLiteral("2021-03-29T10:00:00.000000Z") - 1
+        );
+
+        final LongList stepPerCluster = new LongList();
+        stepPerCluster.add(10L);
+        stepPerCluster.add(10L);
+
+        iterator.of(
+                timestampDriver,
+                sampler,
+                timestampDriver.getTimezoneRules(DateLocaleFactory.EN_LOCALE, "Europe/Berlin"),
+                0,
+                intervals,
+                intervals.getQuick(0),
+                intervals.getQuick(3),
+                stepPerCluster
+        );
+
+        final LongList expected = new LongList();
+        expected.add(timestampDriver.parseFloorLiteral("2021-03-27T12:00:00.000000Z"), timestampDriver.parseFloorLiteral("2021-03-27T22:00:00.000000Z"));
+        // capped at local 07:00 CEST, not 09:00 CEST = 07:00Z
+        expected.add(timestampDriver.parseFloorLiteral("2021-03-27T22:00:00.000000Z"), timestampDriver.parseFloorLiteral("2021-03-28T05:00:00.000000Z"));
+        // snapped across the gap
+        expected.add(timestampDriver.parseFloorLiteral("2021-03-29T00:00:00.000000Z"), timestampDriver.parseFloorLiteral("2021-03-29T10:00:00.000000Z"));
+        assertStepGroups(iterator, expected);
+    }
+
+    @Test
+    public void testStepGroupDoesNotRecomputeSharedBucketTwice() throws Exception {
+        // Two intervals meet inside the same 1-day bucket (day 0); a far third interval (day 5)
+        // keeps the iteration going. With an overshooting 3-day step the first step-group ends at
+        // day 0's bucket ceiling (day 1), so the shared day-0 bucket is emitted once.
+        final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
+        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(timestampDriver, 1, 'd', 0);
+
+        final LongList intervals = new LongList();
+        intervals.add(timestampDriver.fromDays(0) + timestampDriver.fromHours(1), timestampDriver.fromDays(0) + timestampDriver.fromHours(5));
+        intervals.add(timestampDriver.fromDays(0) + timestampDriver.fromHours(14), timestampDriver.fromDays(0) + timestampDriver.fromHours(20));
+        intervals.add(timestampDriver.fromDays(5), timestampDriver.fromDays(5) + timestampDriver.fromHours(5));
+
+        final LongList stepPerCluster = new LongList();
+        stepPerCluster.add(3L);
+        stepPerCluster.add(3L);
+        stepPerCluster.add(1L);
+
+        iterator.of(
+                timestampDriver,
+                sampler,
+                timestampDriver.getTimezoneRules(DateLocaleFactory.EN_LOCALE, "UTC"),
+                0,
+                intervals,
+                timestampDriver.fromDays(0) + timestampDriver.fromHours(1),
+                timestampDriver.fromDays(5) + timestampDriver.fromHours(5),
+                stepPerCluster
+        );
+
+        final LongList expected = new LongList();
+        expected.add(timestampDriver.fromDays(0), timestampDriver.fromDays(1)); // both day-0 intervals, once
+        expected.add(timestampDriver.fromDays(5), timestampDriver.fromDays(6));
+        assertStepGroups(iterator, expected);
+    }
+
+    @Test
     public void testSmoke() throws Exception {
         final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
         final TimestampSampler sampler = TimestampSamplerFactory.getInstance(timestampDriver, 1, 'd', 0);
@@ -697,6 +941,29 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
             Assert.assertEquals(minExpectedTs - tzOffset + timestampDriver.fromDays(i + 1), iterator.getTimestampHi());
         }
         Assert.assertFalse(iterator.next());
+    }
+
+    @Override
+    protected SampleByIntervalIterator createIterator(
+            TimestampSampler sampler,
+            @Nullable TimeZoneRules tzRules,
+            long offset,
+            LongList intervals,
+            long minTs,
+            long maxTs,
+            LongList stepPerInterval
+    ) {
+        Assert.assertNotNull(tzRules);
+        return new TimeZoneIntervalIterator().of(
+                timestampDriver,
+                sampler,
+                tzRules,
+                offset,
+                intervals,
+                minTs,
+                maxTs,
+                stepPerInterval
+        );
     }
 
     @Override

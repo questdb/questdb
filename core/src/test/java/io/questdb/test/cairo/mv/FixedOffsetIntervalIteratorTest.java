@@ -293,6 +293,75 @@ public class FixedOffsetIntervalIteratorTest extends AbstractIntervalIteratorTes
     }
 
     @Test
+    public void testFuzzPerCluster() throws SqlException {
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        for (int i = 0; i < 200; i++) {
+            testFuzzPerCluster(
+                    rnd,
+                    null,
+                    timestampDriver.parseFloorLiteral("2024-03-03T12:01:01.000000Z"),
+                    timestampDriver.parseFloorLiteral("2024-03-20T12:01:01.000000Z")
+            );
+        }
+    }
+
+    @Test
+    public void testStepGroupCapsAtIntervalCeilAcrossGap() throws SqlException {
+        // Two day-wide intervals [0h, 24h) and [48h, 72h) with a 10 one-hour-bucket step.
+        // Without the cap the third step-group would run from 20h to 30h and its replace range
+        // would delete view rows in [24h, 30h); the cap ends it at the first interval's bucket
+        // ceiling, 24h, so no step-group spans the gap [24h, 48h).
+        final FixedOffsetIntervalIterator iterator = new FixedOffsetIntervalIterator();
+        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(timestampDriver, 1, 'h', 0);
+
+        final LongList intervals = new LongList();
+        intervals.add(timestampDriver.fromHours(0), timestampDriver.fromHours(24) - 1);
+        intervals.add(timestampDriver.fromHours(48), timestampDriver.fromHours(72) - 1);
+
+        final LongList stepPerCluster = new LongList();
+        stepPerCluster.add(10L);
+        stepPerCluster.add(10L);
+
+        iterator.of(sampler, 0, intervals, timestampDriver.fromHours(0), timestampDriver.fromHours(72) - 1, stepPerCluster);
+
+        final LongList expected = new LongList();
+        expected.add(timestampDriver.fromHours(0), timestampDriver.fromHours(10));
+        expected.add(timestampDriver.fromHours(10), timestampDriver.fromHours(20));
+        expected.add(timestampDriver.fromHours(20), timestampDriver.fromHours(24)); // capped, not 30h
+        expected.add(timestampDriver.fromHours(48), timestampDriver.fromHours(58));
+        expected.add(timestampDriver.fromHours(58), timestampDriver.fromHours(68));
+        expected.add(timestampDriver.fromHours(68), timestampDriver.fromHours(72));
+        assertStepGroups(iterator, expected);
+    }
+
+    @Test
+    public void testStepGroupDoesNotRecomputeSharedBucketTwice() throws SqlException {
+        // Two intervals meet inside the same 1-day bucket (day 0); a far third interval (day 5)
+        // keeps the iteration going past that bucket. With an overshooting 3-day step the first
+        // step-group ends at day 0's bucket ceiling (day 1), so the day-0 bucket -- shared by both
+        // intervals -- is emitted once, not recomputed for the second interval.
+        final FixedOffsetIntervalIterator iterator = new FixedOffsetIntervalIterator();
+        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(timestampDriver, 1, 'd', 0);
+
+        final LongList intervals = new LongList();
+        intervals.add(timestampDriver.fromDays(0) + timestampDriver.fromHours(1), timestampDriver.fromDays(0) + timestampDriver.fromHours(5));
+        intervals.add(timestampDriver.fromDays(0) + timestampDriver.fromHours(14), timestampDriver.fromDays(0) + timestampDriver.fromHours(20));
+        intervals.add(timestampDriver.fromDays(5), timestampDriver.fromDays(5) + timestampDriver.fromHours(5));
+
+        final LongList stepPerCluster = new LongList();
+        stepPerCluster.add(3L);
+        stepPerCluster.add(3L);
+        stepPerCluster.add(1L);
+
+        iterator.of(sampler, 0, intervals, timestampDriver.fromDays(0) + timestampDriver.fromHours(1), timestampDriver.fromDays(5) + timestampDriver.fromHours(5), stepPerCluster);
+
+        final LongList expected = new LongList();
+        expected.add(timestampDriver.fromDays(0), timestampDriver.fromDays(1)); // both day-0 intervals, once
+        expected.add(timestampDriver.fromDays(5), timestampDriver.fromDays(6));
+        assertStepGroups(iterator, expected);
+    }
+
+    @Test
     public void testPerClusterStepSnapsAcrossGap() throws SqlException {
         // Two clusters: a narrow point at day 1 and a wide range at days 5..7.
         // Per-cluster steps: 1 bucket for the narrow cluster, 3 for the wide.
@@ -419,6 +488,26 @@ public class FixedOffsetIntervalIteratorTest extends AbstractIntervalIteratorTes
         expectedBounds.add(timestampDriver.parseFloorLiteral("2023-12-31T23:00:00.000000Z"));
         expectedBounds.add(timestampDriver.parseFloorLiteral("2024-12-31T23:00:00.000000Z"));
         assertSteps(iterator, expectedBounds);
+    }
+
+    @Override
+    protected SampleByIntervalIterator createIterator(
+            TimestampSampler sampler,
+            @Nullable TimeZoneRules ignored,
+            long offset,
+            LongList intervals,
+            long minTs,
+            long maxTs,
+            LongList stepPerInterval
+    ) {
+        return new FixedOffsetIntervalIterator().of(
+                sampler,
+                offset,
+                intervals,
+                minTs,
+                maxTs,
+                stepPerInterval
+        );
     }
 
     @Override

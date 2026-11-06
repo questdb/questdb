@@ -149,6 +149,59 @@ public class TimeZoneIntervalIterator extends SampleByIntervalIterator {
         return localTs;
     }
 
+    // Sets the high boundary of the current step-group to the given local timestamp, and the shift tracking
+    // to the shifts that lie before it, so that the next next0() resumes its DST scan with the right offset.
+    private void anchorHi(long localTs) {
+        shiftLoIndex = 0;
+        shiftOffset = tzRules.getLocalOffset(localTs);
+        for (int n = localShifts.size(); shiftLoIndex < n; shiftLoIndex += 2) {
+            if (localTs <= localShifts.getQuick(shiftLoIndex)) {
+                break;
+            }
+            shiftOffset = tzRules.getLocalOffset(localShifts.getQuick(shiftLoIndex + 1));
+        }
+        localTimestampHi = localTs;
+        utcTimestampHi = localTs - shiftOffset;
+    }
+
+    // Local bucket floor of the given UTC timestamp, where snapToCluster() anchors the iterator.
+    private long localBucketFloor(long utcTs) {
+        final long localTs = adjustLoBoundary(utcTs + tzRules.getOffset(utcTs));
+        return Math.min(sampler.round(localTs), localMaxTimestamp);
+    }
+
+    // UTC timestamp of the given local timestamp, as anchorHi() computes it, without changing the iterator.
+    private long localToUtc(long localTs) {
+        long offset = tzRules.getLocalOffset(localTs);
+        for (int i = 0, n = localShifts.size(); i < n; i += 2) {
+            if (localTs <= localShifts.getQuick(i)) {
+                break;
+            }
+            offset = tzRules.getLocalOffset(localShifts.getQuick(i + 1));
+        }
+        return localTs - offset;
+    }
+
+    @Override
+    protected boolean clampToInterval(long intervalLoUtc, long intervalHiUtc) {
+        // The iterator walks local time, while the txn intervals are in UTC, so both interval
+        // boundaries are rounded to their buckets in local time.
+        if (utcTimestampLo < localToUtc(localBucketFloor(intervalLoUtc))) {
+            // The step-group starts in the gap before the interval's first bucket. Snap to that
+            // bucket, so that the next step-group starts there.
+            snapToCluster(intervalLoUtc);
+            return false;
+        }
+        // The step-group starts inside the interval's buckets. End it no later than the ceiling
+        // of the interval's last bucket, so that it does not run into the gap after the interval.
+        final long localHi = intervalHiUtc + tzRules.getOffset(intervalHiUtc);
+        final long ceilLocal = Math.min(adjustHiBoundary(sampler.nextTimestamp(sampler.round(localHi))), localMaxTimestamp);
+        if (localTimestampHi > ceilLocal) {
+            anchorHi(ceilLocal);
+        }
+        return true;
+    }
+
     @Override
     protected boolean next0() {
         if (localTimestampHi == localMaxTimestamp) {
@@ -188,23 +241,7 @@ public class TimeZoneIntervalIterator extends SampleByIntervalIterator {
         // advances localTimestampHi by `step` buckets from the snapped point.
         // We also reset shiftLoIndex / shiftOffset so subsequent shift-tracking
         // resumes from the correct position.
-        long localTs = clusterLoUtc + tzRules.getOffset(clusterLoUtc);
-        localTs = adjustLoBoundary(localTs);
-        final long snappedLocal = Math.min(sampler.round(localTs), localMaxTimestamp);
-
-        shiftLoIndex = 0;
-        shiftOffset = tzRules.getLocalOffset(snappedLocal);
-        for (int n = localShifts.size(); shiftLoIndex < n; shiftLoIndex += 2) {
-            final long shiftLo = localShifts.getQuick(shiftLoIndex);
-            if (snappedLocal <= shiftLo) {
-                break;
-            }
-            final long shiftHi = localShifts.getQuick(shiftLoIndex + 1);
-            shiftOffset = tzRules.getLocalOffset(shiftHi);
-        }
-
-        localTimestampHi = snappedLocal;
-        utcTimestampHi = snappedLocal - shiftOffset;
+        anchorHi(localBucketFloor(clusterLoUtc));
     }
 
     @Override

@@ -26,12 +26,14 @@ package io.questdb.test.cairo.mv;
 
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.mv.SampleByIntervalIterator;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.LongList;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.TimeZoneRules;
+import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 
@@ -40,6 +42,19 @@ public abstract class AbstractIntervalIteratorTest {
 
     public AbstractIntervalIteratorTest(TimestampDriver timestampDriver) {
         this.timestampDriver = timestampDriver;
+    }
+
+    // Asserts the iterator's step-groups as [lo0, hi0, lo1, hi1, ...]. Unlike assertSteps, this allows gaps between
+    // consecutive step-groups, so it fits iterations whose clipped intervals leave gaps.
+    protected static void assertStepGroups(SampleByIntervalIterator iterator, LongList expectedLoHiPairs) {
+        final LongList actual = new LongList();
+        while (iterator.next()) {
+            final long lo = iterator.getTimestampLo();
+            final long hi = iterator.getTimestampHi();
+            Assert.assertTrue("step-group lo must be below its hi", lo < hi);
+            actual.add(lo, hi);
+        }
+        TestUtils.assertEquals(expectedLoHiPairs, actual);
     }
 
     // Asserts the steps of an iterator walk: expectedBounds holds the lower bound of each step, followed by the upper
@@ -83,6 +98,96 @@ public abstract class AbstractIntervalIteratorTest {
             long maxTs,
             int step
     );
+
+    protected abstract SampleByIntervalIterator createIterator(
+            TimestampSampler sampler,
+            @Nullable TimeZoneRules tzRules,
+            long offset,
+            LongList intervals,
+            long minTs,
+            long maxTs,
+            LongList stepPerInterval
+    );
+
+    // Fuzzes the per-cluster mode the refresh uses: disjoint intervals with random gaps between them, one random step
+    // per interval, minTs and maxTs taken from the intervals as the refresh takes them. The bucket hull of an interval,
+    // from the floor of its first bucket to the ceiling of its last one, comes from an iterator over that interval
+    // alone. Every step-group must lie within the hulls of the intervals it intersects, with no gap between those
+    // hulls, so that its replace range never covers a whole bucket outside the intervals. Step-groups must not
+    // overlap, so that no bucket is recomputed twice, and together they must cover every interval.
+    protected void testFuzzPerCluster(Rnd rnd, @Nullable TimeZoneRules tzRules, long start, long end) throws SqlException {
+        final int samplingInterval = 1 + rnd.nextInt(5);
+        final char timeUnit = "mhd".charAt(rnd.nextInt(3));
+        final long offset = (rnd.nextBoolean() ? 1 : -1) * rnd.nextLong(timestampDriver.fromHours(1));
+        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(timestampDriver, samplingInterval, timeUnit, 0);
+        final TimestampSampler hullSampler = TimestampSamplerFactory.getInstance(timestampDriver, samplingInterval, timeUnit, 0);
+
+        final int count = 1 + rnd.nextInt(10);
+        final long maxSize = Math.max((end - start) / (2L * count), 1);
+        final LongList intervals = new LongList(2 * count);
+        long hi = start;
+        for (int i = 0; i < count; i++) {
+            final long lo = Math.min(end, hi + 1 + rnd.nextLong(maxSize));
+            hi = Math.min(end, lo + rnd.nextLong(maxSize));
+            unionInPlace(intervals, lo, hi);
+        }
+        final int intervalCount = intervals.size() / 2;
+        final LongList steps = new LongList(intervalCount);
+        final LongList hulls = new LongList(intervals.size());
+        for (int i = 0; i < intervalCount; i++) {
+            steps.add(1 + rnd.nextInt(20));
+            final SampleByIntervalIterator hull = createIterator(
+                    hullSampler,
+                    tzRules,
+                    offset,
+                    null,
+                    intervals.getQuick(2 * i),
+                    intervals.getQuick(2 * i + 1),
+                    1
+            );
+            hulls.add(hull.getMinTimestamp(), hull.getMaxTimestamp());
+        }
+
+        final SampleByIntervalIterator iterator = createIterator(
+                sampler,
+                tzRules,
+                offset,
+                intervals,
+                intervals.getQuick(0),
+                intervals.getQuick(intervals.size() - 1),
+                steps
+        );
+        final LongList remainingIntervals = new LongList(intervals);
+        long prevHi = Long.MIN_VALUE;
+        int stepGroups = 0;
+        while (iterator.next()) {
+            Assert.assertTrue("iterator does not advance", ++stepGroups < 1_000_000);
+            final long lo = iterator.getTimestampLo();
+            final long groupHi = iterator.getTimestampHi();
+            Assert.assertTrue(lo < groupHi);
+            Assert.assertTrue("step-groups overlap", lo >= prevHi);
+            prevHi = groupHi;
+
+            int first = -1;
+            int last = -1;
+            for (int i = 0; i < intervalCount; i++) {
+                if (intervals.getQuick(2 * i) < groupHi && intervals.getQuick(2 * i + 1) >= lo) {
+                    if (first == -1) {
+                        first = i;
+                    }
+                    last = i;
+                }
+            }
+            Assert.assertTrue("step-group intersects no interval", first != -1);
+            Assert.assertTrue("step-group starts before its first interval's bucket", lo >= hulls.getQuick(2 * first));
+            Assert.assertTrue("step-group ends after its last interval's bucket", groupHi <= hulls.getQuick(2 * last + 1));
+            for (int i = first; i < last; i++) {
+                Assert.assertTrue("step-group spans a gap", hulls.getQuick(2 * i + 1) >= hulls.getQuick(2 * i + 2));
+            }
+            subtractInPlace(remainingIntervals, lo, groupHi - 1);
+        }
+        Assert.assertEquals(0, remainingIntervals.size());
+    }
 
     protected void testFuzz(
             Rnd rnd,
