@@ -132,10 +132,15 @@ fn set_base_seq_txn(file: &mut File, parquet_file_size: u64, seq_txn: i64) -> Pa
     let reader = ParquetMetaReader::from_file_size(&mmap[..], resolved_size)?;
     reader.verify_checksum()?;
 
-    // 2. A replay after the header write keeps the stamp it finds.
+    // 2. A replay after the header write keeps the stamp it finds. That write's final fsync may
+    // have failed and left the page clean: dirty it with the same bytes so this fsync reaches disk.
     let seq_txn = SeqTxn::new(seq_txn);
     if reader.seq_txn() == Some(seq_txn) {
         drop(mmap);
+        file.seek(SeekFrom::Start(off as u64))
+            .map_err(ParquetError::from)?;
+        file.write_all(&committed_size.to_le_bytes())
+            .map_err(ParquetError::from)?;
         file.sync_all().map_err(ParquetError::from)?;
         return Ok(());
     }
@@ -397,6 +402,46 @@ mod tests {
             set_base_seq_txn(&mut file, parquet_size, new).unwrap();
             assert_eq!(std::fs::metadata(pm.path()).unwrap().len(), len);
         }
+    }
+
+    #[test]
+    fn set_base_seq_txn_replay_keeps_a_newer_footer_committed() {
+        let (pm, parquet_size) = write_pm(7);
+        let mut bytes = std::fs::read(pm.path()).unwrap();
+        let base_size = bytes.len() as u64;
+        let mut update = ParquetMetaUpdateWriter::new(&bytes, base_size).unwrap();
+        update.parquet_footer(8192, 256).seq_txn(SeqTxn::new(9));
+        let (append, new_size) = update.finish().unwrap();
+        bytes.extend_from_slice(&append);
+        bytes[..8].copy_from_slice(&new_size.to_le_bytes());
+        std::fs::write(pm.path(), &bytes).unwrap();
+        let mut file = File::options()
+            .read(true)
+            .write(true)
+            .open(pm.path())
+            .unwrap();
+
+        set_base_seq_txn(&mut file, parquet_size, 7).unwrap();
+
+        assert_eq!(std::fs::read(pm.path()).unwrap(), bytes);
+    }
+
+    #[test]
+    fn set_base_seq_txn_replay_rewrites_the_committed_size() {
+        let (pm, parquet_size) = write_pm(7);
+        let bytes = std::fs::read(pm.path()).unwrap();
+
+        // A read-only handle fsyncs fine on Linux but cannot dirty the header page.
+        let mut read_only = File::open(pm.path()).unwrap();
+        assert!(set_base_seq_txn(&mut read_only, parquet_size, 7).is_err());
+
+        let mut file = File::options()
+            .read(true)
+            .write(true)
+            .open(pm.path())
+            .unwrap();
+        set_base_seq_txn(&mut file, parquet_size, 7).unwrap();
+        assert_eq!(std::fs::read(pm.path()).unwrap(), bytes);
     }
 
     #[test]
