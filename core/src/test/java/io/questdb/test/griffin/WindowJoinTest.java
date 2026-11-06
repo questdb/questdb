@@ -1865,9 +1865,10 @@ public class WindowJoinTest extends AbstractCairoTest {
                     }
                 }
             }
-            // WINDOW JOIN rejects these: they need the designated timestamp of their own base query.
+            // WINDOW JOIN rejects these: grouping() and grouping_id() need GROUPING SETS, ROLLUP or CUBE,
+            // and sparkline() and twap() need the designated timestamp of their own base query.
             functionNames.removeAll(comparedFunctionNames);
-            Assert.assertEquals("[sparkline, twap]", functionNames.toString());
+            Assert.assertEquals("[grouping, grouping_id, sparkline, twap]", functionNames.toString());
         });
     }
 
@@ -1988,6 +1989,58 @@ public class WindowJoinTest extends AbstractCairoTest {
                                     """
                     );
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testConstantFalseJoinFilterRejectsGroupingFunctions() throws Exception {
+        // WINDOW JOIN has no GROUPING SETS, so it rejects GROUPING() and GROUPING_ID(). The
+        // constant-false path has to report the regular path's error:
+        // testConstantFalseJoinFilterMatchesRegularPathForEveryAggregate() skips a call the regular
+        // path rejects and never runs its constant-false queries. The per-row false filter runs the
+        // regular path.
+        assertMemoryLeak(() -> {
+            createEmptyWindowCountTables();
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE czw_prices (sym SYMBOL, i INT, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                    rightTableTimestampType.getTypeName()
+            );
+            execute("""
+                    INSERT INTO czw_prices VALUES
+                      ('a', 1, '2024-01-01T08:59:30.000000Z'),
+                      ('a', 2, '2024-01-01T09:00:00.000000Z'),
+                      ('b', 3, '2024-01-01T09:00:30.000000Z')""");
+            final String[] conditions = {
+                    "t.sym = p.sym AND t.k < 0",
+                    "t.sym = p.sym AND t.ts2 IN '2024-01-06#workday'",
+                    "t.sym = p.sym AND 1 = 0"
+            };
+            for (boolean isParallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelWindowJoinEnabled(isParallel);
+                for (String prevailing : new String[]{"EXCLUDE PREVAILING", "INCLUDE PREVAILING"}) {
+                    for (String call : new String[]{"grouping(p.i)", "grouping_id(p.i)"}) {
+                        for (String condition : conditions) {
+                            assertQuery("SELECT t.ts, " + call + " a FROM cz_trades t WINDOW JOIN czw_prices p ON (" + condition +
+                                    ") RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW " + prevailing)
+                                    .noLeakCheck()
+                                    .fails(13, "GROUPING() / GROUPING_ID() can only be used with GROUPING SETS, ROLLUP, or CUBE");
+                        }
+                    }
+                }
+                // After the rejections, the same constant-false join runs with an aggregate WINDOW JOIN accepts.
+                assertQuery("SELECT t.ts, sum(p.i) a FROM cz_trades t WINDOW JOIN czw_prices p ON (t.sym = p.sym AND 1 = 0) " +
+                        "RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW EXCLUDE PREVAILING")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .inferRandomAccess()
+                        .sizeMayVary()
+                        .returns(replaceTimestampSuffix("""
+                                ts\ta
+                                2024-01-01T09:00:00.000000Z\tnull
+                                2024-01-01T09:01:00.000000Z\tnull
+                                2024-01-01T09:02:00.000000Z\tnull
+                                """, leftTableTimestampType.getTypeName()));
             }
         });
     }
@@ -11153,6 +11206,8 @@ public class WindowJoinTest extends AbstractCairoTest {
                         args.add("p.d128");
                         args.add("p.d256");
                     }
+                    // A VAR_ARG parameter takes a column of any type, so one column stands for all of them.
+                    case ColumnType.VAR_ARG -> args.add("p.i");
                     default -> throw new AssertionError("no czw_prices column of type " + ColumnType.nameOf(typeTag));
                 }
             }
