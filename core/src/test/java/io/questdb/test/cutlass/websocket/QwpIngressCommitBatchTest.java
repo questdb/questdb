@@ -97,7 +97,7 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     private static final int FUZZ_KINDS = 12;
     private static final int FUZZ_MALFORMED = 5;
     private static final int FUZZ_NEW_COLUMN_SECOND_BLOCK = 8;
-    // Seeds of testCommitBatchFuzzPinnedRedoSeed: four frames of fb, then a frame that
+    // Seeds of testCommitBatchFuzzPinnedRewindSeed: four frames of fb, then a frame that
     // appends to fa and then cannot join on its second block, of fa.
     private static final long FUZZ_PINNED_SEED0 = 641_439L;
     private static final long FUZZ_PINNED_SEED1 = 8_483_050L;
@@ -105,7 +105,7 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     private static final int FUZZ_PLAIN = 0;
     private static final int FUZZ_ROWLESS_DEFERRED = 10;
     private static final int FUZZ_SCHEMA_MISMATCH = 6;
-    // Seeds of testCommitBatchFuzzGeneratesRedoShapes.
+    // Seeds of testCommitBatchFuzzGeneratesRewindShapes.
     private static final long FUZZ_SHAPES_SEED0 = 253_408L;
     private static final long FUZZ_SHAPES_SEED1 = 3_351_329L;
     private static final int FUZZ_TWO_BLOCKS = 4;
@@ -129,6 +129,11 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     @Test
     public void testBatchCommitsBeforeReachingCap() throws Exception {
         assertBatchCommitsBeforeReachingCap(false);
+    }
+
+    @Test
+    public void testBatchCommitsEachTableBeforeFrameFailingAfterAppend() throws Exception {
+        assertBatchCommitsBeforeFrameFailingAfterAppend(false);
     }
 
     @Test
@@ -286,11 +291,11 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
      * already in the batch and in one new to it, a second block that fails after the first
      * appended, a second block that needs a new column on a table the first block put in
      * the batch, writer acquisitions that fail with a CairoException and unexpectedly in a
-     * pass that holds a redo trigger, and the shape of
-     * {@link #testCommitBatchFuzzPinnedRedoSeed}.
+     * pass that holds a frame whose second block takes its first block's rows back out,
+     * and the shape of {@link #testCommitBatchFuzzPinnedRewindSeed}.
      */
     @Test
-    public void testCommitBatchFuzzGeneratesRedoShapes() {
+    public void testCommitBatchFuzzGeneratesRewindShapes() {
         final Rnd rnd = new Rnd(FUZZ_SHAPES_SEED0, FUZZ_SHAPES_SEED1);
         int batchTableFirstBlockFailures = 0;
         int newTableFirstBlockFailures = 0;
@@ -298,37 +303,38 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         int newColumnSecondBlocks = 0;
         int cairoWriterFaults = 0;
         int unexpectedWriterFaults = 0;
-        int pinnedRedoShapes = 0;
+        int pinnedRewindShapes = 0;
         for (int iteration = 0; iteration < 150; iteration++) {
             final FuzzIteration it = generateCommitBatchFuzzIteration(rnd, iteration);
             batchTableFirstBlockFailures += it.hasBatchTableFirstBlockFailure() ? 1 : 0;
             newTableFirstBlockFailures += it.hasNewTableFirstBlockFailure() ? 1 : 0;
             badSecondBlocks += it.hasBadSecondBlockAfterAppend() ? 1 : 0;
             newColumnSecondBlocks += it.hasNewColumnSecondBlockOnBatchTable() ? 1 : 0;
-            cairoWriterFaults += it.hasWriterFaultWithRedoTrigger(false) ? 1 : 0;
-            unexpectedWriterFaults += it.hasWriterFaultWithRedoTrigger(true) ? 1 : 0;
-            pinnedRedoShapes += it.hasPinnedRedoShape() ? 1 : 0;
+            cairoWriterFaults += it.hasWriterFaultWithRewindTrigger(false) ? 1 : 0;
+            unexpectedWriterFaults += it.hasWriterFaultWithRewindTrigger(true) ? 1 : 0;
+            pinnedRewindShapes += it.hasPinnedRewindShape() ? 1 : 0;
         }
         Assert.assertTrue("a batch table's first block fails", batchTableFirstBlockFailures > 0);
         Assert.assertTrue("a new table's first block fails", newTableFirstBlockFailures > 0);
         Assert.assertTrue("a second block fails after the first appended", badSecondBlocks > 0);
         Assert.assertTrue("a second block needs a new column on a batch table", newColumnSecondBlocks > 0);
-        Assert.assertTrue("a writer acquisition fails with a CairoException in a pass with a redo trigger", cairoWriterFaults > 0);
-        Assert.assertTrue("a writer acquisition fails unexpectedly in a pass with a redo trigger", unexpectedWriterFaults > 0);
-        Assert.assertTrue("the pinned redo shape", pinnedRedoShapes > 0);
+        Assert.assertTrue("a writer acquisition fails with a CairoException in a pass with a rewind trigger", cairoWriterFaults > 0);
+        Assert.assertTrue("a writer acquisition fails unexpectedly in a pass with a rewind trigger", unexpectedWriterFaults > 0);
+        Assert.assertTrue("the pinned rewind shape", pinnedRewindShapes > 0);
     }
 
     /**
      * An iteration of {@link #testCommitBatchAckContractFuzz} from a fixed seed whose only
      * faults are data errors, at the cap of 1,000,000: its first bad frame fails on its
      * second block after the first appended, behind more frames of one table than I4 lets
-     * the table commit, so a redo that commits the batch's frames one by one breaks I4.
+     * the table commit. A rewind that leaves the first block's row in its writer breaks
+     * I2, and committing the batch's frames one by one breaks I4.
      */
     @Test
-    public void testCommitBatchFuzzPinnedRedoSeed() throws Exception {
+    public void testCommitBatchFuzzPinnedRewindSeed() throws Exception {
         assertMemoryLeak(() -> {
             final FuzzIteration it = generateCommitBatchFuzzIteration(new Rnd(FUZZ_PINNED_SEED0, FUZZ_PINNED_SEED1), 0);
-            Assert.assertTrue("test setup: the seed must generate the pinned redo shape [" + it + ']', it.hasPinnedRedoShape());
+            Assert.assertTrue("test setup: the seed must generate the pinned rewind shape [" + it + ']', it.hasPinnedRewindShape());
             final ObjList<FuzzIteration> iterations = new ObjList<>();
             iterations.add(it);
             runCommitBatchFuzz(iterations);
@@ -483,6 +489,43 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
                 try (TableReader a = demotableEngine.getReader("a"); TableReader b = demotableEngine.getReader("b")) {
                     Assert.assertEquals("a commits nothing", 0, a.size());
                     Assert.assertEquals("b commits nothing", 0, b.size());
+                }
+            }
+        });
+    }
+
+    /**
+     * A frame appends to a and then fails on b, and a demote refuses the batch commit owed
+     * before the frame's answer: the server sends its role-change CLOSE and nothing else,
+     * commits nothing, and the client replays the whole batch.
+     */
+    @Test
+    public void testDemoteAtBoundaryCommitAfterRewindCommitsNothing() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("CREATE TABLE a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE b (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try (DemotableEngine demotableEngine = new DemotableEngine()) {
+                demotableEngine.demoteAtNextCommit();
+                try (Connection connection = new Connection(
+                        demotableEngine,
+                        httpConfig,
+                        AllowAllSecurityContext.INSTANCE,
+                        false,
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 100L, 1_000_000L)),
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 200L, 2_000_000L)),
+                        createMaskedFrame(WebSocketOpcode.BINARY, qwpMessage(
+                                tableBlock("a", 300L, 3_000_000L),
+                                varcharTableBlock("b", "not-a-long", 3_000_000L)
+                        ))
+                )) {
+                    connection.deliverFrames(3);
+                    Assert.assertTrue("test setup: the demote must land at the batch commit", demotableEngine.isReadOnlyMode());
+                    assertOnlyRoleChangeCloseSent(connection.sentFrames());
+                }
+                drainWalQueue(demotableEngine);
+                try (TableReader a = demotableEngine.getReader("a"); TableReader b = demotableEngine.getReader("b")) {
+                    Assert.assertEquals(0, a.size() + b.size());
                 }
             }
         });
@@ -678,13 +721,13 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDurableAckNamesCommitsOfRedoAfterReacquisitionFailure() throws Exception {
-        assertRedoAfterReacquisitionFailure(true, false, true);
+    public void testDurableAckNamesBatchCommitsBeforeWriterAcquisitionFailure() throws Exception {
+        assertWriterAcquisitionFailureAfterAppend(false, true);
     }
 
     @Test
-    public void testDurableAckNamesEachRedoneCommit() throws Exception {
-        assertRedoBeforeFrameThatCannotJoin(true);
+    public void testDurableAckNamesEachCommitBeforeFrameFailingAfterAppend() throws Exception {
+        assertBatchCommitsBeforeFrameFailingAfterAppend(true);
     }
 
     @Test
@@ -800,8 +843,8 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
      * As {@link #testFailedFrameInCommitBatchKeepsEarlierFramesCommittedAndAcked},
      * with a two-block failing frame and a batch whose rows start past an earlier
      * commit in the same WAL segment. The frame joins the batch, appends 300 next to
-     * the batch's 200 and fails on its second block: the redo rolls both back, commits
-     * and acks 200 on its own, and NACKs the frame, so 300 is discarded and nothing
+     * the batch's 200 and fails on its second block: 300 goes back out of the writer, the
+     * batch commits and acks 200, and the frame is NACKed, so 300 is discarded and nothing
      * the batch or the first pass committed.
      */
     @Test
@@ -870,12 +913,43 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     }
 
     /**
+     * The first frame of a receive pass appends to a and then fails on b, with no batch
+     * pending: its row goes back out of a's writer, a leaves the batch the frame was
+     * opening, and the frame is NACKed. Nothing is committed.
+     */
+    @Test
+    public void testFailedFrameOpeningBatchCommitsNothing() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("CREATE TABLE a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE b (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final long aBefore = lastTxn(engine, "a");
+            final long bBefore = lastTxn(engine, "b");
+            final ObjList<byte[]> sent = ingestInOnePass(
+                    new QwpIngressUpgradeProcessor(engine, httpConfig),
+                    httpConfig,
+                    createMaskedFrame(WebSocketOpcode.BINARY, qwpMessage(
+                            tableBlock("a", 100L, 1_000_000L),
+                            varcharTableBlock("b", "not-a-long", 1_000_001L)
+                    ))
+            );
+            drainWalQueue();
+            assertQuery("SELECT v FROM a").noLeakCheck().expectSize().returns("v\n");
+            assertQuery("SELECT v FROM b").noLeakCheck().expectSize().returns("v\n");
+            Assert.assertEquals(aBefore, lastTxn(engine, "a"));
+            Assert.assertEquals(bBefore, lastTxn(engine, "b"));
+            Assert.assertEquals(-1, maxCumulativeOkAck(sent));
+            Assert.assertEquals(QwpConstants.STATUS_SCHEMA_MISMATCH, errorStatusForSeq(sent, 0));
+        });
+    }
+
+    /**
      * The multi-table shape of
      * {@link #testFailedFrameAfterCommitInSegmentDropsOnlyItsOwnRows}: the
      * pinned client's flush packs every table with rows into one message, so a
      * frame can append a good block to the batch's table and then fail on
-     * another table's block. The redo must drop the frame's good block from the
-     * batch's table while the batch's own rows end up committed and acked.
+     * another table's block. The frame's good block must go back out of the batch's
+     * table while the batch's own rows end up committed and acked.
      */
     @Test
     public void testFailedMultiTableFrameDropsItsBlockFromBatchTable() throws Exception {
@@ -906,15 +980,130 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     }
 
     /**
+     * A frame's first block brings n into the batch, and its second block, of n again,
+     * fails on a value. n's writer goes back to the savepoint of no rows its first block
+     * marked: n leaves the batch, the batch commits a once, and the frame gets its own
+     * NACK. n takes rows on a fresh connection, without the failed frame's.
+     */
+    @Test
+    public void testFailedSecondBlockOfNewTableRewindsItsFirstBlock() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("CREATE TABLE a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE n (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final long aBefore = lastTxn(engine, "a");
+            final long nBefore = lastTxn(engine, "n");
+            final ObjList<byte[]> sent = ingestInOnePass(
+                    new QwpIngressUpgradeProcessor(engine, httpConfig),
+                    httpConfig,
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 100L, 1_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 200L, 2_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, qwpMessage(
+                            tableBlock("n", 300L, 3_000_000L),
+                            varcharTableBlock("n", "not-a-long", 3_000_001L)
+                    ))
+            );
+            Assert.assertEquals("the batch commits a once", aBefore + 1, lastTxn(engine, "a"));
+            Assert.assertEquals("n commits nothing", nBefore, lastTxn(engine, "n"));
+            Assert.assertEquals(1, maxCumulativeOkAck(sent));
+            Assert.assertEquals(QwpConstants.STATUS_SCHEMA_MISMATCH, errorStatusForSeq(sent, 2));
+            Assert.assertTrue("the ack must precede the NACK",
+                    indexOfBinaryFrame(sent, QwpConstants.STATUS_OK, 1) < indexOfErrorResponse(sent, 2));
+
+            final ObjList<byte[]> sentAfter = ingestInOnePass(
+                    new QwpIngressUpgradeProcessor(engine, httpConfig),
+                    httpConfig,
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("n", 400L, 4_000_000L))
+            );
+            Assert.assertEquals(0, maxCumulativeOkAck(sentAfter));
+            drainWalQueue();
+            assertQuery("SELECT v FROM a").noLeakCheck().expectSize().returns("v\n100\n200\n");
+            assertQuery("SELECT v FROM n").noLeakCheck().expectSize().returns("v\n400\n");
+        });
+    }
+
+    /**
+     * As {@link #testFailedFirstBlockAppendRewindsEveryColumnType}, but the failing frame's
+     * first block, of the batch's table, appends a row with every column type, and its
+     * second block fails on b's value. The appended row goes back out of t's writer through
+     * the savepoint the frame marked, the batch commits once before the frame's NACK, and a
+     * frame on a fresh connection appends at the rewound positions: every good row reads
+     * back as sent.
+     */
+    @Test
+    public void testFailedSecondBlockRewindsEveryColumnType() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("CREATE TABLE t (x VARCHAR, s STRING, bin BINARY, arr DOUBLE[], v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE b (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final long tBefore = lastTxn(engine, "t");
+            final long bBefore = lastTxn(engine, "b");
+            final byte[][] frames = new byte[6][];
+            for (int i = 0; i < 5; i++) {
+                frames[i] = typedFrame(i, Integer.toString(100 + i));
+            }
+            frames[5] = typedFrameThenBadBlock(5, "105");
+            final ObjList<byte[]> sent = new ObjList<>();
+            ingestInOnePass(
+                    engine,
+                    new QwpIngressUpgradeProcessor(engine, httpConfig),
+                    httpConfig,
+                    AllowAllSecurityContext.INSTANCE,
+                    false,
+                    64 * 1024,
+                    sent,
+                    frames
+            );
+            Assert.assertEquals("the batch commits once", tBefore + 1, lastTxn(engine, "t"));
+            Assert.assertEquals(bBefore, lastTxn(engine, "b"));
+            Assert.assertEquals(4, maxCumulativeOkAck(sent));
+            Assert.assertEquals(QwpConstants.STATUS_SCHEMA_MISMATCH, errorStatusForSeq(sent, 5));
+            Assert.assertTrue("the ack must precede the NACK",
+                    indexOfBinaryFrame(sent, QwpConstants.STATUS_OK, 4) < indexOfErrorResponse(sent, 5));
+
+            final ObjList<byte[]> sentAfter = ingestInOnePass(
+                    new QwpIngressUpgradeProcessor(engine, httpConfig),
+                    httpConfig,
+                    typedFrame(6, "106")
+            );
+            Assert.assertEquals(0, maxCumulativeOkAck(sentAfter));
+            Assert.assertEquals(tBefore + 2, lastTxn(engine, "t"));
+            drainWalQueue();
+            assertQuery("SELECT x, s, base64(bin, 100) bin, arr, v, ts FROM t").noLeakCheck().expectSize().timestamp("ts").returns("""
+                    x\ts\tbin\tarr\tv\tts
+                    x0-\u00e9\u20ac\ts0\tAAECAA==\t[0.0,0.5]\t100\t1970-01-01T00:00:01.000000Z
+                    x1-\u00e9\u20ac\ts1\tAQECAw==\t[1.0,1.5]\t101\t1970-01-01T00:00:02.000000Z
+                    x2-\u00e9\u20ac\ts2\tAgECBg==\t[2.0,2.5]\t102\t1970-01-01T00:00:03.000000Z
+                    x3-\u00e9\u20ac\ts3\tAwECCQ==\t[3.0,3.5]\t103\t1970-01-01T00:00:04.000000Z
+                    x4-\u00e9\u20ac\ts4\tBAECDA==\t[4.0,4.5]\t104\t1970-01-01T00:00:05.000000Z
+                    x6-\u00e9\u20ac\ts6\tBgECEg==\t[6.0,6.5]\t106\t1970-01-01T00:00:07.000000Z
+                    """);
+            assertQuery("SELECT v FROM b").noLeakCheck().expectSize().returns("v\n");
+        });
+    }
+
+    @Test
+    public void testFailedThirdBlockRewindsBatchTableBeforeNewTable() throws Exception {
+        assertThirdBlockFailureRewindsBothTables(false);
+    }
+
+    @Test
+    public void testFailedThirdBlockRewindsNewTableBeforeBatchTable() throws Exception {
+        assertThirdBlockFailureRewindsBothTables(true);
+    }
+
+    /**
      * A frame's only block, of a table already in the batch, writes values onto the next
      * page of the column's file and then fails on a value that is not a number. To rewind
      * the column, the cancel maps its first page again, and that mapping fails: the writer
-     * is left mid columnar write, where its batch rows cannot commit. The batch is rolled
-     * back, re-joined and committed once, the frame gets its own NACK, and the table takes
-     * rows afterwards.
+     * is left mid columnar write, where its batch rows cannot commit, and refuses to go
+     * back to its savepoint. The table cache distresses, the batch is abandoned with
+     * nothing committed and nothing acked, and the NACK names the frame, with
+     * INTERNAL_ERROR: the client replays the batch, and a failure that recurs strikes this
+     * frame. The table takes rows afterwards.
      */
     @Test
-    public void testFirstBlockCancelFailureRedoesBatch() throws Exception {
+    public void testFirstBlockCancelFailureLosesBatch() throws Exception {
         assertMemoryLeak(() -> {
             final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
             execute("CREATE TABLE a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -1010,11 +1199,11 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
                         mmapsSinceArmed.get() >= 3);
                 Assert.assertTrue("test setup: the failed cancel must leave a's writer mid columnar write",
                         isLeftInColumnarWrite.get());
-                Assert.assertEquals("the batch commits once", aBefore + 1, lastTxn(hookEngine, "a"));
-                Assert.assertEquals(batchFrames - 1, maxCumulativeOkAck(sent));
+                Assert.assertEquals("nothing commits", aBefore, lastTxn(hookEngine, "a"));
+                Assert.assertEquals("nothing is acked", -1, maxCumulativeOkAck(sent));
                 Assert.assertEquals(QwpConstants.STATUS_INTERNAL_ERROR, errorStatusForSeq(sent, batchFrames));
-                Assert.assertTrue("the ack must precede the NACK",
-                        indexOfBinaryFrame(sent, QwpConstants.STATUS_OK, batchFrames - 1) < indexOfErrorResponse(sent, batchFrames));
+                TestUtils.assertContains(errorMessageForSeq(sent, batchFrames), "could not mmap");
+                Assert.assertFalse("the batch's first frame is not NACKed", hasErrorResponseForSeq(sent, 0));
 
                 final ObjList<byte[]> sentAfter = new ObjList<>();
                 ingestInOnePass(
@@ -1028,7 +1217,7 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
                 );
                 Assert.assertEquals(0, maxCumulativeOkAck(sentAfter));
                 drainWalQueue(hookEngine);
-                assertHookQuery(hookEngine, "SELECT v FROM a").expectSize().returns(V_100_TO_109 + "200\n");
+                assertHookQuery(hookEngine, "SELECT v FROM a").expectSize().returns("v\n200\n");
             }
         });
     }
@@ -1209,11 +1398,13 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
      * A frame's only block, of a table new to the batch, needs a new column, and the
      * permission check for it fails unexpectedly. Nothing of the frame reached a writer,
      * but the failure leaves the connection's writers in doubt: the table cache distresses,
-     * and a distressed cache commits nothing. The batch is rolled back, re-joined with fresh
-     * writers and committed once, and the frame gets its own NACK.
+     * and a distressed cache commits nothing. The batch is abandoned, nothing is acked, and
+     * the NACK names the frame, with INTERNAL_ERROR: the failure recurs on every replay of
+     * the batch, and the client's poison detector must strike this frame, not the batch's
+     * healthy first frame.
      */
     @Test
-    public void testFirstBlockUnexpectedErrorRedoesBatch() throws Exception {
+    public void testFirstBlockUnexpectedErrorLosesBatch() throws Exception {
         assertMemoryLeak(() -> {
             final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
             execute("CREATE TABLE a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -1236,13 +1427,13 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
                     )
             );
             drainWalQueue();
-            assertQuery("SELECT v FROM a").noLeakCheck().expectSize().returns(V_100_TO_109);
+            assertQuery("SELECT v FROM a").noLeakCheck().expectSize().returns("v\n");
             assertQuery("SELECT \"column\" FROM table_columns('b')").noLeakCheck().noRandomAccess().returns("column\nv\nts\n");
-            Assert.assertEquals("the batch commits once", aBefore + 1, lastTxn(engine, "a"));
-            Assert.assertEquals(9, maxCumulativeOkAck(sent));
+            Assert.assertEquals("nothing commits", aBefore, lastTxn(engine, "a"));
+            Assert.assertEquals("nothing is acked", -1, maxCumulativeOkAck(sent));
             Assert.assertEquals(QwpConstants.STATUS_INTERNAL_ERROR, errorStatusForSeq(sent, 10));
             TestUtils.assertContains(errorMessageForSeq(sent, 10), "unexpected error");
-            Assert.assertFalse(hasErrorResponseForSeq(sent, 0));
+            Assert.assertFalse("the batch's first frame is not NACKed", hasErrorResponseForSeq(sent, 0));
         });
     }
 
@@ -1272,14 +1463,52 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     }
 
     /**
-     * A full receive pass: over 1 MiB of one-row frames that alternate between a and b,
-     * then a frame that appends to a and fails on b. The redo re-joins all the batch's
-     * frames from the receive buffer and commits each table once, and its copy of the
-     * batch's per-frame record shrinks back once it is done.
+     * A frame appends to a batch table, and its next block needs a column the table
+     * lacks, which a joining block may not create. Nothing failed: the frame's first block
+     * goes back out, the batch's five frames commit once, and the frame then goes the
+     * normal way from its first block, which creates the column and commits.
      */
     @Test
-    public void testFullReceivePassRedoCommitsEachTableOnce() throws Exception {
-        // Without fsync: the redo of this many frames committed each on its own, once.
+    public void testFrameThatOnlyCouldNotJoinCommitsAfterBatch() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("CREATE TABLE a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final long aBefore = lastTxn(engine, "a");
+            ObjList<byte[]> sent = ingestInOnePass(
+                    new QwpIngressUpgradeProcessor(engine, httpConfig),
+                    httpConfig,
+                    oneRowFramesThen("a", 5, createMaskedFrame(WebSocketOpcode.BINARY, qwpMessage(
+                            tableBlock("a", 105L, 6_000_000L),
+                            tableBlockWithExtraColumn("a", 106L, 7L, 6_000_001L)
+                    )))
+            );
+            drainWalQueue();
+            assertQuery("SELECT v, w FROM a").noLeakCheck().expectSize().returns("""
+                    v\tw
+                    100\tnull
+                    101\tnull
+                    102\tnull
+                    103\tnull
+                    104\tnull
+                    105\tnull
+                    106\t7
+                    """);
+            Assert.assertEquals("the batch, the new column, then the frame", aBefore + 3, lastTxn(engine, "a"));
+            Assert.assertEquals(5, maxCumulativeOkAck(sent));
+            for (int seq = 0; seq < 6; seq++) {
+                Assert.assertFalse(hasErrorResponseForSeq(sent, seq));
+            }
+        });
+    }
+
+    /**
+     * A full receive pass: over 1 MiB of one-row frames that alternate between a and b,
+     * then a frame that appends to a and fails on b. The frame's row of a goes back out
+     * of a's writer, and the batch commits each table once.
+     */
+    @Test
+    public void testFullReceivePassRewindCommitsEachTableOnce() throws Exception {
+        // Without fsync, so that a regression to one commit per frame stays fast to detect.
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         assertMemoryLeak(() -> {
             final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
@@ -1302,7 +1531,6 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
             Assert.assertTrue("test setup: the frames must fill over 1 MiB", wireLength > 1024 * 1024);
             final ObjList<byte[]> sent = new ObjList<>();
             final QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
-            final int redoFramesCapacityBefore = processor.getRedoFramesCapacity();
             ingestInOnePass(
                     engine,
                     processor,
@@ -1313,10 +1541,8 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
                     sent,
                     frames
             );
-            Assert.assertEquals("the redo gives its copy of the frame record back",
-                    redoFramesCapacityBefore, processor.getRedoFramesCapacity());
-            Assert.assertEquals("the redo commits a once", aBefore + 1, lastTxn(engine, "a"));
-            Assert.assertEquals("the redo commits b once", bBefore + 1, lastTxn(engine, "b"));
+            Assert.assertEquals("a commits once", aBefore + 1, lastTxn(engine, "a"));
+            Assert.assertEquals("b commits once", bBefore + 1, lastTxn(engine, "b"));
             Assert.assertEquals(goodFrames - 1, maxCumulativeOkAck(sent));
             Assert.assertEquals(QwpConstants.STATUS_SCHEMA_MISMATCH, errorStatusForSeq(sent, goodFrames));
             drainWalQueue();
@@ -1446,6 +1672,43 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * With a max-uncommitted-rows cap of 4, frames [a100], [b200] and [a300] form a batch,
+     * then a frame appends a row to a and has three rows of b, which would reach the cap.
+     * Its row of a goes back out of a's writer, the batch commits each table once, and the
+     * frame then opens a new batch, which commits each table once more.
+     */
+    @Test
+    public void testLaterBlockReachingCapRewindsBatchTable() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = httpConfigWithMaxUncommittedRows(4);
+            execute("CREATE TABLE a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE b (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final long aBefore = lastTxn(engine, "a");
+            final long bBefore = lastTxn(engine, "b");
+            final ObjList<byte[]> sent = ingestInOnePass(
+                    new QwpIngressUpgradeProcessor(engine, httpConfig),
+                    httpConfig,
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 100L, 1_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 200L, 2_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 300L, 3_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, qwpMessage(
+                            tableBlock("a", 301L, 3_000_001L),
+                            tableBlock("b", 401L, 4_000_001L, 402L, 4_000_002L, 403L, 4_000_003L)
+                    ))
+            );
+            drainWalQueue();
+            assertQuery("SELECT v FROM a").noLeakCheck().expectSize().returns("v\n100\n300\n301\n");
+            assertQuery("SELECT v FROM b").noLeakCheck().expectSize().returns("v\n200\n401\n402\n403\n");
+            Assert.assertEquals("the batch, then the frame's own batch", aBefore + 2, lastTxn(engine, "a"));
+            Assert.assertEquals("the batch, then the frame's own batch", bBefore + 2, lastTxn(engine, "b"));
+            Assert.assertEquals(3, maxCumulativeOkAck(sent));
+            for (int seq = 0; seq < 4; seq++) {
+                Assert.assertFalse(hasErrorResponseForSeq(sent, seq));
+            }
+        });
+    }
+
     @Test
     public void testMalformedFirstSchemaSalvagesPendingPrefix() throws Exception {
         assertMalformedPreparationSalvagesPrefix(false);
@@ -1494,7 +1757,7 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testMissingTableAfterAppendRedoesBatch() throws Exception {
+    public void testMissingTableAfterAppendRewindsFrame() throws Exception {
         assertMissingTableWithoutAutoCreate(true);
     }
 
@@ -1517,6 +1780,118 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
                 clientEncodedFrame(1, "c"),
                 clientEncodedFrame(1, "a", "c", "b"),
                 clientEncodedFrame(1, "b"));
+    }
+
+    /**
+     * The section 4.4 case of the design: a frame's only block, of b, which is new to the
+     * batch, writes values onto the next page of b's column and then fails on a value
+     * that is not a number. b gets its batch entry only once its append returns, so it has
+     * none, and when the cancel's mapping of the first page fails, b's writer is left mid
+     * columnar write with nothing to take back out. The frame fails, but nothing of it sits
+     * in a batch writer: the batch commits a once without b, the frame gets its own NACK,
+     * and the frame's clear() frees b's writer, whose rollback it refuses. b takes rows on
+     * a fresh connection, without any of the failed frame's.
+     */
+    @Test
+    public void testNewTableCancelFailureCommitsBatchWithoutIt() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("CREATE TABLE a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE b (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final int batchFrames = 10;
+            // The mmap calls since b joined the failing frame, or -1 before.
+            final AtomicInteger mmapsSinceArmed = new AtomicInteger(-1);
+            final AtomicReference<WalWriter> bWriter = new AtomicReference<>();
+            final AtomicBoolean isLeftInColumnarWrite = new AtomicBoolean();
+            final FilesFacade ff = new TestFilesFacadeImpl() {
+                @Override
+                public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                    if (mmapsSinceArmed.get() > -1) {
+                        // 1: v's values cross onto the column's second page; 2: the cancel maps
+                        // the first page back; 3: freeing the writer cancels again.
+                        final int mmap = mmapsSinceArmed.incrementAndGet();
+                        if (mmap == 2) {
+                            return FilesFacade.MAP_FAILED;
+                        }
+                        if (mmap == 3) {
+                            isLeftInColumnarWrite.set(bWriter.get().isInColumnarWrite());
+                        }
+                    }
+                    return super.mmap(fd, len, offset, flags, memoryTag);
+                }
+            };
+            final AtomicBoolean isArmable = new AtomicBoolean();
+            // b's insert permission is checked as b joins the failing frame, after its lookup.
+            final SecurityContext armingContext = new AllowAllSecurityContext() {
+                @Override
+                public void authorizeInsert(TableToken tableToken) {
+                    if (tableToken.getTableName().equals("b") && isArmable.compareAndSet(true, false)) {
+                        mmapsSinceArmed.set(0);
+                    }
+                }
+            };
+            try (CairoEngine hookEngine = new CairoEngine(pagedConfiguration(ff)) {
+                @Override
+                public WalWriter getWalWriter(TableToken token) {
+                    final WalWriter writer = super.getWalWriter(token);
+                    if (token.getTableName().equals("b")) {
+                        bWriter.set(writer);
+                    }
+                    return writer;
+                }
+            }) {
+                final byte[][] frames = new byte[batchFrames + 2][];
+                frames[0] = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 50L, 500_000L));
+                for (int i = 0; i < batchFrames; i++) {
+                    frames[i + 1] = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 100L + i, (i + 1) * 1_000_000L));
+                }
+                // b holds one row, 8 bytes of v. The failing frame's rows reach v's second 16 KiB
+                // page at its row 2,047, and its last value is not a number.
+                frames[batchFrames + 1] = varcharRowsFrame("b", 2_049, 11_000_000L);
+                final long aBefore = lastTxn(hookEngine, "a");
+                final long bAfterFirstPass;
+                final ObjList<byte[]> sent;
+                final QwpIngressProcessorState state = new QwpIngressProcessorState(
+                        RECV_BUFFER_SIZE,
+                        httpConfig.getSendBufferSize(),
+                        hookEngine,
+                        httpConfig.getLineHttpProcessorConfiguration()
+                );
+                try (Connection connection = new Connection(hookEngine, httpConfig, state, armingContext, false, 64 * 1024, frames)) {
+                    connection.deliverFrames(1);
+                    bAfterFirstPass = lastTxn(hookEngine, "b");
+                    isArmable.set(true);
+                    connection.deliverFrames(batchFrames + 1);
+                    sent = connection.sentFrames();
+                }
+                Assert.assertTrue("test setup: the cancel's mapping must fail, and then the writer's free",
+                        mmapsSinceArmed.get() >= 3);
+                Assert.assertTrue("test setup: the failed cancel must leave b's writer mid columnar write",
+                        isLeftInColumnarWrite.get());
+                Assert.assertEquals("the batch commits a once", aBefore + 1, lastTxn(hookEngine, "a"));
+                Assert.assertEquals("b commits nothing more", bAfterFirstPass, lastTxn(hookEngine, "b"));
+                Assert.assertEquals(batchFrames, maxCumulativeOkAck(sent));
+                Assert.assertEquals(QwpConstants.STATUS_INTERNAL_ERROR, errorStatusForSeq(sent, batchFrames + 1));
+                TestUtils.assertContains(errorMessageForSeq(sent, batchFrames + 1), "could not mmap");
+                Assert.assertTrue("the ack must precede the NACK",
+                        indexOfBinaryFrame(sent, QwpConstants.STATUS_OK, batchFrames) < indexOfErrorResponse(sent, batchFrames + 1));
+
+                final ObjList<byte[]> sentAfter = new ObjList<>();
+                ingestInOnePass(
+                        hookEngine,
+                        new QwpIngressUpgradeProcessor(hookEngine, httpConfig),
+                        httpConfig,
+                        AllowAllSecurityContext.INSTANCE,
+                        false,
+                        sentAfter,
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 7L, 20_000_000L))
+                );
+                Assert.assertEquals(0, maxCumulativeOkAck(sentAfter));
+                drainWalQueue(hookEngine);
+                assertHookQuery(hookEngine, "SELECT v FROM a").expectSize().returns(V_100_TO_109);
+                assertHookQuery(hookEngine, "SELECT v FROM b").expectSize().returns("v\n50\n7\n");
+            }
+        });
     }
 
     @Test
@@ -1683,8 +2058,8 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
 
     /**
      * The refused table's first rows come in a frame's second block, after the first block
-     * appended to a batch table. The redo commits the frames before it, and the frame is
-     * NACKed with its first block's row rolled back.
+     * appended to a batch table. The first block's row goes back out, the frames before
+     * the frame commit, and the frame is NACKed.
      */
     @Test
     public void testPermissionRefusalOfSecondBlockCommitsFramesBefore() throws Exception {
@@ -1938,6 +2313,57 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     }
 
     /**
+     * A frame appends to the batch and then meets a read-only refusal while looking up
+     * a table new to the batch: the transient refusal of a demote. The frame's row goes
+     * back out of a's writer, the batch commits its frame, and the frame gets the
+     * reconnect-eligible CLOSE instead of an error, behind the ack for the batch.
+     */
+    @Test
+    public void testReadOnlyRefusalAfterAppendCommitsBatchBeforeClose() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("CREATE TABLE a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE c (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try (CairoEngine refusingEngine = new CairoEngine(new DefaultTestCairoConfiguration(root)) {
+                @Override
+                public WalWriter getWalWriter(TableToken token) {
+                    if (token.getTableName().equals("c")) {
+                        throw CairoException.readOnlyAccess();
+                    }
+                    return super.getWalWriter(token);
+                }
+            }) {
+                final ObjList<byte[]> sent;
+                try (Connection connection = new Connection(
+                        refusingEngine,
+                        httpConfig,
+                        AllowAllSecurityContext.INSTANCE,
+                        false,
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 100L, 1_000_000L)),
+                        createMaskedFrame(WebSocketOpcode.BINARY, qwpMessage(
+                                tableBlock("a", 200L, 2_000_000L),
+                                tableBlock("c", 300L, 3_000_000L)
+                        ))
+                )) {
+                    connection.deliverFrames(2);
+                    sent = connection.sentFrames();
+                }
+                drainWalQueue(refusingEngine);
+                try (TableReader a = refusingEngine.getReader("a"); TableReader c = refusingEngine.getReader("c")) {
+                    Assert.assertEquals("only the batch's frame commits", 1, a.size());
+                    Assert.assertEquals(0, c.size());
+                }
+                final int closeIndex = indexOfCloseFrame(sent);
+                Assert.assertTrue("the refusal must close the connection", closeIndex >= 0);
+                Assert.assertEquals(WebSocketCloseCode.NORMAL_CLOSURE, closeCode(sent.getQuick(closeIndex)));
+                Assert.assertEquals(0, maxCumulativeOkAck(sent));
+                Assert.assertTrue("the ack must precede the CLOSE", indexOfBinaryFrame(sent, QwpConstants.STATUS_OK, 0) < closeIndex);
+                Assert.assertFalse("a role-change refusal sends no error response", hasErrorResponseForSeq(sent, 1));
+            }
+        });
+    }
+
+    /**
      * A table dropped and re-created between passes leaves a stale entry, which the next
      * lookup evicts. When closing the evicted writer fails, the entry keeps its writer, and
      * the table cache must still not serve it again: the re-created table's two frames in
@@ -1993,119 +2419,12 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     }
 
     /**
-     * In the second pass, frames 1 and 2 name dictionary id 0, x since the first pass, and
-     * frame 3 redefines it as y, then fails unexpectedly before its first table header,
-     * which distresses the table cache. Re-joined, frames 1 and 2 would decode with y, so
-     * frame 3 stays a boundary, and the distressed cache refuses the batch at its first
-     * frame: nothing of it commits, and the client replays it.
-     */
-    @Test
-    public void testRedefiningFrameFailingAfterItsDeltaRefusesBatch() throws Exception {
-        assertMemoryLeak(() -> {
-            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-            execute("CREATE TABLE s (s SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            // Each frame's preparation reaches the hook once: frame 3's is the fourth.
-            final AtomicInteger preparations = new AtomicInteger();
-            final QwpIngressProcessorState state = new QwpIngressProcessorState(
-                    RECV_BUFFER_SIZE,
-                    httpConfig.getSendBufferSize(),
-                    engine,
-                    httpConfig.getLineHttpProcessorConfiguration()
-            ) {
-                @Override
-                protected void onSymbolDictApplied() {
-                    if (preparations.incrementAndGet() == 4) {
-                        throw new IllegalStateException("test: unexpected failure after the dictionary delta");
-                    }
-                }
-            };
-            final GlobalSymbolDictionary dict = new GlobalSymbolDictionary();
-            final GlobalSymbolDictionary otherDict = new GlobalSymbolDictionary();
-            final ObjList<byte[]> sent;
-            try (Connection connection = new Connection(
-                    engine,
-                    httpConfig,
-                    state,
-                    AllowAllSecurityContext.INSTANCE,
-                    false,
-                    RECV_BUFFER_SIZE,
-                    symbolFrame(dict, -1, "s", "x", 100L, 1_000_000L, null),
-                    symbolFrame(dict, 0, "s", "x", 200L, 2_000_000L, null),
-                    symbolFrame(dict, 0, "s", "x", 300L, 3_000_000L, null),
-                    symbolFrame(otherDict, -1, "s", "y", 400L, 4_000_000L, null)
-            )) {
-                connection.deliverFrames(1);
-                connection.deliverFrames(3);
-                sent = connection.sentFrames();
-            }
-            Assert.assertTrue("test setup: frame 3 must fail after its delta", preparations.get() >= 4);
-            drainWalQueue();
-            assertQuery("SELECT s, v FROM s").noLeakCheck().expectSize().returns("s\tv\nx\t100\n");
-            Assert.assertEquals("only the first pass is acked", 0, maxCumulativeOkAck(sent));
-            Assert.assertEquals("the NACK names the batch's first frame", QwpConstants.STATUS_INTERNAL_ERROR, errorStatusForSeq(sent, 1));
-            TestUtils.assertContains(errorMessageForSeq(sent, 1), "commit batch rows are not intact");
-            Assert.assertFalse(hasErrorResponseForSeq(sent, 2));
-            Assert.assertFalse("the failed frame is replayed behind the batch", hasErrorResponseForSeq(sent, 3));
-        });
-    }
-
-    /**
-     * A redo decodes the batch's frames again, so a frame must find the dictionary as
-     * it was when it first arrived. Here frame 1 names id 0 without a delta, meaning
-     * x, and frame 2 redefines id 0 as y, as a client replaying another sender's
-     * dictionary does. Frame 2 commits the batch before it joins, so the redo after
-     * frame 3's failure replays frame 2 alone, and frame 1 keeps x.
-     */
-    @Test
-    public void testRedefiningSymbolDictionaryEndsCommitBatch() throws Exception {
-        assertMemoryLeak(() -> {
-            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-            execute("CREATE TABLE s (s SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE TABLE t (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            final GlobalSymbolDictionary dict = new GlobalSymbolDictionary();
-            final GlobalSymbolDictionary otherDict = new GlobalSymbolDictionary();
-            final ObjList<byte[]> sent;
-            try (Connection connection = new Connection(
-                    engine,
-                    httpConfig,
-                    AllowAllSecurityContext.INSTANCE,
-                    false,
-                    symbolFrame(dict, -1, "s", "x", 100L, 1_000_000L, null),
-                    symbolFrame(dict, 0, "s", "x", 200L, 2_000_000L, null),
-                    symbolFrame(otherDict, -1, "s", "y", 300L, 3_000_000L, null),
-                    symbolFrame(otherDict, 0, "s", "y", 400L, 4_000_000L, "t")
-            )) {
-                connection.deliverFrames(1);
-                connection.deliverFrames(3);
-                sent = connection.sentFrames();
-            }
-            drainWalQueue();
-            assertQuery("SELECT s, v FROM s").noLeakCheck().expectSize().returns("s\tv\nx\t100\nx\t200\ny\t300\n");
-            assertQuery("SELECT v FROM t").noLeakCheck().expectSize().returns("v\n");
-            Assert.assertEquals(2, maxCumulativeOkAck(sent));
-            Assert.assertEquals(QwpConstants.STATUS_SCHEMA_MISMATCH, errorStatusForSeq(sent, 3));
-        });
-    }
-
-    @Test
-    public void testRedoAfterReacquisitionCairoErrorCommitsWhatJoined() throws Exception {
-        assertRedoAfterReacquisitionFailure(false, false, false);
-    }
-
-    @Test
-    public void testRedoAfterReacquisitionFailureCommitsWhatJoined() throws Exception {
-        assertRedoAfterReacquisitionFailure(true, false, false);
-    }
-
-    /**
      * Frame 1 of the second pass redefines dictionary id 0, x since the first pass, as y,
-     * and opens the batch: no batch is pending, so the redefinition cuts nothing. When the
-     * batch's last frame fails, the redo decodes frame 1 again, whose delta now writes the
-     * string id 0 already holds, so frame 1 opens the re-joined batch again, and the batch
-     * commits once with y.
+     * and opens the batch. When the batch's last frame fails after it appended to s, its
+     * row goes back out, and the batch commits once with y.
      */
     @Test
-    public void testRedoAfterRedefiningFirstFrameKeepsItsSymbols() throws Exception {
+    public void testRedefiningFrameOpeningBatchKeepsItsSymbols() throws Exception {
         assertMemoryLeak(() -> {
             final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
             execute("CREATE TABLE s (s SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -2139,472 +2458,44 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     }
 
     /**
-     * A frame appends to a batch table and then fails on a table new to the batch.
-     * The redo re-joins the batch's frames and commits a once, then answers the frame
-     * with the status it failed with, without processing it again.
+     * Frame 1 names dictionary id 0 without a delta, meaning x, and frame 2 redefines id 0
+     * as y, as a client replaying another sender's dictionary does. Frame 2 joins the batch
+     * like any other frame: the writer holds the table's symbol keys, not the client's ids,
+     * so frame 1 keeps x. Frame 3 fails after it appended to s: its row goes back out, and
+     * the batch commits s once.
      */
     @Test
-    public void testRedoAnswersFrameThatFailedWhileJoining() throws Exception {
-        assertMemoryLeak(() -> {
-            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-            execute("CREATE TABLE a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE TABLE b (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            final long aBefore = engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("a"));
-            final long bBefore = engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("b"));
-            ObjList<byte[]> sent = ingestInOnePass(
-                    new QwpIngressUpgradeProcessor(engine, httpConfig),
-                    httpConfig,
-                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 100L, 1_000_000L)),
-                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 200L, 2_000_000L)),
-                    createMaskedFrame(WebSocketOpcode.BINARY, qwpMessage(
-                            tableBlock("a", 300L, 3_000_000L),
-                            varcharTableBlock("b", "not-a-long", 3_000_000L)
-                    ))
-            );
-            drainWalQueue();
-            assertQuery("SELECT v FROM a").noLeakCheck().expectSize().returns("v\n100\n200\n");
-            assertQuery("SELECT v FROM b").noLeakCheck().expectSize().returns("v\n");
-            Assert.assertEquals("the redo commits the batch once",
-                    aBefore + 1, engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("a")));
-            Assert.assertEquals(bBefore, engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("b")));
-            Assert.assertEquals(1, maxCumulativeOkAck(sent));
-            Assert.assertEquals(QwpConstants.STATUS_SCHEMA_MISMATCH, errorStatusForSeq(sent, 2));
-            Assert.assertTrue("the ack must precede the NACK",
-                    indexOfBinaryFrame(sent, QwpConstants.STATUS_OK, 1) < indexOfErrorResponse(sent, 2));
-        });
-    }
-
-    /**
-     * With a max-uncommitted-rows cap of 4, a batch of three frames of a, then a frame of b
-     * and a: b's block joins, but a's would reach the cap. The redo re-joins the batch and
-     * commits it once, and the frame then commits on its own the normal way.
-     */
-    @Test
-    public void testRedoAtCapBoundary() throws Exception {
-        assertMemoryLeak(() -> {
-            final HttpFullFatServerConfiguration httpConfig = httpConfigWithMaxUncommittedRows(4);
-            execute("CREATE TABLE a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE TABLE b (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            final long aBefore = lastTxn(engine, "a");
-            final long bBefore = lastTxn(engine, "b");
-            final ObjList<byte[]> sent = ingestInOnePass(
-                    new QwpIngressUpgradeProcessor(engine, httpConfig),
-                    httpConfig,
-                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 100L, 1_000_000L)),
-                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 200L, 2_000_000L)),
-                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 300L, 3_000_000L)),
-                    createMaskedFrame(WebSocketOpcode.BINARY, qwpMessage(
-                            tableBlock("b", 400L, 4_000_000L),
-                            tableBlock("a", 401L, 4_000_001L)
-                    ))
-            );
-            drainWalQueue();
-            assertQuery("SELECT v FROM a").noLeakCheck().expectSize().returns("v\n100\n200\n300\n401\n");
-            assertQuery("SELECT v FROM b").noLeakCheck().expectSize().returns("v\n400\n");
-            Assert.assertEquals("the batch, then the frame", aBefore + 2, lastTxn(engine, "a"));
-            Assert.assertEquals(bBefore + 1, lastTxn(engine, "b"));
-            Assert.assertEquals(3, maxCumulativeOkAck(sent));
-            for (int seq = 0; seq < 4; seq++) {
-                Assert.assertFalse(hasErrorResponseForSeq(sent, seq));
-            }
-        });
-    }
-
-    @Test
-    public void testRedoClosesForDemoteAtRedoneFrame() throws Exception {
-        assertDemoteAtRedoneFrame(false);
-    }
-
-    /**
-     * A demote that refuses the redo's first commit: the server sends its role-change
-     * CLOSE and nothing else, commits nothing, and the client replays the whole batch.
-     */
-    @Test
-    public void testRedoClosesForDemoteBeforeCommittingAnything() throws Exception {
-        assertMemoryLeak(() -> {
-            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-            execute("CREATE TABLE a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE TABLE b (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            try (DemotableEngine demotableEngine = new DemotableEngine()) {
-                demotableEngine.demoteAtNextCommit();
-                try (Connection connection = new Connection(
-                        demotableEngine,
-                        httpConfig,
-                        AllowAllSecurityContext.INSTANCE,
-                        false,
-                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 100L, 1_000_000L)),
-                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 200L, 2_000_000L)),
-                        createMaskedFrame(WebSocketOpcode.BINARY, qwpMessage(
-                                tableBlock("a", 300L, 3_000_000L),
-                                varcharTableBlock("b", "not-a-long", 3_000_000L)
-                        ))
-                )) {
-                    connection.deliverFrames(3);
-                    Assert.assertTrue("test setup: the demote must land at the redo's first commit", demotableEngine.isReadOnlyMode());
-                    assertOnlyRoleChangeCloseSent(connection.sentFrames());
-                }
-                drainWalQueue(demotableEngine);
-                try (TableReader a = demotableEngine.getReader("a"); TableReader b = demotableEngine.getReader("b")) {
-                    Assert.assertEquals(0, a.size() + b.size());
-                }
-            }
-        });
-    }
-
-    /**
-     * A frame appends to the batch and then meets a read-only refusal while looking up
-     * a table new to the batch: the transient refusal of a demote. The redo commits the
-     * batch's frame on its own, and the frame gets the reconnect-eligible CLOSE instead
-     * of an error, behind the ack for the redone frame.
-     */
-    @Test
-    public void testRedoClosesForReadOnlyRefusalOfFailedFrame() throws Exception {
-        assertMemoryLeak(() -> {
-            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-            execute("CREATE TABLE a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE TABLE c (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            try (CairoEngine refusingEngine = new CairoEngine(new DefaultTestCairoConfiguration(root)) {
-                @Override
-                public WalWriter getWalWriter(TableToken token) {
-                    if (token.getTableName().equals("c")) {
-                        throw CairoException.readOnlyAccess();
-                    }
-                    return super.getWalWriter(token);
-                }
-            }) {
-                final ObjList<byte[]> sent;
-                try (Connection connection = new Connection(
-                        refusingEngine,
-                        httpConfig,
-                        AllowAllSecurityContext.INSTANCE,
-                        false,
-                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 100L, 1_000_000L)),
-                        createMaskedFrame(WebSocketOpcode.BINARY, qwpMessage(
-                                tableBlock("a", 200L, 2_000_000L),
-                                tableBlock("c", 300L, 3_000_000L)
-                        ))
-                )) {
-                    connection.deliverFrames(2);
-                    sent = connection.sentFrames();
-                }
-                drainWalQueue(refusingEngine);
-                try (TableReader a = refusingEngine.getReader("a"); TableReader c = refusingEngine.getReader("c")) {
-                    Assert.assertEquals("only the redone frame commits", 1, a.size());
-                    Assert.assertEquals(0, c.size());
-                }
-                final int closeIndex = indexOfCloseFrame(sent);
-                Assert.assertTrue("the refusal must close the connection", closeIndex >= 0);
-                Assert.assertEquals(WebSocketCloseCode.NORMAL_CLOSURE, closeCode(sent.getQuick(closeIndex)));
-                Assert.assertEquals(0, maxCumulativeOkAck(sent));
-                Assert.assertTrue("the ack must precede the CLOSE", indexOfBinaryFrame(sent, QwpConstants.STATUS_OK, 0) < closeIndex);
-                Assert.assertFalse("a role-change refusal sends no error response", hasErrorResponseForSeq(sent, 1));
-            }
-        });
-    }
-
-    @Test
-    public void testRedoCommitsEachTableBeforeFrameThatCannotJoin() throws Exception {
-        assertRedoBeforeFrameThatCannotJoin(false);
-    }
-
-    /**
-     * A frame appends to a and then fails on b, behind a batch of three frames of each
-     * table. The redo re-joins the batch's six frames and commits each table once, and the
-     * frame gets its own NACK after the ack.
-     */
-    @Test
-    public void testRedoCommitsEachTableOnce() throws Exception {
-        assertMemoryLeak(() -> {
-            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-            execute("CREATE TABLE a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE TABLE b (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            final long aBefore = lastTxn(engine, "a");
-            final long bBefore = lastTxn(engine, "b");
-            final ObjList<byte[]> sent = ingestInOnePass(
-                    new QwpIngressUpgradeProcessor(engine, httpConfig),
-                    httpConfig,
-                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 100L, 1_000_000L)),
-                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 200L, 2_000_000L)),
-                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 300L, 3_000_000L)),
-                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 400L, 4_000_000L)),
-                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 500L, 5_000_000L)),
-                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 600L, 6_000_000L)),
-                    createMaskedFrame(WebSocketOpcode.BINARY, qwpMessage(
-                            tableBlock("a", 700L, 7_000_000L),
-                            varcharTableBlock("b", "not-a-long", 7_000_001L)
-                    ))
-            );
-            drainWalQueue();
-            assertQuery("SELECT v FROM a").noLeakCheck().expectSize().returns("v\n100\n300\n500\n");
-            assertQuery("SELECT v FROM b").noLeakCheck().expectSize().returns("v\n200\n400\n600\n");
-            Assert.assertEquals("the redo commits a once", aBefore + 1, lastTxn(engine, "a"));
-            Assert.assertEquals("the redo commits b once", bBefore + 1, lastTxn(engine, "b"));
-            Assert.assertEquals(5, maxCumulativeOkAck(sent));
-            Assert.assertEquals(QwpConstants.STATUS_SCHEMA_MISMATCH, errorStatusForSeq(sent, 6));
-            Assert.assertTrue("the ack must precede the NACK",
-                    indexOfBinaryFrame(sent, QwpConstants.STATUS_OK, 5) < indexOfErrorResponse(sent, 6));
-        });
-    }
-
-    /**
-     * A frame appends to a batch table, and its next block needs a column the table
-     * lacks, which a joining block may not create. Nothing failed: the redo re-joins the
-     * batch's five frames and commits them once, then processes the frame the normal way,
-     * which creates the column and commits.
-     */
-    @Test
-    public void testRedoCommitsFrameThatOnlyCouldNotJoin() throws Exception {
-        assertMemoryLeak(() -> {
-            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-            execute("CREATE TABLE a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            final long aBefore = lastTxn(engine, "a");
-            ObjList<byte[]> sent = ingestInOnePass(
-                    new QwpIngressUpgradeProcessor(engine, httpConfig),
-                    httpConfig,
-                    oneRowFramesThen("a", 5, createMaskedFrame(WebSocketOpcode.BINARY, qwpMessage(
-                            tableBlock("a", 105L, 6_000_000L),
-                            tableBlockWithExtraColumn("a", 106L, 7L, 6_000_001L)
-                    )))
-            );
-            drainWalQueue();
-            assertQuery("SELECT v, w FROM a").noLeakCheck().expectSize().returns("""
-                    v\tw
-                    100\tnull
-                    101\tnull
-                    102\tnull
-                    103\tnull
-                    104\tnull
-                    105\tnull
-                    106\t7
-                    """);
-            Assert.assertEquals("the batch, the new column, then the frame", aBefore + 3, lastTxn(engine, "a"));
-            Assert.assertEquals(5, maxCumulativeOkAck(sent));
-            for (int seq = 0; seq < 6; seq++) {
-                Assert.assertFalse(hasErrorResponseForSeq(sent, seq));
-            }
-        });
-    }
-
-    @Test
-    public void testRedoCommitsThroughTransientDemoteAtRedoneFrame() throws Exception {
-        assertDemoteAtRedoneFrame(true);
-    }
-
-    @Test
-    public void testRedoEndsBatchAtFrameThatNoLongerJoins() throws Exception {
-        assertRedoneFramePreparation(true);
-    }
-
-    /**
-     * The first frame of a receive pass appends to a and then fails on b: nothing but the
-     * frame is uncommitted, so the redo has no frames to re-join, and answers the frame's
-     * failure. Nothing is committed.
-     */
-    @Test
-    public void testRedoOfFrameOpeningBatch() throws Exception {
-        assertMemoryLeak(() -> {
-            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-            execute("CREATE TABLE a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE TABLE b (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            final long aBefore = lastTxn(engine, "a");
-            final long bBefore = lastTxn(engine, "b");
-            final ObjList<byte[]> sent = ingestInOnePass(
-                    new QwpIngressUpgradeProcessor(engine, httpConfig),
-                    httpConfig,
-                    createMaskedFrame(WebSocketOpcode.BINARY, qwpMessage(
-                            tableBlock("a", 100L, 1_000_000L),
-                            varcharTableBlock("b", "not-a-long", 1_000_001L)
-                    ))
-            );
-            drainWalQueue();
-            assertQuery("SELECT v FROM a").noLeakCheck().expectSize().returns("v\n");
-            assertQuery("SELECT v FROM b").noLeakCheck().expectSize().returns("v\n");
-            Assert.assertEquals(aBefore, lastTxn(engine, "a"));
-            Assert.assertEquals(bBefore, lastTxn(engine, "b"));
-            Assert.assertEquals(-1, maxCumulativeOkAck(sent));
-            Assert.assertEquals(QwpConstants.STATUS_SCHEMA_MISMATCH, errorStatusForSeq(sent, 0));
-        });
-    }
-
-    /**
-     * The redo decodes the batch's frames again, re-applying their symbol dictionary
-     * deltas in order: each row keeps the symbol its frame named, whether the frame
-     * shipped the id or named one an earlier frame shipped, and the batch commits once.
-     */
-    @Test
-    public void testRedoReappliesSymbolDictionaryDeltas() throws Exception {
+    public void testRedefiningSymbolDictionaryJoinsCommitBatch() throws Exception {
         assertMemoryLeak(() -> {
             final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
             execute("CREATE TABLE s (s SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE TABLE t (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            final long sBefore = lastTxn(engine, "s");
             final GlobalSymbolDictionary dict = new GlobalSymbolDictionary();
-            ObjList<byte[]> sent = ingestInOnePass(
-                    new QwpIngressUpgradeProcessor(engine, httpConfig),
+            final GlobalSymbolDictionary otherDict = new GlobalSymbolDictionary();
+            final ObjList<byte[]> sent;
+            final long sAfterFirstPass;
+            try (Connection connection = new Connection(
+                    engine,
                     httpConfig,
+                    AllowAllSecurityContext.INSTANCE,
+                    false,
                     symbolFrame(dict, -1, "s", "x", 100L, 1_000_000L, null),
-                    symbolFrame(dict, 0, "s", "y", 200L, 2_000_000L, null),
-                    symbolFrame(dict, 1, "s", "x", 300L, 3_000_000L, null),
-                    symbolFrame(dict, 1, "s", "y", 400L, 4_000_000L, "t")
-            );
+                    symbolFrame(dict, 0, "s", "x", 200L, 2_000_000L, null),
+                    symbolFrame(otherDict, -1, "s", "y", 300L, 3_000_000L, null),
+                    symbolFrame(otherDict, 0, "s", "y", 400L, 4_000_000L, "t")
+            )) {
+                connection.deliverFrames(1);
+                sAfterFirstPass = lastTxn(engine, "s");
+                connection.deliverFrames(3);
+                sent = connection.sentFrames();
+            }
+            Assert.assertEquals("the second pass commits s once", sAfterFirstPass + 1, lastTxn(engine, "s"));
             drainWalQueue();
-            assertQuery("SELECT s, v FROM s").noLeakCheck().expectSize().returns("s\tv\nx\t100\ny\t200\nx\t300\n");
+            assertQuery("SELECT s, v FROM s").noLeakCheck().expectSize().returns("s\tv\nx\t100\nx\t200\ny\t300\n");
             assertQuery("SELECT v FROM t").noLeakCheck().expectSize().returns("v\n");
-            Assert.assertEquals("the redo commits the batch once", sBefore + 1, lastTxn(engine, "s"));
             Assert.assertEquals(2, maxCumulativeOkAck(sent));
             Assert.assertEquals(QwpConstants.STATUS_SCHEMA_MISMATCH, errorStatusForSeq(sent, 3));
         });
-    }
-
-    /**
-     * Two connections in turn redo a batch of 100 frames through one processor: the second
-     * redo copies the batch's frame record into the array the first one grew.
-     */
-    @Test
-    public void testRedoReusesItsFrameRecord() throws Exception {
-        assertMemoryLeak(() -> {
-            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-            execute("CREATE TABLE a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE TABLE b (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            final QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
-            final int batchFrames = 100;
-            int recordCapacity = -1;
-            for (int pass = 0; pass < 2; pass++) {
-                // Frame i writes v = pass * 1,000 + i, to a when i is even and to b when it is odd.
-                final byte[][] frames = new byte[batchFrames + 1][];
-                for (int i = 0; i < batchFrames; i++) {
-                    final long v = pass * 1_000L + i;
-                    frames[i] = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(i % 2 == 0 ? "a" : "b", v, 1_000_000L + v));
-                }
-                frames[batchFrames] = createMaskedFrame(WebSocketOpcode.BINARY, qwpMessage(
-                        tableBlock("a", pass * 1_000L + batchFrames, 2_000_000L),
-                        varcharTableBlock("b", "not-a-long", 2_000_000L)
-                ));
-                final ObjList<byte[]> sent = new ObjList<>();
-                ingestInOnePass(engine, processor, httpConfig, AllowAllSecurityContext.INSTANCE, false, 64 * 1024, sent, frames);
-                Assert.assertEquals("the redo commits and acks the batch [pass=" + pass + ']', batchFrames - 1, maxCumulativeOkAck(sent));
-                Assert.assertEquals(QwpConstants.STATUS_SCHEMA_MISMATCH, errorStatusForSeq(sent, batchFrames));
-                if (pass == 0) {
-                    recordCapacity = processor.getRedoFramesCapacity();
-                    Assert.assertTrue("the redo keeps the record it grew to: " + recordCapacity, recordCapacity >= 3 * batchFrames);
-                } else {
-                    Assert.assertEquals("the second redo reuses the record", recordCapacity, processor.getRedoFramesCapacity());
-                }
-            }
-            drainWalQueue();
-            assertQuery("SELECT count(), min(v), max(v) FROM a").noLeakCheck().noRandomAccess().expectSize()
-                    .returns("count\tmin\tmax\n100\t0\t1098\n");
-            assertQuery("SELECT count(), min(v), max(v) FROM b").noLeakCheck().noRandomAccess().expectSize()
-                    .returns("count\tmin\tmax\n100\t1\t1099\n");
-        });
-    }
-
-    /**
-     * The redo's batch commit is refused at the batch's first table: the NACK names the
-     * batch's first frame with the commit's status, nothing is committed, and the frames
-     * after it get no response.
-     */
-    @Test
-    public void testRedoStopsAtFailedRedoneBatchCommit() throws Exception {
-        assertMemoryLeak(() -> {
-            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-            execute("CREATE TABLE a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE TABLE b (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE TABLE c (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            final long aBefore = lastTxn(engine, "a");
-            final long bBefore = lastTxn(engine, "b");
-            final ObjList<byte[]> sent = ingestInOnePass(
-                    new QwpIngressUpgradeProcessor(engine, httpConfig),
-                    httpConfig,
-                    denyCommitAfterJoinTo("b"),
-                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 100L, 1_000_000L)),
-                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 200L, 2_000_000L)),
-                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 300L, 3_000_000L)),
-                    createMaskedFrame(WebSocketOpcode.BINARY, qwpMessage(
-                            tableBlock("b", 400L, 4_000_000L),
-                            varcharTableBlock("c", "not-a-long", 4_000_001L)
-                    ))
-            );
-            drainWalQueue();
-            assertQuery("SELECT v FROM a").noLeakCheck().expectSize().returns("v\n");
-            assertQuery("SELECT v FROM b").noLeakCheck().expectSize().returns("v\n");
-            Assert.assertEquals(aBefore, lastTxn(engine, "a"));
-            Assert.assertEquals(bBefore, lastTxn(engine, "b"));
-            Assert.assertEquals(-1, maxCumulativeOkAck(sent));
-            Assert.assertEquals("the NACK names the batch's first frame, with the commit's status",
-                    QwpConstants.STATUS_WRITE_ERROR, errorStatusForSeq(sent, 0));
-            for (int seq = 1; seq < 5; seq++) {
-                Assert.assertFalse("a frame behind the NACK gets no response", hasErrorResponseForSeq(sent, seq));
-            }
-        });
-    }
-
-    @Test
-    public void testRedoStopsAtRedoneFrameThatFails() throws Exception {
-        assertRedoAfterReacquisitionFailure(true, true, false);
-    }
-
-    @Test
-    public void testRedoStopsAtRedoneFrameThatFailsWithCairoError() throws Exception {
-        assertRedoAfterReacquisitionFailure(false, true, false);
-    }
-
-    /**
-     * The redo's first frame cannot re-join: a's writer, which the redo acquires again
-     * because the unexpected failure that set it off freed every writer, fails once more.
-     * With nothing joined before it, the frame goes on its own and commits, the next frame
-     * re-joins and commits, and the frame that set off the redo gets its own NACK.
-     */
-    @Test
-    public void testRedoTakesFrameThatCannotRejoinAlone() throws Exception {
-        assertMemoryLeak(() -> {
-            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-            execute("CREATE TABLE a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE TABLE d (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            final AtomicInteger aAcquisitions = new AtomicInteger();
-            try (CairoEngine hookEngine = new CairoEngine(new DefaultTestCairoConfiguration(root)) {
-                @Override
-                public WalWriter getWalWriter(TableToken token) {
-                    if (token.getTableName().equals("d")) {
-                        throw new IllegalStateException("test: d's writer acquisition fails");
-                    }
-                    if (token.getTableName().equals("a") && aAcquisitions.incrementAndGet() == 2) {
-                        throw new IllegalStateException("test: a's writer acquisition fails");
-                    }
-                    return super.getWalWriter(token);
-                }
-            }) {
-                final long aBefore = lastTxn(hookEngine, "a");
-                final ObjList<byte[]> sent = new ObjList<>();
-                ingestInOnePass(
-                        hookEngine,
-                        new QwpIngressUpgradeProcessor(hookEngine, httpConfig),
-                        httpConfig,
-                        AllowAllSecurityContext.INSTANCE,
-                        false,
-                        sent,
-                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 100L, 1_000_000L)),
-                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 200L, 2_000_000L)),
-                        createMaskedFrame(WebSocketOpcode.BINARY, qwpMessage(
-                                tableBlock("a", 300L, 3_000_000L),
-                                tableBlock("d", 301L, 3_000_001L)
-                        ))
-                );
-                Assert.assertEquals("frame 0 alone, then frame 1", aBefore + 2, lastTxn(hookEngine, "a"));
-                Assert.assertTrue("test setup: a's writer must be acquired again after its failure", aAcquisitions.get() >= 3);
-                Assert.assertEquals(1, maxCumulativeOkAck(sent));
-                Assert.assertEquals(QwpConstants.STATUS_INTERNAL_ERROR, errorStatusForSeq(sent, 2));
-                Assert.assertFalse(hasErrorResponseForSeq(sent, 0));
-                Assert.assertFalse(hasErrorResponseForSeq(sent, 1));
-                drainWalQueue(hookEngine);
-                assertHookQuery(hookEngine, "SELECT v FROM a").expectSize().returns("v\n100\n200\n");
-            }
-        });
-    }
-
-    @Test
-    public void testRedoUnexpectedPreparationErrorOfRedoneFrame() throws Exception {
-        assertRedoneFramePreparation(false);
     }
 
     /**
@@ -2636,6 +2527,47 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
                     QwpConstants.STATUS_WRITE_ERROR, errorStatusForSeq(sent, 0));
             for (int seq = 1; seq < 11; seq++) {
                 Assert.assertFalse(hasErrorResponseForSeq(sent, seq));
+            }
+        });
+    }
+
+    /**
+     * A frame appends to b and then fails on c. Its row goes back out of b's writer, and
+     * the batch commit owed before the frame's answer is refused at the batch's first
+     * table: the NACK names the batch's first frame with the commit's status, nothing is
+     * committed, and the frames after it get no response.
+     */
+    @Test
+    public void testRefusedBoundaryCommitAfterRewindNacksBatch() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("CREATE TABLE a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE b (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE c (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final long aBefore = lastTxn(engine, "a");
+            final long bBefore = lastTxn(engine, "b");
+            final ObjList<byte[]> sent = ingestInOnePass(
+                    new QwpIngressUpgradeProcessor(engine, httpConfig),
+                    httpConfig,
+                    denyCommitAfterJoinTo("b"),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 100L, 1_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 200L, 2_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 300L, 3_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, qwpMessage(
+                            tableBlock("b", 400L, 4_000_000L),
+                            varcharTableBlock("c", "not-a-long", 4_000_001L)
+                    ))
+            );
+            drainWalQueue();
+            assertQuery("SELECT v FROM a").noLeakCheck().expectSize().returns("v\n");
+            assertQuery("SELECT v FROM b").noLeakCheck().expectSize().returns("v\n");
+            Assert.assertEquals(aBefore, lastTxn(engine, "a"));
+            Assert.assertEquals(bBefore, lastTxn(engine, "b"));
+            Assert.assertEquals(-1, maxCumulativeOkAck(sent));
+            Assert.assertEquals("the NACK names the batch's first frame, with the commit's status",
+                    QwpConstants.STATUS_WRITE_ERROR, errorStatusForSeq(sent, 0));
+            for (int seq = 1; seq < 5; seq++) {
+                Assert.assertFalse("a frame behind the NACK gets no response", hasErrorResponseForSeq(sent, seq));
             }
         });
     }
@@ -2742,15 +2674,278 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     }
 
     /**
-     * A frame's first block carries no rows, and its second block cannot join. The
-     * first block appended nothing, but the frame can no longer start from it, so the
-     * batch is redone, and the frame then fails on its own.
+     * With a max-uncommitted-rows cap of 4, a batch of three frames of a, then a frame of b
+     * and a: b's block joins, but a's would reach the cap. b's row goes back out and b
+     * leaves the batch, which commits a once; the frame then opens a new batch, which
+     * commits each table once.
      */
     @Test
-    public void testRowlessFirstBlockThenBlockThatCannotJoinRedoes() throws Exception {
+    public void testRewindAtCapBoundary() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = httpConfigWithMaxUncommittedRows(4);
+            execute("CREATE TABLE a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE b (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final long aBefore = lastTxn(engine, "a");
+            final long bBefore = lastTxn(engine, "b");
+            final ObjList<byte[]> sent = ingestInOnePass(
+                    new QwpIngressUpgradeProcessor(engine, httpConfig),
+                    httpConfig,
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 100L, 1_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 200L, 2_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 300L, 3_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, qwpMessage(
+                            tableBlock("b", 400L, 4_000_000L),
+                            tableBlock("a", 401L, 4_000_001L)
+                    ))
+            );
+            drainWalQueue();
+            assertQuery("SELECT v FROM a").noLeakCheck().expectSize().returns("v\n100\n200\n300\n401\n");
+            assertQuery("SELECT v FROM b").noLeakCheck().expectSize().returns("v\n400\n");
+            Assert.assertEquals("the batch, then the frame", aBefore + 2, lastTxn(engine, "a"));
+            Assert.assertEquals(bBefore + 1, lastTxn(engine, "b"));
+            Assert.assertEquals(3, maxCumulativeOkAck(sent));
+            for (int seq = 0; seq < 4; seq++) {
+                Assert.assertFalse(hasErrorResponseForSeq(sent, seq));
+            }
+        });
+    }
+
+    /**
+     * A frame appends to a and then fails on b, behind a batch of three frames of each
+     * table. Its row goes back out of a's writer, the batch commits each table once, and
+     * the frame gets its own NACK after the ack.
+     */
+    @Test
+    public void testRewindCommitsEachTableOnce() throws Exception {
         assertMemoryLeak(() -> {
             final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
             execute("CREATE TABLE a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE b (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final long aBefore = lastTxn(engine, "a");
+            final long bBefore = lastTxn(engine, "b");
+            final ObjList<byte[]> sent = ingestInOnePass(
+                    new QwpIngressUpgradeProcessor(engine, httpConfig),
+                    httpConfig,
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 100L, 1_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 200L, 2_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 300L, 3_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 400L, 4_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 500L, 5_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 600L, 6_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, qwpMessage(
+                            tableBlock("a", 700L, 7_000_000L),
+                            varcharTableBlock("b", "not-a-long", 7_000_001L)
+                    ))
+            );
+            drainWalQueue();
+            assertQuery("SELECT v FROM a").noLeakCheck().expectSize().returns("v\n100\n300\n500\n");
+            assertQuery("SELECT v FROM b").noLeakCheck().expectSize().returns("v\n200\n400\n600\n");
+            Assert.assertEquals("a commits once", aBefore + 1, lastTxn(engine, "a"));
+            Assert.assertEquals("b commits once", bBefore + 1, lastTxn(engine, "b"));
+            Assert.assertEquals(5, maxCumulativeOkAck(sent));
+            Assert.assertEquals(QwpConstants.STATUS_SCHEMA_MISMATCH, errorStatusForSeq(sent, 6));
+            Assert.assertTrue("the ack must precede the NACK",
+                    indexOfBinaryFrame(sent, QwpConstants.STATUS_OK, 5) < indexOfErrorResponse(sent, 6));
+        });
+    }
+
+    /**
+     * A frame appends 2,049 rows to a, the batch's table, crossing onto later pages of its
+     * columns, and then fails on b's value. Taking a's rows back out maps the first page of
+     * a's column again, and that mapping fails: a's writer is distressed, and so is the
+     * table cache. The batch is abandoned with nothing committed, and the NACK names the
+     * failed frame, with INTERNAL_ERROR. The client replays the pass on a fresh connection,
+     * where the fault is gone: the batch commits a once, and the frame gets its own NACK.
+     */
+    @Test
+    public void testRewindFailureLosesBatchAndReplayCommitsItOnce() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("CREATE TABLE a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE b (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final int batchFrames = 10;
+            final AtomicBoolean isMmapFailing = new AtomicBoolean();
+            final AtomicInteger failedMmaps = new AtomicInteger();
+            final FilesFacade ff = new TestFilesFacadeImpl() {
+                @Override
+                public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                    if (isMmapFailing.compareAndSet(true, false)) {
+                        failedMmaps.incrementAndGet();
+                        return FilesFacade.MAP_FAILED;
+                    }
+                    return super.mmap(fd, len, offset, flags, memoryTag);
+                }
+            };
+            final AtomicBoolean isArmable = new AtomicBoolean();
+            final AtomicReference<QwpIngressProcessorState> stateRef = new AtomicReference<>();
+            final AtomicReference<WalWriter> aWriter = new AtomicReference<>();
+            // b's insert permission is checked as b joins the failing frame, after a's block
+            // appended and before b's block fails, which maps nothing: b's writer holds a row
+            // on the page its append starts on.
+            final SecurityContext armingContext = new AllowAllSecurityContext() {
+                @Override
+                public void authorizeInsert(TableToken tableToken) {
+                    if (tableToken.getTableName().equals("b") && isArmable.compareAndSet(true, false)) {
+                        aWriter.set(stateRef.get().getCommitBatchWriter(0));
+                        isMmapFailing.set(true);
+                    }
+                }
+            };
+            try (CairoEngine hookEngine = new CairoEngine(pagedConfiguration(ff))) {
+                final byte[][] replayFrames = new byte[batchFrames + 1][];
+                for (int i = 0; i < batchFrames; i++) {
+                    replayFrames[i] = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 100L + i, (i + 1) * 1_000_000L));
+                }
+                // The batch holds 10 rows of a, 80 bytes of v and 160 of the designated
+                // timestamp. The failing frame's 2,049 rows of a move both columns onto later
+                // 16 KiB pages.
+                try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
+                     QwpTableBuffer table = new QwpTableBuffer("a");
+                     QwpTableBuffer bad = new QwpTableBuffer("b")) {
+                    final QwpTableBuffer.ColumnBuffer value = table.getOrCreateColumn("v", QwpConstants.TYPE_LONG, false);
+                    final QwpTableBuffer.ColumnBuffer timestamp = table.getOrCreateDesignatedTimestampColumn(QwpConstants.TYPE_TIMESTAMP);
+                    for (int row = 0; row < 2_049; row++) {
+                        value.addLong(1_000L + row);
+                        timestamp.addLong(11_000_000L + row);
+                        table.nextRow();
+                    }
+                    bad.getOrCreateColumn("v", QwpConstants.TYPE_VARCHAR, false).addString("not-a-long");
+                    bad.getOrCreateDesignatedTimestampColumn(QwpConstants.TYPE_TIMESTAMP).addLong(13_000_000L);
+                    bad.nextRow();
+                    encoder.setDeferCommit(false);
+                    encoder.beginMessage(2, new GlobalSymbolDictionary(), -1, -1);
+                    encoder.addTable(table);
+                    encoder.addTable(bad);
+                    replayFrames[batchFrames] = encodedFrame(encoder, encoder.finishMessage());
+                }
+                final byte[][] frames = new byte[batchFrames + 2][];
+                frames[0] = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 50L, 500_000L));
+                System.arraycopy(replayFrames, 0, frames, 1, replayFrames.length);
+                final long aBefore = lastTxn(hookEngine, "a");
+                final long bAfterFirstPass;
+                final ObjList<byte[]> sent;
+                final QwpIngressProcessorState state = new QwpIngressProcessorState(
+                        RECV_BUFFER_SIZE,
+                        httpConfig.getSendBufferSize(),
+                        hookEngine,
+                        httpConfig.getLineHttpProcessorConfiguration()
+                );
+                try (Connection connection = new Connection(hookEngine, httpConfig, state, armingContext, false, 64 * 1024, frames)) {
+                    stateRef.set(connection.getState());
+                    connection.deliverFrames(1);
+                    bAfterFirstPass = lastTxn(hookEngine, "b");
+                    isArmable.set(true);
+                    connection.deliverFrames(batchFrames + 1);
+                    sent = connection.sentFrames();
+                }
+                Assert.assertEquals("test setup: the rewind's mapping must fail", 1, failedMmaps.get());
+                Assert.assertTrue("the failed rewind distresses a's writer", aWriter.get().isDistressed());
+                Assert.assertEquals("nothing commits", aBefore, lastTxn(hookEngine, "a"));
+                Assert.assertEquals(bAfterFirstPass, lastTxn(hookEngine, "b"));
+                Assert.assertEquals("only the first pass is acked", 0, maxCumulativeOkAck(sent));
+                Assert.assertEquals("the NACK names the failed frame",
+                        QwpConstants.STATUS_INTERNAL_ERROR, errorStatusForSeq(sent, batchFrames + 1));
+                Assert.assertFalse("the batch's first frame is not NACKed", hasErrorResponseForSeq(sent, 1));
+
+                // The client replays the batch and the failed frame from its acked watermark.
+                final ObjList<byte[]> sentAfter = new ObjList<>();
+                ingestInOnePass(
+                        hookEngine,
+                        new QwpIngressUpgradeProcessor(hookEngine, httpConfig),
+                        httpConfig,
+                        AllowAllSecurityContext.INSTANCE,
+                        false,
+                        64 * 1024,
+                        sentAfter,
+                        replayFrames
+                );
+                Assert.assertEquals("the replay commits a once", aBefore + 1, lastTxn(hookEngine, "a"));
+                Assert.assertEquals(batchFrames - 1, maxCumulativeOkAck(sentAfter));
+                Assert.assertEquals(QwpConstants.STATUS_SCHEMA_MISMATCH, errorStatusForSeq(sentAfter, batchFrames));
+                drainWalQueue(hookEngine);
+                assertHookQuery(hookEngine, "SELECT v FROM a").expectSize().returns(V_100_TO_109);
+                assertHookQuery(hookEngine, "SELECT v FROM b").expectSize().returns("v\n50\n");
+            }
+        });
+    }
+
+    /**
+     * Frames name their symbols by dictionary ids they ship or that an earlier frame
+     * shipped, and the last frame fails after it appended to s: its row goes back out,
+     * each row of the batch keeps the symbol its frame named, and the batch commits once.
+     */
+    @Test
+    public void testRewindKeepsSymbolsOfBatchFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("CREATE TABLE s (s SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE t (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final long sBefore = lastTxn(engine, "s");
+            final GlobalSymbolDictionary dict = new GlobalSymbolDictionary();
+            ObjList<byte[]> sent = ingestInOnePass(
+                    new QwpIngressUpgradeProcessor(engine, httpConfig),
+                    httpConfig,
+                    symbolFrame(dict, -1, "s", "x", 100L, 1_000_000L, null),
+                    symbolFrame(dict, 0, "s", "y", 200L, 2_000_000L, null),
+                    symbolFrame(dict, 1, "s", "x", 300L, 3_000_000L, null),
+                    symbolFrame(dict, 1, "s", "y", 400L, 4_000_000L, "t")
+            );
+            drainWalQueue();
+            assertQuery("SELECT s, v FROM s").noLeakCheck().expectSize().returns("s\tv\nx\t100\ny\t200\nx\t300\n");
+            assertQuery("SELECT v FROM t").noLeakCheck().expectSize().returns("v\n");
+            Assert.assertEquals("the batch commits once", sBefore + 1, lastTxn(engine, "s"));
+            Assert.assertEquals(2, maxCumulativeOkAck(sent));
+            Assert.assertEquals(QwpConstants.STATUS_SCHEMA_MISMATCH, errorStatusForSeq(sent, 3));
+        });
+    }
+
+    /**
+     * A frame appends to a batch table and then fails on a table new to the batch. Its
+     * row goes back out of a's writer, the batch commits a once, and the frame gets the
+     * status it failed with, without being processed again.
+     */
+    @Test
+    public void testRewoundFrameGetsTheStatusItFailedWith() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("CREATE TABLE a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE b (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final long aBefore = engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("a"));
+            final long bBefore = engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("b"));
+            ObjList<byte[]> sent = ingestInOnePass(
+                    new QwpIngressUpgradeProcessor(engine, httpConfig),
+                    httpConfig,
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 100L, 1_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 200L, 2_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, qwpMessage(
+                            tableBlock("a", 300L, 3_000_000L),
+                            varcharTableBlock("b", "not-a-long", 3_000_000L)
+                    ))
+            );
+            drainWalQueue();
+            assertQuery("SELECT v FROM a").noLeakCheck().expectSize().returns("v\n100\n200\n");
+            assertQuery("SELECT v FROM b").noLeakCheck().expectSize().returns("v\n");
+            Assert.assertEquals("the batch commits once",
+                    aBefore + 1, engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("a")));
+            Assert.assertEquals(bBefore, engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("b")));
+            Assert.assertEquals(1, maxCumulativeOkAck(sent));
+            Assert.assertEquals(QwpConstants.STATUS_SCHEMA_MISMATCH, errorStatusForSeq(sent, 2));
+            Assert.assertTrue("the ack must precede the NACK",
+                    indexOfBinaryFrame(sent, QwpConstants.STATUS_OK, 1) < indexOfErrorResponse(sent, 2));
+        });
+    }
+
+    /**
+     * A frame's first block carries no rows, and its second block, of the batch's table,
+     * fails on a value. The appender cancels the failed block, which leaves the writer
+     * with the batch's rows: the batch commits once, and the frame then gets its own NACK.
+     */
+    @Test
+    public void testRowlessFirstBlockThenFailedBlockCommitsBatchBeforeNack() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("CREATE TABLE a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final long aBefore = lastTxn(engine, "a");
             ObjList<byte[]> sent = ingestInOnePass(
                     new QwpIngressUpgradeProcessor(engine, httpConfig),
                     httpConfig,
@@ -2762,6 +2957,7 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
             );
             drainWalQueue();
             assertQuery("SELECT v FROM a").noLeakCheck().expectSize().returns("v\n100\n");
+            Assert.assertEquals("the batch commits once", aBefore + 1, lastTxn(engine, "a"));
             Assert.assertEquals(0, maxCumulativeOkAck(sent));
             Assert.assertEquals(QwpConstants.STATUS_SCHEMA_MISMATCH, errorStatusForSeq(sent, 1));
         });
@@ -2790,6 +2986,43 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     @Test
     public void testSameTableBlocksWithDifferentColumnsJoinCommitBatch() throws Exception {
         assertBlocksWithDifferentColumnsJoinCommitBatch("weather");
+    }
+
+    /**
+     * A frame's first block brings n into the batch, and its second block, of n again,
+     * needs a column n lacks, which a block may not create once its table holds batch
+     * rows. Nothing failed: n's first row goes back out of n's writer and n leaves the
+     * batch, the batch commits a once, and the frame then goes the normal way from its
+     * first block, which creates the column and commits each of n's rows once.
+     */
+    @Test
+    public void testSecondBlockOfNewTableThatCannotJoinCommitsFrameOnce() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("CREATE TABLE a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE n (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final long aBefore = lastTxn(engine, "a");
+            final long nBefore = lastTxn(engine, "n");
+            final ObjList<byte[]> sent = ingestInOnePass(
+                    new QwpIngressUpgradeProcessor(engine, httpConfig),
+                    httpConfig,
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 100L, 1_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 200L, 2_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, qwpMessage(
+                            tableBlock("n", 300L, 3_000_000L),
+                            tableBlockWithExtraColumn("n", 301L, 7L, 3_000_001L)
+                    ))
+            );
+            drainWalQueue();
+            assertQuery("SELECT v FROM a").noLeakCheck().expectSize().returns("v\n100\n200\n");
+            assertQuery("SELECT v, w FROM n").noLeakCheck().expectSize().returns("v\tw\n300\tnull\n301\t7\n");
+            Assert.assertEquals("the batch commits a once", aBefore + 1, lastTxn(engine, "a"));
+            Assert.assertEquals("the new column, then the frame", nBefore + 2, lastTxn(engine, "n"));
+            Assert.assertEquals(2, maxCumulativeOkAck(sent));
+            for (int seq = 0; seq < 3; seq++) {
+                Assert.assertFalse(hasErrorResponseForSeq(sent, seq));
+            }
+        });
     }
 
     @Test
@@ -2933,11 +3166,12 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     /**
      * A frame's lookup of a table new to the batch fails unexpectedly, which leaves the
      * connection's writers in doubt: the table cache distresses, and a distressed cache
-     * commits nothing. The batch is rolled back, re-joined with fresh writers and committed
-     * once, and the frame gets its own NACK, as one commit per frame would leave it.
+     * commits nothing. The batch is abandoned, nothing is acked, and the NACK names the
+     * frame, with INTERNAL_ERROR: the failure recurs on every replay of the batch, and the
+     * client's poison detector must strike this frame, not the batch's healthy first frame.
      */
     @Test
-    public void testUnexpectedLookupErrorCommitsBatchBeforeNack() throws Exception {
+    public void testUnexpectedLookupErrorLosesBatch() throws Exception {
         assertMemoryLeak(() -> {
             final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
             execute("CREATE TABLE a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -2963,16 +3197,14 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
                         sent,
                         oneRowFramesThen("a", 10, createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 7L, 11_000_000L)))
                 );
-                Assert.assertEquals("the batch commits once", aBefore + 1, lastTxn(hookEngine, "a"));
+                Assert.assertEquals("nothing commits", aBefore, lastTxn(hookEngine, "a"));
                 Assert.assertEquals(bBefore, lastTxn(hookEngine, "b"));
-                Assert.assertEquals(9, maxCumulativeOkAck(sent));
+                Assert.assertEquals("nothing is acked", -1, maxCumulativeOkAck(sent));
                 Assert.assertEquals(QwpConstants.STATUS_INTERNAL_ERROR, errorStatusForSeq(sent, 10));
                 TestUtils.assertContains(errorMessageForSeq(sent, 10), "unexpected error");
                 Assert.assertFalse("the batch's first frame must not be NACKed", hasErrorResponseForSeq(sent, 0));
-                Assert.assertTrue("the ack must precede the NACK",
-                        indexOfBinaryFrame(sent, QwpConstants.STATUS_OK, 9) < indexOfErrorResponse(sent, 10));
                 drainWalQueue(hookEngine);
-                assertHookQuery(hookEngine, "SELECT v FROM a").expectSize().returns(V_100_TO_109);
+                assertHookQuery(hookEngine, "SELECT v FROM a").expectSize().returns("v\n");
                 assertHookQuery(hookEngine, "SELECT v FROM b").expectSize().returns("v\n");
             }
         });
@@ -2981,11 +3213,11 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     /**
      * A frame's preparation fails unexpectedly behind a batch, at the live read-only gate,
      * which distresses the table cache: a distressed cache commits nothing. The batch is
-     * rolled back, re-joined with fresh writers and committed once, the frame gets its own
-     * NACK, and the table takes rows afterwards.
+     * abandoned, nothing is acked, the NACK names the frame, with INTERNAL_ERROR, and the
+     * table takes rows afterwards.
      */
     @Test
-    public void testUnexpectedPreparationErrorCommitsBatchBeforeNack() throws Exception {
+    public void testUnexpectedPreparationErrorLosesBatch() throws Exception {
         assertMemoryLeak(() -> {
             final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
             execute("CREATE TABLE a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -3015,8 +3247,8 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
                         oneRowFramesThen("a", 11)
                 );
                 Assert.assertTrue("test setup: frame 10's preparation must fail", hasFailed.get());
-                Assert.assertEquals("the batch commits once", aBefore + 1, lastTxn(hookEngine, "a"));
-                Assert.assertEquals(9, maxCumulativeOkAck(sent));
+                Assert.assertEquals("nothing commits", aBefore, lastTxn(hookEngine, "a"));
+                Assert.assertEquals("nothing is acked", -1, maxCumulativeOkAck(sent));
                 Assert.assertEquals(QwpConstants.STATUS_INTERNAL_ERROR, errorStatusForSeq(sent, 10));
                 TestUtils.assertContains(errorMessageForSeq(sent, 10), "unexpected error");
                 Assert.assertFalse("the batch's first frame must not be NACKed", hasErrorResponseForSeq(sent, 0));
@@ -3033,9 +3265,19 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
                 );
                 Assert.assertEquals(0, maxCumulativeOkAck(sentAfter));
                 drainWalQueue(hookEngine);
-                assertHookQuery(hookEngine, "SELECT v FROM a").expectSize().returns(V_100_TO_109 + "200\n");
+                assertHookQuery(hookEngine, "SELECT v FROM a").expectSize().returns("v\n200\n");
             }
         });
+    }
+
+    @Test
+    public void testWriterAcquisitionCairoErrorAfterAppendCommitsBatchBeforeNack() throws Exception {
+        assertWriterAcquisitionFailureAfterAppend(false, false);
+    }
+
+    @Test
+    public void testWriterAcquisitionUnexpectedErrorAfterAppendLosesBatch() throws Exception {
+        assertWriterAcquisitionFailureAfterAppend(true, false);
     }
 
     /**
@@ -3062,6 +3304,18 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
             Assert.assertEquals(2, maxCumulativeOkAck(sent));
             Assert.assertFalse(hasErrorResponseForSeq(sent, 1));
         });
+    }
+
+    // A row of table t with a VARCHAR, a STRING, a BINARY, a DOUBLE[] and a LONG, which
+    // takes v as a VARCHAR.
+    private static void addTypedRow(QwpTableBuffer table, int i, String v) {
+        table.getOrCreateColumn("x", QwpConstants.TYPE_VARCHAR, true).addString("x" + i + "-\u00e9\u20ac");
+        table.getOrCreateColumn("s", QwpConstants.TYPE_VARCHAR, true).addString("s" + i);
+        table.getOrCreateColumn("bin", QwpConstants.TYPE_BINARY, true).addBinary(new byte[]{(byte) i, 1, 2, (byte) (i * 3)});
+        table.getOrCreateColumn("arr", QwpConstants.TYPE_DOUBLE_ARRAY, true).addDoubleArray(new double[]{i, i + 0.5});
+        table.getOrCreateColumn("v", QwpConstants.TYPE_VARCHAR, true).addString(v);
+        table.getOrCreateDesignatedTimestampColumn(QwpConstants.TYPE_TIMESTAMP).addLong(1_000_000L * (i + 1));
+        table.nextRow();
     }
 
     private static void assertOnlyRoleChangeCloseSent(ObjList<byte[]> sent) {
@@ -3278,6 +3532,21 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         return header;
     }
 
+    // A configuration of the shared root whose WAL columns map 16 KiB pages through ff.
+    private static DefaultTestCairoConfiguration pagedConfiguration(FilesFacade ff) {
+        return new DefaultTestCairoConfiguration(root) {
+            @Override
+            public @NotNull FilesFacade getFilesFacade() {
+                return ff;
+            }
+
+            @Override
+            public long getWalDataAppendPageSize() {
+                return 16 * 1024;
+            }
+        };
+    }
+
     /**
      * A one-row frame in delta-dictionary mode for a table with columns {@code s}
      * SYMBOL, {@code v} LONG and a designated timestamp. It ships the dictionary
@@ -3379,15 +3648,89 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
      */
     private static byte[] typedFrame(int i, String v) {
         try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder(); QwpTableBuffer table = new QwpTableBuffer("t")) {
-            table.getOrCreateColumn("x", QwpConstants.TYPE_VARCHAR, true).addString("x" + i + "-\u00e9\u20ac");
-            table.getOrCreateColumn("s", QwpConstants.TYPE_VARCHAR, true).addString("s" + i);
-            table.getOrCreateColumn("bin", QwpConstants.TYPE_BINARY, true).addBinary(new byte[]{(byte) i, 1, 2, (byte) (i * 3)});
-            table.getOrCreateColumn("arr", QwpConstants.TYPE_DOUBLE_ARRAY, true).addDoubleArray(new double[]{i, i + 0.5});
-            table.getOrCreateColumn("v", QwpConstants.TYPE_VARCHAR, true).addString(v);
-            table.getOrCreateDesignatedTimestampColumn(QwpConstants.TYPE_TIMESTAMP).addLong(1_000_000L * (i + 1));
-            table.nextRow();
+            addTypedRow(table, i, v);
             return encodedFrame(encoder, encoder.encode(table));
         }
+    }
+
+    // typedFrame's block of t, then a block of b with a value b's LONG column cannot take.
+    private static byte[] typedFrameThenBadBlock(int i, String v) {
+        try (
+                QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
+                QwpTableBuffer table = new QwpTableBuffer("t");
+                QwpTableBuffer bad = new QwpTableBuffer("b")
+        ) {
+            addTypedRow(table, i, v);
+            bad.getOrCreateColumn("v", QwpConstants.TYPE_VARCHAR, false).addString("not-a-long");
+            bad.getOrCreateDesignatedTimestampColumn(QwpConstants.TYPE_TIMESTAMP).addLong(1_000_000L * (i + 1));
+            bad.nextRow();
+            encoder.setDeferCommit(false);
+            encoder.beginMessage(2, new GlobalSymbolDictionary(), -1, -1);
+            encoder.addTable(table);
+            encoder.addTable(bad);
+            return encodedFrame(encoder, encoder.finishMessage());
+        }
+    }
+
+    // A frame of the table's rows with v as a VARCHAR of digits, except the last row's,
+    // which is not a number.
+    private static byte[] varcharRowsFrame(String tableName, int rows, long firstTsMicros) {
+        try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder(); QwpTableBuffer table = new QwpTableBuffer(tableName)) {
+            final QwpTableBuffer.ColumnBuffer value = table.getOrCreateColumn("v", QwpConstants.TYPE_VARCHAR, false);
+            final QwpTableBuffer.ColumnBuffer timestamp = table.getOrCreateDesignatedTimestampColumn(QwpConstants.TYPE_TIMESTAMP);
+            for (int row = 0; row < rows; row++) {
+                value.addString(row < rows - 1 ? Long.toString(1_000L + row) : "not-a-long");
+                timestamp.addLong(firstTsMicros + row);
+                table.nextRow();
+            }
+            return encodedFrame(encoder, encoder.encode(table));
+        }
+    }
+
+    /**
+     * Frames a0, b1, a2 and b3 form a batch of two tables, and frame 4 appends to a, then
+     * fails on b's value, which b's LONG column cannot take. Frame 4's row of a goes back
+     * out of a's writer, the batch commits each table once, and frame 4 gets its own NACK.
+     * The ack covers frames 0 to 3 and, on a durable-ack connection, names both commits.
+     */
+    private void assertBatchCommitsBeforeFrameFailingAfterAppend(boolean isDurableAck) throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("CREATE TABLE a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE b (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final long aBefore = engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("a"));
+            final long bBefore = engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("b"));
+            final ObjList<byte[]> sent = new ObjList<>();
+            ingestInOnePass(
+                    engine,
+                    new QwpIngressUpgradeProcessor(engine, httpConfig),
+                    httpConfig,
+                    AllowAllSecurityContext.INSTANCE,
+                    isDurableAck,
+                    sent,
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 100L, 1_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 200L, 2_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 300L, 3_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 400L, 4_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, qwpMessage(
+                            tableBlock("a", 500L, 5_000_000L),
+                            varcharTableBlock("b", "not-a-long", 5_000_000L)
+                    ))
+            );
+            drainWalQueue();
+            assertQuery("SELECT v FROM a").noLeakCheck().expectSize().returns("v\n100\n300\n");
+            assertQuery("SELECT v FROM b").noLeakCheck().expectSize().returns("v\n200\n400\n");
+            Assert.assertEquals("a commits once", aBefore + 1, engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("a")));
+            Assert.assertEquals("b commits once", bBefore + 1, engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("b")));
+            Assert.assertEquals(3, maxCumulativeOkAck(sent));
+            Assert.assertEquals(QwpConstants.STATUS_SCHEMA_MISMATCH, errorStatusForSeq(sent, 4));
+            Assert.assertTrue("the ack must precede the NACK",
+                    indexOfBinaryFrame(sent, QwpConstants.STATUS_OK, 3) < indexOfErrorResponse(sent, 4));
+            if (isDurableAck) {
+                Assert.assertEquals("the ack must name a's commit", aBefore + 1, okAckSeqTxn(sent, 3, "a"));
+                Assert.assertEquals("the ack must name b's commit", bBefore + 1, okAckSeqTxn(sent, 3, "b"));
+            }
+        });
     }
 
     /**
@@ -3583,126 +3926,6 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * Frames a0, b1, a2 and b3 form a batch of two tables, and frame 4 appends to a, then
-     * names b with a schema b's cached resolution does not cover, so it cannot join.
-     * The redo rolls everything back, re-joins frames 0 to 3 and commits each table once,
-     * then takes frame 4 the normal way, where it fails on b's column type. The ack covers
-     * frames 0 to 3 and, on a durable-ack connection, names both redone commits.
-     */
-    private void assertRedoBeforeFrameThatCannotJoin(boolean isDurableAck) throws Exception {
-        assertMemoryLeak(() -> {
-            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-            execute("CREATE TABLE a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE TABLE b (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            final long aBefore = engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("a"));
-            final long bBefore = engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("b"));
-            final ObjList<byte[]> sent = new ObjList<>();
-            ingestInOnePass(
-                    engine,
-                    new QwpIngressUpgradeProcessor(engine, httpConfig),
-                    httpConfig,
-                    AllowAllSecurityContext.INSTANCE,
-                    isDurableAck,
-                    sent,
-                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 100L, 1_000_000L)),
-                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 200L, 2_000_000L)),
-                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 300L, 3_000_000L)),
-                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 400L, 4_000_000L)),
-                    createMaskedFrame(WebSocketOpcode.BINARY, qwpMessage(
-                            tableBlock("a", 500L, 5_000_000L),
-                            varcharTableBlock("b", "not-a-long", 5_000_000L)
-                    ))
-            );
-            drainWalQueue();
-            assertQuery("SELECT v FROM a").noLeakCheck().expectSize().returns("v\n100\n300\n");
-            assertQuery("SELECT v FROM b").noLeakCheck().expectSize().returns("v\n200\n400\n");
-            Assert.assertEquals("the redo commits a once", aBefore + 1, engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("a")));
-            Assert.assertEquals("the redo commits b once", bBefore + 1, engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("b")));
-            Assert.assertEquals(3, maxCumulativeOkAck(sent));
-            Assert.assertEquals(QwpConstants.STATUS_SCHEMA_MISMATCH, errorStatusForSeq(sent, 4));
-            Assert.assertTrue("the ack must precede the NACK",
-                    indexOfBinaryFrame(sent, QwpConstants.STATUS_OK, 3) < indexOfErrorResponse(sent, 4));
-            if (isDurableAck) {
-                Assert.assertEquals("the ack must name a's redone commit", aBefore + 1, okAckSeqTxn(sent, 3, "a"));
-                Assert.assertEquals("the ack must name b's redone commit", bBefore + 1, okAckSeqTxn(sent, 3, "b"));
-            }
-        });
-    }
-
-    /**
-     * Frames [a100], [a200], then [a300][b301] in one pass, where b's block writes v as a
-     * VARCHAR that is not a number: the last frame fails after it appended to a, and the
-     * batch is redone. The engine marks the redo when the last frame acquires b's writer,
-     * and turns read-only at the first live-gate check after the mark with a batch pending,
-     * frame 1's preparation as it re-joins: for that check alone when the demote is
-     * transient, from then on otherwise. The refused frame cannot join, so frame 0 commits
-     * first. A demote that holds refuses that commit too, and the server sends only its
-     * role-change CLOSE. One that reverted lets frame 0 commit, then frame 1 on its own, and
-     * the last frame gets its own NACK.
-     */
-    private void assertDemoteAtRedoneFrame(boolean isDemoteTransient) throws Exception {
-        assertMemoryLeak(() -> {
-            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-            execute("CREATE TABLE a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE TABLE b (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            final AtomicReference<QwpIngressProcessorState> stateRef = new AtomicReference<>();
-            final AtomicBoolean isRedoMarked = new AtomicBoolean();
-            final AtomicBoolean hasDemoted = new AtomicBoolean();
-            try (CairoEngine hookEngine = new CairoEngine(new DefaultTestCairoConfiguration(root)) {
-                @Override
-                public WalWriter getWalWriter(TableToken token) {
-                    if (token.getTableName().equals("b")) {
-                        isRedoMarked.set(true);
-                    }
-                    return super.getWalWriter(token);
-                }
-
-                @Override
-                public boolean isReadOnlyMode() {
-                    final QwpIngressProcessorState state = stateRef.get();
-                    if (!hasDemoted.get() && isRedoMarked.get() && state != null && state.isCommitBatchPending()) {
-                        hasDemoted.set(true);
-                        return true;
-                    }
-                    return hasDemoted.get() && !isDemoteTransient;
-                }
-            }) {
-                final long aBefore = lastTxn(hookEngine, "a");
-                final ObjList<byte[]> sent;
-                try (Connection connection = new Connection(
-                        hookEngine,
-                        httpConfig,
-                        AllowAllSecurityContext.INSTANCE,
-                        false,
-                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 100L, 1_000_000L)),
-                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 200L, 2_000_000L)),
-                        createMaskedFrame(WebSocketOpcode.BINARY, qwpMessage(
-                                tableBlock("a", 300L, 3_000_000L),
-                                varcharTableBlock("b", "not-a-long", 3_000_001L)
-                        ))
-                )) {
-                    stateRef.set(connection.getState());
-                    connection.deliverFrames(3);
-                    sent = connection.sentFrames();
-                }
-                Assert.assertTrue("test setup: the demote must land at frame 1's re-join", hasDemoted.get());
-                drainWalQueue(hookEngine);
-                if (isDemoteTransient) {
-                    assertHookQuery(hookEngine, "SELECT v FROM a").expectSize().returns("v\n100\n200\n");
-                    Assert.assertEquals("frame 0, then frame 1 on its own", aBefore + 2, lastTxn(hookEngine, "a"));
-                    Assert.assertEquals(1, maxCumulativeOkAck(sent));
-                    Assert.assertEquals(QwpConstants.STATUS_SCHEMA_MISMATCH, errorStatusForSeq(sent, 2));
-                    Assert.assertEquals("a reverted demote closes nothing", -1, indexOfCloseFrame(sent));
-                } else {
-                    assertOnlyRoleChangeCloseSent(sent);
-                    assertHookQuery(hookEngine, "SELECT v FROM a").expectSize().returns("v\n");
-                    Assert.assertEquals(aBefore, lastTxn(hookEngine, "a"));
-                }
-            }
-        });
-    }
-
     private void assertForeignTableCapBoundary(boolean isSeparatePass) throws Exception {
         assertMemoryLeak(() -> {
             HttpFullFatServerConfiguration httpConfig = httpConfigWithMaxUncommittedRows(2);
@@ -3831,8 +4054,8 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     /**
      * With table auto-creation off, a frame names a table that does not exist. As the
      * frame's first block, nothing of the frame touched a writer: the batch commits, and
-     * the frame gets its own NACK. Behind a block the frame appended to the batch, the
-     * batch is redone before that NACK: its frames re-join, and it commits once.
+     * the frame gets its own NACK. Behind a block the frame appended to the batch, that
+     * block's row goes back out of the writer first, and the batch commits once.
      */
     private void assertMissingTableWithoutAutoCreate(boolean isAfterAppend) throws Exception {
         assertMemoryLeak(() -> {
@@ -3927,194 +4150,6 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
                     assertOnlyRoleChangeCloseSent(connection.sentFrames());
                 }
                 assertTableEmpty(demotableEngine);
-            }
-        });
-    }
-
-    /**
-     * Frames [a100], [c200], [a300], [a301], then [a400][d401] in one pass, through an
-     * engine whose writer acquisition always fails for d, and for c fails at its second
-     * call, or at every call from the second on. d's failure is unexpected and leaves the
-     * connection's writers in doubt, so the redo frees them all and acquires them again,
-     * and c's acquisition fails as frame 1 re-joins: what joined before it, frame 0,
-     * commits, and frame 1 goes on its own. A transient failure lets frame 1 commit, then
-     * frames 2 and 3 re-join and commit once, and the last frame gets its own NACK. A
-     * persistent one NACKs frame 1, and nothing after it is processed. On a durable-ack
-     * connection, the ack names the commits the redo made with writers it acquired again.
-     */
-    private void assertRedoAfterReacquisitionFailure(boolean isUnexpected, boolean isPersistent, boolean isDurableAck) throws Exception {
-        assertMemoryLeak(() -> {
-            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-            execute("CREATE TABLE a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE TABLE c (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE TABLE d (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            final AtomicInteger cAcquisitions = new AtomicInteger();
-            try (CairoEngine hookEngine = new CairoEngine(new DefaultTestCairoConfiguration(root)) {
-                @Override
-                public WalWriter getWalWriter(TableToken token) {
-                    if (token.getTableName().equals("d")) {
-                        throw new IllegalStateException("test: d's writer acquisition fails");
-                    }
-                    if (token.getTableName().equals("c")) {
-                        final int acquisition = cAcquisitions.incrementAndGet();
-                        if (isPersistent ? acquisition >= 2 : acquisition == 2) {
-                            if (isUnexpected) {
-                                throw new IllegalStateException("test: c's writer acquisition fails");
-                            }
-                            throw CairoException.nonCritical().put("test: c's writer acquisition fails");
-                        }
-                    }
-                    return super.getWalWriter(token);
-                }
-            }) {
-                final long aBefore = lastTxn(hookEngine, "a");
-                final long cBefore = lastTxn(hookEngine, "c");
-                final long dBefore = lastTxn(hookEngine, "d");
-                final ObjList<byte[]> sent = new ObjList<>();
-                ingestInOnePass(
-                        hookEngine,
-                        new QwpIngressUpgradeProcessor(hookEngine, httpConfig),
-                        httpConfig,
-                        AllowAllSecurityContext.INSTANCE,
-                        isDurableAck,
-                        sent,
-                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 100L, 1_000_000L)),
-                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("c", 200L, 2_000_000L)),
-                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 300L, 3_000_000L)),
-                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 301L, 3_000_001L)),
-                        createMaskedFrame(WebSocketOpcode.BINARY, qwpMessage(
-                                tableBlock("a", 400L, 4_000_000L),
-                                tableBlock("d", 401L, 4_000_001L)
-                        ))
-                );
-                Assert.assertTrue("test setup: c's writer acquisition must fail", cAcquisitions.get() >= 2);
-                Assert.assertEquals(dBefore, lastTxn(hookEngine, "d"));
-                Assert.assertFalse(hasErrorResponseForSeq(sent, 0));
-                drainWalQueue(hookEngine);
-                assertHookQuery(hookEngine, "SELECT v FROM d").expectSize().returns("v\n");
-                if (isPersistent) {
-                    assertHookQuery(hookEngine, "SELECT v FROM a").expectSize().returns("v\n100\n");
-                    assertHookQuery(hookEngine, "SELECT v FROM c").expectSize().returns("v\n");
-                    Assert.assertEquals(aBefore + 1, lastTxn(hookEngine, "a"));
-                    Assert.assertEquals(cBefore, lastTxn(hookEngine, "c"));
-                    Assert.assertEquals(0, maxCumulativeOkAck(sent));
-                    Assert.assertEquals(
-                            "the NACK names the redone frame that failed, with its status",
-                            isUnexpected ? QwpConstants.STATUS_INTERNAL_ERROR : QwpConstants.STATUS_WRITE_ERROR,
-                            errorStatusForSeq(sent, 1)
-                    );
-                    for (int seq = 2; seq < 5; seq++) {
-                        Assert.assertFalse("a frame behind the NACK gets no response", hasErrorResponseForSeq(sent, seq));
-                    }
-                } else {
-                    Assert.assertEquals("frame 0, then frames 2 and 3", aBefore + 2, lastTxn(hookEngine, "a"));
-                    Assert.assertEquals("frame 1 on its own", cBefore + 1, lastTxn(hookEngine, "c"));
-                    Assert.assertTrue("test setup: c's writer must be acquired again after its failure", cAcquisitions.get() >= 3);
-                    assertHookQuery(hookEngine, "SELECT v FROM a").expectSize().returns("v\n100\n300\n301\n");
-                    assertHookQuery(hookEngine, "SELECT v FROM c").expectSize().returns("v\n200\n");
-                    Assert.assertEquals(3, maxCumulativeOkAck(sent));
-                    Assert.assertEquals(QwpConstants.STATUS_INTERNAL_ERROR, errorStatusForSeq(sent, 4));
-                    for (int seq = 1; seq < 4; seq++) {
-                        Assert.assertFalse(hasErrorResponseForSeq(sent, seq));
-                    }
-                    Assert.assertTrue("the ack must precede the NACK",
-                            indexOfBinaryFrame(sent, QwpConstants.STATUS_OK, 3) < indexOfErrorResponse(sent, 4));
-                    if (isDurableAck) {
-                        Assert.assertEquals("the ack must name a's last redone commit", aBefore + 2, okAckSeqTxn(sent, 3, "a"));
-                        Assert.assertEquals("the ack must name c's redone commit", cBefore + 1, okAckSeqTxn(sent, 3, "c"));
-                    }
-                }
-            }
-        });
-    }
-
-    /**
-     * Frames [a100], [a200], [a300], [a301], then [a400][b401] in one pass, where b's block
-     * writes v as a VARCHAR that is not a number: the last frame fails after it appended
-     * to a, and the batch is redone. The engine marks the redo when the last frame acquires
-     * b's writer. At the first live-gate check after the mark with a batch pending, frame
-     * 1's preparation as it re-joins, the engine either fails unexpectedly, which distresses
-     * the table cache, or runs an ALTER TABLE on a, as another connection could, after
-     * which frame 1 cannot join. Either way frame 0 commits, frame 1 goes on its own, and
-     * frames 2 and 3 re-join and commit once.
-     */
-    private void assertRedoneFramePreparation(boolean isAlter) throws Exception {
-        assertMemoryLeak(() -> {
-            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-            execute("CREATE TABLE a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE TABLE b (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            final AtomicReference<QwpIngressProcessorState> stateRef = new AtomicReference<>();
-            final AtomicBoolean isRedoMarked = new AtomicBoolean();
-            final AtomicBoolean hasFired = new AtomicBoolean();
-            try (CairoEngine hookEngine = new CairoEngine(new DefaultTestCairoConfiguration(root)) {
-                @Override
-                public WalWriter getWalWriter(TableToken token) {
-                    if (token.getTableName().equals("b")) {
-                        isRedoMarked.set(true);
-                    }
-                    return super.getWalWriter(token);
-                }
-
-                @Override
-                public boolean isReadOnlyMode() {
-                    final QwpIngressProcessorState state = stateRef.get();
-                    if (!hasFired.get() && isRedoMarked.get() && state != null && state.isCommitBatchPending()) {
-                        // Set first: the ALTER checks this gate too.
-                        hasFired.set(true);
-                        if (!isAlter) {
-                            throw new IllegalStateException("test: unexpected live gate failure");
-                        }
-                        try {
-                            execute("ALTER TABLE a ADD COLUMN z INT");
-                        } catch (SqlException e) {
-                            throw new RuntimeException(e);
-                        }
-                    }
-                    return false;
-                }
-            }) {
-                final long aBefore = lastTxn(hookEngine, "a");
-                final ObjList<byte[]> sent;
-                try (Connection connection = new Connection(
-                        hookEngine,
-                        httpConfig,
-                        AllowAllSecurityContext.INSTANCE,
-                        false,
-                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 100L, 1_000_000L)),
-                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 200L, 2_000_000L)),
-                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 300L, 3_000_000L)),
-                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 301L, 3_000_001L)),
-                        createMaskedFrame(WebSocketOpcode.BINARY, qwpMessage(
-                                tableBlock("a", 400L, 4_000_000L),
-                                varcharTableBlock("b", "not-a-long", 4_000_001L)
-                        ))
-                )) {
-                    stateRef.set(connection.getState());
-                    connection.deliverFrames(5);
-                    sent = connection.sentFrames();
-                }
-                Assert.assertTrue("test setup: the hook must fire at frame 1's re-join", hasFired.get());
-                Assert.assertEquals(3, maxCumulativeOkAck(sent));
-                Assert.assertEquals(QwpConstants.STATUS_SCHEMA_MISMATCH, errorStatusForSeq(sent, 4));
-                for (int seq = 0; seq < 4; seq++) {
-                    Assert.assertFalse(hasErrorResponseForSeq(sent, seq));
-                }
-                drainWalQueue(hookEngine);
-                if (isAlter) {
-                    Assert.assertEquals("the ALTER, frame 0, frame 1 on its own, then frames 2 and 3",
-                            aBefore + 4, lastTxn(hookEngine, "a"));
-                    assertHookQuery(hookEngine, "SELECT v, z FROM a").expectSize().returns("""
-                            v\tz
-                            100\tnull
-                            200\tnull
-                            300\tnull
-                            301\tnull
-                            """);
-                } else {
-                    Assert.assertEquals("frame 0, frame 1 on its own, then frames 2 and 3",
-                            aBefore + 3, lastTxn(hookEngine, "a"));
-                    assertHookQuery(hookEngine, "SELECT v FROM a").expectSize().returns("v\n100\n200\n300\n301\n");
-                }
             }
         });
     }
@@ -4307,6 +4342,135 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
             }
             drainWalQueue();
             assertQuery("SELECT v FROM a").noLeakCheck().expectSize().returns("v\n100\n300\n500\n");
+        });
+    }
+
+    /**
+     * A batch of a's frames, then a frame whose blocks append to a and to n, a table new to
+     * the batch, in the order given, and whose third block fails on b's value. Both rows go
+     * back out: a's writer returns to the batch's rows, and n, which the frame brought into
+     * the batch, leaves it. The batch commits a once, the frame gets its own NACK, and both
+     * tables take rows on a fresh connection, with nothing of the failed frame among them.
+     */
+    private void assertThirdBlockFailureRewindsBothTables(boolean isNewTableFirst) throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("CREATE TABLE a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE n (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE b (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final long aBefore = lastTxn(engine, "a");
+            final long nBefore = lastTxn(engine, "n");
+            final byte[] batchTableBlock = tableBlock("a", 300L, 3_000_000L);
+            final byte[] newTableBlock = tableBlock("n", 301L, 3_000_001L);
+            final ObjList<byte[]> sent = ingestInOnePass(
+                    new QwpIngressUpgradeProcessor(engine, httpConfig),
+                    httpConfig,
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 100L, 1_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 200L, 2_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, qwpMessage(
+                            isNewTableFirst ? newTableBlock : batchTableBlock,
+                            isNewTableFirst ? batchTableBlock : newTableBlock,
+                            varcharTableBlock("b", "not-a-long", 3_000_002L)
+                    ))
+            );
+            Assert.assertEquals("the batch commits a once", aBefore + 1, lastTxn(engine, "a"));
+            Assert.assertEquals("n commits nothing", nBefore, lastTxn(engine, "n"));
+            Assert.assertEquals(1, maxCumulativeOkAck(sent));
+            Assert.assertEquals(QwpConstants.STATUS_SCHEMA_MISMATCH, errorStatusForSeq(sent, 2));
+            Assert.assertTrue("the ack must precede the NACK",
+                    indexOfBinaryFrame(sent, QwpConstants.STATUS_OK, 1) < indexOfErrorResponse(sent, 2));
+
+            final ObjList<byte[]> sentAfter = ingestInOnePass(
+                    new QwpIngressUpgradeProcessor(engine, httpConfig),
+                    httpConfig,
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 400L, 4_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("n", 500L, 5_000_000L))
+            );
+            Assert.assertEquals(1, maxCumulativeOkAck(sentAfter));
+            drainWalQueue();
+            assertQuery("SELECT v FROM a").noLeakCheck().expectSize().returns("v\n100\n200\n400\n");
+            assertQuery("SELECT v FROM n").noLeakCheck().expectSize().returns("v\n500\n");
+            assertQuery("SELECT v FROM b").noLeakCheck().expectSize().returns("v\n");
+        });
+    }
+
+    /**
+     * Frames [a100], [c200], [a300], [a301], then [a400][d401] in one pass, through an
+     * engine whose writer acquisition always fails for d. The last frame's row of a goes
+     * back out of a's writer. A CairoException leaves the table cache healthy: the batch
+     * commits each table once, and the frame gets its own NACK; on a durable-ack
+     * connection, the ack names both commits. An unexpected failure leaves the
+     * connection's writers in doubt and distresses the cache, which commits nothing: the
+     * batch is abandoned with nothing acked, and the NACK names the failed frame, with
+     * INTERNAL_ERROR.
+     */
+    private void assertWriterAcquisitionFailureAfterAppend(boolean isUnexpected, boolean isDurableAck) throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("CREATE TABLE a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE c (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE d (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try (CairoEngine hookEngine = new CairoEngine(new DefaultTestCairoConfiguration(root)) {
+                @Override
+                public WalWriter getWalWriter(TableToken token) {
+                    if (token.getTableName().equals("d")) {
+                        if (isUnexpected) {
+                            throw new IllegalStateException("test: d's writer acquisition fails");
+                        }
+                        throw CairoException.nonCritical().put("test: d's writer acquisition fails");
+                    }
+                    return super.getWalWriter(token);
+                }
+            }) {
+                final long aBefore = lastTxn(hookEngine, "a");
+                final long cBefore = lastTxn(hookEngine, "c");
+                final long dBefore = lastTxn(hookEngine, "d");
+                final ObjList<byte[]> sent = new ObjList<>();
+                ingestInOnePass(
+                        hookEngine,
+                        new QwpIngressUpgradeProcessor(hookEngine, httpConfig),
+                        httpConfig,
+                        AllowAllSecurityContext.INSTANCE,
+                        isDurableAck,
+                        sent,
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 100L, 1_000_000L)),
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("c", 200L, 2_000_000L)),
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 300L, 3_000_000L)),
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 301L, 3_000_001L)),
+                        createMaskedFrame(WebSocketOpcode.BINARY, qwpMessage(
+                                tableBlock("a", 400L, 4_000_000L),
+                                tableBlock("d", 401L, 4_000_001L)
+                        ))
+                );
+                Assert.assertEquals(dBefore, lastTxn(hookEngine, "d"));
+                for (int seq = 0; seq < 4; seq++) {
+                    Assert.assertFalse("only the failed frame is NACKed [seq=" + seq + ']', hasErrorResponseForSeq(sent, seq));
+                }
+                TestUtils.assertContains(errorMessageForSeq(sent, 4), "d's writer acquisition fails");
+                drainWalQueue(hookEngine);
+                assertHookQuery(hookEngine, "SELECT v FROM d").expectSize().returns("v\n");
+                if (isUnexpected) {
+                    Assert.assertEquals("nothing commits", aBefore, lastTxn(hookEngine, "a"));
+                    Assert.assertEquals("nothing commits", cBefore, lastTxn(hookEngine, "c"));
+                    Assert.assertEquals("nothing is acked", -1, maxCumulativeOkAck(sent));
+                    Assert.assertEquals(QwpConstants.STATUS_INTERNAL_ERROR, errorStatusForSeq(sent, 4));
+                    assertHookQuery(hookEngine, "SELECT v FROM a").expectSize().returns("v\n");
+                    assertHookQuery(hookEngine, "SELECT v FROM c").expectSize().returns("v\n");
+                } else {
+                    Assert.assertEquals("a commits once", aBefore + 1, lastTxn(hookEngine, "a"));
+                    Assert.assertEquals("c commits once", cBefore + 1, lastTxn(hookEngine, "c"));
+                    Assert.assertEquals(3, maxCumulativeOkAck(sent));
+                    Assert.assertEquals(QwpConstants.STATUS_WRITE_ERROR, errorStatusForSeq(sent, 4));
+                    Assert.assertTrue("the ack must precede the NACK",
+                            indexOfBinaryFrame(sent, QwpConstants.STATUS_OK, 3) < indexOfErrorResponse(sent, 4));
+                    assertHookQuery(hookEngine, "SELECT v FROM a").expectSize().returns("v\n100\n300\n301\n");
+                    assertHookQuery(hookEngine, "SELECT v FROM c").expectSize().returns("v\n200\n");
+                    if (isDurableAck) {
+                        Assert.assertEquals("the ack must name a's commit", aBefore + 1, okAckSeqTxn(sent, 3, "a"));
+                        Assert.assertEquals("the ack must name c's commit", cBefore + 1, okAckSeqTxn(sent, 3, "c"));
+                    }
+                }
+            }
         });
     }
 
@@ -5105,9 +5269,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
                     && schemaBefore(bad, 0, frameBlocks.getQuick(bad).getQuick(0)) == -1;
         }
 
-        // The shape of testCommitBatchFuzzPinnedRedoSeed: hasBadSecondBlockAfterAppend(), and
-        // a table written by more frames before the bad frame than I4 lets it commit.
-        boolean hasPinnedRedoShape() {
+        // The shape of testCommitBatchFuzzPinnedRewindSeed: hasBadSecondBlockAfterAppend(),
+        // and a table written by more frames before the bad frame than I4 lets it commit.
+        boolean hasPinnedRewindShape() {
             if (!hasBadSecondBlockAfterAppend()) {
                 return false;
             }
@@ -5133,8 +5297,8 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
 
         // An iteration at the cap of 1,000,000 whose writer acquisitions of a table fail
         // unexpectedly or with a CairoException, as asked, with a frame whose second block
-        // sets off a redo when it meets a batch.
-        boolean hasWriterFaultWithRedoTrigger(boolean isUnexpected) {
+        // takes its first block's rows back out when it meets a batch.
+        boolean hasWriterFaultWithRewindTrigger(boolean isUnexpected) {
             if (writerFaultTable < 0 || isWriterFaultUnexpected != isUnexpected || cap != 1_000_000) {
                 return false;
             }

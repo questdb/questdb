@@ -1693,69 +1693,6 @@ public class QwpIngressUpgradeProcessorResumeRecvTest extends AbstractCairoTest 
         });
     }
 
-    /**
-     * A frame appends to the commit batch and then cannot join, so the batch's frames are
-     * re-joined and committed, and the frame fails on its own. Its NACK finds the send
-     * blocked: the ack for the re-joined frames is parked, the NACK queued behind it, and
-     * resuming the send delivers both in that order without processing any frame again.
-     */
-    @Test
-    public void testRedoNackBehindBlockedAckResumesInOrder() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE redo_a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE TABLE redo_b (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            HttpFullFatServerConfiguration config = new DefaultHttpServerConfiguration(configuration);
-            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, config);
-            byte[] wire = QwpIngressWireHarness.concat(
-                    QwpIngressWireHarness.createMaskedFrame(WebSocketOpcode.BINARY,
-                            QwpIngressWireHarness.oneRowMessage("redo_a", 100L, 1_000_000L)),
-                    QwpIngressWireHarness.createMaskedFrame(WebSocketOpcode.BINARY,
-                            QwpIngressWireHarness.oneRowMessage("redo_b", 200L, 2_000_000L)),
-                    QwpIngressWireHarness.createMaskedFrame(WebSocketOpcode.BINARY, QwpIngressWireHarness.qwpMessage(
-                            QwpIngressWireHarness.tableBlock("redo_a", 300L, 3_000_000L),
-                            QwpIngressWireHarness.varcharTableBlock("redo_b", "not-a-long", 3_000_000L)
-                    ))
-            );
-            MockNetworkFacade nf = new MockNetworkFacade(wire);
-            long recv = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
-            long send = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
-            MockRawSocket socket = new MockRawSocket(send, SEND_BUFFER_SIZE);
-            socket.throwSlowToReadOnCall = 1;
-            try (TestableContext context = new TestableContext(config, nf, socket, recv, RECV_BUFFER_SIZE)) {
-                QwpIngressProcessorState state = setupState(config, context);
-                try {
-                    processor.resumeRecv(context);
-                    Assert.fail("the ack ahead of the NACK must encounter injected backpressure");
-                } catch (PeerIsSlowToReadException expected) {
-                    Assert.assertEquals("the redone frames are covered", 1, state.getHighestProcessedSequence());
-                    Assert.assertEquals(2, state.getDeferredErrorSequence());
-                    Assert.assertEquals(QwpConstants.STATUS_SCHEMA_MISMATCH, state.getDeferredErrorStatus());
-                    Assert.assertTrue(state.hasUnresolvedSequence());
-                    Assert.assertFalse(state.isCommitBatchPending());
-                    Assert.assertEquals(QwpConstants.STATUS_OK, Unsafe.getByte(send + 2));
-                    Assert.assertEquals(1, Unsafe.getLong(send + 3));
-                }
-                processor.resumeSend(context);
-                Assert.assertTrue("resume drains the parked ack before writing the NACK", context.resumeResponseSendCalled);
-                Assert.assertEquals(2, socket.sendCallCount);
-                Assert.assertEquals(QwpConstants.STATUS_SCHEMA_MISMATCH, Unsafe.getByte(send + 2));
-                Assert.assertEquals(2, Unsafe.getLong(send + 3));
-                try {
-                    processor.resumeRecv(context);
-                } catch (ServerDisconnectException expected) {
-                    // MockNetworkFacade returns EOF after its input is exhausted.
-                }
-                Assert.assertEquals("no repeated NACK or frame processing on resume", 2, socket.sendCallCount);
-            } finally {
-                Unsafe.free(recv, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
-                Unsafe.free(send, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
-            }
-            drainWalQueue();
-            assertQuery("SELECT v FROM redo_a").noLeakCheck().expectSize().returns("v\n100\n");
-            assertQuery("SELECT v FROM redo_b").noLeakCheck().expectSize().returns("v\n200\n");
-        });
-    }
-
     @Test
     public void testResumeRecvBufferFull() throws Exception {
         assertMemoryLeak(() -> {
@@ -1872,6 +1809,70 @@ public class QwpIngressUpgradeProcessorResumeRecvTest extends AbstractCairoTest 
             } finally {
                 Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
             }
+        });
+    }
+
+    /**
+     * A frame appends to the commit batch and then fails on its second block: its row goes
+     * back out of the batch table's writer, the batch commits, and the frame gets its own
+     * NACK. That NACK finds the send blocked: the ack for the batch is parked, the NACK
+     * queued behind it, and resuming the send delivers both in that order without
+     * processing any frame again.
+     */
+    @Test
+    public void testRewoundFrameNackBehindBlockedAckResumesInOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE rewind_a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE rewind_b (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            HttpFullFatServerConfiguration config = new DefaultHttpServerConfiguration(configuration);
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, config);
+            byte[] wire = QwpIngressWireHarness.concat(
+                    QwpIngressWireHarness.createMaskedFrame(WebSocketOpcode.BINARY,
+                            QwpIngressWireHarness.oneRowMessage("rewind_a", 100L, 1_000_000L)),
+                    QwpIngressWireHarness.createMaskedFrame(WebSocketOpcode.BINARY,
+                            QwpIngressWireHarness.oneRowMessage("rewind_b", 200L, 2_000_000L)),
+                    QwpIngressWireHarness.createMaskedFrame(WebSocketOpcode.BINARY, QwpIngressWireHarness.qwpMessage(
+                            QwpIngressWireHarness.tableBlock("rewind_a", 300L, 3_000_000L),
+                            QwpIngressWireHarness.varcharTableBlock("rewind_b", "not-a-long", 3_000_000L)
+                    ))
+            );
+            MockNetworkFacade nf = new MockNetworkFacade(wire);
+            long recv = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            long send = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            MockRawSocket socket = new MockRawSocket(send, SEND_BUFFER_SIZE);
+            socket.throwSlowToReadOnCall = 1;
+            try (TestableContext context = new TestableContext(config, nf, socket, recv, RECV_BUFFER_SIZE)) {
+                QwpIngressProcessorState state = setupState(config, context);
+                try {
+                    processor.resumeRecv(context);
+                    Assert.fail("the ack ahead of the NACK must encounter injected backpressure");
+                } catch (PeerIsSlowToReadException expected) {
+                    Assert.assertEquals("the batch's frames are covered", 1, state.getHighestProcessedSequence());
+                    Assert.assertEquals(2, state.getDeferredErrorSequence());
+                    Assert.assertEquals(QwpConstants.STATUS_SCHEMA_MISMATCH, state.getDeferredErrorStatus());
+                    Assert.assertTrue(state.hasUnresolvedSequence());
+                    Assert.assertFalse(state.isCommitBatchPending());
+                    Assert.assertEquals(QwpConstants.STATUS_OK, Unsafe.getByte(send + 2));
+                    Assert.assertEquals(1, Unsafe.getLong(send + 3));
+                }
+                processor.resumeSend(context);
+                Assert.assertTrue("resume drains the parked ack before writing the NACK", context.resumeResponseSendCalled);
+                Assert.assertEquals(2, socket.sendCallCount);
+                Assert.assertEquals(QwpConstants.STATUS_SCHEMA_MISMATCH, Unsafe.getByte(send + 2));
+                Assert.assertEquals(2, Unsafe.getLong(send + 3));
+                try {
+                    processor.resumeRecv(context);
+                } catch (ServerDisconnectException expected) {
+                    // MockNetworkFacade returns EOF after its input is exhausted.
+                }
+                Assert.assertEquals("no repeated NACK or frame processing on resume", 2, socket.sendCallCount);
+            } finally {
+                Unsafe.free(recv, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(send, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            }
+            drainWalQueue();
+            assertQuery("SELECT v FROM rewind_a").noLeakCheck().expectSize().returns("v\n100\n");
+            assertQuery("SELECT v FROM rewind_b").noLeakCheck().expectSize().returns("v\n200\n");
         });
     }
 

@@ -106,7 +106,7 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                     prepareArrayBlock(state, column -> column.addDoubleArray(new double[]{value, value + 0.5}), 1_000_000L + frame);
                     // Phase 1 re-validates array dimensions on every block, but an
                     // array column that exists settles the schema like any other.
-                    Assert.assertEquals(QwpIngressProcessorState.COMMIT_BATCH_JOINED, state.joinCommitBatch(frame, 0, 0));
+                    Assert.assertTrue(state.joinCommitBatch(frame));
                     Assert.assertTrue(state.getErrorText(), state.isOk());
                     state.clearMessageState();
                 }
@@ -141,11 +141,11 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 state.clear();
 
                 prepareArrayBlock(state, column -> column.addDoubleArray(new double[]{7.0, 8.0}), 3_000_000L);
-                Assert.assertEquals(QwpIngressProcessorState.COMMIT_BATCH_JOINED, state.joinCommitBatch(2, 0, 0));
+                Assert.assertTrue(state.joinCommitBatch(2));
                 state.clearMessageState();
                 prepareArrayBlock(state, column -> column.addDoubleArray(new double[][]{{9.0, 10.0}, {11.0, 12.0}}), 4_000_000L);
                 // Phase 1 refuses the block before it writes a row, so the batch can commit as it stands.
-                Assert.assertEquals(QwpIngressProcessorState.COMMIT_BATCH_BOUNDARY, state.joinCommitBatch(3, 0, 0));
+                Assert.assertFalse(state.joinCommitBatch(3));
                 Assert.assertEquals(QwpIngressProcessorState.Status.SCHEMA_MISMATCH, state.getStatus());
                 TestUtils.assertContains(state.getErrorText(), "array dimensionality mismatch");
                 Assert.assertTrue(state.isCommitBatchPending());
@@ -175,15 +175,13 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
             try (QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfigWithCap(3))) {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
                 prepareLongBlocks(state, 1, "capped");
-                Assert.assertEquals(QwpIngressProcessorState.COMMIT_BATCH_JOINED, state.joinCommitBatch(0, 0, 0));
+                Assert.assertTrue(state.joinCommitBatch(0));
                 state.clearMessageState();
                 prepareLongBlocks(state, 1, "capped");
-                Assert.assertEquals("1 + 1 rows stay below the cap of 3",
-                        QwpIngressProcessorState.COMMIT_BATCH_JOINED, state.joinCommitBatch(1, 0, 0));
+                Assert.assertTrue("1 + 1 rows stay below the cap of 3", state.joinCommitBatch(1));
                 state.clearMessageState();
                 prepareLongBlocks(state, 1, "capped");
-                Assert.assertEquals("2 + 1 rows would reach the cap",
-                        QwpIngressProcessorState.COMMIT_BATCH_BOUNDARY, state.joinCommitBatch(2, 0, 0));
+                Assert.assertFalse("2 + 1 rows would reach the cap", state.joinCommitBatch(2));
                 Assert.assertTrue(state.isOk());
                 state.clearMessageState();
                 Assert.assertTrue(state.commitBatch());
@@ -211,7 +209,7 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 final String[] frames = {"first_t", "second_t", "first_t"};
                 for (int seq = 0; seq < frames.length; seq++) {
                     prepareLongBlocks(state, 1, frames[seq]);
-                    Assert.assertEquals(QwpIngressProcessorState.COMMIT_BATCH_JOINED, state.joinCommitBatch(seq, 0, 0));
+                    Assert.assertTrue(state.joinCommitBatch(seq));
                     state.clearMessageState();
                 }
                 final TableWriter.Row row = state.getCommitBatchWriter(1).newRow(5_000_000L);
@@ -233,84 +231,94 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
     }
 
     /**
-     * A frame that fails on its first block's append leaves the batch as it stands: the
-     * appender cancelled the block, and nothing of the frame is in a writer. The frame is
-     * a boundary, whether its table is in the batch or new to it, as is a frame without a
-     * payload, and the batch then commits. A frame that fails after its first block is a
-     * redo, whether that block appended rows or had none: the normal path can no longer
-     * take the frame from its first block.
+     * A frame that fails leaves the batch as it stood before the frame, so the batch then
+     * commits. The appender cancels a failed block, so a frame that fails on its first
+     * block's append left nothing in a writer, whether its table is in the batch or new
+     * to it, and neither does a frame without a payload. A frame that fails after its first
+     * block appended to a batch table takes that block's rows back out of the table's
+     * writer, and so does one whose first block had no rows. A table that the failed frame
+     * brought into the batch leaves it.
      */
     @Test
-    public void testFailedFirstBlockAppendIsCommitBatchBoundary() throws Exception {
+    public void testFailedFrameLeavesCommitBatchAsItStood() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE a (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE TABLE b (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE c (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             LineHttpProcessorConfiguration config = new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
             try (QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, config)) {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
                 prepareVarcharBlocks(state, "a", "1");
-                Assert.assertEquals(QwpIngressProcessorState.COMMIT_BATCH_JOINED, state.joinCommitBatch(0, 0, 0));
+                Assert.assertTrue(state.joinCommitBatch(0));
                 state.clearMessageState();
                 prepareVarcharBlocks(state, "a", "2");
-                Assert.assertEquals(QwpIngressProcessorState.COMMIT_BATCH_JOINED, state.joinCommitBatch(1, 0, 0));
+                Assert.assertTrue(state.joinCommitBatch(1));
                 state.clearMessageState();
 
                 prepareVarcharBlocks(state, "a", "not-a-long");
-                Assert.assertEquals("a batch table's block that fails on a value",
-                        QwpIngressProcessorState.COMMIT_BATCH_BOUNDARY, state.joinCommitBatch(2, 0, 0));
+                Assert.assertFalse("a batch table's block that fails on a value", state.joinCommitBatch(2));
                 Assert.assertEquals(QwpIngressProcessorState.Status.SCHEMA_MISMATCH, state.getStatus());
                 Assert.assertTrue(state.isCommitBatchPending());
+                Assert.assertTrue(state.isCommitBatchIntact());
                 state.clearMessageState();
                 prepareVarcharBlocks(state, "b", "not-a-long");
-                Assert.assertEquals("a new table's block that fails on a value",
-                        QwpIngressProcessorState.COMMIT_BATCH_BOUNDARY, state.joinCommitBatch(3, 0, 0));
+                Assert.assertFalse("a new table's block that fails on a value", state.joinCommitBatch(3));
                 Assert.assertEquals(QwpIngressProcessorState.Status.SCHEMA_MISMATCH, state.getStatus());
                 Assert.assertTrue(state.isCommitBatchPending());
+                Assert.assertEquals("the failed table did not join", 1, state.getCommitBatchTableCount());
                 state.clearMessageState();
                 state.prepareMessage();
-                Assert.assertEquals("a frame without a payload",
-                        QwpIngressProcessorState.COMMIT_BATCH_BOUNDARY, state.joinCommitBatch(4, 0, 0));
+                Assert.assertFalse("a frame without a payload", state.joinCommitBatch(4));
                 Assert.assertTrue(state.getErrorText(), state.isOk());
                 Assert.assertTrue(state.commitBatch());
                 Assert.assertEquals("the watermark covers the batch", 1, state.getHighestProcessedSequence());
                 state.clearMessageState();
 
                 prepareVarcharBlocks(state, "a", "3");
-                Assert.assertEquals(QwpIngressProcessorState.COMMIT_BATCH_JOINED, state.joinCommitBatch(5, 0, 0));
+                Assert.assertTrue(state.joinCommitBatch(5));
                 state.clearMessageState();
-                prepareVarcharBlocks(state, "a", "4", "b", "not-a-long");
-                Assert.assertEquals("a block that fails after the frame's first block appended",
-                        QwpIngressProcessorState.COMMIT_BATCH_REDO, state.joinCommitBatch(6, 0, 0));
+                prepareVarcharBlocks(state, "a", "4", "c", "4", "b", "not-a-long");
+                Assert.assertFalse("a block that fails after the frame's first blocks appended", state.joinCommitBatch(6));
                 Assert.assertEquals(QwpIngressProcessorState.Status.SCHEMA_MISMATCH, state.getStatus());
+                Assert.assertTrue(state.isCommitBatchIntact());
+                Assert.assertEquals("the table the frame brought in left the batch", 1, state.getCommitBatchTableCount());
+                Assert.assertEquals("the frame's row left a's writer", 1, state.getCommitBatchWriter(0).getUncommittedRowCount());
+                state.clearFrameErrorForBatchCommit();
+                Assert.assertTrue(state.commitBatch());
+                Assert.assertEquals(5, state.getHighestProcessedSequence());
                 state.clear();
-                Assert.assertFalse(state.isCommitBatchPending());
 
                 prepareVarcharBlocks(state, "a", "5");
-                Assert.assertEquals(QwpIngressProcessorState.COMMIT_BATCH_JOINED, state.joinCommitBatch(7, 0, 0));
+                Assert.assertTrue(state.joinCommitBatch(7));
                 state.clearMessageState();
                 prepareVarcharBlocks(state, "a", null, "b", "not-a-long");
-                Assert.assertEquals("a block that fails after the frame's first block, which had no rows",
-                        QwpIngressProcessorState.COMMIT_BATCH_REDO, state.joinCommitBatch(8, 0, 0));
+                Assert.assertFalse("a block that fails after the frame's first block, which had no rows", state.joinCommitBatch(8));
                 Assert.assertEquals(QwpIngressProcessorState.Status.SCHEMA_MISMATCH, state.getStatus());
+                Assert.assertTrue(state.isCommitBatchIntact());
+                state.clearFrameErrorForBatchCommit();
+                Assert.assertTrue(state.commitBatch());
+                Assert.assertEquals(7, state.getHighestProcessedSequence());
                 state.clear();
                 Assert.assertFalse(state.isCommitBatchPending());
             }
             drainWalQueue();
-            assertQuery("SELECT val FROM a").noLeakCheck().expectSize().returns("val\n1\n2\n");
+            assertQuery("SELECT val FROM a").noLeakCheck().expectSize().returns("val\n1\n2\n3\n5\n");
             assertQuery("SELECT val FROM b").noLeakCheck().expectSize().returns("val\n");
+            assertQuery("SELECT val FROM c").noLeakCheck().expectSize().returns("val\n");
         });
     }
 
     /**
      * How a failed frame meets a pending batch of a symbol table. A failure that distresses
-     * the table cache, which then commits nothing, makes it a redo, whether the frame got
-     * to its first block's lookup or failed in its preparation. A failure that leaves the
-     * cache healthy and touched no writer makes it a boundary, whether the decode failed
-     * outright or after it applied a dictionary delta that only adds ids. So does a frame
-     * that redefines a dictionary id, failed or not, here one that is fine.
+     * the table cache, which then commits nothing, leaves the batch no longer intact,
+     * whether the frame got to its first block's lookup or failed in its preparation, and
+     * the batch commit refuses it. A failure that leaves the cache healthy and touched no
+     * writer leaves the batch intact, whether the decode failed outright or after it
+     * applied a dictionary delta that only adds ids. A frame that redefines a dictionary
+     * id joins like any other.
      */
     @Test
-    public void testFailedFrameInDistressedCacheIsRedo() throws Exception {
+    public void testFailedFrameInDistressedCacheLosesCommitBatch() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE s (s SYMBOL, val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE TABLE b (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -338,42 +346,48 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                     state.of(1, AllowAllSecurityContext.INSTANCE);
                     final GlobalSymbolDictionary dict = new GlobalSymbolDictionary();
                     prepareSymbolBlock(state, dict, -1, "x");
-                    Assert.assertEquals(QwpIngressProcessorState.COMMIT_BATCH_JOINED, state.joinCommitBatch(0, 0, 0));
+                    Assert.assertTrue(state.joinCommitBatch(0));
                     state.clearMessageState();
 
                     isLookupFailing.set(true);
                     prepareLongBlocks(state, 1, "b");
-                    Assert.assertEquals("an unexpected error in the first block's lookup",
-                            QwpIngressProcessorState.COMMIT_BATCH_REDO, state.joinCommitBatch(1, 0, 0));
+                    Assert.assertFalse("an unexpected error in the first block's lookup", state.joinCommitBatch(1));
                     Assert.assertEquals(QwpIngressProcessorState.Status.INTERNAL_ERROR, state.getStatus());
+                    Assert.assertFalse(state.isCommitBatchIntact());
+                    state.clearFrameErrorForBatchCommit();
+                    Assert.assertFalse("a distressed table cache commits nothing", state.commitBatch());
+                    Assert.assertEquals(QwpIngressProcessorState.Status.INTERNAL_ERROR, state.getStatus());
+                    TestUtils.assertContains(state.getErrorText(), "commit batch rows are not intact");
+                    // The upgrade processor would abandon the batch here, which pins this
+                    // connection's watermark below it; the clear() alone lets the test go on.
                     state.clear();
                     Assert.assertFalse(state.isCommitBatchPending());
+                    Assert.assertTrue("the clear frees the distressed cache", state.isCommitBatchIntact());
 
                     prepareSymbolBlock(state, dict, 0, "x");
-                    Assert.assertEquals(QwpIngressProcessorState.COMMIT_BATCH_JOINED, state.joinCommitBatch(2, 0, 0));
+                    Assert.assertTrue(state.joinCommitBatch(2));
                     state.clearMessageState();
                     isGateFailing.set(true);
                     prepareSymbolBlock(state, dict, 0, "x");
                     Assert.assertEquals(QwpIngressProcessorState.Status.INTERNAL_ERROR, state.getStatus());
-                    Assert.assertEquals("an unexpected error in the preparation, before the decode",
-                            QwpIngressProcessorState.COMMIT_BATCH_REDO, state.joinCommitBatch(3, 0, 0));
+                    Assert.assertFalse("an unexpected error in the preparation, before the decode", state.joinCommitBatch(3));
+                    Assert.assertFalse(state.isCommitBatchIntact());
                     state.clear();
 
                     prepareSymbolBlock(state, dict, 0, "x");
-                    Assert.assertEquals(QwpIngressProcessorState.COMMIT_BATCH_JOINED, state.joinCommitBatch(4, 0, 0));
+                    Assert.assertTrue(state.joinCommitBatch(4));
                     state.clearMessageState();
                     addNativeData(state, new byte[]{'Q', 'W', 'P'});
                     state.prepareMessage();
                     Assert.assertEquals(QwpIngressProcessorState.Status.PARSE_ERROR, state.getStatus());
-                    Assert.assertEquals("a malformed frame",
-                            QwpIngressProcessorState.COMMIT_BATCH_BOUNDARY, state.joinCommitBatch(5, 0, 0));
+                    Assert.assertFalse("a malformed frame", state.joinCommitBatch(5));
+                    Assert.assertTrue(state.isCommitBatchIntact());
                     state.clearMessageState();
 
                     final GlobalSymbolDictionary otherDict = new GlobalSymbolDictionary();
                     prepareSymbolBlock(state, otherDict, -1, "y");
                     Assert.assertTrue(state.getErrorText(), state.isOk());
-                    Assert.assertEquals("a frame that redefines id 0",
-                            QwpIngressProcessorState.COMMIT_BATCH_BOUNDARY, state.joinCommitBatch(6, 0, 0));
+                    Assert.assertTrue("a frame that redefines id 0", state.joinCommitBatch(6));
                     state.clearMessageState();
 
                     // Adds id 1 and then fails in its first table header: the table name's
@@ -394,18 +408,21 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                     }
                     state.prepareMessage();
                     Assert.assertEquals(QwpIngressProcessorState.Status.PARSE_ERROR, state.getStatus());
-                    Assert.assertEquals("a frame that fails in its first table header after a delta that adds ids",
-                            QwpIngressProcessorState.COMMIT_BATCH_BOUNDARY, state.joinCommitBatch(7, 0, 0));
+                    Assert.assertFalse("a frame that fails in its first table header after a delta that adds ids", state.joinCommitBatch(7));
                     Assert.assertTrue(state.isCommitBatchPending());
+                    Assert.assertTrue(state.isCommitBatchIntact());
                     state.clearFrameErrorForBatchCommit();
                     Assert.assertTrue(state.commitBatch());
-                    Assert.assertEquals(4, state.getHighestProcessedSequence());
+                    Assert.assertEquals(6, state.getHighestProcessedSequence());
                     state.clear();
                 }
                 drainWalQueue(hookEngine);
-                try (TableReader reader = hookEngine.getReader("s")) {
-                    Assert.assertEquals("frame 4's row", 1, reader.size());
-                }
+                assertQuery("SELECT s, val FROM s")
+                        .withEngine(hookEngine)
+                        .withContext(TestUtils.createSqlExecutionCtx(hookEngine))
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("s\tval\nx\t1\ny\t1\n");
             }
         });
     }
@@ -418,11 +435,10 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
             try (QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, config)) {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
                 prepareLongBlocks(state, 1, "evolving");
-                Assert.assertEquals(QwpIngressProcessorState.COMMIT_BATCH_JOINED, state.joinCommitBatch(0, 0, 0));
+                Assert.assertTrue(state.joinCommitBatch(0));
                 state.clearMessageState();
                 prepareEvolvedBlock(state, "evolving");
-                Assert.assertEquals("a schema the writer has not settled cannot join",
-                        QwpIngressProcessorState.COMMIT_BATCH_BOUNDARY, state.joinCommitBatch(1, 0, 0));
+                Assert.assertFalse("a schema the writer has not settled cannot join", state.joinCommitBatch(1));
                 Assert.assertTrue(state.isOk());
                 Assert.assertTrue(state.commitBatch());
             }
@@ -430,53 +446,6 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
             assertQuery("SELECT count() FROM evolving").noLeakCheck().noRandomAccess().expectSize().returns("count\n1\n");
             assertQuery("SELECT \"column\" FROM table_columns('evolving')").noLeakCheck()
                     .noRandomAccess().returns("column\nval\nts\n");
-        });
-    }
-
-    /**
-     * A commit batch keeps three longs per frame for a redo, and a long receive pass grows
-     * that record. Ending the connection gives the memory back, so a pooled state does not
-     * keep it at the size of the largest pass it ever processed.
-     */
-    @Test
-    public void testFrameRecordShrinksWhenConnectionEnds() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE record_a (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            final long message;
-            final int messageSize;
-            try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
-                 QwpTableBuffer table = new QwpTableBuffer("record_a")) {
-                table.getOrCreateColumn("val", QwpConstants.TYPE_LONG, false).addLong(1);
-                table.getOrCreateDesignatedTimestampColumn(QwpConstants.TYPE_TIMESTAMP).addLong(1_000_000L);
-                table.nextRow();
-                messageSize = encoder.encode(table);
-                message = Unsafe.malloc(messageSize, MemoryTag.NATIVE_DEFAULT);
-                Unsafe.getUnsafe().copyMemory(encoder.getBuffer().getBufferPtr(), message, messageSize);
-            }
-            try {
-                LineHttpProcessorConfiguration config = new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-                try (QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, config)) {
-                    state.of(1, AllowAllSecurityContext.INSTANCE);
-                    final int initialCapacity = state.getCommitBatchFramesCapacity();
-                    // 300 frames commit as one batch: 900 longs, past the initial capacity.
-                    ingestInterleaved(state, new long[]{message}, new int[]{messageSize}, 0, 300);
-                    Assert.assertTrue("test setup: the batch must grow its frame record",
-                            state.getCommitBatchFramesCapacity() >= 900);
-                    state.onDisconnected();
-                    Assert.assertEquals(initialCapacity, state.getCommitBatchFramesCapacity());
-                    // The pooled state takes the next connection with the small record.
-                    state.of(2, AllowAllSecurityContext.INSTANCE);
-                    ingestInterleaved(state, new long[]{message}, new int[]{messageSize}, 0, 30);
-                    Assert.assertTrue(state.commitBatch());
-                    Assert.assertEquals(29, state.getHighestProcessedSequence());
-                    state.onDisconnected();
-                    Assert.assertEquals(initialCapacity, state.getCommitBatchFramesCapacity());
-                }
-            } finally {
-                Unsafe.free(message, messageSize, MemoryTag.NATIVE_DEFAULT);
-            }
-            drainWalQueue();
-            assertQuery("SELECT count() FROM record_a").noLeakCheck().noRandomAccess().expectSize().returns("count\n330\n");
         });
     }
 
@@ -586,33 +555,33 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
                 // An empty frame opens the batch.
                 prepareLongBlocks(state, 0);
-                Assert.assertEquals(QwpIngressProcessorState.COMMIT_BATCH_JOINED, state.joinCommitBatch(0, 0, 0));
+                Assert.assertTrue(state.joinCommitBatch(0));
                 Assert.assertEquals(0, state.getCommitBatchTableCount());
                 state.clearMessageState();
                 // A rowless block joins no table.
                 prepareLongBlocks(state, 0, "prepared");
-                Assert.assertEquals(QwpIngressProcessorState.COMMIT_BATCH_JOINED, state.joinCommitBatch(1, 0, 0));
+                Assert.assertTrue(state.joinCommitBatch(1));
                 Assert.assertEquals(0, state.getCommitBatchTableCount());
                 state.clearMessageState();
                 prepareLongBlocks(state, 1, "prepared");
-                Assert.assertEquals(QwpIngressProcessorState.COMMIT_BATCH_JOINED, state.joinCommitBatch(2, 0, 0));
+                Assert.assertTrue(state.joinCommitBatch(2));
                 Assert.assertEquals(1, state.getCommitBatchTableCount());
                 state.clearMessageState();
                 // A rowless block of a batch table and a frame of two blocks of it.
                 prepareLongBlocks(state, 0, "prepared");
-                Assert.assertEquals(QwpIngressProcessorState.COMMIT_BATCH_JOINED, state.joinCommitBatch(3, 0, 0));
+                Assert.assertTrue(state.joinCommitBatch(3));
                 state.clearMessageState();
                 prepareLongBlocks(state, 1, "prepared", "prepared");
-                Assert.assertEquals(QwpIngressProcessorState.COMMIT_BATCH_JOINED, state.joinCommitBatch(4, 0, 0));
+                Assert.assertTrue(state.joinCommitBatch(4));
                 Assert.assertEquals(1, state.getCommitBatchTableCount());
                 state.clearMessageState();
                 // Another table joins, alone and next to the batch's first table.
                 prepareLongBlocks(state, 1, "other");
-                Assert.assertEquals(QwpIngressProcessorState.COMMIT_BATCH_JOINED, state.joinCommitBatch(5, 0, 0));
+                Assert.assertTrue(state.joinCommitBatch(5));
                 Assert.assertEquals(2, state.getCommitBatchTableCount());
                 state.clearMessageState();
                 prepareLongBlocks(state, 1, "prepared", "other");
-                Assert.assertEquals(QwpIngressProcessorState.COMMIT_BATCH_JOINED, state.joinCommitBatch(6, 0, 0));
+                Assert.assertTrue(state.joinCommitBatch(6));
                 Assert.assertEquals(2, state.getCommitBatchTableCount());
                 state.clearMessageState();
                 Assert.assertTrue(state.commitBatch());
@@ -1282,7 +1251,7 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                     final int tableCount = 10 * connection;
                     for (int frame = 0; frame < 2 * tableCount; frame++) {
                         prepareLongBlocks(state, 1, "conn_table_" + frame % tableCount);
-                        Assert.assertEquals(QwpIngressProcessorState.COMMIT_BATCH_JOINED, state.joinCommitBatch(frame, 0, 0));
+                        Assert.assertTrue(state.joinCommitBatch(frame));
                         state.clearMessageState();
                     }
                     Assert.assertTrue(state.commitBatch());
@@ -1575,7 +1544,7 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                         state.addData(address, address + length);
                     }
                     state.prepareMessage();
-                    Assert.assertEquals(QwpIngressProcessorState.COMMIT_BATCH_JOINED, state.joinCommitBatch(seq, 0, 0));
+                    Assert.assertTrue(state.joinCommitBatch(seq));
                     state.clearMessageState();
                 }
                 Assert.assertEquals(2, state.getCommitBatchTableCount());
@@ -7330,19 +7299,19 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
                 state.setDurableAckEnabled(true);
                 prepareLongBlocks(state, 1, "prepared");
-                Assert.assertEquals(QwpIngressProcessorState.COMMIT_BATCH_JOINED, state.joinCommitBatch(0, 0, 0));
+                Assert.assertTrue(state.joinCommitBatch(0));
                 state.clearMessageState();
                 prepareLongBlocks(state, 1, "prepared");
                 if (isAfterAdmission) {
                     // The frame joins and appends to the old writer before the replacement.
-                    Assert.assertEquals(QwpIngressProcessorState.COMMIT_BATCH_JOINED, state.joinCommitBatch(1, 0, 0));
+                    Assert.assertTrue(state.joinCommitBatch(1));
                     state.clearMessageState();
                 }
                 execute(isDrop ? "DROP TABLE prepared" : "RENAME TABLE prepared TO prepared_old");
                 execute("CREATE TABLE prepared (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
                 long replacementTxn = engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("prepared"));
                 if (!isAfterAdmission) {
-                    Assert.assertEquals(QwpIngressProcessorState.COMMIT_BATCH_BOUNDARY, state.joinCommitBatch(1, 0, 0));
+                    Assert.assertFalse(state.joinCommitBatch(1));
                     Assert.assertTrue(state.isOk());
                 }
                 Assert.assertFalse(state.commitBatch());
@@ -7379,7 +7348,7 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
             final int t = i % messages.length;
             state.addData(messages[t], messages[t] + messageSizes[t]);
             state.prepareMessage();
-            Assert.assertEquals(QwpIngressProcessorState.COMMIT_BATCH_JOINED, state.joinCommitBatch(seq, 0, 0));
+            Assert.assertTrue(state.joinCommitBatch(seq));
             state.clearMessageState();
             if ((i + 1) % 300 == 0) {
                 Assert.assertTrue(state.commitBatch());
