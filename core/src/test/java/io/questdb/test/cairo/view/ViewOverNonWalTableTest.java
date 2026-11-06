@@ -44,6 +44,7 @@ import io.questdb.griffin.engine.ops.OperationDispatcher;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
+import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.LogCapture;
@@ -51,6 +52,7 @@ import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.After;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -276,43 +278,34 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
     }
 
     @Test
-    public void testDdlDoesNotWaitAtCheckpointOrBusyWriter() throws Exception {
+    public void testDdlDoesNotWaitAtBusyWriter() throws Exception {
         // A view compile run holds t's reader, but the DDL fails for another reason first: a
-        // checkpoint in progress, or a busy writer. The DDL fails at once, as it does today,
-        // and does not wait for the run.
-        assertMemoryLeak(() -> {
-            // the server default; a DDL that waited would log its wait before it fails
-            node1.setProperty(PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 500);
-            createTableAndViewsThenAddColumn();
-            final ViewCompileParker run = ViewCompileParker.ofQueueDrain(engine, "t", PoolListener.SRC_READER);
-            engine.setPoolListener(run);
-            try {
-                run.start();
-                execute("CHECKPOINT CREATE");
-                try {
-                    assertDdlFails("TRUNCATE TABLE t", "there is an active query against 't'. Try again.");
-                    assertDdlFails("DROP TABLE t", "could not lock 't~' [reason='checkpointInProgress']");
-                    assertDdlFails("RENAME TABLE t TO u", "table busy [reason=checkpointInProgress]");
-                } finally {
-                    execute("CHECKPOINT RELEASE");
-                }
-                try (TableWriter ignore = getWriter("t")) {
-                    assertDdlFails("DROP TABLE t", "could not lock 't~' [reason='test']");
-                    assertDdlFails("RENAME TABLE t TO u", "table busy [reason=test]");
-                }
-            } finally {
-                run.join();
-                engine.setPoolListener(null);
+        // busy writer. The DDL fails at once, as it does today, and does not wait for the run.
+        assertMemoryLeak(() -> assertDdlDoesNotWaitForViewCompile(() -> {
+            try (TableWriter ignore = getWriter("t")) {
+                assertDdlFails("DROP TABLE t", "could not lock 't~' [reason='test']");
+                assertDdlFails("RENAME TABLE t TO u", "table busy [reason=test]");
             }
-            capture.drain();
-            capture.assertNotLogged(WAIT_LINE);
+        }));
+    }
 
-            execute("TRUNCATE TABLE t");
-            execute("RENAME TABLE t TO u");
-            execute("DROP TABLE u");
-            assertTableListed("t", false);
-            assertTableListed("u", false);
-        });
+    @Test
+    public void testDdlDoesNotWaitAtCheckpoint() throws Exception {
+        // CHECKPOINT CREATE calls sync(), which Windows does not have.
+        Assume.assumeFalse(Os.isWindows());
+        // A view compile run holds t's reader, but the DDL fails for another reason first: a
+        // checkpoint in progress. The DDL fails at once, as it does today, and does not wait
+        // for the run.
+        assertMemoryLeak(() -> assertDdlDoesNotWaitForViewCompile(() -> {
+            execute("CHECKPOINT CREATE");
+            try {
+                assertDdlFails("TRUNCATE TABLE t", "there is an active query against 't'. Try again.");
+                assertDdlFails("DROP TABLE t", "could not lock 't~' [reason='checkpointInProgress']");
+                assertDdlFails("RENAME TABLE t TO u", "table busy [reason=checkpointInProgress]");
+            } finally {
+                execute("CHECKPOINT RELEASE");
+            }
+        }));
     }
 
     @Test
@@ -767,6 +760,8 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
 
     @Test
     public void testTruncateFailsWhenCheckpointStartsDuringViewCompileWait() throws Exception {
+        // CHECKPOINT CREATE calls sync(), which Windows does not have.
+        Assume.assumeFalse(Os.isWindows());
         // While TRUNCATE waits for a view compile run that holds t's reader, another session
         // starts a checkpoint. TRUNCATE checks for a checkpoint before each lock attempt, so once
         // the run ends it fails as it does when the checkpoint starts first, and leaves t's rows be.
@@ -1362,6 +1357,31 @@ public class ViewOverNonWalTableTest extends AbstractViewTest {
                     .returns("a\n42\n");
             execute("DROP TABLE u");
         }
+    }
+
+    // Runs the DDLs while a view compile run holds t's reader. A DDL that waited for the run would
+    // log its wait before it fails, so the log must not carry the wait line.
+    private void assertDdlDoesNotWaitForViewCompile(TestUtils.LeakProneCode ddls) throws Exception {
+        // the server default
+        node1.setProperty(PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 500);
+        createTableAndViewsThenAddColumn();
+        final ViewCompileParker run = ViewCompileParker.ofQueueDrain(engine, "t", PoolListener.SRC_READER);
+        engine.setPoolListener(run);
+        try {
+            run.start();
+            ddls.run();
+        } finally {
+            run.join();
+            engine.setPoolListener(null);
+        }
+        capture.drain();
+        capture.assertNotLogged(WAIT_LINE);
+
+        execute("TRUNCATE TABLE t");
+        execute("RENAME TABLE t TO u");
+        execute("DROP TABLE u");
+        assertTableListed("t", false);
+        assertTableListed("u", false);
     }
 
     // The listener starts a view compile run on the DDL thread's first lock of t's metadata, and
