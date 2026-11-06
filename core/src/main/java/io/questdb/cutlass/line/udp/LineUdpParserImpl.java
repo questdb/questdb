@@ -79,7 +79,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     private final short defaultFloatColumnType;
     private final short defaultIntegerColumnType;
     private final CairoEngine engine;
-    private final IntList geoHashBitsSizeByColIdx = new IntList(); // 0 if not a GeoHash, else bits precision
+    private final IntList valueTypeByColIdx = new IntList(); // what getValueType() made of each value; putValue reads the spelling from it
     private final FieldValueParser MY_NEW_TAG_VALUE = this::parseTagValueNewTable;
     private final Path path = new Path();
     private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
@@ -218,7 +218,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                 break;
             case EVT_TIMESTAMP:
                 columnValues.add(token.getCacheAddress());
-                geoHashBitsSizeByColIdx.add(0);
+                valueTypeByColIdx.add(ColumnType.TIMESTAMP);
                 break;
             default:
                 break;
@@ -252,7 +252,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
             LineUdpParserSupport.putValue(
                     row,
                     (int) columnNameType.getQuick(i * 2 + 1),
-                    geoHashBitsSizeByColIdx.getQuick(i),
+                    valueTypeByColIdx.getQuick(i),
                     i,
                     cache.get(columnValues.getQuick(i))
             );
@@ -272,7 +272,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
             LineUdpParserSupport.putValue(
                     row,
                     Numbers.decodeHighInt(value),
-                    geoHashBitsSizeByColIdx.getQuick(i),
+                    valueTypeByColIdx.getQuick(i),
                     Numbers.decodeLowInt(value),
                     cache.get(columnValues.getQuick(i))
             );
@@ -302,7 +302,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     private void clearState() {
         columnNameType.clear();
         columnIndexAndType.clear();
-        geoHashBitsSizeByColIdx.clear();
+        valueTypeByColIdx.clear();
         columnValues.clear();
     }
 
@@ -446,7 +446,6 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         assert valueType > ColumnType.UNDEFINED;
         if (columnType > ColumnType.UNDEFINED) {
             boolean valid;
-            int geoHashBits = 0;
             if (valueType != ColumnType.NULL) {
                 final int valueTypeTag = ColumnType.tagOf(valueType);
                 final int columnTypeTag = ColumnType.tagOf(columnType);
@@ -464,14 +463,22 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                             || columnTypeTag == ColumnType.BYTE;
                     case ColumnType.BYTE -> columnTypeTag == ColumnType.BYTE;
                     case ColumnType.BOOLEAN -> columnTypeTag == ColumnType.BOOLEAN;
+                    // the same conversions as ILP over TCP gives a quoted string; a geohash is
+                    // tested by its flag, since DECIMAL and multi-dimensional array types keep
+                    // their own data in the bits a geohash type uses for its precision
                     case ColumnType.STRING, ColumnType.VARCHAR -> columnTypeTag == ColumnType.STRING ||
                             columnTypeTag == ColumnType.VARCHAR ||
                             columnTypeTag == ColumnType.CHAR ||
                             columnTypeTag == ColumnType.IPv4 ||
-                            isForField &&
-                                    (geoHashBits = ColumnType.getGeoHashBits(columnType)) != 0;
-                    case ColumnType.DOUBLE -> columnTypeTag == ColumnType.DOUBLE || columnTypeTag == ColumnType.FLOAT;
-                    case ColumnType.FLOAT -> columnTypeTag == ColumnType.FLOAT;
+                            columnTypeTag == ColumnType.SYMBOL ||
+                            columnTypeTag == ColumnType.UUID ||
+                            ColumnType.isDecimalType(columnTypeTag) ||
+                            isForField && ColumnType.isGeoHash(columnType);
+                    case ColumnType.DOUBLE -> columnTypeTag == ColumnType.DOUBLE
+                            || columnTypeTag == ColumnType.FLOAT
+                            || ColumnType.isDecimalType(columnTypeTag);
+                    case ColumnType.FLOAT -> columnTypeTag == ColumnType.FLOAT
+                            || ColumnType.isDecimalType(columnTypeTag);
                     case ColumnType.SYMBOL -> columnTypeTag == ColumnType.SYMBOL;
                     case ColumnType.LONG256 -> columnTypeTag == ColumnType.LONG256;
                     case ColumnType.TIMESTAMP -> columnTypeTag == ColumnType.TIMESTAMP;
@@ -483,7 +490,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
             if (valid) {
                 columnIndexAndType.add(Numbers.encodeLowHighInts(columnIndex, columnType));
                 columnValues.add(value.getCacheAddress());
-                geoHashBitsSizeByColIdx.add(geoHashBits);
+                valueTypeByColIdx.add(valueType);
             } else {
                 LOG.error().$("mismatched column and value types [table=").$(writer.getTableToken())
                         .$(", column=").$safe(metadata.getColumnName(columnIndex))
@@ -501,7 +508,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                 int columnIndex = writer.getColumnIndex(colNameAsChars);
                 columnIndexAndType.add(Numbers.encodeLowHighInts(columnIndex, valueType));
                 columnValues.add(value.getCacheAddress());
-                geoHashBitsSizeByColIdx.add(0);
+                valueTypeByColIdx.add(valueType);
             } else if (!autoCreateNewColumns) {
                 throw CairoException.nonCritical()
                         .put("column does not exist, creating new columns is disabled [table=").put(writer.getTableToken().getTableName())
@@ -519,8 +526,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     private void parseValueNewTable(CachedCharSequence value, int valueType) {
         columnNameType.add(valueType);
         columnValues.add(value.getCacheAddress());
-        geoHashBitsSizeByColIdx.add(0); // not a GeoHash, no constant literal
-        // that can be recognised yet
+        valueTypeByColIdx.add(valueType);
     }
 
     private void prepareNewColumn(CachedCharSequence token) {
