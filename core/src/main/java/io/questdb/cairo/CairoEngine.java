@@ -3723,12 +3723,13 @@ public class CairoEngine implements Closeable, WriterSource {
         useful |= walWriterPool.releaseInactive();
         useful |= viewWalWriterPool.releaseInactive();
         useful |= scoreboardPool.releaseInactive();
+        return useful;
+    }
+
+    public boolean releaseInactiveCompilers() {
         // completeInit() builds the compiler pool, and maintenance can start before it runs
         final SqlCompilerPool compilerPool = sqlCompilerPool;
-        if (compilerPool != null) {
-            useful |= compilerPool.releaseInactive();
-        }
-        return useful;
+        return compilerPool != null && compilerPool.releaseInactive();
     }
 
     @TestOnly

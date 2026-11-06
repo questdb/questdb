@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.pool;
 
+import io.questdb.ServerMain;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.CairoEngine;
@@ -95,6 +96,35 @@ public class SqlCompilerPoolTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMaintenanceJobTrimsIdleCompiler() throws Exception {
+        assertMemoryLeak(() -> {
+            final int modelFloor = configuration.getSqlModelPoolCapacity();
+            try (
+                    CairoEngine idleEngine = new CairoEngine(inactiveTtlConfiguration());
+                    SqlExecutionContext context = TestUtils.createSqlExecutionCtx(idleEngine)
+            ) {
+                setCurrentMicros(1_000_000);
+                final SqlCompilerImpl delegate;
+                try (SqlCompiler compiler = idleEngine.getSqlCompiler()) {
+                    delegate = (SqlCompilerImpl) ((SqlCompilerPool.C) compiler).getDelegate();
+                    compileAndClose(compiler, cteChain(8), context);
+                }
+                final int grownModels = delegate.getQueryModelPoolCapacity();
+                Assert.assertTrue(grownModels > modelFloor);
+
+                setCurrentMicros(1_000_000 + INACTIVE_TTL_MILLIS * 1000 + 1);
+                idleEngine.releaseInactive();
+                Assert.assertEquals(grownModels, delegate.getQueryModelPoolCapacity());
+
+                new ServerMain.EngineMaintenanceJob(idleEngine).run();
+                Assert.assertEquals(modelFloor, delegate.getQueryModelPoolCapacity());
+            } finally {
+                currentMicros = -1;
+            }
+        });
+    }
+
+    @Test
     public void testReleaseInactiveClosesCompilerItCannotTrim() throws Exception {
         assertMemoryLeak(() -> {
             final LogCapture capture = new LogCapture();
@@ -126,7 +156,7 @@ public class SqlCompilerPoolTest extends AbstractCairoTest {
                 }
                 Assert.assertEquals(0, closedCompilers.get());
                 setCurrentMicros(1_000_000 + INACTIVE_TTL_MILLIS * 1000 + 1);
-                Assert.assertTrue(idleEngine.releaseInactive());
+                Assert.assertTrue(idleEngine.releaseInactiveCompilers());
                 Assert.assertEquals(1, closedCompilers.get());
                 capture.drain();
                 capture.assertLoggedRE("could not trim idle compiler, closing it \\[error=.*" + TRIM_FAILURE);
@@ -166,11 +196,11 @@ public class SqlCompilerPoolTest extends AbstractCairoTest {
                     Assert.assertTrue(busyModels > modelFloor);
 
                     setCurrentMicros(1_000_000 + INACTIVE_TTL_MILLIS * 1000);
-                    idleEngine.releaseInactive();
+                    idleEngine.releaseInactiveCompilers();
                     Assert.assertTrue(idleDelegate.getQueryModelPoolCapacity() > modelFloor);
 
                     setCurrentMicros(1_000_000 + INACTIVE_TTL_MILLIS * 1000 + 1);
-                    idleEngine.releaseInactive();
+                    idleEngine.releaseInactiveCompilers();
                     Assert.assertEquals(modelFloor, idleDelegate.getQueryModelPoolCapacity());
                     Assert.assertEquals(characterFloor, idleDelegate.getCharacterStoreCapacity());
                     Assert.assertEquals(configuration.getSqlExpressionPoolCapacity(), idleDelegate.getSqlNodePoolCapacity());
