@@ -42,11 +42,20 @@ import org.junit.Test;
  * memoization on as in production, once with every parallel plan switched off and once with them
  * on, and the two must agree. Each query reaches one place that compiles a copy of a function per
  * worker: the Async Window chain's filter and GROUP BY steps, a window over a stolen filter, the
- * Async Filter's per-worker filters, and the parallel GROUP BY's per-worker functions and filter.
+ * Async Filter's per-worker filters, and the parallel GROUP BY's per-worker functions and filter,
+ * grouping sets included.
  * The positive control checks that functions without per-call state (a clock, now()) keep their
  * parallel plans.
  */
 public class StatefulFunctionWorkerCopiesTest extends AbstractCairoTest {
+    // a stateful aggregate, key and filter of grouping sets; neither ex nor seq is ever NULL, so
+    // every NULL in a key is a rolled-up one and the ORDER BY orders all rows
+    private static final String[] GROUPING_SETS = {
+            "SELECT ex, seq, sum(timestamp_sequence(0, 1)::long) s FROM trade GROUP BY ROLLUP (ex, seq) ORDER BY ex, seq",
+            // an expression key has to be in every grouping set
+            "SELECT timestamp_sequence(0, 1)::long % 3 k, ex, count() n FROM trade GROUP BY k, ROLLUP (ex) ORDER BY k, ex",
+            "SELECT ex, count() n FROM trade WHERE timestamp_sequence(0, 1) < 5_000::timestamp GROUP BY GROUPING SETS ((ex), ()) ORDER BY ex"
+    };
     private static final String LAGGED = "(SELECT time, ex, price, size, lag(price) OVER (ORDER BY time) lp FROM trade WHERE sym = 'BIG')";
 
     @Override
@@ -164,6 +173,38 @@ public class StatefulFunctionWorkerCopiesTest extends AbstractCairoTest {
                 // the POSTING index gather: the GROUP BY compiles its own copies of the filter
                 "SELECT ex, count() n FROM trade WHERE sym IN ('BIG', 'K1') AND timestamp_sequence(0, 1) < 3_000::timestamp ORDER BY ex"
         );
+    }
+
+    @Test
+    public void testParallelGroupingSets() throws Exception {
+        assertAllMatchSerial(GROUPING_SETS);
+    }
+
+    @Test
+    public void testParallelGroupingSetsPlans() throws Exception {
+        // the parallel GROUP BY of grouping sets compiles a copy of the keys and the aggregates
+        // per worker too, so the stateful shapes keep the serial one; the positive control, the
+        // first shape without the stateful function, keeps its parallel plan
+        assertMemoryLeak(() -> inPool((engine, ctx) -> {
+            for (String query : GROUPING_SETS) {
+                final String plan = plan(engine, ctx, query);
+                Assert.assertTrue(query + "\n" + plan, plan.contains("GroupBy vectorized: false"));
+                Assert.assertTrue(query + "\n" + plan, plan.contains("groupingSets: true"));
+                Assert.assertFalse(query + "\n" + plan, plan.contains("Async Group By"));
+            }
+            final String rowPure = "SELECT ex, seq, sum(seq::long) s FROM trade GROUP BY ROLLUP (ex, seq) ORDER BY ex, seq";
+            Assert.assertEquals(rowPure, run(engine, ctx, rowPure, false), run(engine, ctx, rowPure, true));
+            final String plan = plan(engine, ctx, rowPure);
+            Assert.assertTrue(rowPure + "\n" + plan, plan.contains("Async Group By"));
+            Assert.assertTrue(rowPure + "\n" + plan, plan.contains("groupingSets: true"));
+            // GROUPING_ID() reads only the grouping set of a row, with no per-call state, so the
+            // grouping sets keep their parallel plan
+            final String grouping = "SELECT ex, seq, grouping_id(ex, seq) g, sum(seq::long) s FROM trade GROUP BY ROLLUP (ex, seq) ORDER BY ex, seq";
+            Assert.assertEquals(grouping, run(engine, ctx, grouping, false), run(engine, ctx, grouping, true));
+            final String groupingPlan = plan(engine, ctx, grouping);
+            Assert.assertTrue(grouping + "\n" + groupingPlan, groupingPlan.contains("Async Group By"));
+            Assert.assertTrue(grouping + "\n" + groupingPlan, groupingPlan.contains("groupingSets: true"));
+        }));
     }
 
     @Test

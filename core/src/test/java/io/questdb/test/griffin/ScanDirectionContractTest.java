@@ -359,6 +359,100 @@ public class ScanDirectionContractTest extends AbstractCairoTest {
     }
 
     /**
+     * Positive control for {@link #testParallelGroupingSetsRefusedAsAsofJoinMaster}: grouping sets
+     * over a page-frame base select AsyncGroupingSetsRecordCursorFactory ("Async Group By" with
+     * groupingSets: true), and the query must keep compiling and returning every row: one per
+     * (ts, sym) pair, and one per ts with sym rolled up to NULL, which sorts first.
+     */
+    @Test
+    public void testParallelGroupingSetsAloneStillReturnsAllRows() throws Exception {
+        assertQuery("select ts, sym, count() c from t group by grouping sets ((ts, sym), (ts)) order by ts, sym")
+                .ddl(FIVE_ROW_DDL, FIVE_ROW_ROWS)
+                .noLeakCheck()
+                .timestamp("ts")
+                .expectSize()
+                .withPlanContaining("Async Group By", "groupingSets: true")
+                .returns("""
+                        ts\tsym\tc
+                        2024-01-01T00:00:00.000000Z\t\t1
+                        2024-01-01T00:00:00.000000Z\ta\t1
+                        2024-01-01T00:00:01.000000Z\t\t1
+                        2024-01-01T00:00:01.000000Z\tb\t1
+                        2024-01-01T00:00:02.000000Z\t\t1
+                        2024-01-01T00:00:02.000000Z\tc\t1
+                        2024-01-01T00:00:03.000000Z\t\t1
+                        2024-01-01T00:00:03.000000Z\td\t1
+                        2024-01-01T00:00:04.000000Z\t\t1
+                        2024-01-01T00:00:04.000000Z\te\t1
+                        """);
+    }
+
+    /**
+     * AsyncGroupingSetsRecordCursorFactory (the parallel grouping sets) emits the entries of one
+     * map per grouping set, set after set, never designated-timestamp order, as the keyed
+     * group-by does. It must not pass on the base's FORWARD, so the ASOF join refuses the
+     * re-attached designated timestamp. Revert to base.getScanDirection() and this test fails.
+     */
+    @Test
+    public void testParallelGroupingSetsRefusedAsAsofJoinMaster() throws Exception {
+        assertQuery("""
+                select a.ts ats, b.ts bts
+                from ((select ts, sym, count() c from t group by grouping sets ((ts, sym), (ts))) timestamp(ts)) a
+                asof join t b
+                """)
+                .ddl(FIVE_ROW_DDL, FIVE_ROW_ROWS)
+                .noLeakCheck()
+                .failsWith("ASC order over TIMESTAMP column is required but not provided");
+    }
+
+    /**
+     * Positive control for {@link #testSerialGroupingSetsRefusedAsAsofJoinMaster}: a union-all
+     * base does not support page framing, which routes grouping sets to the serial
+     * GroupingSetsRecordCursorFactory ("GroupBy vectorized: false" with groupingSets: true). Every
+     * row of t comes twice, so every count is 2.
+     */
+    @Test
+    public void testSerialGroupingSetsAloneStillReturnsAllRows() throws Exception {
+        assertQuery("select ts, sym, count() c from (select * from t union all select * from t) group by grouping sets ((ts, sym), (ts)) order by ts, sym")
+                .ddl(FIVE_ROW_DDL, FIVE_ROW_ROWS)
+                .noLeakCheck()
+                .timestamp("ts")
+                .expectSize()
+                .withPlanContaining("GroupBy vectorized: false", "groupingSets: true")
+                .returns("""
+                        ts\tsym\tc
+                        2024-01-01T00:00:00.000000Z\t\t2
+                        2024-01-01T00:00:00.000000Z\ta\t2
+                        2024-01-01T00:00:01.000000Z\t\t2
+                        2024-01-01T00:00:01.000000Z\tb\t2
+                        2024-01-01T00:00:02.000000Z\t\t2
+                        2024-01-01T00:00:02.000000Z\tc\t2
+                        2024-01-01T00:00:03.000000Z\t\t2
+                        2024-01-01T00:00:03.000000Z\td\t2
+                        2024-01-01T00:00:04.000000Z\t\t2
+                        2024-01-01T00:00:04.000000Z\te\t2
+                        """);
+    }
+
+    /**
+     * GroupingSetsRecordCursorFactory (the serial grouping sets) emits the entries of one map per
+     * grouping set, set after set, as {@link #testParallelGroupingSetsRefusedAsAsofJoinMaster}
+     * describes for the parallel one, so it declares SCAN_DIRECTION_OTHER and the ASOF join
+     * refuses the re-attached designated timestamp. Declare FORWARD and this test fails.
+     */
+    @Test
+    public void testSerialGroupingSetsRefusedAsAsofJoinMaster() throws Exception {
+        assertQuery("""
+                select a.ts ats, b.ts bts
+                from ((select ts, sym, count() c from (select * from t union all select * from t) group by grouping sets ((ts, sym), (ts))) timestamp(ts)) a
+                asof join t b
+                """)
+                .ddl(FIVE_ROW_DDL, FIVE_ROW_ROWS)
+                .noLeakCheck()
+                .failsWith("ASC order over TIMESTAMP column is required but not provided");
+    }
+
+    /**
      * Positive control for {@link #testSortedSymbolIndexRefusedAsAsofJoinMaster}: the inner
      * "ORDER BY sym, ts" query, used on its own (without re-attaching a designated timestamp),
      * is exactly the shape that selects SortedSymbolIndexRecordCursorFactory, and it must keep

@@ -309,7 +309,8 @@ public final class HashJoinGroupByCandidate {
             SqlExecutionContext executionContext,
             boolean isBuildFlipped
     ) {
-        if (groupBy.getSelectModelType() != IQueryModel.SELECT_MODEL_GROUP_BY || groupBy.getSampleBy() != null
+        if (groupBy.getSelectModelType() != IQueryModel.SELECT_MODEL_GROUP_BY || groupBy.hasGroupingSets()
+                || groupBy.getSampleBy() != null
                 || !groupBy.isOptimisable() || groupBy.getSharedRefCount() > 0 || hasFill(groupBy)) {
             return null;
         }

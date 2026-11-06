@@ -986,6 +986,38 @@ public class WindowChainTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupingSetsStayOffTheChain() throws Exception {
+        // The chain's GROUP BY step computes a plain GROUP BY over the union of the keys, which
+        // would drop the total row of these grouping sets: they keep their own GROUP BY over the
+        // chain. The only NULL g is the total row's, as f is never NULL.
+        assertMemoryLeak(() -> {
+            createTrade(engine, sqlExecutionContext, 3_000);
+            final String runs = "(SELECT time, sum(f) OVER (ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) g"
+                    + " FROM (SELECT time, CASE WHEN price > lp THEN 1 ELSE 0 END f"
+                    + " FROM (SELECT time, price, lag(price) OVER (ORDER BY time) lp FROM trade WHERE sym = 'BIG')))";
+            final String[] queries = {
+                    "SELECT g, count() n FROM " + runs + " GROUP BY GROUPING SETS ((g), ()) ORDER BY g",
+                    "SELECT g, count() n, max(time) t FROM " + runs + " GROUP BY ROLLUP (g) ORDER BY g",
+            };
+            for (String query : queries) {
+                assertMatchesSerial(engine, sqlExecutionContext, query, null);
+                sqlExecutionContext.setParallelWindowEnabled(true);
+                final StringSink plan = new StringSink();
+                try {
+                    engine.print("explain " + query, plan, sqlExecutionContext);
+                } finally {
+                    sqlExecutionContext.setParallelWindowEnabled(false);
+                }
+                Assert.assertTrue(query + "\n" + plan, Chars.contains(plan, "groupingSets: true"));
+                Assert.assertTrue(query + "\n" + plan, Chars.contains(plan, "Async Window"));
+                Assert.assertFalse(query + "\n" + plan, Chars.contains(plan, "then: group by"));
+            }
+            // without grouping sets, the same GROUP BY is the chain's last step
+            assertMatchesSerial(engine, sqlExecutionContext, "SELECT g, count() n FROM " + runs + " ORDER BY g", AsyncWindowStage.KIND_GROUP_BY);
+        });
+    }
+
+    @Test
     public void testStepsWithRandomFunctionsOrSubQueriesStaySerial() throws Exception {
         // A step's worker copies would draw from the query's one Rnd at once, which is not thread
         // safe, or run a sub-query once each: such a step is not chained. rnd_int(1, 2, 0) * 0 + 1

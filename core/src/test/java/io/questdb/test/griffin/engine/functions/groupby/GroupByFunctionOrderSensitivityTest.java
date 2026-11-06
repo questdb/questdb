@@ -473,6 +473,7 @@ public class GroupByFunctionOrderSensitivityTest {
             "io.questdb.griffin.engine.functions.groupby.DoubleArrayElemMinGroupByFunctionFactory$DoubleArrayElemMinGroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.DoubleArrayElemSumGroupByFunctionFactory$DoubleArrayElemSumGroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.GeomeanDoubleGroupByFunction",
+            "io.questdb.griffin.engine.functions.groupby.GroupingFunction",
             "io.questdb.griffin.engine.functions.groupby.KSumDoubleGroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.KurtosisPopGroupByFunctionFactory$KurtosisPopGroupByFunction",
             "io.questdb.griffin.engine.functions.groupby.KurtosisSampleGroupByFunctionFactory$KurtosisSampleGroupByFunction",

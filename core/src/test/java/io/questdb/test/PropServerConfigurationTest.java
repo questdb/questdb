@@ -220,6 +220,9 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(5, configuration.getCairoConfiguration().getCreateAsSelectRetryCount());
         Assert.assertEquals(8, configuration.getCairoConfiguration().getViewLexerPoolCapacity());
         Assert.assertTrue(configuration.getCairoConfiguration().isMatViewEnabled());
+        Assert.assertTrue(configuration.getCairoConfiguration().isMatViewRowExpiryCleanupEnabled());
+        Assert.assertEquals(16_384, configuration.getCairoConfiguration().getMatViewRowExpiryCleanupMaxCachedPartitions());
+        Assert.assertEquals(0.5, configuration.getCairoConfiguration().getMatViewRowExpiryCleanupMinExpiredFraction(), 0.000001);
         Assert.assertFalse(configuration.getCairoConfiguration().isMatViewCoveringIndexEnabled());
         Assert.assertEquals(10, configuration.getCairoConfiguration().getMatViewMaxRefreshRetries());
         Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getMatViewInsertAsSelectBatchSize());
@@ -260,6 +263,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(32, configuration.getCairoConfiguration().getSqlUnorderedMapMaxEntrySize());
         Assert.assertEquals(1024, configuration.getCairoConfiguration().getSqlModelPoolCapacity());
         Assert.assertEquals(10_000, configuration.getCairoConfiguration().getSqlMaxNegativeLimit());
+        Assert.assertEquals(4096, configuration.getCairoConfiguration().getSqlMaxGroupingSets());
         Assert.assertEquals(128 * 1024, configuration.getCairoConfiguration().getSqlSortKeyPageSize());
         Assert.assertEquals(Long.MAX_VALUE, configuration.getCairoConfiguration().getSqlSortKeyMaxBytes());
         Assert.assertEquals(128 * 1024, configuration.getCairoConfiguration().getSqlSortLightValuePageSize());
@@ -1943,6 +1947,42 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testMatViewRowExpiryCleanupMaxCachedPartitionsAcceptsZero() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MAX_CACHED_PARTITIONS.getPropertyPath(), "0");
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(0, configuration.getCairoConfiguration().getMatViewRowExpiryCleanupMaxCachedPartitions());
+    }
+
+    @Test
+    public void testMatViewRowExpiryCleanupMaxCachedPartitionsRejectsNegative() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MAX_CACHED_PARTITIONS.getPropertyPath(), "-1");
+        assertInvalidConfiguration(properties, PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MAX_CACHED_PARTITIONS);
+    }
+
+    @Test
+    public void testMatViewRowExpiryCleanupMinExpiredFractionRejectsAboveOne() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MIN_EXPIRED_FRACTION.getPropertyPath(), "1.1");
+        assertInvalidConfiguration(properties, PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MIN_EXPIRED_FRACTION);
+    }
+
+    @Test
+    public void testMatViewRowExpiryCleanupMinExpiredFractionRejectsNaN() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MIN_EXPIRED_FRACTION.getPropertyPath(), "NaN");
+        assertInvalidConfiguration(properties, PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MIN_EXPIRED_FRACTION);
+    }
+
+    @Test
+    public void testMatViewRowExpiryCleanupMinExpiredFractionRejectsNegative() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MIN_EXPIRED_FRACTION.getPropertyPath(), "-0.1");
+        assertInvalidConfiguration(properties, PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MIN_EXPIRED_FRACTION);
+    }
+
+    @Test
     public void testMinimum2SharedWorkers() throws Exception {
         final Properties properties = new Properties();
         final PropServerConfiguration configuration = newPropServerConfiguration(properties);
@@ -2844,6 +2884,9 @@ public class PropServerConfigurationTest {
             Assert.assertTrue(configuration.getMetrics().isScrapeEnabled());
 
             Assert.assertFalse(configuration.getCairoConfiguration().isMatViewEnabled());
+            Assert.assertFalse(configuration.getCairoConfiguration().isMatViewRowExpiryCleanupEnabled());
+            Assert.assertEquals(1000, configuration.getCairoConfiguration().getMatViewRowExpiryCleanupMaxCachedPartitions());
+            Assert.assertEquals(0.25, configuration.getCairoConfiguration().getMatViewRowExpiryCleanupMinExpiredFraction(), 0.000001);
             Assert.assertEquals(100, configuration.getCairoConfiguration().getMatViewMaxRefreshRetries());
             Assert.assertEquals(1000, configuration.getCairoConfiguration().getMatViewInsertAsSelectBatchSize());
             Assert.assertEquals(10000, configuration.getCairoConfiguration().getMatViewRowsPerQueryEstimate());
