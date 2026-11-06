@@ -615,7 +615,9 @@ public class ParquetDedupColumnTopTest extends AbstractCairoTest {
     private record Row(int minute, int payload, int key, int extra) {
     }
 
-    /** Shared SQL history and independent last-write-wins oracle for the constrained storage fuzzer. */
+    /**
+     * Shared SQL history and independent last-write-wins oracle for the constrained storage fuzzer.
+     */
     private static class ReplayScenario implements AutoCloseable {
         private final int groupSize;
         private final int groups;

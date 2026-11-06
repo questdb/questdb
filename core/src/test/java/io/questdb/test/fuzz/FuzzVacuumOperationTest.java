@@ -26,6 +26,10 @@ package io.questdb.test.fuzz;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -193,6 +197,33 @@ public class FuzzVacuumOperationTest extends AbstractCairoTest {
                 }
                 Assert.assertTrue("VACUUM must queue its purge after the queue drains", pubSeq.current() > filledUpTo);
             }
+        });
+    }
+
+    @Test
+    public void testApplyRetriesWhenPurgeDiscoveryQueueIsFull() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, val DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO t VALUES ('2024-01-01', 1.0), ('2024-01-02', 2.0)");
+            final TableToken tableToken = engine.verifyTableName("t");
+            final MessageBus messageBus = engine.getMessageBus();
+            int queued = 0;
+            while (TableUtils.schedulePurgeO3Partitions(messageBus, tableToken, ColumnType.TIMESTAMP, PartitionBy.DAY)) {
+                queued++;
+            }
+            Assert.assertTrue(queued > 0);
+            Assert.assertEquals(-1, messageBus.getO3PurgeDiscoveryPubSeq().next());
+            try (TableWriterAPI writer = getWriter("t")) {
+                Assert.assertFalse(new FuzzVacuumOperation().apply(new Rnd(), engine, writer, -1, null));
+            }
+            // The operation drained the full queue, then its retried VACUUM queued and drained its own task.
+            Assert.assertTrue(messageBus.getO3PurgeDiscoverySubSeq().next() < 0);
+            Assert.assertTrue(TableUtils.schedulePurgeO3Partitions(messageBus, tableToken, ColumnType.TIMESTAMP, PartitionBy.DAY));
+            messageBus.getO3PurgeDiscoverySubSeq().clear();
+            assertQuery("SELECT val FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("val\n1.0\n2.0\n");
         });
     }
 
