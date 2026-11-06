@@ -38,20 +38,21 @@ public interface FiberDispatchContext {
     }
 
     /**
-     * Returns how many published page frames of one query may be unfinished at once. A reducer
-     * that claimed a frame and waits for CPU holds up later frames of every query on that ordered
-     * queue, so a context with few CPU grants keeps few frames out.
-     */
-    default int getParallelFrameLimit() {
-        return Integer.MAX_VALUE;
-    }
-
-    /**
      * Returns the query-registry owner represented by this context, or {@code -1} when the
      * context does not represent a SQL execution. QueryRegistry uses this opaque link to fold
      * execution-phase registrations into a protocol owner that was admitted before compilation.
      */
     default long getQueryRegistryOwnerId() {
+        return -1;
+    }
+
+    /**
+     * Returns which reserved reduce queue shard a query must use, or {@code -1} for a shared one.
+     * A query that waits for CPU holds up every query on its ordered queue: a reducer holds its
+     * frame, and the owner holds the queue slots it has not collected yet. A context whose queries
+     * can wait for CPU therefore keeps them off the queues of other queries.
+     */
+    default int getReservedPageFrameShard(int reservedShardCount) {
         return -1;
     }
 

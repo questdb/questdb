@@ -26,6 +26,7 @@ package io.questdb.test.cairo.sql.async;
 
 import io.questdb.DefaultFactoryProvider;
 import io.questdb.FactoryProvider;
+import io.questdb.MessageBusImpl;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoConfigurationWrapper;
@@ -75,6 +76,7 @@ import io.questdb.mp.continuation.TimerShards;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -2937,139 +2939,6 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testOwnerStopsPublishingAtUnfinishedFrameLimit() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("""
-                    CREATE TABLE limited_frames AS (
-                        SELECT x, timestamp_sequence(0, 86_400_000_000) ts
-                        FROM long_sequence(4)
-                    ) TIMESTAMP(ts) PARTITION BY DAY
-                    """);
-            final FiberDispatchContext context = new FiberDispatchContext() {
-                @Override
-                public int getParallelFrameLimit() {
-                    return 2;
-                }
-            };
-            final FiberRuntime dispatcherRuntime = new FiberRuntime(4);
-            final FiberRuntime ownerRuntime = new RecordingFiberDispatchController().createRuntime(1);
-            final FiberWalWaitQueue[] reducerWaitQueues = {
-                    new FiberWalWaitQueue(),
-                    new FiberWalWaitQueue(),
-                    new FiberWalWaitQueue(),
-                    new FiberWalWaitQueue()
-            };
-            final WorkStealingStrategy noStealing = new WorkStealingStrategy() {
-                @Override
-                public WorkStealingStrategy of(AtomicInteger startedCounter) {
-                    return this;
-                }
-
-                @Override
-                public boolean shouldSteal(int finishedCount) {
-                    return false;
-                }
-            };
-            final PageFrameReduceDispatcher dispatcher = new PageFrameReduceDispatcher(
-                    engine,
-                    engine.getMessageBus(),
-                    dispatcherRuntime
-            );
-            engine.getMessageBus().setPageFrameReduceDispatcher(dispatcher);
-            final PageFrameSequence<StatefulAtom> frameSequence = new PageFrameSequence<>(
-                    engine,
-                    withWorkStealingStrategy(noStealing),
-                    engine.getMessageBus(),
-                    new StatefulAtom() {
-                    },
-                    (_, _, task, _, stealingFrameSequence) -> {
-                        // Stands in for a reducer that waits for a CPU grant. The owner just reduces what it steals.
-                        if (stealingFrameSequence == null) {
-                            park(reducerWaitQueues[task.getFrameIndex()]);
-                        }
-                    },
-                    () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_OFFLOAD),
-                    1,
-                    PageFrameReduceTask.TYPE_FILTER
-            );
-            final SCSequence collectSubSeq = new SCSequence();
-            final AtomicInteger collectedFrames = new AtomicInteger();
-            final AtomicReference<Throwable> failure = new AtomicReference<>();
-            try (RecordCursorFactory factory = select("SELECT * FROM limited_frames")) {
-                final FiberTask ownerTask = new FiberTask() {
-                    @Override
-                    protected void onError(Throwable th) {
-                        failure.set(th);
-                    }
-
-                    @Override
-                    protected boolean runStep() {
-                        try {
-                            frameSequence.of(factory, sqlExecutionContext, collectSubSeq, PartitionFrameCursorFactory.ORDER_ASC);
-                        } catch (SqlException e) {
-                            throw new AssertionError(e);
-                        }
-                        frameSequence.prepareForDispatch();
-                        for (int i = 0; i < 4; i++) {
-                            frameSequence.collect(frameSequence.next(), false);
-                            collectedFrames.incrementAndGet();
-                        }
-                        frameSequence.await();
-                        return true;
-                    }
-                };
-                Assert.assertSame(LaunchResult.LAUNCHED, ownerRuntime.launch(ownerTask, context));
-                Assert.assertEquals(1, ownerRuntime.drain(1));
-                Assert.assertNull(failure.get());
-                Assert.assertEquals(1, ownerRuntime.getParkedFiberCount());
-
-                final int shard = frameSequence.getShard();
-                final RingQueue<PageFrameReduceTask> queue = engine.getMessageBus().getPageFrameReduceQueue(shard);
-                final MCSequence subSeq = engine.getMessageBus().getPageFrameReduceSubSeq(shard);
-                Assert.assertFalse(dispatcher.consumeOrdered(0, queue, subSeq, null));
-                Assert.assertFalse(dispatcher.consumeOrdered(0, queue, subSeq, null));
-                Assert.assertTrue(dispatcher.consumeOrdered(0, queue, subSeq, null));
-                Assert.assertEquals(2, dispatcherRuntime.getParkedFiberCount());
-
-                // A finished frame no longer counts, even while it cannot be collected behind the first one.
-                reducerWaitQueues[1].fire(1, false);
-                Assert.assertEquals(1, dispatcherRuntime.drain(1));
-                Assert.assertEquals(1, ownerRuntime.drain(1));
-                Assert.assertEquals(0, collectedFrames.get());
-                Assert.assertFalse(dispatcher.consumeOrdered(0, queue, subSeq, null));
-                Assert.assertTrue(dispatcher.consumeOrdered(0, queue, subSeq, null));
-                Assert.assertEquals(2, dispatcherRuntime.getParkedFiberCount());
-
-                // The owner collects two frames, publishes the last one and steals it.
-                reducerWaitQueues[0].fire(1, false);
-                Assert.assertEquals(1, dispatcherRuntime.drain(1));
-                Assert.assertEquals(1, ownerRuntime.drain(1));
-                Assert.assertEquals(2, collectedFrames.get());
-                Assert.assertEquals(3, frameSequence.getReduceFinishedCounter().get());
-
-                reducerWaitQueues[2].fire(1, false);
-                Assert.assertEquals(1, dispatcherRuntime.drain(1));
-                Assert.assertEquals(1, ownerRuntime.drain(1));
-                Assert.assertTrue(ownerTask.isDone());
-                Assert.assertNull(failure.get());
-                Assert.assertEquals(4, collectedFrames.get());
-                Assert.assertEquals(4, frameSequence.getReduceFinishedCounter().get());
-            } finally {
-                for (FiberWalWaitQueue reducerWaitQueue : reducerWaitQueues) {
-                    reducerWaitQueue.fire(1, false);
-                }
-                dispatcherRuntime.drain(4);
-                ownerRuntime.drain(1);
-                close(ownerRuntime);
-                close(dispatcherRuntime);
-                Misc.free(frameSequence);
-                engine.getMessageBus().setPageFrameReduceDispatcher(null);
-                Misc.free(dispatcher);
-            }
-        });
-    }
-
-    @Test
     public void testPlainOwnerReducesLocallyWithoutMountingFiber() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
@@ -3481,6 +3350,97 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
             } finally {
                 close(runtime);
                 Misc.free(dispatcher);
+            }
+        });
+    }
+
+    @Test
+    public void testReservedShardsTakeOnlyQueriesOfReservingContexts() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE reserved_shards AS (
+                        SELECT x, timestamp_sequence(0, 86_400_000_000) ts
+                        FROM long_sequence(2)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            final CairoConfiguration busConfiguration = new CairoConfigurationWrapper(configuration) {
+                @Override
+                public int getPageFrameReduceReservedShardCount() {
+                    return 2;
+                }
+
+                @Override
+                public int getPageFrameReduceShardCount() {
+                    return 2;
+                }
+            };
+            final FiberDispatchContext reservingContext = new FiberDispatchContext() {
+                @Override
+                public int getReservedPageFrameShard(int reservedShardCount) {
+                    Assert.assertEquals(2, reservedShardCount);
+                    return 1;
+                }
+            };
+            final WorkStealingStrategy noStealing = new WorkStealingStrategy() {
+                @Override
+                public WorkStealingStrategy of(AtomicInteger startedCounter) {
+                    return this;
+                }
+
+                @Override
+                public boolean shouldSteal(int finishedCount) {
+                    return false;
+                }
+            };
+            final FiberRuntime ownerRuntime = new RecordingFiberDispatchController().createRuntime(1);
+            final AtomicInteger workerReducedFrames = new AtomicInteger();
+            final SCSequence collectSubSeq = new SCSequence();
+            try (
+                    MessageBusImpl messageBus = new MessageBusImpl(busConfiguration);
+                    RecordCursorFactory factory = select("SELECT * FROM reserved_shards");
+                    PageFrameSequence<StatefulAtom> frameSequence = new PageFrameSequence<>(
+                            engine,
+                            withWorkStealingStrategy(noStealing),
+                            messageBus,
+                            new StatefulAtom() {
+                            },
+                            (_, _, _, _, stealingFrameSequence) -> {
+                                if (stealingFrameSequence == null) {
+                                    workerReducedFrames.incrementAndGet();
+                                }
+                            },
+                            () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_OFFLOAD),
+                            1,
+                            PageFrameReduceTask.TYPE_FILTER
+                    );
+                    PageFrameReduceJob job = new PageFrameReduceJob(engine, messageBus, new Rnd())
+            ) {
+                Assert.assertEquals(4, messageBus.getPageFrameReduceShardCount());
+                Assert.assertEquals(2, messageBus.getPageFrameReduceReservedShardCount());
+                for (int i = 0; i < 32; i++) {
+                    frameSequence.of(factory, sqlExecutionContext, collectSubSeq, PartitionFrameCursorFactory.ORDER_ASC);
+                    Assert.assertTrue(frameSequence.getShard() < 2);
+                    frameSequence.reset();
+                }
+                openOnFiber(ownerRuntime, new FiberDispatchContext() {
+                }, frameSequence, factory, collectSubSeq);
+                Assert.assertTrue(frameSequence.getShard() < 2);
+                frameSequence.reset();
+
+                openOnFiber(ownerRuntime, reservingContext, frameSequence, factory, collectSubSeq);
+                Assert.assertEquals(3, frameSequence.getShard());
+                frameSequence.prepareForDispatch();
+                Assert.assertEquals(2, frameSequence.getFrameCount());
+                Assert.assertEquals(-1, frameSequence.next(1, false));
+                Assert.assertEquals(0, workerReducedFrames.get());
+                Assert.assertTrue(job.run());
+                Assert.assertEquals(1, workerReducedFrames.get());
+                for (int i = 0; i < 2; i++) {
+                    frameSequence.collect(frameSequence.next(), false);
+                }
+                frameSequence.await();
+            } finally {
+                close(ownerRuntime);
             }
         });
     }
@@ -4758,6 +4718,36 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                 return SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
             }
         };
+    }
+
+    private static void openOnFiber(
+            FiberRuntime runtime,
+            FiberDispatchContext context,
+            PageFrameSequence<StatefulAtom> frameSequence,
+            RecordCursorFactory factory,
+            SCSequence collectSubSeq
+    ) {
+        final AtomicReference<Throwable> failure = new AtomicReference<>();
+        final FiberTask task = new FiberTask() {
+            @Override
+            protected void onError(Throwable th) {
+                failure.set(th);
+            }
+
+            @Override
+            protected boolean runStep() {
+                try {
+                    frameSequence.of(factory, sqlExecutionContext, collectSubSeq, PartitionFrameCursorFactory.ORDER_ASC);
+                } catch (SqlException e) {
+                    throw new AssertionError(e);
+                }
+                return true;
+            }
+        };
+        Assert.assertSame(LaunchResult.LAUNCHED, runtime.launch(task, context));
+        Assert.assertEquals(1, runtime.drain(1));
+        Assert.assertTrue(task.isDone());
+        Assert.assertNull(failure.get());
     }
 
     private static void park(FiberWalWaitQueue waitQueue) {

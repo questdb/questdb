@@ -477,7 +477,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
             reduceFinishedCounter.set(0);
             reduceStartedCounter.set(0);
             workStealingStrategy.of(reduceStartedCounter);
-            shard = rnd.nextInt(messageBus.getPageFrameReduceShardCount());
+            shard = selectShard(rnd);
             reduceQueue = messageBus.getPageFrameReduceQueue(shard);
 
             // It is essential to init the atom after we prepared sequence for dispatch.
@@ -681,8 +681,6 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         boolean idle = true;
         boolean dispatched = false;
         final int collectedFrameCount = collectedFrameIndex + 1;
-        final FiberDispatchContext dispatchContext = getDispatchContext();
-        final int unfinishedFrameLimit = dispatchContext != null ? dispatchContext.getParallelFrameLimit() : Integer.MAX_VALUE;
 
         try {
             if (!hasPublication) {
@@ -702,7 +700,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                 while (true) {
                     final int totalDispatched = dispatchStartFrameIndex - collectedFrameCount;
                     // Treat situation when we hit the dispatch limit as if it was a full queue (-1).
-                    if (totalDispatched >= dispatchLimit || dispatchStartFrameIndex - reduceFinishedCounter.get() >= unfinishedFrameLimit) {
+                    if (totalDispatched >= dispatchLimit) {
                         cursor = -1;
                     } else {
                         cursor = reducePubSeq.next();
@@ -874,6 +872,16 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
             }
             reduceFinishedCounter.incrementAndGet();
         }
+    }
+
+    private int selectShard(Rnd rnd) {
+        final int reservedShardCount = messageBus.getPageFrameReduceReservedShardCount();
+        final int sharedShardCount = messageBus.getPageFrameReduceShardCount() - reservedShardCount;
+        final FiberDispatchContext dispatchContext = getDispatchContext();
+        final int reservedShard = reservedShardCount > 0 && dispatchContext != null
+                ? dispatchContext.getReservedPageFrameShard(reservedShardCount)
+                : -1;
+        return reservedShard > -1 ? sharedShardCount + reservedShard : rnd.nextInt(sharedShardCount);
     }
 
     private boolean stealWork(
