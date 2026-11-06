@@ -40,6 +40,52 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCoalesceCharOrSymbolWithIPv4OrUuid() throws Exception {
+        // a STRING argument takes the result type of a CHAR or SYMBOL argument to IPv4 or UUID,
+        // which the CHAR or SYMBOL argument cannot be read as: the query fails to compile in any
+        // order, and an explicit cast of the CHAR or SYMBOL argument makes it work
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k INT, ch CHAR, sym_ip SYMBOL, sym_uid SYMBOL, ip IPv4, uid UUID)");
+            execute("""
+                    INSERT INTO t VALUES
+                        (0, 'a', '9.9.9.9', '11111111-1111-1111-1111-111111111111', '1.2.3.4', '22222222-2222-2222-2222-222222222222'),
+                        (1, 'b', null, null, null, null),
+                        (2, 'c', '8.8.8.8', '33333333-3333-3333-3333-333333333333', '4.3.2.1', '44444444-4444-4444-4444-444444444444')
+                    """);
+            assertQuery("SELECT coalesce(sym_ip, '5.6.7.8', ip) FROM t")
+                    .noLeakCheck()
+                    .fails(16, "inconvertible types: SYMBOL -> IPv4 [from=SYMBOL, to=IPv4]");
+            assertQuery("SELECT coalesce(ch, sym_ip, ip) FROM t")
+                    .noLeakCheck()
+                    .fails(16, "inconvertible types: CHAR -> IPv4 [from=CHAR, to=IPv4]");
+            assertQuery("SELECT coalesce(sym_ip, ch, ip) FROM t")
+                    .noLeakCheck()
+                    .fails(16, "inconvertible types: SYMBOL -> IPv4 [from=SYMBOL, to=IPv4]");
+            assertQuery("SELECT coalesce(ch, '55555555-5555-5555-5555-555555555555', uid) FROM t")
+                    .noLeakCheck()
+                    .fails(16, "inconvertible types: CHAR -> UUID [from=CHAR, to=UUID]");
+            assertQuery("SELECT coalesce(sym_uid, '55555555-5555-5555-5555-555555555555', uid) FROM t")
+                    .noLeakCheck()
+                    .fails(16, "inconvertible types: SYMBOL -> UUID [from=SYMBOL, to=UUID]");
+            assertQuery("""
+                    SELECT k,
+                        coalesce(sym_ip::IPv4, '5.6.7.8', ip) a,
+                        coalesce(ch::IPv4, '5.6.7.8', ip) b,
+                        coalesce(sym_uid::UUID, '55555555-5555-5555-5555-555555555555', uid) c,
+                        coalesce(ch::UUID, '55555555-5555-5555-5555-555555555555', uid) d
+                    FROM t""")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            k\ta\tb\tc\td
+                            0\t9.9.9.9\t5.6.7.8\t11111111-1111-1111-1111-111111111111\t55555555-5555-5555-5555-555555555555
+                            1\t5.6.7.8\t5.6.7.8\t55555555-5555-5555-5555-555555555555\t55555555-5555-5555-5555-555555555555
+                            2\t8.8.8.8\t5.6.7.8\t33333333-3333-3333-3333-333333333333\t55555555-5555-5555-5555-555555555555
+                            """);
+        });
+    }
+
+    @Test
     public void testCoalesceDecimal128() throws Exception {
         assertQuery("select coalesce(null::decimal(24, 1), 12.34m) c")
                 .noLeakCheck()
