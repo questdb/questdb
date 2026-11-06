@@ -207,12 +207,13 @@ public class AdaptiveCrashSweepSelfCheckTest extends AbstractAdaptiveCrashSweepT
 
             crashFf.setSyncfsFileSystemWide(true);
             assertCommitDurabilityOps(r, r.n, -1);
+            // A count below the pin, as after a removed flush.
             AssertionError mismatch = Assert.assertThrows(
                     AssertionError.class,
-                    () -> assertCommitDurabilityOps(r, -1, r.n)
+                    () -> assertCommitDurabilityOps(r, r.n + 1, r.n)
             );
             Assert.assertEquals(
-                    "the commit phase performed " + r.n + " durability ops, expected -1"
+                    "the commit phase performed " + r.n + " durability ops, expected " + (r.n + 1)
                             + " with filesystem-wide syncfs=true; ops:\n" + ops,
                     mismatch.getMessage()
             );
