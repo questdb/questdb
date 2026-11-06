@@ -11,6 +11,8 @@ pub mod page;
 pub mod parquet_meta_decode;
 pub mod row_groups;
 pub mod slicer;
+#[cfg(test)]
+mod top_rows_tests;
 
 pub use row_groups::{ParquetDecoder, RowGroupBuffers};
 
@@ -227,12 +229,19 @@ pub struct ColumnChunkBuffers {
     pub page_buffers_size: usize,
     pub page_buffers: Vec<Vec<u8>>,
 
-    /// Number of leading column-top rows in the decoded chunk. For a source type with no
-    /// in-band null sentinel (BYTE/SHORT/CHAR) these are its only nulls, so Java consults
-    /// this count to surface NULL for column-top rows during a lazy fixed->var conversion
-    /// (the in-band decoded value is 0, indistinguishable from a real 0). Read from Java via
-    /// the `chunkColumnTopOffset` field offset. 0 when there is no column top.
-    pub column_top: usize,
+    /// Address and run count of `top_rows`, refreshed with the data pointers and read from
+    /// Java via the `chunkTopRowsPtrOffset` and `chunkTopRowsCountOffset` field offsets.
+    pub top_rows_ptr: *const [u64; 2],
+    pub top_rows_count: usize,
+
+    /// The column-top rows of the decoded chunk, as ascending, disjoint `[lo, hi)` runs of buffer
+    /// rows. A decode at the width of a type without a NULL sentinel (BOOLEAN, BYTE, SHORT, CHAR)
+    /// writes these rows as 0 or false, a value of the type, so a conversion to a type with a NULL
+    /// reads NULL in them only through this list. A `_pm` decode records them from the definition
+    /// levels where the chunk has them, see `row_groups::decode_records_top_rows`, and otherwise
+    /// takes the leading rows the chunk null count gives. The footer decoder takes the leading rows
+    /// of the column top that the file metadata records, see `row_groups::takes_file_column_top`.
+    top_rows: AcVec<[u64; 2]>,
 
     /// Allocated capacity of `page_buffers` last published by `refresh_ptrs`.
     /// This is tracked separately from the exposed logical byte size so spare
@@ -634,14 +643,14 @@ mod tests {
             2
         );
         assert_eq!(read_i32s(&rgb, 0), vec![0, 0]);
-        assert_eq!(rgb.column_bufs[0].column_top, 0);
+        assert!(rgb.column_bufs[0].top_rows().is_empty());
         assert_eq!(
             decoder.decode_row_group(&mut ctx, &mut rgb, &columns, 1, 0, 5)?,
             5
         );
         assert_eq!(read_i32s(&rgb, 0), vec![0, 0, -128, 127, 5]);
         assert_eq!(read_i64s(&rgb, 1), vec![0, 0, -32768, 32767, 5]);
-        assert_eq!(rgb.column_bufs[0].column_top, 0);
+        assert!(rgb.column_bufs[0].top_rows().is_empty());
         Ok(())
     }
 
@@ -668,15 +677,15 @@ mod tests {
         );
         assert_eq!(read_i32s(&rgb, 0), vec![0, 0, -128, 127, 5]);
         assert_eq!(read_i64s(&rgb, 1), vec![0, 0, -32768, 32767, 5]);
-        assert_eq!(rgb.column_bufs[0].column_top, 0);
-        assert_eq!(rgb.column_bufs[1].column_top, 0);
+        assert!(rgb.column_bufs[0].top_rows().is_empty());
+        assert!(rgb.column_bufs[1].top_rows().is_empty());
         // a window that ends past the top decides on the top rows it holds
         assert_eq!(
             decoder.decode_row_group(&mut ctx, &mut rgb, &columns, 1, 0, 4)?,
             5
         );
         assert_eq!(read_i32s(&rgb, 0), vec![0, 0, -128, 127]);
-        assert_eq!(rgb.column_bufs[0].column_top, 0);
+        assert!(rgb.column_bufs[0].top_rows().is_empty());
         Ok(())
     }
 
@@ -838,7 +847,7 @@ mod tests {
             read_i32s(&rgb, 0),
             vec![INT_NULL, INT_NULL, INT_NULL, 127, INT_NULL]
         );
-        assert_eq!(rgb.column_bufs[0].column_top, 1);
+        assert_eq!(rgb.column_bufs[0].top_rows(), &[[0, 1]]);
         Ok(())
     }
 

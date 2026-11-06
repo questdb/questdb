@@ -2122,14 +2122,16 @@ fn convert_row_group_buffers_to_partition(
                 column_bufs.len()
             )
         })?;
-        if col_buf.column_top > row_count {
-            return Err(fmt_err!(
-                InvalidLayout,
-                "decoded column top {} exceeds row count {}, column index: {}",
-                col_buf.column_top,
-                row_count,
-                i
-            ));
+        if let Some(&[_, top_rows_hi]) = col_buf.top_rows().last() {
+            if top_rows_hi > row_count as u64 {
+                return Err(fmt_err!(
+                    InvalidLayout,
+                    "decoded column top rows end {} past row count {}, column index: {}",
+                    top_rows_hi,
+                    row_count,
+                    i
+                ));
+            }
         }
         let mut column = *column_template;
         column.row_count = row_count;
@@ -2282,13 +2284,18 @@ mod validation_tests {
     fn decoded_partition_rejects_column_top_past_row_count() {
         let allocator_state = TestAllocatorState::new();
         let mut column_bufs = vec![ColumnChunkBuffers::new(allocator_state.allocator())];
-        column_bufs[0].column_top = 2;
+        column_bufs[0].add_top_rows(0, 2).unwrap();
         let partition = one_column_partition(ColumnTypeTag::Int.into_type());
 
         assert_error_contains(
             convert_row_group_buffers_to_partition(&partition, &column_bufs, 1, 0),
-            "decoded column top 2 exceeds row count 1, column index: 0",
+            "decoded column top rows end 2 past row count 1, column index: 0",
         );
+
+        // top rows up to the row count are of the decoded rows
+        column_bufs[0].reset();
+        column_bufs[0].add_top_rows(0, 1).unwrap();
+        assert!(convert_row_group_buffers_to_partition(&partition, &column_bufs, 1, 0).is_ok());
     }
 
     #[test]

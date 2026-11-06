@@ -2593,10 +2593,8 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
                     }
                     execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01', '2024-01-02'");
                     drainWalQueue();
-                    // CONVERT TO PARQUET of a partition before the last one writes the rows of a column top as
-                    // NULLs. The last partition, which only a WAL table converts, keeps the top, and the first
-                    // row group of 2024-01-02 holds no row of late: without a row on 2024-01-03 it is the last.
-                    Assert.assertEquals(isWal && !isAttached ? 4 : 0, getColumnTop("pt", 1, "late"));
+                    // the first row group of 2024-01-02 holds no row of late
+                    Assert.assertEquals(4, getColumnTop("pt", 1, "late"));
                     assertSqlCursors("SELECT * FROM tw", "SELECT * FROM pt");
                 }
             }
@@ -4473,14 +4471,13 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
     }
 
     /**
-     * Table pt of the failure tests, converted: CONVERT TO PARQUET wrote the rows of the tops of s, bt and
-     * st as NULLs, so CONVERT TO NATIVE writes them as NULL values, under top 0.
+     * Table pt of the failure tests, converted: s and st start at row group 1, bt keeps its top of 5.
      */
     private void assertConvertFailureTableConverted(String table, String context) throws Exception {
         Assert.assertEquals(context, PartitionFormat.NATIVE, getPartitionFormat(table));
-        Assert.assertEquals(context, 0, getColumnTop(table, 0, "s"));
-        Assert.assertEquals(context, 0, getColumnTop(table, 0, "bt"));
-        Assert.assertEquals(context, 0, getColumnTop(table, 0, "st"));
+        Assert.assertEquals(context, 4, getColumnTop(table, 0, "s"));
+        Assert.assertEquals(context, 5, getColumnTop(table, 0, "bt"));
+        Assert.assertEquals(context, 4, getColumnTop(table, 0, "st"));
         assertQuery("SELECT v, ts, s, bt, st FROM " + table + " WHERE ts IN '2024-01-01'")
                 .noLeakCheck()
                 .timestamp("ts")
@@ -4501,12 +4498,13 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
 
     private void assertConvertToNativeFailureKeepsColumnTops(boolean isLegacy, boolean isAsync) throws Exception {
         // Three failures of CONVERT TO NATIVE in a row on one table, each through the writer pool or the
-        // command queue of a writer the test holds: the _txn commit after the _cv commit, the index of s,
-        // and the open of the last column file. The conversion links the index of s, or rebuilds it when
-        // it changed the column top, as for the stale top of the legacy fixture. Each failure leaves the
-        // committed state of before the CONVERT, in the files and in the writer, which then commits a row
-        // of another partition. A last CONVERT succeeds. Index queries on the legacy parquet partition
-        // fail, see TableReader.checkParquetIndexes(), before and after each failure.
+        // command queue of a writer the test holds: the _txn commit after the _cv commit, the index
+        // rebuild of s, and the open of the last column file. The conversion changes the column top of s,
+        // which starts at row group 1 of pt and has a stale top in the legacy fixture, so it rebuilds the
+        // index. Each failure leaves the committed state of before the CONVERT, in the files and in the
+        // writer, which then commits a row of another partition. A last CONVERT succeeds. Index queries on
+        // the legacy parquet partition fail, see TableReader.checkParquetIndexes(), before and after each
+        // failure.
         setInPlaceParquetO3Properties();
         final String table = isLegacy ? "legacy_absent_merged" : "pt";
         final ConvertToNativeFailingFacade ff = new ConvertToNativeFailingFacade(table);
@@ -4531,9 +4529,9 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             final String[] querySnapshot = snapshotQueries(table, CONVERT_FAILURE_QUERIES);
             Assert.assertEquals(isLegacy, querySnapshot[1].contains(STALE_PARQUET_INDEX_ERROR));
             final String convertSql = "ALTER TABLE " + table + " CONVERT PARTITION TO NATIVE LIST '2024-01-01'";
-            final String[] failures = {"_txn commit", isLegacy ? "index rebuild" : "index link", "column file open"};
+            final String[] failures = {"_txn commit", "index rebuild", "column file open"};
             final String[] failingFileNames = {null, "s.k", isLegacy ? "d.d" : "st.d"};
-            final String[] errors = {"No space left", isLegacy ? "could not open read-write" : "could not create hard link", "could not open"};
+            final String[] errors = {"No space left", "could not open read-write", "could not open"};
             if (isAsync) {
                 try (TableWriter writer = getWriter(table)) {
                     final int partitionColumnIndex = writer.getMetadata().getColumnIndex("s");

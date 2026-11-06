@@ -16199,11 +16199,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                     dataBuf = Unsafe.malloc(dataBufCap, MemoryTag.NATIVE_DEFAULT);
                                 }
                                 try {
-                                    final int convColumnTop = (int) rowGroupBuffers.getChunkColumnTop(columnIndex);
+                                    final long topRowsPtr = rowGroupBuffers.getChunkTopRowsPtr(columnIndex);
+                                    final long topRowCount = rowGroupBuffers.getChunkTopRowCount(columnIndex);
                                     if (ColumnType.isVarchar(tableColumnType)) {
-                                        ParquetColumnTypeConverter.convertFixedColumnToVarchar(parquetColumnType, srcDataPtr, (int) rowGroupRowCount, convColumnTop, auxBuf, dataBuf, dataBufCap, utf8Sink);
+                                        ParquetColumnTypeConverter.convertFixedColumnToVarchar(parquetColumnType, srcDataPtr, (int) rowGroupRowCount, topRowsPtr, topRowCount, auxBuf, dataBuf, dataBufCap, utf8Sink);
                                     } else {
-                                        ParquetColumnTypeConverter.convertFixedColumnToString(parquetColumnType, srcDataPtr, (int) rowGroupRowCount, convColumnTop, auxBuf, dataBuf, dataBufCap, utf16Sink);
+                                        ParquetColumnTypeConverter.convertFixedColumnToString(parquetColumnType, srcDataPtr, (int) rowGroupRowCount, topRowsPtr, topRowCount, auxBuf, dataBuf, dataBufCap, utf16Sink);
                                     }
 
                                     // Compute actual bytes from the aux vector *before* shifting,
@@ -16262,15 +16263,28 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         final long dstFixFd = columnFdAndDataSize.get(3L * columnIndex + 1);
                         final int srcTag2 = ColumnType.tagOf(parquetColumnType);
                         final int dstTag2 = ColumnType.tagOf(tableColumnType);
-
-                        if ((ColumnType.isVarSize(srcTag2) || ColumnType.isSymbol(srcTag2))
-                                && !ColumnType.isVarSize(dstTag2) && !ColumnType.isSymbol(dstTag2)) {
-                            // Var->fixed or Symbol->fixed: batch-convert decoded var data to fixed.
-                            // Symbol was decoded as VARCHAR_SLICE; use VARCHAR as the effective source.
-                            final int effectiveSrcType = ColumnType.isSymbol(srcTag2) ? ColumnType.VARCHAR : parquetColumnType;
-                            final long fixSize = rowGroupRowCount * ColumnType.sizeOf(tableColumnType);
-                            final long fixBuf = Unsafe.malloc(fixSize, MemoryTag.NATIVE_DEFAULT);
-                            try {
+                        // No-sentinel columns (BOOLEAN/BYTE/SHORT/CHAR) decode or convert their column-top rows
+                        // to an in-band 0/false the reader cannot tell from a real value. Reconstruct the leading
+                        // parquet column top in the native column version and skip the region in the data file so
+                        // it reads as NULL -- matching native, and so a subsequent ALTER ... TYPE SYMBOL (which runs
+                        // after this parquet->native pre-pass) sees the column top instead of a literal 0/false. A
+                        // later column top, which a native column of the type cannot hold, keeps its 0/false, as a
+                        // native squash of the folders writes it.
+                        final long colTopRows = ColumnType.isNoNullSentinelFixedType(tableColumnType) && rowsWritten == 0
+                                ? rowGroupBuffers.getChunkLeadingTopRows(columnIndex)
+                                : 0;
+                        long fixBuf = 0;
+                        long fixSize = 0;
+                        try {
+                            long fixPtr = srcDataPtr;
+                            long fixDataSize = srcDataSize;
+                            if ((ColumnType.isVarSize(srcTag2) || ColumnType.isSymbol(srcTag2))
+                                    && !ColumnType.isVarSize(dstTag2) && !ColumnType.isSymbol(dstTag2)) {
+                                // Var->fixed or Symbol->fixed: batch-convert decoded var data to fixed.
+                                // Symbol was decoded as VARCHAR_SLICE; use VARCHAR as the effective source.
+                                final int effectiveSrcType = ColumnType.isSymbol(srcTag2) ? ColumnType.VARCHAR : parquetColumnType;
+                                fixSize = rowGroupRowCount * ColumnType.sizeOf(tableColumnType);
+                                fixBuf = Unsafe.malloc(fixSize, MemoryTag.NATIVE_DEFAULT);
                                 ParquetColumnTypeConverter.convertVarColumnToFixed(
                                         effectiveSrcType, tableColumnType,
                                         srcDataPtr, srcAuxPtr,
@@ -16278,38 +16292,27 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                         directUtf8String, utf16Sink,
                                         d64, d128, d256
                                 );
-                                appendBuffer(dstFixFd, fixBuf, fixSize);
-                            } finally {
-                                Unsafe.free(fixBuf, fixSize, MemoryTag.NATIVE_DEFAULT);
+                                fixPtr = fixBuf;
+                                fixDataSize = fixSize;
                             }
-                        } else {
-                            // Same type, or fixed->fixed conversion handled by Rust post_convert.
-                            final int dstTagFixed = ColumnType.tagOf(tableColumnType);
-                            final boolean noNullSentinel = dstTagFixed == ColumnType.BOOLEAN
-                                    || dstTagFixed == ColumnType.BYTE
-                                    || dstTagFixed == ColumnType.SHORT
-                                    || dstTagFixed == ColumnType.CHAR;
-                            final int colTopRows = (int) rowGroupBuffers.getChunkColumnTop(columnIndex);
-                            final long skipBytes = (long) colTopRows * ColumnType.sizeOf(tableColumnType);
+                            // Otherwise the same type, or a fixed->fixed conversion handled by Rust post_convert.
+                            final long skipBytes = colTopRows * ColumnType.sizeOf(tableColumnType);
                             // A column changed lazily from a type with a NULL sentinel takes its top rows from the
                             // column top of the file, and QuestDB 9.3.3 and older kept a stale one in a file they
                             // merged rows into. A top row that converted to a value other than 0 shows the top
                             // stale: the column then keeps no top, as the native merge that wrote the value ended it.
-                            if (noNullSentinel && colTopRows > 0 && rowsWritten == 0 && isZeroFilled(srcDataPtr, Math.min(skipBytes, srcDataSize))) {
-                                // No-sentinel columns (BOOLEAN/BYTE/SHORT/CHAR) decode their
-                                // column-top rows to an in-band 0/false the reader cannot tell
-                                // from a real value. Reconstruct the parquet column top in the
-                                // native column version and skip the region in the data file so
-                                // it reads as NULL -- matching native, and so a subsequent
-                                // ALTER ... TYPE SYMBOL (which runs after this parquet->native
-                                // pre-pass) sees the column top instead of a literal 0/false.
-                                if (srcDataSize > skipBytes) {
-                                    appendBuffer(dstFixFd, srcDataPtr + skipBytes, srcDataSize - skipBytes);
+                            if (colTopRows > 0 && isZeroFilled(fixPtr, Math.min(skipBytes, fixDataSize))) {
+                                if (fixDataSize > skipBytes) {
+                                    appendBuffer(dstFixFd, fixPtr + skipBytes, fixDataSize - skipBytes);
                                 }
                                 parquetDecodedColumnLeadingRows.setQuick(columnIndex, parquetDecodedColumnLeadingRows.getQuick(columnIndex) + colTopRows);
                                 chunkRowsWritten = rowGroupRowCount - colTopRows;
                             } else {
-                                appendBuffer(dstFixFd, srcDataPtr, srcDataSize);
+                                appendBuffer(dstFixFd, fixPtr, fixDataSize);
+                            }
+                        } finally {
+                            if (fixBuf != 0) {
+                                Unsafe.free(fixBuf, fixSize, MemoryTag.NATIVE_DEFAULT);
                             }
                         }
                     }

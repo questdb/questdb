@@ -126,40 +126,46 @@ public class O3ParquetCoalescedColumnTopTest extends AbstractCairoTest {
     @Test
     public void testConvertToNativeColumnTop() throws Exception {
         // the conversion to native converts one row group at a time. CONVERT TO PARQUET writes the rows of the
-        // top of b, v 1..8 in row groups 0 and 1, as NULLs, which the conversion to native decodes as BYTE: they
-        // hold 0, as v 9. v 99 of 2024-01-02, a native partition, keeps its top, NULL, and the rows with a value
-        // keep it
+        // top of b, v 1..8 in row groups 0 and 1, as NULLs and records them as the column top, which the
+        // conversion to native keeps: they read NULL after the change of type, as on the native twin tw, and the
+        // stored 0 of v 9 reads 0. v 99 of 2024-01-02, a native partition, keeps its top, NULL
         assertMemoryLeak(() -> {
             for (String target : new String[]{"VARCHAR", "STRING"}) {
                 final String t = "pt_" + target;
-                execute("CREATE TABLE " + t + " (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-                execute("INSERT INTO " + t + " (v, ts) VALUES " + DAY_ROWS);
-                drainWalQueue();
-                execute("ALTER TABLE " + t + " ADD COLUMN b BYTE");
-                drainWalQueue();
-                execute("INSERT INTO " + t + " (v, ts, b) VALUES (9, '2024-01-01T08:00:00.000000Z', 0), (10, '2024-01-01T09:00:00.000000Z', 10)");
-                drainWalQueue();
+                final String twin = "tw_" + target;
+                for (String table : new String[]{t, twin}) {
+                    execute("CREATE TABLE " + table + " (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                    execute("INSERT INTO " + table + " (v, ts) VALUES " + DAY_ROWS);
+                    drainWalQueue();
+                    execute("ALTER TABLE " + table + " ADD COLUMN b BYTE");
+                    drainWalQueue();
+                    execute("INSERT INTO " + table + " (v, ts, b) VALUES (9, '2024-01-01T08:00:00.000000Z', 0), (10, '2024-01-01T09:00:00.000000Z', 10)");
+                    drainWalQueue();
+                }
                 convertToParquet(t);
-                execute("ALTER TABLE " + t + " ALTER COLUMN b TYPE " + target);
-                drainWalQueue();
+                for (String table : new String[]{t, twin}) {
+                    execute("ALTER TABLE " + table + " ALTER COLUMN b TYPE " + target);
+                    drainWalQueue();
+                }
                 execute("ALTER TABLE " + t + " CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
                 drainWalQueue();
+                assertSqlCursors("SELECT v, b, ts FROM " + twin + " ORDER BY ts, v", "SELECT v, b, ts FROM " + t + " ORDER BY ts, v");
                 assertQuery("SELECT v, b FROM " + t + " WHERE ts < '2024-01-02'")
                         .noLeakCheck()
                         .returns("""
                                 v\tb
-                                1\t0
-                                2\t0
-                                3\t0
-                                4\t0
-                                5\t0
-                                6\t0
-                                7\t0
-                                8\t0
+                                1\t
+                                2\t
+                                3\t
+                                4\t
+                                5\t
+                                6\t
+                                7\t
+                                8\t
                                 9\t0
                                 10\t10
                                 """);
-                assertQuery("SELECT count() FROM " + t + " WHERE b IS NULL").noLeakCheck().noRandomAccess().expectSize().returns("count\n1\n");
+                assertQuery("SELECT count() FROM " + t + " WHERE b IS NULL").noLeakCheck().noRandomAccess().expectSize().returns("count\n9\n");
             }
         });
     }

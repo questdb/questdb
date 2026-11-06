@@ -33,6 +33,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
@@ -46,6 +47,9 @@ import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
 import java.io.File;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -54,6 +58,8 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.IntFunction;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * An O3 commit into a parquet partition keeps the column top of a BOOLEAN, BYTE, SHORT or CHAR
@@ -1511,8 +1517,8 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         // top ends inside the prefix of rows 1..3 and stays: the NULLs of c1..c3 in row group 0 are its rows, which a
         // merge writes as NULLs, so the update leaves row groups 0 and 1 in place, and merges row group 2 from what
         // the check decoded: 3 x 9 columns in the check, none in the merge. CHAR: the check does not run, the merge
-        // decodes and writes the three row groups. testDedupUpsertIdenticalKeptTopFirstMergeRewritesRowGroup converts
-        // the partition before the last: the file records no top, and the merge rewrites row group 0
+        // decodes and writes the three row groups. testDedupUpsertIdenticalKeptTopFirstMergeRewritesRowGroup erases the
+        // top that the file records, as the O3 merge of QuestDB 10.0.1 and older did, and the merge rewrites row group 0
         Assume.assumeTrue(isWal);
         setInPlaceProperties(4);
         assertMemoryLeak(() -> {
@@ -1532,15 +1538,17 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
 
     @Test
     public void testDedupUpsertIdenticalKeptTopFirstMergeRewritesRowGroup() throws Exception {
-        // top 2, 12 rows: the replays of row 4 (row group 0, which holds the top rows 1, 2) and row 6 (row group 1)
-        // pass the identity check, the change of row 11 fails the check of row group 2. Row group 0 holds NULL in
-        // c1..c3, the merge writes it; row group 1 holds none and stays in place. The merge prepares row group 0
-        // before row group 2, so the check keeps nothing of row group 2: 3 x 9 columns in the check, 2 x 9 in the
-        // merge. The top ends inside the prefix of rows 1..3 and stays
+        // top 2, 12 rows, in a file that records no top, as the O3 merge of QuestDB 10.0.1 and older left it (see
+        // eraseFileColumnTops()): the replays of row 4 (row group 0, which holds the top rows 1, 2) and row 6 (row
+        // group 1) pass the identity check, the change of row 11 fails the check of row group 2. Row group 0 holds
+        // NULL in c1..c3, the merge writes it; row group 1 holds none and stays in place. The merge prepares row
+        // group 0 before row group 2, so the check keeps nothing of row group 2: 3 x 9 columns in the check, 2 x 9 in
+        // the merge. The top ends inside the prefix of rows 1..3 and stays
         Assume.assumeTrue(isWal);
         setInPlaceProperties(4);
         assertMemoryLeak(() -> {
             createShapeTables(" DEDUP UPSERT KEYS(ts)", 2, 12, -1);
+            eraseFileColumnTops();
             final boolean isChecked = hasNoSentinelType();
             assertDecodedColumnsAndWrittenRows(
                     isChecked ? 45 : 27,
@@ -2810,6 +2818,43 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         }
     }
 
+    // Rewrites the non-zero column tops that the parquet file of 2024-01-01 of pt records to 0, in place: the file then
+    // holds the NULLs of the tops and records no top, as the O3 merge of QuestDB 10.0.1 and older, which zeroed the
+    // column tops of the file, left it. JSON whitespace pads each top to the width of its digits, so the footer keeps
+    // its length and the _pm file its offsets.
+    private static void eraseFileColumnTops() throws Exception {
+        engine.releaseAllWriters();
+        engine.releaseAllReaders();
+        final String parquetFile;
+        try (TableReader reader = engine.getReader("pt"); Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(reader.getTableToken());
+            TableUtils.setPathForParquetPartition(
+                    path,
+                    reader.getMetadata().getTimestampType(),
+                    reader.getPartitionedBy(),
+                    reader.getPartitionTimestampByIndex(0),
+                    reader.getTxFile().getPartitionNameTxn(0)
+            );
+            parquetFile = path.toString();
+        }
+        engine.releaseAllReaders();
+        final java.nio.file.Path file = Paths.get(parquetFile);
+        final byte[] bytes = Files.readAllBytes(file);
+        // ISO-8859-1 maps each byte to one char, so a match offset is a byte offset
+        final Matcher topMatcher = Pattern.compile("\"column_top\":([1-9][0-9]*)")
+                .matcher(new String(bytes, StandardCharsets.ISO_8859_1));
+        int erasedTopCount = 0;
+        while (topMatcher.find()) {
+            bytes[topMatcher.start(1)] = '0';
+            for (int i = topMatcher.start(1) + 1; i < topMatcher.end(1); i++) {
+                bytes[i] = ' ';
+            }
+            erasedTopCount++;
+        }
+        Assert.assertTrue("the parquet file records no column top to erase", erasedTopCount > 0);
+        Files.write(file, bytes);
+    }
+
     private static long getMergeDecodedColumnCount() {
         try (TableWriter writer = getWriter("pt")) {
             return writer.getParquetMergeDecodedColumnCount();
@@ -3473,9 +3518,9 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
     }
 
     // the tables of createShapeTables(); isConvertedLast converts 2024-01-01 while it is the last partition and adds the
-    // row of 2024-01-02 after. That conversion records the column tops in the parquet file, as the conversion of any
-    // partition did in earlier versions; the conversion of a partition before the last writes the rows of a top as
-    // NULLs and records no top
+    // row of 2024-01-02 after. That conversion squashes the partition and encodes it whole; the conversion of a
+    // partition before the last encodes its folders one after another and writes the rows of a top as NULLs. Both
+    // record the leading column tops in the parquet file
     private void createShapeTables(
             String dedup,
             int top,

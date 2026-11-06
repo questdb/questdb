@@ -82,7 +82,6 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
     private LongList rowGroupIndexRowLos;
     private IntList rowGroupOrder;
     private LongList srcPtrs;
-    private LongList topRows;
     // The merge actions [unchangedMergeActionLo, unchangedMergeActionHi) of the partition whose MERGEs the merge loop
     // leaves as stored, see setUnchangedMergeActions()
     private int unchangedMergeActionHi;
@@ -105,7 +104,6 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
         rowGroupIndexRowLos = new LongList();
         rowGroupOrder = new IntList();
         srcPtrs = new LongList();
-        topRows = new LongList();
     }
 
     @Override
@@ -121,7 +119,6 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
         rowGroupIndexRowLos.clear();
         rowGroupOrder.clear();
         srcPtrs.clear();
-        topRows.clear();
         keptTopMergeAction = -1;
         unchangedMergeActionLo = 0;
         unchangedMergeActionHi = 0;
@@ -152,7 +149,6 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
         rowGroupIndexRowLos = null;
         rowGroupOrder = null;
         srcPtrs = null;
-        topRows = null;
         super.close();
     }
 
@@ -282,11 +278,6 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
         srcPtrs.setPos(requiredLen);
         srcPtrs.fill(0, requiredLen, 0);
         return srcPtrs;
-    }
-
-    // the column-top rows of a coalesced run, see ParquetColumnTypeConverter.fillRangeTopRows()
-    public LongList getTopRows() {
-        return topRows;
     }
 
     public boolean isPreparedMergeKeyColumnsOnly() {

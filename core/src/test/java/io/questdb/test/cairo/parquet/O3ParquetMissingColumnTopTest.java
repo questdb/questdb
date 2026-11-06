@@ -233,9 +233,9 @@ public class O3ParquetMissingColumnTopTest extends AbstractCairoTest {
 
     @Test
     public void testPresentColumnKeptWhileMissingTopEnds() throws Exception {
-        // p BYTE has a top of 2 rows, which CONVERT TO PARQUET writes as NULLs, and m BYTE is added after the
-        // conversion. The row at 02:30 merges into row group 0 after row 3: the rewrite of the prefix of rows
-        // 1..3 stores the NULLs of p as 0, where the native twin keeps the top, and ends the top of m, all 8 rows
+        // p BYTE has a top of 2 rows, which CONVERT TO PARQUET writes as NULLs and records as the column top, and
+        // m BYTE is added after the conversion. The row at 02:30 merges into row group 0 after row 3: the rewrite
+        // of the prefix of rows 1..3 keeps the top of p, as the native twin does, and ends the top of m, all 8 rows
         assertMemoryLeak(() -> {
             for (String t : tables()) {
                 execute("CREATE TABLE " + t + " (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -255,13 +255,13 @@ public class O3ParquetMissingColumnTopTest extends AbstractCairoTest {
                 execute("ALTER TABLE " + t + " ALTER COLUMN m TYPE INT");
             }
             drainWalQueue();
-            assertTwinWithTopOfP();
+            assertTwin();
             assertQuery("SELECT v, p, m FROM pt WHERE ts IN '" + O3_DAY + "' ORDER BY ts")
                     .noLeakCheck()
                     .returns("""
                             v\tp\tm
-                            1\t0\t0
-                            2\t0\t0
+                            1\tnull\t0
+                            2\tnull\t0
                             3\t3\t0
                             50\t9\t9
                             4\t4\t0
@@ -272,7 +272,7 @@ public class O3ParquetMissingColumnTopTest extends AbstractCairoTest {
                             """);
             engine.releaseAllWriters();
             engine.releaseAllReaders();
-            assertTwinWithTopOfP();
+            assertTwin();
         });
     }
 
@@ -281,11 +281,6 @@ public class O3ParquetMissingColumnTopTest extends AbstractCairoTest {
     }
 
     // pt reads as tw, but p of rows 1 and 2, the top of p, reads NULL or 0 on either
-    private static void assertTwinWithTopOfP() throws Exception {
-        final String sql = "SELECT v, ts, CASE WHEN v IN (1, 2) THEN coalesce(p, 0) ELSE p END p, m FROM {t} ORDER BY ts";
-        assertSqlCursors(sql.replace("{t}", "tw"), sql.replace("{t}", "pt"));
-    }
-
     private static void convertToParquet() throws Exception {
         execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '" + O3_DAY + "'");
         drainWalQueue();

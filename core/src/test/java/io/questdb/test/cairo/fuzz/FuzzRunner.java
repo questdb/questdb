@@ -119,8 +119,11 @@ public class FuzzRunner {
     private static final AtomicInteger checkedNoSentinelWidenings = new AtomicInteger();
     private static final AtomicInteger checkedNoSentinelWideningsOnParquet = new AtomicInteger();
     // the widenings that applyWalChecked() checked over a day whose NULLs of the column do not lead the day: the rows
-    // of a column top that come after rows with values, which a split or composite day converts into one row group
+    // of a column top that come after rows with values, which a split or composite day converts into one row group;
+    // and those of them that a lazy change decodes at the width of the source type, see
+    // FuzzChangeColumnTypeOperation.isDecodedAtSourceWidth()
     private static final AtomicInteger checkedNoSentinelWideningsOverNonLeadingNulls = new AtomicInteger();
+    private static final AtomicInteger checkedSourceWidthWideningsOverNonLeadingNulls = new AtomicInteger();
     private static final int MAX_COVERED_KEYS_CHECKED = 32;
     // Share of fuzz runs that use TIMESTAMP_NS designated timestamp instead of TIMESTAMP
     private static final int NANOS_TIMESTAMP_PERCENT = 40;
@@ -214,6 +217,10 @@ public class FuzzRunner {
         return checkedNoSentinelWideningsOverNonLeadingNulls.get();
     }
 
+    public static int getCheckedSourceWidthWideningsOverNonLeadingNulls() {
+        return checkedSourceWidthWideningsOverNonLeadingNulls.get();
+    }
+
     public static String getWalParallelApplyTableName(String tableNameBase, int i) {
         return tableNameBase + "_" + i;
     }
@@ -223,6 +230,7 @@ public class FuzzRunner {
         checkedNoSentinelWidenings.set(0);
         checkedNoSentinelWideningsOnParquet.set(0);
         checkedNoSentinelWideningsOverNonLeadingNulls.set(0);
+        checkedSourceWidthWideningsOverNonLeadingNulls.set(0);
     }
 
     public void after() {
@@ -981,8 +989,8 @@ public class FuzzRunner {
 
     /**
      * Makes the generator change a STRING, SYMBOL or VARCHAR column to BOOLEAN, BYTE or SHORT on a parquet
-     * partition, with in-order writes only, see FuzzTransactionGenerator.generateSet(). The parallel WAL apply
-     * needs one WAL writer to keep the order.
+     * partition and those types back to text, with in-order writes only, see
+     * FuzzTransactionGenerator.generateSet(). The parallel WAL apply needs one WAL writer to keep the order.
      */
     public void setNoSentinelTypeChangeEnabled(boolean isNoSentinelTypeChangeEnabled) {
         this.isNoSentinelTypeChangeEnabled = isNoSentinelTypeChangeEnabled;
@@ -1530,6 +1538,9 @@ public class FuzzRunner {
         final int nonLeadingNullDays = countNonLeadingNullDays(tableName, timestampColumnName, columnName);
         if (nonLeadingNullDays > 0) {
             checkedNoSentinelWideningsOverNonLeadingNulls.incrementAndGet();
+            if (FuzzChangeColumnTypeOperation.isDecodedAtSourceWidth(columnType, newColumnType)) {
+                checkedSourceWidthWideningsOverNonLeadingNulls.incrementAndGet();
+            }
         }
         LOG.info().$("checked widening [change=").$(change)
                 .$(", rows=").$(before.length - 2)

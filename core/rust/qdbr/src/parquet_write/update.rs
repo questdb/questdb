@@ -8374,10 +8374,11 @@ mod tests {
     /// Decodes row groups `0..tops.len()` of `added` (the file of
     /// [`build_added_column_layout`]) as `target` in one range decode, and asserts that the
     /// buffer equals the row groups decoded one by one and laid end to end, and that the
-    /// surfaced column top is `expected_column_top`. An all-NULL row group that
-    /// decode_row_group returns empty (the fast path) stands for `null_bytes` per row, as the
-    /// O3 merge fills it.
-    #[allow(clippy::too_many_arguments)]
+    /// surfaced column-top rows are the top of each row group from its first row in the
+    /// buffer. A decode straight to a target with a NULL (BYTE/SHORT to INT, LONG or
+    /// TIMESTAMP) reads the top rows as that NULL and surfaces none. An all-NULL row group
+    /// that decode_row_group returns empty (the fast path) stands for `null_bytes` per row, as
+    /// the O3 merge fills it.
     fn assert_range_decode_equals_per_group_decodes(
         added: ColumnType,
         parquet_bytes: &[u8],
@@ -8386,7 +8387,6 @@ mod tests {
         tops: &[usize],
         target: ColumnType,
         null_bytes: &[u8],
-        expected_column_top: usize,
     ) -> Result<(), Box<dyn Error>> {
         use crate::allocator::TestAllocatorState;
         use crate::parquet_metadata::reader::ParquetMetaReader;
@@ -8439,8 +8439,27 @@ mod tests {
             expected.as_slice(),
             "{added:?} -> {target:?}, tops {tops:?}"
         );
+        let is_decoded_as_target = matches!(
+            (added.tag(), target.tag()),
+            (
+                ColumnTypeTag::Byte | ColumnTypeTag::Short,
+                ColumnTypeTag::Int | ColumnTypeTag::Long | ColumnTypeTag::Timestamp
+            )
+        );
+        let mut expected_top_rows: Vec<[u64; 2]> = Vec::new();
+        if !is_decoded_as_target {
+            for (rg, &top) in tops.iter().enumerate() {
+                let lo = (rg * 4) as u64;
+                match expected_top_rows.last_mut() {
+                    Some(last) if last[1] == lo => last[1] = lo + top as u64,
+                    _ if top > 0 => expected_top_rows.push([lo, lo + top as u64]),
+                    _ => {}
+                }
+            }
+        }
         assert_eq!(
-            chunk.column_top, expected_column_top,
+            chunk.top_rows(),
+            expected_top_rows.as_slice(),
             "{added:?} -> {target:?}, tops {tops:?}"
         );
         Ok(())
@@ -8513,29 +8532,29 @@ mod tests {
 
     /// A run of row groups decoded into one buffer must equal the row groups decoded one by
     /// one and laid end to end, for a column added after the file was written and lazily
-    /// converted from a type without a NULL sentinel. Java reads the surfaced column top as
-    /// one leading block of NULLs: the top rows from row 0 up to the first row with a value.
+    /// converted from a type without a NULL sentinel. Java reads the surfaced column-top rows,
+    /// the top of each row group from its first row in the buffer, as NULL.
     #[test]
     fn decode_row_group_range_equals_per_group_decodes() -> Result<(), Box<dyn Error>> {
-        // (tops of the row groups, column top Java reads)
-        let layouts: [(&[usize], usize); 10] = [
-            (&[0, 4], 0),
-            (&[4, 0], 4),
-            (&[4, 4], 8),
-            (&[0, 0], 0),
-            (&[0, 4, 4], 0),
-            (&[4, 0, 4], 4),
-            (&[0, 3, 4], 0),
-            (&[2, 4], 2),
-            (&[4, 2, 0], 6),
-            (&[1, 0, 2, 4], 1),
+        // the tops of the row groups
+        let layouts: [&[usize]; 10] = [
+            &[0, 4],
+            &[4, 0],
+            &[4, 4],
+            &[0, 0],
+            &[0, 4, 4],
+            &[4, 0, 4],
+            &[0, 3, 4],
+            &[2, 4],
+            &[4, 2, 0],
+            &[1, 0, 2, 4],
         ];
         for source in [
             ColumnTypeTag::Byte,
             ColumnTypeTag::Short,
             ColumnTypeTag::Boolean,
         ] {
-            for (tops, column_top) in layouts {
+            for tops in layouts {
                 let (pq, pm, pm_size) = build_no_sentinel_layout(source, tops)?;
                 for (target, null_bytes) in no_sentinel_targets(source) {
                     assert_range_decode_equals_per_group_decodes(
@@ -8546,7 +8565,6 @@ mod tests {
                         tops,
                         target,
                         &null_bytes,
-                        column_top,
                     )?;
                 }
             }
@@ -8579,15 +8597,6 @@ mod tests {
                     _ => 4,
                 })
                 .collect();
-            // the leading block: the tops of the row groups that hold only their top, and
-            // the top of the first row group that holds a value
-            let mut column_top = 0;
-            for &top in &tops {
-                column_top += top;
-                if top < 4 {
-                    break;
-                }
-            }
             let (pq, pm, pm_size) = build_no_sentinel_layout(source, &tops)?;
             let targets = no_sentinel_targets(source);
             let (target, null_bytes) = &targets[rng.random_range(0..targets.len())];
@@ -8599,7 +8608,6 @@ mod tests {
                 &tops,
                 *target,
                 null_bytes,
-                column_top,
             )
             .map_err(|e| format!("seed {seed}: {e}"))?;
         }

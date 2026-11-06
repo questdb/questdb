@@ -16,11 +16,11 @@ use crate::parquet_read::{
 };
 use nonmax::NonMaxU32;
 use parquet2::encoding::Encoding;
-use parquet2::metadata::FileMetaData;
+use parquet2::metadata::{Descriptor, FileMetaData};
 use parquet2::read::{SlicePageReader, SlicedDataPage, SlicedDictPage, SlicedPage};
 use parquet2::schema::types::{PhysicalType, PrimitiveConvertedType, PrimitiveLogicalType};
 use qdb_core::col_type::{nulls, ColumnType, ColumnTypeTag, QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG};
-use std::{cmp, mem::size_of, ops::Range, ptr, slice};
+use std::{cmp, mem::size_of, ptr, slice};
 
 // The metadata fields are accessed from Java.
 // This struct contains only immutable metadata.
@@ -189,46 +189,16 @@ pub(crate) fn decompress_varchar_slice_data<'a>(
 
 /// Apply post-decode conversions that cannot be handled by the per-page decode dispatch,
 /// typically because the source and target share the same physical representation.
-/// `leading_nulls` is the count of column-top rows at the start of the buffer.
-/// `has_def_levels` tells whether the decoded chunk carries definition levels, see
-/// [`post_convert_with_top_rows`].
+/// BOOLEAN, BYTE and SHORT have no NULL sentinel: a conversion from one of them to a type
+/// with a NULL writes that NULL over the column-top rows of the buffer (`bufs.top_rows()`),
+/// which the decode wrote as 0 or false, as native ALTER COLUMN TYPE reads a column top. A
+/// decode straight to a target with a NULL (DecodeAs::Target) reads the definition levels of a
+/// chunk into that NULL itself, so its callers give it top rows only for a chunk without
+/// definition levels (a Required column of QuestDB 9.4.x and older), which decodes its top
+/// rows as the stored 0.
 pub(super) fn post_convert(
     from_type: ColumnType,
     to_type: ColumnType,
-    leading_nulls: usize,
-    has_def_levels: bool,
-    bufs: &mut ColumnChunkBuffers,
-) -> ParquetResult<()> {
-    let top_rows = 0..leading_nulls;
-    post_convert_with_top_rows(
-        from_type,
-        to_type,
-        slice::from_ref(&top_rows),
-        has_def_levels,
-        bufs,
-    )
-}
-
-/// [`post_convert`] for a buffer whose column-top rows are not one leading block: a run of
-/// row groups decoded into one buffer, where each group's column top starts at that group's
-/// first row. `top_rows` holds the rows of the column tops, as sorted, disjoint ranges of
-/// buffer rows. Byte/Short/Boolean have no in-band null sentinel, so these rows are their
-/// only nulls, and a target with a sentinel must read NULL in them.
-///
-/// `has_def_levels` tells whether the decoded chunk carries definition levels (an Optional
-/// column, every file QuestDB 10.0.0 and later wrote). A decode straight to a target with a
-/// NULL sentinel (DecodeAs::Target) then already wrote that NULL for each def-level-0 row,
-/// wherever it sits, and `top_rows` must not be stamped: the callers derive them from the
-/// chunk null count, which is no leading count when a row group holds the values of one
-/// folder ahead of the column top of the next, as CONVERT TO PARQUET of a split or
-/// composite partition writes. A chunk without definition levels (a Required column of
-/// QuestDB 9.4.x and older) decodes its top rows as the stored 0, and its top is the
-/// leading rows of the chunk.
-pub(super) fn post_convert_with_top_rows(
-    from_type: ColumnType,
-    to_type: ColumnType,
-    top_rows: &[Range<usize>],
-    has_def_levels: bool,
     bufs: &mut ColumnChunkBuffers,
 ) -> ParquetResult<()> {
     let src_tag = from_type.tag();
@@ -240,27 +210,27 @@ pub(super) fn post_convert_with_top_rows(
         (ColumnTypeTag::Boolean, ColumnTypeTag::Short) => {
             expand_bool::<i16>(&mut bufs.data_vec)?;
         }
-        // Boolean has no in-band null sentinel, so its only nulls are the column-top prefix.
-        // Byte/Short targets also lack a sentinel (column top stays 0, matching native), but
+        // Boolean has no in-band null sentinel, so its only nulls are the column-top rows.
+        // Byte/Short targets also lack a sentinel (the top rows read 0, matching native), but
         // sentinel-bearing targets must stamp the target NULL over the column-top rows.
         (ColumnTypeTag::Boolean, ColumnTypeTag::Int) => {
             expand_bool::<i32>(&mut bufs.data_vec)?;
-            stamp_top_rows(&mut bufs.data_vec, top_rows, nulls::INT);
+            stamp_top_rows(&mut bufs.data_vec, &bufs.top_rows, nulls::INT);
         }
         (
             ColumnTypeTag::Boolean,
             ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
         ) => {
             expand_bool::<i64>(&mut bufs.data_vec)?;
-            stamp_top_rows(&mut bufs.data_vec, top_rows, nulls::LONG);
+            stamp_top_rows(&mut bufs.data_vec, &bufs.top_rows, nulls::LONG);
         }
         (ColumnTypeTag::Boolean, ColumnTypeTag::Float) => {
             expand_bool::<f32>(&mut bufs.data_vec)?;
-            stamp_top_rows(&mut bufs.data_vec, top_rows, f32::NAN);
+            stamp_top_rows(&mut bufs.data_vec, &bufs.top_rows, f32::NAN);
         }
         (ColumnTypeTag::Boolean, ColumnTypeTag::Double) => {
             expand_bool::<f64>(&mut bufs.data_vec)?;
-            stamp_top_rows(&mut bufs.data_vec, top_rows, f64::NAN);
+            stamp_top_rows(&mut bufs.data_vec, &bufs.top_rows, f64::NAN);
         }
         // Fixed → Boolean: contract decoded source-sized values to 1-byte booleans.
         // Null sentinels (i32::MIN, i64::MIN, NaN) map to 0 (false), not 1.
@@ -343,51 +313,45 @@ pub(super) fn post_convert_with_top_rows(
             }
         }
         // Fixed integer → Decimal: widen to target size and scale by 10^(target_scale).
-        // Byte/Short have no in-band null sentinel, so their column-top prefix is nulled via
-        // `leading_nulls`; Int/Long carry i32::MIN/i64::MIN in-band (and may have scattered
-        // nulls), handled by `is_int_null` inside convert_fixed_to_decimal, so pass 0 for them.
+        // Int/Long carry i32::MIN/i64::MIN in-band (and may have scattered nulls), handled by
+        // `is_int_null` inside convert_fixed_to_decimal. Byte/Short have no in-band null
+        // sentinel, so their column-top rows convert as the 0 they decoded to and take the
+        // decimal NULL afterwards.
         (
             ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Int | ColumnTypeTag::Long,
             dst,
         ) if is_decimal_tag(dst) => {
-            let dec_top_rows: &[Range<usize>] = match src_tag {
-                ColumnTypeTag::Byte | ColumnTypeTag::Short => top_rows,
-                _ => &[],
-            };
             convert_fixed_to_decimal(
                 &mut bufs.data_vec,
                 src_tag,
                 dst,
-                dec_top_rows,
                 to_type.decimal_scale(),
                 to_type.decimal_precision(),
             )?;
+            if matches!(src_tag, ColumnTypeTag::Byte | ColumnTypeTag::Short) {
+                stamp_decimal_top_rows(&mut bufs.data_vec, dst, &bufs.top_rows);
+            }
         }
         // Byte/Short have no in-band null sentinel, so their only nulls are column-top rows,
         // which native ALTER reads as the target NULL. Byte/Short -> Int/Long/Timestamp
-        // decode straight to the target (DecodeAs::Target). On a chunk with definition levels
-        // the decoder already wrote the target NULL for every def-level-0 row, and stamping
-        // `top_rows` would write NULL over stored values whenever the chunk's NULLs are not
-        // its leading rows. Only a legacy (9.4.x) Required chunk, which has no def levels and
-        // stores its top rows as 0, needs the stamp.
+        // decode straight to the target (DecodeAs::Target), which reads the def-level-0 rows of
+        // a chunk with definition levels as the target NULL wherever they sit. Only a legacy
+        // (9.4.x) Required chunk, which has no def levels and stores its top rows as 0, comes
+        // with top rows here, see takes_file_column_top().
         (ColumnTypeTag::Byte | ColumnTypeTag::Short, ColumnTypeTag::Int) => {
-            if !has_def_levels {
-                stamp_top_rows(&mut bufs.data_vec, top_rows, nulls::INT);
-            }
+            stamp_top_rows(&mut bufs.data_vec, &bufs.top_rows, nulls::INT);
         }
         (
             ColumnTypeTag::Byte | ColumnTypeTag::Short,
             ColumnTypeTag::Long | ColumnTypeTag::Timestamp,
         ) => {
-            if !has_def_levels {
-                stamp_top_rows(&mut bufs.data_vec, top_rows, nulls::LONG);
-            }
+            stamp_top_rows(&mut bufs.data_vec, &bufs.top_rows, nulls::LONG);
         }
         // Int32 → Int64 widening. Byte/Short → Date has no dedicated DeltaBinaryPacked
         // decode arm yet, so it stays a two-pass widen.
         (ColumnTypeTag::Byte, ColumnTypeTag::Date) => {
             convert_numeric_in_place::<i8, i64>(&mut bufs.data_vec, |_| false, 0i64, |v| v as i64)?;
-            stamp_top_rows(&mut bufs.data_vec, top_rows, nulls::LONG);
+            stamp_top_rows(&mut bufs.data_vec, &bufs.top_rows, nulls::LONG);
         }
         (ColumnTypeTag::Short, ColumnTypeTag::Date) => {
             convert_numeric_in_place::<i16, i64>(
@@ -396,7 +360,7 @@ pub(super) fn post_convert_with_top_rows(
                 0i64,
                 |v| v as i64,
             )?;
-            stamp_top_rows(&mut bufs.data_vec, top_rows, nulls::LONG);
+            stamp_top_rows(&mut bufs.data_vec, &bufs.top_rows, nulls::LONG);
         }
         // Int → Long/Date/Timestamp stays Source: i32::MIN → i64::MIN via the value check.
         (
@@ -453,7 +417,7 @@ pub(super) fn post_convert_with_top_rows(
                 0.0f32,
                 |v| v as f32,
             )?;
-            stamp_top_rows(&mut bufs.data_vec, top_rows, f32::NAN);
+            stamp_top_rows(&mut bufs.data_vec, &bufs.top_rows, f32::NAN);
         }
         (ColumnTypeTag::Short, ColumnTypeTag::Float) => {
             convert_numeric_in_place::<i16, f32>(
@@ -462,7 +426,7 @@ pub(super) fn post_convert_with_top_rows(
                 0.0f32,
                 |v| v as f32,
             )?;
-            stamp_top_rows(&mut bufs.data_vec, top_rows, f32::NAN);
+            stamp_top_rows(&mut bufs.data_vec, &bufs.top_rows, f32::NAN);
         }
         (ColumnTypeTag::Int, ColumnTypeTag::Float) => {
             convert_numeric_in_place::<i32, f32>(
@@ -491,7 +455,7 @@ pub(super) fn post_convert_with_top_rows(
                 0.0f64,
                 |v| v as f64,
             )?;
-            stamp_top_rows(&mut bufs.data_vec, top_rows, f64::NAN);
+            stamp_top_rows(&mut bufs.data_vec, &bufs.top_rows, f64::NAN);
         }
         (ColumnTypeTag::Short, ColumnTypeTag::Double) => {
             convert_numeric_in_place::<i16, f64>(
@@ -500,7 +464,7 @@ pub(super) fn post_convert_with_top_rows(
                 0.0f64,
                 |v| v as f64,
             )?;
-            stamp_top_rows(&mut bufs.data_vec, top_rows, f64::NAN);
+            stamp_top_rows(&mut bufs.data_vec, &bufs.top_rows, f64::NAN);
         }
         (ColumnTypeTag::Int, ColumnTypeTag::Double) => {
             convert_numeric_in_place::<i32, f64>(
@@ -706,30 +670,53 @@ where
     Ok(())
 }
 
-/// Overwrite the first `count` elements of `data` (interpreted as `[D]`) with `null_value`.
+/// Overwrite the column-top rows `top_rows` of `data` (interpreted as `[D]`) with `null_value`.
 ///
-/// Used for conversions whose source type has no in-band null sentinel (BYTE, SHORT, CHAR):
-/// their only nulls are the contiguous column-top prefix, encoded as def-level=0 rows. The
-/// decoder materialises those as an in-band 0 indistinguishable from a real 0, so the count
-/// of leading nulls (`count`, derived from the column top) is needed to stamp the target
-/// sentinel and keep the lazy parquet read in step with the native ALTER path.
-fn stamp_top_rows<D: Copy>(data: &mut AcVec<u8>, top_rows: &[Range<usize>], null_value: D) {
-    let elem = size_of::<D>();
-    let len = data.len() / elem;
+/// Used for conversions whose source type has no in-band null sentinel (BOOLEAN, BYTE, SHORT):
+/// their only nulls are the column-top rows, which the decoder materialises as an in-band 0
+/// indistinguishable from a real 0, so the target sentinel is stamped over them to keep the
+/// lazy parquet read in step with the native ALTER path.
+fn stamp_top_rows<D: Copy>(data: &mut AcVec<u8>, top_rows: &[[u64; 2]], null_value: D) {
     let ptr = data.as_mut_ptr();
-    for rows in top_rows {
-        let end = rows.end.min(len);
-        for i in rows.start.min(end)..end {
-            // SAFETY: i < end <= data.len()/size_of::<D>(), so the write stays in bounds.
-            unsafe { (ptr.add(i * elem) as *mut D).write_unaligned(null_value) };
-        }
-    }
+    for_each_top_row(top_rows, data.len() / size_of::<D>(), |i| {
+        // SAFETY: for_each_top_row yields only i < data.len()/size_of::<D>().
+        unsafe { (ptr.add(i * size_of::<D>()) as *mut D).write_unaligned(null_value) };
+    });
 }
 
-/// Whether buffer row `i` lies in one of the column-top row ranges.
+/// Overwrite the column-top rows `top_rows` of a decimal buffer of type `dst_tag` with its NULL.
+fn stamp_decimal_top_rows(data: &mut AcVec<u8>, dst_tag: ColumnTypeTag, top_rows: &[[u64; 2]]) {
+    let dst_size = decimal_tag_size(dst_tag);
+    let ptr = data.as_mut_ptr();
+    for_each_top_row(top_rows, data.len() / dst_size, |i| {
+        // SAFETY: for_each_top_row yields only i < data.len()/dst_size.
+        unsafe {
+            match dst_tag {
+                ColumnTypeTag::Decimal128 => {
+                    (ptr.add(i * 16) as *mut i64).write_unaligned(i64::MIN);
+                    (ptr.add(i * 16 + 8) as *mut u64).write_unaligned(0);
+                }
+                ColumnTypeTag::Decimal256 => {
+                    (ptr.add(i * 32) as *mut i64).write_unaligned(i64::MIN);
+                    (ptr.add(i * 32 + 8) as *mut u64).write_unaligned(0);
+                    (ptr.add(i * 32 + 16) as *mut u64).write_unaligned(0);
+                    (ptr.add(i * 32 + 24) as *mut u64).write_unaligned(0);
+                }
+                _ => write_le_i64_at(ptr, i, dst_size, null_i64_for_decimal(dst_tag)),
+            }
+        }
+    });
+}
+
+/// Calls `f` with each row of the `[lo, hi)` runs `top_rows` below `len`.
 #[inline]
-fn is_top_row(top_rows: &[Range<usize>], i: usize) -> bool {
-    top_rows.iter().any(|rows| rows.contains(&i))
+fn for_each_top_row(top_rows: &[[u64; 2]], len: usize, mut f: impl FnMut(usize)) {
+    for &[lo, hi] in top_rows {
+        let hi = (hi as usize).min(len);
+        for i in (lo as usize).min(hi)..hi {
+            f(i);
+        }
+    }
 }
 
 /// Returns true for decimal type tags.
@@ -1308,11 +1295,12 @@ fn round_div_i256_pow10(
 /// Convert decoded fixed integer values (BYTE/SHORT/INT/LONG) to a target decimal type.
 /// Widens each value from the source size to the target decimal size, then multiplies
 /// by 10^scale. Iterates backwards when the target is wider to avoid overwriting unread data.
+/// Only an in-band INT/LONG NULL converts to the decimal NULL; the caller stamps the NULL over
+/// the column-top rows of a BYTE/SHORT source.
 fn convert_fixed_to_decimal(
     data: &mut AcVec<u8>,
     src_tag: ColumnTypeTag,
     dst_tag: ColumnTypeTag,
-    top_rows: &[Range<usize>],
     dst_scale: u8,
     dst_precision: u8,
 ) -> ParquetResult<()> {
@@ -1362,7 +1350,7 @@ fn convert_fixed_to_decimal(
             if dst_size >= src_size {
                 for i in (0..count).rev() {
                     let val = unsafe { read_le_i64_at(ptr, i, src_size) };
-                    let scaled = if is_top_row(top_rows, i) || is_int_null(val, src_tag) {
+                    let scaled = if is_int_null(val, src_tag) {
                         null_sentinel
                     } else {
                         scale_or_null_i64(val, factor, limit, null_sentinel)
@@ -1372,7 +1360,7 @@ fn convert_fixed_to_decimal(
             } else {
                 for i in 0..count {
                     let val = unsafe { read_le_i64_at(ptr, i, src_size) };
-                    let scaled = if is_top_row(top_rows, i) || is_int_null(val, src_tag) {
+                    let scaled = if is_int_null(val, src_tag) {
                         null_sentinel
                     } else {
                         scale_or_null_i64(val, factor, limit, null_sentinel)
@@ -1407,7 +1395,7 @@ fn convert_fixed_to_decimal(
                 // the Decimal128 NULL pair on overflow; a result within i128 that
                 // still exceeds the target precision (|scaled| >= 10^precision) is
                 // also NULLed, mirroring the i64 path in scale_or_null_i64.
-                let scaled = if is_top_row(top_rows, i) || is_int_null(val, src_tag) {
+                let scaled = if is_int_null(val, src_tag) {
                     None
                 } else {
                     (val as i128).checked_mul(factor)
@@ -1438,7 +1426,7 @@ fn convert_fixed_to_decimal(
                 // Decimal256 NULL on overflow. A value within i256 that still
                 // exceeds the target precision (|scaled| >= 10^precision) is also
                 // NULLed, mirroring the Decimal128 path.
-                let scaled = if is_top_row(top_rows, i) || is_int_null(val, src_tag) {
+                let scaled = if is_int_null(val, src_tag) {
                     None
                 } else {
                     let sign = if val < 0 { u64::MAX } else { 0 };
@@ -1703,6 +1691,71 @@ pub(super) fn plan_decode_conversion(
     }
 }
 
+/// Whether a type has no NULL sentinel: a column top of BOOLEAN, BYTE, SHORT or CHAR reads 0 or
+/// false, a value of the type, and only a conversion to a type with a NULL tells it apart.
+pub(super) fn has_no_null_sentinel(tag: ColumnTypeTag) -> bool {
+    matches!(
+        tag,
+        ColumnTypeTag::Boolean | ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Char
+    )
+}
+
+/// Whether a `_pm` decode of a column chunk records its column-top rows
+/// (`ColumnChunkBuffers::top_rows`) from the definition levels. A column of a source type without
+/// a NULL sentinel is NULL only in its column tops, which QuestDB writes at definition level 0
+/// wherever they sit: CONVERT TO PARQUET of a split or composite partition writes the folders, or
+/// the pieces, of a row group one after another, each with its own top, so a row group can hold
+/// stored values ahead of top rows. A decode at the width of such a type writes those rows as 0 or
+/// false, so when the chunk carries definition levels, the page decode records them as it reads
+/// them. A decode to a type with a NULL reads the definition levels into that NULL and needs no
+/// list.
+///
+/// A chunk without definition levels (a Required column of QuestDB 9.4.x and older) stores its
+/// top rows as 0: the `_pm` decode takes the top from the chunk null counts. The footer decoder,
+/// which serves CONVERT TO NATIVE, records none, see [`takes_file_column_top`].
+pub(super) fn decode_records_top_rows(
+    source_type: ColumnType,
+    decode_type: ColumnType,
+    descriptor: &Descriptor,
+) -> bool {
+    has_no_null_sentinel(source_type.tag())
+        && descriptor.max_def_level > 0
+        && matches!(
+            (descriptor.primitive_type.physical_type, decode_type.tag()),
+            (
+                PhysicalType::Int32,
+                ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Char
+            ) | (PhysicalType::Boolean, ColumnTypeTag::Boolean)
+        )
+}
+
+/// Whether the footer decoder takes the column-top rows of a chunk from the column top of the file
+/// metadata, as the leading rows it counts. It records none from the definition levels: it serves
+/// CONVERT TO NATIVE, which keeps only the leading column top, as a native column holds no later
+/// one, and the metadata top is the one the PartitionUpdater keeps as a native O3 merge does. An
+/// O3 merge that ends a top lowers it in the metadata but can leave the NULLs of the ended rows in
+/// the row groups that the update keeps, which then read as the 0 or false that native stores.
+///
+/// A source type without a NULL sentinel needs the rows for a conversion to read NULL there, see
+/// [`post_convert`], wherever the decode wrote them as 0: at the width of such a type, and at any
+/// width for a chunk without definition levels (a Required column of QuestDB 9.4.x and older). The
+/// decode of a chunk with definition levels to a type with a NULL writes that NULL itself. A source
+/// type with a NULL decodes its column top as that NULL, which a conversion to a type without one
+/// turns into 0, in post_convert (INT to SHORT) or in Java (VARCHAR to BYTE): CONVERT TO NATIVE
+/// needs the rows to keep the column top as the native column top of the new type
+/// (`TableWriter.produceNativeFromParquet`). Only the footer metadata records the column top of
+/// such a source, and the decode cannot see a conversion Java makes, so it takes the rows for every
+/// decode of such a source; the readers of a source with a NULL ignore them.
+pub(super) fn takes_file_column_top(
+    source_type: ColumnType,
+    decode_type: ColumnType,
+    has_def_levels: bool,
+) -> bool {
+    !has_no_null_sentinel(source_type.tag())
+        || !has_def_levels
+        || has_no_null_sentinel(decode_type.tag())
+}
+
 /// Decompress a varchar_slice dictionary page into a fresh buffer drawn from `buf_pool`, then
 /// move that buffer into `persistent_bufs` so it lives for the full column-chunk decode.
 ///
@@ -1917,32 +1970,28 @@ impl ParquetDecoder {
                 }
             }
 
-            // Number of this chunk's rows that fall in the column-top prefix. For a source
-            // type with no in-band null sentinel (BYTE/SHORT/CHAR), these are its only nulls,
-            // and post_convert stamps the target sentinel over them.
-            let leading_nulls = column_top
-                .saturating_sub(accumulated_size + row_group_lo as usize)
-                .min(row_group_hi.saturating_sub(row_group_lo) as usize);
-            let leading_nulls = self.verified_leading_nulls(
-                column_idx,
+            if takes_file_column_top(
                 original_column_type,
                 column_type,
-                leading_nulls,
-                0..leading_nulls,
-                column_chunk_bufs,
-            );
-            // Surface the count to Java (read via chunkColumnTopOffset) for lazy fixed->var
-            // conversions, where the source has no in-band null and Java must emit NULL here.
-            column_chunk_bufs.column_top = leading_nulls;
+                self.has_def_levels(column_idx),
+            ) {
+                // The rows of this chunk that fall in the column top of the file metadata.
+                let leading_nulls = column_top
+                    .saturating_sub(accumulated_size + row_group_lo as usize)
+                    .min(row_group_hi.saturating_sub(row_group_lo) as usize);
+                let leading_nulls = self.verified_leading_nulls(
+                    column_idx,
+                    original_column_type,
+                    column_type,
+                    leading_nulls,
+                    0..leading_nulls,
+                    column_chunk_bufs,
+                );
+                column_chunk_bufs.add_top_rows(0, leading_nulls)?;
+            }
 
             // Post-decode conversions that cannot be handled by the decode dispatch.
-            post_convert(
-                original_column_type,
-                to_column_type,
-                leading_nulls,
-                self.has_def_levels(column_idx),
-                column_chunk_bufs,
-            )?;
+            post_convert(original_column_type, to_column_type, column_chunk_bufs)?;
         }
 
         Ok(decoded)
@@ -2095,54 +2144,53 @@ impl ParquetDecoder {
                 }
             }
 
-            // Column-top nulls for a no-sentinel source must be stamped with the target
-            // sentinel. column_top here is partition-absolute, so make it window-relative the
-            // same way as the non-filtered path above. rows_filter is window-relative and
-            // ascending and the output preserves order, so the matched column-top rows are a
-            // contiguous leading prefix of the (possibly compacted) buffer.
-            let window_column_top = column_top
-                .saturating_sub(accumulated_size + row_group_lo as usize)
-                .min(row_group_hi.saturating_sub(row_group_lo) as usize);
-            let decoded_top_rows =
-                rows_filter.partition_point(|&r| (r as usize) < window_column_top);
-            let leading_nulls = if FILL_NULLS {
-                // the rows the filter skips hold the NULL the decode fills in, so only the
-                // decoded rows of the top tell whether it holds
-                self.verified_leading_nulls(
-                    column_idx,
-                    original_column_type,
-                    column_type,
-                    window_column_top,
-                    rows_filter[..decoded_top_rows].iter().map(|&r| r as usize),
-                    column_chunk_bufs,
-                )
-            } else {
-                self.verified_leading_nulls(
-                    column_idx,
-                    original_column_type,
-                    column_type,
-                    decoded_top_rows,
-                    0..decoded_top_rows,
-                    column_chunk_bufs,
-                )
-            };
-            column_chunk_bufs.column_top = leading_nulls;
-            // Post-decode conversions that cannot be handled by the decode dispatch.
-            post_convert(
+            if takes_file_column_top(
                 original_column_type,
-                to_column_type,
-                leading_nulls,
+                column_type,
                 self.has_def_levels(column_idx),
-                column_chunk_bufs,
-            )?;
+            ) {
+                // column_top here is partition-absolute, so make it window-relative the same way
+                // as the non-filtered path above. rows_filter is window-relative and ascending
+                // and the output preserves order, so the matched column-top rows are a
+                // contiguous leading prefix of the (possibly compacted) buffer.
+                let window_column_top = column_top
+                    .saturating_sub(accumulated_size + row_group_lo as usize)
+                    .min(row_group_hi.saturating_sub(row_group_lo) as usize);
+                let decoded_top_rows =
+                    rows_filter.partition_point(|&r| (r as usize) < window_column_top);
+                let leading_nulls = if FILL_NULLS {
+                    // the rows the filter skips hold the NULL the decode fills in, so only the
+                    // decoded rows of the top tell whether it holds
+                    self.verified_leading_nulls(
+                        column_idx,
+                        original_column_type,
+                        column_type,
+                        window_column_top,
+                        rows_filter[..decoded_top_rows].iter().map(|&r| r as usize),
+                        column_chunk_bufs,
+                    )
+                } else {
+                    self.verified_leading_nulls(
+                        column_idx,
+                        original_column_type,
+                        column_type,
+                        decoded_top_rows,
+                        0..decoded_top_rows,
+                        column_chunk_bufs,
+                    )
+                };
+                column_chunk_bufs.add_top_rows(0, leading_nulls)?;
+            }
+            // Post-decode conversions that cannot be handled by the decode dispatch.
+            post_convert(original_column_type, to_column_type, column_chunk_bufs)?;
         }
 
         Ok(output_count)
     }
 
     /// Whether the chunks of column `column_idx` carry definition levels, which the page
-    /// decode reads the NULLs of the chunk from, see post_convert_with_top_rows(). A column
-    /// out of range has none; the callers check the index first.
+    /// decode reads the NULLs of the chunk from, see takes_file_column_top(). A column out of
+    /// range has none; the callers check the index first.
     fn has_def_levels(&self, column_idx: usize) -> bool {
         self.metadata
             .schema_descr
@@ -2331,6 +2379,7 @@ impl ParquetDecoder {
                                 row_lo,
                                 row_hi,
                                 &rows_filter[page_filter_start..filter_idx],
+                                None,
                             )
                             .with_context(|_| {
                                 format!(
@@ -2366,6 +2415,7 @@ impl ParquetDecoder {
                                 0,
                                 0,
                                 &rows_filter[page_filter_start..filter_idx],
+                                None,
                             )
                             .with_context(|_| {
                                 format!(
@@ -2431,6 +2481,7 @@ impl ParquetDecoder {
                                 row_lo,
                                 row_hi,
                                 &rows_filter[page_filter_start..filter_idx],
+                                None,
                             )
                             .with_context(|_| {
                                 format!(
@@ -2455,6 +2506,7 @@ impl ParquetDecoder {
                                 0,
                                 0,
                                 &rows_filter[page_filter_start..filter_idx],
+                                None,
                             )
                             .with_context(|_| {
                                 format!(
@@ -2587,6 +2639,7 @@ impl ParquetDecoder {
                                 col_info,
                                 row_group_lo.saturating_sub(row_count),
                                 cmp::min(page_row_count, row_group_hi - row_count),
+                                None,
                             )
                             .with_context(|_| {
                                 format!(
@@ -2623,6 +2676,7 @@ impl ParquetDecoder {
                                 col_info,
                                 row_group_lo.saturating_sub(row_count),
                                 cmp::min(page_row_count, row_group_hi - row_count),
+                                None,
                             )
                             .with_context(|_| {
                                 format!(
@@ -4430,7 +4484,7 @@ mod multi_dict_tests {
     /// in the future.
     #[test]
     fn post_convert_rejects_unsupported_pairs() {
-        use crate::allocator::{AcVec, TestAllocatorState};
+        use crate::allocator::TestAllocatorState;
         use crate::parquet::tests::ColumnTypeTagExt;
         let tas = TestAllocatorState::new();
         let allocator = tas.allocator();
@@ -4447,35 +4501,13 @@ mod multi_dict_tests {
             (ColumnTypeTag::Char, ColumnTypeTag::Double),
         ];
         for (src, dst) in unsupported {
-            let mut bufs = ColumnChunkBuffers {
-                data_size: 0,
-                data_ptr: std::ptr::null_mut(),
-                data_vec: AcVec::new_in(allocator.clone()),
-                aux_size: 0,
-                aux_ptr: std::ptr::null_mut(),
-                aux_vec: AcVec::new_in(allocator.clone()),
-                page_buffers_size: 0,
-                page_buffers: Vec::new(),
-                column_top: 0,
-                page_buffers_capacity: 0,
-                page_buffers_charged: 0,
-                page_buffers_counted: 0,
-            };
-            for has_def_levels in [false, true] {
-                let err = post_convert(
-                    src.into_type(),
-                    dst.into_type(),
-                    0,
-                    has_def_levels,
-                    &mut bufs,
-                )
-                .unwrap_err();
-                let msg = err.to_string();
-                assert!(
-                    msg.contains("post_convert: unsupported conversion"),
-                    "unexpected error for {src:?} -> {dst:?}, def levels {has_def_levels}: {msg}"
-                );
-            }
+            let mut bufs = ColumnChunkBuffers::new(allocator.clone());
+            let err = post_convert(src.into_type(), dst.into_type(), &mut bufs).unwrap_err();
+            let msg = err.to_string();
+            assert!(
+                msg.contains("post_convert: unsupported conversion"),
+                "unexpected error for {src:?} -> {dst:?}: {msg}"
+            );
         }
     }
 
@@ -4484,7 +4516,7 @@ mod multi_dict_tests {
     /// without an error.
     #[test]
     fn post_convert_accepts_known_no_op_pairs() {
-        use crate::allocator::{AcVec, TestAllocatorState};
+        use crate::allocator::TestAllocatorState;
         use crate::parquet::tests::ColumnTypeTagExt;
         let tas = TestAllocatorState::new();
         let allocator = tas.allocator();
@@ -4512,61 +4544,32 @@ mod multi_dict_tests {
             (ColumnTypeTag::Boolean, ColumnTypeTag::Boolean),
         ];
         for (src, dst) in no_ops {
-            let mut bufs = ColumnChunkBuffers {
-                data_size: 0,
-                data_ptr: std::ptr::null_mut(),
-                data_vec: AcVec::new_in(allocator.clone()),
-                aux_size: 0,
-                aux_ptr: std::ptr::null_mut(),
-                aux_vec: AcVec::new_in(allocator.clone()),
-                page_buffers_size: 0,
-                page_buffers: Vec::new(),
-                column_top: 0,
-                page_buffers_capacity: 0,
-                page_buffers_charged: 0,
-                page_buffers_counted: 0,
-            };
-            for has_def_levels in [false, true] {
-                post_convert(src.into_type(), dst.into_type(), 0, has_def_levels, &mut bufs)
-                    .unwrap_or_else(|e| {
-                        panic!("expected no-op for {src:?} -> {dst:?}, def levels {has_def_levels}, got {e}")
-                    });
-            }
+            let mut bufs = ColumnChunkBuffers::new(allocator.clone());
+            post_convert(src.into_type(), dst.into_type(), &mut bufs)
+                .unwrap_or_else(|e| panic!("expected no-op for {src:?} -> {dst:?}, got {e}"));
         }
     }
 
     /// BYTE/SHORT -> INT/LONG/TIMESTAMP decode straight to the target width
-    /// (DecodeAs::Target). A legacy Required chunk has no def levels, so its
-    /// column-top rows decode as the stored 0. post_convert must stamp the target
-    /// NULL over the first `leading_nulls` rows, as native ALTER keeps the column
-    /// top NULL, and leave every row after the top as it is, a real 0 included.
-    /// A chunk with def levels decoded the target NULL into its def-level-0 rows
-    /// wherever they sit, so post_convert leaves it as decoded whatever the count:
-    /// the rows a count of NULLs covers can hold stored values, 0 included.
+    /// (DecodeAs::Target). A legacy Required chunk has no def levels, so its column-top rows
+    /// decode as the stored 0, and the decode takes its leading top rows from the file
+    /// metadata: post_convert must stamp the target NULL over them, as native ALTER keeps the
+    /// column top NULL, and leave every row after the top as it is, a real 0 included. A chunk
+    /// with def levels decoded the target NULL into its def-level-0 rows wherever they sit, so
+    /// the decode takes no top rows for it and post_convert leaves it as decoded: the rows a
+    /// count of NULLs covers can hold stored values, 0 included.
     #[test]
     fn post_convert_stamps_byte_short_top_for_sentinel_targets() {
-        use crate::allocator::{AcVec, TestAllocatorState};
+        use crate::allocator::TestAllocatorState;
         use crate::parquet::tests::ColumnTypeTagExt;
         let tas = TestAllocatorState::new();
         let allocator = tas.allocator();
 
-        let make = |bytes: &[u8]| -> ColumnChunkBuffers {
-            let mut data_vec = AcVec::new_in(allocator.clone());
-            data_vec.extend_from_slice(bytes).unwrap();
-            ColumnChunkBuffers {
-                data_size: 0,
-                data_ptr: std::ptr::null_mut(),
-                data_vec,
-                aux_size: 0,
-                aux_ptr: std::ptr::null_mut(),
-                aux_vec: AcVec::new_in(allocator.clone()),
-                page_buffers_size: 0,
-                page_buffers: Vec::new(),
-                column_top: 0,
-                page_buffers_capacity: 0,
-                page_buffers_charged: 0,
-                page_buffers_counted: 0,
-            }
+        let make = |bytes: &[u8], leading_nulls: usize| -> ColumnChunkBuffers {
+            let mut bufs = ColumnChunkBuffers::new(allocator.clone());
+            bufs.data_vec.extend_from_slice(bytes).unwrap();
+            bufs.add_top_rows(0, leading_nulls).unwrap();
+            bufs
         };
 
         // rows a Required chunk decodes: its top rows hold the stored 0
@@ -4585,44 +4588,32 @@ mod multi_dict_tests {
                 .map(|c| i32::from_ne_bytes(c.try_into().unwrap()))
                 .collect()
         };
+        let int = ColumnTypeTag::Int.into_type();
         for src in [ColumnTypeTag::Byte, ColumnTypeTag::Short] {
+            let src_type = src.into_type();
+            // the decode takes the file column top for a chunk without def levels only
+            assert!(takes_file_column_top(src_type, int, false), "{src:?}");
+            assert!(!takes_file_column_top(src_type, int, true), "{src:?}");
             for (leading_nulls, expected) in [
                 (3usize, vec![nulls::INT, nulls::INT, nulls::INT, 5, 0]),
                 (0, stored_i32.to_vec()),
                 (7, vec![nulls::INT; 5]),
             ] {
-                let mut bufs = make(&stored_i32_bytes);
-                post_convert(
-                    src.into_type(),
-                    ColumnTypeTag::Int.into_type(),
-                    leading_nulls,
-                    false,
-                    &mut bufs,
-                )
-                .unwrap();
+                let mut bufs = make(&stored_i32_bytes, leading_nulls);
+                post_convert(src_type, int, &mut bufs).unwrap();
                 assert_eq!(
                     read_i32(&bufs),
                     expected,
                     "{src:?} -> Int, leading_nulls {leading_nulls}"
                 );
             }
-            // the null count 2, no count, and a count past the end
-            for leading_nulls in [2usize, 0, 7] {
-                let mut bufs = make(&decoded_i32_bytes);
-                post_convert(
-                    src.into_type(),
-                    ColumnTypeTag::Int.into_type(),
-                    leading_nulls,
-                    true,
-                    &mut bufs,
-                )
-                .unwrap();
-                assert_eq!(
-                    read_i32(&bufs),
-                    decoded_i32.to_vec(),
-                    "{src:?} -> Int with def levels, leading_nulls {leading_nulls}"
-                );
-            }
+            let mut bufs = make(&decoded_i32_bytes, 0);
+            post_convert(src_type, int, &mut bufs).unwrap();
+            assert_eq!(
+                read_i32(&bufs),
+                decoded_i32.to_vec(),
+                "{src:?} -> Int with def levels"
+            );
         }
 
         let stored_i64 = [0i64, 0, 0, 5, 0];
@@ -4640,34 +4631,40 @@ mod multi_dict_tests {
         };
         let ts_ns = ColumnType::new(ColumnTypeTag::Timestamp, QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG);
         for src in [ColumnTypeTag::Byte, ColumnTypeTag::Short] {
+            let src_type = src.into_type();
             for dst in [
                 ColumnTypeTag::Long.into_type(),
                 ColumnTypeTag::Timestamp.into_type(),
                 ts_ns,
             ] {
+                assert!(
+                    takes_file_column_top(src_type, dst, false),
+                    "{src:?} -> {dst}"
+                );
+                assert!(
+                    !takes_file_column_top(src_type, dst, true),
+                    "{src:?} -> {dst}"
+                );
                 for (leading_nulls, expected) in [
                     (3usize, vec![nulls::LONG, nulls::LONG, nulls::LONG, 5, 0]),
                     (0, stored_i64.to_vec()),
                     (7, vec![nulls::LONG; 5]),
                 ] {
-                    let mut bufs = make(&stored_i64_bytes);
-                    post_convert(src.into_type(), dst, leading_nulls, false, &mut bufs).unwrap();
+                    let mut bufs = make(&stored_i64_bytes, leading_nulls);
+                    post_convert(src_type, dst, &mut bufs).unwrap();
                     assert_eq!(
                         read_i64(&bufs),
                         expected,
                         "{src:?} -> {dst}, leading_nulls {leading_nulls}"
                     );
                 }
-                // the null count 3, no count, and a count past the end
-                for leading_nulls in [3usize, 0, 7] {
-                    let mut bufs = make(&decoded_i64_bytes);
-                    post_convert(src.into_type(), dst, leading_nulls, true, &mut bufs).unwrap();
-                    assert_eq!(
-                        read_i64(&bufs),
-                        decoded_i64.to_vec(),
-                        "{src:?} -> {dst} with def levels, leading_nulls {leading_nulls}"
-                    );
-                }
+                let mut bufs = make(&decoded_i64_bytes, 0);
+                post_convert(src_type, dst, &mut bufs).unwrap();
+                assert_eq!(
+                    read_i64(&bufs),
+                    decoded_i64.to_vec(),
+                    "{src:?} -> {dst} with def levels"
+                );
             }
         }
 
@@ -4675,75 +4672,65 @@ mod multi_dict_tests {
         // as 0, so post_convert leaves it alone.
         let stored_i16_bytes: Vec<u8> = [0i16, 0, 5].iter().flat_map(|v| v.to_ne_bytes()).collect();
         let stored_i8_bytes = [0u8, 0, 5];
-        for has_def_levels in [false, true] {
-            let mut bufs = make(&stored_i16_bytes);
-            post_convert(
-                ColumnTypeTag::Byte.into_type(),
-                ColumnTypeTag::Short.into_type(),
-                2,
-                has_def_levels,
-                &mut bufs,
-            )
-            .unwrap();
-            assert_eq!(bufs.data_vec.as_slice(), stored_i16_bytes.as_slice());
-            let mut bufs = make(&stored_i8_bytes);
-            post_convert(
-                ColumnTypeTag::Short.into_type(),
-                ColumnTypeTag::Byte.into_type(),
-                2,
-                has_def_levels,
-                &mut bufs,
-            )
-            .unwrap();
-            assert_eq!(bufs.data_vec.as_slice(), stored_i8_bytes.as_slice());
-        }
+        let mut bufs = make(&stored_i16_bytes, 2);
+        post_convert(
+            ColumnTypeTag::Byte.into_type(),
+            ColumnTypeTag::Short.into_type(),
+            &mut bufs,
+        )
+        .unwrap();
+        assert_eq!(bufs.data_vec.as_slice(), stored_i16_bytes.as_slice());
+        let mut bufs = make(&stored_i8_bytes, 2);
+        post_convert(
+            ColumnTypeTag::Short.into_type(),
+            ColumnTypeTag::Byte.into_type(),
+            &mut bufs,
+        )
+        .unwrap();
+        assert_eq!(bufs.data_vec.as_slice(), stored_i8_bytes.as_slice());
     }
 
-    /// A run of row groups decoded into one buffer holds the column top of each group at
-    /// that group's first row. post_convert_with_top_rows stamps the target NULL over the
-    /// rows of each range, clamped to the buffer, and leaves the other rows as they are, a
-    /// real 0 included. Expected values: the source value widened to the target, NULL in the
-    /// ranges.
+    /// The column-top rows of a buffer need not be one leading block: a run of row groups
+    /// decoded into one buffer holds the column top of each group from that group's first
+    /// row, and a split or composite day holds the top of each folder after the values of the
+    /// folder before it. post_convert stamps the target NULL over the rows of each run,
+    /// clamped to the buffer, and leaves the other rows as they are, a real 0 included.
+    /// Expected values: the source value widened to the target, NULL in the runs.
     #[test]
-    #[allow(clippy::single_range_in_vec_init)]
-    fn post_convert_with_top_rows_stamps_each_range() {
-        use crate::allocator::{AcVec, TestAllocatorState};
+    fn post_convert_stamps_each_top_row_run() {
+        use crate::allocator::TestAllocatorState;
         use crate::parquet::tests::ColumnTypeTagExt;
         let tas = TestAllocatorState::new();
         let allocator = tas.allocator();
 
-        let make = |bytes: &[u8]| -> ColumnChunkBuffers {
-            let mut data_vec = AcVec::new_in(allocator.clone());
-            data_vec.extend_from_slice(bytes).unwrap();
-            ColumnChunkBuffers {
-                data_size: 0,
-                data_ptr: std::ptr::null_mut(),
-                data_vec,
-                aux_size: 0,
-                aux_ptr: std::ptr::null_mut(),
-                aux_vec: AcVec::new_in(allocator.clone()),
-                page_buffers_size: 0,
-                page_buffers: Vec::new(),
-                column_top: 0,
-                page_buffers_capacity: 0,
-                page_buffers_charged: 0,
-                page_buffers_counted: 0,
+        let make = |bytes: &[u8], top_rows: &[[u64; 2]]| -> ColumnChunkBuffers {
+            let mut bufs = ColumnChunkBuffers::new(allocator.clone());
+            bufs.data_vec.extend_from_slice(bytes).unwrap();
+            for &[lo, hi] in top_rows {
+                bufs.add_top_rows(lo as usize, hi as usize).unwrap();
             }
+            bufs
         };
-        // rows 0..6 hold 0, 0, 5, 0, -3, 7; None marks a row the ranges cover
+        // rows 0..6 hold 0, 0, 5, 0, -3, 7; None marks a row the runs cover
         let stored = [0i64, 0, 5, 0, -3, 7];
-        type Case<'a> = (&'a [Range<usize>], [Option<i64>; 6]);
+        type Case<'a> = (&'a [[u64; 2]], [Option<i64>; 6]);
         let cases: [Case; 5] = [
-            (&[1..2, 3..5], [Some(0), None, Some(5), None, None, Some(7)]),
-            // past the end of the buffer: clamped
-            (&[4..100], [Some(0), Some(0), Some(5), Some(0), None, None]),
             (
-                &[10..12],
+                &[[1, 2], [3, 5]],
+                [Some(0), None, Some(5), None, None, Some(7)],
+            ),
+            // past the end of the buffer: clamped
+            (
+                &[[4, 100]],
+                [Some(0), Some(0), Some(5), Some(0), None, None],
+            ),
+            (
+                &[[10, 12]],
                 [Some(0), Some(0), Some(5), Some(0), Some(-3), Some(7)],
             ),
             (&[], [Some(0), Some(0), Some(5), Some(0), Some(-3), Some(7)]),
             (
-                &[0..2, 5..6],
+                &[[0, 2], [5, 6]],
                 [None, None, Some(5), Some(0), Some(-3), None],
             ),
         ];
@@ -4772,7 +4759,7 @@ mod multi_dict_tests {
         let long_bytes: Vec<u8> = stored.iter().flat_map(|&v| v.to_le_bytes()).collect();
         // (source, decoded source bytes, target, target width, encoding of the expected row)
         let conversions: [(ColumnTypeTag, &[u8], ColumnTypeTag, usize, Encode); 13] = [
-            // decoded at the target width
+            // decoded at the target width, the runs of a legacy Required chunk
             (ColumnTypeTag::Byte, &int_bytes, ColumnTypeTag::Int, 4, int),
             (ColumnTypeTag::Short, &int_bytes, ColumnTypeTag::Int, 4, int),
             (
@@ -4832,7 +4819,7 @@ mod multi_dict_tests {
                 8,
                 double,
             ),
-            // a source with a NULL sentinel: the ranges do not apply
+            // a source with a NULL sentinel: the runs do not apply
             (ColumnTypeTag::Int, &int_bytes, ColumnTypeTag::Long, 8, long),
             // no NULL in the target: nothing stamps
             (
@@ -4852,42 +4839,23 @@ mod multi_dict_tests {
         ];
         for (src, bytes, dst, size, encode) in conversions {
             // INT has a NULL sentinel of its own, SHORT and BYTE targets have no NULL
-            let has_top = !matches!(
+            let is_stamped = !matches!(
                 (src, dst),
                 (ColumnTypeTag::Int, _) | (_, ColumnTypeTag::Short | ColumnTypeTag::Byte)
             );
-            // a decode straight to a target with a NULL decodes the NULLs of a chunk with def
-            // levels itself; a decode at the source width reads them as 0 either way
-            let is_decoded_as_target = matches!(
-                (src, dst),
-                (
-                    ColumnTypeTag::Byte | ColumnTypeTag::Short,
-                    ColumnTypeTag::Int | ColumnTypeTag::Long | ColumnTypeTag::Timestamp
-                )
-            );
-            for has_def_levels in [false, true] {
-                let is_stamped = has_top && !(is_decoded_as_target && has_def_levels);
-                for (top_rows, expected) in &cases {
-                    let mut bufs = make(bytes);
-                    post_convert_with_top_rows(
-                        src.into_type(),
-                        dst.into_type(),
-                        top_rows,
-                        has_def_levels,
-                        &mut bufs,
-                    )
-                    .unwrap();
-                    let expected: Vec<Vec<u8>> = stored
-                        .iter()
-                        .zip(expected)
-                        .map(|(&v, e)| encode(if is_stamped { *e } else { Some(v) }))
-                        .collect();
-                    assert_eq!(
-                        rows_of(&bufs, size),
-                        expected,
-                        "{src:?} -> {dst:?}, top rows {top_rows:?}, def levels {has_def_levels}"
-                    );
-                }
+            for (top_rows, expected) in &cases {
+                let mut bufs = make(bytes, top_rows);
+                post_convert(src.into_type(), dst.into_type(), &mut bufs).unwrap();
+                let expected: Vec<Vec<u8>> = stored
+                    .iter()
+                    .zip(expected)
+                    .map(|(&v, e)| encode(if is_stamped { *e } else { Some(v) }))
+                    .collect();
+                assert_eq!(
+                    rows_of(&bufs, size),
+                    expected,
+                    "{src:?} -> {dst:?}, top rows {top_rows:?}"
+                );
             }
         }
 
@@ -4903,32 +4871,28 @@ mod multi_dict_tests {
             (ColumnTypeTag::Double, 8, double),
         ];
         for (dst, size, encode) in bool_conversions {
-            for has_def_levels in [false, true] {
-                for (top_rows, covered) in &cases {
-                    let mut bufs = make(&bool_bytes);
-                    post_convert_with_top_rows(
-                        ColumnTypeTag::Boolean.into_type(),
-                        dst.into_type(),
-                        top_rows,
-                        has_def_levels,
-                        &mut bufs,
-                    )
-                    .unwrap();
-                    let expected: Vec<Vec<u8>> = bool_values
-                        .iter()
-                        .zip(covered)
-                        .map(|(&v, c)| encode(c.map(|_| v)))
-                        .collect();
-                    assert_eq!(
-                        rows_of(&bufs, size),
-                        expected,
-                        "Boolean -> {dst:?}, top rows {top_rows:?}, def levels {has_def_levels}"
-                    );
-                }
+            for (top_rows, covered) in &cases {
+                let mut bufs = make(&bool_bytes, top_rows);
+                post_convert(
+                    ColumnTypeTag::Boolean.into_type(),
+                    dst.into_type(),
+                    &mut bufs,
+                )
+                .unwrap();
+                let expected: Vec<Vec<u8>> = bool_values
+                    .iter()
+                    .zip(covered)
+                    .map(|(&v, c)| encode(c.map(|_| v)))
+                    .collect();
+                assert_eq!(
+                    rows_of(&bufs, size),
+                    expected,
+                    "Boolean -> {dst:?}, top rows {top_rows:?}"
+                );
             }
         }
 
-        // to DECIMAL(18,2): a BYTE source NULLs the ranges, an INT source, which has a NULL
+        // to DECIMAL(18,2): a BYTE source NULLs the runs, an INT source, which has a NULL
         // sentinel of its own, ignores them
         let decimal = ColumnType::new_decimal(18, 2).unwrap();
         let decimal_long: Encode = |v| v.map_or(nulls::LONG, |v| v * 100).to_le_bytes().to_vec();
@@ -4936,34 +4900,25 @@ mod multi_dict_tests {
             (ColumnTypeTag::Byte, &byte_bytes),
             (ColumnTypeTag::Int, &int_bytes),
         ] {
-            for has_def_levels in [false, true] {
-                for (top_rows, expected) in &cases {
-                    let mut bufs = make(bytes);
-                    post_convert_with_top_rows(
-                        src.into_type(),
-                        decimal,
-                        top_rows,
-                        has_def_levels,
-                        &mut bufs,
-                    )
-                    .unwrap();
-                    let expected: Vec<Vec<u8>> = stored
-                        .iter()
-                        .zip(expected)
-                        .map(|(&v, e)| {
-                            decimal_long(if src == ColumnTypeTag::Byte {
-                                *e
-                            } else {
-                                Some(v)
-                            })
+            for (top_rows, expected) in &cases {
+                let mut bufs = make(bytes, top_rows);
+                post_convert(src.into_type(), decimal, &mut bufs).unwrap();
+                let expected: Vec<Vec<u8>> = stored
+                    .iter()
+                    .zip(expected)
+                    .map(|(&v, e)| {
+                        decimal_long(if src == ColumnTypeTag::Byte {
+                            *e
+                        } else {
+                            Some(v)
                         })
-                        .collect();
-                    assert_eq!(
-                        rows_of(&bufs, 8),
-                        expected,
-                        "{src:?} -> DECIMAL(18,2), top rows {top_rows:?}, def levels {has_def_levels}"
-                    );
-                }
+                    })
+                    .collect();
+                assert_eq!(
+                    rows_of(&bufs, 8),
+                    expected,
+                    "{src:?} -> DECIMAL(18,2), top rows {top_rows:?}"
+                );
             }
         }
     }
@@ -4991,20 +4946,9 @@ mod multi_dict_tests {
             for &v in vals {
                 data_vec.extend_from_slice(&v.to_ne_bytes()).unwrap();
             }
-            ColumnChunkBuffers {
-                data_size: 0,
-                data_ptr: std::ptr::null_mut(),
-                data_vec,
-                aux_size: 0,
-                aux_ptr: std::ptr::null_mut(),
-                aux_vec: AcVec::new_in(allocator.clone()),
-                page_buffers_size: 0,
-                page_buffers: Vec::new(),
-                column_top: 0,
-                page_buffers_capacity: 0,
-                page_buffers_charged: 0,
-                page_buffers_counted: 0,
-            }
+            let mut bufs = ColumnChunkBuffers::new(allocator.clone());
+            bufs.data_vec = data_vec;
+            bufs
         };
         let read = |bufs: &ColumnChunkBuffers| -> Vec<i64> {
             bufs.data_vec
@@ -5018,7 +4962,7 @@ mod multi_dict_tests {
         // ×1_000_000 overflows i64 (must wrap, not null) and the NULL sentinel.
         let ms = [1_592_222_400_000i64, 0, 253_402_300_799_999, NULL];
         let mut b = make(&ms);
-        post_convert(date, ts_ns, 0, true, &mut b).unwrap();
+        post_convert(date, ts_ns, &mut b).unwrap();
         let got = read(&b);
         for (i, &v) in ms.iter().enumerate() {
             // Prior behaviour: ×1000 (ms->μs) then ×1000 (μs->ns).
@@ -5036,7 +4980,7 @@ mod multi_dict_tests {
         // TIMESTAMP_NS -> DATE: ÷1_000_000 in one pass, truncating toward zero.
         let ns = [1_592_222_400_123_456_789i64, 1_999_999, -1_999_999, NULL];
         let mut b = make(&ns);
-        post_convert(ts_ns, date, 0, true, &mut b).unwrap();
+        post_convert(ts_ns, date, &mut b).unwrap();
         let got = read(&b);
         for (i, &v) in ns.iter().enumerate() {
             // Prior behaviour: ÷1000 (ns->μs) then ÷1000 (μs->ms).
@@ -5049,16 +4993,16 @@ mod multi_dict_tests {
 
         // Single-step crosses (already one pass) keep scaling through the same arm.
         let mut b = make(&[5, NULL]); // DATE -> TIMESTAMP (μs): ×1000
-        post_convert(date, ts_us, 0, true, &mut b).unwrap();
+        post_convert(date, ts_us, &mut b).unwrap();
         assert_eq!(read(&b), vec![5000, NULL]);
         let mut b = make(&[7, NULL]); // TIMESTAMP (μs) -> TIMESTAMP_NS: ×1000
-        post_convert(ts_us, ts_ns, 0, true, &mut b).unwrap();
+        post_convert(ts_us, ts_ns, &mut b).unwrap();
         assert_eq!(read(&b), vec![7000, NULL]);
         let mut b = make(&[7654, NULL]); // TIMESTAMP_NS -> TIMESTAMP (μs): ÷1000
-        post_convert(ts_ns, ts_us, 0, true, &mut b).unwrap();
+        post_convert(ts_ns, ts_us, &mut b).unwrap();
         assert_eq!(read(&b), vec![7, NULL]);
         let mut b = make(&[42, NULL]); // same unit: no-op
-        post_convert(ts_us, ts_us, 0, true, &mut b).unwrap();
+        post_convert(ts_us, ts_us, &mut b).unwrap();
         assert_eq!(read(&b), vec![42, NULL]);
     }
 
@@ -5578,15 +5522,8 @@ mod decimal_convert_tests {
         // INT -> Decimal8(2,0): 100/-100 fit the i8 width but exceed precision 2 -> null; 99/-99/0 survive.
         let null8 = i8::MIN as i64;
         let mut b = buf(&allocator, &le_small(&[100, 99, -100, -99, 0], 4));
-        convert_fixed_to_decimal(
-            &mut b,
-            ColumnTypeTag::Int,
-            ColumnTypeTag::Decimal8,
-            &[],
-            0,
-            2,
-        )
-        .unwrap();
+        convert_fixed_to_decimal(&mut b, ColumnTypeTag::Int, ColumnTypeTag::Decimal8, 0, 2)
+            .unwrap();
         assert_eq!(read_small(b.as_slice(), 0, 1), null8);
         assert_eq!(read_small(b.as_slice(), 1, 1), 99);
         assert_eq!(read_small(b.as_slice(), 2, 1), null8);
@@ -5597,15 +5534,8 @@ mod decimal_convert_tests {
         // 999_999_999 survives. Same byte width (4) as the INT source, so no resize.
         let null32 = i32::MIN as i64;
         let mut b = buf(&allocator, &le_small(&[1_500_000_000, 999_999_999], 4));
-        convert_fixed_to_decimal(
-            &mut b,
-            ColumnTypeTag::Int,
-            ColumnTypeTag::Decimal32,
-            &[],
-            0,
-            9,
-        )
-        .unwrap();
+        convert_fixed_to_decimal(&mut b, ColumnTypeTag::Int, ColumnTypeTag::Decimal32, 0, 9)
+            .unwrap();
         assert_eq!(read_small(b.as_slice(), 0, 4), null32);
         assert_eq!(read_small(b.as_slice(), 1, 4), 999_999_999);
 
@@ -5614,15 +5544,8 @@ mod decimal_convert_tests {
         // these; the old byte-width-only guard stored them verbatim.
         let null64 = i64::MIN;
         let mut b = buf(&allocator, &le_small(&[1, 0, 2], 4));
-        convert_fixed_to_decimal(
-            &mut b,
-            ColumnTypeTag::Int,
-            ColumnTypeTag::Decimal64,
-            &[],
-            18,
-            18,
-        )
-        .unwrap();
+        convert_fixed_to_decimal(&mut b, ColumnTypeTag::Int, ColumnTypeTag::Decimal64, 18, 18)
+            .unwrap();
         assert_eq!(read_small(b.as_slice(), 0, 8), null64);
         assert_eq!(read_small(b.as_slice(), 1, 8), 0);
         assert_eq!(read_small(b.as_slice(), 2, 8), null64);
@@ -5640,7 +5563,6 @@ mod decimal_convert_tests {
             &mut b,
             ColumnTypeTag::Int,
             ColumnTypeTag::Decimal128,
-            &[],
             19,
             20,
         )
@@ -5663,7 +5585,6 @@ mod decimal_convert_tests {
             &mut b,
             ColumnTypeTag::Int,
             ColumnTypeTag::Decimal256,
-            &[],
             75,
             76,
         )
@@ -5672,15 +5593,16 @@ mod decimal_convert_tests {
         assert_ne!(&b.as_slice()[32..64], &d256_null());
     }
 
-    /// A BYTE/SHORT source converts its column-top rows, the rows of `top_rows`, to the decimal
-    /// NULL of the target width, and every other row, a real 0 included, to the value times
-    /// 10^scale. Decimal8 from SHORT narrows the buffer, the other small widths widen it.
+    /// A BYTE/SHORT source converts every row, a real 0 included, to the value times 10^scale,
+    /// and post_convert then stamps its column-top rows, the runs of `top_rows`, with the decimal
+    /// NULL of the target width. Decimal8 from SHORT narrows the buffer, the other small widths
+    /// widen it.
     #[test]
     fn convert_fixed_to_decimal_top_rows() {
         let tas = TestAllocatorState::new();
         let allocator = tas.allocator();
         let values = [3i64, 0, -2, 5, 0, 1];
-        let top_rows = [1..2usize, 3..5];
+        let top_rows = [[1u64, 2], [3, 5]];
         let is_top = |i: usize| i == 1 || i == 3 || i == 4;
         for (src, src_size) in [(ColumnTypeTag::Byte, 1), (ColumnTypeTag::Short, 2)] {
             for (dst, dst_size, precision, scale, null) in [
@@ -5690,7 +5612,8 @@ mod decimal_convert_tests {
                 (ColumnTypeTag::Decimal64, 8, 18, 3, i64::MIN),
             ] {
                 let mut b = buf(&allocator, &le_small(&values, src_size));
-                convert_fixed_to_decimal(&mut b, src, dst, &top_rows, scale, precision).unwrap();
+                convert_fixed_to_decimal(&mut b, src, dst, scale, precision).unwrap();
+                stamp_decimal_top_rows(&mut b, dst, &top_rows);
                 assert_eq!(b.len(), values.len() * dst_size);
                 for (i, &v) in values.iter().enumerate() {
                     let expected = if is_top(i) {
@@ -5707,8 +5630,8 @@ mod decimal_convert_tests {
             }
 
             let mut b = buf(&allocator, &le_small(&values, src_size));
-            convert_fixed_to_decimal(&mut b, src, ColumnTypeTag::Decimal128, &top_rows, 4, 38)
-                .unwrap();
+            convert_fixed_to_decimal(&mut b, src, ColumnTypeTag::Decimal128, 4, 38).unwrap();
+            stamp_decimal_top_rows(&mut b, ColumnTypeTag::Decimal128, &top_rows);
             for (i, &v) in values.iter().enumerate() {
                 let expected = if is_top(i) {
                     d128_null()
@@ -5723,8 +5646,8 @@ mod decimal_convert_tests {
             }
 
             let mut b = buf(&allocator, &le_small(&values, src_size));
-            convert_fixed_to_decimal(&mut b, src, ColumnTypeTag::Decimal256, &top_rows, 4, 76)
-                .unwrap();
+            convert_fixed_to_decimal(&mut b, src, ColumnTypeTag::Decimal256, 4, 76).unwrap();
+            stamp_decimal_top_rows(&mut b, ColumnTypeTag::Decimal256, &top_rows);
             for (i, &v) in values.iter().enumerate() {
                 let expected = if is_top(i) {
                     d256_null()
@@ -5756,8 +5679,7 @@ mod decimal_convert_tests {
             (ColumnTypeTag::Decimal64, 8, 18, 3, i64::MIN),
         ] {
             let mut b = buf(&allocator, &le_small(&values, 4));
-            convert_fixed_to_decimal(&mut b, ColumnTypeTag::Int, dst, &[], scale, precision)
-                .unwrap();
+            convert_fixed_to_decimal(&mut b, ColumnTypeTag::Int, dst, scale, precision).unwrap();
             assert_eq!(b.len(), values.len() * dst_size);
             for (i, &v) in values.iter().enumerate() {
                 let expected = if is_null(i) {
@@ -5774,15 +5696,8 @@ mod decimal_convert_tests {
         }
 
         let mut b = buf(&allocator, &le_small(&values, 4));
-        convert_fixed_to_decimal(
-            &mut b,
-            ColumnTypeTag::Int,
-            ColumnTypeTag::Decimal128,
-            &[],
-            4,
-            38,
-        )
-        .unwrap();
+        convert_fixed_to_decimal(&mut b, ColumnTypeTag::Int, ColumnTypeTag::Decimal128, 4, 38)
+            .unwrap();
         for (i, &v) in values.iter().enumerate() {
             let expected = if is_null(i) {
                 d128_null()
@@ -5797,15 +5712,8 @@ mod decimal_convert_tests {
         }
 
         let mut b = buf(&allocator, &le_small(&values, 4));
-        convert_fixed_to_decimal(
-            &mut b,
-            ColumnTypeTag::Int,
-            ColumnTypeTag::Decimal256,
-            &[],
-            4,
-            76,
-        )
-        .unwrap();
+        convert_fixed_to_decimal(&mut b, ColumnTypeTag::Int, ColumnTypeTag::Decimal256, 4, 76)
+            .unwrap();
         for (i, &v) in values.iter().enumerate() {
             let expected = if is_null(i) {
                 d256_null()

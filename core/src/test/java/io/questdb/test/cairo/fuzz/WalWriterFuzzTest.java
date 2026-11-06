@@ -275,10 +275,9 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     @Test
     public void testConvertPartitionTypeChangeColumnTopsFuzz() throws Exception {
         // As testConvertPartitionColumnTopsFuzz, with frequent type changes, one of them from STRING, SYMBOL
-        // or VARCHAR to BOOLEAN, BYTE or SHORT lazily on a parquet partition, see
-        // FuzzTransactionGenerator.generateSet(). The rows of the top, which CONVERT TO PARQUET writes as
-        // NULLs, must read 0 or false through CONVERT TO NATIVE and the ALTER COLUMN TYPE pre-pass, as the
-        // column top of the non-WAL twin.
+        // or VARCHAR to BOOLEAN, BYTE or SHORT lazily on a parquet partition, and changes back to text, see
+        // FuzzTransactionGenerator.generateSet(). The column must keep its top through CONVERT TO NATIVE and
+        // the ALTER COLUMN TYPE pre-pass, so that the change back reads the top as NULL, as the non-WAL twin.
         Rnd rnd = generateRandom(LOG);
         setTestParams(rnd);
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 50 + rnd.nextInt(151));
@@ -355,14 +354,12 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     }
 
     /**
-     * As testConvertSplitAndCompositePartitionToParquet, with BYTE and SHORT columns changed to INT, LONG, TIMESTAMP
-     * and TIMESTAMP_NS, the first time lazily on a parquet partition: a split or composite day converts the stored
-     * values of one folder and the column top of the next into one row group. The WAL apply checks each CONVERT
-     * PARTITION and each such change against the rows of the table before it, see
-     * FuzzRunner.setNoSentinelWideningChecked(). No column is renamed or dropped and no table is dropped, so the
-     * widened columns keep their names, and no covering index includes them. With
-     * {@code -Dquestdb.fuzz.noSentinel.everyWideningTarget=true} BOOLEAN columns widen too, and the targets include
-     * DATE, FLOAT, DOUBLE, STRING, VARCHAR and SYMBOL.
+     * As testConvertSplitAndCompositePartitionToParquet, with BOOLEAN, BYTE and SHORT columns changed to INT, LONG,
+     * TIMESTAMP, TIMESTAMP_NS, DATE, FLOAT, DOUBLE, STRING, VARCHAR and SYMBOL, the first time lazily on a parquet
+     * partition: a split or composite day converts the stored values of one folder and the column top of the next
+     * into one row group. The WAL apply checks each CONVERT PARTITION and each such change against the rows of the
+     * table before it, see FuzzRunner.setNoSentinelWideningChecked(). No column is renamed or dropped and no table is
+     * dropped, so the widened columns keep their names, and no covering index includes them.
      */
     @Test
     public void testConvertSplitAndCompositeNoSentinelWideningFuzz() throws Exception {
@@ -377,6 +374,17 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     public void testConvertSplitAndCompositeNoSentinelWideningOverNonLeadingNulls() throws Exception {
         runConvertSplitAndCompositeNoSentinelWideningFuzz(generateRandom(LOG, 714743377371743956L, 2795700442123086616L));
         Assert.assertTrue(FuzzRunner.getCheckedNoSentinelWideningsOverNonLeadingNulls() > 0);
+    }
+
+    /**
+     * testConvertSplitAndCompositeNoSentinelWideningFuzz with seeds that change a BYTE column to FLOAT over a day whose
+     * NULLs do not lead it. The lazy change decodes the column at the width of BYTE, and read stored values as NULL
+     * when the decode took the column-top rows of a row group from its NULL count, as rows that lead it.
+     */
+    @Test
+    public void testConvertSplitAndCompositeNoSentinelWideningAtSourceWidthOverNonLeadingNulls() throws Exception {
+        runConvertSplitAndCompositeNoSentinelWideningFuzz(generateRandom(LOG, 860669443537073L, 1794047339980L));
+        Assert.assertTrue(FuzzRunner.getCheckedSourceWidthWideningsOverNonLeadingNulls() > 0);
     }
 
     /**

@@ -44,20 +44,14 @@ import org.jetbrains.annotations.Nullable;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
-    // with -Dquestdb.fuzz.noSentinel.everyWideningTarget=true, generateNoSentinelWidening() also widens BOOLEAN
-    // and widens to the targets that a decode reaches at the source width, see NO_SENTINEL_WIDENING_EVERY_TARGET
-    private static final boolean IS_EVERY_NO_SENTINEL_WIDENING_TARGET = Boolean.getBoolean("questdb.fuzz.noSentinel.everyWideningTarget");
     private static final long MAX_TABLE_ROWS_TO_CONVERT_TO_SYMBOL = 60_000;
-    // NO_SENTINEL_WIDENING_TARGETS and the targets that a lazy change decodes at the source width, which a
-    // split or composite day reads wrong, so the default run leaves them out
-    private static final int[] NO_SENTINEL_WIDENING_EVERY_TARGET = {
+    // the targets with a NULL that generateNoSentinelWidening() changes a BOOLEAN, BYTE or SHORT column to. A lazy
+    // change on a parquet partition decodes a BYTE or SHORT column to INT, LONG and TIMESTAMP straight to the
+    // target, through the definition levels, and every other change at the source width, through the column-top
+    // rows that the decode records, see isDecodedAtSourceWidth()
+    private static final int[] NO_SENTINEL_WIDENING_TARGETS = {
             ColumnType.INT, ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.TIMESTAMP_NANO,
             ColumnType.DATE, ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.STRING, ColumnType.VARCHAR, ColumnType.SYMBOL
-    };
-    // the targets with a NULL that generateNoSentinelWidening() changes a BYTE or SHORT column to: a lazy
-    // change on a parquet partition decodes them straight to the target, through the definition levels
-    private static final int[] NO_SENTINEL_WIDENING_TARGETS = {
-            ColumnType.INT, ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.TIMESTAMP_NANO
     };
     // CHAR stays out: random CHAR values include lone surrogates, and CONVERT TO PARQUET suspends a table
     // whose STRING holds one, as after a change from CHAR to STRING
@@ -71,6 +65,9 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
             ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.BOOLEAN,
             ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.TIMESTAMP_NANO,
             ColumnType.STRING, ColumnType.VARCHAR
+    };
+    private static final int[] textColumnTypes = {
+            ColumnType.STRING, ColumnType.SYMBOL, ColumnType.VARCHAR
     };
     // the changes generateTextToNoSentinelChange() made
     private static final AtomicInteger textToNoSentinelChanges = new AtomicInteger();
@@ -120,14 +117,22 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
         };
     }
 
-    public static int changeColumnTypeTo(Rnd rnd, int columnType, long estimatedTotalRowCount) {
+    /**
+     * {@code isNoSentinelToTextAllowed} lets BOOLEAN, BYTE and SHORT change to STRING, SYMBOL or VARCHAR, half
+     * of the time; without it the generator never changes a type without a NULL sentinel to one with it.
+     */
+    public static int changeColumnTypeTo(Rnd rnd, int columnType, long estimatedTotalRowCount, boolean isNoSentinelToTextAllowed) {
+        final boolean isSymbolAllowed = estimatedTotalRowCount < MAX_TABLE_ROWS_TO_CONVERT_TO_SYMBOL;
+        if (isNoSentinelToTextAllowed && ColumnType.isNoNullSentinelFixedType(columnType) && rnd.nextBoolean()) {
+            return generateNextType(columnType, textColumnTypes, rnd, isSymbolAllowed, true);
+        }
         return switch (columnType) {
             case ColumnType.STRING, ColumnType.SYMBOL, ColumnType.VARCHAR ->
-                    generateNextType(columnType, varSizeConvertableColumnTypes, rnd, estimatedTotalRowCount < MAX_TABLE_ROWS_TO_CONVERT_TO_SYMBOL);
+                    generateNextType(columnType, varSizeConvertableColumnTypes, rnd, isSymbolAllowed, isNoSentinelToTextAllowed);
             case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG,
                  ColumnType.FLOAT, ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.TIMESTAMP_NANO,
                  ColumnType.DOUBLE ->
-                    generateNextType(columnType, numericConvertableColumnTypes, rnd, estimatedTotalRowCount < MAX_TABLE_ROWS_TO_CONVERT_TO_SYMBOL);
+                    generateNextType(columnType, numericConvertableColumnTypes, rnd, isSymbolAllowed, isNoSentinelToTextAllowed);
             default ->
                     throw new UnsupportedOperationException("Unsupported column type to generate type change: " + columnType);
         };
@@ -141,12 +146,13 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
             Rnd rnd,
             RecordMetadata tableMetadata
     ) {
-        return generateColumnTypeChange(transactionList, estimatedTotalRowCount, metadataVersion, waitBarrierVersion, rnd, tableMetadata, false);
+        return generateColumnTypeChange(transactionList, estimatedTotalRowCount, metadataVersion, waitBarrierVersion, rnd, tableMetadata, false, false);
     }
 
     /**
-     * Changes the type of a column, with {@code isNoSentinelSkipped} none of type BOOLEAN, BYTE or SHORT. Returns null
-     * when no column can change.
+     * Changes the type of a column, with {@code isNoSentinelSkipped} none of type BOOLEAN, BYTE or SHORT, which
+     * {@code isNoSentinelToTextAllowed} lets change to text, see {@link #changeColumnTypeTo}. Returns null when no
+     * column can change.
      */
     public static RecordMetadata generateColumnTypeChange(
             ObjList<FuzzTransaction> transactionList,
@@ -155,7 +161,8 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
             int waitBarrierVersion,
             Rnd rnd,
             RecordMetadata tableMetadata,
-            boolean isNoSentinelSkipped
+            boolean isNoSentinelSkipped,
+            boolean isNoSentinelToTextAllowed
     ) {
         int startColumnIndex = rnd.nextInt(tableMetadata.getColumnCount());
 
@@ -170,7 +177,7 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
                     && canGenerateColumnTypeChange(tableMetadata, columnIndex)
                     && !(isNoSentinelSkipped && isNoSentinelSource(tableMetadata.getColumnType(columnIndex)))) {
                 int columnType = tableMetadata.getColumnType(columnIndex);
-                int newColType = changeColumnTypeTo(rnd, columnType, estimatedTotalRowCount);
+                int newColType = changeColumnTypeTo(rnd, columnType, estimatedTotalRowCount, isNoSentinelToTextAllowed);
                 return addColumnTypeChange(transactionList, metadataVersion, waitBarrierVersion, rnd, tableMetadata, columnIndex, newColType);
             }
         }
@@ -181,8 +188,8 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
 
     /**
      * Changes a STRING, SYMBOL or VARCHAR column, if the table has one, to BOOLEAN, BYTE or SHORT: a type
-     * that reads the column top, and the NULLs that CONVERT TO PARQUET writes for the rows of a top, as 0 or
-     * false. {@link #getTextToNoSentinelChanges()} counts these changes.
+     * that reads the column top as 0 or false, until a later change back to text shows whether the top
+     * was kept. {@link #getTextToNoSentinelChanges()} counts these changes.
      */
     public static RecordMetadata generateTextToNoSentinelChange(
             ObjList<FuzzTransaction> transactionList,
@@ -204,9 +211,8 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
     }
 
     /**
-     * Changes a column without a NULL sentinel, if the table has one, to a type with NULL: a BYTE or SHORT column
-     * to one of {@link #NO_SENTINEL_WIDENING_TARGETS}, or with {@code -Dquestdb.fuzz.noSentinel.everyWideningTarget}
-     * a BOOLEAN, BYTE or SHORT column to one of {@link #NO_SENTINEL_WIDENING_EVERY_TARGET}. Native ALTER COLUMN TYPE
+     * Changes a column without a NULL sentinel, if the table has one, to a type with NULL: a BOOLEAN, BYTE or SHORT
+     * column to one of {@link #NO_SENTINEL_WIDENING_TARGETS}. Native ALTER COLUMN TYPE
      * reads the column top as NULL and every stored value, 0 and false included, as itself. Adds the name of the
      * column to {@code widenedColumns}; {@link #getNoSentinelWidenings()} counts these changes.
      */
@@ -243,8 +249,7 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
         for (int i = 0, n = tableMetadata.getColumnCount(); i < n; i++) {
             final int columnIndex = (startColumnIndex + i) % n;
             if (columnIndex != tableMetadata.getTimestampIndex() && isNoSentinelWideningSource(tableMetadata.getColumnType(columnIndex))) {
-                final int[] targets = IS_EVERY_NO_SENTINEL_WIDENING_TARGET ? NO_SENTINEL_WIDENING_EVERY_TARGET : NO_SENTINEL_WIDENING_TARGETS;
-                int newColumnType = targets[rnd.nextInt(targets.length)];
+                int newColumnType = NO_SENTINEL_WIDENING_TARGETS[rnd.nextInt(NO_SENTINEL_WIDENING_TARGETS.length)];
                 if (ColumnType.isSymbol(newColumnType) && estimatedTotalRowCount >= MAX_TABLE_ROWS_TO_CONVERT_TO_SYMBOL) {
                     newColumnType = ColumnType.VARCHAR;
                 }
@@ -268,6 +273,19 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
      * Whether a change from {@code columnType} to {@code newColumnType} turns a column without a NULL sentinel into
      * a column with one: its column top becomes the NULL of the target, and a stored 0 or false the converted 0.
      */
+    /**
+     * Whether a lazy change of a column without a NULL sentinel to {@code newColumnType} decodes the parquet
+     * partition at the width of the source type, which reads a column top as 0 or false, so that only the column-top
+     * rows the decode records read NULL. A BYTE or SHORT column changed to INT, LONG or TIMESTAMP decodes straight to
+     * the target, which reads the definition levels into its NULL.
+     */
+    public static boolean isDecodedAtSourceWidth(int columnType, int newColumnType) {
+        return !((columnType == ColumnType.BYTE || columnType == ColumnType.SHORT)
+                && (newColumnType == ColumnType.INT
+                || newColumnType == ColumnType.LONG
+                || ColumnType.isTimestamp(newColumnType)));
+    }
+
     public static boolean isNoSentinelWidening(int columnType, int newColumnType) {
         return isNoSentinelSource(columnType) && isNullable(newColumnType);
     }
@@ -370,12 +388,15 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
         return newMeta;
     }
 
-    private static int generateNextType(int columnType, int[] numericConvertableColumnTypes, Rnd rnd, boolean symbolsAllowed) {
+    private static int generateNextType(int columnType, int[] convertableColumnTypes, Rnd rnd, boolean symbolsAllowed, boolean isNoSentinelToTextAllowed) {
         int nextColType = columnType;
         // disallow noop conversion
-        // disallow conversions from non-nullable to nullable
-        while (nextColType == columnType || (isNullable(columnType) != isNullable(nextColType) || (!symbolsAllowed && ColumnType.isSymbol(nextColType)))) {
-            nextColType = numericConvertableColumnTypes[rnd.nextInt(numericConvertableColumnTypes.length)];
+        // disallow conversions from non-nullable to nullable, but for BOOLEAN, BYTE and SHORT to text when allowed
+        while (nextColType == columnType
+                || (isNullable(columnType) != isNullable(nextColType)
+                && !(isNoSentinelToTextAllowed && ColumnType.isNoNullSentinelFixedType(columnType) && isText(nextColType)))
+                || (!symbolsAllowed && ColumnType.isSymbol(nextColType))) {
+            nextColType = convertableColumnTypes[rnd.nextInt(convertableColumnTypes.length)];
         }
         return nextColType;
     }
@@ -385,9 +406,9 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
     }
 
     private static boolean isNoSentinelWideningSource(int columnType) {
-        return columnType == ColumnType.BYTE
-                || columnType == ColumnType.SHORT
-                || (IS_EVERY_NO_SENTINEL_WIDENING_TARGET && columnType == ColumnType.BOOLEAN);
+        return columnType == ColumnType.BOOLEAN
+                || columnType == ColumnType.BYTE
+                || columnType == ColumnType.SHORT;
     }
 
     private static boolean isText(int columnType) {

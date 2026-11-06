@@ -5395,8 +5395,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         activeToDecodeIdx.getQuick(ai),
                         ai,
                         rowGroupSize,
-                        rowGroupIndex,
-                        rowGroupIndexHi,
                         nullBufs,
                         convertedPtrs,
                         srcPtrs,
@@ -5569,8 +5567,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         activeToDecodeIdx.getQuick(ai),
                         ai,
                         rowGroupSize,
-                        rowGroupIndex,
-                        rowGroupIndexHi,
                         nullBufs,
                         convertedPtrs,
                         srcPtrs,
@@ -5590,35 +5586,23 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             int decodeIdx,
             int activeColumnIndex,
             int rowGroupSize,
-            int rowGroupIndex,
-            int rowGroupIndexHi,
             LongList nullBufs,
             LongList convertedPtrs,
             LongList srcPtrs,
             O3ParquetMergeContext ctx
     ) {
         final int slot = activeColumnIndex * 4;
-        final int columnType = tableWriterMetadata.getColumnType(columnIndex);
-        // A coalesced run decodes several row groups into one buffer, where the column top of
-        // each row group starts at that group's first row. A fixed-to-var conversion of a source
-        // without a NULL sentinel needs all of them, not only the leading block.
-        LongList topRows = null;
-        if (rowGroupIndexHi > rowGroupIndex && decodeIdx >= 0 && ColumnType.isVarSize(columnType)) {
-            final int parquetIdx = tableToParquetIdx.getQuick(columnIndex);
-            if (ColumnType.isNoNullSentinelFixedType(decoder.metadata().getColumnType(parquetIdx))) {
-                topRows = ctx.getTopRows();
-                ParquetColumnTypeConverter.fillRangeTopRows(decoder.metadata(), parquetIdx, rowGroupIndex, rowGroupIndexHi, topRows);
-            }
-        }
+        // A coalesced run decodes several row groups into one buffer. The decoder records the
+        // column-top rows of each group at its own rows of the buffer, which the fixed-to-var
+        // conversion of a source without a NULL sentinel reads as NULL.
         ParquetColumnTypeConverter.prepareSourceColumn(
                 decoder,
                 rowGroupBuffers,
                 tableToParquetIdx,
                 columnIndex,
-                columnType,
+                tableWriterMetadata.getColumnType(columnIndex),
                 decodeIdx,
                 rowGroupSize,
-                topRows,
                 ctx,
                 nullBufs,
                 convertedPtrs,
