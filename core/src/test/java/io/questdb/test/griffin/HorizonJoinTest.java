@@ -3015,6 +3015,8 @@ public class HorizonJoinTest extends AbstractCairoTest {
         // Three key pairs: all three left-hand keys share q.k, two share q.k and k3 compares q.j alone,
         // or k1 compares q.k alone and two share q.j. The check compares each left-hand key with the
         // earliest left-hand key of its right-hand column, so it compares every group of keys at once.
+        // In the last ON clause k1 compares both q.k and q.j: one key pair of k1 remains, the keys of k1
+        // and k2 share q.j, and an equality of q.k and q.j filters the right-hand rows.
         assertMemoryLeak(() -> {
             final String[][] keyTypes = {
                     {"INT", "INT", "INT"},
@@ -3024,7 +3026,8 @@ public class HorizonJoinTest extends AbstractCairoTest {
             final String[] onClauses = {
                     "t.k1 = q.k AND t.k2 = q.k AND t.k3 = q.k",
                     "t.k1 = q.k AND t.k2 = q.k AND t.k3 = q.j",
-                    "t.k1 = q.k AND t.k2 = q.j AND t.k3 = q.j"
+                    "t.k1 = q.k AND t.k2 = q.j AND t.k3 = q.j",
+                    "t.k1 = q.k AND t.k2 = q.j AND t.k1 = q.j"
             };
             for (String[] types : keyTypes) {
                 createSharedKeyTypeTables(types);
@@ -3409,6 +3412,53 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinOnMasterSymbolInTwoLetterCases() throws Exception {
+        // mergeContexts() compares column names as written, so t.s1 and t.S1 leave one left-hand column at
+        // two key positions. Against two right-hand columns, SymbolTranslatingRecord could translate t.s1
+        // into the symbol table of only one of them, so the keys compare strings. Against one right-hand
+        // column twice, both positions translate alike, and the keys compare symbol ids as the single key
+        // does. Next to t.s2 and t.S2, which compare strings with a STRING and a VARCHAR column, the
+        // separate key t.s1 = p.s compares symbol ids. Rows checked with DuckDB.
+        assertMemoryLeak(() -> {
+            createSymbolIdKeyTables();
+            assertSymbolIdKeyRows("t.s1 = p.s AND t.S1 = p.a", """
+                    id\tavg
+                    1\tnull
+                    2\t5.0
+                    3\t6.0
+                    4\t7.0
+                    5\t5.0
+                    6\t4.0
+                    7\tnull
+                    """);
+            assertSymbolIdKeyRows("t.s1 = p.s AND t.S1 = p.s", """
+                    id\tavg
+                    1\t3.0
+                    2\t8.0
+                    3\t6.0
+                    4\t7.0
+                    5\t8.0
+                    6\t4.0
+                    7\tnull
+                    """);
+            assertSymbolIdKeyRows("t.s2 = p.pst AND t.S2 = p.pv AND t.s1 = p.s", """
+                    id\tavg
+                    1\t3.0
+                    2\t5.0
+                    3\t1.0
+                    4\t7.0
+                    5\t8.0
+                    6\t4.0
+                    7\tnull
+                    """);
+            sqlExecutionContext.setParallelHorizonJoinEnabled(true);
+            assertSymbolIdKeys("t.s1 = p.s AND t.S1 = p.a", false);
+            assertSymbolIdKeys("t.s1 = p.s AND t.S1 = p.s", true);
+            assertSymbolIdKeys("t.s2 = p.pst AND t.S2 = p.pv AND t.s1 = p.s", true);
+        });
+    }
+
+    @Test
     public void testHorizonJoinOnMasterSymbolSharedBySlaveColumns() throws Exception {
         // t.s = p.a AND t.s = p.b implies p.a = p.b, which filters the right-hand rows, so one
         // SYMBOL key pair remains.
@@ -3430,6 +3480,70 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             1\t3.0
                             2\tnull
                             """);
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnMasterSymbolSharedBySlaveColumnsInAnyOrder() throws Exception {
+        // The third key pair of t.s1 = p.s AND t.s2 = p.a AND t.s1 = p.a shares p.a with the second pair
+        // and t.s1 with the first. A HORIZON JOIN keeps both key pairs of an implied left-hand equality, so
+        // mergeContexts() merges the third pair with the first one: in every order of the conjuncts one key
+        // pair of t.s1 remains, and an equality of p.s and p.a filters the right-hand rows. The remaining keys
+        // compare symbol ids: either they share p.a, whose symbol table SymbolTranslatingRecord translates
+        // both t.s1 and t.s2 into, or they share no column. With the STRING column t.st in place of t.s2,
+        // the same rows come back. Rows checked with DuckDB.
+        assertMemoryLeak(() -> {
+            createSymbolIdKeyTables();
+            final String expected = """
+                    id\tavg
+                    1\tnull
+                    2\t5.0
+                    3\t6.0
+                    4\t7.0
+                    5\tnull
+                    6\t4.0
+                    7\tnull
+                    """;
+            for (String column : new String[]{"t.s2", "t.st"}) {
+                final String sharedSlave = column + " = p.a";
+                final String[] onClauses = {
+                        "t.s1 = p.s AND " + sharedSlave + " AND t.s1 = p.a",
+                        "t.s1 = p.s AND t.s1 = p.a AND " + sharedSlave,
+                        sharedSlave + " AND t.s1 = p.s AND t.s1 = p.a",
+                        sharedSlave + " AND t.s1 = p.a AND t.s1 = p.s",
+                        "t.s1 = p.a AND t.s1 = p.s AND " + sharedSlave,
+                        "t.s1 = p.a AND " + sharedSlave + " AND t.s1 = p.s",
+                        "p.s = t.s1 AND p.a = " + column + " AND p.a = t.s1"
+                };
+                for (String onClause : onClauses) {
+                    assertSymbolIdKeyRows(onClause, expected, "slave filter");
+                    if ("t.s2".equals(column)) {
+                        sqlExecutionContext.setParallelHorizonJoinEnabled(true);
+                        assertSymbolIdKeys(onClause, true);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnMasterSymbolSharedBySlaveColumnsKeyTypeMismatch() throws Exception {
+        // t.s1 = p.s AND t.st = p.i AND t.s1 = p.i leaves the keys p.i = t.s1 and p.i = t.st, see
+        // testHorizonJoinOnMasterSymbolSharedBySlaveColumnsInAnyOrder(), and the INT column p.i cannot be a
+        // key of the SYMBOL column t.s1. The error points at p.i in the third conjunct.
+        assertMemoryLeak(() -> {
+            createSymbolIdKeyTables();
+            for (boolean isParallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                assertQuery("SELECT t.id, avg(p.price) FROM trades t HORIZON JOIN prices p ON (t.s1 = p.s AND t.st = p.i AND t.s1 = p.i) " +
+                        "RANGE FROM 0s TO 0s STEP 1s AS h ORDER BY t.id")
+                        .noLeakCheck()
+                        .fails(103, "join column type mismatch");
+                assertQuery("SELECT t.id, avg(p.price) FROM trades t HORIZON JOIN prices r ON (t.s1 = r.s) " +
+                        "HORIZON JOIN prices p ON (t.s1 = p.s AND t.st = p.i AND t.s1 = p.i) RANGE FROM 0s TO 0s STEP 1s AS h ORDER BY t.id")
+                        .noLeakCheck()
+                        .fails(141, "join column type mismatch");
+            }
         });
     }
 
@@ -3962,6 +4076,28 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "ORDER BY t.id")
                     .noLeakCheck()
                     .fails(97, "query is not allowed here");
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnSymbolKeyBesideStringKeysComparesSymbolIds() throws Exception {
+        // p.a, a SYMBOL column, is a key of the STRING column t.st and of the VARCHAR column t.v, so both of
+        // those keys compare strings. The separate key t.s1 = p.s shares no column with them, and compares
+        // symbol ids as it would alone. Rows checked with DuckDB.
+        assertMemoryLeak(() -> {
+            createSymbolIdKeyTables();
+            assertSymbolIdKeyRows("t.st = p.a AND t.v = p.a AND t.s1 = p.s", """
+                    id\tavg
+                    1\tnull
+                    2\t5.0
+                    3\t6.0
+                    4\t7.0
+                    5\tnull
+                    6\t4.0
+                    7\tnull
+                    """);
+            sqlExecutionContext.setParallelHorizonJoinEnabled(true);
+            assertSymbolIdKeys("t.st = p.a AND t.v = p.a AND t.s1 = p.s", true);
         });
     }
 
@@ -11302,6 +11438,32 @@ public class HorizonJoinTest extends AbstractCairoTest {
         }
     }
 
+    // Asserts the rows of HORIZON JOIN prices p ON (onClause) over the tables of createSymbolIdKeyTables(),
+    // serial and parallel, alone and as the first and the last of two HORIZON JOINs, with the plan fragments.
+    private void assertSymbolIdKeyRows(String onClause, String expected, String... planFragments) throws Exception {
+        final String[] queries = {
+                "SELECT t.id, avg(p.price) FROM trades t HORIZON JOIN prices p ON (" + onClause + ") RANGE FROM 0s TO 0s STEP 1s AS h ORDER BY t.id",
+                "SELECT t.id, avg(p.price) FROM trades t HORIZON JOIN prices p ON (" + onClause + ") HORIZON JOIN prices r ON (t.s1 = r.s) "
+                        + "LIST (0s) AS h ORDER BY t.id",
+                "SELECT t.id, avg(p.price) FROM trades t HORIZON JOIN prices r ON (t.s1 = r.s) HORIZON JOIN prices p ON (" + onClause + ") "
+                        + "LIST (0s) AS h ORDER BY t.id"
+        };
+        for (boolean isParallel : new boolean[]{false, true}) {
+            sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+            for (String sql : queries) {
+                try {
+                    final QueryAssertion assertion = assertQuery(sql).noLeakCheck().expectSize();
+                    if (planFragments.length > 0) {
+                        assertion.withPlanContaining(planFragments);
+                    }
+                    assertion.returns(expected);
+                } catch (AssertionError e) {
+                    throw new AssertionError(sql + (isParallel ? ", parallel" : ", serial") + ": " + e.getMessage(), e);
+                }
+            }
+        }
+    }
+
     // Tells from the atoms of the parallel factories whether the key of prices p compares symbol ids:
     // only then do the lookups copy the left-hand key from a SymbolTranslatingRecord.
     private void assertSymbolIdKeys(String onClause, boolean isSymbolId) throws Exception {
@@ -11547,6 +11709,36 @@ public class HorizonJoinTest extends AbstractCairoTest {
                 INSERT INTO tm VALUES
                     (1, 'A', 'A', 'A', '1970-01-01T00:00:00.000010Z'),
                     (2, 'B', 'A', 'A', '1970-01-01T00:00:00.000020Z')
+                """);
+    }
+
+    // Each symbol table orders its symbol ids differently: trades.s1 and trades.s2 hold C=0, A=1, B=2 and D=3,
+    // prices.s B=0, A=1 and C=2, and prices.a B=0, C=1 and A=2, so a key that compares symbol ids through
+    // the wrong symbol table matches the wrong rows. Trade 6 holds NULL keys, which match price 4, trade 7
+    // holds D, which no price holds, and trade 1 comes before the price that trade 4 matches.
+    private void createSymbolIdKeyTables() throws Exception {
+        executeWithRewriteTimestamp("CREATE TABLE trades (id INT, s1 SYMBOL, s2 SYMBOL, st STRING, v VARCHAR, ts #TIMESTAMP) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+        executeWithRewriteTimestamp("CREATE TABLE prices (id INT, s SYMBOL, a SYMBOL, pst STRING, pv VARCHAR, i INT, price DOUBLE, ts #TIMESTAMP) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+        execute("""
+                INSERT INTO prices VALUES
+                    (1, 'B', 'B', 'B', 'B', 1, 1.0, '1970-01-01T00:00:00.000001Z'),
+                    (2, 'A', 'C', 'A', 'C', 2, 2.0, '1970-01-01T00:00:00.000002Z'),
+                    (3, 'C', 'A', 'C', 'C', 3, 3.0, '1970-01-01T00:00:00.000003Z'),
+                    (4, NULL, NULL, NULL, NULL, 4, 4.0, '1970-01-01T00:00:00.000004Z'),
+                    (5, 'A', 'A', 'A', 'A', 5, 5.0, '1970-01-01T00:00:00.000005Z'),
+                    (6, 'B', 'B', 'B', 'A', 6, 6.0, '1970-01-01T00:00:00.000006Z'),
+                    (7, 'C', 'C', 'C', 'C', 7, 7.0, '1970-01-01T00:00:00.000007Z'),
+                    (8, 'A', 'B', 'B', 'B', 8, 8.0, '1970-01-01T00:00:00.000008Z')
+                """);
+        execute("""
+                INSERT INTO trades VALUES
+                    (1, 'C', 'C', 'C', 'C', '1970-01-01T00:00:00.000005Z'),
+                    (2, 'A', 'A', 'A', 'A', '1970-01-01T00:00:00.000010Z'),
+                    (3, 'B', 'B', 'B', 'B', '1970-01-01T00:00:00.000020Z'),
+                    (4, 'C', 'C', 'C', 'C', '1970-01-01T00:00:00.000030Z'),
+                    (5, 'A', 'B', 'B', 'A', '1970-01-01T00:00:00.000040Z'),
+                    (6, NULL, NULL, NULL, NULL, '1970-01-01T00:00:00.000050Z'),
+                    (7, 'D', 'D', 'D', 'D', '1970-01-01T00:00:00.000060Z')
                 """);
     }
 

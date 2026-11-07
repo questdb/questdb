@@ -9299,6 +9299,12 @@ public class SqlOptimiser implements Mutable {
 
         deletedContexts.clear();
         JoinContext r = contextPool.next();
+        // HORIZON JOIN keeps both key pairs of an implied equality between two master columns, see
+        // addFilterOrEmitJoin(), so a merge with the key pair that shares the slave column of a new key
+        // pair changes nothing. The key pair that shares the master column turns the implied slave
+        // equality into the slave filter and leaves one key pair, so HORIZON JOIN merges with it first,
+        // whatever the order of the ON clause conjuncts.
+        final boolean isHorizonJoin = parent.getJoinModels().getQuick(a.slaveIndex).getJoinType() == IQueryModel.JOIN_HORIZON;
         // check if we are merging a.x = b.x to a.y = b.y
         // or a.x = b.x to a.x = b.y, e.g., one of the columns in the same table
         for (int i = 0, n = b.aNames.size(); i < n; i++) {
@@ -9310,39 +9316,8 @@ public class SqlOptimiser implements Mutable {
             int bbi = b.bIndexes.getQuick(i);
             ExpressionNode bbo = b.bNodes.getQuick(i);
 
-            for (int k = 0, z = a.aNames.size(); k < z; k++) {
-                final CharSequence aan = a.aNames.getQuick(k);
-                final int aai = a.aIndexes.getQuick(k);
-                final ExpressionNode aao = a.aNodes.getQuick(k);
-                final CharSequence abn = a.bNames.getQuick(k);
-                final int abi = a.bIndexes.getQuick(k);
-                final ExpressionNode abo = a.bNodes.getQuick(k);
-
-                if (aai == bai && Chars.equals(aan, ban)) {
-                    // a.x = ?.x
-                    //  |     ?
-                    // a.x = ?.y
-                    addFilterOrEmitJoin(parent, k, abi, abn, abo, bbi, bbn, bbo, a.slaveIndex, isEmittedClause);
-                    break;
-                } else if (abi == bai && Chars.equals(abn, ban)) {
-                    // a.y = b.x
-                    //    /
-                    // b.x = a.x
-                    addFilterOrEmitJoin(parent, k, aai, aan, aao, bbi, bbn, bbo, a.slaveIndex, isEmittedClause);
-                    break;
-                } else if (aai == bbi && Chars.equals(aan, bbn)) {
-                    // a.x = b.x
-                    //     \
-                    // b.y = a.x
-                    addFilterOrEmitJoin(parent, k, abi, abn, abo, bai, ban, bao, a.slaveIndex, isEmittedClause);
-                    break;
-                } else if (abi == bbi && Chars.equals(abn, bbn)) {
-                    // a.x = b.x
-                    //        |
-                    // a.y = b.x
-                    addFilterOrEmitJoin(parent, k, aai, aan, aao, bai, ban, bao, a.slaveIndex, isEmittedClause);
-                    break;
-                }
+            if (!isHorizonJoin || !mergeKeySharingColumn(parent, a, bai, ban, bao, bbi, bbn, bbo, isEmittedClause, true)) {
+                mergeKeySharingColumn(parent, a, bai, ban, bao, bbi, bbn, bbo, isEmittedClause, false);
             }
             r.aIndexes.add(bai);
             r.aNames.add(ban);
@@ -9390,6 +9365,60 @@ public class SqlOptimiser implements Mutable {
             }
         }
         return r;
+    }
+
+    // Merges the key pair bai.ban = bbi.bbn with the first key pair of context a that shares a column
+    // with it, see addFilterOrEmitJoin(). With isMasterColumnOnly, a shared column of the slave of a
+    // does not count. Returns true when the key pair merged.
+    private boolean mergeKeySharingColumn(
+            IQueryModel parent,
+            JoinContext a,
+            int bai,
+            CharSequence ban,
+            ExpressionNode bao,
+            int bbi,
+            CharSequence bbn,
+            ExpressionNode bbo,
+            boolean isEmittedClause,
+            boolean isMasterColumnOnly
+    ) {
+        for (int k = 0, z = a.aNames.size(); k < z; k++) {
+            final CharSequence aan = a.aNames.getQuick(k);
+            final int aai = a.aIndexes.getQuick(k);
+            final ExpressionNode aao = a.aNodes.getQuick(k);
+            final CharSequence abn = a.bNames.getQuick(k);
+            final int abi = a.bIndexes.getQuick(k);
+            final ExpressionNode abo = a.bNodes.getQuick(k);
+            final boolean isAaCounted = !isMasterColumnOnly || aai != a.slaveIndex;
+            final boolean isAbCounted = !isMasterColumnOnly || abi != a.slaveIndex;
+
+            if (isAaCounted && aai == bai && Chars.equals(aan, ban)) {
+                // a.x = ?.x
+                //  |     ?
+                // a.x = ?.y
+                addFilterOrEmitJoin(parent, k, abi, abn, abo, bbi, bbn, bbo, a.slaveIndex, isEmittedClause);
+                return true;
+            } else if (isAbCounted && abi == bai && Chars.equals(abn, ban)) {
+                // a.y = b.x
+                //    /
+                // b.x = a.x
+                addFilterOrEmitJoin(parent, k, aai, aan, aao, bbi, bbn, bbo, a.slaveIndex, isEmittedClause);
+                return true;
+            } else if (isAaCounted && aai == bbi && Chars.equals(aan, bbn)) {
+                // a.x = b.x
+                //     \
+                // b.y = a.x
+                addFilterOrEmitJoin(parent, k, abi, abn, abo, bai, ban, bao, a.slaveIndex, isEmittedClause);
+                return true;
+            } else if (isAbCounted && abi == bbi && Chars.equals(abn, bbn)) {
+                // a.x = b.x
+                //        |
+                // a.y = b.x
+                addFilterOrEmitJoin(parent, k, aai, aan, aao, bai, ban, bao, a.slaveIndex, isEmittedClause);
+                return true;
+            }
+        }
+        return false;
     }
 
     private void mergeWindowSpec(WindowExpression child, WindowExpression base) {

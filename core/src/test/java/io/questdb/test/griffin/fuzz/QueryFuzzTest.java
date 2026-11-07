@@ -1147,8 +1147,10 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 .$(runner.getBuildChoiceRuns()).$(" runs picked the build per execution")
                 .$();
         LOG.info().$("fuzz map page axis: ").$(runner.getMapPageAxisRuns()).$(" comparisons").$();
-        LOG.info().$("fuzz reference axis: ").$(runner.getReferenceAxisRuns()).$(" comparisons across ")
-                .$(generatedByShape[QueryShape.GROUPING_SETS.ordinal()]).$(" grouping sets queries")
+        LOG.info().$("fuzz reference axis: ").$(runner.getReferenceAxisRuns(QueryShape.GROUPING_SETS)).$(" comparisons across ")
+                .$(generatedByShape[QueryShape.GROUPING_SETS.ordinal()]).$(" grouping sets queries, ")
+                .$(runner.getReferenceAxisRuns(QueryShape.HORIZON_JOIN)).$(" across ")
+                .$(generatedByShape[QueryShape.HORIZON_JOIN.ordinal()]).$(" HORIZON JOIN queries")
                 .$();
 
         if (failures.size() > 0) {
@@ -1240,7 +1242,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
             Assert.assertTrue(
                     "the reference axis compared none of the " + groupingSetsGenerated
                             + " grouping sets queries; the UNION ALL rewrite looks out of step with the engine",
-                    runner.getReferenceAxisRuns() > 0
+                    runner.getReferenceAxisRuns(QueryShape.GROUPING_SETS) > 0
             );
         }
         // Guard the fault injector against a silent disarm. It has several ways to stop biting while

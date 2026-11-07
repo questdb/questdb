@@ -558,6 +558,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     // creates the cursors of the SHOW statements the compiler defines, see generateShowQuery()
     private final SqlParserCallback sqlParserCallback;
     private final WhereClauseSymbolEstimator symbolEstimator = new WhereClauseSymbolEstimator();
+    // the key positions whose two columns could compare symbol ids, see hasMixedSymbolIdKeyColumn()
+    private final BitSet symbolIdKeys = new BitSet();
     private final IntList tempAggIndex = new IntList();
     private final ObjList<QueryColumn> tempColumnsList = new ObjList<>();
     private final ObjList<ExpressionNode> tempExpressionNodeList = new ObjList<>();
@@ -2006,6 +2008,28 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return filter;
     }
 
+    // A record copier writes a column in one encoding at every key position, so a column shared by a key
+    // that compares symbol ids and a key that compares strings would need two encodings. The callers keep
+    // every key a string then. symbolIdKeys holds the key positions whose columns could compare symbol ids.
+    private static boolean hasMixedSymbolIdKeyColumn(
+            ListColumnFilter slaveKeyColumns,
+            ListColumnFilter masterKeyColumns,
+            BitSet symbolIdKeys
+    ) {
+        for (int k = 1, m = slaveKeyColumns.getColumnCount(); k < m; k++) {
+            final int slaveColIndex = slaveKeyColumns.getColumnIndexFactored(k);
+            final int masterColIndex = masterKeyColumns.getColumnIndexFactored(k);
+            final boolean isSymbolIdKey = symbolIdKeys.get(k);
+            for (int j = 0; j < k; j++) {
+                if ((slaveColIndex == slaveKeyColumns.getColumnIndexFactored(j) || masterColIndex == masterKeyColumns.getColumnIndexFactored(j))
+                        && isSymbolIdKey != symbolIdKeys.get(j)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     // True when this model owns a SAMPLE BY fill that emits gap rows. FILL(NONE) emits none.
     // Like findFillBucketIndex, ownership means this model's columns carry the fill's bucket key,
     // so an outer GROUP BY over a SAMPLE BY ... FILL sub-query does not own the inner fill.
@@ -2031,16 +2055,28 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return false;
     }
 
-    // SymbolTranslatingRecord maps each master key column to one slave symbol table, so a master
-    // SYMBOL column that is matched against two slave columns cannot use symbol ids.
-    private static boolean hasRepeatedSymbolKeyColumn(ListColumnFilter keyColumns, RecordMetadata metadata) {
-        for (int k = 1, m = keyColumns.getColumnCount(); k < m; k++) {
-            final int columnIndex = keyColumns.getColumnIndexFactored(k);
-            if (metadata.getColumnType(columnIndex) == ColumnType.SYMBOL) {
-                for (int j = 0; j < k; j++) {
-                    if (keyColumns.getColumnIndexFactored(j) == columnIndex) {
-                        return true;
-                    }
+    // SymbolTranslatingRecord translates each column through the symbol table of one partner column. A
+    // translated column that compares symbol ids with two different columns would be translated through
+    // the wrong symbol table for one of them, so the callers keep every key a string. ASOF, LT and HORIZON
+    // joins translate master columns. Hash joins translate slave columns, and the light hash joins
+    // translate master columns when they swap the build side at runtime.
+    private static boolean hasSymbolIdKeyColumnWithTwoPartners(
+            ListColumnFilter slaveKeyColumns,
+            ListColumnFilter masterKeyColumns,
+            BitSet symbolIdKeys,
+            boolean isSlaveTranslated
+    ) {
+        for (int k = 1, m = slaveKeyColumns.getColumnCount(); k < m; k++) {
+            final int slaveColIndex = slaveKeyColumns.getColumnIndexFactored(k);
+            final int masterColIndex = masterKeyColumns.getColumnIndexFactored(k);
+            for (int j = 0; j < k; j++) {
+                final int otherSlaveColIndex = slaveKeyColumns.getColumnIndexFactored(j);
+                final int otherMasterColIndex = masterKeyColumns.getColumnIndexFactored(j);
+                final boolean isMasterWithTwoPartners = masterColIndex == otherMasterColIndex && slaveColIndex != otherSlaveColIndex;
+                final boolean isSlaveWithTwoPartners = slaveColIndex == otherSlaveColIndex && masterColIndex != otherMasterColIndex;
+                // hasMixedSymbolIdKeyColumn() has ruled out a shared column whose keys differ in encoding
+                if ((isMasterWithTwoPartners || (isSlaveTranslated && isSlaveWithTwoPartners)) && symbolIdKeys.get(k)) {
+                    return true;
                 }
             }
         }
@@ -2160,39 +2196,29 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return false;
     }
 
-    // HORIZON key copiers encode a column the same way at every key position, so a slave SYMBOL column
-    // that is matched against a master SYMBOL column and a master column of another type needs one
-    // encoding for both positions, and strings serve both. A slave SYMBOL column that is matched only
-    // against master SYMBOL columns keeps symbol ids: SymbolTranslatingRecord translates each of them
-    // into the symbol table of that one slave column.
+    // HORIZON JOIN translates master key columns, as ASOF and LT joins do, so a pair of SYMBOL columns
+    // compares symbol ids under the rules of convertSymbolJoinKeysToInt(). A slave SYMBOL column that two
+    // master SYMBOL columns share keeps symbol ids: SymbolTranslatingRecord translates both into the
+    // symbol table of that one slave column. SqlOptimiser.mergeContexts() leaves one key pair of a master
+    // column that two slave columns share, but it tells column names apart by letter case, so t.s and
+    // t.S still put one master column at two key positions. Those keys compare strings when they name two
+    // slave columns, and keep symbol ids when they name the same one.
     private static boolean isHorizonSymbolIdKeyAllowed(
             ListColumnFilter masterKeyColumns,
             RecordMetadata masterMetadata,
             ListColumnFilter slaveKeyColumns,
-            RecordMetadata slaveMetadata
+            RecordMetadata slaveMetadata,
+            BitSet symbolIdKeys
     ) {
-        // SqlOptimiser.addFilterOrEmitJoin() keeps one HORIZON key pair of a master column that two
-        // slave columns share, and the implied slave equality filters the slave rows, so no master key
-        // column repeats here. SymbolTranslatingRecord would translate a repeated master SYMBOL column
-        // through one of its slave columns only, so such keys compare strings.
-        if (hasRepeatedSymbolKeyColumn(masterKeyColumns, masterMetadata)) {
-            assert false : "master SYMBOL column at two HORIZON JOIN key positions";
-            return false;
-        }
-        for (int k = 1, n = slaveKeyColumns.getColumnCount(); k < n; k++) {
-            final int slaveColumnIndex = slaveKeyColumns.getColumnIndexFactored(k);
-            if (slaveMetadata.getColumnType(slaveColumnIndex) != ColumnType.SYMBOL) {
-                continue;
-            }
-            for (int j = 0; j < k; j++) {
-                if (slaveKeyColumns.getColumnIndexFactored(j) == slaveColumnIndex
-                        && (masterMetadata.getColumnType(masterKeyColumns.getColumnIndexFactored(j)) != ColumnType.SYMBOL
-                        || masterMetadata.getColumnType(masterKeyColumns.getColumnIndexFactored(k)) != ColumnType.SYMBOL)) {
-                    return false;
-                }
+        symbolIdKeys.clear();
+        for (int k = 0, n = slaveKeyColumns.getColumnCount(); k < n; k++) {
+            if (slaveMetadata.getColumnType(slaveKeyColumns.getColumnIndexFactored(k)) == ColumnType.SYMBOL
+                    && masterMetadata.getColumnType(masterKeyColumns.getColumnIndexFactored(k)) == ColumnType.SYMBOL) {
+                symbolIdKeys.set(k);
             }
         }
-        return true;
+        return !hasMixedSymbolIdKeyColumn(slaveKeyColumns, masterKeyColumns, symbolIdKeys)
+                && !hasSymbolIdKeyColumnWithTwoPartners(slaveKeyColumns, masterKeyColumns, symbolIdKeys, false);
     }
 
     // Returns true when every column the expression reads resolves, as the function parser resolves it,
@@ -3534,8 +3560,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordMetadata slaveMetadata,
             boolean isSlaveTranslated
     ) {
-        if (hasMixedSymbolIdKeyColumn(masterMetadata, slaveMetadata)
-                || hasSymbolIdKeyColumnWithTwoPartners(masterMetadata, slaveMetadata, isSlaveTranslated)) {
+        symbolIdKeys.clear();
+        for (int k = 0, m = listColumnFilterA.getColumnCount(); k < m; k++) {
+            if (isSymbolJoinKeyIntConvertible(masterMetadata, listColumnFilterB.getColumnIndexFactored(k), slaveMetadata, listColumnFilterA.getColumnIndexFactored(k))) {
+                symbolIdKeys.set(k);
+            }
+        }
+        if (hasMixedSymbolIdKeyColumn(listColumnFilterA, listColumnFilterB, symbolIdKeys)
+                || hasSymbolIdKeyColumnWithTwoPartners(listColumnFilterA, listColumnFilterB, symbolIdKeys, isSlaveTranslated)) {
             return null;
         }
         IntList masterSymbolKeyCols = null;
@@ -3543,7 +3575,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         for (int k = 0, m = listColumnFilterA.getColumnCount(); k < m; k++) {
             final int slaveColIndex = listColumnFilterA.getColumnIndexFactored(k);
             final int masterColIndex = listColumnFilterB.getColumnIndexFactored(k);
-            if (isSymbolJoinKeyIntConvertible(masterMetadata, masterColIndex, slaveMetadata, slaveColIndex)) {
+            if (symbolIdKeys.get(k)) {
                 // This is a non-self-join SYMBOL-SYMBOL pair currently using string comparison
                 keyTypes.set(k, ColumnType.INT);
                 if (masterSymbolKeyCols == null) {
@@ -6819,7 +6851,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 final BitSet asOfWriteTimestampAsNanosB = new BitSet();
                 IntList masterSymbolKeyCols = null;
                 IntList slaveSymbolKeyCols = null;
-                final boolean isSymbolIdKeyAllowed = isHorizonSymbolIdKeyAllowed(masterKeyColumnFilter, masterMetadata, slaveKeyColumnFilter, slaveMetadata);
+                final boolean isSymbolIdKeyAllowed = isHorizonSymbolIdKeyAllowed(masterKeyColumnFilter, masterMetadata, slaveKeyColumnFilter, slaveMetadata, symbolIdKeys);
 
                 for (int k = 0, m = slaveKeyColumnFilter.getColumnCount(); k < m; k++) {
                     final int columnIndexA = slaveKeyColumnFilter.getColumnIndexFactored(k);
@@ -9930,7 +9962,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     final BitSet asOfWriteTimestampAsNanosB = new BitSet();
                     IntList masterSymbolKeyCols = null;
                     IntList slaveSymbolKeyCols = null;
-                    final boolean isSymbolIdKeyAllowed = isHorizonSymbolIdKeyAllowed(masterKeyColumnFilter, masterMetadata, slaveKeyColumnFilter, slaveMeta);
+                    final boolean isSymbolIdKeyAllowed = isHorizonSymbolIdKeyAllowed(masterKeyColumnFilter, masterMetadata, slaveKeyColumnFilter, slaveMeta, symbolIdKeys);
 
                     for (int k = 0, m = slaveKeyColumnFilter.getColumnCount(); k < m; k++) {
                         final int columnIndexA = slaveKeyColumnFilter.getColumnIndexFactored(k);
@@ -16074,53 +16106,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 && slaveMetadata.isSymbolTableStatic(slaveColIndex)
                 && writeSymbolAsStringB.get(masterColIndex)
                 && writeSymbolAsStringA.get(slaveColIndex);
-    }
-
-    // A column shared by a key that compares symbol ids and a key that compares strings would
-    // need two encodings, so convertSymbolJoinKeysToInt() keeps every key a string.
-    private boolean hasMixedSymbolIdKeyColumn(RecordMetadata masterMetadata, RecordMetadata slaveMetadata) {
-        for (int k = 1, m = listColumnFilterA.getColumnCount(); k < m; k++) {
-            final int slaveColIndex = listColumnFilterA.getColumnIndexFactored(k);
-            final int masterColIndex = listColumnFilterB.getColumnIndexFactored(k);
-            final boolean isIntConvertible = isSymbolJoinKeyIntConvertible(masterMetadata, masterColIndex, slaveMetadata, slaveColIndex);
-            for (int j = 0; j < k; j++) {
-                final int otherSlaveColIndex = listColumnFilterA.getColumnIndexFactored(j);
-                final int otherMasterColIndex = listColumnFilterB.getColumnIndexFactored(j);
-                if ((slaveColIndex == otherSlaveColIndex || masterColIndex == otherMasterColIndex)
-                        && isIntConvertible != isSymbolJoinKeyIntConvertible(masterMetadata, otherMasterColIndex, slaveMetadata, otherSlaveColIndex)) {
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
-    // SymbolTranslatingRecord translates each column through the symbol table of one partner column. A
-    // translated column that compares symbol ids with two different columns would be translated through
-    // the wrong symbol table for one of them, so convertSymbolJoinKeysToInt() keeps every key a string.
-    // ASOF and LT joins translate master columns. Hash joins translate slave columns, and the light hash
-    // joins translate master columns when they swap the build side at runtime.
-    private boolean hasSymbolIdKeyColumnWithTwoPartners(
-            RecordMetadata masterMetadata,
-            RecordMetadata slaveMetadata,
-            boolean isSlaveTranslated
-    ) {
-        for (int k = 1, m = listColumnFilterA.getColumnCount(); k < m; k++) {
-            final int slaveColIndex = listColumnFilterA.getColumnIndexFactored(k);
-            final int masterColIndex = listColumnFilterB.getColumnIndexFactored(k);
-            for (int j = 0; j < k; j++) {
-                final int otherSlaveColIndex = listColumnFilterA.getColumnIndexFactored(j);
-                final int otherMasterColIndex = listColumnFilterB.getColumnIndexFactored(j);
-                final boolean isMasterWithTwoPartners = masterColIndex == otherMasterColIndex && slaveColIndex != otherSlaveColIndex;
-                final boolean isSlaveWithTwoPartners = slaveColIndex == otherSlaveColIndex && masterColIndex != otherMasterColIndex;
-                // hasMixedSymbolIdKeyColumn() has ruled out a shared column whose keys differ in encoding
-                if ((isMasterWithTwoPartners || (isSlaveTranslated && isSlaveWithTwoPartners))
-                        && isSymbolJoinKeyIntConvertible(masterMetadata, masterColIndex, slaveMetadata, slaveColIndex)) {
-                    return true;
-                }
-            }
-        }
-        return false;
     }
 
     private void lookupColumnIndexes(
