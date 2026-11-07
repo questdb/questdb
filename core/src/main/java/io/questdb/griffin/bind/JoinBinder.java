@@ -162,12 +162,9 @@ final class JoinBinder implements Mutable {
         if (node.type == ExpressionNode.LITERAL && node.position == position) {
             return node;
         }
-        ExpressionNode column = findUnnestColumn(node.lhs, position);
-        if (column == null) {
-            column = findUnnestColumn(node.rhs, position);
-        }
-        for (int i = 0, n = node.args.size(); column == null && i < n; i++) {
-            column = findUnnestColumn(node.args.getQuick(i), position);
+        ExpressionNode column = null;
+        for (int i = 0, n = node.operandCount(); column == null && i < n; i++) {
+            column = findUnnestColumn(node.operandAt(i), position);
         }
         return column;
     }
@@ -392,10 +389,8 @@ final class JoinBinder implements Mutable {
             }
             return;
         }
-        validateOuterJoinColumns(expression.lhs, output);
-        validateOuterJoinColumns(expression.rhs, output);
-        for (int i = 0, n = expression.args.size(); i < n; i++) {
-            validateOuterJoinColumns(expression.args.getQuick(i), output);
+        for (int i = 0, n = expression.operandCount(); i < n; i++) {
+            validateOuterJoinColumns(expression.operandAt(i), output);
         }
     }
 
@@ -993,10 +988,8 @@ final class JoinBinder implements Mutable {
             }
             joinGraphBuilder.addOrderingConstraint(source, origin);
         }
-        collectJoinDependencies(expression.lhs, join, origin, isDeferred);
-        collectJoinDependencies(expression.rhs, join, origin, isDeferred);
-        for (int i = 0, n = expression.args.size(); i < n; i++) {
-            collectJoinDependencies(expression.args.getQuick(i), join, origin, isDeferred);
+        for (int i = 0, n = expression.operandCount(); i < n; i++) {
+            collectJoinDependencies(expression.operandAt(i), join, origin, isDeferred);
         }
     }
 
@@ -1292,12 +1285,9 @@ final class JoinBinder implements Mutable {
         if (expression.type == ExpressionNode.LITERAL) {
             return joinReferenceSource(expression, join) > origin ? expression : null;
         }
-        ExpressionNode reference = findForwardJoinReference(expression.lhs, join, origin);
-        if (reference == null) {
-            reference = findForwardJoinReference(expression.rhs, join, origin);
-        }
-        for (int i = 0, n = expression.args.size(); reference == null && i < n; i++) {
-            reference = findForwardJoinReference(expression.args.getQuick(i), join, origin);
+        ExpressionNode reference = null;
+        for (int i = 0, n = expression.operandCount(); reference == null && i < n; i++) {
+            reference = findForwardJoinReference(expression.operandAt(i), join, origin);
         }
         return reference;
     }
@@ -1314,11 +1304,8 @@ final class JoinBinder implements Mutable {
             return FunctionBinder.findColumn(expression, group.getOutput(), null) == -1 && !ctx.functionBinder.isOuterScopeColumn(expression)
                     && FunctionBinder.findColumn(expression, join.getOutput(), null) > -1;
         }
-        if (hasCommaPrefixReference(expression.lhs, join, group) || hasCommaPrefixReference(expression.rhs, join, group)) {
-            return true;
-        }
-        for (int i = 0, n = expression.args.size(); i < n; i++) {
-            if (hasCommaPrefixReference(expression.args.getQuick(i), join, group)) {
+        for (int i = 0, n = expression.operandCount(); i < n; i++) {
+            if (hasCommaPrefixReference(expression.operandAt(i), join, group)) {
                 return true;
             }
         }
@@ -1408,9 +1395,9 @@ final class JoinBinder implements Mutable {
         if (expression.type == ExpressionNode.LITERAL) {
             return joinReferenceSource(expression, join);
         }
-        int index = mergeJoinSources(joinExpressionSource(expression.lhs, join), joinExpressionSource(expression.rhs, join));
-        for (int i = 0, n = expression.args.size(); i < n; i++) {
-            index = mergeJoinSources(index, joinExpressionSource(expression.args.getQuick(i), join));
+        int index = -1;
+        for (int i = 0, n = expression.operandCount(); i < n; i++) {
+            index = mergeJoinSources(index, joinExpressionSource(expression.operandAt(i), join));
         }
         return index;
     }
@@ -1452,9 +1439,9 @@ final class JoinBinder implements Mutable {
         if (expression.type == ExpressionNode.LITERAL) {
             return joinReferenceSource(expression, join);
         }
-        int last = Math.max(lastJoinReferenceSource(expression.lhs, join), lastJoinReferenceSource(expression.rhs, join));
-        for (int i = 0, n = expression.args.size(); i < n; i++) {
-            last = Math.max(last, lastJoinReferenceSource(expression.args.getQuick(i), join));
+        int last = -1;
+        for (int i = 0, n = expression.operandCount(); i < n; i++) {
+            last = Math.max(last, lastJoinReferenceSource(expression.operandAt(i), join));
         }
         return last;
     }

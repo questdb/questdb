@@ -179,7 +179,7 @@ public final class RowExpiryUtil {
      * <p>
      * The cleanup sweep runs this text. DDL validation binds {@link #appendKeepCase} instead,
      * whose {@code switch} is stricter about operand types, so every policy it accepts also binds here.
-     * Reads express the same keep set as {@code NOT (<predicate>)} ({@code ExpiryReadBinder.appendKeepFilter}),
+     * Reads express the same keep set as {@code NOT (<predicate>)} ({@link #appendKeepFilter}),
      * which the JIT compiler can turn into machine code where a {@code CASE} cannot. Both spellings mean
      * "the predicate is not TRUE" and keep exactly the same rows, including rows whose operand is NULL;
      * {@code RowExpiryFuzzTest} checks the sweep against the read for randomised data, which is what holds
@@ -189,7 +189,7 @@ public final class RowExpiryUtil {
      * A NULL operand follows QuestDB's two-valued comparison semantics: {@code v < 2.0} is FALSE for a
      * NULL {@code v} and keeps the row, while {@code NOT (v >= 2.0)}, {@code v != 2.0} and
      * {@code v IS NULL} are TRUE for it, so this sweep deletes it. Spellings that read as the same rule
-     * can thus differ on NULL rows; see {@code ExpiryReadBinder.appendKeepFilter} for the full account.
+     * can thus differ on NULL rows; see {@link #appendKeepFilter} for the full account.
      */
     public static String buildRowExpiryKeepFilter(String predicate) {
         return "CASE WHEN ((" + predicate.trim() + ") AND true) THEN false ELSE true END";
@@ -216,6 +216,29 @@ public final class RowExpiryUtil {
         sink.putAscii(KEEP_CASE_PREFIX);
         appendTrimmed(sink, predicate, 0, predicate.length());
         sink.putAscii(KEEP_CASE_SUFFIX);
+    }
+
+    /**
+     * Appends the keep-filter text for an EXPIRE ROWS predicate, the rows that have NOT expired. A row expires only when
+     * the predicate is TRUE, so the keep-filter keeps every row whose predicate result is anything else, which
+     * {@code NOT (predicate)} spells for every predicate shape. Over a comparison of the designated timestamp,
+     * {@code IntervalExtractor} reads an interval out of that {@code NOT} and prunes partitions, see its negated range
+     * comparison.
+     * <p>
+     * What happens to a row whose predicate operand is NULL follows QuestDB's two-valued comparison semantics, which the
+     * keep-filter reports rather than overrides: a comparison against NULL is FALSE, so {@code v < 2.0} keeps a row whose
+     * {@code v} is NULL, while a predicate that is TRUE on a NULL operand expires it. {@code NOT (v >= 2.0)} is such a
+     * predicate ({@code NULL >= 2.0} is FALSE, so the {@code NOT} is TRUE), and so are {@code v != 2.0} and
+     * {@code v IS NULL}. {@code v < 2.0} and {@code NOT (v >= 2.0)} therefore express DIFFERENT policies for NULL rows
+     * although they read as the same rule, and the expired NULL rows are physically deleted by the cleanup sweep, which
+     * keeps the same rows through a {@code CASE} wrap of its own ({@link #buildRowExpiryKeepFilter} explains why the
+     * sweep spells it differently). {@code MatViewExpireRowsTest.testExpireScalarNullRowsFollowPredicateTruthValue} pins
+     * this across the spellings.
+     */
+    public static void appendKeepFilter(CharSink<?> sink, CharSequence predicate) {
+        sink.putAscii("NOT (");
+        appendTrimmed(sink, predicate, 0, predicate.length());
+        sink.putAscii(')');
     }
 
     /**
@@ -394,19 +417,6 @@ public final class RowExpiryUtil {
     }
 
     /**
-     * Appends the text between {@code lo} and {@code hi} without the whitespace that surrounds it.
-     */
-    public static void appendTrimmed(CharSink<?> sink, CharSequence text, int lo, int hi) {
-        while (lo < hi && text.charAt(lo) <= ' ') {
-            lo++;
-        }
-        while (lo < hi && text.charAt(hi - 1) <= ' ') {
-            hi--;
-        }
-        sink.put(text, lo, hi);
-    }
-
-    /**
      * Appends the PARTITION BY column list of a KEEP LATEST policy, see {@link #keepLatestKeys}.
      */
     public static void appendKeepLatestKeys(CharSink<?> sink, CharSequence stored) {
@@ -564,6 +574,19 @@ public final class RowExpiryUtil {
             sink.put(c);
         }
         sink.putAscii('"');
+    }
+
+    /**
+     * Appends the text between {@code lo} and {@code hi} without the whitespace that surrounds it.
+     */
+    private static void appendTrimmed(CharSink<?> sink, CharSequence text, int lo, int hi) {
+        while (lo < hi && text.charAt(lo) <= ' ') {
+            lo++;
+        }
+        while (lo < hi && text.charAt(hi - 1) <= ' ') {
+            hi--;
+        }
+        sink.put(text, lo, hi);
     }
 
     private static void appendUnescaped(CharSink<?> sink, CharSequence stored, int lo, int hi) {

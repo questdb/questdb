@@ -7310,13 +7310,6 @@ public class SqlParser {
      * significantly impact performance. This aligns with mainstream databases which also
      * do not support ELSE in PIVOT. For such requirements, user can use subqueries instead.
      */
-    private QueryModel pivotParent(QueryModel pivot) {
-        final QueryModel parent = queryModelPool.next();
-        parent.setModelPosition(pivot.getModelPosition());
-        parent.setNestedModel(pivot);
-        return parent;
-    }
-
     private CharSequence parsePivot(GenericLexer lexer, QueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {
         CharSequence tok;
         expectTok(lexer, '(');
@@ -8437,6 +8430,13 @@ public class SqlParser {
      * one on every read, the first included, which would otherwise hand the clause a sub-query it
      * cannot run.
      */
+    private QueryModel pivotParent(QueryModel pivot) {
+        final QueryModel parent = queryModelPool.next();
+        parent.setModelPosition(pivot.getModelPosition());
+        parent.setNestedModel(pivot);
+        return parent;
+    }
+
     private ExpressionNode readDeclaredQueries(
             ExpressionNode node,
             @Nullable QueryModel model,
@@ -9757,7 +9757,7 @@ public class SqlParser {
     }
 
     /**
-     * Parses a query binding composes for a stored window policy, with no declaration in scope, see
+     * Parses the query {@link ExpiryPolicyParser} composes for a stored window policy, with no declaration in scope, see
      * {@link #parseExpiryExpression}.
      */
     QueryModel parseExpiryQuery(CharSequence text, SqlParserCallback sqlParserCallback) throws SqlException {

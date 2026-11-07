@@ -507,10 +507,8 @@ final class PivotBinder implements Mutable {
             window.getOutput().add(columnId, name, function.getDataType(), true);
             return ctx.bindingExpressions.next().of(ExpressionNode.LITERAL, name, 0, node.position);
         }
-        node.lhs = replacePivotWindows(node.lhs, source, window, pivot, windowScope, executionContext);
-        node.rhs = replacePivotWindows(node.rhs, source, window, pivot, windowScope, executionContext);
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            node.args.setQuick(i, replacePivotWindows(node.args.getQuick(i), source, window, pivot, windowScope, executionContext));
+        for (int i = 0, n = node.operandCount(); i < n; i++) {
+            node.setOperandAt(i, replacePivotWindows(node.operandAt(i), source, window, pivot, windowScope, executionContext));
         }
         return node;
     }

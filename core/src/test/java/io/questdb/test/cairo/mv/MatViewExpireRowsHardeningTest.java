@@ -3741,6 +3741,43 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowPolicyReadDeclaresTimestampAtAnyColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            for (String columns : new String[]{"ts TIMESTAMP, sym SYMBOL, v DOUBLE", "sym SYMBOL, ts TIMESTAMP, v DOUBLE", "sym SYMBOL, v DOUBLE, ts TIMESTAMP"}) {
+                execute("CREATE TABLE base (" + columns + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("""
+                        INSERT INTO base (sym, v, ts) VALUES
+                        ('A', 1.0, '2024-01-01T00:00:00.000000Z'),
+                        ('A', 3.0, '2024-01-02T00:00:00.000000Z'),
+                        ('B', 2.0, '2024-01-03T00:00:00.000000Z')""");
+                execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) EXPIRE ROWS KEEP HIGHEST ON v PARTITION BY sym");
+                drainWalAndMatViewQueues();
+                // The policy expires A's lower row, whichever column of the view holds the timestamp.
+                assertQuery("SELECT sym, v, ts FROM mv")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .returns("""
+                                sym\tv\tts
+                                A\t3.0\t2024-01-02T00:00:00.000000Z
+                                B\t2.0\t2024-01-03T00:00:00.000000Z
+                                """);
+                assertQuery("SELECT ts, sum(v) s FROM mv SAMPLE BY 1d")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .returns("""
+                                ts\ts
+                                2024-01-02T00:00:00.000000Z\t3.0
+                                2024-01-03T00:00:00.000000Z\t2.0
+                                """);
+                execute("DROP MATERIALIZED VIEW mv");
+                execute("DROP TABLE base");
+                drainWalAndMatViewQueues();
+            }
+        });
+    }
+
+    @Test
     public void testWindowPolicySubQueryReadsViewAsPlainTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (sym SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");

@@ -119,11 +119,8 @@ final class AggregateBinder implements Mutable {
         if (ExpressionNode.compareNodesExact(expression, node)) {
             return true;
         }
-        if (containsNode(expression.lhs, node) || containsNode(expression.rhs, node)) {
-            return true;
-        }
-        for (int i = 0, n = expression.args.size(); i < n; i++) {
-            if (containsNode(expression.args.getQuick(i), node)) {
+        for (int i = 0, n = expression.operandCount(); i < n; i++) {
+            if (containsNode(expression.operandAt(i), node)) {
                 return true;
             }
         }
@@ -837,10 +834,8 @@ final class AggregateBinder implements Mutable {
             }
             return;
         }
-        collectColumnSpellings(node.lhs, input, inputAlias);
-        collectColumnSpellings(node.rhs, input, inputAlias);
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            collectColumnSpellings(node.args.getQuick(i), input, inputAlias);
+        for (int i = 0, n = node.operandCount(); i < n; i++) {
+            collectColumnSpellings(node.operandAt(i), input, inputAlias);
         }
     }
 
@@ -1185,11 +1180,8 @@ final class AggregateBinder implements Mutable {
                 && (ctx.functionFactoryCache.isRuntimeConstant(expression.token) || SqlKeywords.isCastKeyword(expression.token)))) {
             return false;
         }
-        if (!isConstantGroupingExpression(expression.lhs) || !isConstantGroupingExpression(expression.rhs)) {
-            return false;
-        }
-        for (int i = 0, n = expression.args.size(); i < n; i++) {
-            if (!isConstantGroupingExpression(expression.args.getQuick(i))) {
+        for (int i = 0, n = expression.operandCount(); i < n; i++) {
+            if (!isConstantGroupingExpression(expression.operandAt(i))) {
                 return false;
             }
         }
@@ -1387,11 +1379,8 @@ final class AggregateBinder implements Mutable {
         if (node.type == ExpressionNode.LITERAL) {
             return FunctionBinder.findColumn(node, input, null) == index;
         }
-        if (readsColumn(node.lhs, input, index) || readsColumn(node.rhs, input, index)) {
-            return true;
-        }
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            if (readsColumn(node.args.getQuick(i), input, index)) {
+        for (int i = 0, n = node.operandCount(); i < n; i++) {
+            if (readsColumn(node.operandAt(i), input, index)) {
                 return true;
             }
         }

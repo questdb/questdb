@@ -1217,8 +1217,7 @@ public class ServerMain implements Closeable {
             long t = clock.getTicks();
             if (last + checkInterval < t) {
                 last = t;
-                final boolean isUseful = engine.releaseInactive();
-                return engine.releaseInactiveCompilers() | isUseful;
+                return engine.releaseInactive() | engine.releaseInactiveCompilers();
             }
             return false;
         }

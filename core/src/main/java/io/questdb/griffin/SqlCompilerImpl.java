@@ -950,18 +950,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return newBinder(parser, new BindScopeStack(), newExpressionRewriter(parser), newFunctionInstantiator(parser));
     }
 
-    public ExpressionNode parseExpiryExpression(CharSequence text, SqlParserCallback parserCallback) throws SqlException {
-        return parser.parseExpiryExpression(text, parserCallback);
-    }
-
-    public QueryModel parseExpiryLatestBy(CharSequence text, int position) throws SqlException {
-        return parser.parseExpiryLatestBy(text, position);
-    }
-
-    public QueryModel parseExpiryQuery(CharSequence text, SqlParserCallback parserCallback) throws SqlException {
-        return parser.parseExpiryQuery(text, parserCallback);
-    }
-
     @Override
     public ExpressionNode parseExpression(CharSequence expression) throws SqlException {
         clear();
@@ -7087,7 +7075,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private SqlBinder newBinder(FunctionParser parser, BindScopeStack scopes, BoundExpressionRewriter rewriter, FunctionInstantiator instantiator) {
-        return new SqlBinder(configuration, parser, this, scopes, sqlNodePool, characterStore, planNodePools, planTables,
+        return new SqlBinder(configuration, parser, this, new ExpiryPolicyParser(this.parser), scopes, sqlNodePool, characterStore, planNodePools, planTables,
                 preparedFunctions, functionSources, rewriter, instantiator, joinGraphBuilder, updateTarget, emptySchema, traversalAlgo,
                 planReadIds, temporaries);
     }

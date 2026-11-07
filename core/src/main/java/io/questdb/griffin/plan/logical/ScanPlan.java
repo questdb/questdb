@@ -70,8 +70,8 @@ public final class ScanPlan extends LogicalPlan {
     private IndexOrder indexOrder = IndexOrder.NONE;
     private IndexRead indexRead = IndexRead.NONE;
     private IntervalScan intervalScan = IntervalScan.NONE;
-    private boolean isRandomAccess = true;
     private boolean isExpiringRead;
+    private boolean isRandomAccess = true;
     private boolean isSequencedUpdate;
     private boolean isRewound;
     private boolean isTimestampDropped;
@@ -552,10 +552,6 @@ public final class ScanPlan extends LogicalPlan {
     }
 
     /**
-     * Whether the intervals the scan reads lie in a single partition, which lets an index access path emit rows in
-     * key order.
-     */
-    /**
      * True when a nested loop reads the rows of the scan again for each row of its other input.
      */
     public boolean isRewound() {
@@ -604,6 +600,13 @@ public final class ScanPlan extends LogicalPlan {
     }
 
     /**
+     * Marks this read of the table as one that applies its EXPIRE ROWS policy, see {@link #isExpiringRead}.
+     */
+    public void markExpiringRead() {
+        isExpiringRead = true;
+    }
+
+    /**
      * Marks the scan as part of the client-side compilation of an UPDATE of a WAL table, see
      * {@link #isSequencedUpdate}; the binder marks every scan it binds for such a statement but the scans of a
      * sub-query whose rows binding consumes.
@@ -641,10 +644,6 @@ public final class ScanPlan extends LogicalPlan {
     public void setExcludedKeys(ObjList<BoundExpression> keys) {
         excludedKeys.clear();
         excludedKeys.addAll(keys);
-    }
-
-    public void setExpiringRead(boolean isExpiringRead) {
-        this.isExpiringRead = isExpiringRead;
     }
 
     public void setHints(int hints) {

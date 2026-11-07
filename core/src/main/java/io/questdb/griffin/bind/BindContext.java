@@ -29,7 +29,6 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.CharacterStore;
 import io.questdb.griffin.CharacterStoreEntry;
 import io.questdb.griffin.CompilerTemporaries;
-import io.questdb.griffin.ExpiryPolicyVersionChangedException;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.FunctionInstantiator;
 import io.questdb.griffin.FunctionParser;
@@ -215,11 +214,11 @@ final class BindContext implements Mutable {
         if (expression == null) {
             return false;
         }
-        if (expression.type == ExpressionNode.QUERY || hasSubQuery(expression.lhs) || hasSubQuery(expression.rhs)) {
+        if (expression.type == ExpressionNode.QUERY) {
             return true;
         }
-        for (int i = 0, n = expression.args.size(); i < n; i++) {
-            if (hasSubQuery(expression.args.getQuick(i))) {
+        for (int i = 0, n = expression.operandCount(); i < n; i++) {
+            if (hasSubQuery(expression.operandAt(i))) {
                 return true;
             }
         }
@@ -429,6 +428,17 @@ final class BindContext implements Mutable {
         return alias;
     }
 
+    /**
+     * Designates the input's column at {@code index}. A declaration changes metadata and observes the input's order,
+     * so a projection marks that boundary.
+     */
+    ProjectPlan declareTimestamp(LogicalPlan input, int index, int position) {
+        final ProjectPlan project = identityProjection(input, position);
+        project.getOutput().setTimestampIndex(index);
+        project.markTimestampDeclaration();
+        return project;
+    }
+
     boolean hasAggregate(ExpressionNode expression) {
         if (expression == null) {
             return false;
@@ -507,9 +517,6 @@ final class BindContext implements Mutable {
     }
 
     /**
-     * The function binding built for the bound root, which the preparations own until code generation adopts it.
-     */
-    /**
      * Keeps the rows of the input whose last column, a boolean the input computes to decide it, is true, and drops that
      * column.
      */
@@ -523,6 +530,9 @@ final class BindContext implements Mutable {
         return project;
     }
 
+    /**
+     * The function binding built for the bound root, which the preparations own until code generation adopts it.
+     */
     Function preparedRoot(BoundExpression root) {
         final PreparedFunctions.Entry entry = preparedFunctions.findOwned(root);
         if (entry == null) {

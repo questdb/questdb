@@ -134,12 +134,9 @@ final class TemporalJoinBinder {
             final int dot = FunctionBinder.qualifierEnd(node, master);
             return dot > 0 && Chars.equalsIgnoreCase(GenericLexer.unquote(node.token.subSequence(0, dot)), slaveAlias) ? node : null;
         }
-        ExpressionNode reference = findSlaveReference(node.lhs, slaveAlias, master);
-        if (reference == null) {
-            reference = findSlaveReference(node.rhs, slaveAlias, master);
-        }
-        for (int i = 0, n = node.args.size(); reference == null && i < n; i++) {
-            reference = findSlaveReference(node.args.getQuick(i), slaveAlias, master);
+        ExpressionNode reference = null;
+        for (int i = 0, n = node.operandCount(); reference == null && i < n; i++) {
+            reference = findSlaveReference(node.operandAt(i), slaveAlias, master);
         }
         return reference;
     }
@@ -261,11 +258,8 @@ final class TemporalJoinBinder {
             final int dot = FunctionBinder.qualifierEnd(node, master);
             return dot < 0 || Chars.equalsIgnoreCaseNc(GenericLexer.unquote(node.token.subSequence(0, dot)), slaveAlias);
         }
-        if (!isSlavePredicate(node.lhs, master, masterAlias, slaveAlias) || !isSlavePredicate(node.rhs, master, masterAlias, slaveAlias)) {
-            return false;
-        }
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            if (!isSlavePredicate(node.args.getQuick(i), master, masterAlias, slaveAlias)) {
+        for (int i = 0, n = node.operandCount(); i < n; i++) {
+            if (!isSlavePredicate(node.operandAt(i), master, masterAlias, slaveAlias)) {
                 return false;
             }
         }
@@ -302,10 +296,8 @@ final class TemporalJoinBinder {
             }
             return;
         }
-        rejectUnknownHorizonColumn(node.lhs, output, horizonAlias);
-        rejectUnknownHorizonColumn(node.rhs, output, horizonAlias);
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            rejectUnknownHorizonColumn(node.args.getQuick(i), output, horizonAlias);
+        for (int i = 0, n = node.operandCount(); i < n; i++) {
+            rejectUnknownHorizonColumn(node.operandAt(i), output, horizonAlias);
         }
     }
 
@@ -507,9 +499,9 @@ final class TemporalJoinBinder {
             return FunctionBinder.findColumn(node, scope, alias) == -1 && !ctx.functionBinder.isOuterScopeColumn(node)
                     ? node.position : Integer.MAX_VALUE;
         }
-        int position = Math.min(firstUnresolvableReference(node.lhs, scope, alias), firstUnresolvableReference(node.rhs, scope, alias));
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            position = Math.min(position, firstUnresolvableReference(node.args.getQuick(i), scope, alias));
+        int position = Integer.MAX_VALUE;
+        for (int i = 0, n = node.operandCount(); i < n; i++) {
+            position = Math.min(position, firstUnresolvableReference(node.operandAt(i), scope, alias));
         }
         return position;
     }
@@ -536,10 +528,8 @@ final class TemporalJoinBinder {
             }
             return;
         }
-        resolveHorizonWhere(node.lhs, output);
-        resolveHorizonWhere(node.rhs, output);
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            resolveHorizonWhere(node.args.getQuick(i), output);
+        for (int i = 0, n = node.operandCount(); i < n; i++) {
+            resolveHorizonWhere(node.operandAt(i), output);
         }
     }
 
@@ -660,10 +650,8 @@ final class TemporalJoinBinder {
             }
             return columnStep;
         }
-        step = windowJoinReferencedStep(node.lhs, plan, step, position);
-        step = windowJoinReferencedStep(node.rhs, plan, step, position);
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            step = windowJoinReferencedStep(node.args.getQuick(i), plan, step, position);
+        for (int i = 0, n = node.operandCount(); i < n; i++) {
+            step = windowJoinReferencedStep(node.operandAt(i), plan, step, position);
         }
         return step;
     }
@@ -1156,10 +1144,8 @@ final class TemporalJoinBinder {
             targets.add(ctx.planNodes.columns.next().of(step.getAggregateColumnIds().getQuick(ordinal), step.getAggregates().getQuick(ordinal).getDataType(), node.position));
             return;
         }
-        collectWindowJoinAggregateOccurrences(node.lhs, plan, sources, targets);
-        collectWindowJoinAggregateOccurrences(node.rhs, plan, sources, targets);
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            collectWindowJoinAggregateOccurrences(node.args.getQuick(i), plan, sources, targets);
+        for (int i = 0, n = node.operandCount(); i < n; i++) {
+            collectWindowJoinAggregateOccurrences(node.operandAt(i), plan, sources, targets);
         }
     }
 
@@ -1178,10 +1164,8 @@ final class TemporalJoinBinder {
             }
             return;
         }
-        rejectWindowJoinReads(node.lhs, plan);
-        rejectWindowJoinReads(node.rhs, plan);
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            rejectWindowJoinReads(node.args.getQuick(i), plan);
+        for (int i = 0, n = node.operandCount(); i < n; i++) {
+            rejectWindowJoinReads(node.operandAt(i), plan);
         }
     }
 

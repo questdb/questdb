@@ -84,6 +84,36 @@ public class LateralDomainCopyTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDomainCopiesExpiringRead() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE b (sym SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO b VALUES
+                    ('a', 1.0, '2024-01-01T00:00:00.000000Z'),
+                    ('a', 3.0, '2024-01-02T00:00:00.000000Z'),
+                    ('b', 2.0, '2024-01-03T00:00:00.000000Z')""");
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM b)");
+            execute("CREATE TABLE u (y DOUBLE)");
+            execute("INSERT INTO u VALUES (1.5), (2.5), (3.5)");
+            drainWalAndMatViewQueues();
+            // Each policy expires only a's first row, so the domain copy has to read the view under the policy.
+            for (String policy : new String[]{"WHEN v < 2", "KEEP LATEST PARTITION BY sym", "KEEP HIGHEST ON v PARTITION BY sym"}) {
+                execute("ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS " + policy);
+                drainWalAndMatViewQueues();
+                assertQuery("SELECT m.sym, m.v, l.c FROM mv m CROSS JOIN LATERAL (SELECT count() c FROM u WHERE u.y > m.v) l ORDER BY m.ts")
+                        .noRandomAccess()
+                        .noLeakCheck()
+                        .withPlanContaining("__qdb_outer_ref__")
+                        .returns("""
+                                sym\tv\tc
+                                a\t3.0\t1
+                                b\t2.0\t2
+                                """);
+            }
+        });
+    }
+
+    @Test
     public void testDomainCopiesDecorrelatedSteps() throws Exception {
         assertMemoryLeak(() -> {
             createTables();

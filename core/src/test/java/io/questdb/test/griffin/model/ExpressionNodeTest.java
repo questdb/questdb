@@ -52,6 +52,52 @@ public class ExpressionNodeTest {
     }
 
     @Test
+    public void testOperandsFollowParamCount() {
+        final ObjectPool<ExpressionNode> pool = new ObjectPool<>(ExpressionNode.FACTORY, 8);
+        final ExpressionNode a = pool.next().of(ExpressionNode.LITERAL, "a", 0, 0);
+        final ExpressionNode b = pool.next().of(ExpressionNode.LITERAL, "b", 0, 0);
+        final ExpressionNode c = pool.next().of(ExpressionNode.LITERAL, "c", 0, 0);
+        final ExpressionNode d = pool.next().of(ExpressionNode.LITERAL, "d", 0, 0);
+
+        final ExpressionNode leaf = pool.next().of(ExpressionNode.LITERAL, "x", 0, 0);
+        Assert.assertEquals(2, leaf.operandCount());
+        Assert.assertNull(leaf.operandAt(0));
+        Assert.assertNull(leaf.operandAt(1));
+
+        final ExpressionNode unary = pool.next().of(ExpressionNode.OPERATION, "-", 0, 0);
+        unary.paramCount = 1;
+        unary.rhs = a;
+        Assert.assertEquals(2, unary.operandCount());
+        Assert.assertNull(unary.operandAt(0));
+        Assert.assertSame(a, unary.operandAt(1));
+
+        final ExpressionNode binary = pool.next().of(ExpressionNode.OPERATION, "+", 0, 0);
+        binary.paramCount = 2;
+        binary.lhs = a;
+        binary.rhs = b;
+        Assert.assertEquals(2, binary.operandCount());
+        Assert.assertSame(a, binary.operandAt(0));
+        Assert.assertSame(b, binary.operandAt(1));
+        binary.setOperandAt(0, c);
+        binary.setOperandAt(1, d);
+        Assert.assertSame(c, binary.lhs);
+        Assert.assertSame(d, binary.rhs);
+
+        final ExpressionNode call = pool.next().of(ExpressionNode.FUNCTION, "f", 0, 0);
+        call.paramCount = 3;
+        call.args.add(a);
+        call.args.add(b);
+        call.args.add(c);
+        Assert.assertEquals(3, call.operandCount());
+        Assert.assertSame(a, call.operandAt(0));
+        Assert.assertSame(c, call.operandAt(2));
+        call.setOperandAt(1, d);
+        Assert.assertSame(d, call.args.getQuick(1));
+        Assert.assertNull(call.lhs);
+        Assert.assertNull(call.rhs);
+    }
+
+    @Test
     public void testDeepCloneAndCopyFromCarryInheritedTimestampOrder() {
         final ObjectPool<ExpressionNode> pool = new ObjectPool<>(ExpressionNode.FACTORY, 4);
         final ExpressionNode node = pool.next().of(ExpressionNode.LITERAL, "ts", 0, 0);

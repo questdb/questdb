@@ -28,9 +28,9 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.MetadataCache;
 import io.questdb.cairo.RowExpiryUtil;
 import io.questdb.cairo.TableToken;
+import io.questdb.griffin.ExpiryPolicyParser;
 import io.questdb.griffin.ExpiryPolicyVersionChangedException;
 import io.questdb.griffin.ExpiryReadPolicy;
-import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlUtil;
@@ -45,8 +45,6 @@ import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.griffin.plan.logical.TreeWalk;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.Mutable;
-import io.questdb.std.ObjectPool;
-import io.questdb.std.str.StringSink;
 
 /**
  * Binds the read of a materialized view under an EXPIRE ROWS policy, so that expired rows are invisible to every read
@@ -66,50 +64,22 @@ final class ExpiryReadBinder implements Mutable {
         return TreeWalk.CONTINUE;
     };
     private final SqlBinder binder;
-    private final SqlCompilerImpl compiler;
     private final BindContext ctx;
-    // What binding parses. The tokens of a parse read its text until the next bind, whatever other reads of the query
-    // bind meanwhile, so each parse has a text of its own.
-    private final ObjectPool<StringSink> policyTexts = new ObjectPool<>(StringSink::new, 2);
+    private final ExpiryPolicyParser policyParser;
     // The tables whose policy is being bound: what the policy itself reads, its keep query or a sub-query of its
     // predicate, reads the table without the policy rather than applying the policy a second time. Lookups ignore
     // case, as the table registry does, since a policy sub-query can name the table in a different case from the read.
     private final LowerCaseCharSequenceHashSet tablesBound = new LowerCaseCharSequenceHashSet();
 
-    ExpiryReadBinder(BindContext ctx, SqlBinder binder, SqlCompilerImpl compiler) {
+    ExpiryReadBinder(BindContext ctx, SqlBinder binder, ExpiryPolicyParser policyParser) {
         this.ctx = ctx;
         this.binder = binder;
-        this.compiler = compiler;
-    }
-
-    /**
-     * Appends the keep-filter text for an EXPIRE ROWS predicate, the rows that have NOT expired. A row expires only when
-     * the predicate is TRUE, so the keep-filter keeps every row whose predicate result is anything else, which
-     * {@code NOT (predicate)} spells for every predicate shape. Over a comparison of the designated timestamp,
-     * {@link io.questdb.griffin.model.IntervalExtractor} reads an interval out of that {@code NOT} and prunes partitions,
-     * see its negated range comparison.
-     * <p>
-     * What happens to a row whose predicate operand is NULL follows QuestDB's two-valued comparison semantics, which the
-     * keep-filter reports rather than overrides: a comparison against NULL is FALSE, so {@code v < 2.0} keeps a row whose
-     * {@code v} is NULL, while a predicate that is TRUE on a NULL operand expires it. {@code NOT (v >= 2.0)} is such a
-     * predicate ({@code NULL >= 2.0} is FALSE, so the {@code NOT} is TRUE), and so are {@code v != 2.0} and
-     * {@code v IS NULL}. {@code v < 2.0} and {@code NOT (v >= 2.0)} therefore express DIFFERENT policies for NULL rows
-     * although they read as the same rule, and the expired NULL rows are physically deleted by the cleanup sweep, which
-     * keeps the same rows through a {@code CASE} wrap of its own ({@link RowExpiryUtil#buildRowExpiryKeepFilter} explains
-     * why the sweep spells it differently). {@code MatViewExpireRowsTest.testExpireScalarNullRowsFollowPredicateTruthValue}
-     * pins this across the spellings.
-     */
-    private static void appendKeepFilter(StringSink sink, String predicate) {
-        sink.putAscii("NOT (");
-        RowExpiryUtil.appendTrimmed(sink, predicate, 0, predicate.length());
-        sink.putAscii(')');
+        this.policyParser = policyParser;
     }
 
     private LogicalPlan bindKeepFilter(ScanPlan scan, TableToken token, String predicate, SqlExecutionContext executionContext) throws SqlException {
-        final StringSink text = policyTexts.next();
-        appendKeepFilter(text, predicate);
         final ExpressionNode keepFilter = SqlUtil.optimiseBooleanNot(
-                compiler.parseExpiryExpression(text, binder.getParserCallback()), ctx.bindingExpressions);
+                policyParser.parseKeepFilter(predicate, binder.getParserCallback()), ctx.bindingExpressions);
         final BoundExpression bound = binder.bindPredicate(keepFilter, scan, token.getTableName(), executionContext);
         bound.walk(POLICY_CALLS);
         return ctx.planNodes.filters.next().of(scan, bound, scan.getPosition());
@@ -132,26 +102,20 @@ final class ExpiryReadBinder implements Mutable {
      * rest of the view.
      */
     LogicalPlan bindQueryRead(TableToken token, MetadataCache.ExpiryPolicyInfo policy, ExpressionNode viewName, int position, SqlExecutionContext executionContext) throws SqlException {
-        final StringSink sql = policyTexts.next();
-        sql.putAscii("SELECT *, ");
-        RowExpiryUtil.appendWindowKeepCase(sql, policy.getPredicate(), policy.getTimestampName());
-        sql.putAscii(' ').putAscii(RowExpiryUtil.KEEP_COLUMN).putAscii(" FROM ");
-        RowExpiryUtil.appendQuotedIdentifier(sql, token.getTableName());
         final LogicalPlan keepQuery;
         tablesBound.add(token.getTableName());
         try {
-            final QueryModel query = compiler.parseExpiryQuery(sql, binder.getParserCallback());
-            query.setArtificialStar(true);
+            final QueryModel query = policyParser.parseKeepQuery(token, policy, binder.getParserCallback());
             query.setViewNameExpr(viewName);
             keepQuery = binder.bindQuery(query, executionContext);
         } finally {
             tablesBound.remove(token.getTableName());
         }
         final ScanPlan scan = LogicalPlans.scanUnderChain(keepQuery);
-        scan.setExpiringRead(true);
+        scan.markExpiringRead();
         scan.setPosition(position);
-        final int timestampIndex = SqlBinder.timestampIndex(keepQuery.getOutput(), policy.getTimestampName(), position);
-        return ctx.keepRows(binder.declareTimestamp(keepQuery, timestampIndex, position), position);
+        // the query selects the columns of the scan first, in the order of the scan
+        return ctx.keepRows(ctx.declareTimestamp(keepQuery, scan.getOutput().getTimestampIndex(), position), position);
     }
 
     /**
@@ -160,15 +124,11 @@ final class ExpiryReadBinder implements Mutable {
     LogicalPlan bindScanRead(ScanPlan scan, MetadataCache.ExpiryPolicyInfo policy, int position, SqlExecutionContext executionContext) throws SqlException {
         final TableToken token = scan.getTableToken();
         final String predicate = policy.getPredicate();
-        scan.setExpiringRead(true);
+        scan.markExpiringRead();
         tablesBound.add(token.getTableName());
         try {
             if (RowExpiryUtil.isKeepLatest(predicate)) {
-                final StringSink text = policyTexts.next();
-                RowExpiryUtil.appendQuotedIdentifier(text, policy.getTimestampName());
-                text.putAscii(" PARTITION BY ");
-                RowExpiryUtil.appendKeepLatestKeys(text, predicate);
-                return binder.bindLatestBy(scan, compiler.parseExpiryLatestBy(text, position));
+                return binder.bindLatestBy(scan, policyParser.parseKeepLatest(policy, position));
             }
             return bindKeepFilter(scan, token, predicate, executionContext);
         } finally {
@@ -192,7 +152,7 @@ final class ExpiryReadBinder implements Mutable {
 
     @Override
     public void clear() {
-        policyTexts.clear();
+        policyParser.clear();
         tablesBound.clear();
     }
 

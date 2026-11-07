@@ -38,6 +38,7 @@ import io.questdb.griffin.CallBinder;
 import io.questdb.griffin.CharacterStore;
 import io.questdb.griffin.CharacterStoreEntry;
 import io.questdb.griffin.CompilerTemporaries;
+import io.questdb.griffin.ExpiryPolicyParser;
 import io.questdb.griffin.ExpressionParser;
 import io.questdb.griffin.FunctionInstantiator;
 import io.questdb.griffin.FunctionParser;
@@ -132,6 +133,7 @@ public final class SqlBinder implements Mutable {
             CairoConfiguration configuration,
             FunctionParser functionParser,
             SqlCompilerImpl compiler,
+            ExpiryPolicyParser expiryPolicyParser,
             BindScopeStack scopes,
             ObjectPool<ExpressionNode> sqlNodePool,
             CharacterStore characterStore,
@@ -157,7 +159,7 @@ public final class SqlBinder implements Mutable {
         this.referencedColumns = new ReferencedColumns(temporaries.idMap);
         this.ctx = new BindContext(compiler, functionParser, scopes, sqlNodePool, characterStore, emptySchema, planNodePools, planTables,
                 preparedFunctions, functionSources, expressionRewriter, functionInstantiator, traversalAlgo, planReadIds, temporaries);
-        this.expiryReadBinder = new ExpiryReadBinder(ctx, this, compiler);
+        this.expiryReadBinder = new ExpiryReadBinder(ctx, this, expiryPolicyParser);
         this.windowBinder = new WindowBinder(ctx, temporaries);
         this.lateralBinder = new LateralBinder(ctx, this, configuration.getSqlModelPoolCapacity());
         this.joinBinder = new JoinBinder(ctx, this, configuration, lateralBinder, joinGraphBuilder, temporaries);
@@ -964,7 +966,13 @@ public final class SqlBinder implements Mutable {
         }
         input = orderBinder.projectBeforeDeclaredOrder(input);
         final OutputSchema output = input.getOutput();
-        final int index = timestampIndex(output, timestamp.token, timestamp.position);
+        final int index = getColumnIndexQuiet(output, timestamp.token);
+        if (index < 0) {
+            throw SqlException.invalidColumn(timestamp.position, timestamp.token);
+        }
+        if (!ColumnType.isTimestamp(output.getColumnType(index))) {
+            throw SqlException.$(timestamp.position, "not a TIMESTAMP");
+        }
         if (input instanceof ScanPlan) {
             // SQL can designate another timestamp. Partition intervals still use
             // the table's native timestamp, retained separately on the scan.
@@ -977,7 +985,7 @@ public final class SqlBinder implements Mutable {
                 && (source.getSampleBy() == null || output.getTimestampIndex() == index)) {
             return input;
         }
-        return declareTimestamp(input, index, timestamp.position);
+        return ctx.declareTimestamp(input, index, timestamp.position);
     }
 
     private boolean collectCursorColumns(QueryModel model) {
@@ -1006,10 +1014,8 @@ public final class SqlBinder implements Mutable {
             addCursorNode(node, null);
             return;
         }
-        collectCursorNodes(node.lhs);
-        collectCursorNodes(node.rhs);
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            collectCursorNodes(node.args.getQuick(i));
+        for (int i = 0, n = node.operandCount(); i < n; i++) {
+            collectCursorNodes(node.operandAt(i));
         }
     }
 
@@ -1306,10 +1312,8 @@ public final class SqlBinder implements Mutable {
             return;
         }
         if (node.type != ExpressionNode.LITERAL) {
-            validateOuterNames(node.lhs, columns, columnIndex, source, sourceAlias);
-            validateOuterNames(node.rhs, columns, columnIndex, source, sourceAlias);
-            for (int i = 0, n = node.args.size(); i < n; i++) {
-                validateOuterNames(node.args.getQuick(i), columns, columnIndex, source, sourceAlias);
+            for (int i = 0, n = node.operandCount(); i < n; i++) {
+                validateOuterNames(node.operandAt(i), columns, columnIndex, source, sourceAlias);
             }
             return;
         }
@@ -1446,20 +1450,6 @@ public final class SqlBinder implements Mutable {
 
     static SortDirection sortDirection(int modelDirection) {
         return modelDirection == QueryModel.ORDER_DIRECTION_DESCENDING ? SortDirection.DESCENDING : SortDirection.ASCENDING;
-    }
-
-    /**
-     * The index of the column a {@code timestamp(...)} clause names, which has to be a timestamp.
-     */
-    static int timestampIndex(OutputSchema output, CharSequence name, int position) throws SqlException {
-        final int index = getColumnIndexQuiet(output, name);
-        if (index < 0) {
-            throw SqlException.invalidColumn(position, name);
-        }
-        if (!ColumnType.isTimestamp(output.getColumnType(index))) {
-            throw SqlException.$(position, "not a TIMESTAMP");
-        }
-        return index;
     }
 
     /**
@@ -1713,17 +1703,6 @@ public final class SqlBinder implements Mutable {
     ExpressionNode copyWhereClause(QueryModel source) {
         return source.getWhereClause() == null ? null
                 : SqlUtil.optimiseBooleanNot(ExpressionNode.deepClone(ctx.bindingExpressions, source.getWhereClause()), ctx.bindingExpressions);
-    }
-
-    /**
-     * Designates the input's column at {@code index}. A declaration changes metadata and observes the input's order,
-     * so a projection marks that boundary.
-     */
-    ProjectPlan declareTimestamp(LogicalPlan input, int index, int position) {
-        final ProjectPlan project = ctx.identityProjection(input, position);
-        project.getOutput().setTimestampIndex(index);
-        project.markTimestampDeclaration();
-        return project;
     }
 
     /**

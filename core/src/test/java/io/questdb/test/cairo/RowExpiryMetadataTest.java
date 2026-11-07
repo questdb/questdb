@@ -120,6 +120,12 @@ public class RowExpiryMetadataTest extends AbstractCairoTest {
         RowExpiryUtil.appendKeepCase(sink, "");
         assertEquals("CASE WHEN () THEN false ELSE true END", sink.toString());
         sink.clear();
+        RowExpiryUtil.appendKeepFilter(sink, " \t v < 1\n");
+        assertEquals("NOT (v < 1)", sink.toString());
+        sink.clear();
+        RowExpiryUtil.appendKeepFilter(sink, "v < 1");
+        assertEquals("NOT (v < 1)", sink.toString());
+        sink.clear();
         RowExpiryUtil.appendWindowKeepCase(sink, RowExpiryUtil.encodeWindow(" v < max(v) OVER () \n"), "ts");
         assertEquals("CASE WHEN (v < max(v) OVER ()) THEN false ELSE true END", sink.toString());
         sink.clear();

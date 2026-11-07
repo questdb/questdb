@@ -1653,11 +1653,8 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
             final BindScope scope = ctx.scope();
             return findColumn(node, scope.expressionInput, scope.expressionInputAlias) == index;
         }
-        if (referencesColumn(node.lhs, index) || referencesColumn(node.rhs, index)) {
-            return true;
-        }
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            if (referencesColumn(node.args.getQuick(i), index)) {
+        for (int i = 0, n = node.operandCount(); i < n; i++) {
+            if (referencesColumn(node.operandAt(i), index)) {
                 return true;
             }
         }
@@ -1787,10 +1784,8 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         if (node == null) {
             return;
         }
-        rewriteAndOffsets(node.lhs);
-        rewriteAndOffsets(node.rhs);
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            rewriteAndOffsets(node.args.getQuick(i));
+        for (int i = 0, n = node.operandCount(); i < n; i++) {
+            rewriteAndOffsets(node.operandAt(i));
         }
         if (node.type != ExpressionNode.FUNCTION || node.args.size() != 3 || !Chars.equalsIgnoreCase(node.token, "and_offset")) {
             return;
@@ -2167,10 +2162,8 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
     }
 
     private void wrapTimestampColumns(ExpressionNode node, CharSequence unit, CharSequence stride, int timestampIndex) {
-        node.lhs = wrapTimestampColumn(node.lhs, unit, stride, timestampIndex);
-        node.rhs = wrapTimestampColumn(node.rhs, unit, stride, timestampIndex);
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            node.args.setQuick(i, wrapTimestampColumn(node.args.getQuick(i), unit, stride, timestampIndex));
+        for (int i = 0, n = node.operandCount(); i < n; i++) {
+            node.setOperandAt(i, wrapTimestampColumn(node.operandAt(i), unit, stride, timestampIndex));
         }
     }
 

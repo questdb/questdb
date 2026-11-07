@@ -1126,11 +1126,6 @@ public final class LogicalPlans {
     }
 
     /**
-     * The value a comparison of a column with itself folds to: {@link #SELF_COMPARISON_TRUE} for {@code =},
-     * {@link #SELF_COMPARISON_FALSE} for {@code !=}, {@code <>}, {@code >} and {@code <}, otherwise
-     * {@link #SELF_COMPARISON_NONE}.
-     */
-    /**
      * The scan the single-input chain of the plan ends in; null when it ends in anything else.
      */
     public static ScanPlan scanUnderChain(LogicalPlan plan) {
@@ -1140,6 +1135,11 @@ public final class LogicalPlans {
         return plan instanceof ScanPlan scan ? scan : null;
     }
 
+    /**
+     * The value a comparison of a column with itself folds to: {@link #SELF_COMPARISON_TRUE} for {@code =},
+     * {@link #SELF_COMPARISON_FALSE} for {@code !=}, {@code <>}, {@code >} and {@code <}, otherwise
+     * {@link #SELF_COMPARISON_NONE}.
+     */
     public static int selfComparison(FunctionExpression call) {
         final ComparisonOperator operator = ComparisonOperator.of(call.getName());
         if (operator != null && call.getArgumentCount() == 2 && call.argumentAt(0) instanceof ColumnExpression left

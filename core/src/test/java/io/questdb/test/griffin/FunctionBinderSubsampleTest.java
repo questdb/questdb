@@ -159,6 +159,11 @@ public class FunctionBinderSubsampleTest extends AbstractCairoTest {
                         "target point count must be a constant or bind variable");
                 assertExceptionNoLeakCheck("SELECT ts, i FROM x SUBSAMPLE cadence(2, (SELECT 1 FROM long_sequence(1) WHERE x = (SELECT 1)))", 42,
                         "seed must be a constant, bind variable, or NULL");
+                // A sub-query inside an expression fails as it does anywhere else: no operator takes a cursor.
+                assertExceptionNoLeakCheck("SELECT ts, i FROM x SUBSAMPLE uniform(1 + (SELECT 1))", 40,
+                        "there is no matching operator `+` with the argument types: INT + CURSOR");
+                assertExceptionNoLeakCheck("SELECT ts, i FROM x SUBSAMPLE cadence(2, 1 + (SELECT 1))", 43,
+                        "there is no matching operator `+` with the argument types: INT + CURSOR");
             }
         });
     }

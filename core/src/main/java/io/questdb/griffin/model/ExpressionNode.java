@@ -521,6 +521,19 @@ public class ExpressionNode implements Mutable, Sinkable {
         return false;
     }
 
+    /**
+     * Replaces the operand at {@code index}, see {@link #operandAt}.
+     */
+    public void setOperandAt(int index, ExpressionNode operand) {
+        if (paramCount >= 3) {
+            args.setQuick(index, operand);
+        } else if (index == 0) {
+            lhs = operand;
+        } else {
+            rhs = operand;
+        }
+    }
+
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
         // note: it's safe to take any registry (new or old) because we don't use precedence here

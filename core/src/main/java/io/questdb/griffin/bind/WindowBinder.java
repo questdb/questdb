@@ -105,10 +105,8 @@ final class WindowBinder {
             }
             depth++;
         }
-        validateWindowNesting(expression.lhs, depth);
-        validateWindowNesting(expression.rhs, depth);
-        for (int i = 0, n = expression.args.size(); i < n; i++) {
-            validateWindowNesting(expression.args.getQuick(i), depth);
+        for (int i = 0, n = expression.operandCount(); i < n; i++) {
+            validateWindowNesting(expression.operandAt(i), depth);
         }
     }
 
@@ -195,11 +193,8 @@ final class WindowBinder {
         if (expression.windowExpression != null && ctx.scope().windowColumnIds.getQuick(findWindowNode(expression)) < 0) {
             return false;
         }
-        if (!areWindowsBound(expression.lhs) || !areWindowsBound(expression.rhs)) {
-            return false;
-        }
-        for (int i = 0, n = expression.args.size(); i < n; i++) {
-            if (!areWindowsBound(expression.args.getQuick(i))) {
+        for (int i = 0, n = expression.operandCount(); i < n; i++) {
+            if (!areWindowsBound(expression.operandAt(i))) {
                 return false;
             }
         }
@@ -402,10 +397,8 @@ final class WindowBinder {
                 scope.windowNodes.add(expression);
             }
         }
-        collectWindowNodes0(expression.lhs);
-        collectWindowNodes0(expression.rhs);
-        for (int i = 0, n = expression.args.size(); i < n; i++) {
-            collectWindowNodes0(expression.args.getQuick(i));
+        for (int i = 0, n = expression.operandCount(); i < n; i++) {
+            collectWindowNodes0(expression.operandAt(i));
         }
     }
 
@@ -444,12 +437,9 @@ final class WindowBinder {
         if (ctx.isAggregate(expression)) {
             return expression.position;
         }
-        int position = findAggregatePosition(expression.lhs);
-        if (position < 0) {
-            position = findAggregatePosition(expression.rhs);
-        }
-        for (int i = 0, n = expression.args.size(); position < 0 && i < n; i++) {
-            position = findAggregatePosition(expression.args.getQuick(i));
+        int position = -1;
+        for (int i = 0, n = expression.operandCount(); position < 0 && i < n; i++) {
+            position = findAggregatePosition(expression.operandAt(i));
         }
         return position;
     }
@@ -523,10 +513,8 @@ final class WindowBinder {
             return false;
         }
         final int mark = windowGroupMembers.size();
-        nameWindows(node.lhs, model);
-        nameWindows(node.rhs, model);
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            nameWindows(node.args.getQuick(i), model);
+        for (int i = 0, n = node.operandCount(); i < n; i++) {
+            nameWindows(node.operandAt(i), model);
         }
         closeWindowGroup(mark);
         final int index = findWindowNode(node);
@@ -567,21 +555,19 @@ final class WindowBinder {
         if (node == null || nameWindowNode(node, model)) {
             return;
         }
-        nameWindows(node.lhs, model);
-        nameWindows(node.rhs, model);
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            nameWindows(node.args.getQuick(i), model);
+        for (int i = 0, n = node.operandCount(); i < n; i++) {
+            nameWindows(node.operandAt(i), model);
         }
     }
 
     private boolean readsWindowResult(ExpressionNode expression) {
         return expression != null && (windowAliasCopyId(expression) >= 0 || windowAliasReferenceIndex(expression) >= 0 || windowResultId(expression) >= 0
-                || readsWindowResult(expression.lhs) || readsWindowResult(expression.rhs) || readsWindowResult(expression.args));
+                || hasOperandReadingWindowResult(expression));
     }
 
-    private boolean readsWindowResult(ObjList<ExpressionNode> expressions) {
-        for (int i = 0, n = expressions.size(); i < n; i++) {
-            if (readsWindowResult(expressions.getQuick(i))) {
+    private boolean hasOperandReadingWindowResult(ExpressionNode expression) {
+        for (int i = 0, n = expression.operandCount(); i < n; i++) {
+            if (readsWindowResult(expression.operandAt(i))) {
                 return true;
             }
         }
@@ -605,12 +591,8 @@ final class WindowBinder {
             return index >= 0 && index < columnIndex && (!isWindowArgument || !isPureComputedColumn(columns.getQuick(index).getAst()));
         }
         isWindowArgument |= node.windowExpression != null;
-        if (referencesEarlierAlias(node.lhs, columns, columnIndex, source, isWindowArgument)
-                || referencesEarlierAlias(node.rhs, columns, columnIndex, source, isWindowArgument)) {
-            return true;
-        }
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            if (referencesEarlierAlias(node.args.getQuick(i), columns, columnIndex, source, isWindowArgument)) {
+        for (int i = 0, n = node.operandCount(); i < n; i++) {
+            if (referencesEarlierAlias(node.operandAt(i), columns, columnIndex, source, isWindowArgument)) {
                 return true;
             }
         }
@@ -653,7 +635,7 @@ final class WindowBinder {
         if (alias != null) {
             return alias;
         }
-        return readsWindowResult(call.lhs) || readsWindowResult(call.rhs) || readsWindowResult(call.args) ? replaceWindowReferencesInCopy(call) : call;
+        return hasOperandReadingWindowResult(call) ? replaceWindowReferencesInCopy(call) : call;
     }
 
     private ExpressionNode replaceWindowReferences(ExpressionNode expression) {
@@ -753,10 +735,8 @@ final class WindowBinder {
         if (expression.windowExpression != null) {
             return rewriteWindowAliases(expression, model, source, -1, false, executionContext);
         }
-        expression.lhs = rewriteOrderWindowAliases(expression.lhs, model, source, executionContext);
-        expression.rhs = rewriteOrderWindowAliases(expression.rhs, model, source, executionContext);
-        for (int i = 0, n = expression.args.size(); i < n; i++) {
-            expression.args.setQuick(i, rewriteOrderWindowAliases(expression.args.getQuick(i), model, source, executionContext));
+        for (int i = 0, n = expression.operandCount(); i < n; i++) {
+            expression.setOperandAt(i, rewriteOrderWindowAliases(expression.operandAt(i), model, source, executionContext));
         }
         return expression;
     }
@@ -843,10 +823,8 @@ final class WindowBinder {
             }
             isWindowArgument = true;
         }
-        expression.lhs = rewriteWindowAliases(expression.lhs, model, source, columnIndex, isWindowArgument, executionContext);
-        expression.rhs = rewriteWindowAliases(expression.rhs, model, source, columnIndex, isWindowArgument, executionContext);
-        for (int i = 0, n = expression.args.size(); i < n; i++) {
-            expression.args.setQuick(i, rewriteWindowAliases(expression.args.getQuick(i), model, source, columnIndex, isWindowArgument, executionContext));
+        for (int i = 0, n = expression.operandCount(); i < n; i++) {
+            expression.setOperandAt(i, rewriteWindowAliases(expression.operandAt(i), model, source, columnIndex, isWindowArgument, executionContext));
         }
         return expression;
     }

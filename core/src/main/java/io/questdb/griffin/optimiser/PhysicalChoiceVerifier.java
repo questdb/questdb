@@ -492,10 +492,6 @@ final class PhysicalChoiceVerifier {
     }
 
     /**
-     * Checks the algorithm operator planning records for the DISTINCT, see {@link DistinctPlan.Algorithm}: the
-     * time-series one exactly over an input with random access and a designated timestamp.
-     */
-    /**
      * The invariant that a physical choice operator planning records on the node breaks, or null: the choices of the node
      * and of the parts it owns, and the timestamps and the order they read from its inputs.
      */
@@ -525,6 +521,10 @@ final class PhysicalChoiceVerifier {
         return timestampRead == null && plan instanceof WindowPlan window ? windowOrder(window) : timestampRead;
     }
 
+    /**
+     * Checks the algorithm operator planning records for the DISTINCT, see {@link DistinctPlan.Algorithm}: the
+     * time-series one exactly over an input with random access and a designated timestamp.
+     */
     static String distinct(DistinctPlan distinct, boolean isPlanned) {
         final DistinctPlan.Algorithm algorithm = distinct.getAlgorithm();
         if (algorithm == null) {
