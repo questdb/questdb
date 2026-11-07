@@ -65,6 +65,13 @@ public final class IntervalUtils {
     private static final int SUNDAY = 7;
     private static final int DAY_FILTER_WEEKEND = (1 << (SATURDAY - 1)) | (1 << (SUNDAY - 1)); // Sat-Sun
     private static final int THURSDAY = 4;
+    // What an element of a date list did with the time part of the list, see expandDateList(). An element
+    // that ignores the time part names the parser that its day would parse the date and time with: with the
+    // duration, parseRange() tries parseAnyFormat() after parseInterval(), without it parseIntervalSuffix()
+    // tries parseFloor().
+    private static final int TIME_PART_READ = 1;
+    private static final int TIME_PART_SKIPPED_WITHOUT_DURATION = 4;
+    private static final int TIME_PART_SKIPPED_WITH_DURATION = 2;
     private static final int TUESDAY = 2;
     private static final int WEDNESDAY = 3;
     // Day filter bitmask constants (bit 0 = Monday, bit 6 = Sunday)
@@ -88,6 +95,10 @@ public final class IntervalUtils {
             new FiberLocal<>(() -> new ObjectStackPool<>(PendingSteps::new, 4));
     private static final FiberLocal<StringSink> tlSink1 = new FiberLocal<>(StringSink::new);
     private static final FiberLocal<StringSink> tlSink2 = new FiberLocal<>(StringSink::new);
+    // checkTimePartAsDays() scratch: the brackets of a time part, their values, and the intervals of a parse
+    private static final FiberLocal<LongList> tlTimePartBrackets = new FiberLocal<>(LongList::new);
+    private static final FiberLocal<LongList> tlTimePartIntervals = new FiberLocal<>(LongList::new);
+    private static final FiberLocal<LongList> tlTimePartValues = new FiberLocal<>(LongList::new);
 
     /**
      * Formats a timestamp as "YYYY-MM-DD" into the given sink.
@@ -1605,6 +1616,27 @@ public final class IntervalUtils {
         Numbers.append(sink, value);
     }
 
+    /**
+     * Appends {@code text[lo, hi)} to a variant of a time part, see {@link #checkTimePartVariant}, and returns
+     * what {@link #determinePadWidth} reads in the variant, with the appended text: bit 0 is a '.', bit 1 a
+     * 'T' or ' ', and the bits from 32 on are the position of the last 'W' plus one, see
+     * {@link #timePartPadWidth}.
+     */
+    private static long appendTimePartText(StringSink variant, CharSequence text, int lo, int hi, long padState) {
+        for (int i = lo; i < hi; i++) {
+            final char c = text.charAt(i);
+            if (c == '.') {
+                padState |= 1;
+            } else if (c == 'T' || c == ' ') {
+                padState |= 2;
+            } else if (c == 'W') {
+                padState = (padState & 3) | ((long) (variant.length() + 1) << 32);
+            }
+            variant.put(c);
+        }
+        return padState;
+    }
+
     private static void apply(TimestampDriver timestampDriver, LongList temp, long lo, long hi, int period, char periodType, int count) {
         temp.add(lo, hi);
         if (count > 1) {
@@ -1885,6 +1917,272 @@ public final class IntervalUtils {
             }
         } catch (NumericException e) {
             throw SqlException.$(position, "invalid timezone: ").put(tz, tzLo, tzHi);
+        }
+    }
+
+    /**
+     * Checks the time part of a date list that a point in time ignored and that no element parsed. A point in
+     * time keeps its own time, and a range between two points in time is one interval, so neither parses the
+     * time part, which SQL otherwise reads: the compiled form of a literal reads it with
+     * {@link #compileTimeOverrides} before its elements, and where the compiled form cannot hold it, the
+     * literal is this parser, which reads it with each day. The check reads it the same way, and emits nothing.
+     *
+     * @param tzMarker    the timezone marker of the list, or -1
+     * @param semicolon   the first ';' after the list, or -1
+     * @param timePartUse what the elements of the list did with the time part, as TIME_PART_* bits
+     * @param sink        a scratch sink
+     */
+    private static void checkSkippedTimePart(
+            TimestampDriver timestampDriver,
+            CairoConfiguration configuration,
+            CharSequence seq,
+            int elemListLo,
+            int elemListHi,
+            int suffixStart,
+            int lim,
+            int tzMarker,
+            int semicolon,
+            int timePartUse,
+            int errorPos,
+            StringSink sink
+    ) throws SqlException {
+        // compileTickExpr() ends the time part at the timezone, else at the first ';', even in a bracket
+        final int timeHi = compileSuffixTimeHi(tzMarker, semicolon, lim);
+        if (suffixStart == timeHi) {
+            return;
+        }
+        final LongList intervals = tlTimePartIntervals.get();
+        if (isCompilable(seq, elemListLo, elemListHi, false, suffixStart, timeHi, semicolon)) {
+            // the literal has IR, which reads the time part with compileTimeOverrides() before the elements
+            compileTimeOverrides(timestampDriver, configuration, seq, suffixStart, timeHi, errorPos, null, sink, intervals);
+        } else {
+            // the literal parses: read the time part as the days of the skipped points in time would, which end
+            // their brackets at the first ';' (dateLim in expandDateList())
+            checkTimePartAsDays(timestampDriver, configuration, seq, suffixStart,
+                    semicolon >= 0 && semicolon < timeHi ? semicolon : timeHi, timePartUse, errorPos, sink, intervals);
+        }
+    }
+
+    /**
+     * Reads a time part the way the day of a skipped point in time would, without expanding its brackets, see
+     * {@link #checkSkippedTimePart}. It first checks the syntax of each bracket as
+     * {@link #expandBracketsRecursive} and {@link #expandTimeListBracket} check it: the closing bracket, the
+     * numbers, ascending ranges, at most the configured number of numeric brackets in a row, the slots of a
+     * time list and their timezones. It then parses the time with every bracket at its first value, and with
+     * each other value of each bracket, both ends of a range, and the other brackets at their first value, see
+     * {@link #checkTimePartVariant}. So it rejects only what the days reject, and accepts what fails the days
+     * only with two brackets off their first value, strictly inside a range, or past the limit of intervals.
+     *
+     * @param lo          start of the time part in seq
+     * @param hi          end of the time part in seq, before its first ';'
+     * @param timePartUse the parsers of the days, as TIME_PART_SKIPPED_* bits
+     * @param sink        a scratch sink
+     * @param intervals   a scratch list
+     */
+    private static void checkTimePartAsDays(
+            TimestampDriver timestampDriver,
+            CairoConfiguration configuration,
+            CharSequence seq,
+            int lo,
+            int hi,
+            int timePartUse,
+            int errorPos,
+            StringSink sink,
+            LongList intervals
+    ) throws SqlException {
+        // Pass 1: the syntax of each bracket. Each bracket takes 4 longs: its start, its end, the bounds of its
+        // values, and 1 for a time list. The value of a slot is the bounds of its time, that of a number is the
+        // number, or its complement for the end of a range.
+        final LongList brackets = tlTimePartBrackets.get();
+        final LongList values = tlTimePartValues.get();
+        brackets.clear();
+        values.clear();
+        final int maxBracketDepth = configuration.getSqlIntervalMaxBracketDepth();
+        int groupCount = 0;
+        for (int bracketStart = compileFindCharOrNeg1(seq, lo, hi, '['); bracketStart >= 0; ) {
+            final int bracketEnd = findMatchingBracket(seq, bracketStart, hi, errorPos);
+            final int valuesLo = values.size();
+            final boolean isTimeList = isTimeListBracket(seq, bracketStart, bracketEnd);
+            int i = bracketStart + 1;
+            if (isTimeList) {
+                // the slot loop of expandTimeListBracket()
+                while (i < bracketEnd) {
+                    while (i < bracketEnd && Chars.isAsciiWhitespace(seq.charAt(i))) {
+                        i++;
+                    }
+                    if (i >= bracketEnd) {
+                        break;
+                    }
+                    final int slotLo = i;
+                    while (i < bracketEnd && seq.charAt(i) != ',') {
+                        i++;
+                    }
+                    int slotHi = i;
+                    while (slotHi > slotLo && Chars.isAsciiWhitespace(seq.charAt(slotHi - 1))) {
+                        slotHi--;
+                    }
+                    if (slotLo >= slotHi) {
+                        throw SqlException.$(errorPos, "Empty element in time list");
+                    }
+                    if (compileFindCharOrNeg1(seq, slotLo, slotHi, '[') >= 0) {
+                        throw SqlException.$(errorPos, "Nested brackets not supported in time list. Use separate expansions: T[09:00,09:30] instead of T[09:[00,30]]");
+                    }
+                    final int tzMarker = compileFindCharOrNeg1(seq, slotLo, slotHi, '@');
+                    if (tzMarker >= 0) {
+                        // converts no interval, but rejects a timezone that the day rejects
+                        intervals.clear();
+                        applyTimezoneToIntervals(timestampDriver, configuration, intervals, 0, seq, tzMarker + 1, slotHi, errorPos, true);
+                    }
+                    values.add(Numbers.encodeLowHighInts(slotLo, tzMarker >= 0 ? tzMarker : slotHi));
+                    if (i < bracketEnd) {
+                        i++;
+                    }
+                }
+                // the day expands the text after a time list from depth 0
+                groupCount = 0;
+            } else {
+                // the item loop of expandBracketsRecursive(), which goes a level deeper for each numeric bracket
+                if (++groupCount > maxBracketDepth) {
+                    throw SqlException.$(errorPos, "Too many bracket groups (max ").put(maxBracketDepth).put(')');
+                }
+                while (i < bracketEnd) {
+                    while (i < bracketEnd && Chars.isAsciiWhitespace(seq.charAt(i))) {
+                        i++;
+                    }
+                    if (i >= bracketEnd) {
+                        break;
+                    }
+                    final int numStart = i;
+                    while (i < bracketEnd && Chars.isAsciiDigit(seq.charAt(i))) {
+                        i++;
+                    }
+                    if (numStart == i) {
+                        throw SqlException.$(errorPos, "Expected number in bracket expansion");
+                    }
+                    final int value;
+                    try {
+                        value = Numbers.parseInt(seq, numStart, i);
+                    } catch (NumericException e) {
+                        throw SqlException.$(errorPos, "Expected number in bracket expansion");
+                    }
+                    while (i < bracketEnd && Chars.isAsciiWhitespace(seq.charAt(i))) {
+                        i++;
+                    }
+                    int rangeEnd = value;
+                    if (i + 1 < bracketEnd && seq.charAt(i) == '.' && seq.charAt(i + 1) == '.') {
+                        i += 2;
+                        while (i < bracketEnd && Chars.isAsciiWhitespace(seq.charAt(i))) {
+                            i++;
+                        }
+                        final int endStart = i;
+                        while (i < bracketEnd && Chars.isAsciiDigit(seq.charAt(i))) {
+                            i++;
+                        }
+                        if (endStart == i) {
+                            throw SqlException.$(errorPos, "Expected number after '..'");
+                        }
+                        try {
+                            rangeEnd = Numbers.parseInt(seq, endStart, i);
+                        } catch (NumericException e) {
+                            throw SqlException.$(errorPos, "Expected number after '..'");
+                        }
+                        if (rangeEnd < value) {
+                            throw SqlException.$(errorPos, "Range must be ascending: ").put(value).put("..").put(rangeEnd);
+                        }
+                    }
+                    values.add(value);
+                    if (rangeEnd > value) {
+                        values.add(~rangeEnd);
+                    }
+                    while (i < bracketEnd && Chars.isAsciiWhitespace(seq.charAt(i))) {
+                        i++;
+                    }
+                    if (i < bracketEnd) {
+                        if (seq.charAt(i) != ',') {
+                            throw SqlException.$(errorPos, "Expected ',' or end of bracket");
+                        }
+                        i++;
+                    }
+                }
+                if (values.size() == valuesLo) {
+                    throw SqlException.$(errorPos, "Empty bracket expansion");
+                }
+            }
+            brackets.add(bracketStart, bracketEnd, Numbers.encodeLowHighInts(valuesLo, values.size()), isTimeList ? 1 : 0);
+            bracketStart = compileFindCharOrNeg1(seq, bracketEnd + 1, hi, '[');
+        }
+
+        // Pass 2: the time with every bracket at its first value, then each other value of each bracket
+        checkTimePartVariant(timestampDriver, seq, lo, hi, brackets, values, -1, -1, timePartUse, errorPos, sink, intervals);
+        for (int bracket = 0, n = brackets.size(); bracket < n; bracket += 4) {
+            final long valueBounds = brackets.getQuick(bracket + 2);
+            for (int valueIndex = Numbers.decodeLowInt(valueBounds) + 1, valuesHi = Numbers.decodeHighInt(valueBounds); valueIndex < valuesHi; valueIndex++) {
+                checkTimePartVariant(timestampDriver, seq, lo, hi, brackets, values, bracket, valueIndex, timePartUse, errorPos, sink, intervals);
+            }
+        }
+    }
+
+    /**
+     * Writes a variant of a time part into {@code variant}: the day 1970-01-01, followed by the time part with
+     * the bracket at {@code offBracket} at the value at {@code offValue}, and each other bracket at its first
+     * value, see {@link #checkTimePartAsDays}. A negative offBracket puts every bracket at its first value. A
+     * number takes the padding that the day gives it. Then parses the variant as the days of the skipped points
+     * in time would, see TIME_PART_SKIPPED_*, and fails as the days fail. Neither 1970-01-01 nor the date of a
+     * day holds a character that decides the padding.
+     */
+    private static void checkTimePartVariant(
+            TimestampDriver timestampDriver,
+            CharSequence seq,
+            int lo,
+            int hi,
+            LongList brackets,
+            LongList values,
+            int offBracket,
+            int offValue,
+            int timePartUse,
+            int errorPos,
+            StringSink variant,
+            LongList intervals
+    ) throws SqlException {
+        variant.clear();
+        variant.put("1970-01-01");
+        long padState = 0;
+        int textLo = lo;
+        for (int bracket = 0, n = brackets.size(); bracket < n; bracket += 4) {
+            padState = appendTimePartText(variant, seq, textLo, (int) brackets.getQuick(bracket), padState);
+            final long value = values.getQuick(bracket == offBracket ? offValue : Numbers.decodeLowInt(brackets.getQuick(bracket + 2)));
+            if (brackets.getQuick(bracket + 3) != 0) {
+                // a slot of a time list, without its timezone
+                padState = appendTimePartText(variant, seq, Numbers.decodeLowInt(value), Numbers.decodeHighInt(value), padState);
+            } else {
+                // expandBracketsRecursive() takes an item of 100 or more right after a 'T' for a time without
+                // colons, but not the end of a range, which is negative here
+                if (value >= 100 && variant.charAt(variant.length() - 1) == 'T') {
+                    throw SqlException.$(errorPos, "Military time format not supported in bracket expansion. Use colons: [09:00,14:30] instead of [0900,1430]");
+                }
+                appendPaddedInt(variant, (int) (value >= 0 ? value : ~value), timePartPadWidth(padState, variant.length()));
+            }
+            textLo = (int) brackets.getQuick(bracket + 1) + 1;
+        }
+        appendTimePartText(variant, seq, textLo, hi, padState);
+        assert variant.length() > 10 : "empty time part";
+        try {
+            intervals.clear();
+            timestampDriver.parseInterval(variant, 0, variant.length(), IntervalOperation.INTERSECT, intervals);
+            return;
+        } catch (NumericException ignore) {
+            // the day then parses the date and time with the parser of its duration
+        }
+        try {
+            if ((timePartUse & TIME_PART_SKIPPED_WITH_DURATION) != 0) {
+                timestampDriver.parseAnyFormat(variant, 0, variant.length());
+            }
+            if ((timePartUse & TIME_PART_SKIPPED_WITHOUT_DURATION) != 0) {
+                timestampDriver.parseFloor(variant, 0, variant.length());
+            }
+        } catch (NumericException e) {
+            // the time without its 'T', as compileTimeOverrides() names it
+            throw SqlException.$(errorPos, "Invalid time override: ").put(variant, variant.charAt(10) == 'T' ? 11 : 10, variant.length());
         }
     }
 
@@ -2370,7 +2668,8 @@ public final class IntervalUtils {
 
     /**
      * Parses a single time element (e.g. "09:00" or "09:00@+05:00") and appends
-     * one (offset, width, zoneMatch) triple to irList.
+     * one (offset, width, zoneMatch) triple to irList, unless irList is null, see
+     * {@link #compileTimeOverrides}.
      */
     private static void compileOneTimeOverride(
             TimestampDriver timestampDriver,
@@ -2379,7 +2678,7 @@ public final class IntervalUtils {
             int elemStart,
             int elemEnd,
             int position,
-            LongList irList,
+            @Nullable LongList irList,
             StringSink parseSink,
             LongList tmp
     ) throws SqlException {
@@ -2431,9 +2730,11 @@ public final class IntervalUtils {
             }
         }
 
-        irList.add(tLo);
-        irList.add(tHi - tLo);
-        irList.add(zoneMatch);
+        if (irList != null) {
+            irList.add(tLo);
+            irList.add(tHi - tLo);
+            irList.add(zoneMatch);
+        }
     }
 
     /**
@@ -2563,7 +2864,8 @@ public final class IntervalUtils {
 
     /**
      * Parses a bracket time list like T[09:00,14:00,16:30@+05:00] and appends
-     * (offset, width, zoneMatch) triples to irList.
+     * (offset, width, zoneMatch) triples to irList, unless irList is null, see
+     * {@link #compileTimeOverrides}.
      *
      * @return number of time overrides parsed
      */
@@ -2574,7 +2876,7 @@ public final class IntervalUtils {
             int tContentLo,
             int timeHi,
             int position,
-            LongList irList,
+            @Nullable LongList irList,
             StringSink parseSink,
             LongList tmp
     ) throws SqlException {
@@ -2607,7 +2909,9 @@ public final class IntervalUtils {
 
     /**
      * Parses time override(s) from the suffix (e.g. "T09:30" or "T[09:00,14:00]")
-     * and appends (offset, width, zoneMatch) triples to irList.
+     * and appends (offset, width, zoneMatch) triples to irList. The parser passes a
+     * null irList to only check a time part that no element of a date list reads, see
+     * {@link #checkSkippedTimePart}.
      *
      * @return number of time overrides parsed
      */
@@ -2618,7 +2922,7 @@ public final class IntervalUtils {
             int timeLo,
             int timeHi,
             int position,
-            LongList irList,
+            @Nullable LongList irList,
             StringSink parseSink,
             LongList tmp
     ) throws SqlException {
@@ -2647,11 +2951,13 @@ public final class IntervalUtils {
         } catch (NumericException e) {
             throw SqlException.$(position, "Invalid time override: ").put(effectiveSeq, tContentLo, timeHi);
         }
-        long tLo = decodeIntervalLo(tmp, 0);
-        long tHi = decodeIntervalHi(tmp, 0);
-        irList.add(tLo);
-        irList.add(tHi - tLo);
-        irList.add(Long.MIN_VALUE);
+        if (irList != null) {
+            long tLo = decodeIntervalLo(tmp, 0);
+            long tHi = decodeIntervalHi(tmp, 0);
+            irList.add(tLo);
+            irList.add(tHi - tLo);
+            irList.add(Long.MIN_VALUE);
+        }
         return 1;
     }
 
@@ -3155,6 +3461,8 @@ public final class IntervalUtils {
 
         // Parse comma-separated date elements, respecting nested brackets
         int elementStart = contentStart;
+        // what the elements did with the time part of the list, as TIME_PART_* bits
+        int timePartUse = 0;
 
         for (int i = contentStart; i <= contentEnd; i++) {
             char c = i < contentEnd ? seq.charAt(i) : ','; // Treat end as virtual comma
@@ -3185,6 +3493,7 @@ public final class IntervalUtils {
                 CharSequence elementSeq = seq;
                 int resolvedElementStart = elementStart;
                 int resolvedElementEnd = elementEnd;
+                boolean isPointInTime = false;
 
                 if (seq.charAt(elementStart) == '$') {
                     // Check for range operator (..) in element - e.g., "$today..$today+5d"
@@ -3192,7 +3501,7 @@ public final class IntervalUtils {
 
                     if (rangeOpPos >= 0) {
                         // Handle date variable range - expand into multiple dates
-                        expandDateVariableRange(
+                        timePartUse |= expandDateVariableRange(
                                 timestampDriver,
                                 configuration,
                                 seq,
@@ -3242,6 +3551,7 @@ public final class IntervalUtils {
                     } else {
                         // $now, or a shift below a day - format with full datetime, timezone suffix still applies
                         appendDateTime(timestampDriver, resolvedTimestamp, dateVarSink);
+                        isPointInTime = true;
                     }
 
                     // Append any suffix (timezone/day filter) from the original element
@@ -3413,6 +3723,16 @@ public final class IntervalUtils {
 
                 // If element already has time, skip the time part of suffix but include duration
                 int effectiveSuffixStart = elementHasTime ? suffixTimeEnd : suffixStart;
+                if (effectiveSuffixStart == suffixStart) {
+                    // the sink of the element holds the time part: a day, a static day or month, or a point in
+                    // time whose time part does not start with 'T', which then fails on its own text
+                    timePartUse |= TIME_PART_READ;
+                } else if (isPointInTime) {
+                    // a point in time keeps its own time; its day would parse the time part without the duration
+                    // under its own tick calendar, see effectiveSuffixEnd below
+                    timePartUse |= activeExchangeSchedule == null && globalDurationSemicolon >= 0
+                            ? TIME_PART_SKIPPED_WITH_DURATION : TIME_PART_SKIPPED_WITHOUT_DURATION;
+                }
 
                 // Determine suffix end - exclude duration if tick calendar is active
                 int effectiveSuffixEnd = lim;
@@ -3522,6 +3842,12 @@ public final class IntervalUtils {
                 elementStart = i + 1;
             }
         }
+
+        // no element parsed the time part, which a point in time ignored: check it the way SQL would otherwise read it
+        if (timePartUse != 0 && (timePartUse & TIME_PART_READ) == 0) {
+            checkSkippedTimePart(timestampDriver, configuration, seq, lo + 1, listEnd, suffixStart, lim,
+                    globalTzMarker, globalDurationSemicolon, timePartUse, errorPos, sink);
+        }
     }
 
     /**
@@ -3540,8 +3866,11 @@ public final class IntervalUtils {
      * Adjacent full-day intervals will be merged by the caller's unionBracketExpandedIntervals.
      * <p>
      * Consider extracting a shared helper method if this becomes a maintenance burden.
+     *
+     * @return what the range did with the time part of the list, as TIME_PART_* bits: a range of days that
+     * iterates a day reads it, a range between two points in time ignores it
      */
-    private static void expandDateVariableRange(
+    private static int expandDateVariableRange(
             TimestampDriver timestampDriver,
             CairoConfiguration configuration,
             CharSequence seq,
@@ -3675,7 +4004,12 @@ public final class IntervalUtils {
             if (durationSemicolon >= 0) {
                 compileDurationParts(timestampDriver, seq, durationSemicolon + 1, lim, errorPos, null);
             }
-            return;
+            // The range ignores the time part too. A day of it would parse the time part without the duration
+            // under the tick calendar of the range, see the lookup of elemExchangeSchedule below.
+            final int dayFilterMarker = compileFindCharOrNeg1(seq, rangeEnd, elementEnd, '#');
+            return durationSemicolon >= 0
+                    && (dayFilterMarker < 0 || getExchangeSchedule(configuration, seq, dayFilterMarker + 1, elementEnd) == null)
+                    ? TIME_PART_SKIPPED_WITH_DURATION : TIME_PART_SKIPPED_WITHOUT_DURATION;
         }
 
         // Day-based range: iterate from start to end by days. When one endpoint is a point in time,
@@ -3701,6 +4035,7 @@ public final class IntervalUtils {
         StringSink dateVarSink = tlDateVarSink.get();
         long currentTimestamp = startTimestamp;
         long previousTimestamp = currentTimestamp - 1; // For infinite loop protection
+        int timePartUse = 0;
 
         while (currentTimestamp <= endTimestamp) {
             // Safety check: addDays always advances the timestamp, so this should never trigger
@@ -3714,6 +4049,8 @@ public final class IntervalUtils {
                 currentTimestamp = timestampDriver.addDays(currentTimestamp, 1);
                 continue;
             }
+            // the sink of the day holds the time part
+            timePartUse = TIME_PART_READ;
 
             // Format the date
             dateVarSink.clear();
@@ -3897,6 +4234,7 @@ public final class IntervalUtils {
             // Move to next day
             currentTimestamp = timestampDriver.addDays(currentTimestamp, 1);
         }
+        return timePartUse;
     }
 
     /**
@@ -5020,6 +5358,28 @@ public final class IntervalUtils {
                         Numbers.decodeHighInt(encoded)
                 )
         );
+    }
+
+    /**
+     * Returns the padding that {@link #determinePadWidth} gives a bracket value at the end of a variant of a
+     * time part, from the state that {@link #appendTimePartText} keeps.
+     */
+    private static int timePartPadWidth(long padState, int variantLength) {
+        if ((padState & 1) != 0) {
+            // a fraction of a second
+            return 0;
+        }
+        if ((padState & 2) != 0) {
+            // an hour, a minute or a second
+            return 2;
+        }
+        final int lastW = (int) (padState >>> 32) - 1;
+        if (lastW >= 0) {
+            // the week, or the day of the week
+            return variantLength - lastW - 1 == 0 ? 2 : 1;
+        }
+        // a month or a day
+        return 2;
     }
 
     static int append(LongList list, int writePoint, long lo, long hi) {

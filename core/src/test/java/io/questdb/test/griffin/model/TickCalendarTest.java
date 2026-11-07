@@ -27,6 +27,7 @@ package io.questdb.test.griffin.model;
 import io.questdb.DefaultFactoryProvider;
 import io.questdb.FactoryProvider;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.TickCalendarServiceFactory;
@@ -458,6 +459,53 @@ public class TickCalendarTest {
                 assertTickExprErrorWithNow(driver, expression, driver.parseFloorLiteral(now), "Invalid duration unit: x");
             }
             assertCompileTickExprError(driver, expression, "Invalid duration unit: x");
+        }
+    }
+
+    @Test
+    public void testDateVariablePointInTimeTimePartParsesWithTheLeafOfItsDayUnderTickCalendars() throws SqlException {
+        // A point in time ignores the time part, which the parser checks as the day of the point in time reads it.
+        // A day parses its date and time with the duration of the expression, which parseAnyFormat() reads when
+        // parseInterval() fails, but a tick calendar of the element or of a date list keeps the duration for later,
+        // and the day parses with parseFloor() instead. parseFloor() takes a fraction of 5 digits and a Z, and
+        // parseAnyFormat() a UTC zone. 2025-01-24 is a Friday, and 12:00Z is before the open of XNYS.
+        for (int timestampType : new int[]{ColumnType.TIMESTAMP, ColumnType.TIMESTAMP_NANO}) {
+            final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+            final long now = driver.parseFloorLiteral("2025-01-24T12:00:00.000000Z");
+            // the calendar of the element
+            assertAcceptedLikeDayWithNow(driver, "[$now#XNYS]", "[$today#XNYS]", "T[09..10]:30:00.12345Z", ";1h", now);
+            assertAcceptedLikeDayWithNow(driver, "[$now#XNYS]", "[$today#XNYS]", "T09:30:00.12345Z", ";1h", now);
+            assertParsedAndCompiledWithNow(driver, "[]", "[$now#XNYS]T[09..10]:30:00.12345Z;1h", now);
+            assertAcceptedLikeDayWithNow(driver, "[$now - 1h..$now#XNYS]", "[$today..$today#XNYS]", "T[09..10]:30:00.12345Z", ";1h", now);
+            assertRejectedLikeDayWithNow(driver, "[$now#XNYS]", "[$today#XNYS]", "T[09..10]:30:00UTC", ";1h", now, "Invalid time override: 09:30:00UTC");
+            assertRejectedLikeDayWithNow(driver, "[$now - 1h..$now#XNYS]", "[$today..$today#XNYS]", "T[09..10]:30:00UTC", ";1h", now, "Invalid time override: 09:30:00UTC");
+            // the calendar of the date list
+            assertAcceptedLikeDayWithNow(driver, "[$now]", "[$today]", "T[09..10]:30:00.12345Z", "#XNYS;1h", now);
+            assertParsedAndCompiledWithNow(driver, "[]", "[$now]T[09..10]:30:00.12345Z#XNYS;1h", now);
+            // A bare variable keeps the duration with its date and time also under a calendar of the expression
+            assertRejectedLikeDayWithNow(driver, "$now", "$today", "T[09..10]:30:00.12345Z", "#XNYS;1h", now, "Invalid time override: 09:30:00.12345Z");
+            assertAcceptedLikeDayWithNow(driver, "$now", "$today", "T[09..10]:30:00UTC", "#XNYS;1h", now);
+            // a day filter is no calendar, and keeps the duration with the date and time
+            assertRejectedLikeDayWithNow(driver, "[$now#Fri]", "[$today#Fri]", "T[09..10]:30:00.12345Z", ";1h", now, "Invalid time override: 09:30:00.12345Z");
+            // Each point in time of a list has the days it would have alone: one with a calendar, one without
+            assertRejectedLikeDayWithNow(driver, "[$now#XNYS, $now - 1h]", "[$today#XNYS, $today]", "T[09..10]:30:00.12345Z", ";1h", now, "Invalid time override: 09:30:00.12345Z");
+            assertRejectedLikeDayWithNow(driver, "[$now#XNYS, $now - 1h]", "[$today#XNYS, $today]", "T[09..10]:30:00UTC", ";1h", now, "Invalid time override: 09:30:00UTC");
+            // A day of the list reads the time part: the calendar keeps none of its 09:30, and $now keeps its own
+            // time and takes the duration
+            final String nowAndHour = ColumnType.isTimestampNano(timestampType)
+                    ? "[{lo=2025-01-24T12:00:00.000000000Z, hi=2025-01-24T12:59:59.999999999Z}]"
+                    : "[{lo=2025-01-24T12:00:00.000000Z, hi=2025-01-24T12:59:59.999999Z}]";
+            final String dayAndNow = "[$today#XNYS, $now]T09:30:00.12345Z;1h";
+            Assert.assertEquals(
+                    dayAndNow,
+                    "parsed: " + nowAndHour + "\ncompiled: " + nowAndHour,
+                    "parsed: " + parsed(driver, dayAndNow, now) + "\ncompiled: " + compiled(driver, dayAndNow, now)
+            );
+            // the compiled form holds this time part and rejects it, also on Saturday 2025-01-25, when the
+            // calendar keeps nothing
+            for (String day : new String[]{"2025-01-24T12:00:00.000000Z", "2025-01-25T12:00:00.000000Z"}) {
+                assertParsedAndCompiledFailWithNow(driver, "[$now - 1h..$now]T[25:00]#XNYS;1h", driver.parseFloorLiteral(day), "Invalid time in time list: 25:00");
+            }
         }
     }
 
@@ -1320,6 +1368,16 @@ public class TickCalendarTest {
         return sink.toString();
     }
 
+    /**
+     * Asserts that the day accepts the time part, and that the point in time, followed by the time part and the
+     * rest of the expression, gives on both paths the intervals that the parser gives without the time part.
+     */
+    private void assertAcceptedLikeDayWithNow(TimestampDriver driver, String pointInTime, String day, String timePart, String rest, long now) {
+        final String dayParsed = parsed(driver, day + timePart + rest, now);
+        Assert.assertFalse(day + timePart + rest + " should parse: " + dayParsed, dayParsed.startsWith("error: "));
+        assertParsedAndCompiledEqualWithNow(driver, pointInTime + timePart + rest, pointInTime + rest, now);
+    }
+
     private void assertCompileTickExprError(TimestampDriver driver, String expression, String expectedError) {
         try {
             IntervalUtils.compileTickExpr(driver, configuration, expression, 0, expression.length(), 42).close();
@@ -1328,6 +1386,32 @@ public class TickCalendarTest {
             Assert.assertEquals(expression, expectedError, e.getFlyweightMessage().toString());
             Assert.assertEquals(expression, 42, e.getPosition());
         }
+    }
+
+    /**
+     * Asserts that the parser and the compiled form give for the expression the intervals that the parser
+     * gives for the reference.
+     */
+    private void assertParsedAndCompiledEqualWithNow(TimestampDriver driver, String expression, String reference, long now) {
+        final String expected = parsed(driver, reference, now);
+        Assert.assertFalse(reference + " should parse: " + expected, expected.startsWith("error: "));
+        Assert.assertEquals(
+                expression,
+                "parsed: " + expected + "\ncompiled: " + expected,
+                "parsed: " + parsed(driver, expression, now) + "\ncompiled: " + compiled(driver, expression, now)
+        );
+    }
+
+    /**
+     * Asserts that the parser and the compiled form reject the expression with exactly the given error, the
+     * compiled form when it compiles or when it evaluates.
+     */
+    private void assertParsedAndCompiledFailWithNow(TimestampDriver driver, String expression, long now, String expectedError) {
+        Assert.assertEquals(
+                expression,
+                "parsed: error: " + expectedError + "\ncompiled: error: " + expectedError,
+                "parsed: " + parsed(driver, expression, now) + "\ncompiled: " + compiled(driver, expression, now)
+        );
     }
 
     /**
@@ -1351,6 +1435,18 @@ public class TickCalendarTest {
                 "parsed: " + expectedForType + "\ncompiled: " + expectedForType,
                 "parsed: " + parsed + "\ncompiled: " + intervalToString(driver, intervals)
         );
+    }
+
+    /**
+     * Asserts that the day rejects the time part, and that the point in time, followed by it, fails on both paths
+     * with the given error, which names the time that fails the day.
+     */
+    private void assertRejectedLikeDayWithNow(TimestampDriver driver, String pointInTime, String day, String timePart, String rest, long now, String expectedError) {
+        final String dayExpression = day + timePart + rest;
+        final String dayParsed = parsed(driver, dayExpression, now);
+        final String time = expectedError.substring("Invalid time override: ".length());
+        Assert.assertTrue(dayExpression + " should fail on " + time + ": " + dayParsed, dayParsed.startsWith("error: Invalid date: ") && dayParsed.endsWith("T" + time));
+        assertParsedAndCompiledFailWithNow(driver, pointInTime + timePart + rest, now, expectedError);
     }
 
     private void assertTickExprErrorWithNow(TimestampDriver driver, String expression, long now, String expectedError) {
@@ -1382,5 +1478,32 @@ public class TickCalendarTest {
         TimestampDriver driver = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP);
         IntervalUtils.parseTickExpr(driver, configuration, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, sink, true, nowTimestamp);
         Assert.assertEquals(expected, intervalToString(driver, out));
+    }
+
+    /**
+     * Returns what the compiled form evaluates the expression to: the intervals, or "error: " and the message
+     * when it fails to compile or to evaluate.
+     */
+    private String compiled(TimestampDriver driver, String expression, long now) {
+        final LongList intervals = new LongList();
+        try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(driver, configuration, expression, 0, expression.length(), 0)) {
+            compiled.evaluate(intervals, now);
+            return intervalToString(driver, intervals);
+        } catch (SqlException | CairoException e) {
+            return "error: " + e.getFlyweightMessage();
+        }
+    }
+
+    /**
+     * Returns what the parser gives for the expression: the intervals, or "error: " and the message.
+     */
+    private String parsed(TimestampDriver driver, String expression, long now) {
+        final LongList intervals = new LongList();
+        try {
+            IntervalUtils.parseTickExpr(driver, configuration, expression, 0, expression.length(), 0, intervals, IntervalOperation.INTERSECT, sink, true, now);
+            return intervalToString(driver, intervals);
+        } catch (SqlException e) {
+            return "error: " + e.getFlyweightMessage();
+        }
     }
 }

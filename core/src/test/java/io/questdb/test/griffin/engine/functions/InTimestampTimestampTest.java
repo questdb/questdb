@@ -24,16 +24,19 @@
 
 package io.questdb.test.griffin.engine.functions;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.jit.JitUtil;
+import io.questdb.mp.WorkerPool;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.BindVarTuple;
 import io.questdb.test.tools.MutationStep;
 import io.questdb.test.tools.TestUtils;
@@ -1004,10 +1007,286 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPointInTimeTimePartThatADayReadsKeepsItsRows() throws Exception {
+        // Where a day of the list reads the time part, the list keeps the rows of that reading: the day takes the
+        // time at its own timezone, 09:00 at +01:00 is 08:00Z, and $now keeps its own time
+        assertMemoryLeak(() -> {
+            createHourlyTable();
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T10:00:00.000000Z"));
+            try {
+                final String dayAtPlusOneAndNow = "2\t2024-01-02T08:00:00.000000Z\t2024-01-02T10:00:00.000000Z";
+                assertTickExprMatches("[$today@+01:00, $now]T09:00:00Z", dayAtPlusOneAndNow);
+                assertTickExprBindVariableMatches("[$today@+01:00, $now]T09:00:00Z", dayAtPlusOneAndNow);
+                assertTickExprBindVariableMatches("[$today, $now]T09:00:00Z", "2\t2024-01-02T09:00:00.000000Z\t2024-01-02T10:00:00.000000Z");
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testPointInTimeWithMalformedTimeBindVariableFailsInEverySqlContext() throws Exception {
+        // the bind variable selected the row at $now, or the range, and EXPLAIN printed it
+        assertTickExprBindVariableFailsInEverySqlContext("[$now]T[25:00]", "Invalid time in time list: 25:00");
+        assertTickExprBindVariableFailsInEverySqlContext("[$now - 1h..$now]T[09..10]:99", "Invalid time override: 09:99");
+    }
+
+    @Test
+    public void testPointInTimeWithMalformedTimeBindVariableFailsOnlyItsExecution() throws Exception {
+        // The query compiles once and parses the bind variable each time it runs: a malformed time part fails
+        // that run at $1, and the next value selects its range again, within a partition and across two
+        // partitions
+        assertMemoryLeak(() -> {
+            createHourlyTable();
+            final String query = "SELECT count(), min(ts), max(ts) FROM t WHERE ts IN $1";
+            final int position = query.indexOf("$1");
+            final ObjList<BindVarTuple> cases = new ObjList<>();
+            try {
+                setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T10:00:00.000000Z"));
+                final String range = "2\t2024-01-02T09:00:00.000000Z\t2024-01-02T10:00:00.000000Z";
+                addTickExprBindCase(cases, "[$now - 1h..$now]T09:00", range);
+                addTickExprBindFailureCase(cases, "[$now - 1h..$now]T25:00", position, "Invalid time override: 25:00");
+                addTickExprBindFailureCase(cases, "[$now - 1h..$now]T[09..10]:99", position, "Invalid time override: 09:99");
+                addTickExprBindCase(cases, "[$now - 1h..$now]T09:00", range);
+                assertQuery(query)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .assertBinds(cases);
+
+                // from 23:00 on 2024-01-01 to 00:30 on 2024-01-02
+                setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T00:30:00.000000Z"));
+                cases.clear();
+                final String acrossMidnight = "2\t2024-01-01T23:00:00.000000Z\t2024-01-02T00:00:00.000000Z";
+                addTickExprBindCase(cases, "[$now - 90m..$now]T09:00", acrossMidnight);
+                addTickExprBindFailureCase(cases, "[$now - 90m..$now]T25:00", position, "Invalid time override: 25:00");
+                addTickExprBindFailureCase(cases, "[$now - 90m..$now]T[09..10]:99", position, "Invalid time override: 09:99");
+                addTickExprBindCase(cases, "[$now - 90m..$now]T09:00", acrossMidnight);
+                assertQuery(query)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .assertBinds(cases);
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
     public void testPointInTimeWithMalformedTimeFailsAsLiteralAndAsBindVariable() throws Exception {
         // a point in time ignores the time part, which still has to be well-formed: the bind variable
         // selected the row at $now
         assertMalformedTickExprFails("[$now]T[25:00]", "25:00");
+    }
+
+    @Test
+    public void testPointInTimeWithMalformedTimeFailsInDropPartitionWhere() throws Exception {
+        // The compiled form leaves a time part with a numeric expansion to the parser, which the statement runs
+        // when it compiles. The statement dropped the partitions of 2024-01-01 and 2024-01-02.
+        assertTickExprFailsInDropPartitionWhere("[$now - 34h..$now]T[09..10]:99", "2024-01-01T[09..10]:99", "09:99");
+    }
+
+    @Test
+    public void testPointInTimeWithMalformedTimeFailsInEveryShape() throws Exception {
+        // the bind variable selected the row at $now, the range, or nothing where the day filter of the element
+        // drops $now, 2024-01-02 being a Tuesday
+        assertMalformedTickExprFails("[$now]T25:00", "Invalid time override: 25:00");
+        assertMalformedTickExprFails("$nowT[25:00]", "Invalid time in time list: 25:00");
+        assertMalformedTickExprFails("$today+2hT[25:00]", "Invalid time in time list: 25:00");
+        assertMalformedTickExprFails("[$now - 1h..$now]T[25:00]", "Invalid time in time list: 25:00");
+        assertMalformedTickExprFails("[$now]T09:99", "Invalid time override: 09:99");
+        // the compiled form ends the time part at the timezone of the expression, the last '@'
+        assertMalformedTickExprFails("[$now - 1h..$now]T09:00@+01:00@+02:00", "Invalid time override: 09:00@+01:00");
+        // the literal leaves these to the parser when the query runs, and selected the row at $now too
+        assertMalformedTickExprFails("[$now]T[09..10]:99", "Invalid time override: 09:99");
+        assertMalformedTickExprFails("[$now@+01:00]T25:00", "Invalid time override: 25:00");
+        assertMalformedTickExprFails("[$now#Mon]T25:00", "Invalid time override: 25:00");
+    }
+
+    @Test
+    public void testPointInTimeWithMalformedTimeFailsInEverySqlContext() throws Exception {
+        // The literal fails the query at its position wherever the query holds it, the same as the expression
+        // without a date variable. On a monotonic function of the designated timestamp it selected the row at
+        // $now.
+        assertTickExprFailsInEverySqlContext("[$now]T[25:00]", "2024-01-02T[25:00]", "25:00");
+    }
+
+    @Test
+    public void testPointInTimeWithMalformedTimeFailsInStringColumn() throws Exception {
+        // ts IN <column> parses the tick expression of each row when the query runs: a malformed time part fails
+        // the query at the column, which selected the row at $now or the range, and a well-formed one selects
+        // the range
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT timestamp_sequence('2024-01-01T00:00:00.000000Z', 3_600_000_000L) ts,
+                               '[$now]T[25:00]'::STRING bad_list,
+                               '[$now]T[25:00]'::VARCHAR bad_list_varchar,
+                               '[$now - 1h..$now]T[09..10]:99'::STRING bad_expansion,
+                               '[$now - 1h..$now]T[09..10]:99'::VARCHAR bad_expansion_varchar,
+                               '[$now - 1h..$now]T[09..10]:00'::STRING good,
+                               '[$now - 1h..$now]T[09..10]:00'::VARCHAR good_varchar
+                        FROM long_sequence(96)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T10:00:00.000000Z"));
+            try {
+                final String[][] columnsAndErrors = {
+                        {"bad_list", "Invalid time in time list: 25:00"},
+                        {"bad_list_varchar", "Invalid time in time list: 25:00"},
+                        {"bad_expansion", "Invalid time override: 09:99"},
+                        {"bad_expansion_varchar", "Invalid time override: 09:99"}
+                };
+                for (String[] columnAndError : columnsAndErrors) {
+                    final String sql = "SELECT count() FROM t WHERE ts IN " + columnAndError[0];
+                    assertExceptionNoLeakCheck(sql, sql.indexOf(columnAndError[0]), columnAndError[1]);
+                }
+                for (String column : new String[]{"good", "good_varchar"}) {
+                    assertQuery("SELECT count(), min(ts), max(ts) FROM t WHERE ts IN " + column)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("""
+                                    count\tmin\tmax
+                                    2\t2024-01-02T09:00:00.000000Z\t2024-01-02T10:00:00.000000Z
+                                    """);
+                }
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testPointInTimeWithMalformedTimeFailsInStringColumnOnParallelWorkers() throws Exception {
+        // Four workers filter the frames of the table at once, and each parses the tick expression of its rows
+        // with scratch lists of its own. A row every 3.6 seconds over four days and a bit.
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 10_000);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+                engine.execute("""
+                        CREATE TABLE t AS (
+                            SELECT timestamp_sequence('2024-01-01T00:00:00.000000Z', 3_600_000L) ts,
+                                   '[$now]T[25:00]'::STRING bad_list,
+                                   '[$now - 1h..$now]T[09..10]:99'::VARCHAR bad_expansion,
+                                   '[$now - 1h..$now]T[09..10]:00'::STRING good
+                            FROM long_sequence(100_000)
+                        ) TIMESTAMP(ts) PARTITION BY DAY
+                        """, sqlExecutionContext);
+                setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T10:00:00.000000Z"));
+                try {
+                    final String[][] columnsAndErrors = {
+                            {"bad_list", "Invalid time in time list: 25:00"},
+                            {"bad_expansion", "Invalid time override: 09:99"}
+                    };
+                    for (String[] columnAndError : columnsAndErrors) {
+                        final String sql = "SELECT count() FROM t WHERE ts IN " + columnAndError[0];
+                        assertQuery(sql)
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .fails(sql.indexOf(columnAndError[0]), columnAndError[1]);
+                    }
+                    // the rows from 09:00 to 10:00
+                    assertQuery("SELECT count() FROM t WHERE ts IN good")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .withPlanContaining("Async Filter workers: 4", "filter: ts in good")
+                            .returns("count\n1001\n");
+                    assertQuery("SELECT count(), min(ts), max(ts) FROM t WHERE ts IN good")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .withPlanContaining("Async Group By workers: 4", "filter: ts in good")
+                            .returns("""
+                                    count\tmin\tmax
+                                    1001\t2024-01-02T09:00:00.000000Z\t2024-01-02T10:00:00.000000Z
+                                    """);
+                } finally {
+                    setCurrentMicros(-1);
+                }
+            }, configuration, LOG);
+        });
+    }
+
+    @Test
+    public void testPointInTimeWithMalformedTimeFailsInView() throws Exception {
+        // CREATE VIEW runs its query to learn the columns, which evaluates the literal that the compiled form
+        // leaves to the parser, and creates no view when it fails. It created the view.
+        assertMemoryLeak(() -> {
+            createHourlyTable();
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T10:00:00.000000Z"));
+            try {
+                try {
+                    execute("CREATE VIEW v AS (SELECT count(), min(ts), max(ts) FROM t WHERE ts IN '[$now - 12h..$now]T[09..10]:99')");
+                    Assert.fail("CREATE VIEW should fail");
+                } catch (CairoException | SqlException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "Invalid time override: 09:99");
+                }
+                Assert.assertNull(engine.getTableTokenIfExists("v"));
+                // the view of a well-formed time part selects the 13 hours of the range that ends at $now, and
+                // again when $now moves on
+                execute("CREATE VIEW v AS (SELECT count(), min(ts), max(ts) FROM t WHERE ts IN '[$now - 12h..$now]T[09..10]:00')");
+                assertQuery("SELECT * FROM v")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("count\tmin\tmax\n13\t2024-01-01T22:00:00.000000Z\t2024-01-02T10:00:00.000000Z\n");
+                setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T11:00:00.000000Z"));
+                assertQuery("SELECT * FROM v")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("count\tmin\tmax\n13\t2024-01-01T23:00:00.000000Z\t2024-01-02T11:00:00.000000Z\n");
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testPointInTimeWithMalformedTimeWithoutIrFailsWhenItRuns() throws Exception {
+        // The compiled form leaves a time part with a numeric expansion to the parser, which reads the literal
+        // when the query runs: the query compiles, but each run fails at the literal, in the interval scan and in
+        // the row filter, with the JIT on and off
+        assertMemoryLeak(() -> {
+            createHourlyTable();
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T10:00:00.000000Z"));
+            final int jitMode = sqlExecutionContext.getJitMode();
+            try {
+                final String tickExpr = "[$now - 1h..$now]T[09..10]:99";
+                final String scan = "SELECT count() FROM t WHERE ts IN '" + tickExpr + "'";
+                final String filter = "SELECT count() FROM t WHERE ts IN '" + tickExpr + "' OR ts > '2030-01-01'";
+                for (int mode : new int[]{SqlJitMode.JIT_MODE_ENABLED, SqlJitMode.JIT_MODE_DISABLED}) {
+                    sqlExecutionContext.setJitMode(mode);
+                    for (String sql : new String[]{scan, filter}) {
+                        try (RecordCursorFactory factory = select(sql)) {
+                            for (int run = 0; run < 2; run++) {
+                                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                    cursor.hasNext();
+                                    Assert.fail("the query should fail: " + sql);
+                                } catch (CairoException e) {
+                                    TestUtils.assertContains(e.getFlyweightMessage(), "Invalid time override: 09:99");
+                                    Assert.assertEquals(34, e.getPosition());
+                                }
+                            }
+                        }
+                        // EXPLAIN evaluates the intervals that it prints, and fails the same way
+                        assertExceptionNoLeakCheck("EXPLAIN " + sql, 42, "Invalid time override: 09:99");
+                    }
+                }
+            } finally {
+                sqlExecutionContext.setJitMode(jitMode);
+                setCurrentMicros(-1);
+            }
+        });
     }
 
     @Test
@@ -1276,6 +1555,10 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
      * Creates the tables of {@link #EVERY_SQL_CONTEXT_QUERIES} and {@link #EVERY_SQL_CONTEXT_FILTER_QUERIES}.
      */
     private static void createEverySqlContextTables() throws SqlException {
+        // a test may check several expressions
+        for (String table : new String[]{"t", "tn", "te", "tw"}) {
+            execute("DROP TABLE IF EXISTS " + table);
+        }
         // hourly rows from 2024-01-01T00:00 to 2024-01-04T23:00, in ts and in ts2, and a row whose
         // ts2 is NULL
         execute("""

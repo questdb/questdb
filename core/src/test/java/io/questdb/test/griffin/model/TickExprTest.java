@@ -39,6 +39,7 @@ import io.questdb.griffin.model.RuntimeIntervalModelBuilder;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Chars;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -61,10 +62,14 @@ import static io.questdb.test.griffin.GriffinParserTestUtils.intervalToString;
 
 @RunWith(Parameterized.class)
 public class TickExprTest {
+    // what parsedWithNow() and compiledWithNow() return for an expression that fails, before the message
+    private static final String ERROR_PREFIX = "error: ";
     // durations with a unit that TimestampDriver.add() does not know
     private static final String[] FUZZ_BAD_UNIT_DURATIONS = {";1x", ";1h1x", ";1H", ";1U", ";1D", ";0X"};
     private static final String[] FUZZ_DAY_FILTERS = {"", "#Tue", "#workday", "#weekend"};
     private static final String[] FUZZ_DURATIONS = {"", ";1h", ";30m"};
+    // timezones and day filters of a date list element
+    private static final String[] FUZZ_ELEMENT_SUFFIXES = {"", "@+02:00", "#Mon", "#Tue", "@Europe/London#Mon"};
     // time parts that the grammar rejects
     private static final String[] FUZZ_MALFORMED_TIMES = {"T[25:00]", "T25:00", "t09:00", "t[09:00]", "T[", "T"};
     // "now" on different days, weekdays and times of day, and on days when the clocks change
@@ -76,6 +81,13 @@ public class TickExprTest {
             "2024-02-29T23:59:00.000000Z", // the last minute of a leap day
             "2024-03-31T00:30:00.000000Z", // London springs forward at 01:00Z
             "2024-11-03T05:30:00.000000Z" // New York falls back at 06:00Z
+    };
+    // points in time, which keep their own time and ignore the time part of the expression
+    private static final String[] FUZZ_POINTS_IN_TIME = {"$now", "$NOW + 1h", "$today+2h"};
+    // time parts that start with 'T' and that the day of a point in time rejects, those of FUZZ_MALFORMED_TIMES
+    // and those that only the parser holds
+    private static final String[] FUZZ_POINT_IN_TIME_MALFORMED_TIMES = {
+            "T[25:00]", "T25:00", "T[", "T", "T[09..10]:99", "T[10..09]:00", "T[0900]", "T[09:00@Foo/Bar]", "T[09:[00,30]]"
     };
     // ranges between two points in time, which ignore the duration of the expression
     private static final String[] FUZZ_POINT_IN_TIME_RANGES = {
@@ -3428,6 +3440,21 @@ public class TickExprTest {
                 }
             }
         }
+        // every point in time, bare and in a date list, with and without a timezone or a day filter of its own,
+        // and every range between two points in time, with a time part that their days reject
+        for (String time : FUZZ_POINT_IN_TIME_MALFORMED_TIMES) {
+            for (String zone : FUZZ_ZONES) {
+                for (String pointInTime : FUZZ_POINTS_IN_TIME) {
+                    checker.check(pointInTime + time + zone, TickExprKind.MALFORMED_TIME);
+                    for (String elementSuffix : FUZZ_ELEMENT_SUFFIXES) {
+                        checker.check("[" + pointInTime + elementSuffix + "]" + time + zone, TickExprKind.MALFORMED_TIME);
+                    }
+                }
+                for (String range : FUZZ_POINT_IN_TIME_RANGES) {
+                    checker.check(range + time + zone, TickExprKind.MALFORMED_TIME);
+                }
+            }
+        }
         // and random expressions of every shape
         final Rnd rnd = TestUtils.generateRandom(LOG);
         final StringSink expression = new StringSink();
@@ -3709,6 +3736,37 @@ public class TickExprTest {
     }
 
     @Test
+    public void testDateVariablePointInTimeKeepsItsTimeWithWellFormedTimePart() {
+        // A point in time keeps its own time and a range between two points in time is one interval, so a
+        // time part that the day of the point in time accepts changes neither, on both paths. A static
+        // element with a time of its own keeps it too.
+        final String now = "2024-01-02T10:00:00.000000Z";
+        final String[] timeParts = {
+                "T[9..10]:00", "T09:00:00.[1..5]", "T[09:00:00.5][1]", "T[09,]:00", "T[09:00,]:[15]", "T[ 09:00 ]:[15]",
+                "T[09:,10:][00:,30:][00]", "T[09:00,10:00][:00,:30]", "T[02:30@America/New_York]",
+                "T[0..23]:[0..59]:[0..59].[0..999999999]"
+        };
+        final String[] pointsInTime = {
+                "[$now]", "[$now - 1h..$now]", "[$today + 18h]", "[$now@+01:00]", "[$now#Tue]", "[$now - 1h..$now@+01:00]",
+                "[$now, 2024-01-02T10:00]"
+        };
+        for (String pointInTime : pointsInTime) {
+            for (String timePart : FUZZ_TIMES) {
+                assertKeepsItsIntervalWithNow(pointInTime, timePart, "", now);
+            }
+            for (String timePart : timeParts) {
+                assertKeepsItsIntervalWithNow(pointInTime, timePart, "", now);
+            }
+            // the timezone of the expression still applies
+            assertKeepsItsIntervalWithNow(pointInTime, "T[10:30@Europe/London]", "@+02:00", now);
+        }
+        // A single point in time reads a time part that does not start with 'T' as part of its own text,
+        // which fails, so only the ranges take this one
+        assertKeepsItsIntervalWithNow("[$now - 1h..$now]", " [09..10]:00", "", now);
+        assertKeepsItsIntervalWithNow("[$now - 1h..$now@+01:00]", " [09..10]:00", "", now);
+    }
+
+    @Test
     public void testDateVariablePointInTimeRangeChecksTimezoneBeforeDuration() {
         // The compiled form reads the timezone of the expression before its duration, and the parser
         // converts a range between two points in time to the timezone before it checks the duration,
@@ -3837,6 +3895,394 @@ public class TickExprTest {
     }
 
     @Test
+    public void testDateVariablePointInTimeTimePartAgreesWithDay() {
+        // Where the compiled form cannot hold the time part, the literal is the parser, which reads the time part
+        // after a day with the grammar of the day. The time part after a point in time fails where it fails after
+        // the day of that point in time, with the syntax error of the day or with the time that fails it.
+        final String now = "2024-01-02T10:00:00.000000Z";
+        final String[] timeParts = {
+                "T[09..10]:99", "T[10..09]:00", "T[0900]", "T[09:[00,30]]", "T[]", "T[09..]:00", "T[a]:00", "T[,09]:00",
+                "T[09 10]:00", "T[09..10..11]:00", "T[09_0]:00", "T[[09]]:00", "T09:[00,61]", "T[09:00,25:00]:[15]",
+                "T[09:00,,10:00]:[00]", "T[,09:00]:[00]", "T[09:00@Foo/Bar]", "T[09:00@+01:00,10:00@Foo]:[00]",
+                "T[2147483648]:00", "T[09..2147483648]:00", "T[0:][0][0:][0]", "T[09:0T][100]", "\tT[09..10]:00",
+                " [25..26]:00", "T[09..10]:\u00e9", "T[09:00\uD83D\uDE00]:[00]"
+        };
+        final String[][] pointsInTimeAndDays = {
+                {"[$now]", "[$today]"},
+                {"[$now - 1h..$now]", "[$today]"},
+                {"[$now@+01:00]", "[$today@+01:00]"},
+                {"[$now#Tue]", "[$today#Tue]"},
+                {"[$now - 1h..$now@+01:00]", "[$today..$today@+01:00]"}
+        };
+        for (String[] pointInTimeAndDay : pointsInTimeAndDays) {
+            for (String timePart : timeParts) {
+                assertRejectedLikeDayWithNow(pointInTimeAndDay[0], pointInTimeAndDay[1], timePart, "", now);
+            }
+        }
+    }
+
+    @Test
+    public void testDateVariablePointInTimeTimePartBracketGroups() {
+        // A time part holds at most cairo.sql.interval.max.bracket.depth numeric brackets in a row after a point
+        // in time, as after a day, and a time list starts the count again
+        final String now = "2024-01-02T10:00:00.000000Z";
+        final String pointInTime = "[{lo=2024-01-02T10:00:00.000000Z, hi=2024-01-02T10:00:00.000000Z}]";
+        // 8 groups, the default limit
+        assertParsedAndCompiledWithNow(configuration, pointInTime, pointInTime, "[$now]T[09]:[00]:[00].[1][2][3][4][5]", now);
+        assertParsedAndCompiledErrorsWithNow(
+                "[$now]T[09]:[00]:[00].[1][2][3][4][5][6]",
+                now,
+                "Too many bracket groups (max 8)",
+                "Too many bracket groups (max 8)"
+        );
+        assertRejectedLikeDayWithNow("[$now - 1h..$now]", "[$today]", "T[09]:[00]:[00].[1][2][3][4][5][6]", "", now);
+
+        final CairoConfiguration twoGroups = new DefaultCairoConfiguration(".") {
+            @Override
+            public int getSqlIntervalMaxBracketDepth() {
+                return 2;
+            }
+        };
+        assertParsedAndCompiledWithNow(twoGroups, pointInTime, pointInTime, "[$now]T[09]:[00]", now);
+        assertParsedAndCompiledWithNow(
+                twoGroups,
+                "error: Too many bracket groups (max 2)",
+                "error: Too many bracket groups (max 2)",
+                "[$now]T[09]:[00]:[00]",
+                now
+        );
+        // a time list starts the count again
+        assertParsedAndCompiledWithNow(twoGroups, pointInTime, pointInTime, "[$now]T[09:][00]:[00]", now);
+        assertParsedAndCompiledWithNow(twoGroups, pointInTime, pointInTime, "[$now]T[09]:[00][:00]", now);
+        // and the day agrees
+        assertParsedAndCompiledWithNow(
+                twoGroups,
+                "error: Too many bracket groups (max 2)",
+                "error: Too many bracket groups (max 2)",
+                "[$today]T[09]:[00]:[00]",
+                now
+        );
+        final String daySecond = "[{lo=2024-01-02T09:00:00.000000Z, hi=2024-01-02T09:00:00.999999Z}]";
+        assertParsedAndCompiledWithNow(twoGroups, daySecond, daySecond, "[$today]T[09:][00]:[00]", now);
+    }
+
+    @Test
+    public void testDateVariablePointInTimeTimePartCheckedWhenNothingReadsIt() {
+        // The parser checks the time part when no element of the list parsed it in this evaluation: a range of
+        // business days that has no day, a static element that keeps a time of its own, and a point in time that
+        // its own day filter drops leave it to the check
+        final String saturday = "2025-01-25T12:00:00.000000Z";
+        assertParsedAndCompiledRejectedAtCompileTime("[$today..$today+0bd, $now]T25:00", saturday, "Invalid time override: 25:00");
+        assertParsedAndCompiledErrorsWithNow(
+                "[$today..$today+0bd, $now]T[09..10]:99",
+                saturday,
+                "Invalid time override: 09:99",
+                "Invalid time override: 09:99"
+        );
+        // on a Friday the day of the range reads the time part, which fails on both paths
+        final String friday = "2025-01-24T12:00:00.000000Z";
+        assertParsedAndCompiledRejectedWithNow("[$today..$today+0bd, $now]T25:00", friday, "25:00");
+        assertParsedAndCompiledRejectedWithNow("[$today..$today+0bd, $now]T[09..10]:99", friday, "09:99");
+        // A static element with a time of its own keeps it, and the compiled form leaves the list to the parser,
+        // which reads the time part as a day does. The minute of the static element holds $now.
+        final String now = "2024-01-02T10:00:00.000000Z";
+        assertRejectedLikeDayWithNow("[$now, 2024-01-02T10:00]", "[$today, 2024-01-02T10:00]", "T25:00", "", now);
+        final String staticMinute = "[{lo=2024-01-02T10:00:00.000000Z, hi=2024-01-02T10:00:59.999999Z}]";
+        assertParsedAndCompiledWithNow(configuration, staticMinute, staticMinute, "[$now, 2024-01-02T10:00]T09:00:00Z", now);
+        // 2024-01-02 is a Tuesday, so the day filter drops $now
+        assertRejectedLikeDayWithNow("[$now#Mon]", "[$today#Mon]", "T25:00", "", now);
+        assertRejectedLikeDayWithNow("[$now#Mon]", "[$today#Mon]", "T[09..10]:99", "", now);
+        assertRejectedLikeDayWithNow("[$now#Mon]", "[$today#Mon]", "T[09:00@Foo]", "", now);
+        assertParsedAndCompiledErrorsWithNow("[$now#Mon]T[09:00@Foo]", now, "invalid timezone: Foo", "invalid timezone: Foo");
+        // Left out, as no point in time takes part: a range of business days alone on a Saturday, as in
+        // [$today..$today+0bd]T25:00, and a static element alone with a time of its own, as in
+        // [2024-01-02T10:00]T25:00, which keeps that time whatever the time part of the list
+    }
+
+    @Test
+    public void testDateVariablePointInTimeTimePartChecksEachBracketValueAlone() {
+        // The check parses the time with every bracket at its first value, and each other value of each bracket
+        // with the other brackets at their first value, so it accepts a time part that fails a day only on two
+        // values at once, or only inside a '..' range
+        final String now = "2024-01-02T10:00:00.000000Z";
+        // 09:00:00.1123456789 has too many digits
+        assertAcceptedUnlikeDayWithNow("[$now]", "[$today]", "T[09:00:00.,09:00:00.1][5,123456789]", "", now);
+        // an offset of +10:60
+        assertAcceptedUnlikeDayWithNow("[$now]", "[$today]", "T09:00:00+[1000..1100]", "", now);
+    }
+
+    @Test
+    public void testDateVariablePointInTimeTimePartCutAsCompiled() {
+        // The compiled form ends the time part at the timezone of the expression, else at the first ';', also
+        // inside a bracket, and the parser checks the time part that a point in time ignores on the same text
+        final String now = "2024-01-02T10:00:00.000000Z";
+        assertParsedAndCompiledRejectedAtCompileTime("[$now - 1h..$now]T09:00@+01:00@+02:00", now, "Invalid time override: 09:00@+01:00");
+        assertParsedAndCompiledRejectedAtCompileTime("$now - 1h..$nowT09:00@+01:00@+02:00", now, "Invalid time override: 09:00@+01:00");
+        assertParsedAndCompiledRejectedAtCompileTime("[$now]T[09:00;1h", now, "Unclosed '[' in time list");
+        // the compiled form reads the duration before the time part, and the duration then holds the end of
+        // the bracket
+        assertParsedAndCompiledErrorsWithNow("[$now]T[09:00;1h@+01:00]", now, "Unclosed '[' in time list", "Expected number before unit '@'");
+        assertParsedAndCompiledErrorsWithNow("$nowT[09:00;1h@+01:00]", now, "Unclosed '[' in time list", "Expected number before unit '@'");
+        assertParsedAndCompiledErrorsWithNow("[$now]T[09:00;1h]@+01:00", now, "Invalid time in time list: 09:00;1h", "Expected number before unit ']'");
+        // the compiled form leaves this one to the parser, which fails like the day
+        assertRejectedLikeDayWithNow("[$now]", "[$today]", "T[09..10;1h]:00", "@+01:00", now);
+        assertParsedAndCompiledErrorsWithNow("[$now]T[09..10;1h]:00@+01:00", now, "Unclosed '[' in interval", "Unclosed '[' in interval");
+    }
+
+    @Test
+    public void testDateVariablePointInTimeTimePartDayOracleFuzz() {
+        // The parser checks the time part that a point in time ignores the way the literal reads it: with the
+        // check of the compiled form where the compiled form holds the time part, and else as the day of each
+        // point in time reads it, without expanding it. Random time parts after random points in time fail like
+        // the literal, or like the days of the points in time: exactly for a time part with at most one bracket
+        // and no '..' range, and otherwise only where the days fail too, as the check parses each value of a
+        // bracket with the other brackets at their first value, and only the ends of a range. In a list where a
+        // day or a static element without a time of its own reads the time part, nothing else checks it, so the
+        // list fails where that element alone fails.
+        final PointInTimeTimePartChecker checker = new PointInTimeTimePartChecker(timestampType.getDriver());
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        for (int i = 0, n = Integer.getInteger("questdb.fuzz.tickTimes", 3_000); i < n; i++) {
+            checker.check(rnd);
+        }
+        checker.assertNoFailures();
+    }
+
+    @Test
+    public void testDateVariablePointInTimeTimePartExpandsNothing() {
+        // The check parses one time per value of a bracket rather than every combination of the values, so a
+        // time part that a day expands past the limit of intervals leaves a point in time as it is
+        final CairoConfiguration fourIntervals = new DefaultCairoConfiguration(".") {
+            @Override
+            public int getSqlIntervalIncrementalMergeThreshold() {
+                return 2;
+            }
+
+            @Override
+            public int getSqlIntervalMaxIntervalsAfterMerge() {
+                return 4;
+            }
+        };
+        final String now = "2024-01-02T10:00:00.000000Z";
+        final String range = "[{lo=2024-01-02T09:00:00.000000Z, hi=2024-01-02T10:00:00.000000Z}]";
+        assertParsedAndCompiledWithNow(fourIntervals, range, range, "[$now - 1h..$now]T[00..23]:00", now);
+        // the day expands the hours to 24 intervals
+        assertParsedAndCompiledWithNow(
+                fourIntervals,
+                "error: Bracket expansion produces too many intervals (max 4)",
+                "error: Bracket expansion produces too many intervals (max 4)",
+                "[$today]T[00..23]:00",
+                now
+        );
+        // a bracket of 10^9 values, alone and after three others
+        final String pointInTime = "[{lo=2024-01-02T10:00:00.000000Z, hi=2024-01-02T10:00:00.000000Z}]";
+        assertParsedAndCompiledWithNow(configuration, pointInTime, pointInTime, "[$now]T00:00:00.[0..999999999]", now);
+        assertParsedAndCompiledWithNow(configuration, range, range, "[$now - 1h..$now]T[0..23]:[0..59]:[0..59].[0..999999999]", now);
+    }
+
+    @Test
+    public void testDateVariablePointInTimeTimePartGrammarFollowsTheLiteral() {
+        // Where the compiled form holds the time part, the literal reads it with the grammar of the compiled form,
+        // and the parser checks the time part that a point in time ignores with that grammar too
+        final String now = "2024-01-02T10:00:00.000000Z";
+        final String pointInTime = "[{lo=2024-01-02T10:00:00.000000Z, hi=2024-01-02T10:00:00.000000Z}]";
+        assertParsedAndCompiledRejectedAtCompileTime("[$now]T09:00:00Z", now, "Invalid time override: 09:00:00Z");
+        assertParsedAndCompiledRejectedAtCompileTime("[$now]T[09:00,]", now, "Empty element in time list");
+        assertParsedAndCompiledWithNow(configuration, pointInTime, pointInTime, "[$now]T[09:00] ", now);
+        // Where it does not, the literal is the parser, which reads the time part as the day of each point in
+        // time does: the days accept the first three, and reject the trailing space of the last two
+        assertAcceptedLikeDayWithNow("[$now@+01:00]", "[$today@+01:00]", "T09:00:00Z", "", now);
+        assertAcceptedLikeDayWithNow("[$now#Tue]", "[$today#Tue]", "T[09:00,]", "", now);
+        assertAcceptedLikeDayWithNow("[$now - 1h..$now@+01:00]", "[$today..$today@+01:00]", " 09:00", "", now);
+        assertRejectedLikeDayWithNow("[$now@+01:00]", "[$today@+01:00]", "T[09:00] ", "", now);
+        assertRejectedLikeDayWithNow("[$now#Tue]", "[$today#Tue]", "T[09:00] ", "", now);
+        // 10:00 at +01:00, and the hour before it
+        final String atPlusOne = "[{lo=2024-01-02T09:00:00.000000Z, hi=2024-01-02T09:00:00.000000Z}]";
+        assertParsedAndCompiledWithNow(configuration, atPlusOne, atPlusOne, "[$now@+01:00]T09:00:00Z", now);
+        final String rangeAtPlusOne = "[{lo=2024-01-02T08:00:00.000000Z, hi=2024-01-02T09:00:00.000000Z}]";
+        assertParsedAndCompiledWithNow(configuration, rangeAtPlusOne, rangeAtPlusOne, "[$now - 1h..$now@+01:00] 09:00", now);
+        assertParsedAndCompiledErrorsWithNow("[$now@+01:00]T[09:00] ", now, "Invalid time override: 09:00 ", "Invalid time override: 09:00 ");
+    }
+
+    @Test
+    public void testDateVariablePointInTimeTimePartInDynamicMode() throws SqlException {
+        // Without applying the intervals, the parser keeps a range between two points in time as one encoded
+        // interval, and checks the time part that the range ignores the same way
+        final String now = "2024-01-02T10:00:00.000000Z";
+        assertEncodedIntervalWithNow("[{lo=2024-01-02T09:00:00.000000Z, hi=2024-01-02T10:00:00.000000Z}]", "$now - 1h..$nowT[09..10]:00", now);
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final String[][] expressionsAndErrors = {
+                {"$now - 1h..$nowT[25:00]", "Invalid time in time list: 25:00"},
+                {"$now - 1h..$nowT[09..10]:99", "Invalid time override: 09:99"}
+        };
+        for (String[] expressionAndError : expressionsAndErrors) {
+            final String expression = expressionAndError[0];
+            out.clear();
+            try {
+                parseTickExprWithNow(timestampDriver, expression, 0, expression.length(), 42, out, IntervalOperation.INTERSECT, false, timestampDriver.parseFloorLiteral(now));
+                Assert.fail("parse should fail: " + expression + ", parsed: " + encodedIntervalToSink(timestampDriver, out));
+            } catch (SqlException e) {
+                TestUtils.assertEquals(expressionAndError[1], e.getFlyweightMessage());
+                Assert.assertEquals(42, e.getPosition());
+            }
+            // and leaves no interval behind
+            Assert.assertEquals(0, out.size());
+        }
+    }
+
+    @Test
+    public void testDateVariablePointInTimeTimePartMilitaryTime() {
+        // a number of 100 or more right after a 'T' is a time without colons, which a day rejects: also after a
+        // time list slot that ends in 'T', and on both paths
+        final String now = "2024-01-02T10:00:00.000000Z";
+        assertRejectedLikeDayWithNow("[$now - 1h..$now]", "[$today]", "T[0900]", "", now);
+        assertRejectedLikeDayWithNow("[$now - 1h..$now]", "[$today]", "T[09:0T][100]", "", now);
+        final String military = "Military time format not supported in bracket expansion. Use colons: [09:00,14:30] instead of [0900,1430]";
+        assertParsedAndCompiledErrorsWithNow("[$now - 1h..$now]T[0900]", now, military, military);
+        assertParsedAndCompiledErrorsWithNow("[$now - 1h..$now]T[09:0T][100]", now, military, military);
+        // The end of a range is no such number: the check parses it as an hour, which fails, and the day fails
+        // on the hour 24 of the range
+        assertParsedAndCompiledErrorsWithNow("[$now - 1h..$now]T[09..100]", now, "Invalid time override: 100", "Invalid time override: 100");
+        assertParsedAndCompiledErrorsWithNow("[$today]T[09..100]", now, "Invalid date: 2024-01-02T24", "Invalid date: 2024-01-02T24");
+    }
+
+    @Test
+    public void testDateVariablePointInTimeTimePartOfManyValues() {
+        final String now = "2024-01-02T10:00:00.000000Z";
+        // a bracket of 100_001 values, of which the check parses one time each
+        final String hours = "00,".repeat(100_000);
+        assertKeepsItsIntervalWithNow("[$now]", "T[" + hours + "00]:00", "", now);
+        assertParsedAndCompiledErrorsWithNow("[$now]T[" + hours + "99]:00", now, "Invalid time override: 99:00", "Invalid time override: 99:00");
+        // a time list of 50_002 slots, which the compiled form holds
+        assertParsedAndCompiledRejectedAtCompileTime("[$now]T[09:00," + "10:00,".repeat(50_000) + "25:00]", now, "Invalid time in time list: 25:00");
+        // a time part of 20_000 brackets, which fails on its first time
+        final String time = "Invalid time override: " + "0:00".repeat(10_000);
+        assertParsedAndCompiledErrorsWithNow("[$now - 1h..$now]T" + "[0:][0]".repeat(10_000), now, time, time);
+    }
+
+    @Test
+    public void testDateVariablePointInTimeTimePartPadding() {
+        // A bracket value takes the width of its field, as in a day: two digits after a 'T' or a space, and no
+        // padding after a '.'
+        final String now = "2024-01-02T10:00:00.000000Z";
+        assertAcceptedLikeDayWithNow("[$now - 1h..$now]", "[$today]", "T[9..10]:00", "", now);
+        // 8 digits of a second, rather than 16
+        assertAcceptedLikeDayWithNow("[$now - 1h..$now]", "[$today]", "T09:00:00.[1][2][3][4][5][6][7][8]", "", now);
+        assertAcceptedLikeDayWithNow("[$now - 1h..$now]", "[$today]", "T[09:00:00.5][1]", "", now);
+        assertAcceptedLikeDayWithNow("[$now - 1h..$now]", "[$today]", " [9..10]:00", "", now);
+        // A time part that does not start with 'T' or a space, after a range, has no time for a value to
+        // be a field of, and fails, naming the value with the padding of a day: two digits after a 'W', for
+        // the week of an ISO week, one digit a character later, for the day of the week, else two digits
+        assertRejectedLikeDayWithNow("[$now - 1h..$now]", "[$today]", "\tW[1]", "", now);
+        assertRejectedLikeDayWithNow("[$now - 1h..$now]", "[$today]", "\tW0[1]", "", now);
+        assertRejectedLikeDayWithNow("[$now - 1h..$now]", "[$today]", "\t:[1]", "", now);
+        assertParsedAndCompiledErrorsWithNow("[$now - 1h..$now]\tW0[1]", now, "Invalid time override: \tW01", "Invalid time override: \tW01");
+    }
+
+    @Test
+    public void testDateVariablePointInTimeTimePartParsesWithTheLeafOfItsDay() {
+        // A day parses its date and time with the duration when the expression has one, as a date that
+        // parseAnyFormat() reads, which takes a UTC zone, else as one that parseFloor() reads, which takes
+        // a fraction of 5 digits and a Z. The check of the time part after a point in time does the same.
+        final String now = "2024-01-02T10:00:00.000000Z";
+        assertAcceptedLikeDayWithNow("[$now - 1h..$now]", "[$today]", "T[09..10]:00:00UTC", ";1h", now);
+        assertRejectedLikeDayWithNow("[$now - 1h..$now]", "[$today]", "T[09..10]:00:00UTC", "", now);
+        assertAcceptedLikeDayWithNow("[$now - 1h..$now]", "[$today]", "T[09..10]:00:00.12345Z", "", now);
+        assertRejectedLikeDayWithNow("[$now - 1h..$now]", "[$today]", "T[09..10]:00:00.12345Z", ";1h", now);
+        assertRejectedLikeDayWithNow("[$now@+01:00]", "[$today@+01:00]", "T09:30:00.12345Z", ";1h", now);
+        // a day filter keeps the duration with the date and time
+        assertRejectedLikeDayWithNow("[$now - 1h..$now#Tue]", "[$today..$today#Tue]", "T[09..10]:30:00.12345Z", ";1h", now);
+        assertAcceptedLikeDayWithNow("[$now - 1h..$now#Tue]", "[$today..$today#Tue]", "T[09..10]:30:00.12345Z", "", now);
+        assertParsedAndCompiledErrorsWithNow(
+                "[$now - 1h..$now]T[09..10]:00:00.12345Z;1h",
+                now,
+                "Invalid time override: 09:00:00.12345Z",
+                "Invalid time override: 09:00:00.12345Z"
+        );
+    }
+
+    @Test
+    public void testDateVariablePointInTimeTimePartScratchReuse() {
+        // The check reuses its lists from one parse to the next, after a failure too, on 50 days in a row
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final long firstDay = timestampDriver.parseFloorLiteral("2024-01-02T10:00:00.000000Z");
+        for (int day = 0; day < 50; day++) {
+            final long now = timestampDriver.addDays(firstDay, day);
+            assertKeepsItsIntervalWithNow("[$now]", "T[00..23]:[00,30]:30", "", now);
+            assertParsedAndCompiledWithNow(
+                    configuration,
+                    "error: Expected number in bracket expansion",
+                    "error: Expected number in bracket expansion",
+                    "[$now]T[09..10]:[a]",
+                    now
+            );
+            assertKeepsItsIntervalWithNow("[$now - 1h..$now]", "T[09..10]:00", "", now);
+            assertParsedAndCompiledWithNow(configuration, "error: Invalid time override: 25:00", "error: Invalid time override: 25:00", "[$now]T25:00", now);
+            assertKeepsItsIntervalWithNow("[$now@+01:00]", "T09:00", "", now);
+        }
+    }
+
+    @Test
+    public void testDateVariablePointInTimeTimePartUncheckedWhereADayReadsIt() {
+        // Where a day of the list reads the time part, the list keeps the result of that reading, with the
+        // grammar of the day on the parser. Where the compiled form holds the time part, the literal reads it
+        // with its own grammar, which rejects a time with a zone; this difference between the two paths does
+        // not depend on the points in time of the list.
+        final String now = "2024-01-02T10:00:00.000000Z";
+        // the day takes 09:00:00Z at +01:00, 08:00Z, and $now keeps its own time
+        final String dayAtPlusOneAndNow = "[{lo=2024-01-02T08:00:00.000000Z, hi=2024-01-02T08:00:00.000000Z},{lo=2024-01-02T10:00:00.000000Z, hi=2024-01-02T10:00:00.000000Z}]";
+        assertParsedAndCompiledWithNow(configuration, dayAtPlusOneAndNow, dayAtPlusOneAndNow, "[$today@+01:00, $now]T09:00:00Z", now);
+        final String dayAndNow = "[{lo=2024-01-02T09:00:00.000000Z, hi=2024-01-02T09:00:00.000000Z},{lo=2024-01-02T10:00:00.000000Z, hi=2024-01-02T10:00:00.000000Z}]";
+        assertParsedAndCompiledWithNow(configuration, dayAndNow, "error: Invalid time override: 09:00:00Z", "[$today, $now]T09:00:00Z", now);
+        // the range from 09:00 keeps the 09:00:00Z of its day
+        final String day = "[{lo=2024-01-02T09:00:00.000000Z, hi=2024-01-02T09:00:00.000000Z}]";
+        assertParsedAndCompiledWithNow(configuration, day, "error: Invalid time override: 09:00:00Z", "[$now - 1h..$today]T09:00:00Z", now);
+        // the day rejects the trailing space
+        assertParsedAndCompiledErrorsWithNow("[$today@+01:00, $now]T[09:00] ", now, "Invalid date: 2024-01-02T09:00 ", "Invalid date: 2024-01-02T09:00 ");
+        assertParsedAndCompiledErrorsWithNow("[$now, $today]T[25:00]", now, "Invalid date: 2024-01-02T25:00", "Invalid time in time list: 25:00");
+    }
+
+    @Test
+    public void testDateVariablePointInTimeTimePartWhitespaceInBrackets() {
+        // Whitespace around the values of a bracket and of a time list, which the compiled form cannot hold
+        // when a time follows the list, is skipped as a day skips it, and a single '.' is no range
+        final String now = "2024-01-02T10:00:00.000000Z";
+        final String[] timeParts = {
+                "T[ 09]:00", "T[09 ,10]:00", "T[09.. 10]:00", "T[09..10 ,11]:00", "T[09, ]:00", "T[09:, ]00", "T[ 09:00 , 10:00 ]:00"
+        };
+        for (String timePart : timeParts) {
+            assertAcceptedLikeDayWithNow("[$now - 1h..$now]", "[$today]", timePart, "", now);
+        }
+        assertRejectedLikeDayWithNow("[$now - 1h..$now]", "[$today]", "T[09.]:00", "", now);
+        assertRejectedLikeDayWithNow("[$now - 1h..$now]", "[$today]", "T[09.5]:00", "", now);
+        assertParsedAndCompiledErrorsWithNow("[$now - 1h..$now]T[09.5]:00", now, "Expected ',' or end of bracket", "Expected ',' or end of bracket");
+    }
+
+    @Test
+    public void testDateVariablePointInTimeTimePartWithZoneNameOnDaysTheClocksChange() {
+        // The check parses each time on 1970-01-01 rather than on the day of the point in time. A time with the
+        // name of a zone parses the same on the days the clocks change: in the hour that London skips, and in
+        // the hour that New York skips.
+        assertSameVerdictAsDayWithNow(
+                "[$now - 1h..$now]",
+                "[$today]",
+                "T[01..02]:30:00Europe/London",
+                ";1h",
+                timestampType.getDriver().parseFloorLiteral("2024-03-31T02:30:00.000000Z")
+        );
+        assertSameVerdictAsDayWithNow(
+                "[$now - 1h..$now]",
+                "[$today]",
+                "T[02..03]:30:00America/New_York",
+                ";1h",
+                timestampType.getDriver().parseFloorLiteral("2024-03-10T08:00:00.000000Z")
+        );
+        if (ColumnType.isTimestampNano(timestampType.getTimestampType())) {
+            // on the last whole day of nanosecond timestamps, a day rejects such a time, which the check accepts
+            assertAcceptedUnlikeDayWithNow("[$now - 1h..$now]", "[$today]", "T[01..02]:30:00Europe/London", ";1h", "2262-04-10T12:00:00.000000Z");
+        }
+    }
+
+    @Test
     public void testDateVariablePointInTimeWithMalformedTimeFails() {
         // A point in time keeps its own time and ignores the time part of the expression, but a
         // malformed time part still fails the expression, the same as when a day takes it. The parser,
@@ -3850,11 +4296,73 @@ public class TickExprTest {
         assertParsedAndCompiledRejectedWithNow("$today+2hT[25:00]", now, "25:00");
         assertParsedAndCompiledRejectedWithNow("[$now - 1h..$now]T[25:00]", now, "25:00");
         assertParsedAndCompiledRejectedWithNow("[$now]T09:99", now, "09:99");
-        // the compiled form parses this one at every evaluation, so both paths let it through
+        // the compiled form parses this one at every evaluation
         assertParsedAndCompiledRejectedWithNow("[$now]T[09..10]:99", now, "09:99");
         // a day takes the time part, which fails on both paths
         assertParsedAndCompiledRejectedWithNow("[$now, $today]T[25:00]", now, "25:00");
         assertParsedAndCompiledRejectedWithNow("[$today]T09:99", now, "09:99");
+    }
+
+    @Test
+    public void testDateVariablePointInTimeWithMalformedTimeFailsAtEveryNow() {
+        // the check of the time part that a point in time ignores does not depend on "now": on different
+        // days, weekdays and times of day, on days when the clocks change, before 1970 and in the far future
+        final String[][] expressionsAndErrors = {
+                {"[$now]T[25:00]", "25:00"},
+                {"[$now]T25:00", "25:00"},
+                {"$nowT25:00", "25:00"},
+                {"$nowT[25:00]", "25:00"},
+                {"$today+2hT[25:00]", "25:00"},
+                {"[$now - 1h..$now]T[25:00]", "25:00"},
+                {"[$now]T09:99", "09:99"},
+                {"[$now]T[09..10]:99", "09:99"},
+                {"[$now - 1h..$now]T[09..10]:99", "09:99"},
+                {"[$now, $today]T[25:00]", "25:00"},
+                {"[$today]T09:99", "09:99"}
+        };
+        final String[] nows = Arrays.copyOf(FUZZ_NOWS, FUZZ_NOWS.length + 2);
+        nows[FUZZ_NOWS.length] = "1969-12-31T23:30:00.000000Z";
+        nows[FUZZ_NOWS.length + 1] = ColumnType.isTimestampNano(timestampType.getTimestampType())
+                ? "2262-04-11T00:00:00.000000Z"
+                : "9999-12-31T23:00:00.000000Z";
+        for (String now : nows) {
+            for (String[] expressionAndError : expressionsAndErrors) {
+                assertParsedAndCompiledRejectedWithNow(expressionAndError[0], now, expressionAndError[1]);
+            }
+            assertKeepsItsIntervalWithNow("[$now - 1h..$now]", "T[09..10]:00", "", now);
+        }
+    }
+
+    @Test
+    public void testDateVariablePointInTimeWithMalformedTimeFailsInEveryShape() {
+        // A malformed time part fails a point in time with a shift, a variable name in upper case, a list of
+        // ranges between points in time, a bare range, a duration, and a timezone or a day filter of the
+        // element, as the literal fails, or as the day of the point in time fails where the compiled form leaves
+        // the literal to the parser
+        final String now = "2024-01-02T10:00:00.000000Z";
+        assertParsedAndCompiledRejectedAtCompileTime("[$now]T25:00;1h", now, "Invalid time override: 25:00");
+        assertParsedAndCompiledRejectedAtCompileTime("[$now + 1h]T[25:00]", now, "Invalid time in time list: 25:00");
+        assertParsedAndCompiledRejectedAtCompileTime("[$today+2h]T09:99", now, "Invalid time override: 09:99");
+        assertParsedAndCompiledRejectedAtCompileTime("[$NOW]T[25:00]", now, "Invalid time in time list: 25:00");
+        assertParsedAndCompiledRejectedAtCompileTime("[$now - 3h..$now - 2h, $now - 1h..$now]T25:00", now, "Invalid time override: 25:00");
+        assertParsedAndCompiledRejectedAtCompileTime("$now..$NOW + 1hT25:00", now, "Invalid time override: 25:00");
+        assertParsedAndCompiledRejectedAtCompileTime("[$now - 1h..$now]T25:00;1h", now, "Invalid time override: 25:00");
+        assertRejectedLikeDayWithNow("[$now@+01:00]", "[$today@+01:00]", "T25:00", "", now);
+        assertRejectedLikeDayWithNow("[$now#Tue]", "[$today#Tue]", "T25:00", "", now);
+        assertParsedAndCompiledErrorsWithNow("[$now@+01:00]T25:00", now, "Invalid time override: 25:00", "Invalid time override: 25:00");
+        // a time part that does not start with 'T', after a range between points in time
+        assertParsedAndCompiledRejectedAtCompileTime("[$now - 1h..$now] ", now, "Expected 'T' time override, got:  ");
+        assertParsedAndCompiledRejectedAtCompileTime("[$now - 1h..$now] 09:00", now, "Expected 'T' time override, got:  ");
+        // a lowercase 't' starts no time part, and fails as before
+        assertParsedAndCompiledRejectedWithNow("$nowt09:00", now, "$nowt09:00");
+        assertParsedAndCompiledRejectedWithNow("[$now@+02:00]t09:00", now, "Invalid date: $nowt09:00");
+        // without a time part, a point in time keeps its interval
+        final String range = "[{lo=2024-01-02T09:00:00.000000Z, hi=2024-01-02T10:00:00.000000Z}]";
+        assertParsedAndCompiledWithNow(configuration, range, range, "[$now - 1h..$now];1h", now);
+        final String atPlusOne = "[{lo=2024-01-02T09:00:00.000000Z, hi=2024-01-02T09:00:00.000000Z}]";
+        assertParsedAndCompiledWithNow(configuration, atPlusOne, atPlusOne, "[$now]@+01:00", now);
+        final String hour = "[{lo=2024-01-02T10:00:00.000000Z, hi=2024-01-02T10:59:59.999999Z}]";
+        assertParsedAndCompiledWithNow(configuration, hour, hour, "[$now];1h", now);
     }
 
     @Test
@@ -6742,6 +7250,48 @@ public class TickExprTest {
     }
 
     @Test
+    public void testSteadyStateSkippedTimePartCheckAllocatesNoJavaHeap() throws Exception {
+        // ts IN <string column> parses the tick expression of every row, so the check of a time part that a
+        // point in time ignores must not allocate: neither the check of the compiled form, nor the reading of
+        // the time part as the days would read it, with a slot timezone and a time per bracket value
+        final String[] expressions = {
+                "[$now - 1h..$now]T09:00",
+                "[$now - 1h..$now]T[09..10]:00",
+                "[$now - 1h..$now]T[09:00@+01:00,10:00]:[00,30]",
+                "[$now - 1h..$now@+01:00]T09:00"
+        };
+        try (TestUtils.ThreadMetricsScope<com.sun.management.ThreadMXBean> scope = TestUtils.threadAllocationScope()) {
+            final com.sun.management.ThreadMXBean threadMXBean = scope.getBean();
+            final TimestampDriver timestampDriver = timestampType.getDriver();
+            final long now = timestampDriver.parseFloorLiteral("2024-01-02T10:00:00.000000Z");
+            final StringSink scratch = new StringSink();
+            for (String expression : expressions) {
+                for (int i = 0; i < 20_000; i++) {
+                    out.clear();
+                    IntervalUtils.parseTickExpr(timestampDriver, configuration, expression, 0, expression.length(),
+                            0, out, IntervalOperation.INTERSECT, scratch, true, now);
+                }
+                long minAllocatedBytes = Long.MAX_VALUE;
+                long intervalCount = 0;
+                for (int round = 0; round < 5; round++) {
+                    final long allocatedBefore = threadMXBean.getCurrentThreadAllocatedBytes();
+                    for (int i = 0; i < 1_000; i++) {
+                        out.clear();
+                        IntervalUtils.parseTickExpr(timestampDriver, configuration, expression, 0, expression.length(),
+                                0, out, IntervalOperation.INTERSECT, scratch, true, now);
+                        intervalCount += out.size() / 2;
+                    }
+                    minAllocatedBytes = Math.min(minAllocatedBytes,
+                            threadMXBean.getCurrentThreadAllocatedBytes() - allocatedBefore);
+                }
+                // each parses to the one interval of its range
+                Assert.assertEquals(expression, 5_000, intervalCount);
+                Assert.assertEquals(expression, 0, minAllocatedBytes);
+            }
+        }
+    }
+
+    @Test
     public void testTimeListBracketAdjacentIntervals() throws SqlException {
         // Test adjacent intervals: 09:00 (covers 09:00:00.000000-09:00:59.999999)
         // and 09:01 (covers 09:01:00.000000-09:01:59.999999) are exactly adjacent.
@@ -7508,11 +8058,15 @@ public class TickExprTest {
     private static TickExprKind appendRandomTickExpr(Rnd rnd, StringSink sink) {
         boolean isMalformed = false;
         boolean hasStaticElementTime = false;
+        // every element is a point in time or a range between two points in time
+        boolean isEveryElementPointInTime = true;
         if (rnd.nextInt(8) == 0) {
             sink.put("  ");
         }
         if (rnd.nextInt(3) == 0) {
+            final int exprLo = sink.length();
             appendRandomDateVariableExpr(rnd, sink);
+            isEveryElementPointInTime = isPointInTimeExpr(sink, exprLo, sink.length());
         } else {
             sink.put('[');
             for (int i = 0, n = 1 + rnd.nextInt(3); i < n; i++) {
@@ -7531,14 +8085,18 @@ public class TickExprTest {
                     } while (elementTime.isEmpty());
                     sink.put(element).put(elementTime);
                     hasStaticElementTime = true;
+                    isEveryElementPointInTime = false;
                     // not compared, see isWeekWithZonedSlot()
                     isMalformed |= isWeekWithZonedSlot(element, elementTime);
                     continue;
                 }
                 if (isStaticElement) {
                     sink.put(pick(rnd, FUZZ_STATIC_ELEMENTS));
+                    isEveryElementPointInTime = false;
                 } else {
+                    final int exprLo = sink.length();
                     appendRandomDateVariableExpr(rnd, sink);
+                    isEveryElementPointInTime &= isPointInTimeExpr(sink, exprLo, sink.length());
                 }
                 switch (elementSuffix) {
                     case 0 -> sink.put(pick(rnd, FUZZ_ZONES));
@@ -7556,8 +8114,13 @@ public class TickExprTest {
             sink.put(']');
         }
         boolean hasListTime = false;
+        // a malformed time part that every element ignores, which is all that is malformed
+        boolean isTimeMalformedAlone = false;
         if (rnd.nextInt(10) == 0) {
-            sink.put(pick(rnd, FUZZ_MALFORMED_TIMES));
+            final String time = pick(rnd, FUZZ_MALFORMED_TIMES);
+            sink.put(time);
+            // a point in time reads a time part that does not start with 'T' as part of its own text
+            isTimeMalformedAlone = !isMalformed && isEveryElementPointInTime && time.charAt(0) == 'T';
             isMalformed = true;
         } else {
             final String listTime = pick(rnd, FUZZ_TIMES);
@@ -7583,12 +8146,26 @@ public class TickExprTest {
             sink.put(dayFilter).put(duration);
         }
         if (isMalformed) {
-            return TickExprKind.MALFORMED;
+            return isTimeMalformedAlone ? TickExprKind.MALFORMED_TIME : TickExprKind.MALFORMED;
         }
         if (isDayFilterMisplaced) {
             return TickExprKind.MISPLACED_DAY_FILTER;
         }
         return hasStaticElementTime ? TickExprKind.STATIC_ELEMENT_TIME : TickExprKind.WELL_FORMED;
+    }
+
+    /**
+     * Returns what the compiled form evaluates the expression to at the given "now": the intervals, or
+     * "error: " and the message when it fails to compile or to evaluate.
+     */
+    private static String compiled(TimestampDriver timestampDriver, CairoConfiguration cairoConfiguration, String expression, long now, LongList intervals) {
+        intervals.clear();
+        try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(timestampDriver, cairoConfiguration, expression, 0, expression.length(), 0)) {
+            compiled.evaluate(intervals, now);
+            return intervalToString(timestampDriver, intervals).toString();
+        } catch (SqlException | CairoException e) {
+            return ERROR_PREFIX + e.getFlyweightMessage();
+        }
     }
 
     /**
@@ -7641,6 +8218,31 @@ public class TickExprTest {
     }
 
     /**
+     * Returns whether a date variable expression of the fuzz test is a point in time, or a range between two
+     * points in time.
+     */
+    private static boolean isPointInTimeExpr(CharSequence seq, int lo, int hi) {
+        while (lo < hi && Chars.isAsciiWhitespace(seq.charAt(lo))) {
+            lo++;
+        }
+        while (hi > lo && Chars.isAsciiWhitespace(seq.charAt(hi - 1))) {
+            hi--;
+        }
+        final int rangeOperator = Chars.indexOf(seq, lo, hi, "..");
+        if (rangeOperator >= 0) {
+            return isPointInTimeExpr(seq, lo, rangeOperator) && isPointInTimeExpr(seq, rangeOperator + 2, hi);
+        }
+        if (lo >= hi || seq.charAt(lo) != '$') {
+            return false;
+        }
+        try {
+            return !DateVariableExpr.isDayLevel(DateVariableExpr.parseEncoded(seq, lo, hi, 0));
+        } catch (SqlException e) {
+            return false;
+        }
+    }
+
+    /**
      * Returns whether a static element of the fuzz test is an ISO week with a time slot that has its own
      * timezone. The parser reads such a week as the start of the week in the timezone of the slot. The
      * compiled form converts it again with the timezone of the list, and judges it against the day filter
@@ -7675,8 +8277,46 @@ public class TickExprTest {
         );
     }
 
+    /**
+     * Returns what the parser gives for the expression at the given "now": the intervals, or "error: " and
+     * the message.
+     */
+    private static String parsed(TimestampDriver timestampDriver, CairoConfiguration cairoConfiguration, String expression, long now, LongList intervals) {
+        intervals.clear();
+        try {
+            IntervalUtils.parseTickExpr(timestampDriver, cairoConfiguration, expression, 0, expression.length(), 0,
+                    intervals, IntervalOperation.INTERSECT, new StringSink(), true, now);
+            return intervalToString(timestampDriver, intervals).toString();
+        } catch (SqlException e) {
+            return ERROR_PREFIX + e.getFlyweightMessage();
+        }
+    }
+
     private static String pick(Rnd rnd, String[] values) {
         return values[rnd.nextInt(values.length)];
+    }
+
+    /**
+     * Asserts that the day accepts the time part, and that the point in time, followed by it, keeps on
+     * both paths the interval it has without it, see {@link #assertSameVerdictAsDayWithNow}.
+     */
+    private void assertAcceptedLikeDayWithNow(String pointInTime, String day, String timePart, String rest, String nowTimestamp) {
+        Assert.assertFalse(
+                pointInTime + timePart + rest + " should be accepted like " + day + timePart + rest,
+                assertSameVerdictAsDayWithNow(pointInTime, day, timePart, rest, timestampType.getDriver().parseFloorLiteral(nowTimestamp))
+        );
+    }
+
+    /**
+     * Asserts that the day rejects the time part, and that the point in time, followed by it, still keeps
+     * on both paths the interval it has without it: the check of the time part parses each time on
+     * 1970-01-01, and each value of a bracket with the other brackets at their first value.
+     */
+    private void assertAcceptedUnlikeDayWithNow(String pointInTime, String day, String timePart, String rest, String nowTimestamp) {
+        final long now = timestampType.getDriver().parseFloorLiteral(nowTimestamp);
+        final String dayParsed = parsedWithNow(configuration, day + timePart + rest, now);
+        Assert.assertTrue(day + timePart + rest + " should fail, parsed: " + dayParsed, dayParsed.startsWith(ERROR_PREFIX));
+        assertKeepsItsIntervalWithNow(pointInTime, timePart, rest, now);
     }
 
     private void assertBracketInterval(String expected, String interval) throws SqlException {
@@ -7975,6 +8615,26 @@ public class TickExprTest {
     }
 
     /**
+     * Asserts that the point in time, followed by the time part and the rest of the expression, gives on
+     * both paths the intervals that the parser gives without the time part: a point in time keeps its own
+     * time, and a range between two points in time is one interval.
+     */
+    private void assertKeepsItsIntervalWithNow(String pointInTime, String timePart, String rest, long now) {
+        final String expression = pointInTime + timePart + rest;
+        final String expected = parsedWithNow(configuration, pointInTime + rest, now);
+        Assert.assertFalse(pointInTime + rest + " should parse: " + expected, expected.startsWith(ERROR_PREFIX));
+        TestUtils.assertEquals(
+                expression,
+                "parsed: " + expected + "\ncompiled: " + expected,
+                "parsed: " + parsedWithNow(configuration, expression, now) + "\ncompiled: " + compiledWithNow(configuration, expression, now)
+        );
+    }
+
+    private void assertKeepsItsIntervalWithNow(String pointInTime, String timePart, String rest, String nowTimestamp) {
+        assertKeepsItsIntervalWithNow(pointInTime, timePart, rest, timestampType.getDriver().parseFloorLiteral(nowTimestamp));
+    }
+
+    /**
      * Asserts that both the parse path ({@code parseTickExpr}) and the compiled path
      * ({@link CompiledTickExpression#evaluate}) produce the expected intervals for the given "now".
      */
@@ -7996,6 +8656,14 @@ public class TickExprTest {
         } catch (CairoException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), expectedError);
         }
+    }
+
+    /**
+     * Asserts that the parser and the compiled form reject the expression at the given "now" with exactly
+     * the given errors, the compiled form when it compiles or when it evaluates.
+     */
+    private void assertParsedAndCompiledErrorsWithNow(String expression, String nowTimestamp, String parsedError, String compiledError) {
+        assertParsedAndCompiledWithNow(configuration, ERROR_PREFIX + parsedError, ERROR_PREFIX + compiledError, expression, nowTimestamp);
     }
 
     /**
@@ -8064,6 +8732,35 @@ public class TickExprTest {
                 && compiled.startsWith("error: ") && compiled.contains(expectedError));
     }
 
+    /**
+     * Asserts what the parser and the compiled form give for the expression at the given "now" under the
+     * given configuration: the intervals, written in microseconds, or "error: " and the message, which the
+     * compiled form gives when it compiles or when it evaluates.
+     */
+    private void assertParsedAndCompiledWithNow(
+            CairoConfiguration cairoConfiguration,
+            String expectedParsed,
+            String expectedCompiled,
+            String expression,
+            long now
+    ) {
+        TestUtils.assertEquals(
+                expression,
+                "parsed: " + forTimestampType(expectedParsed) + "\ncompiled: " + forTimestampType(expectedCompiled),
+                "parsed: " + parsedWithNow(cairoConfiguration, expression, now) + "\ncompiled: " + compiledWithNow(cairoConfiguration, expression, now)
+        );
+    }
+
+    private void assertParsedAndCompiledWithNow(
+            CairoConfiguration cairoConfiguration,
+            String expectedParsed,
+            String expectedCompiled,
+            String expression,
+            String nowTimestamp
+    ) {
+        assertParsedAndCompiledWithNow(cairoConfiguration, expectedParsed, expectedCompiled, expression, timestampType.getDriver().parseFloorLiteral(nowTimestamp));
+    }
+
     private void assertParsedAndCompiledWithNow(String expected, String expression, String nowTimestamp) throws SqlException {
         final TimestampDriver timestampDriver = timestampType.getDriver();
         final long now = timestampDriver.parseFloorLiteral(nowTimestamp);
@@ -8090,6 +8787,56 @@ public class TickExprTest {
         );
     }
 
+    /**
+     * Asserts that the day rejects the time part, and that the point in time, followed by it, fails on both
+     * paths the same way, see {@link #assertSameVerdictAsDayWithNow}.
+     */
+    private void assertRejectedLikeDayWithNow(String pointInTime, String day, String timePart, String rest, String nowTimestamp) {
+        Assert.assertTrue(
+                pointInTime + timePart + rest + " should be rejected like " + day + timePart + rest,
+                assertSameVerdictAsDayWithNow(pointInTime, day, timePart, rest, timestampType.getDriver().parseFloorLiteral(nowTimestamp))
+        );
+    }
+
+    /**
+     * Asserts that a time part after a point in time fails on both paths exactly where the parser fails on it
+     * after the day of that point in time, for an expression whose literal the compiled form leaves to the
+     * parser. A syntax error is the error of the day, and a time that fails to parse is the time that fails
+     * the day. Where the day accepts the time part, the point in time keeps the interval it has without it.
+     * A single point in time reads a time part that does not start with 'T' as part of its own text, and
+     * fails on that text.
+     *
+     * @return whether the day, and so the point in time, rejects the time part
+     */
+    private boolean assertSameVerdictAsDayWithNow(String pointInTime, String day, String timePart, String rest, long now) {
+        final String expression = pointInTime + timePart + rest;
+        final String parsed = parsedWithNow(configuration, expression, now);
+        final String compiled = compiledWithNow(configuration, expression, now);
+        final String dayParsed = parsedWithNow(configuration, day + timePart + rest, now);
+        final String message = expression + "\nparsed: " + parsed + "\ncompiled: " + compiled + "\n" + day + timePart + rest + ": " + dayParsed;
+        if (!dayParsed.startsWith(ERROR_PREFIX)) {
+            assertKeepsItsIntervalWithNow(pointInTime, timePart, rest, now);
+            return false;
+        }
+        Assert.assertTrue(message, parsed.startsWith(ERROR_PREFIX));
+        Assert.assertEquals(message, parsed, compiled);
+        final String parsedError = parsed.substring(ERROR_PREFIX.length());
+        final String dayError = dayParsed.substring(ERROR_PREFIX.length());
+        final String invalidTime = "Invalid time override: ";
+        final String invalidDate = "Invalid date: ";
+        if (parsedError.startsWith(invalidTime)) {
+            // the day names the time after its date, YYYY-MM-DD
+            Assert.assertTrue(message, dayError.startsWith(invalidDate));
+            final String dayTime = dayError.substring(invalidDate.length() + 10);
+            Assert.assertEquals(message, dayTime.startsWith("T") ? dayTime.substring(1) : dayTime, parsedError.substring(invalidTime.length()));
+        } else if (parsedError.startsWith(invalidDate)) {
+            Assert.assertFalse(message, timePart.startsWith("T"));
+        } else {
+            Assert.assertEquals(message, dayError, parsedError);
+        }
+        return true;
+    }
+
     private void assertShortInterval(String expected, String interval) throws SqlException {
         out.clear();
         final TimestampDriver timestampDriver = timestampType.getDriver();
@@ -8100,6 +8847,32 @@ public class TickExprTest {
                         : expected,
                 intervalToString(timestampDriver, out)
         );
+    }
+
+    /**
+     * Returns what the compiled form evaluates the expression to at the given "now": the intervals, or
+     * "error: " and the message when it fails to compile or to evaluate.
+     */
+    private String compiledWithNow(CairoConfiguration cairoConfiguration, String expression, long now) {
+        return compiled(timestampType.getDriver(), cairoConfiguration, expression, now, out);
+    }
+
+    /**
+     * Returns the expected intervals, written in microseconds, in the precision of the timestamp type, or
+     * the expected error as it is.
+     */
+    private String forTimestampType(String expected) {
+        return ColumnType.isTimestampNano(timestampType.getTimestampType()) && !expected.startsWith(ERROR_PREFIX)
+                ? expected.replace("00Z", "00000Z").replace("99Z", "99999Z")
+                : expected;
+    }
+
+    /**
+     * Returns what the parser gives for the expression at the given "now": the intervals, or "error: " and
+     * the message.
+     */
+    private String parsedWithNow(CairoConfiguration cairoConfiguration, String expression, long now) {
+        return parsed(timestampType.getDriver(), cairoConfiguration, expression, now, out);
     }
 
     @FunctionalInterface
@@ -8115,9 +8888,13 @@ public class TickExprTest {
      * one that it compiles evaluates to the intervals of the parser at every "now", and one that it
      * rejects fails to parse at every "now".
      * <p>
-     * The two validate a malformed expression in different ways. The parser ignores the time part
-     * of a point in time, so it lets {@code $nowT[25:00]} through where the compiled form rejects it.
-     * The checker therefore only requires a detected date variable of a malformed expression.
+     * A point in time keeps its own time and ignores the time part of the expression, which the parser
+     * still reads the way the literal does: with the check of the compiled form where the compiled form
+     * holds the time part, else as the day of the point in time reads it. A time part that the day rejects
+     * after an expression whose elements are all points in time, as in {@code $nowT[25:00]} or
+     * {@code [$now#Mon]T[09..10]:99}, must fail the parser at every "now", and the compiled form when it
+     * compiles or when it evaluates. The two validate other malformed expressions in different ways, so
+     * the checker only requires a detected date variable of those.
      * <p>
      * The parser rejects most static elements with a time part of their own in a date list with a time
      * part. It accepts an element with a day and a time of day of its own, and an ISO week, which it
@@ -8144,6 +8921,9 @@ public class TickExprTest {
         private int checkCount;
         private int compiledCount;
         private int failureCount;
+        private int malformedTimeCount;
+        private int malformedTimeRejectedAtCompileCount;
+        private int malformedTimeRejectedAtEvaluationCount;
         private int misplacedDayFilterCount;
         private int misplacedDayFilterRejectedCount;
         private int nowDependentCount;
@@ -8165,6 +8945,9 @@ public class TickExprTest {
                     .$(", badDurationUnitRejected=").$(badDurationUnitRejectedCount)
                     .$(", misplacedDayFilter=").$(misplacedDayFilterCount)
                     .$(", misplacedDayFilterRejected=").$(misplacedDayFilterRejectedCount)
+                    .$(", malformedTime=").$(malformedTimeCount)
+                    .$(", malformedTimeRejectedAtCompile=").$(malformedTimeRejectedAtCompileCount)
+                    .$(", malformedTimeRejectedAtEvaluation=").$(malformedTimeRejectedAtEvaluationCount)
                     .$(", staticElementTime=").$(staticElementTimeCount)
                     .$(", staticElementTimeRejected=").$(staticElementTimeRejectedCount)
                     .$(", failures=").$(failureCount)
@@ -8181,6 +8964,9 @@ public class TickExprTest {
             Assert.assertTrue("no expression with a day filter after the duration failed to compile", misplacedDayFilterRejectedCount > 0);
             Assert.assertTrue("no expression with a date variable had a static element with a time part", staticElementTimeCount > 0);
             Assert.assertTrue("no expression with a static element with a time part failed to compile", staticElementTimeRejectedCount > 0);
+            Assert.assertTrue("no expression of points in time had a malformed time part", malformedTimeCount > 0);
+            Assert.assertTrue("no expression with a malformed time part failed to compile", malformedTimeRejectedAtCompileCount > 0);
+            Assert.assertTrue("no expression with a malformed time part failed to evaluate", malformedTimeRejectedAtEvaluationCount > 0);
         }
 
         /**
@@ -8217,6 +9003,10 @@ public class TickExprTest {
                 return;
             }
             if (kind == TickExprKind.MALFORMED) {
+                return;
+            }
+            if (kind == TickExprKind.MALFORMED_TIME) {
+                checkMalformedTime(expression);
                 return;
             }
             if (kind == TickExprKind.BAD_DURATION_UNIT || kind == TickExprKind.MISPLACED_DAY_FILTER) {
@@ -8301,6 +9091,37 @@ public class TickExprTest {
             }
         }
 
+        private void checkMalformedTime(String expression) {
+            malformedTimeCount++;
+            for (int i = 0; i < nows.length; i++) {
+                if (!ERROR.equals(parsed[i])) {
+                    fail(expression, "has a malformed time part, but parses to " + parsed[i] + " at " + FUZZ_NOWS[i]);
+                    return;
+                }
+            }
+            final CompiledTickExpression compiled;
+            try {
+                compiled = IntervalUtils.compileTickExpr(timestampDriver, configuration, expression, 0, expression.length(), 0);
+            } catch (SqlException | CairoException e) {
+                malformedTimeRejectedAtCompileCount++;
+                return;
+            }
+            try (compiled) {
+                for (int i = 0; i < nows.length; i++) {
+                    intervals.clear();
+                    try {
+                        compiled.evaluate(intervals, nows[i]);
+                    } catch (CairoException e) {
+                        continue;
+                    }
+                    fail(expression, "has a malformed time part, but evaluates to " + intervalToString(timestampDriver, intervals)
+                            + " at " + FUZZ_NOWS[i]);
+                    return;
+                }
+            }
+            malformedTimeRejectedAtEvaluationCount++;
+        }
+
         private void fail(String expression, String reason) {
             if (failureCount++ < MAX_REPORTED_FAILURES) {
                 failures.put(expression).put(": ").put(reason).put('\n');
@@ -8320,6 +9141,352 @@ public class TickExprTest {
     }
 
     /**
+     * Checks random time parts after random points in time against the reading that SQL makes of them, see
+     * {@link #testDateVariablePointInTimeTimePartDayOracleFuzz}. The expression is one of the shapes of
+     * {@link #SHAPES}, the reference the literal, the day of each point in time, or the day that reads the
+     * time part in the list.
+     */
+    private static class PointInTimeTimePartChecker {
+        // elements that read the time part of the list: days, a range of days, and static elements without a
+        // time of their own
+        private static final String[] DAY_READERS = {
+                "$today", "$yesterday..$today", "$today@+01:00", "$tomorrow#Wed", "2024-01-05", "2024-01", "2024-01-0[1..3]"
+        };
+        private static final String[] ELEMENT_SUFFIXES = {"", "", "@+01:00", "@Europe/London", "#Tue", "#Mon", "#workday"};
+        private static final int MAX_REPORTED_FAILURES = 20;
+        private static final String[] POINTS_IN_TIME = {"$now", "$NOW + 1h", "$today+2h", "$now - 30m"};
+        // ranges between two points in time that start before they end at every "now"
+        private static final String[] RANGES = {"$now - 1h..$now", "$now - 90m..$now - 30m", "$now..$NOW + 1h"};
+        private static final int SHAPE_BARE = 0;
+        private static final int SHAPE_DAY_READER = 4;
+        private static final int SHAPE_POINT_IN_TIME = 1;
+        private static final int SHAPE_POINT_IN_TIME_AND_RANGE = 3;
+        private static final int SHAPE_RANGE = 2;
+        private static final String[] SHAPES = {
+                "bare point in time", "point in time", "range", "point in time and range", "day reader", "static element time"
+        };
+        // the end of a time: a zone, which only parseFloor() or only parseAnyFormat() takes, or an offset
+        private static final String[] TAILS = {"Z", "UTC", "+01:00", "Europe/London"};
+        private static final String[] ZONES = {"", "", "@+02:00", "@Europe/London"};
+        private final StringSink failures = new StringSink();
+        private final LongList intervals = new LongList();
+        private final long[] nows = new long[FUZZ_NOWS.length];
+        private final int[] shapeCounts = new int[SHAPES.length];
+        private final TimestampDriver timestampDriver;
+        private int acceptedCount;
+        private int checkCount;
+        private int exactCount;
+        private int failureCount;
+        private int literalCount;
+        private int oneWayCount;
+        private int rejectedCount;
+        private int withDurationCount;
+        private int withoutDurationCount;
+
+        PointInTimeTimePartChecker(TimestampDriver timestampDriver) {
+            this.timestampDriver = timestampDriver;
+            for (int i = 0; i < FUZZ_NOWS.length; i++) {
+                nows[i] = timestampDriver.parseFloorLiteral(FUZZ_NOWS[i]);
+            }
+        }
+
+        void assertNoFailures() {
+            LOG.info().$("point in time time part fuzz done [expressions=").$(checkCount)
+                    .$(", accepted=").$(acceptedCount)
+                    .$(", rejected=").$(rejectedCount)
+                    .$(", literal=").$(literalCount)
+                    .$(", exact=").$(exactCount)
+                    .$(", oneWay=").$(oneWayCount)
+                    .$(", withDuration=").$(withDurationCount)
+                    .$(", withoutDuration=").$(withoutDurationCount)
+                    .$(", failures=").$(failureCount)
+                    .I$();
+            if (failureCount > 0) {
+                Assert.fail(failureCount + " of " + checkCount + " tick expressions failed, the first "
+                        + Math.min(failureCount, MAX_REPORTED_FAILURES) + ":\n" + failures);
+            }
+            for (int i = 0; i < SHAPES.length; i++) {
+                Assert.assertTrue("no expression of the shape: " + SHAPES[i], shapeCounts[i] > 0);
+            }
+            Assert.assertTrue("no expression was accepted", acceptedCount > 0);
+            Assert.assertTrue("no expression was rejected", rejectedCount > 0);
+            Assert.assertTrue("no time part was one that the compiled form holds", literalCount > 0);
+            Assert.assertTrue("no time part had at most one bracket and no range", exactCount > 0);
+            Assert.assertTrue("no time part had brackets that the check reads one at a time", oneWayCount > 0);
+            Assert.assertTrue("no expression had a duration", withDurationCount > 0);
+            Assert.assertTrue("no expression was without a duration", withoutDurationCount > 0);
+        }
+
+        void check(Rnd rnd) {
+            checkCount++;
+            final int nowIndex = rnd.nextInt(nows.length);
+            final long now = nows[nowIndex];
+            final int shape = rnd.nextInt(SHAPES.length);
+            shapeCounts[shape]++;
+            final String elementSuffix = pick(rnd, ELEMENT_SUFFIXES);
+            final String prefix;
+            // the expression of the days of the points in time, or, for SHAPE_DAY_READER, of the day alone
+            final String dayPrefix;
+            // a single point in time reads a time part that does not start with 'T' as part of its own text
+            boolean isSpaceAllowed = false;
+            // the compiled form holds no element with a timezone or a day filter of its own, and no static
+            // element with a time of its own
+            boolean isCompilable = elementSuffix.isEmpty();
+            switch (shape) {
+                case SHAPE_BARE -> {
+                    prefix = rnd.nextBoolean() ? pick(rnd, POINTS_IN_TIME) : pick(rnd, RANGES);
+                    dayPrefix = "$today";
+                    isCompilable = true;
+                }
+                case SHAPE_POINT_IN_TIME -> {
+                    prefix = "[" + pick(rnd, POINTS_IN_TIME) + elementSuffix + "]";
+                    dayPrefix = "[$today" + elementSuffix + "]";
+                }
+                case SHAPE_RANGE -> {
+                    prefix = "[" + pick(rnd, RANGES) + elementSuffix + "]";
+                    dayPrefix = "[$today..$today" + elementSuffix + "]";
+                    isSpaceAllowed = true;
+                }
+                case SHAPE_POINT_IN_TIME_AND_RANGE -> {
+                    prefix = "[" + pick(rnd, POINTS_IN_TIME) + ", " + pick(rnd, RANGES) + elementSuffix + "]";
+                    dayPrefix = "[$today, $today..$today" + elementSuffix + "]";
+                }
+                case SHAPE_DAY_READER -> {
+                    final String reader = pick(rnd, DAY_READERS);
+                    prefix = "[" + reader + ", " + pick(rnd, POINTS_IN_TIME) + elementSuffix + "]";
+                    dayPrefix = "[" + reader + "]";
+                }
+                default -> {
+                    prefix = "[2024-01-05T10:00, " + pick(rnd, POINTS_IN_TIME) + elementSuffix + "]";
+                    dayPrefix = "[2024-01-05T10:00, $today" + elementSuffix + "]";
+                    isCompilable = false;
+                }
+            }
+            final String timePart = randomTimePart(rnd, isSpaceAllowed && rnd.nextInt(4) == 0);
+            final String duration = pick(rnd, FUZZ_DURATIONS);
+            final String rest = pick(rnd, ZONES) + pick(rnd, FUZZ_DAY_FILTERS) + duration;
+            final String expression = prefix + timePart + rest;
+            final String parsed = parsed(timestampDriver, configuration, expression, now, intervals);
+            final String compiled = compiled(timestampDriver, configuration, expression, now, intervals);
+            final boolean isRejected = parsed.startsWith(ERROR_PREFIX);
+            if (isRejected) {
+                rejectedCount++;
+            } else {
+                acceptedCount++;
+            }
+            final String day = parsed(timestampDriver, configuration, dayPrefix + timePart + rest, now, intervals);
+            final boolean isDayRejecting = day.startsWith(ERROR_PREFIX);
+            final String verdicts = " at " + FUZZ_NOWS[nowIndex] + ", parsed: " + parsed + ", compiled: " + compiled
+                    + ", " + dayPrefix + timePart + rest + ": " + day;
+            if (shape == SHAPE_DAY_READER) {
+                // the day reads the time part, and the list fails where the day alone fails
+                if (isRejected != isDayRejecting) {
+                    fail(expression, "fails other than the day that reads its time part" + verdicts);
+                }
+                return;
+            }
+            if (duration.isEmpty()) {
+                withoutDurationCount++;
+            } else {
+                withDurationCount++;
+            }
+            if (!isRejected) {
+                // a point in time keeps its own time
+                final String expected = parsed(timestampDriver, configuration, prefix + rest, now, intervals);
+                if (!parsed.equals(expected) || !compiled.equals(expected)) {
+                    fail(expression, "does not keep the intervals of " + prefix + rest + ", " + expected + verdicts);
+                    return;
+                }
+            } else if (!compiled.equals(parsed)) {
+                fail(expression, "fails otherwise when it compiles" + verdicts);
+                return;
+            }
+            if (isCompilable && isTimePartCompilable(timePart)) {
+                // the literal reads the time part with the check of the compiled form, which compiled checked
+                // above, and the parser checks it the same way
+                literalCount++;
+                return;
+            }
+            int bracketCount = 0;
+            for (int i = 0, n = timePart.length(); i < n; i++) {
+                if (timePart.charAt(i) == '[') {
+                    bracketCount++;
+                }
+            }
+            if (bracketCount <= 1 && !timePart.contains("..")) {
+                exactCount++;
+                if (isRejected != isDayRejecting) {
+                    fail(expression, "fails other than the days of its points in time" + verdicts);
+                }
+            } else {
+                oneWayCount++;
+                if (isRejected && !isDayRejecting) {
+                    fail(expression, "fails where the days of its points in time do not" + verdicts);
+                }
+            }
+        }
+
+        /**
+         * Returns whether the compiled form holds the time part, as IntervalUtils.isCompilable() decides it
+         * for an expression of date variables: a time part without brackets, or with a time list right after
+         * its first character, of plain times, and nothing but whitespace after the list.
+         */
+        private static boolean isTimePartCompilable(String timePart) {
+            final int bracketStart = timePart.indexOf('[');
+            if (bracketStart < 0) {
+                return true;
+            }
+            if (bracketStart != 1) {
+                return false;
+            }
+            final int bracketEnd = timePart.indexOf(']');
+            if (bracketEnd < 0) {
+                // an unclosed bracket fails either way
+                return true;
+            }
+            final String slots = timePart.substring(bracketStart + 1, bracketEnd);
+            return slots.indexOf(':') >= 0 && slots.indexOf('@') < 0 && slots.indexOf('[') < 0 && !slots.contains("..")
+                    && timePart.substring(bracketEnd + 1).isBlank();
+        }
+
+        /**
+         * Appends a field of a time: a number of two digits up to {@code max}, now and then a larger one, or
+         * a bracket of such numbers, now and then malformed.
+         *
+         * @return the number of brackets that the time part may still take
+         */
+        private static int appendField(Rnd rnd, StringBuilder timePart, int max, int bracketBudget) {
+            if (bracketBudget == 0 || rnd.nextInt(3) == 0) {
+                appendNumber(rnd, timePart, max, true);
+                return bracketBudget;
+            }
+            timePart.append('[');
+            switch (rnd.nextInt(14)) {
+                case 0 -> {
+                    // an ascending range
+                    final int lo = rnd.nextInt(max + 1);
+                    timePart.append(lo).append("..").append(lo + rnd.nextInt(3));
+                }
+                case 1 -> {
+                    // a range past the largest value
+                    timePart.append(max - 1).append("..").append(max + 1 + rnd.nextInt(2));
+                }
+                case 2 -> timePart.append(max).append("..").append(max - 1);
+                case 3 -> timePart.append(rnd.nextBoolean() ? "" : ",").append(rnd.nextBoolean() ? "" : "5");
+                case 4 -> timePart.append("5..");
+                case 5 -> timePart.append("5 6");
+                case 6 -> timePart.append("0900");
+                default -> {
+                    // a list of values, now and then with a trailing comma
+                    for (int i = 0, n = 1 + rnd.nextInt(3); i < n; i++) {
+                        if (i > 0) {
+                            timePart.append(',');
+                        }
+                        appendNumber(rnd, timePart, max, rnd.nextBoolean());
+                    }
+                    if (rnd.nextInt(8) == 0) {
+                        timePart.append(',');
+                    }
+                }
+            }
+            timePart.append(']');
+            return bracketBudget - 1;
+        }
+
+        private static void appendFraction(Rnd rnd, StringBuilder timePart, int bracketBudget) {
+            if (bracketBudget == 0 || rnd.nextBoolean()) {
+                // up to 10 digits, the most that no timestamp takes
+                for (int i = 0, n = 1 + rnd.nextInt(10); i < n; i++) {
+                    timePart.append(rnd.nextInt(10));
+                }
+                return;
+            }
+            // a short range, as the days of the points in time take each of its values
+            switch (rnd.nextInt(3)) {
+                case 0 -> timePart.append("[0..2]");
+                case 1 -> timePart.append('[').append(rnd.nextInt(10)).append(',').append(rnd.nextInt(1_000_000)).append(']');
+                default -> timePart.append('[').append(rnd.nextInt(10)).append(']');
+            }
+        }
+
+        private static void appendNumber(Rnd rnd, StringBuilder timePart, int max, boolean isPadded) {
+            final int value = rnd.nextInt(8) == 0 ? max + 1 + rnd.nextInt(99 - max) : rnd.nextInt(max + 1);
+            if (isPadded && value < 10) {
+                timePart.append('0');
+            }
+            timePart.append(value);
+        }
+
+        private static void appendTimeList(Rnd rnd, StringBuilder timePart) {
+            timePart.append('[');
+            for (int i = 0, n = 1 + rnd.nextInt(3); i < n; i++) {
+                if (i > 0) {
+                    timePart.append(',');
+                }
+                if (rnd.nextInt(16) == 0) {
+                    // an empty slot
+                    continue;
+                }
+                appendNumber(rnd, timePart, 23, true);
+                timePart.append(':');
+                appendNumber(rnd, timePart, 59, true);
+                switch (rnd.nextInt(8)) {
+                    case 0 -> timePart.append("@+01:00");
+                    case 1 -> timePart.append("@Europe/London");
+                    case 2 -> timePart.append("@Foo");
+                    default -> {
+                    }
+                }
+            }
+            if (rnd.nextInt(8) == 0) {
+                timePart.append(',');
+            }
+            timePart.append(']');
+        }
+
+        /**
+         * Returns a random time part of up to 3 brackets: numbers, ranges and time lists, with slot
+         * timezones, now and then malformed, and now and then with a zone at the end.
+         */
+        private static String randomTimePart(Rnd rnd, boolean isSpaceLed) {
+            final StringBuilder timePart = new StringBuilder(isSpaceLed ? " " : "T");
+            int bracketBudget = rnd.nextInt(4);
+            if (bracketBudget > 0 && rnd.nextInt(3) == 0) {
+                appendTimeList(rnd, timePart);
+                bracketBudget--;
+                if (rnd.nextBoolean()) {
+                    timePart.append(':');
+                    appendField(rnd, timePart, 59, bracketBudget);
+                }
+            } else {
+                bracketBudget = appendField(rnd, timePart, 23, bracketBudget);
+                if (rnd.nextInt(4) > 0) {
+                    timePart.append(':');
+                    bracketBudget = appendField(rnd, timePart, 59, bracketBudget);
+                    if (rnd.nextBoolean()) {
+                        timePart.append(':');
+                        bracketBudget = appendField(rnd, timePart, 59, bracketBudget);
+                        if (rnd.nextInt(3) == 0) {
+                            timePart.append('.');
+                            appendFraction(rnd, timePart, bracketBudget);
+                        }
+                    }
+                }
+            }
+            if (rnd.nextInt(5) == 0) {
+                timePart.append(pick(rnd, TAILS));
+            }
+            return timePart.toString();
+        }
+
+        private void fail(String expression, String reason) {
+            if (failureCount++ < MAX_REPORTED_FAILURES) {
+                failures.put(expression).put(": ").put(reason).put('\n');
+            }
+        }
+    }
+
+    /**
      * What the grammar makes of a tick expression that {@link #testDateVariableDetectionFuzz} generates.
      */
     private enum TickExprKind {
@@ -8327,6 +9494,9 @@ public class TickExprTest {
         // holds a part that the grammar rejects, which the parser and the compiled form validate in
         // different ways
         MALFORMED,
+        // well-formed but for a time part that every element ignores, as all are points in time, and
+        // that their days reject
+        MALFORMED_TIME,
         // well-formed but for a duration unit that TimestampDriver.add() does not know
         BAD_DURATION_UNIT,
         // well-formed but for a day filter after the duration, which makes the duration malformed
