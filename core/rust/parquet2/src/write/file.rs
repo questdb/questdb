@@ -309,6 +309,15 @@ fn row_group_page_indexable(
     })
 }
 
+/// Removes the elements whose index `removed` marks, in one in-place pass,
+/// and keeps the rest in order; elements past the end of `removed` stay.
+/// `Vec::retain` visits every element once, in order, so the n-th visit
+/// takes the n-th mark.
+fn remove_marked<T>(values: &mut Vec<T>, removed: &[bool]) {
+    let mut marks = removed.iter();
+    values.retain(|_| !marks.next().copied().unwrap_or(false));
+}
+
 /// Writes the page index for `row_groups`, recording each column's index
 /// offset/length in place and advancing `offset`. Fresh groups derive it from
 /// `page_specs` (`boundary_order` from `sorting_columns`); copied groups (an
@@ -1314,23 +1323,19 @@ impl<W: Write> ParquetFile<W> {
                 // Phase 1b: removals, in original index space after the
                 // replacements and before the insertions. Insert positions are
                 // final positions that already exclude removed groups, so every
-                // removal must be applied before any insertion. Descending order
-                // keeps the lower indices stable. Cached sources keep their
-                // original index, which is what the FooterCache is keyed by.
-                // remove() sized `removed` to the original count and rejected
-                // replaced groups; phase 1 rejected a replacement of a removed one.
+                // removal must be applied before any insertion. Cached sources
+                // keep their original index, which is what the FooterCache is
+                // keyed by. remove() sized `removed` to the original count and
+                // rejected replaced groups; phase 1 rejected a replacement of a
+                // removed one.
                 debug_assert!(removed.len() <= original_rg_count);
                 for index in (0..removed.len()).rev() {
                     if !removed[index] {
                         continue;
                     }
                     debug_assert!(!modified[index]);
-                    // Checked access instead of a direct index: descending
-                    // order keeps this in bounds under correct iteration, but
-                    // a logic error that made the loop ascend previously
-                    // turned into an out-of-bounds panic here (a JNI abort)
-                    // instead of an Err. get()/len() guards on all three
-                    // lockstep vectors turn that into a recoverable error.
+                    // get(), not an index: a logic error must surface as an
+                    // Err, not a panic (a JNI abort).
                     let row_group_num_rows = metadata
                         .row_groups
                         .get(index)
@@ -1351,30 +1356,15 @@ impl<W: Write> ParquetFile<W> {
                                 index, num_rows
                             ))
                         })?;
-                    if index >= metadata.row_groups.len() {
-                        return Err(Error::oos(format!(
-                            "Row group removal index {} out of bounds for {} row groups",
-                            index,
-                            metadata.row_groups.len()
-                        )));
-                    }
-                    if index >= sources.len() {
-                        return Err(Error::oos(format!(
-                            "Row group removal index {} out of bounds for {} row group sources",
-                            index,
-                            sources.len()
-                        )));
-                    }
-                    if index >= origins.len() {
-                        return Err(Error::oos(format!(
-                            "Row group removal index {} out of bounds for {} row group origins",
-                            index,
-                            origins.len()
-                        )));
-                    }
-                    metadata.row_groups.remove(index);
-                    sources.remove(index);
-                    origins.remove(index);
+                }
+                // One pass per lockstep vector: a Vec::remove per removed
+                // group would shift every later group each time.
+                if !removed.is_empty() {
+                    debug_assert_eq!(sources.len(), metadata.row_groups.len());
+                    debug_assert_eq!(origins.len(), metadata.row_groups.len());
+                    remove_marked(&mut metadata.row_groups, &removed);
+                    remove_marked(&mut sources, &removed);
+                    remove_marked(&mut origins, &removed);
                 }
 
                 // Phase 2: insertions in ascending ordinal order
@@ -1810,6 +1800,114 @@ mod tests {
         let meta = file.metadata().unwrap();
         assert_eq!(meta.row_groups.len(), count - 1);
         assert_eq!(meta.num_rows, count as i64 - 1);
+        Ok(())
+    }
+
+    #[test]
+    fn update_remove_head_half_of_max_row_groups() -> UpdResult<()> {
+        // The most row groups write_row_group lets a file have (i16 ordinals),
+        // the first half removed: every survivor moves to the head. The cache
+        // holds other markers than the parsed metadata, so the output shows
+        // that each survivor is emitted from its own original cache entry.
+        let count = i16::MAX as usize + 1;
+        let half = count / 2;
+        let markers: Vec<i64> = (0..count as i64).collect();
+        let cache_markers: Vec<i64> = (0..count as i64).map(|i| 100_000 + i).collect();
+        let rows = vec![1i64; count];
+        let cache = FooterCache::from_footer_bytes(serialize_footer(&marker_metadata(
+            &cache_markers,
+            &rows,
+        )))?;
+        let mut file = marker_updater(&markers, &rows, Some(cache));
+        for ordinal in 0..half {
+            file.remove(ordinal as i32)?;
+        }
+        let end = file.end(None)?;
+        let expected_origins: Vec<RowGroupOrigin> = (half..count)
+            .map(|orig_idx| RowGroupOrigin::Existing { orig_idx })
+            .collect();
+        assert_eq!(file.row_group_origins(), expected_origins.as_slice());
+        let (markers, num_rows, _) = read_back(file, end);
+        let expected_markers: Vec<i64> = (half as i64..count as i64).map(|i| 100_000 + i).collect();
+        assert_eq!(markers, expected_markers);
+        assert_eq!(num_rows, half as i64);
+        Ok(())
+    }
+
+    #[test]
+    fn update_remove_scattered_groups_keeps_sources_aligned() -> UpdResult<()> {
+        // Removed groups at the head, in an adjacent run between survivors and
+        // at the tail, around a replaced group. The cache holds other markers
+        // than the parsed metadata: an unchanged survivor is emitted from its
+        // own original cache entry, the replaced group from its new metadata.
+        let cache = FooterCache::from_footer_bytes(serialize_footer(&marker_metadata(
+            &[100, 101, 102, 103, 104, 105, 106],
+            &[1, 2, 3, 4, 5, 6, 7],
+        )))?;
+        let mut file = marker_updater(
+            &[10, 11, 12, 13, 14, 15, 16],
+            &[1, 2, 3, 4, 5, 6, 7],
+            Some(cache),
+        );
+        file.remove(0)?;
+        file.remove(2)?;
+        file.remove(3)?;
+        file.remove(6)?;
+        file.write_raw_row_group(&[], marker_rg(24, 9, 4))?; // k=0 replaces group 4
+        let end = file.end(None)?;
+        assert_eq!(
+            file.row_group_origins(),
+            &[
+                RowGroupOrigin::Existing { orig_idx: 1 },
+                RowGroupOrigin::Written(0),
+                RowGroupOrigin::Existing { orig_idx: 5 },
+            ]
+        );
+        let (markers, num_rows, _) = read_back(file, end);
+        assert_eq!(markers, vec![101, 24, 105]);
+        // 28 - group 4 (5) + its replacement (9) - removed (1 + 3 + 4 + 7) = 17
+        assert_eq!(num_rows, 17);
+        Ok(())
+    }
+
+    #[test]
+    fn update_remove_nothing_keeps_every_row_group() -> UpdResult<()> {
+        // A replacement and an insertion, but no removal: every original
+        // group stays, in order, unchanged ones emitted from the cache.
+        let cache = FooterCache::from_footer_bytes(serialize_footer(&marker_metadata(
+            &[100, 101, 102],
+            &[1, 2, 3],
+        )))?;
+        let mut file = marker_updater(&[10, 11, 12], &[1, 2, 3], Some(cache));
+        file.write_raw_row_group(&[], marker_rg(21, 4, 1))?; // k=0 replaces group 1
+        file.insert(empty_group(), 0, &[])?; // k=1 at final position 0
+        let end = file.end(None)?;
+        assert_eq!(
+            file.row_group_origins(),
+            &[
+                RowGroupOrigin::Written(1),
+                RowGroupOrigin::Existing { orig_idx: 0 },
+                RowGroupOrigin::Written(0),
+                RowGroupOrigin::Existing { orig_idx: 2 },
+            ]
+        );
+        let (markers, num_rows, _) = read_back(file, end);
+        // Inserted zero-column groups have total_byte_size 0.
+        assert_eq!(markers, vec![0, 100, 21, 102]);
+        // 6 - group 1 (2) + its replacement (4) + the insert (0) = 8
+        assert_eq!(num_rows, 8);
+        Ok(())
+    }
+
+    #[test]
+    fn update_remove_only_row_group_leaves_no_row_groups() -> UpdResult<()> {
+        let mut file = marker_updater(&[10], &[5], None);
+        file.remove(0)?;
+        let end = file.end(None)?;
+        assert_eq!(file.row_group_origins(), &[] as &[RowGroupOrigin]);
+        let (markers, num_rows, _) = read_back(file, end);
+        assert_eq!(markers, Vec::<i64>::new());
+        assert_eq!(num_rows, 0);
         Ok(())
     }
 
