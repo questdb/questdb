@@ -7572,7 +7572,6 @@ public class WalWriterTest extends AbstractCairoTest {
         }
     }
 
-    @SuppressWarnings("SameParameterValue")
     // TableSequencerAPI.throwIfCommitRefused() must refuse exactly what the commit of a writer
     // holding the same token refuses, with the same exception: run the DDL between the writer's
     // acquisition and its commit, then compare the check's outcome with the commit's.
@@ -7612,6 +7611,7 @@ public class WalWriterTest extends AbstractCairoTest {
         });
     }
 
+    @SuppressWarnings("SameParameterValue")
     private void assertEmptySymbolDiff(WalEventCursor.DataInfo dataInfo, int columnIndex) {
         SymbolMapDiff symbolMapDiff = dataInfo.nextSymbolMapDiff();
         assertEquals(columnIndex, symbolMapDiff.getColumnIndex());

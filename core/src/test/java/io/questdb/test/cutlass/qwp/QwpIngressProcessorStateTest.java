@@ -7294,13 +7294,6 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * The batch's table is dropped, or renamed with its name reused, while a batch is
-     * pending. Before admission the next frame is cut from the batch; after admission
-     * it joins and appends to the old writer. Either way the batch's own commit is
-     * refused (dropped table, or the sequencer's token check), nothing of it is
-     * committed or reported, and the client replays the batch by name.
-     */
     private void assertLookupEvictsDistressedWriter(int uncommittedRows) throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE distressed (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -7363,6 +7356,13 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * The batch's table is dropped, or renamed with its name reused, while a batch is
+     * pending. Before admission the next frame is cut from the batch; after admission
+     * it joins and appends to the old writer. Either way the batch's own commit is
+     * refused (dropped table, or the sequencer's token check), nothing of it is
+     * committed or reported, and the client replays the batch by name.
+     */
     private void assertBatchLostToReplacement(boolean isDrop, boolean isAfterAdmission) throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE prepared (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
