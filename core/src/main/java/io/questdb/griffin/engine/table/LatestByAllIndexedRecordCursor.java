@@ -410,8 +410,13 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
             final long indexRowLo = frame.getIndexRowLo();
             final long indexRowHi = frame.getIndexRowHi() - 1;
             final int invertedFrameIndex = Rows.MAX_SAFE_PARTITION_INDEX - frameIndex;
-            final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
-            recordA.init(frameMemory);
+            // Only a materialized frame has a source-row resolver, and only prefixes read the record.
+            IndexReader.SourceRowResolver sourceRows = IndexReader.SourceRowResolver.NONE;
+            if (prefixes.size() > 2 || frameMemoryPool.usesCustomDecode(frameIndex)) {
+                final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
+                recordA.init(frameMemory);
+                sourceRows = frameMemory.getSourceRowResolver();
+            }
 
             for (int i = remainingKeys.size() - 1; i >= 0; i--) {
                 final int key = remainingKeys.getQuick(i);
@@ -420,7 +425,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                         indexRowLo,
                         indexRowHi,
                         null,
-                        frameMemory.getSourceRowResolver()
+                        sourceRows
                 )) {
                     if (cursor.hasNext()) {
                         // Relative to indexRowLo, so already frame-relative, as the native scan returns it.
