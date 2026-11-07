@@ -3967,6 +3967,19 @@ public class TickExprTest {
     }
 
     @Test
+    public void testDateVariablePointInTimeTimePartCheckedAfterTimezoneAndDuration() {
+        // The compiled form reads the timezone and the duration of the expression before its time part. The
+        // parser checks the time part that the points in time ignore after the elements of the expression have
+        // read the timezone and the duration, so both paths report a bad timezone or a malformed duration of an
+        // expression whose time part is malformed too.
+        final String now = "2024-01-02T10:00:00.000000Z";
+        assertParsedAndCompiledRejectedAtCompileTime("[$now]T25:00@Foo", now, "invalid timezone: Foo");
+        assertParsedAndCompiledRejectedAtCompileTime("[$now - 1h..$now]T25:00@Foo", now, "invalid timezone: Foo");
+        assertParsedAndCompiledRejectedAtCompileTime("[$now]T25:00;1x", now, "Invalid duration unit: x");
+        assertParsedAndCompiledRejectedAtCompileTime("[$now - 1h..$now]T25:00;1x", now, "Invalid duration unit: x");
+    }
+
+    @Test
     public void testDateVariablePointInTimeTimePartCheckedWhenNothingReadsIt() {
         // The parser checks the time part when no element of the list parsed it in this evaluation: a range of
         // business days that has no day, a static element that keeps a time of its own, and a point in time that
@@ -4037,8 +4050,9 @@ public class TickExprTest {
         // the literal, or like the days of the points in time: exactly for a time part with at most one bracket
         // and no '..' range, and otherwise only where the days fail too, as the check parses each value of a
         // bracket with the other brackets at their first value, and only the ends of a range. In a list where a
-        // day or a static element without a time of its own reads the time part, nothing else checks it, so the
-        // list fails where that element alone fails.
+        // day or a static element without a time of its own reads the time part before a point in time or a
+        // range between two points in time, nothing else checks it, so the list fails where that element alone
+        // fails.
         final PointInTimeTimePartChecker checker = new PointInTimeTimePartChecker(timestampType.getDriver());
         final Rnd rnd = TestUtils.generateRandom(LOG);
         for (int i = 0, n = Integer.getInteger("questdb.fuzz.tickTimes", 3_000); i < n; i++) {
@@ -4239,6 +4253,17 @@ public class TickExprTest {
         // the day rejects the trailing space
         assertParsedAndCompiledErrorsWithNow("[$today@+01:00, $now]T[09:00] ", now, "Invalid date: 2024-01-02T09:00 ", "Invalid date: 2024-01-02T09:00 ");
         assertParsedAndCompiledErrorsWithNow("[$now, $today]T[25:00]", now, "Invalid date: 2024-01-02T25:00", "Invalid time in time list: 25:00");
+    }
+
+    @Test
+    public void testDateVariablePointInTimeTimePartUncheckedWhereADayReadsItBeforeARange() {
+        // A day before a range between two points in time reads the time part, as before a single point in
+        // time, and the list keeps the result of that reading: the day takes 09:00:00Z, which the range from
+        // 09:00 to 10:00 holds. The literal reads the time part with the grammar of the compiled form, which
+        // rejects a time with a zone, see testDateVariablePointInTimeTimePartUncheckedWhereADayReadsIt.
+        final String now = "2024-01-02T10:00:00.000000Z";
+        final String range = "[{lo=2024-01-02T09:00:00.000000Z, hi=2024-01-02T10:00:00.000000Z}]";
+        assertParsedAndCompiledWithNow(configuration, range, "error: Invalid time override: 09:00:00Z", "[$today, $now - 1h..$now]T09:00:00Z", now);
     }
 
     @Test
@@ -9159,11 +9184,13 @@ public class TickExprTest {
         private static final String[] RANGES = {"$now - 1h..$now", "$now - 90m..$now - 30m", "$now..$NOW + 1h"};
         private static final int SHAPE_BARE = 0;
         private static final int SHAPE_DAY_READER = 4;
+        private static final int SHAPE_DAY_READER_AND_RANGE = 6;
         private static final int SHAPE_POINT_IN_TIME = 1;
         private static final int SHAPE_POINT_IN_TIME_AND_RANGE = 3;
         private static final int SHAPE_RANGE = 2;
         private static final String[] SHAPES = {
-                "bare point in time", "point in time", "range", "point in time and range", "day reader", "static element time"
+                "bare point in time", "point in time", "range", "point in time and range", "day reader", "static element time",
+                "day reader and range"
         };
         // the end of a time: a zone, which only parseFloor() or only parseAnyFormat() takes, or an offset
         private static final String[] TAILS = {"Z", "UTC", "+01:00", "Europe/London"};
@@ -9225,7 +9252,8 @@ public class TickExprTest {
             shapeCounts[shape]++;
             final String elementSuffix = pick(rnd, ELEMENT_SUFFIXES);
             final String prefix;
-            // the expression of the days of the points in time, or, for SHAPE_DAY_READER, of the day alone
+            // the expression of the days of the points in time, or, for SHAPE_DAY_READER and
+            // SHAPE_DAY_READER_AND_RANGE, of the day alone
             final String dayPrefix;
             // a single point in time reads a time part that does not start with 'T' as part of its own text
             boolean isSpaceAllowed = false;
@@ -9256,6 +9284,11 @@ public class TickExprTest {
                     prefix = "[" + reader + ", " + pick(rnd, POINTS_IN_TIME) + elementSuffix + "]";
                     dayPrefix = "[" + reader + "]";
                 }
+                case SHAPE_DAY_READER_AND_RANGE -> {
+                    final String reader = pick(rnd, DAY_READERS);
+                    prefix = "[" + reader + ", " + pick(rnd, RANGES) + elementSuffix + "]";
+                    dayPrefix = "[" + reader + "]";
+                }
                 default -> {
                     prefix = "[2024-01-05T10:00, " + pick(rnd, POINTS_IN_TIME) + elementSuffix + "]";
                     dayPrefix = "[2024-01-05T10:00, $today" + elementSuffix + "]";
@@ -9278,7 +9311,7 @@ public class TickExprTest {
             final boolean isDayRejecting = day.startsWith(ERROR_PREFIX);
             final String verdicts = " at " + FUZZ_NOWS[nowIndex] + ", parsed: " + parsed + ", compiled: " + compiled
                     + ", " + dayPrefix + timePart + rest + ": " + day;
-            if (shape == SHAPE_DAY_READER) {
+            if (shape == SHAPE_DAY_READER || shape == SHAPE_DAY_READER_AND_RANGE) {
                 // the day reads the time part, and the list fails where the day alone fails
                 if (isRejected != isDayRejecting) {
                     fail(expression, "fails other than the day that reads its time part" + verdicts);

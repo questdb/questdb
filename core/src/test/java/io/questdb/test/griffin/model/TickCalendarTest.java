@@ -463,6 +463,26 @@ public class TickCalendarTest {
     }
 
     @Test
+    public void testDateVariablePointInTimeTimePartParsesWithTheLeafOfItsDayNextToStaticElementTime() {
+        // A static element with a time of its own keeps that time and takes the duration, and the parser checks
+        // the time part that the point in time ignores as the day of the point in time reads it: under the
+        // calendar of the element, without the duration, with parseFloor(), which takes a fraction of 5 digits
+        // and a Z. 2025-01-24 is a Friday, and 12:00Z is before the open of XNYS.
+        for (int timestampType : new int[]{ColumnType.TIMESTAMP, ColumnType.TIMESTAMP_NANO}) {
+            final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+            final long now = driver.parseFloorLiteral("2025-01-24T12:00:00.000000Z");
+            assertAcceptedLikeDayWithNow(
+                    driver,
+                    "[$now#XNYS, 2025-01-24T10:00]",
+                    "[$today#XNYS, 2025-01-24T10:00]",
+                    "T09:30:00.12345Z",
+                    ";1h",
+                    now
+            );
+        }
+    }
+
+    @Test
     public void testDateVariablePointInTimeTimePartParsesWithTheLeafOfItsDayUnderTickCalendars() throws SqlException {
         // A point in time ignores the time part, which the parser checks as the day of the point in time reads it.
         // A day parses its date and time with the duration of the expression, which parseAnyFormat() reads when
