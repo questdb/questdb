@@ -84,7 +84,7 @@ public class DoubleMatrixMultiplyFunctionFactory implements FunctionFactory {
                 Function rightArg,
                 int leftArgPos,
                 int rightArgPos
-        ) {
+        ) throws SqlException {
             try {
                 this.leftArg = leftArg;
                 this.rightArg = rightArg;
@@ -92,6 +92,18 @@ public class DoubleMatrixMultiplyFunctionFactory implements FunctionFactory {
                 this.leftArgPos = leftArgPos;
                 this.rightArgPos = rightArgPos;
                 this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, 2);
+
+                // when the argument dimensionality is already known, set up the 1-D to 2-D
+                // promotion right away: an all-constant call is folded through getArray()
+                // at parse time, before init() runs
+                final int dimsLeft = ColumnType.decodeWeakArrayDimensionality(leftArg.getType());
+                final int dimsRight = ColumnType.decodeWeakArrayDimensionality(rightArg.getType());
+                if (dimsLeft > 0) {
+                    initLeftDerived(dimsLeft);
+                }
+                if (dimsRight > 0) {
+                    initRightDerived(dimsRight);
+                }
             } catch (Throwable th) {
                 close();
                 throw th;
@@ -177,27 +189,8 @@ public class DoubleMatrixMultiplyFunctionFactory implements FunctionFactory {
 
             // left/right argument may be a bind var, i.e. have weak dimensionality,
             // so that the number of dimensions is only available at init() time
-            final int dimsLeft = ColumnType.decodeArrayDimensionality(leftArg.getType());
-            final int dimsRight = ColumnType.decodeArrayDimensionality(rightArg.getType());
-            if (dimsLeft == 1) {
-                if (leftDerived == null) {
-                    leftDerived = new DerivedArrayView();
-                }
-            } else if (dimsLeft == 2) {
-                leftDerived = null;
-            } else {
-                throw SqlException.position(leftArgPos).put("left array is not one or two-dimensional");
-            }
-
-            if (dimsRight == 1) {
-                if (rightDerived == null) {
-                    rightDerived = new DerivedArrayView();
-                }
-            } else if (dimsRight == 2) {
-                rightDerived = null;
-            } else {
-                throw SqlException.position(rightArgPos).put("right array is not one or two-dimensional");
-            }
+            initLeftDerived(ColumnType.decodeArrayDimensionality(leftArg.getType()));
+            initRightDerived(ColumnType.decodeArrayDimensionality(rightArg.getType()));
         }
 
         @Override
@@ -208,6 +201,30 @@ public class DoubleMatrixMultiplyFunctionFactory implements FunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName()).val('(').val(leftArg).val(", ").val(rightArg).val(')');
+        }
+
+        private void initLeftDerived(int dimsLeft) throws SqlException {
+            if (dimsLeft == 1) {
+                if (leftDerived == null) {
+                    leftDerived = new DerivedArrayView();
+                }
+            } else if (dimsLeft == 2) {
+                leftDerived = null;
+            } else {
+                throw SqlException.position(leftArgPos).put("left array is not one or two-dimensional");
+            }
+        }
+
+        private void initRightDerived(int dimsRight) throws SqlException {
+            if (dimsRight == 1) {
+                if (rightDerived == null) {
+                    rightDerived = new DerivedArrayView();
+                }
+            } else if (dimsRight == 2) {
+                rightDerived = null;
+            } else {
+                throw SqlException.position(rightArgPos).put("right array is not one or two-dimensional");
+            }
         }
     }
 }
