@@ -67,7 +67,9 @@ import java.util.regex.Pattern;
  * table. A conjunct on a table before the last join filters after it, and SqlOptimiser may also filter the
  * scan of the table with copies of the conjuncts, see SqlOptimiser.addScanFilterCopyCandidate(). The
  * LIMIT-fenced reference runs the flat joins without WHERE in a sub-query that LIMIT keeps whole, and
- * filters its rows, so it takes no such copy.
+ * filters its rows, so it takes no such copy. The LIMIT queries end the WHERE-heavy flat form with a LIMIT,
+ * which may return any rows of the query but no fewer than it asks for, so a filter of a table before the
+ * RIGHT or FULL join must not stop at the LIMIT.
  */
 public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
     // a join of the flat form: its type and the number of its table
@@ -79,8 +81,15 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
     // queries that the generator coverage test draws from a fixed seed
     private static final int IMPLIED_KEY_CORPUS_SIZE = 1_000;
     private static final int IMPLIED_KEY_QUERY_COUNT = 300;
+    // LIMIT shapes that the LIMIT coverage test draws from a fixed seed
+    private static final int LIMIT_CORPUS_SIZE = 1_000;
     // index of the LIMIT-fenced reference query in the array that generateQueries() returns
     private static final int LIMIT_FENCED = 3;
+    // LIMIT n, LIMIT -n and LIMIT lo, hi, see appendLimit()
+    private static final Pattern LIMIT_FIRST_ROWS = Pattern.compile(" LIMIT \\d+$");
+    private static final Pattern LIMIT_LAST_ROWS = Pattern.compile(" LIMIT -\\d+$");
+    private static final int LIMIT_QUERY_COUNT = 300;
+    private static final Pattern LIMIT_RANGE = Pattern.compile(" LIMIT \\d+, \\d+$");
     private static final Log LOG = LogFactory.getLog(RightFullJoinPrefixFuzzTest.class);
     // queries that the multi-table conjunct coverage test draws from a fixed seed
     private static final int MULTI_TABLE_CORPUS_SIZE = 1_000;
@@ -101,6 +110,8 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
     private static final int WHERE_CORPUS_SIZE = 1_000;
     // a WHERE with two conjuncts
     private static final Pattern WHERE_CONJUNCT_PAIR = Pattern.compile(" WHERE .* AND ");
+    // a WHERE whose first predicate reads the first table, see appendWherePredicate()
+    private static final Pattern WHERE_ON_FIRST_TABLE = Pattern.compile("^SELECT \\* FROM t(\\d) .* WHERE (coalesce\\()?[cs]\\1[ ,]");
     private static final int WHERE_QUERY_COUNT = 300;
     // a WHERE predicate on a SYMBOL column
     private static final Pattern WHERE_SYMBOL_PREDICATE = Pattern.compile(" s\\d (LIKE|~|IN|NOT IN) ");
@@ -131,17 +142,103 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFlatJoinWhereWithLimitReturnsRowsOfFlatJoinWhere() throws Exception {
+        assertMemoryLeak(() -> {
+            final Rnd rnd = TestUtils.generateRandom(LOG);
+            createTables();
+            final StringSink rows = new StringSink();
+            final StringSink limitRows = new StringSink();
+            int checkedCount = 0;
+            for (int i = 0; i < LIMIT_QUERY_COUNT; i++) {
+                final String flat = generateQueries(rnd, false, false, true, rnd.nextBoolean())[0];
+                final String limit = generateLimit(rnd);
+                String binds = "";
+                if (flat.contains("$1")) {
+                    final int first = WHERE_BIND_VALUES[rnd.nextInt(WHERE_BIND_VALUES.length)];
+                    final int second = WHERE_BIND_VALUES[rnd.nextInt(WHERE_BIND_VALUES.length)];
+                    bindVariableService.clear();
+                    bindVariableService.setInt(0, first);
+                    if (flat.contains("$2")) {
+                        bindVariableService.setInt(1, second);
+                    }
+                    binds = ", $1=" + first + ", $2=" + second;
+                }
+                final String message = "flat=" + flat + limit + binds;
+                try {
+                    rows.clear();
+                    printSql(flat, rows);
+                } catch (Throwable e) {
+                    // the flat form can write a time-series join after an outer join, see isUnsupportedReference()
+                    if (e instanceof SqlException sqlException && isUnsupportedReference(flat, NESTED, sqlException)) {
+                        continue;
+                    }
+                    throw new AssertionError("query failed [" + message + ", error=" + e + ']', e);
+                }
+                try {
+                    limitRows.clear();
+                    printSql(flat + limit, limitRows);
+                } catch (Throwable e) {
+                    throw new AssertionError("query with LIMIT failed, although the query runs [" + message + ", error=" + e + ']', e);
+                }
+                final List<String> all = rowList(rows);
+                final List<String> limited = rowList(limitRows);
+                Assert.assertEquals(message, limitedRowCount(limit, all.size()), limited.size());
+                // any rows of the query, each no more often than the query returns it
+                for (int j = 0, n = limited.size(); j < n; j++) {
+                    Assert.assertTrue(message + ", row=" + limited.get(j), all.remove(limited.get(j)));
+                }
+                checkedCount++;
+            }
+            // most flat forms run; a change that made them fail with an error that isUnsupportedReference()
+            // accepts would check few LIMIT queries and pass
+            Assert.assertTrue("only " + checkedCount + " of " + LIMIT_QUERY_COUNT + " queries were checked", checkedCount * 2 >= LIMIT_QUERY_COUNT);
+        });
+    }
+
+    @Test
     public void testImpliedKeyQueriesRejectOnlySlaveOfFullJoin() {
         // Without its check of the master side, SqlOptimiser keyed such a FULL join and returned the rows
         // that it NULL-extends on the master side, which the INNER join keeps through NULL = NULL.
         final Rnd rnd = new Rnd(42, 4242);
         int matchCount = 0;
         for (int i = 0; i < IMPLIED_KEY_CORPUS_SIZE; i++) {
-            if (FULL_JOIN_SLAVE_ONLY_REJECTED.matcher(generateQueries(rnd, true, true, false)[0]).find()) {
+            if (FULL_JOIN_SLAVE_ONLY_REJECTED.matcher(generateQueries(rnd, true, true, false, false)[0]).find()) {
                 matchCount++;
             }
         }
         Assert.assertTrue("only " + matchCount + " of " + IMPLIED_KEY_CORPUS_SIZE + " queries", matchCount * 25 >= IMPLIED_KEY_CORPUS_SIZE);
+    }
+
+    @Test
+    public void testLimitQueriesCoverLimitShapes() {
+        // LIMIT n and LIMIT lo, hi read the first rows of the joins, LIMIT -n reads the last rows, and half
+        // of the queries filter the first table, whose filter the LIMIT reaches as advice
+        final Rnd rnd = new Rnd(42, 4242);
+        int firstRowsCount = 0;
+        int lastRowsCount = 0;
+        int rangeCount = 0;
+        int firstTableWhereCount = 0;
+        for (int i = 0; i < LIMIT_CORPUS_SIZE; i++) {
+            final String flat = generateQueries(rnd, false, false, true, rnd.nextBoolean())[0];
+            final String limit = generateLimit(rnd);
+            if (LIMIT_FIRST_ROWS.matcher(limit).find()) {
+                firstRowsCount++;
+            } else if (LIMIT_LAST_ROWS.matcher(limit).find()) {
+                lastRowsCount++;
+            } else if (LIMIT_RANGE.matcher(limit).find()) {
+                rangeCount++;
+            }
+            if (WHERE_ON_FIRST_TABLE.matcher(flat).find()) {
+                firstTableWhereCount++;
+            }
+        }
+        final String counts = "firstRows=" + firstRowsCount + ", lastRows=" + lastRowsCount + ", range=" + rangeCount
+                + ", firstTableWhere=" + firstTableWhereCount + " of " + LIMIT_CORPUS_SIZE;
+        Assert.assertEquals(counts, LIMIT_CORPUS_SIZE, firstRowsCount + lastRowsCount + rangeCount);
+        Assert.assertTrue(counts, firstRowsCount * 5 >= LIMIT_CORPUS_SIZE);
+        Assert.assertTrue(counts, lastRowsCount * 5 >= LIMIT_CORPUS_SIZE);
+        Assert.assertTrue(counts, rangeCount * 5 >= LIMIT_CORPUS_SIZE);
+        Assert.assertTrue(counts, firstTableWhereCount * 5 >= LIMIT_CORPUS_SIZE * 2);
     }
 
     @Test
@@ -153,7 +250,7 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
         int sumOnLeftCount = 0;
         int sumOnRightCount = 0;
         for (int i = 0; i < MULTI_TABLE_CORPUS_SIZE; i++) {
-            final String flat = generateQueries(rnd, false, false, false)[0];
+            final String flat = generateQueries(rnd, false, false, false, false)[0];
             if (hasMultiTableConjunctAfterOuterJoin(flat, MULTI_TABLE_SUM_ON_LEFT)) {
                 sumOnLeftCount++;
             }
@@ -177,7 +274,7 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
         int bindCount = 0;
         int conjunctPairCount = 0;
         for (int i = 0; i < WHERE_CORPUS_SIZE; i++) {
-            final String flat = generateQueries(rnd, false, false, true)[0];
+            final String flat = generateQueries(rnd, false, false, true, false)[0];
             if (flat.contains(" LATEST ON ts PARTITION BY k")) {
                 latestOnCount++;
             }
@@ -254,6 +351,19 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
         }
     }
 
+    // Returns LIMIT n, LIMIT -n or LIMIT lo, hi, with n from 1 to 4 and 0 <= lo < hi <= 4. The tables hold up to
+    // six rows each, so the queries return fewer rows than the LIMIT asks for as well as more.
+    private static String generateLimit(Rnd rnd) {
+        return switch (rnd.nextInt(3)) {
+            case 0 -> " LIMIT " + (1 + rnd.nextInt(4));
+            case 1 -> " LIMIT -" + (1 + rnd.nextInt(4));
+            default -> {
+                final int lo = rnd.nextInt(4);
+                yield " LIMIT " + lo + ", " + (lo + 1 + rnd.nextInt(4 - lo));
+            }
+        };
+    }
+
     // Returns {flat, nested, prefix sub-query, LIMIT-fenced}: the same joins flat, as sub-queries nested in
     // the order written, with the tables before the last join in a sub-query, and flat without WHERE in a
     // sub-query that LIMIT keeps whole, with the WHERE outside. With isOuterJoinHeavy, the
@@ -263,8 +373,15 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
     // filters on one or both tables of the last such tie. With isWhereHeavy, every query filters with one
     // or two predicates on a table, and a quarter of them put LATEST ON on the first table: the flat form
     // as a trailing LATEST ON, which applies to the first table, and the nested and prefix forms as a
-    // sub-query of that table.
-    private static String[] generateQueries(Rnd rnd, boolean isOuterJoinHeavy, boolean isImpliedKeyHeavy, boolean isWhereHeavy) {
+    // sub-query of that table. With isFirstTableWhere, the WHERE of a WHERE-heavy query filters the first
+    // table, whose filter a LIMIT over the joins reaches as advice.
+    private static String[] generateQueries(
+            Rnd rnd,
+            boolean isOuterJoinHeavy,
+            boolean isImpliedKeyHeavy,
+            boolean isWhereHeavy,
+            boolean isFirstTableWhere
+    ) {
         final int modelCount = isOuterJoinHeavy ? 4 + rnd.nextInt(5) : 3 + rnd.nextInt(6);
         final int[] tables = new int[TABLE_COUNT];
         for (int i = 0; i < TABLE_COUNT; i++) {
@@ -365,7 +482,7 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
                 default -> " WHERE c" + impliedKeyMaster + " > 0 AND c" + impliedKeySlave + " > 0";
             };
         } else if (isWhereHeavy) {
-            final int table = tables[rnd.nextInt(modelCount)];
+            final int table = isFirstTableWhere ? tables[0] : tables[rnd.nextInt(modelCount)];
             final StringBuilder predicates = new StringBuilder(" WHERE ");
             appendWherePredicate(rnd, predicates, table, tables, modelCount);
             if (rnd.nextInt(3) == 0) {
@@ -463,6 +580,24 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
         return referenceIndex == PREFIX_SUB_QUERY && Chars.startsWith(message, "Invalid column: ");
     }
 
+    // the number of rows that a LIMIT of generateLimit() keeps of rowCount rows
+    private static int limitedRowCount(String limit, int rowCount) {
+        final String bounds = limit.substring(" LIMIT ".length());
+        final int comma = bounds.indexOf(',');
+        if (comma == -1) {
+            return Math.min(Math.abs(Integer.parseInt(bounds)), rowCount);
+        }
+        final int lo = Integer.parseInt(bounds.substring(0, comma));
+        final int hi = Integer.parseInt(bounds.substring(comma + 2));
+        return Math.max(0, Math.min(hi, rowCount) - lo);
+    }
+
+    private static List<String> rowList(StringSink sink) {
+        final String[] lines = sink.toString().split("\n");
+        // the first line is the header
+        return new ArrayList<>(Arrays.asList(lines).subList(Math.min(1, lines.length), lines.length));
+    }
+
     private static String sortedRows(StringSink sink) {
         final String[] lines = sink.toString().split("\n");
         // the header differs: a sub-query renames the columns that several tables share
@@ -480,7 +615,7 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
             int checkedCount = 0;
             int runCount = 0;
             for (int i = 0; i < queryCount; i++) {
-                final String[] queries = generateQueries(rnd, referenceIndex == PREFIX_SUB_QUERY || isImpliedKeyHeavy, isImpliedKeyHeavy, isWhereHeavy);
+                final String[] queries = generateQueries(rnd, referenceIndex == PREFIX_SUB_QUERY || isImpliedKeyHeavy, isImpliedKeyHeavy, isWhereHeavy, false);
                 final String flat = queries[0];
                 final String reference = queries[referenceIndex];
                 // a query with bind variables runs with two sets of values

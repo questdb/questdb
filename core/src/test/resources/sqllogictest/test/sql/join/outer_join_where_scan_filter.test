@@ -7,6 +7,8 @@
 # - t0.ts IN '2024-01-05' is a QuestDB interval: DuckDB runs it as
 #   t0.ts >= '2024-01-05' AND t0.ts < '2024-01-06'.
 # - LATEST ON has no DuckDB counterpart, so this file does not cover it.
+# - A LIMIT without ORDER BY may return any rows of the query, so the LIMIT queries count their rows.
+#   QuestDB's negative LIMIT and LIMIT lo, hi have no DuckDB counterpart.
 # The tables bypass WAL, so inserted rows are visible at once.
 
 statement ok
@@ -159,3 +161,76 @@ DROP TABLE t1
 
 statement ok
 DROP TABLE t2
+
+# A LIMIT over a RIGHT or FULL join must not stop the scan of the table before the join at the LIMIT.
+# The first rows of l0 that pass the WHERE, rn 1, 2 and 3, match no l1 row.
+
+statement ok
+DROP TABLE IF EXISTS l0
+
+statement ok
+DROP TABLE IF EXISTS l1
+
+statement ok
+CREATE TABLE l0 (rn INT, k INT, k2 INT, x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+
+statement ok
+CREATE TABLE l1 (k INT)
+
+statement ok
+INSERT INTO l0 VALUES (1, 1, 1, 5, '2024-01-05T01:00:00.000000Z'), (2, 2, 2, 6, '2024-01-05T02:00:00.000000Z'), (3, 3, 3, 7, '2024-01-05T03:00:00.000000Z'), (4, 10, 10, 8, '2024-01-05T04:00:00.000000Z'), (5, 11, 10, 0, '2024-01-05T05:00:00.000000Z'), (6, 11, 11, 9, '2024-01-06T01:00:00.000000Z'), (7, 10, 10, 10, '2024-01-06T02:00:00.000000Z'), (8, 12, 12, 11, '2024-01-06T03:00:00.000000Z'), (9, 99, 99, 12, '2024-01-07T01:00:00.000000Z'), (10, 99, 99, 13, '2024-01-07T02:00:00.000000Z')
+
+statement ok
+INSERT INTO l1 VALUES (10), (11), (12), (13)
+
+query II rowsort
+SELECT l0.rn, l1.k FROM l0 RIGHT JOIN l1 ON l0.k = l1.k WHERE l0.x > 1
+----
+4	10
+6	11
+7	10
+8	12
+
+query I
+SELECT count(*) FROM (SELECT l0.rn, l1.k FROM l0 RIGHT JOIN l1 ON l0.k = l1.k WHERE l0.x > 1 LIMIT 2)
+----
+2
+
+query I
+SELECT count(*) FROM (SELECT l0.rn, l1.k FROM l0 RIGHT JOIN l1 ON l0.k = l1.k WHERE l0.x > 1 LIMIT 10)
+----
+4
+
+# the ON keys imply l0.k = l0.k2, which filters the scan of l0; no l0 row matches l1 row 13
+query II rowsort
+SELECT l0.rn, l1.k FROM l0 RIGHT JOIN l1 ON l0.k = l1.k AND l0.k2 = l1.k
+----
+4	10
+6	11
+7	10
+8	12
+NULL	13
+
+query I
+SELECT count(*) FROM (SELECT l0.rn, l1.k FROM l0 RIGHT JOIN l1 ON l0.k = l1.k AND l0.k2 = l1.k LIMIT 3)
+----
+3
+
+query II rowsort
+SELECT l0.rn, l1.k FROM l0 FULL JOIN l1 ON l0.k = l1.k WHERE l0.x > 1 AND l1.k > 0
+----
+4	10
+6	11
+7	10
+8	12
+
+query I
+SELECT count(*) FROM (SELECT l0.rn, l1.k FROM l0 FULL JOIN l1 ON l0.k = l1.k WHERE l0.x > 1 AND l1.k > 0 LIMIT 2)
+----
+2
+
+statement ok
+DROP TABLE l0
+
+statement ok
+DROP TABLE l1

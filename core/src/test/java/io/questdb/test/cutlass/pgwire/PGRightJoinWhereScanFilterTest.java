@@ -24,6 +24,9 @@
 
 package io.questdb.test.cutlass.pgwire;
 
+import io.questdb.std.Chars;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
 import java.sql.PreparedStatement;
@@ -37,7 +40,8 @@ import java.sql.Types;
  * RightJoinWhereScanFilterTest for the data. Each statement runs with a value and then with NULL on
  * the same prepared statement: a copy of a conjunct filters the scan only when another conjunct of the
  * table is false on its NULL row for every value, so the NULL execution returns the rows that the
- * post-join filter alone returns.
+ * post-join filter alone returns. The LIMIT statement runs with LIMIT values of either sign, see
+ * RightFullJoinLimitTest.
  */
 public class PGRightJoinWhereScanFilterTest extends BasePGTest {
     private static final String HEADER = "count[BIGINT]\n";
@@ -100,9 +104,54 @@ public class PGRightJoinWhereScanFilterTest extends BasePGTest {
         });
     }
 
+    @Test
+    public void testLimitBindVariable() throws Exception {
+        // t0.c > 0 is false on a NULL c, so a copy filters the scan of t0. The RIGHT join returns k 0 and 1 in
+        // the order of t0, and k 3, the last t0 row that passes the filter, matches no t2 row. A copy that
+        // took the LIMIT would read only the last rows of t0 for a negative LIMIT, and return too few rows.
+        // Shared query workers make the copy an async filter, the only filter that takes a LIMIT.
+        sharedQueryWorkerCount = 2;
+        try {
+            assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+                createTables(connection);
+                try (
+                        Statement statement = connection.createStatement();
+                        ResultSet plan = statement.executeQuery("EXPLAIN SELECT t0.k FROM t0 RIGHT JOIN t2 ON t2.k = t0.k WHERE t0.c > 0 LIMIT 1")
+                ) {
+                    sink.clear();
+                    while (plan.next()) {
+                        sink.put(plan.getString(1)).put('\n');
+                    }
+                    TestUtils.assertContains(sink, "Async");
+                    TestUtils.assertContains(sink, "filter: 0<c");
+                    Assert.assertFalse(sink.toString(), Chars.contains(sink, "limit:"));
+                }
+                try (PreparedStatement statement = connection.prepareStatement(
+                        "SELECT t0.k FROM t0 RIGHT JOIN t2 ON t2.k = t0.k WHERE t0.c > 0 LIMIT ?"
+                )) {
+                    for (int i = 0; i < 2; i++) {
+                        assertLimit(statement, 1, "0\n");
+                        assertLimit(statement, -1, "1\n");
+                        assertLimit(statement, -2, "0\n1\n");
+                        assertLimit(statement, 3, "0\n1\n");
+                    }
+                }
+            });
+        } finally {
+            sharedQueryWorkerCount = 0;
+        }
+    }
+
     private static void assertCount(PreparedStatement statement, int expectedCount) throws SQLException {
         try (ResultSet rs = statement.executeQuery()) {
             assertResultSet(HEADER + expectedCount + "\n", sink, rs);
+        }
+    }
+
+    private static void assertLimit(PreparedStatement statement, int limit, String expectedRows) throws SQLException {
+        statement.setInt(1, limit);
+        try (ResultSet rs = statement.executeQuery()) {
+            assertResultSet("k[INTEGER]\n" + expectedRows, sink, rs);
         }
     }
 

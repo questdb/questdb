@@ -229,11 +229,11 @@ class AsyncHorizonJoinProjectionRecordCursor implements NoRandomAccessRecordCurs
 
     @Override
     public void expectLimitedIteration() {
-        // Only the limited light sorts call this, and only over a random-access base, which this
-        // cursor is not, so no plan reaches it. A LIMIT over this factory compiles to
-        // LimitRecordCursorFactory, whose cursor does not call it: dispatch stays unlimited, and
-        // close() cancels the tasks that the reader leaves unstarted. The override caps the
-        // in-flight tasks for a parent that announces a limited read.
+        // LimitRecordCursorFactory calls this for a LIMIT that reads the first rows of this cursor.
+        // The limited light sorts call it only over a random-access base, which this cursor is not.
+        // Without the call, dispatch stays unlimited, and close() cancels the tasks that the reader
+        // leaves unstarted. The override caps the in-flight tasks for a parent that announces a
+        // limited read.
         dispatchLimit = defaultDispatchLimit;
     }
 

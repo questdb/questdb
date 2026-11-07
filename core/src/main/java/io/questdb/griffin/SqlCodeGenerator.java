@@ -2055,6 +2055,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return false;
     }
 
+    private static boolean hasRightOrFullJoin(IQueryModel model) {
+        final ObjList<IQueryModel> joinModels = model.getJoinModels();
+        // join model 0 is the model itself
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            if (isRightOrFullJoin(joinModels.getQuick(i).getJoinType())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     // SymbolTranslatingRecord translates each column through the symbol table of one partner column. A
     // translated column that compares symbol ids with two different columns would be translated through
     // the wrong symbol table for one of them, so the callers keep every key a string. ASOF, LT and HORIZON
@@ -15527,6 +15538,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (model.getLatestBy().size() > 0) {
             return null;
         }
+        // The LIMIT advice of a join level counts the rows that the level returns, but this filter
+        // reads only the table of join model 0, which runs ahead of every RIGHT or FULL join of the
+        // level. A RIGHT join drops the rows of that table that match nothing, and RIGHT and FULL
+        // joins return their unmatched rows after reading every row of that table, so a filter that
+        // stops at the LIMIT loses rows, or NULL-extends rows that have a match. LimitRecordCursorFactory
+        // applies the LIMIT above the level instead, and its RecordCursor.expectLimitedIteration() call
+        // still caps the page frame tasks that the filter dispatches ahead of the join.
+        if (hasRightOrFullJoin(model)) {
+            return null;
+        }
         if (model.getLimitAdviceLo() != null && model.getLimitAdviceHi() == null) {
             return toLimitFunction(executionContext, model.getLimitAdviceLo(), LongConstant.ZERO);
         }
@@ -16608,11 +16629,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (ordered.size() != n) {
             return;
         }
-        boolean hasRightOrFullJoin = false;
-        for (int i = 1; i < n && !hasRightOrFullJoin; i++) {
-            hasRightOrFullJoin = isRightOrFullJoin(joinModels.getQuick(i).getJoinType());
-        }
-        if (!hasRightOrFullJoin) {
+        if (!hasRightOrFullJoin(model)) {
             return;
         }
         final IntList positions = tempJoinModelPositions;

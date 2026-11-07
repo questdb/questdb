@@ -440,6 +440,13 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             remaining = -1;
             counter.clear();
             resolveBoundsCheap();
+            // A LIMIT that reads the first rows of the base lets the parallel cursors below, such as
+            // the async filter that a join reads its master through, cap the page frame tasks that
+            // they dispatch ahead of the reader. A negative bound reads the base to its end, and
+            // LIMIT 0 reads nothing.
+            if (lo >= 0 && hi > lo) {
+                base.expectLimitedIteration();
+            }
         }
     }
 }
