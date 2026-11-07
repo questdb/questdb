@@ -33,6 +33,8 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import static io.questdb.test.cairo.parquet.ParquetCommitTestUtils.partitionNameTxn;
+
 /**
  * An in-place parquet O3 merge rewrites every column's file column_top to 0
  * (update.rs end()), so the table's _cv must record top 0 for every live column
@@ -59,9 +61,9 @@ public class ParquetInPlaceO3ColumnTopTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTwins("INT", false);
             convertToParquet("2024-01-03");
-            long txnBefore = partitionNameTxn(0);
+            long txnBefore = partitionNameTxn(engine, "pq", 0);
             executeBoth("INSERT INTO %s (id, ts, extra) VALUES (1000, '2024-01-01T09:00', 2000)");
-            Assert.assertEquals(txnBefore, partitionNameTxn(0));
+            Assert.assertEquals(txnBefore, partitionNameTxn(engine, "pq", 0));
             try (TableReader reader = engine.getReader("pq")) {
                 final ColumnVersionReader cv = reader.getColumnVersionReader();
                 final TableReaderMetadata metadata = reader.getMetadata();
@@ -85,10 +87,10 @@ public class ParquetInPlaceO3ColumnTopTest extends AbstractCairoTest {
             createTwins("INT", true);
             executeBoth("ALTER TABLE %s DEDUP ENABLE UPSERT KEYS(ts, extra)");
             convertToParquet("2024-01-04");
-            long txnBefore = partitionNameTxn(0);
+            long txnBefore = partitionNameTxn(engine, "pq", 0);
             executeBoth("INSERT INTO %s (id, ts, extra) VALUES (1000, '2024-01-01T09:00', 2000)");
             executeBoth("INSERT INTO %s (id, ts, extra) VALUES (2000, '2024-01-01T09:00', 2000)");
-            Assert.assertEquals(txnBefore, partitionNameTxn(0));
+            Assert.assertEquals(txnBefore, partitionNameTxn(engine, "pq", 0));
             assertSqlCursors("nat", "pq");
             assertQuery("SELECT id, ts, extra FROM pq WHERE ts IN '2024-01-01T09'")
                     .noLeakCheck()
@@ -105,9 +107,9 @@ public class ParquetInPlaceO3ColumnTopTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTwins("INT", false);
             convertToParquet("2024-01-03");
-            long txnBefore = partitionNameTxn(0);
+            long txnBefore = partitionNameTxn(engine, "pq", 0);
             executeBoth("INSERT INTO %s (id, ts, extra) VALUES (1000, '2024-01-01T09:00', 2000)");
-            Assert.assertEquals(txnBefore, partitionNameTxn(0));
+            Assert.assertEquals(txnBefore, partitionNameTxn(engine, "pq", 0));
             assertSqlCursors("nat", "pq");
             convertToNative("2024-01-03");
             assertSqlCursors("nat", "pq");
@@ -128,9 +130,9 @@ public class ParquetInPlaceO3ColumnTopTest extends AbstractCairoTest {
             // equals its row count; a row at 2024-01-04 makes it non-last.
             createTwins("INT", true);
             convertToParquet("2024-01-04");
-            long txnBefore = partitionNameTxn(2);
+            long txnBefore = partitionNameTxn(engine, "pq", 2);
             executeBoth("INSERT INTO %s (id, ts, extra) VALUES (1000, '2024-01-03T09:00', 2000)");
-            Assert.assertEquals(txnBefore, partitionNameTxn(2));
+            Assert.assertEquals(txnBefore, partitionNameTxn(engine, "pq", 2));
             assertSqlCursors("nat", "pq");
             convertToNative("2024-01-04");
             assertSqlCursors("nat", "pq");
@@ -149,9 +151,9 @@ public class ParquetInPlaceO3ColumnTopTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTwins("SYMBOL INDEX", true);
             convertToParquet("2024-01-04");
-            final long txn0 = partitionNameTxn(0);
-            final long txn1 = partitionNameTxn(1);
-            final long txn2 = partitionNameTxn(2);
+            final long txn0 = partitionNameTxn(engine, "pq", 0);
+            final long txn1 = partitionNameTxn(engine, "pq", 1);
+            final long txn2 = partitionNameTxn(engine, "pq", 2);
             // 'x' lands in every partition: in place into each parquet partition,
             // appended to the native 2024-01-04
             executeBoth("""
@@ -161,9 +163,9 @@ public class ParquetInPlaceO3ColumnTopTest extends AbstractCairoTest {
                     (1002, '2024-01-03T09:00', 'x'),
                     (1003, '2024-01-04T02:00', 'x')
                     """);
-            Assert.assertEquals(txn0, partitionNameTxn(0));
-            Assert.assertEquals(txn1, partitionNameTxn(1));
-            Assert.assertEquals(txn2, partitionNameTxn(2));
+            Assert.assertEquals(txn0, partitionNameTxn(engine, "pq", 0));
+            Assert.assertEquals(txn1, partitionNameTxn(engine, "pq", 1));
+            Assert.assertEquals(txn2, partitionNameTxn(engine, "pq", 2));
             assertSymbolLookups();
             convertToNative("2024-01-04");
             assertSymbolLookups();
@@ -199,12 +201,6 @@ public class ParquetInPlaceO3ColumnTopTest extends AbstractCairoTest {
         execute(String.format(sqlTemplate, "nat"));
         execute(String.format(sqlTemplate, "pq"));
         drainWalQueue();
-    }
-
-    private static long partitionNameTxn(int partitionIndex) {
-        try (TableReader reader = engine.getReader("pq")) {
-            return reader.getTxFile().getPartitionNameTxn(partitionIndex);
-        }
     }
 
     private void assertSymbolLookups() throws Exception {

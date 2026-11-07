@@ -68,6 +68,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
+import static io.questdb.test.cairo.parquet.ParquetCommitTestUtils.parquetFileSize;
+import static io.questdb.test.cairo.parquet.ParquetCommitTestUtils.partitionNameTxn;
 
 /**
  * An in-place parquet O3 update rebuilds the partition's symbol indexes (bitmap, posting,
@@ -219,7 +221,7 @@ public class ParquetInPlaceIndexPinnedReaderTest extends AbstractCairoTest {
     public void testInPlaceCommitsReleasePurgeEntries() throws Exception {
         assertMemoryLeak(() -> {
             createSimpleTwins(IDX_BITMAP, false, "nat", "pq");
-            final long nameTxnBefore = partitionNameTxn("pq", 0);
+            final long nameTxnBefore = partitionNameTxn(engine, "pq", 0);
             final long symNameTxnBefore = symColumnNameTxn();
             final long ts = MicrosTimestampDriver.floor("2024-01-01T00:30:00.000000Z");
             // One writer for every commit, as under continuous ingestion: each in-place
@@ -422,7 +424,7 @@ public class ParquetInPlaceIndexPinnedReaderTest extends AbstractCairoTest {
     }
 
     private static void assertInPlace(String stage, long nameTxnBefore, long symNameTxnBefore, StringBuilder mismatches) {
-        final long nameTxnAfter = partitionNameTxn("pq", 0);
+        final long nameTxnAfter = partitionNameTxn(engine, "pq", 0);
         if (nameTxnAfter != nameTxnBefore) {
             mismatches.append("\n[").append(stage).append("] parquet O3 must update in place, name txn ")
                     .append(nameTxnBefore).append(" -> ").append(nameTxnAfter);
@@ -516,19 +518,6 @@ public class ParquetInPlaceIndexPinnedReaderTest extends AbstractCairoTest {
         return files;
     }
 
-    // A pq partition's parquet file size as committed in _txn.
-    private static long parquetFileSize(int partitionIndex) {
-        try (TableReader reader = engine.getReader("pq")) {
-            return reader.getTxFile().getPartitionParquetFileSize(partitionIndex);
-        }
-    }
-
-    private static long partitionNameTxn(String table, int partitionIndex) {
-        try (TableReader reader = engine.getReader(table)) {
-            return reader.getTxFile().getPartitionNameTxn(partitionIndex);
-        }
-    }
-
     private static String plainQuery(String table, String key) {
         // The same rows without the index: a filter on a function of sym.
         return "SELECT ts, sym, v FROM " + table + " WHERE concat(sym, '') = '" + key + "'";
@@ -584,7 +573,7 @@ public class ParquetInPlaceIndexPinnedReaderTest extends AbstractCairoTest {
         final AtomicInteger faults = new AtomicInteger();
         assertMemoryLeak(failOpenOnce("2024-01-01", faultFile, armed, faults), () -> {
             createTwins(indexClause);
-            final long nameTxnBefore = partitionNameTxn("pq", 0);
+            final long nameTxnBefore = partitionNameTxn(engine, "pq", 0);
             final long symNameTxnBefore = symColumnNameTxn();
             final Map<String, byte[]> filesBefore = indexFiles();
             final String[] keys = {"s0", "s1", "s2"};
@@ -597,7 +586,7 @@ public class ParquetInPlaceIndexPinnedReaderTest extends AbstractCairoTest {
             commit.apply("pq");
             Assert.assertEquals("fault must fire exactly once", 1, faults.get());
             Assert.assertTrue("pq must suspend", engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("pq")));
-            Assert.assertEquals(nameTxnBefore, partitionNameTxn("pq", 0));
+            Assert.assertEquals(nameTxnBefore, partitionNameTxn(engine, "pq", 0));
             // A failure after finishO3Commit moved _cv (the covering reseal) has queued the
             // superseded version for the purge: the rollback must drop it with _cv. The writer
             // survives the failure (not distressed), so the pool hands back the same one.
@@ -617,7 +606,7 @@ public class ParquetInPlaceIndexPinnedReaderTest extends AbstractCairoTest {
             engine.releaseAllReaders();
             engine.releaseAllWriters();
             try (TableWriter ignore = getWriter("pq")) {
-                Assert.assertEquals(nameTxnBefore, partitionNameTxn("pq", 0));
+                Assert.assertEquals(nameTxnBefore, partitionNameTxn(engine, "pq", 0));
             }
             checkIndexQueries("after writer reopen", keys, oldExpected, mismatches);
 
@@ -706,8 +695,8 @@ public class ParquetInPlaceIndexPinnedReaderTest extends AbstractCairoTest {
             final long[] sym2NameTxnBefore = new long[2];
             final ObjList<Map<String, byte[]>> filesBefore = new ObjList<>();
             for (int p = 0; p < 2; p++) {
-                nameTxnBefore[p] = partitionNameTxn("pq", p);
-                sizeBefore[p] = parquetFileSize(p);
+                nameTxnBefore[p] = partitionNameTxn(engine, "pq", p);
+                sizeBefore[p] = parquetFileSize(engine, "pq", p);
                 symNameTxnBefore[p] = columnNameTxn("sym", p);
                 sym2NameTxnBefore[p] = columnNameTxn("sym2", p);
                 filesBefore.add(indexFiles(p));
@@ -730,8 +719,8 @@ public class ParquetInPlaceIndexPinnedReaderTest extends AbstractCairoTest {
             final StringBuilder mismatches = new StringBuilder();
             for (int p = 0; p < 2; p++) {
                 final String stage = "after fault, partition " + p;
-                Assert.assertEquals(stage + ", name txn", nameTxnBefore[p], partitionNameTxn("pq", p));
-                Assert.assertEquals(stage + ", parquet size", sizeBefore[p], parquetFileSize(p));
+                Assert.assertEquals(stage + ", name txn", nameTxnBefore[p], partitionNameTxn(engine, "pq", p));
+                Assert.assertEquals(stage + ", parquet size", sizeBefore[p], parquetFileSize(engine, "pq", p));
                 Assert.assertEquals(stage + ", sym name txn", symNameTxnBefore[p], columnNameTxn("sym", p));
                 Assert.assertEquals(stage + ", sym2 name txn", sym2NameTxnBefore[p], columnNameTxn("sym2", p));
                 checkFilesKept(stage, filesBefore.getQuick(p), indexFiles(p), mismatches);
@@ -760,7 +749,7 @@ public class ParquetInPlaceIndexPinnedReaderTest extends AbstractCairoTest {
     private void assertNonWalInPlace(String indexClause) throws Exception {
         assertMemoryLeak(() -> {
             createSimpleTwins(indexClause, false, "nat", "pq");
-            final long nameTxnBefore = partitionNameTxn("pq", 0);
+            final long nameTxnBefore = partitionNameTxn(engine, "pq", 0);
             final long symNameTxnBefore = symColumnNameTxn();
             final String exp0 = printed(plainQuery("nat", "s0"));
             final String[] keys = {"s0", "s1", "s2"};
@@ -802,7 +791,7 @@ public class ParquetInPlaceIndexPinnedReaderTest extends AbstractCairoTest {
     private void assertPinned(String indexClause, boolean isMidScan, TableCommit commit) throws Exception {
         assertMemoryLeak(() -> {
             createTwins(indexClause);
-            final long nameTxnBefore = partitionNameTxn("pq", 0);
+            final long nameTxnBefore = partitionNameTxn(engine, "pq", 0);
             final long symNameTxnBefore = symColumnNameTxn();
             final String[] keys = {"s0", "s1", "s2"};
             final String[] oldExpected = new String[keys.length];
@@ -941,7 +930,7 @@ public class ParquetInPlaceIndexPinnedReaderTest extends AbstractCairoTest {
     private void assertSupersededFilesPurged0(String indexClause) throws Exception {
         try (ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine)) {
             createTwins(indexClause);
-            final long nameTxnBefore = partitionNameTxn("pq", 0);
+            final long nameTxnBefore = partitionNameTxn(engine, "pq", 0);
             final long symNameTxnBefore = symColumnNameTxn();
             final Map<String, byte[]> filesBefore = indexFiles();
             Assert.assertFalse("no index files found", filesBefore.isEmpty());
@@ -1014,7 +1003,7 @@ public class ParquetInPlaceIndexPinnedReaderTest extends AbstractCairoTest {
     private void assertTwoVersionsPinnedThenConvertNative0(String indexClause) throws Exception {
         try (ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine)) {
             createSimpleTwins(indexClause, true, "nat", "pq");
-            final long nameTxnBefore = partitionNameTxn("pq", 0);
+            final long nameTxnBefore = partitionNameTxn(engine, "pq", 0);
             final String[] keys = {"s0", "s1", "s2"};
             final StringBuilder mismatches = new StringBuilder();
 
@@ -1032,7 +1021,7 @@ public class ParquetInPlaceIndexPinnedReaderTest extends AbstractCairoTest {
             applyO3Wave("nat", 2000, "03");
             final long symNameTxnAfterSecond = symColumnNameTxn();
             Assert.assertNotEquals(symNameTxnAfterFirst, symNameTxnAfterSecond);
-            Assert.assertEquals(nameTxnBefore, partitionNameTxn("pq", 0));
+            Assert.assertEquals(nameTxnBefore, partitionNameTxn(engine, "pq", 0));
 
             // The purge runs while both older versions are pinned, one per open cursor.
             runPurgeJob(purgeJob);

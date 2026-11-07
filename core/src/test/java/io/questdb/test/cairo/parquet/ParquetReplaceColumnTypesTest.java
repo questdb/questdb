@@ -25,7 +25,6 @@
 package io.questdb.test.cairo.parquet;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
@@ -41,6 +40,11 @@ import org.junit.runners.Parameterized;
 
 import java.util.Arrays;
 import java.util.Collection;
+
+import static io.questdb.test.cairo.parquet.ParquetCommitTestUtils.assertTwinsEqual;
+import static io.questdb.test.cairo.parquet.ParquetCommitTestUtils.parquetFileSize;
+import static io.questdb.test.cairo.parquet.ParquetCommitTestUtils.parquetRowGroupCount;
+import static io.questdb.test.cairo.parquet.ParquetCommitTestUtils.partitionNameTxn;
 
 /**
  * Replace and dedup commits on parquet partitions over every column type, with micro and
@@ -92,12 +96,12 @@ public class ParquetReplaceColumnTypesTest extends AbstractCairoTest {
     public void testAcrossThreePartitions() throws Exception {
         assertMemoryLeak(() -> {
             createTwins(false);
-            final long txnBefore = partitionNameTxn("pq", 0);
+            final long txnBefore = partitionNameTxn(engine, "pq", 0);
             // the tail of parquet day 1 merges in place, parquet day 2 is covered and goes
             // away, the head of native day 3 merges
             replaceBoth(ts("2024-01-01T19:00"), ts("2024-01-03T03:00"), ts("2024-01-01T21:00"), ts("2024-01-03T01:00"));
-            assertTwinsEqual();
-            Assert.assertEquals(txnBefore, partitionNameTxn("pq", 0));
+            assertTwinsEqual(engine, sqlExecutionContext);
+            Assert.assertEquals(txnBefore, partitionNameTxn(engine, "pq", 0));
             assertQuery("SELECT name, numRows, isParquet FROM table_partitions('pq')")
                     .noLeakCheck()
                     .expectSize()
@@ -114,12 +118,12 @@ public class ParquetReplaceColumnTypesTest extends AbstractCairoTest {
     public void testDropMergeAndO3InOneCommit() throws Exception {
         assertMemoryLeak(() -> {
             createTwins(false);
-            final long txnBefore = partitionNameTxn("pq", 0);
+            final long txnBefore = partitionNameTxn(engine, "pq", 0);
             // row group 0 merges (06:00 removed, 05:00 added), row group 1 is dropped, 15:00
             // lands in the gap before row group 2
             replaceBoth(ts("2024-01-01T05:00"), ts("2024-01-01T15:00"), ts("2024-01-01T05:00"), ts("2024-01-01T15:00"));
-            assertTwinsEqual();
-            Assert.assertEquals(txnBefore, partitionNameTxn("pq", 0));
+            assertTwinsEqual(engine, sqlExecutionContext);
+            Assert.assertEquals(txnBefore, partitionNameTxn(engine, "pq", 0));
             assertDayCount("2024-01-01", 9);
         });
     }
@@ -128,14 +132,14 @@ public class ParquetReplaceColumnTypesTest extends AbstractCairoTest {
     public void testDropRowGroup() throws Exception {
         assertMemoryLeak(() -> {
             createTwins(false);
-            final long txnBefore = partitionNameTxn("pq", 0);
-            final long sizeBefore = parquetFileSize("pq", 0);
+            final long txnBefore = partitionNameTxn(engine, "pq", 0);
+            final long sizeBefore = parquetFileSize(engine, "pq", 0);
             // [07:00, 15:00] covers all of row group 1 (08:00..14:00) and brings no rows
             replaceBoth(ts("2024-01-01T07:00"), ts("2024-01-01T15:00"));
-            assertTwinsEqual();
-            Assert.assertEquals(txnBefore, partitionNameTxn("pq", 0));
-            Assert.assertEquals(2, parquetRowGroupCount("pq", 0));
-            Assert.assertTrue(parquetFileSize("pq", 0) > sizeBefore);
+            assertTwinsEqual(engine, sqlExecutionContext);
+            Assert.assertEquals(txnBefore, partitionNameTxn(engine, "pq", 0));
+            Assert.assertEquals(2, parquetRowGroupCount(engine, "pq", 0));
+            Assert.assertTrue(parquetFileSize(engine, "pq", 0) > sizeBefore);
             assertDayCount("2024-01-01", 8);
         });
     }
@@ -144,12 +148,12 @@ public class ParquetReplaceColumnTypesTest extends AbstractCairoTest {
     public void testFilterMergeNoRows() throws Exception {
         assertMemoryLeak(() -> {
             createTwins(false);
-            final long txnBefore = partitionNameTxn("pq", 0);
+            final long txnBefore = partitionNameTxn(engine, "pq", 0);
             // the window removes the 10:00 row of row group 1 and brings no rows: a
             // filter-only merge with an empty O3 slice for every column type
             replaceBoth(ts("2024-01-01T08:30"), ts("2024-01-01T11:30"));
-            assertTwinsEqual();
-            Assert.assertEquals(txnBefore, partitionNameTxn("pq", 0));
+            assertTwinsEqual(engine, sqlExecutionContext);
+            Assert.assertEquals(txnBefore, partitionNameTxn(engine, "pq", 0));
             assertDayCount("2024-01-01", 11);
         });
     }
@@ -158,10 +162,10 @@ public class ParquetReplaceColumnTypesTest extends AbstractCairoTest {
     public void testFilterMergeWithRows() throws Exception {
         assertMemoryLeak(() -> {
             createTwins(false);
-            final long txnBefore = partitionNameTxn("pq", 0);
+            final long txnBefore = partitionNameTxn(engine, "pq", 0);
             replaceBoth(ts("2024-01-01T08:30"), ts("2024-01-01T11:30"), ts("2024-01-01T09:00"), ts("2024-01-01T10:30"));
-            assertTwinsEqual();
-            Assert.assertEquals(txnBefore, partitionNameTxn("pq", 0));
+            assertTwinsEqual(engine, sqlExecutionContext);
+            Assert.assertEquals(txnBefore, partitionNameTxn(engine, "pq", 0));
             assertDayCount("2024-01-01", 13);
         });
     }
@@ -177,12 +181,12 @@ public class ParquetReplaceColumnTypesTest extends AbstractCairoTest {
 
             // every row of row group 1 again, every value equal: the parquet partition stays
             // as it is, so every type's decoded values compare equal to its O3 values
-            long txnBefore = partitionNameTxn("pq", 0);
-            long sizeBefore = parquetFileSize("pq", 0);
+            long txnBefore = partitionNameTxn(engine, "pq", 0);
+            long sizeBefore = parquetFileSize(engine, "pq", 0);
             insertBoth("SELECT * FROM nat WHERE " + rowGroup1);
-            assertTwinsEqual();
-            Assert.assertEquals("identical commit, name txn", txnBefore, partitionNameTxn("pq", 0));
-            Assert.assertEquals("identical commit, parquet size", sizeBefore, parquetFileSize("pq", 0));
+            assertTwinsEqual(engine, sqlExecutionContext);
+            Assert.assertEquals("identical commit, name txn", txnBefore, partitionNameTxn(engine, "pq", 0));
+            Assert.assertEquals("identical commit, parquet size", sizeBefore, parquetFileSize(engine, "pq", 0));
 
             // the same rows with one value of one column changed must merge, for every type
             final String[] columns = COLUMNS.split(", ");
@@ -200,13 +204,13 @@ public class ParquetReplaceColumnTypesTest extends AbstractCairoTest {
                     select.put(columns[i].equals(column) ? "s." : "n.").put(columns[i]);
                 }
                 select.put(", n.ts FROM nat n CROSS JOIN src s WHERE n.id = 6 AND s.id = ").put(srcId);
-                sizeBefore = parquetFileSize("pq", 0);
-                txnBefore = partitionNameTxn("pq", 0);
+                sizeBefore = parquetFileSize(engine, "pq", 0);
+                txnBefore = partitionNameTxn(engine, "pq", 0);
                 insertBoth(select.toString());
-                assertTwinsEqual();
+                assertTwinsEqual(engine, sqlExecutionContext);
                 Assert.assertTrue(
                         "a change of " + column + " must update the parquet partition",
-                        sizeBefore != parquetFileSize("pq", 0) || txnBefore != partitionNameTxn("pq", 0)
+                        sizeBefore != parquetFileSize(engine, "pq", 0) || txnBefore != partitionNameTxn(engine, "pq", 0)
                 );
             }
         });
@@ -216,18 +220,18 @@ public class ParquetReplaceColumnTypesTest extends AbstractCairoTest {
     public void testNoop() throws Exception {
         assertMemoryLeak(() -> {
             createTwins(false);
-            final long txnBefore = partitionNameTxn("pq", 0);
-            final long sizeBefore = parquetFileSize("pq", 0);
+            final long txnBefore = partitionNameTxn(engine, "pq", 0);
+            final long sizeBefore = parquetFileSize(engine, "pq", 0);
             // the window falls strictly between the rows at 08:00 and 10:00
             replaceBoth(ts("2024-01-01T08:30"), ts("2024-01-01T09:30"));
-            assertTwinsEqual();
-            Assert.assertEquals(txnBefore, partitionNameTxn("pq", 0));
-            Assert.assertEquals(sizeBefore, parquetFileSize("pq", 0));
+            assertTwinsEqual(engine, sqlExecutionContext);
+            Assert.assertEquals(txnBefore, partitionNameTxn(engine, "pq", 0));
+            Assert.assertEquals(sizeBefore, parquetFileSize(engine, "pq", 0));
             // the window misses every row of the partition
             replaceBoth(ts("2024-01-01T22:00") + 1, ts("2024-01-01T23:30"));
-            assertTwinsEqual();
-            Assert.assertEquals(txnBefore, partitionNameTxn("pq", 0));
-            Assert.assertEquals(sizeBefore, parquetFileSize("pq", 0));
+            assertTwinsEqual(engine, sqlExecutionContext);
+            Assert.assertEquals(txnBefore, partitionNameTxn(engine, "pq", 0));
+            Assert.assertEquals(sizeBefore, parquetFileSize(engine, "pq", 0));
         });
     }
 
@@ -257,7 +261,7 @@ public class ParquetReplaceColumnTypesTest extends AbstractCairoTest {
                 }
                 Arrays.sort(timestamps);
                 replaceBoth(lo, hi, timestamps);
-                assertTwinsEqual();
+                assertTwinsEqual(engine, sqlExecutionContext);
                 final String symbol = symbolValues[1 + rnd.nextInt(symbolValues.length - 1)];
                 assertSqlCursors(
                         "SELECT * FROM nat WHERE sym = '" + symbol + "'",
@@ -274,13 +278,13 @@ public class ParquetReplaceColumnTypesTest extends AbstractCairoTest {
             // [06:00, 16:00] touches row group 0 only at its max row and row group 2 only
             // at its min row: both edge rows go
             replaceBoth(ts("2024-01-01T06:00"), ts("2024-01-01T16:00"), ts("2024-01-01T11:00"));
-            assertTwinsEqual();
+            assertTwinsEqual(engine, sqlExecutionContext);
             assertDayCount("2024-01-01", 7);
             // [04:00, 04:00] holds exactly one row; hi - 1 one unit below the 18:00 row
             replaceBoth(ts("2024-01-01T04:00"), ts("2024-01-01T04:00"));
-            assertTwinsEqual();
+            assertTwinsEqual(engine, sqlExecutionContext);
             replaceBoth(ts("2024-01-01T17:00"), ts("2024-01-01T18:00") - 1);
-            assertTwinsEqual();
+            assertTwinsEqual(engine, sqlExecutionContext);
             assertDayCount("2024-01-01", 6);
         });
     }
@@ -290,7 +294,7 @@ public class ParquetReplaceColumnTypesTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTwins(false);
             replaceBoth(day1 + day, day1 + 2 * day - 1);
-            assertTwinsEqual();
+            assertTwinsEqual(engine, sqlExecutionContext);
             assertQuery("SELECT name, numRows, isParquet FROM table_partitions('pq')")
                     .noLeakCheck()
                     .expectSize()
@@ -309,15 +313,15 @@ public class ParquetReplaceColumnTypesTest extends AbstractCairoTest {
             // one row group per partition: any merge rewrites it
             node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, (String) null);
             createTwins(false);
-            Assert.assertEquals(1, parquetRowGroupCount("pq", 0));
-            final long txnBefore = partitionNameTxn("pq", 0);
+            Assert.assertEquals(1, parquetRowGroupCount(engine, "pq", 0));
+            final long txnBefore = partitionNameTxn(engine, "pq", 0);
             replaceBoth(ts("2024-01-01T08:30"), ts("2024-01-01T11:30"), ts("2024-01-01T09:00"));
-            assertTwinsEqual();
-            Assert.assertNotEquals(txnBefore, partitionNameTxn("pq", 0));
-            final long txnAfterFirst = partitionNameTxn("pq", 0);
+            assertTwinsEqual(engine, sqlExecutionContext);
+            Assert.assertNotEquals(txnBefore, partitionNameTxn(engine, "pq", 0));
+            final long txnAfterFirst = partitionNameTxn(engine, "pq", 0);
             replaceBoth(ts("2024-01-01T15:00"), ts("2024-01-01T18:00"));
-            assertTwinsEqual();
-            Assert.assertNotEquals(txnAfterFirst, partitionNameTxn("pq", 0));
+            assertTwinsEqual(engine, sqlExecutionContext);
+            Assert.assertNotEquals(txnAfterFirst, partitionNameTxn(engine, "pq", 0));
         });
     }
 
@@ -328,38 +332,12 @@ public class ParquetReplaceColumnTypesTest extends AbstractCairoTest {
         drainWalQueue();
     }
 
-    private static long parquetFileSize(String table, int partitionIndex) {
-        try (TableReader reader = engine.getReader(table)) {
-            return reader.getTxFile().getPartitionParquetFileSize(partitionIndex);
-        }
-    }
-
-    private static int parquetRowGroupCount(String table, int partitionIndex) {
-        try (TableReader reader = engine.getReader(table)) {
-            reader.openPartition(partitionIndex);
-            return reader.getAndInitParquetPartitionDecoder(partitionIndex).metadata().getRowGroupCount();
-        }
-    }
-
-    private static long partitionNameTxn(String table, int partitionIndex) {
-        try (TableReader reader = engine.getReader(table)) {
-            return reader.getTxFile().getPartitionNameTxn(partitionIndex);
-        }
-    }
-
     private void assertDayCount(String day, int expected) throws Exception {
         assertQuery("SELECT count() FROM pq WHERE ts IN '" + day + "'")
                 .noLeakCheck()
                 .expectSize()
                 .noRandomAccess()
                 .returns("count\n" + expected + "\n");
-    }
-
-    private void assertTwinsEqual() throws Exception {
-        Assert.assertFalse("nat suspended", engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("nat")));
-        Assert.assertFalse("pq suspended", engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("pq")));
-        assertSqlCursors("nat", "pq");
-        assertSqlCursors("SELECT count(), min(ts), max(ts) FROM nat", "SELECT count(), min(ts), max(ts) FROM pq");
     }
 
     /**
@@ -437,8 +415,8 @@ public class ParquetReplaceColumnTypesTest extends AbstractCairoTest {
     private void replaceBoth(long lo, long hi, long... timestamps) throws Exception {
         final String select = "SELECT " + COLUMNS + " FROM src WHERE id >= " + nextSrcId + " AND id < " + (nextSrcId + timestamps.length);
         nextSrcId += timestamps.length;
-        ReplaceCommitTestUtils.replace(engine, sqlExecutionContext, "nat", select, lo, hi, timestamps);
-        ReplaceCommitTestUtils.replace(engine, sqlExecutionContext, "pq", select, lo, hi, timestamps);
+        ParquetCommitTestUtils.replace(engine, sqlExecutionContext, "nat", select, lo, hi, timestamps);
+        ParquetCommitTestUtils.replace(engine, sqlExecutionContext, "pq", select, lo, hi, timestamps);
         drainWalQueue();
     }
 

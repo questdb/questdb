@@ -26,7 +26,6 @@ package io.questdb.test.cairo.parquet;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.MicrosTimestampDriver;
-import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.std.ObjList;
@@ -36,6 +35,7 @@ import org.junit.Before;
 import org.junit.Test;
 
 import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
+import static io.questdb.test.cairo.parquet.ParquetCommitTestUtils.partitionNameTxn;
 
 /**
  * An in-place parquet O3 update that shifts row-group positions must keep each row
@@ -122,12 +122,6 @@ public class ParquetBloomFilterRowGroupShiftTest extends AbstractCairoTest {
         assertBloomAfterO3(rows(row(800, "03:30"), row(801, "07:30")));
     }
 
-    private static long partitionNameTxn() {
-        try (TableReader reader = engine.getReader("x")) {
-            return reader.getTxFile().getPartitionNameTxn(0);
-        }
-    }
-
     private static String row(int val, String hhmm) {
         return val + "\t2024-01-01T" + hhmm + ":00.000000Z";
     }
@@ -150,7 +144,7 @@ public class ParquetBloomFilterRowGroupShiftTest extends AbstractCairoTest {
             }
             assertEveryValue(allRows);
 
-            long nameTxnBefore = partitionNameTxn();
+            long nameTxnBefore = partitionNameTxn(engine, "x", 0);
             StringBuilder insert = new StringBuilder("INSERT INTO x VALUES ");
             for (int i = 0, n = o3Rows.size(); i < n; i++) {
                 String[] parts = o3Rows.getQuick(i).split("\t");
@@ -159,7 +153,7 @@ public class ParquetBloomFilterRowGroupShiftTest extends AbstractCairoTest {
             execute(insert);
             drainWalQueue();
             // the O3 commit must have updated the parquet file in place
-            Assert.assertEquals(nameTxnBefore, partitionNameTxn());
+            Assert.assertEquals(nameTxnBefore, partitionNameTxn(engine, "x", 0));
             assertQuery("SELECT count() FROM x WHERE ts IN '2024-01-01'")
                     .noLeakCheck()
                     .expectSize()
@@ -182,7 +176,7 @@ public class ParquetBloomFilterRowGroupShiftTest extends AbstractCairoTest {
             createBloomPartition();
             final long rangeLo = MicrosTimestampDriver.floor("2024-01-01T" + lo + ":00.000000Z");
             final long rangeHi = MicrosTimestampDriver.floor("2024-01-01T" + hi + ":59.999999Z");
-            final long nameTxnBefore = partitionNameTxn();
+            final long nameTxnBefore = partitionNameTxn(engine, "x", 0);
             try (WalWriter ww = engine.getWalWriter(engine.verifyTableName("x"))) {
                 for (int i = 0, n = newRows.size(); i < n; i++) {
                     final String[] parts = newRows.getQuick(i).split("\t");
@@ -195,7 +189,7 @@ public class ParquetBloomFilterRowGroupShiftTest extends AbstractCairoTest {
             drainWalQueue();
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
             // the replace commit must have updated the parquet file in place
-            Assert.assertEquals(nameTxnBefore, partitionNameTxn());
+            Assert.assertEquals(nameTxnBefore, partitionNameTxn(engine, "x", 0));
 
             final ObjList<String> expected = new ObjList<>();
             for (int i = 0; i < 16; i++) {

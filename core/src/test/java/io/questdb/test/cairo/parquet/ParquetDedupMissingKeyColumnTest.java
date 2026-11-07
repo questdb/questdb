@@ -33,6 +33,8 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import static io.questdb.test.cairo.parquet.ParquetCommitTestUtils.assertTwinsEqual;
+
 /**
  * Dedup O3 merge into a multi-row-group parquet partition whose dedup key column is
  * missing from the file (added after CONVERT) or has a stale partition-level column top.
@@ -128,7 +130,7 @@ public class ParquetDedupMissingKeyColumnTest extends AbstractCairoTest {
             addKey("INT");
             convert();
             insertO3("INT", "2024-01-01T21:30");
-            assertTwinsEqual();
+            assertTwinsEqualAndDay1Parquet();
         });
     }
 
@@ -159,7 +161,7 @@ public class ParquetDedupMissingKeyColumnTest extends AbstractCairoTest {
                 execute("INSERT INTO " + t + "(id, ts) VALUES (1003, '2024-01-01T00:00')");
             }
             drainWalQueue();
-            assertTwinsEqual();
+            assertTwinsEqualAndDay1Parquet();
             assertQuery("SELECT id, ts, k FROM pq WHERE ts IN ('2024-01-01T00:00', '2024-01-01T10:00', '2024-01-01T12:00') ORDER BY ts, id").noLeakCheck().timestamp("ts").returns(
                     """
                             id\tts\tk
@@ -191,7 +193,7 @@ public class ParquetDedupMissingKeyColumnTest extends AbstractCairoTest {
                 execute("INSERT INTO " + t + "(id, ts) VALUES (1001, '2024-01-01T21:30')");
             }
             drainWalQueue();
-            assertTwinsEqual();
+            assertTwinsEqualAndDay1Parquet();
             assertQuery(TAIL).noLeakCheck().timestamp("ts").returns(
                     """
                             id\tts\tk
@@ -228,7 +230,7 @@ public class ParquetDedupMissingKeyColumnTest extends AbstractCairoTest {
                 execute("INSERT INTO " + t + "(id, ts, k, v) VALUES (1000, '2024-01-01T12:00', 70, 1)");
             }
             drainWalQueue();
-            assertTwinsEqual();
+            assertTwinsEqualAndDay1Parquet();
             assertQuery("SELECT id, ts, k, v FROM pq WHERE ts BETWEEN '2024-01-01T10:00' AND '2024-01-01T14:00'").noLeakCheck().timestamp("ts").returns(
                     """
                             id\tts\tk\tv
@@ -248,15 +250,12 @@ public class ParquetDedupMissingKeyColumnTest extends AbstractCairoTest {
         drainWalQueue();
     }
 
-    private void assertTwinsEqual() throws Exception {
-        Assert.assertFalse("nat suspended", engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("nat")));
-        Assert.assertFalse("pq suspended", engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("pq")));
+    private void assertTwinsEqualAndDay1Parquet() throws Exception {
+        assertTwinsEqual(engine, sqlExecutionContext);
         assertQuery("SELECT isParquet FROM table_partitions('pq') WHERE minTimestamp < '2024-01-02'")
                 .noLeakCheck()
                 .noRandomAccess()
                 .returns("isParquet\ntrue\n");
-        assertSqlCursors("nat", "pq");
-        assertSqlCursors("SELECT count(), min(ts), max(ts) FROM nat", "SELECT count(), min(ts), max(ts) FROM pq");
     }
 
     private void convert() throws Exception {
@@ -300,6 +299,6 @@ public class ParquetDedupMissingKeyColumnTest extends AbstractCairoTest {
             drainWalQueue();
         }
         insertO3(kType, o3Ts);
-        assertTwinsEqual();
+        assertTwinsEqualAndDay1Parquet();
     }
 }

@@ -28,7 +28,6 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.O3PartitionPurgeJob;
 import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableUtils;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
@@ -41,14 +40,17 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.io.File;
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Paths;
-import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+
+import static io.questdb.test.cairo.parquet.ParquetCommitTestUtils.assertTwinsEqual;
+import static io.questdb.test.cairo.parquet.ParquetCommitTestUtils.indexFiles;
+import static io.questdb.test.cairo.parquet.ParquetCommitTestUtils.parquetFileSize;
+import static io.questdb.test.cairo.parquet.ParquetCommitTestUtils.parquetRowGroupCount;
+import static io.questdb.test.cairo.parquet.ParquetCommitTestUtils.parquetUnusedBytes;
+import static io.questdb.test.cairo.parquet.ParquetCommitTestUtils.partitionDirCount;
+import static io.questdb.test.cairo.parquet.ParquetCommitTestUtils.partitionNameTxn;
 
 /**
  * A DEDUP UPSERT KEYS commit whose every row duplicates an existing row with equal
@@ -98,23 +100,23 @@ public class ParquetDedupIdenticalCommitTest extends AbstractCairoTest {
         assertMemoryLeak(ff, () -> {
             node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, 0);
             createTwins();
-            final long txnBefore = partitionNameTxn();
-            final long sizeBefore = parquetFileSize();
-            final int dirsBefore = partitionDirCount();
+            final long txnBefore = partitionNameTxn(engine, "pq", 0);
+            final long sizeBefore = parquetFileSize(engine, "pq", 0);
+            final int dirsBefore = partitionDirCount(engine, "pq", "2024-01-01");
             armed.set(true);
             insertBoth("SELECT id, ts, v, sym, CASE WHEN id = 6 THEN -1.0 ELSE d END, s, bin FROM nat WHERE ts IN '2024-01-01'");
             Assert.assertEquals("fault must fire exactly once", 1, faults.get());
             Assert.assertTrue("pq must suspend", engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("pq")));
-            Assert.assertEquals("name txn", txnBefore, partitionNameTxn());
-            Assert.assertEquals("parquet file size", sizeBefore, parquetFileSize());
-            Assert.assertEquals("the failed rewrite must remove its directory", dirsBefore, partitionDirCount());
+            Assert.assertEquals("name txn", txnBefore, partitionNameTxn(engine, "pq", 0));
+            Assert.assertEquals("parquet file size", sizeBefore, parquetFileSize(engine, "pq", 0));
+            Assert.assertEquals("the failed rewrite must remove its directory", dirsBefore, partitionDirCount(engine, "pq", "2024-01-01"));
             assertQuery("SELECT d FROM pq WHERE id = 6").noLeakCheck().returns("d\n9.0\n");
 
             execute("ALTER TABLE pq RESUME WAL");
             drainWalQueue();
-            assertTwinsEqual();
-            Assert.assertNotEquals(txnBefore, partitionNameTxn());
-            Assert.assertEquals(3, parquetRowGroupCount());
+            assertTwinsEqual(engine, sqlExecutionContext);
+            Assert.assertNotEquals(txnBefore, partitionNameTxn(engine, "pq", 0));
+            Assert.assertEquals(3, parquetRowGroupCount(engine, "pq", 0));
             assertQuery("SELECT d FROM pq WHERE id = 6").noLeakCheck().returns("d\n-1.0\n");
         });
     }
@@ -180,7 +182,7 @@ public class ParquetDedupIdenticalCommitTest extends AbstractCairoTest {
                             9
                             """
             );
-            Assert.assertEquals(4, parquetRowGroupCount());
+            Assert.assertEquals(4, parquetRowGroupCount(engine, "pq", 0));
             assertQuery("SELECT count() FROM pq WHERE ts IN '2024-01-01'").noLeakCheck().expectSize().noRandomAccess().returns("count\n13\n");
         });
     }
@@ -239,14 +241,14 @@ public class ParquetDedupIdenticalCommitTest extends AbstractCairoTest {
             execute("ALTER TABLE nat ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (d)");
             execute("ALTER TABLE pq ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (d)");
             drainWalQueue();
-            final String indexFilesBefore = pqSymIndexFiles();
+            final String indexFilesBefore = indexFiles(engine, "pq", 0, "sym");
             final O3ParquetPathCounts paths = new O3ParquetPathCounts();
             assertIdenticalCommitIsNoop("SELECT * FROM nat WHERE ts BETWEEN '2024-01-01T08:00' AND '2024-01-01T12:00'", false);
             Assert.assertEquals(
                     "inPlace=0, rewrite=0, dropInPlace=0, dropRewrite=0, replaceNoop=0, replaceRemoval=0, dedupIdentical=1",
                     paths.toString()
             );
-            Assert.assertEquals("an identical commit wrote the covering index files", indexFilesBefore, pqSymIndexFiles());
+            Assert.assertEquals("an identical commit wrote the covering index files", indexFilesBefore, indexFiles(engine, "pq", 0, "sym"));
             for (String sym : new String[]{"s0", "s1", "s2"}) {
                 final String lookup = "SELECT sym, d, ts FROM %s WHERE sym = '" + sym + "'";
                 assertQuery(String.format(lookup, "pq")).noLeakCheck().assertsPlanContaining("CoveringIndex");
@@ -363,17 +365,17 @@ public class ParquetDedupIdenticalCommitTest extends AbstractCairoTest {
     public void testNewRowStillMerges() throws Exception {
         assertMemoryLeak(() -> {
             createTwins();
-            final long txnBefore = partitionNameTxn();
-            final long sizeBefore = parquetFileSize();
+            final long txnBefore = partitionNameTxn(engine, "pq", 0);
+            final long sizeBefore = parquetFileSize(engine, "pq", 0);
             // identical rows plus one new key (id 999 at an existing timestamp)
             insertBoth("""
                     SELECT * FROM nat WHERE ts BETWEEN '2024-01-01T08:00' AND '2024-01-01T12:00'
                     UNION ALL
                     SELECT 999, ts, v, sym, d, s, bin FROM nat WHERE id = 6
                     """);
-            assertTwinsEqual();
-            Assert.assertEquals(txnBefore, partitionNameTxn());
-            Assert.assertNotEquals(sizeBefore, parquetFileSize());
+            assertTwinsEqual(engine, sqlExecutionContext);
+            Assert.assertEquals(txnBefore, partitionNameTxn(engine, "pq", 0));
+            Assert.assertNotEquals(sizeBefore, parquetFileSize(engine, "pq", 0));
             assertQuery("SELECT count() FROM pq WHERE ts IN '2024-01-01'").noLeakCheck().expectSize().noRandomAccess().returns("count\n13\n");
         });
     }
@@ -406,7 +408,7 @@ public class ParquetDedupIdenticalCommitTest extends AbstractCairoTest {
                     "SELECT d FROM pq WHERE id = 6",
                     "d\n-1.0\n"
             );
-            Assert.assertEquals(3, parquetRowGroupCount());
+            Assert.assertEquals(3, parquetRowGroupCount(engine, "pq", 0));
         });
     }
 
@@ -452,16 +454,16 @@ public class ParquetDedupIdenticalCommitTest extends AbstractCairoTest {
             node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, 0);
             createTwins();
             pqDir.set(engine.verifyTableName("pq").getDirName());
-            final long txnBefore = partitionNameTxn();
-            final long sizeBefore = parquetFileSize();
-            final int dirsBefore = partitionDirCount();
+            final long txnBefore = partitionNameTxn(engine, "pq", 0);
+            final long sizeBefore = parquetFileSize(engine, "pq", 0);
+            final int dirsBefore = partitionDirCount(engine, "pq", "2024-01-01");
             armed.set(true);
             insertBoth("SELECT * FROM nat WHERE ts BETWEEN '2024-01-01T16:00' AND '2024-01-01T22:00'");
             Assert.assertEquals("fault must fire exactly once", 1, faults.get());
-            assertTwinsEqual();
-            Assert.assertEquals("name txn", txnBefore, partitionNameTxn());
-            Assert.assertEquals("parquet file size", sizeBefore, parquetFileSize());
-            Assert.assertEquals("the abandoned rewrite's directory stays", dirsBefore + 1, partitionDirCount());
+            assertTwinsEqual(engine, sqlExecutionContext);
+            Assert.assertEquals("name txn", txnBefore, partitionNameTxn(engine, "pq", 0));
+            Assert.assertEquals("parquet file size", sizeBefore, parquetFileSize(engine, "pq", 0));
+            Assert.assertEquals("the abandoned rewrite's directory stays", dirsBefore + 1, partitionDirCount(engine, "pq", "2024-01-01"));
 
             assertChangedCommitMerges(
                     "SELECT id, ts, v, sym, CASE WHEN id = 6 THEN -1.0 ELSE d END, s, bin FROM nat WHERE ts IN '2024-01-01'",
@@ -476,8 +478,8 @@ public class ParquetDedupIdenticalCommitTest extends AbstractCairoTest {
             try (O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, 1)) {
                 purgeJob.drain(0);
             }
-            Assert.assertEquals("only the live directory may stay", 1, partitionDirCount());
-            assertTwinsEqual();
+            Assert.assertEquals("only the live directory may stay", 1, partitionDirCount(engine, "pq", "2024-01-01"));
+            assertTwinsEqual(engine, sqlExecutionContext);
         });
     }
 
@@ -503,7 +505,7 @@ public class ParquetDedupIdenticalCommitTest extends AbstractCairoTest {
                             103
                             """
             );
-            Assert.assertEquals(2, parquetRowGroupCount());
+            Assert.assertEquals(2, parquetRowGroupCount(engine, "pq", 0));
             assertQuery("SELECT count() FROM pq WHERE ts IN '2024-01-01'").noLeakCheck().expectSize().noRandomAccess().returns("count\n18\n");
         });
     }
@@ -530,116 +532,37 @@ public class ParquetDedupIdenticalCommitTest extends AbstractCairoTest {
         drainWalQueue();
     }
 
-    private static long parquetFileSize() {
-        try (TableReader reader = engine.getReader("pq")) {
-            return reader.getTxFile().getPartitionParquetFileSize(0);
-        }
-    }
-
-    private static int parquetRowGroupCount() {
-        try (TableReader reader = engine.getReader("pq")) {
-            reader.openPartition(0);
-            return reader.getAndInitParquetPartitionDecoder(0).metadata().getRowGroupCount();
-        }
-    }
-
-    private static long parquetUnusedBytes() {
-        try (TableReader reader = engine.getReader("pq")) {
-            reader.openPartition(0);
-            return reader.getAndInitParquetPartitionDecoder(0).metadata().getUnusedBytes();
-        }
-    }
-
-    private static long partitionNameTxn() {
-        try (TableReader reader = engine.getReader("pq")) {
-            return reader.getTxFile().getPartitionNameTxn(0);
-        }
-    }
-
-    /**
-     * Counts pq's directories for day 1 (2024-01-01 and 2024-01-01.N): an abandoned
-     * rewrite must not leave its txn-named directory behind.
-     */
-    private static int partitionDirCount() {
-        final String[] names = new File(configuration.getDbRoot().toString(), engine.verifyTableName("pq").getDirName()).list();
-        Assert.assertNotNull(names);
-        int count = 0;
-        for (String name : names) {
-            if (name.startsWith("2024-01-01")) {
-                count++;
-            }
-        }
-        return count;
-    }
-
-    /**
-     * The index files of sym in pq's day 1 directory, one "name length hash" line each, by name.
-     */
-    private static String pqSymIndexFiles() throws IOException {
-        final String partitionDir;
-        try (TableReader reader = engine.getReader("pq"); Path path = new Path()) {
-            path.of(configuration.getDbRoot()).concat(reader.getTableToken().getDirName());
-            TableUtils.setPathForNativePartition(
-                    path,
-                    reader.getMetadata().getTimestampType(),
-                    reader.getPartitionedBy(),
-                    reader.getTxFile().getPartitionTimestampByIndex(0),
-                    reader.getTxFile().getPartitionNameTxn(0)
-            );
-            partitionDir = path.toString();
-        }
-        final String[] names = new File(partitionDir).list();
-        Assert.assertNotNull(partitionDir, names);
-        Arrays.sort(names);
-        final StringBuilder files = new StringBuilder();
-        for (String name : names) {
-            if (name.startsWith("sym.")) {
-                final byte[] content = Files.readAllBytes(Paths.get(partitionDir, name));
-                files.append(name).append(' ').append(content.length).append(' ').append(Arrays.hashCode(content)).append('\n');
-            }
-        }
-        Assert.assertTrue("no key file in " + files, files.indexOf("sym.pk") >= 0);
-        return files.toString();
-    }
-
     private void assertChangedCommitMerges(String select, boolean isRewriteExpected, String probe, String expected) throws Exception {
-        final long txnBefore = partitionNameTxn();
-        final long sizeBefore = parquetFileSize();
+        final long txnBefore = partitionNameTxn(engine, "pq", 0);
+        final long sizeBefore = parquetFileSize(engine, "pq", 0);
         insertBoth(select);
-        assertTwinsEqual();
+        assertTwinsEqual(engine, sqlExecutionContext);
         if (isRewriteExpected) {
-            Assert.assertNotEquals(txnBefore, partitionNameTxn());
+            Assert.assertNotEquals(txnBefore, partitionNameTxn(engine, "pq", 0));
         } else {
-            Assert.assertEquals(txnBefore, partitionNameTxn());
-            Assert.assertNotEquals(sizeBefore, parquetFileSize());
-            Assert.assertTrue(parquetUnusedBytes() > 0);
+            Assert.assertEquals(txnBefore, partitionNameTxn(engine, "pq", 0));
+            Assert.assertNotEquals(sizeBefore, parquetFileSize(engine, "pq", 0));
+            Assert.assertTrue(parquetUnusedBytes(engine, "pq", 0) > 0);
         }
         assertQuery(probe).noLeakCheck().returns(expected);
     }
 
     private void assertIdenticalCommitIsNoop(String select, boolean isRewriteMode) throws Exception {
-        final long txnBefore = partitionNameTxn();
-        final long sizeBefore = parquetFileSize();
-        final long unusedBefore = parquetUnusedBytes();
-        final int rowGroupsBefore = parquetRowGroupCount();
-        final int dirsBefore = partitionDirCount();
+        final long txnBefore = partitionNameTxn(engine, "pq", 0);
+        final long sizeBefore = parquetFileSize(engine, "pq", 0);
+        final long unusedBefore = parquetUnusedBytes(engine, "pq", 0);
+        final int rowGroupsBefore = parquetRowGroupCount(engine, "pq", 0);
+        final int dirsBefore = partitionDirCount(engine, "pq", "2024-01-01");
         insertBoth(select);
-        assertTwinsEqual();
-        Assert.assertEquals("name txn", txnBefore, partitionNameTxn());
-        Assert.assertEquals("parquet file size", sizeBefore, parquetFileSize());
-        Assert.assertEquals("unused bytes", unusedBefore, parquetUnusedBytes());
-        Assert.assertEquals("row groups", rowGroupsBefore, parquetRowGroupCount());
-        Assert.assertEquals("partition dirs", dirsBefore, partitionDirCount());
+        assertTwinsEqual(engine, sqlExecutionContext);
+        Assert.assertEquals("name txn", txnBefore, partitionNameTxn(engine, "pq", 0));
+        Assert.assertEquals("parquet file size", sizeBefore, parquetFileSize(engine, "pq", 0));
+        Assert.assertEquals("unused bytes", unusedBefore, parquetUnusedBytes(engine, "pq", 0));
+        Assert.assertEquals("row groups", rowGroupsBefore, parquetRowGroupCount(engine, "pq", 0));
+        Assert.assertEquals("partition dirs", dirsBefore, partitionDirCount(engine, "pq", "2024-01-01"));
         if (isRewriteMode) {
             Assert.assertEquals(0, unusedBefore);
         }
-    }
-
-    private void assertTwinsEqual() throws Exception {
-        Assert.assertFalse("nat suspended", engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("nat")));
-        Assert.assertFalse("pq suspended", engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("pq")));
-        assertSqlCursors("nat", "pq");
-        assertSqlCursors("SELECT count(), min(ts), max(ts) FROM nat", "SELECT count(), min(ts), max(ts) FROM pq");
     }
 
     /**
