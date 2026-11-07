@@ -192,11 +192,14 @@ public class O3MaxLagFuzzTest extends AbstractO3Test {
             );
 
             try {
-                Rnd rnd1 = new Rnd();
+                // Both replays must see the same random sequence
+                final long replaySeed0 = rnd.nextLong();
+                final long replaySeed1 = rnd.nextLong();
+                Rnd rnd1 = new Rnd(replaySeed0, replaySeed1);
                 replayTransactions(rnd1, engine, w, transactions, -1);
                 w.commit();
 
-                Rnd rnd2 = new Rnd();
+                Rnd rnd2 = new Rnd(replaySeed0, replaySeed1);
                 replayTransactions(rnd2, engine, w2, transactions, w.getMetadata().getTimestampIndex());
                 w2.commit();
 
