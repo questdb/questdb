@@ -45,4 +45,29 @@ public interface FiberDispatchContext {
     default long getQueryRegistryOwnerId() {
         return -1;
     }
+
+    /**
+     * Returns which reserved reduce queue shard a query must use, or {@code -1} for a shared one.
+     * A query that waits for CPU holds up every query on its ordered queue: a reducer holds its
+     * frame, and the owner holds the queue slots it has not collected yet. A context whose queries
+     * can wait for CPU therefore keeps them off the queues of other queries.
+     */
+    default int getReservedPageFrameShard(int reservedShardCount) {
+        return -1;
+    }
+
+    /**
+     * Returns whether query-parallel child work shares a limited number of CPU grants with its
+     * owner. An owner that cannot park cannot give its grant up, so it does such work itself.
+     */
+    default boolean isParallelWorkLimited() {
+        return false;
+    }
+
+    /**
+     * Whether parallel work must run inline to keep waits for CPU off shared task queues.
+     */
+    default boolean isParallelWorkLocal() {
+        return false;
+    }
 }

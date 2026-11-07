@@ -766,6 +766,14 @@ public interface CairoConfiguration {
 
     int getPageFrameReduceQueueCapacity();
 
+    /**
+     * Reduce queue shards on top of {@link #getPageFrameReduceShardCount()} that only a
+     * {@link io.questdb.mp.continuation.FiberDispatchContext} can select.
+     */
+    default int getPageFrameReduceReservedShardCount() {
+        return 0;
+    }
+
     int getPageFrameReduceRowIdListCapacity();
 
     int getPageFrameReduceShardCount();

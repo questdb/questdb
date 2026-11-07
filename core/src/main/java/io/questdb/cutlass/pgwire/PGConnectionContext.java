@@ -240,6 +240,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             this.circuitBreaker = circuitBreaker;
             this.sqlExecutionContext = sqlExecutionContext;
             this.sqlExecutionContext.with(DenyAllSecurityContext.INSTANCE, bindVariableService, this.rnd = configuration.getRandom());
+            this.sqlExecutionContext.setSessionScoped(true);
             this.namedStatements = new Utf8SequenceObjHashMap<>(configuration.getNamedStatementCacheCapacity());
             this.pendingWriters = new ObjObjHashMap<>(configuration.getPendingWritersCacheSize());
             this.namedPortals = new Utf8SequenceObjHashMap<>(configuration.getNamedStatementCacheCapacity());

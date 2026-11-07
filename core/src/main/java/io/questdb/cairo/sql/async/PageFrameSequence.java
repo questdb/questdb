@@ -48,6 +48,7 @@ import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.continuation.CancellationBinding;
 import io.questdb.mp.continuation.FiberCancellationSignal;
+import io.questdb.mp.continuation.FiberDispatchContext;
 import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTracker;
@@ -416,11 +417,17 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                     if (dispatchStartFrameIndex == collectedFrameIndex + 1) {
                         return -2;
                     }
-                } else if (dispatch(dispatchLimit, countOnly)) {
-                    // We have dispatched something, so let's try to collect it.
-                    continue;
-                } else if (dispatcher != null && !isActive()) {
-                    continue;
+                } else {
+                    final int previousDispatchStartFrameIndex = dispatchStartFrameIndex;
+                    // A finished frame is not necessarily collectable: an earlier frame may be with a
+                    // reducer that needs this Fiber's CPU grant to finish it, so without a new frame
+                    // to collect this Fiber has to park rather than spin.
+                    if (dispatch(dispatchLimit, countOnly) && (!canPark || dispatchStartFrameIndex != previousDispatchStartFrameIndex)) {
+                        continue;
+                    }
+                    if (dispatcher != null && !isActive()) {
+                        continue;
+                    }
                 }
                 if (dispatchStartFrameIndex == collectedFrameIndex + 1) {
                     reduceLocally(countOnly);
@@ -470,7 +477,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
             reduceFinishedCounter.set(0);
             reduceStartedCounter.set(0);
             workStealingStrategy.of(reduceStartedCounter);
-            shard = rnd.nextInt(messageBus.getPageFrameReduceShardCount());
+            shard = selectShard(rnd);
             reduceQueue = messageBus.getPageFrameReduceQueue(shard);
 
             // It is essential to init the atom after we prepared sequence for dispatch.
@@ -652,6 +659,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
      * @return true if at least one task was dispatched or reduced; false otherwise
      */
     private boolean dispatch(int dispatchLimit, boolean countOnly) {
+        detachContextIfOwnerCannotPark();
         // the sequence used to steal worker jobs
         final MCSequence reduceSubSeq = messageBus.getPageFrameReduceSubSeq(shard);
         final MPSequence reducePubSeq = messageBus.getPageFrameReducePubSeq(shard);
@@ -666,14 +674,17 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
             MCSequence reduceSubSeq,
             MPSequence reducePubSeq
     ) {
-        boolean hasPublication = dispatcher == null || dispatcher.tryAcquirePublication();
+        int publication = dispatcher != null
+                ? dispatcher.acquirePublication()
+                : PageFrameReduceDispatcher.PUBLICATION_ACQUIRED;
+        boolean hasPublication = publication == PageFrameReduceDispatcher.PUBLICATION_ACQUIRED;
         boolean idle = true;
         boolean dispatched = false;
         final int collectedFrameCount = collectedFrameIndex + 1;
 
         try {
             if (!hasPublication) {
-                if (!dispatcher.isCurrentFiberOwned()) {
+                if (publication == PageFrameReduceDispatcher.PUBLICATION_CLOSED) {
                     cancel(SqlExecutionCircuitBreaker.STATE_CANCELLED);
                 }
                 return false;
@@ -725,9 +736,10 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                                 return true;
                             }
                             if (dispatcher != null) {
-                                hasPublication = dispatcher.tryAcquirePublication();
+                                publication = dispatcher.acquirePublication();
+                                hasPublication = publication == PageFrameReduceDispatcher.PUBLICATION_ACQUIRED;
                                 if (!hasPublication) {
-                                    if (!dispatcher.isCurrentFiberOwned()) {
+                                    if (publication == PageFrameReduceDispatcher.PUBLICATION_CLOSED) {
                                         cancel(SqlExecutionCircuitBreaker.STATE_CANCELLED);
                                     }
                                     return dispatched;
@@ -860,6 +872,16 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
             }
             reduceFinishedCounter.incrementAndGet();
         }
+    }
+
+    private int selectShard(Rnd rnd) {
+        final int reservedShardCount = messageBus.getPageFrameReduceReservedShardCount();
+        final int sharedShardCount = messageBus.getPageFrameReduceShardCount() - reservedShardCount;
+        final FiberDispatchContext dispatchContext = getDispatchContext();
+        final int reservedShard = reservedShardCount > 0 && dispatchContext != null
+                ? dispatchContext.getReservedPageFrameShard(reservedShardCount)
+                : -1;
+        return reservedShard > -1 ? sharedShardCount + reservedShard : rnd.nextInt(sharedShardCount);
     }
 
     private boolean stealWork(

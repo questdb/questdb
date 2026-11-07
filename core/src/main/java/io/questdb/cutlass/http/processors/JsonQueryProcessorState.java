@@ -146,6 +146,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private Record record;
     private long recordCountNanos;
     private RecordCursorFactory recordCursorFactory;
+    private @Nullable String resourceGroup;
     private Rnd rnd;
     // the select cache scope of the principal the query runs for, see getSelectCacheKey()
     private CharSequence selectCacheScope;
@@ -216,6 +217,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             timings = false;
             pausedQuery = false;
             quoteLargeNum = false;
+            resourceGroup = null;
             queryJitCompiled = false;
             operationFuture = Misc.free(operationFuture);
             skip = 0;
@@ -271,6 +273,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         explain = HttpKeywords.isTrue(request.getUrlParam(URL_PARAM_EXPLAIN));
         quoteLargeNum = HttpKeywords.isTrue(request.getUrlParam(URL_PARAM_QUOTE_LARGE_NUM))
                 || HttpKeywords.isCon(request.getUrlParam(URL_PARAM_SRC));
+        final DirectUtf8Sequence resourceGroupParam = request.getUrlParam(URL_PARAM_RESOURCE_GROUP);
+        resourceGroup = resourceGroupParam != null ? Utf8s.toString(resourceGroupParam) : null;
         apiVersion = parseApiVersion(request);
     }
 
@@ -328,6 +332,13 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     public short getQueryType() {
         return queryType;
+    }
+
+    /**
+     * Returns the Resource Group the request asked to run in, or null for the login user's group.
+     */
+    public @Nullable String getResourceGroup() {
+        return resourceGroup;
     }
 
     public Rnd getRnd() {

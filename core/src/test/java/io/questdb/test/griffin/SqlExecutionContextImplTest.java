@@ -30,7 +30,9 @@ import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -141,6 +143,44 @@ public class SqlExecutionContextImplTest extends AbstractCairoTest {
             } finally {
                 context.setQueryRegistryOwnerId(-1);
             }
+            context.reset();
+        });
+    }
+
+    @Test
+    public void testSessionResourceGroupLastsUntilSecurityContextIsBound() throws Exception {
+        assertMemoryLeak(() -> {
+            final SqlExecutionContextImpl context = (SqlExecutionContextImpl) sqlExecutionContext;
+            Assert.assertFalse(context.isSessionScoped());
+            context.with(AllowAllSecurityContext.INSTANCE, null, null, 17, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+            Assert.assertNull(context.getSessionResourceGroup());
+
+            final StringSink name = new StringSink();
+            name.put("alerts");
+            context.setSessionResourceGroup(name);
+            name.clear();
+            name.put("batch");
+            context.reset();
+            context.with(23);
+            Assert.assertSame(AllowAllSecurityContext.INSTANCE, context.swapSecurityContext(DenyAllSecurityContext.INSTANCE));
+            Assert.assertSame(DenyAllSecurityContext.INSTANCE, context.swapSecurityContext(AllowAllSecurityContext.INSTANCE));
+            TestUtils.assertEquals("per-query resets and temporary swaps keep the session's group", "alerts", context.getSessionResourceGroup());
+
+            context.with(AllowAllSecurityContext.INSTANCE, null, null, 17, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+            Assert.assertNull(context.getSessionResourceGroup());
+
+            context.setSessionResourceGroup("alerts");
+            context.with(AllowAllSecurityContext.INSTANCE, null, null);
+            Assert.assertNull(context.getSessionResourceGroup());
+
+            context.setSessionResourceGroup("alerts");
+            context.setSessionResourceGroup(null);
+            Assert.assertNull(context.getSessionResourceGroup());
+
+            context.setSessionScoped(true);
+            context.with(AllowAllSecurityContext.INSTANCE);
+            Assert.assertTrue("binding a security context keeps the context session-scoped", context.isSessionScoped());
+            context.setSessionScoped(false);
             context.reset();
         });
     }

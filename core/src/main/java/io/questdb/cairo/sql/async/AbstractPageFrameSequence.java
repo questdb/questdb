@@ -111,6 +111,16 @@ abstract class AbstractPageFrameSequence {
         return SuspensionScope.isFiberMode() && Fiber.isMounted();
     }
 
+    // An owner under a CPU limit may wait for its group's budget at any poll, and a stolen frame must not
+    // wait with it: its query would stall on a budget that is not its own.
+    static boolean isReducerSuspendable(
+            AbstractPageFrameSequence frameSequence,
+            @Nullable AbstractPageFrameSequence stealingFrameSequence
+    ) {
+        return isFiberSuspendable()
+                && (stealingFrameSequence == null || stealingFrameSequence == frameSequence || !Fiber.isDispatchLimited());
+    }
+
     protected final void awaitProgress(
             PageFrameReduceDispatcher dispatcher,
             long observedSequenceProgress,
@@ -224,6 +234,17 @@ abstract class AbstractPageFrameSequence {
 
     FiberEventWaitQueue getProgressWaitQueue() {
         return progressWaitQueue;
+    }
+
+    /**
+     * A cursor opened before its owner lost the ability to park captured the owner's context. Its
+     * reducers must not depend on a CPU grant that owner cannot give up, even if a limit on such
+     * grants only appears while they run.
+     */
+    protected final void detachContextIfOwnerCannotPark() {
+        if (dispatchContext != null && !isFiberSuspendable()) {
+            dispatchContext = null;
+        }
     }
 
     protected final boolean isInterruptionSuperseded(CairoException exception) {

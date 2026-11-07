@@ -153,8 +153,42 @@ public final class Fiber implements FiberWaitCoordinator.Target {
         return requireControlledMountedFiber().dispatchContext;
     }
 
+    /**
+     * Returns whether the mounted Fiber's dispatch is under a CPU limit, so that it can wait for its
+     * group's budget at any cooperative poll.
+     */
+    public static boolean isDispatchLimited() {
+        final Fiber fiber = mountedOrNull();
+        return fiber != null
+                && fiber.dispatchRequest != null
+                && fiber.dispatchContext != null
+                && fiber.dispatchContext.isParallelWorkLimited();
+    }
+
+    /**
+     * Returns whether the current Fiber holds a limited CPU grant it cannot give up because it
+     * may not park, or its group requires local parallel work. Such work must not occupy a shared
+     * publication ring while it waits for CPU, because later frames on the ring wait behind it.
+     */
+    public static boolean isHoldingLimitedGrant() {
+        final SuspensionScope.CarrierScope scope = SuspensionScope.scope();
+        final Fiber fiber = scope.fiber;
+        return fiber != null
+                && fiber.dispatchRequest != null
+                && fiber.dispatchContext != null
+                && (fiber.dispatchContext.isParallelWorkLocal()
+                || scope.mode != SuspensionScope.Mode.FIBER && fiber.dispatchContext.isParallelWorkLimited())
+                && isMounted();
+    }
+
     public static boolean isMounted() {
         return Continuation.getCurrentContinuation(SCOPE) != null;
+    }
+
+    public static boolean needsBlockingDispatchPoll() {
+        final Fiber fiber = mountedOrNull();
+        return fiber != null && fiber.mountedDispatchTicket != null
+                && fiber.mountedDispatchTicket.needsBlockingPoll();
     }
 
     /**
