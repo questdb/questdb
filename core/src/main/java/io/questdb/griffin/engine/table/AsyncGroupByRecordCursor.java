@@ -406,6 +406,10 @@ class AsyncGroupByRecordCursor implements RecordCursor {
         }
     }
 
+    boolean isOpen() {
+        return isOpen;
+    }
+
     void longTopK(DirectLongLongSortedList list, Function recordFunction, MapRecordCursor sharedMapCursor) {
         final AsyncGroupByAtom atom = frameSequence.getAtom();
         if (recordFunction.isThreadSafe() && atom.isSharded() && sharedMapCursor.size() > configuration.getGroupByParallelTopKThreshold()) {

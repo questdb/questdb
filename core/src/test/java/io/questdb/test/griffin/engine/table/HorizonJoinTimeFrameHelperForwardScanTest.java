@@ -44,6 +44,7 @@ import io.questdb.cairo.sql.TimeFrame;
 import io.questdb.cairo.sql.TimeFrameCursor;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.griffin.engine.table.HorizonJoinMatcher;
+import io.questdb.griffin.engine.table.HorizonJoinSharedKeyCheckTemplate;
 import io.questdb.griffin.engine.table.HorizonJoinSlaveState;
 import io.questdb.griffin.engine.table.HorizonJoinTimeFrameHelper;
 import io.questdb.log.Log;
@@ -80,8 +81,12 @@ public class HorizonJoinTimeFrameHelperForwardScanTest extends AbstractCairoTest
     private static final int COMMON_KEY = 2;
     private static final Log LOG = LogFactory.getLog(HorizonJoinTimeFrameHelperForwardScanTest.class);
     private static final RecordSink MASTER_KEY_SINK = new KeySink(MasterRecord.KEY_COLUMN);
+    // The master key (key, key2) of t.k = s.k AND t.k2 = s.k: both positions compare the slave key column.
+    private static final RecordSink MASTER_SHARED_KEY_SINK = new KeySink(MasterRecord.KEY_COLUMN, MasterRecord.KEY2_COLUMN);
     private static final int RARE_KEY = 1;
+    private static final ArrayColumnTypes SHARED_KEY_TYPES = new ArrayColumnTypes().add(ColumnType.INT).add(ColumnType.INT);
     private static final RecordSink SLAVE_KEY_SINK = new KeySink(SlaveRecord.KEY_COLUMN);
+    private static final RecordSink SLAVE_SHARED_KEY_SINK = new KeySink(SlaveRecord.KEY_COLUMN, SlaveRecord.KEY_COLUMN);
 
     @Test
     public void testAggregatingConstructorKeepsWindowSwitchOff() throws Exception {
@@ -586,7 +591,7 @@ public class HorizonJoinTimeFrameHelperForwardScanTest extends AbstractCairoTest
             final IntList keys = new IntList();
             addRareKeyRun(positions, keys, 100, 150);
             final ObjList<HorizonJoinSlaveState> slaveStates = new ObjList<>();
-            slaveStates.add(new HorizonJoinSlaveState(null, 1, 1, null, null, null, 1, null, null));
+            slaveStates.add(new HorizonJoinSlaveState(null, 1, 1, null, null, null, 1, null, null, null));
             try (
                     HorizonJoinMatcher matcher = new HorizonJoinMatcher(configuration, slaveStates, -1);
                     Map map = newMap()
@@ -747,7 +752,7 @@ public class HorizonJoinTimeFrameHelperForwardScanTest extends AbstractCairoTest
             Arrays.fill(frameRowCounts, 250_000);
             final SlaveCursor cursor = new SlaveCursor(frameRowCounts, row -> (int) (row % 30));
             final ObjList<HorizonJoinSlaveState> slaveStates = new ObjList<>();
-            slaveStates.add(new HorizonJoinSlaveState(null, 1, 1, null, null, null, 1, null, null));
+            slaveStates.add(new HorizonJoinSlaveState(null, 1, 1, null, null, null, 1, null, null, null));
             try (
                     HorizonJoinMatcher matcher = new HorizonJoinMatcher(configuration, slaveStates, -1);
                     Map map = newMap()
@@ -933,6 +938,151 @@ public class HorizonJoinTimeFrameHelperForwardScanTest extends AbstractCairoTest
                         lookup(newHelper(false), cursor, map, positions, keys),
                         lookup(newHelper(true), cursor, map, positions, keys)
                 );
+            }
+        });
+    }
+
+    @Test
+    public void testSharedKeyCheckAllocatesUnderQueryTracker() throws Exception {
+        // The check copies the master key values into native memory, which of() allocates under the
+        // tracker of the execution and close() frees. The aggregating helper allocates nothing else.
+        assertMemoryLeak(() -> {
+            final SlaveCursor cursor = new SlaveCursor(new long[]{100}, row -> (int) (row % 10));
+            try (
+                    LimitedMemoryTracker first = new LimitedMemoryTracker(Long.MAX_VALUE);
+                    LimitedMemoryTracker second = new LimitedMemoryTracker(Long.MAX_VALUE);
+                    Map map = newSharedKeyMap();
+                    HorizonJoinTimeFrameHelper helper = newSharedKeyHelper(true)
+            ) {
+                final MasterRecord master = new MasterRecord();
+                helper.of(cursor, first);
+                final long checkBytes = first.getUsed();
+                Assert.assertTrue(checkBytes > 0);
+                Assert.assertEquals(0, lookupSharedKey(helper, cursor, map, master, 99, 1, 2));
+                Assert.assertEquals(checkBytes, first.getUsed());
+                // the next execution frees the copies under the tracker that allocated them
+                helper.of(cursor, second);
+                Assert.assertEquals(0, first.getUsed());
+                Assert.assertEquals(checkBytes, second.getUsed());
+                Assert.assertEquals(0, lookupSharedKey(helper, cursor, map, master, 99, 1, 2));
+                helper.close();
+                Assert.assertEquals(0, second.getUsed());
+                // close() leaves the helper reusable
+                helper.of(cursor, first);
+                map.clear();
+                Assert.assertEquals(checkBytes, first.getUsed());
+                Assert.assertEquals(2, lookupSharedKey(helper, cursor, map, master, 99, 9, 9));
+                helper.close();
+                Assert.assertEquals(0, first.getUsed());
+            }
+        });
+    }
+
+    @Test
+    public void testSharedKeyCheckKeepsKeysNoRowHoldsOutOfKeyMissCache() throws Exception {
+        // A helper with the window switch remembers the keys that no row at or below a position holds.
+        // A key whose values differ never reaches that cache: the check answers it first, so 1,000
+        // distinct such keys neither read a slave row nor grow the cache. A key whose values agree but
+        // that no row holds still scans and is remembered.
+        assertMemoryLeak(() -> {
+            final SlaveCursor cursor = new SlaveCursor(new long[]{100}, row -> COMMON_KEY);
+            try (
+                    LimitedMemoryTracker tracker = new LimitedMemoryTracker(Long.MAX_VALUE);
+                    Map map = newSharedKeyMap();
+                    HorizonJoinTimeFrameHelper helper = new HorizonJoinTimeFrameHelper(
+                            configuration, 64, 1, BWD_SCAN_ABSOLUTE_THRESHOLD, BWD_SCAN_MIN_GAP,
+                            BWD_SCAN_SWITCH_FACTOR, null, SHARED_KEY_TYPES, true, newSharedKeyCheckTemplate()
+                    )
+            ) {
+                final MasterRecord master = new MasterRecord();
+                helper.of(cursor, tracker);
+                final long checkBytes = tracker.getUsed();
+                for (int i = 0; i < 1_000; i++) {
+                    Assert.assertEquals("lookup " + i, 0, lookupSharedKey(helper, cursor, map, master, 99, i, -i - 1));
+                }
+                Assert.assertEquals(checkBytes, tracker.getUsed());
+                Assert.assertEquals(200, lookupSharedKey(helper, cursor, map, master, 99, RARE_KEY, RARE_KEY));
+                Assert.assertTrue(tracker.getUsed() > checkBytes);
+            }
+        });
+    }
+
+    @Test
+    public void testSharedKeyCheckRunsOnlyWhenKeyCacheMisses() throws Exception {
+        // The key cache holds slave keys only, so it never answers a key whose values differ, and the
+        // check runs after the cache lookup. The slave cycles through 10 keys, and all lookups ask for
+        // row 500, which holds key 0. The first lookup finds an empty cache, so the check copies both
+        // master key values once more before the lookup scans rows 500 to 497 for key 7. The second
+        // asks for key 9, which the cache then holds, and reads the master key only to probe the cache,
+        // with or without the check. The third asks for a key whose values differ: the cache misses,
+        // and the check answers it without reading a slave row, where the lookup without the check
+        // goes on from row 497, the lowest row that the first lookup read, down to row 0.
+        assertMemoryLeak(() -> {
+            final SlaveCursor cursor = new SlaveCursor(new long[]{1_000}, row -> (int) (row % 10));
+            final long[][] masterReads = new long[2][3];
+            final long[][] slaveReads = new long[2][3];
+            final int[][] keys = {{7, 7}, {9, 9}, {1, 2}};
+            for (int pass = 0; pass < 2; pass++) {
+                try (
+                        Map map = newSharedKeyMap();
+                        HorizonJoinTimeFrameHelper helper = newSharedKeyHelper(pass == 0)
+                ) {
+                    helper.of(cursor, null);
+                    final MasterRecord master = new MasterRecord();
+                    for (int i = 0; i < keys.length; i++) {
+                        final long reads = master.keyReadCount;
+                        slaveReads[pass][i] = lookupSharedKey(helper, cursor, map, master, 500, keys[i][0], keys[i][1]);
+                        masterReads[pass][i] = master.keyReadCount - reads;
+                    }
+                }
+            }
+            // a slave row copies its key twice, once per key position
+            Assert.assertArrayEquals(new long[]{8, 0, 0}, slaveReads[0]);
+            Assert.assertArrayEquals(new long[]{8, 0, 2 * 498}, slaveReads[1]);
+            Assert.assertEquals(masterReads[1][0] + 2, masterReads[0][0]);
+            Assert.assertEquals(2, masterReads[0][1]);
+            Assert.assertEquals(2, masterReads[1][1]);
+        });
+    }
+
+    @Test
+    public void testSharedKeyCheckSkipsKeysNoSlaveRowHolds() throws Exception {
+        // The slave cycles through 10 keys, and the lookups walk 200 positions 2 rows apart from row
+        // 100,000 on, alternating a key whose values agree with one whose values differ, which no row
+        // holds. Backward-only mode clears the key cache at every position, and no backward scan
+        // reaches the absolute threshold, so without the check each lookup of a key whose values
+        // differ reads every row down to row 0. The check answers it without reading a row, and the
+        // other lookups read the rows that they read without the check.
+        assertMemoryLeak(() -> {
+            final SlaveCursor cursor = new SlaveCursor(new long[]{200_000}, row -> (int) (row % 10));
+            final int lookupCount = 200;
+            final long[][] slaveReads = new long[2][lookupCount];
+            for (int pass = 0; pass < 2; pass++) {
+                try (
+                        Map map = newSharedKeyMap();
+                        HorizonJoinTimeFrameHelper helper = newSharedKeyHelper(pass == 0)
+                ) {
+                    helper.of(cursor, null);
+                    final MasterRecord master = new MasterRecord();
+                    for (int i = 0; i < lookupCount; i++) {
+                        final long position = 100_000 + 2L * i;
+                        // the key of the row 3 rows below the position, or two keys that differ
+                        final int key = (int) ((position - 3) % 10);
+                        slaveReads[pass][i] = i % 2 == 0
+                                ? lookupSharedKey(helper, cursor, map, master, position, key, key)
+                                : lookupSharedKey(helper, cursor, map, master, position, key, key + 1);
+                    }
+                    Assert.assertFalse(helper.isForwardScanMode());
+                }
+            }
+            for (int i = 0; i < lookupCount; i++) {
+                if (i % 2 == 0) {
+                    Assert.assertEquals("rows of lookup " + i, 8, slaveReads[0][i]);
+                    Assert.assertEquals("rows of lookup " + i, 8, slaveReads[1][i]);
+                } else {
+                    Assert.assertEquals("rows of lookup " + i, 0, slaveReads[0][i]);
+                    Assert.assertEquals("rows of lookup " + i, 2 * (100_000 + 2L * i + 1), slaveReads[1][i]);
+                }
             }
         });
     }
@@ -1124,6 +1274,33 @@ public class HorizonJoinTimeFrameHelperForwardScanTest extends AbstractCairoTest
         return scannedRows;
     }
 
+    /**
+     * Runs one lookup of the master key (key, key2) at the position, checks the match against a
+     * brute-force scan and returns the number of slave key values that the lookup read, two per row.
+     * A slave row writes its key at both key positions, so only a key whose values agree can match.
+     */
+    private static long lookupSharedKey(
+            HorizonJoinTimeFrameHelper helper,
+            SlaveCursor cursor,
+            Map map,
+            MasterRecord master,
+            long position,
+            int key,
+            int key2
+    ) {
+        final long asOfRowId = helper.findAsOfRow(position, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+        master.key = key;
+        master.key2 = key2;
+        final long keyReadCount = cursor.keyReadCount;
+        final long matchRowId = helper.findKeyedAsOfMatch(asOfRowId, master, MASTER_SHARED_KEY_SINK, SLAVE_SHARED_KEY_SINK, map, null, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+        Assert.assertEquals(
+                "match [position=" + position + ", key=" + key + ", key2=" + key2 + ']',
+                key == key2 ? cursor.findMatch(position, key) : Long.MIN_VALUE,
+                matchRowId
+        );
+        return cursor.keyReadCount - keyReadCount;
+    }
+
     private static HorizonJoinTimeFrameHelper newHelper(boolean isWindowSwitchEnabled) {
         return new HorizonJoinTimeFrameHelper(
                 configuration,
@@ -1160,8 +1337,37 @@ public class HorizonJoinTimeFrameHelperForwardScanTest extends AbstractCairoTest
                 newKeySinkTemplate(SlaveRecord.KEY_COLUMN),
                 1,
                 null,
+                null,
                 null
         );
+    }
+
+    // The check of the master key (key, key2), whose two positions compare the slave key column.
+    private static HorizonJoinSharedKeyCheckTemplate newSharedKeyCheckTemplate() {
+        return new HorizonJoinSharedKeyCheckTemplate(
+                configuration,
+                newKeySinkTemplate(MasterRecord.KEY_COLUMN),
+                newKeySinkTemplate(MasterRecord.KEY2_COLUMN)
+        );
+    }
+
+    // An aggregating helper for the master key (key, key2), with or without the check of that key.
+    private static HorizonJoinTimeFrameHelper newSharedKeyHelper(boolean hasCheck) {
+        return new HorizonJoinTimeFrameHelper(
+                configuration,
+                configuration.getSqlAsOfJoinLookAhead(),
+                1,
+                BWD_SCAN_ABSOLUTE_THRESHOLD,
+                BWD_SCAN_MIN_GAP,
+                BWD_SCAN_SWITCH_FACTOR,
+                null,
+                SHARED_KEY_TYPES,
+                hasCheck ? newSharedKeyCheckTemplate() : null
+        );
+    }
+
+    private static Map newSharedKeyMap() {
+        return MapFactory.createUnorderedMap(configuration, SHARED_KEY_TYPES, new SingleColumnType(ColumnType.LONG));
     }
 
     private static Map newMap() {
@@ -1239,15 +1445,17 @@ public class HorizonJoinTimeFrameHelperForwardScanTest extends AbstractCairoTest
     }
 
     private static final class KeySink implements RecordSink {
-        private final int columnIndex;
+        private final int[] columnIndexes;
 
-        private KeySink(int columnIndex) {
-            this.columnIndex = columnIndex;
+        private KeySink(int... columnIndexes) {
+            this.columnIndexes = columnIndexes;
         }
 
         @Override
         public void copy(Record r, RecordSinkSPI w) {
-            w.putInt(r.getInt(columnIndex));
+            for (int columnIndex : columnIndexes) {
+                w.putInt(r.getInt(columnIndex));
+            }
         }
 
         @Override
@@ -1256,13 +1464,18 @@ public class HorizonJoinTimeFrameHelperForwardScanTest extends AbstractCairoTest
     }
 
     private static final class MasterRecord implements Record {
+        private static final int KEY2_COLUMN = 1;
         private static final int KEY_COLUMN = 0;
         private int key;
+        private int key2;
         private long keyReadCount;
 
         @Override
         public int getInt(int col) {
             keyReadCount++;
+            if (col == KEY2_COLUMN) {
+                return key2;
+            }
             Assert.assertEquals(KEY_COLUMN, col);
             return key;
         }

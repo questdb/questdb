@@ -74,6 +74,12 @@ class FilteredRecordCursor implements RecordCursor {
     }
 
     @Override
+    public boolean isKnownEmpty() {
+        // the filter drops rows of the base, so it keeps no row of an empty base
+        return base.isKnownEmpty();
+    }
+
+    @Override
     public SymbolTable newSymbolTable(int columnIndex) {
         return base.newSymbolTable(columnIndex);
     }

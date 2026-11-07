@@ -106,7 +106,7 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
             try (RecordCursorFactory factory = new HorizonJoinNotKeyedRecordCursorFactory(
                     configuration, new BytecodeAssembler(), new GenericRecordMetadata(),
                     new JoinRecordMetadata(configuration, 0), select("trades"), select("quotes"), filter,
-                    new long[]{0}, 0, groups, 1, null, null, null, 1, null, null, new int[0], new int[0]
+                    new long[]{0}, 0, groups, 1, null, null, null, 1, null, null, null, new int[0], new int[0]
             )) {
                 Assert.assertSame(initFailure, Assert.assertThrows(RuntimeException.class, () -> factory.getCursor(sqlExecutionContext)));
                 Assert.assertArrayEquals(new Throwable[]{cursorClosedFailure}, initFailure.getSuppressed());
@@ -2175,8 +2175,8 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
         try {
             if (isMulti) {
                 final ObjList<HorizonJoinSlaveState> slaveStates = new ObjList<>();
-                slaveStates.add(new HorizonJoinSlaveState(firstSlaveFactory, 1, 1, null, null, null, 1, null, null));
-                slaveStates.add(new HorizonJoinSlaveState(secondSlaveFactory, 1, 1, null, null, null, 1, null, null));
+                slaveStates.add(new HorizonJoinSlaveState(firstSlaveFactory, 1, 1, null, null, null, 1, null, null, null));
+                slaveStates.add(new HorizonJoinSlaveState(secondSlaveFactory, 1, 1, null, null, null, 1, null, null, null));
                 slaveStates.getQuick(0).setFilter(slaveFilter);
                 slaveStates.getQuick(0).setPerWorkerFilters(perWorkerSlaveFilters);
                 new AsyncMultiHorizonJoinNotKeyedRecordCursorFactory(
@@ -2217,6 +2217,7 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
                         null,
                         null,
                         1,
+                        null,
                         null,
                         null,
                         new int[0],
@@ -2318,6 +2319,7 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
                     null,
                     null,
                     1,
+                    null,
                     null,
                     null,
                     new int[0],
@@ -2475,7 +2477,7 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
         final AsyncHorizonJoinResources resources = new AsyncHorizonJoinResources(null, null, null, null, null, null, null, null);
         final StatefulAtom atom;
         if (isMulti) {
-            final HorizonJoinSlaveState state = new HorizonJoinSlaveState(slaveFactory, 1, 1, null, null, null, 1, null, null);
+            final HorizonJoinSlaveState state = new HorizonJoinSlaveState(slaveFactory, 1, 1, null, null, null, 1, null, null, null);
             state.setFilter(ownerFilter);
             state.setPerWorkerFilters(workerFilters);
             states.add(state);
@@ -2487,7 +2489,7 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
             resources.setSlaveFilters(ownerFilter, workerFilters);
             atom = new AsyncHorizonJoinNotKeyedAtom(
                     new BytecodeAssembler(), configuration, slaveFactory, 0, new long[]{0}, 1,
-                    null, null, null, 1, null, null, new int[0], new int[0], groups, resources, 1, 1, 2
+                    null, null, null, 1, null, null, null, new int[0], new int[0], groups, resources, 1, 1, 2
             );
         }
         try (atom) {
@@ -2705,7 +2707,7 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
         private int getFactoryCalls;
 
         private CountingSlaveState(RecordCursorFactory factory, RuntimeException failure, int failureCall) {
-            super(factory, 1, 1, null, null, null, 1, null, null);
+            super(factory, 1, 1, null, null, null, 1, null, null, null);
             this.failure = failure;
             this.failureCall = failureCall;
         }

@@ -1,0 +1,356 @@
+/*+*****************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.test.cutlass.pgwire;
+
+import org.junit.Test;
+
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.sql.Types;
+
+public class PGLateralJoinTest extends BasePGTest {
+
+    // A prepared statement whose LATERAL body holds a RIGHT join that WHERE t.id > ? plans as an INNER
+    // join runs with each value, NULL included: t.id > ? is false on the rows that the join NULL-extends
+    // whatever the value, so one plan returns the rows of the body for each. t.id >= ? keeps those rows
+    // for a NULL value, as NULL >= NULL is true, so its RIGHT join keeps its plan.
+    @Test
+    public void testNullRejectingBindVariableNextToRightJoin() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (Statement statement = connection.createStatement()) {
+                createOrdersAndRefunds(statement);
+                statement.execute("CREATE TABLE trades (id INT, x INT, ts TIMESTAMP) TIMESTAMP(ts)");
+                statement.execute("INSERT INTO trades VALUES (10, 1, 1::timestamp), (11, 2, 2::timestamp)");
+            }
+            final String sql = "SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM "
+                    + "trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE t.id {OP} ?) l ORDER BY 1, 2, 3";
+            final String header = "id[INTEGER],tid[INTEGER],rid[INTEGER]\n";
+            final String bothTrades = "1,10,100\n2,11,101\n";
+            final String nullExtended = "1,null,101\n1,null,102\n2,null,100\n2,null,102\n3,null,100\n3,null,101\n3,null,102\n";
+            assertExecutions(connection, sql.replace("{OP}", ">"), header, new Integer[]{0, null, 10, 0}, new String[]{bothTrades, "", "2,11,101\n", bothTrades});
+            assertExecutions(connection, sql.replace("{OP}", ">="), header, new Integer[]{null, 10, null}, new String[]{nullExtended, bothTrades, nullExtended});
+        });
+    }
+
+    // A prepared statement whose LATERAL body holds a RIGHT join over a computed SHORT column runs with
+    // a NULL value: t.sid != 0 is false on the 0 that the join puts in the SHORT column, so it drops
+    // the rows that the join NULL-extends whatever the value of t.i = ?. Trade 11 holds NULL in i, and
+    // NULL = NULL is true.
+    @Test
+    public void testNullValueNextToAComputedColumn() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (Statement statement = connection.createStatement()) {
+                createOrdersAndRefunds(statement);
+                statement.execute("CREATE TABLE trades (id INT, x INT, i INT, ts TIMESTAMP) TIMESTAMP(ts)");
+                statement.execute("INSERT INTO trades VALUES (10, 1, 10, 1::timestamp), (11, 2, NULL, 2::timestamp)");
+            }
+            final String sql = "SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM "
+                    + "(SELECT id, x, i, CAST(id AS SHORT) sid FROM trades) t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k "
+                    + "WHERE t.i = ? AND t.sid != 0) l ORDER BY 1, 2, 3";
+            final String header = "id[INTEGER],tid[INTEGER],rid[INTEGER]\n";
+            try (PreparedStatement statement = connection.prepareStatement(sql)) {
+                statement.setNull(1, Types.INTEGER);
+                try (ResultSet rs = statement.executeQuery()) {
+                    assertResultSet(header + "2,11,101\n", sink, rs);
+                }
+                statement.setInt(1, 10);
+                try (ResultSet rs = statement.executeQuery()) {
+                    assertResultSet(header + "1,10,100\n", sink, rs);
+                }
+            }
+        });
+    }
+
+    // A prepared statement whose LATERAL body holds a RIGHT join reads, at each execution, the value of
+    // a CASE over a scalar sub-query. Per outer row, refund k matches both trades, and t.id >= 10 keeps
+    // both. Refund 103 makes max(id) 103, so the CASE becomes NULL, and NULL >= NULL keeps the rows that
+    // the join NULL-extends: per outer row, the refunds of no trade, 103 included, as it matches no
+    // outer key.
+    @Test
+    public void testNullValueOfANestedSubQuery() throws Exception {
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
+            try (Statement statement = connection.createStatement()) {
+                createOrdersAndRefunds(statement);
+                statement.execute("CREATE TABLE trades (id INT, x INT, ts TIMESTAMP) TIMESTAMP(ts)");
+                statement.execute("INSERT INTO trades VALUES (10, 1, 1::timestamp), (11, 2, 2::timestamp)");
+            }
+            final String sql = "SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM "
+                    + "trades t RIGHT JOIN refunds r ON r.k = o.k "
+                    + "WHERE t.id >= CASE WHEN (SELECT max(id) FROM refunds) > 102 THEN NULL::int ELSE 10 END) l ORDER BY 1, 2, 3";
+            final String header = "id[INTEGER],tid[INTEGER],rid[INTEGER]\n";
+            try (PreparedStatement statement = connection.prepareStatement(sql)) {
+                for (int i = 0; i < 2; i++) {
+                    try (ResultSet rs = statement.executeQuery()) {
+                        assertResultSet(header + "1,10,100\n1,11,100\n2,10,101\n2,11,101\n3,10,102\n3,11,102\n", sink, rs);
+                    }
+                }
+                try (Statement insert = connection.createStatement()) {
+                    insert.execute("INSERT INTO refunds VALUES (103, 4, 4::timestamp)");
+                }
+                for (int i = 0; i < 2; i++) {
+                    try (ResultSet rs = statement.executeQuery()) {
+                        assertResultSet(header + "1,null,101\n1,null,102\n1,null,103\n2,null,100\n2,null,102\n2,null,103\n3,null,100\n3,null,101\n3,null,103\n", sink, rs);
+                    }
+                }
+            }
+        });
+    }
+
+    // A prepared statement whose LATERAL body holds a RIGHT join runs with each pair of values of two
+    // ANDed conjuncts that keep the rows the join NULL-extends only while their value is NULL. Trade 11
+    // holds NULL in i and 10 in l: with i = NULL and l >= 10 it matches, as NULL = NULL is true, while
+    // NULL >= 10 is false on the NULL-extended rows. With both values NULL, NULL = NULL and
+    // NULL >= NULL keep the NULL-extended rows, and 10 >= NULL drops trade 11. Each execution returns
+    // the rows of the body run once per outer row.
+    @Test
+    public void testNullValueOfAnyConjunct() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (Statement statement = connection.createStatement()) {
+                createOrdersAndRefunds(statement);
+                statement.execute("CREATE TABLE trades (id INT, x INT, i INT, l LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+                statement.execute("INSERT INTO trades VALUES (10, 1, 10, 10, 1::timestamp), (11, 2, NULL, 10, 2::timestamp)");
+            }
+            final String body = "trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = {K} WHERE t.i = ? AND t.l >= ?";
+            final String sql = "SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM "
+                    + body.replace("{K}", "o.k") + ") l ORDER BY 1, 2, 3";
+            // the body once per outer row, with the outer key as a literal
+            final String reference = "SELECT * FROM ("
+                    + "SELECT 1 id, tid, rid FROM (SELECT t.id tid, r.id rid FROM " + body.replace("{K}", "1") + ") UNION ALL "
+                    + "SELECT 2 id, tid, rid FROM (SELECT t.id tid, r.id rid FROM " + body.replace("{K}", "2") + ") UNION ALL "
+                    + "SELECT 3 id, tid, rid FROM (SELECT t.id tid, r.id rid FROM " + body.replace("{K}", "3") + ")"
+                    + ") ORDER BY 1, 2, 3";
+            final String header = "id[INTEGER],tid[INTEGER],rid[INTEGER]\n";
+            try (
+                    PreparedStatement statement = connection.prepareStatement(sql);
+                    PreparedStatement referenceStatement = connection.prepareStatement(reference)
+            ) {
+                final Integer[] firstValues = {null, null, 10, 10};
+                final Long[] secondValues = {10L, null, null, 10L};
+                final String[] rows = {"2,11,101\n", "1,null,101\n1,null,102\n2,null,100\n2,null,102\n3,null,100\n3,null,101\n3,null,102\n", "", "1,10,100\n"};
+                for (int i = 0; i < rows.length; i++) {
+                    bind(statement, 1, firstValues[i], secondValues[i]);
+                    try (ResultSet rs = statement.executeQuery()) {
+                        assertResultSet(header + rows[i], sink, rs);
+                    }
+                    for (int k = 0; k < 3; k++) {
+                        bind(referenceStatement, 2 * k + 1, firstValues[i], secondValues[i]);
+                    }
+                    try (ResultSet rs = referenceStatement.executeQuery()) {
+                        assertResultSet(header + rows[i], sink, rs);
+                    }
+                }
+            }
+        });
+    }
+
+    // A prepared statement whose LATERAL body equates a.x to the outer key and compares a.id with it
+    // too. Per outer row, a.id > o.x + 0 keeps a row 10 of o.x = 1 and a row 11 of o.x = 3, and a
+    // NULL value makes the comparison false for every row. Each value runs twice.
+    @Test
+    public void testLateralWhereKeyAndCorrelatedComparisonPrepared() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (Statement statement = connection.createStatement()) {
+                statement.execute("CREATE TABLE o (id INT, x INT)");
+                statement.execute("CREATE TABLE a (id INT, x INT)");
+                statement.execute("INSERT INTO o VALUES (1, 1), (2, NULL), (3, 3)");
+                statement.execute("INSERT INTO a VALUES (10, 1), (11, 3), (12, NULL), (0, 1)");
+            }
+            final String sql = "SELECT o.id, l.aid FROM o JOIN LATERAL (SELECT a.id aid FROM a WHERE a.x = o.x AND a.id > o.x + ?) l ORDER BY 1, 2";
+            final String header = "id[INTEGER],aid[INTEGER]\n";
+            try (PreparedStatement statement = connection.prepareStatement(sql)) {
+                for (int i = 0; i < 2; i++) {
+                    statement.setInt(1, 0);
+                    try (ResultSet rs = statement.executeQuery()) {
+                        assertResultSet(header + "1,10\n3,11\n", sink, rs);
+                    }
+                }
+                for (int i = 0; i < 2; i++) {
+                    statement.setNull(1, Types.INTEGER);
+                    try (ResultSet rs = statement.executeQuery()) {
+                        assertResultSet(header, sink, rs);
+                    }
+                }
+            }
+        });
+    }
+
+    // A prepared statement whose LATERAL body reads o.x in c's ON clause and keys o.x in WHERE on b,
+    // which the RIGHT join after c joins, returns the rows of DuckDB, with IS NOT DISTINCT FROM for
+    // QuestDB's =, at each execution: o.x > 1 leaves the master side of the RIGHT join empty for
+    // o.x = 1, so b rows 21 and 23 come NULL-extended, and b.id > 0 keeps every b row. The statement
+    // with the key on a returns the rows of DuckDB at each execution too.
+    @Test
+    public void testLateralOuterConditionBeforeRightJoinKeyOnSlavePrepared() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (Statement statement = connection.createStatement()) {
+                statement.execute("CREATE TABLE o (id INT, x INT)");
+                statement.execute("CREATE TABLE a (id INT, x INT)");
+                statement.execute("CREATE TABLE b (id INT, k INT, x INT)");
+                statement.execute("CREATE TABLE c (id INT, sid INT)");
+                statement.execute("INSERT INTO o VALUES (1, 1), (2, NULL), (3, 3)");
+                statement.execute("INSERT INTO a VALUES (10, 1), (11, 3), (12, NULL), (0, 1)");
+                statement.execute("INSERT INTO b VALUES (20, 5, 1), (21, 1, 1), (22, 7, NULL), (23, 1, NULL), (24, 3, 3)");
+                statement.execute("INSERT INTO c VALUES (100, 21), (101, 22), (102, 20), (103, 23), (104, 99)");
+            }
+            final String sql = "SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (SELECT a.id aid, b.id sid FROM a JOIN c ON c.sid = a.id + 11 AND o.x > 1 RIGHT JOIN b ON a.x = b.k WHERE b.k = o.x AND b.id > ?) l ORDER BY 1, 2, 3";
+            try (PreparedStatement statement = connection.prepareStatement(sql)) {
+                for (int i = 0; i < 2; i++) {
+                    statement.setInt(1, 0);
+                    try (ResultSet rs = statement.executeQuery()) {
+                        assertResultSet("id[INTEGER],aid[INTEGER],sid[INTEGER]\n1,null,21\n1,null,23\n3,11,24\n", sink, rs);
+                    }
+                }
+            }
+            final String masterKeySql = "SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (SELECT a.id aid, b.id sid FROM a JOIN c ON c.sid - ? = o.x RIGHT JOIN b ON a.x = b.k WHERE a.x = o.x AND a.id IS NOT NULL) l ORDER BY 1, 2, 3";
+            try (PreparedStatement statement = connection.prepareStatement(masterKeySql)) {
+                for (int i = 0; i < 2; i++) {
+                    statement.setInt(1, 20);
+                    try (ResultSet rs = statement.executeQuery()) {
+                        assertResultSet("id[INTEGER],aid[INTEGER],sid[INTEGER]\n1,0,21\n1,0,23\n1,10,21\n1,10,23\n3,11,24\n", sink, rs);
+                    }
+                }
+            }
+        });
+    }
+
+    // A prepared statement whose LATERAL body reads o.id in c's ON clause, which keeps the outer-ref
+    // join ahead of the RIGHT join, and keys o.x in WHERE on b, which that join joins, next to a filter
+    // that drops the rows that the join NULL-extends. Each statement returns the rows of DuckDB at each
+    // execution: the body, the body in the first branch of a UNION ALL, and the body with a.id >= ?,
+    // which with 5 keeps a row 11.
+    @Test
+    public void testLateralOuterConditionBeforeRightJoinKeyOnSlaveNullRejectingPrepared() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (Statement statement = connection.createStatement()) {
+                createKeyAndComparisonTables(statement);
+            }
+            final String header = "id[INTEGER],aid[INTEGER],sid[INTEGER]\n";
+            final String[][] cases = {
+                    {"SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (SELECT a.id aid, b.id sid FROM a JOIN c ON c.sid = a.id + 11 AND o.id > 1 RIGHT JOIN b ON a.x = b.k WHERE b.k = o.x AND a.id IS NOT NULL) l ORDER BY 1, 2, 3",
+                            header + "3,11,24\n"},
+                    {"SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (SELECT a.id aid, b.id sid FROM a JOIN c ON c.sid = a.id + 11 AND o.x > 1 RIGHT JOIN b ON a.x = b.k WHERE b.k = o.x AND a.id IS NOT NULL UNION ALL SELECT a.id, -1 FROM a WHERE a.x = o.x) l ORDER BY 1, 2, 3",
+                            header + "1,0,-1\n1,10,-1\n2,12,-1\n3,11,-1\n3,11,24\n"},
+            };
+            for (String[] c : cases) {
+                try (PreparedStatement statement = connection.prepareStatement(c[0])) {
+                    for (int i = 0; i < 2; i++) {
+                        try (ResultSet rs = statement.executeQuery()) {
+                            assertResultSet(c[1], sink, rs);
+                        }
+                    }
+                }
+            }
+            final String sql = "SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (SELECT a.id aid, b.id sid FROM a JOIN c ON c.sid = a.id + 11 AND o.id > 1 RIGHT JOIN b ON a.x = b.k WHERE b.k = o.x AND a.id >= ?) l ORDER BY 1, 2, 3";
+            try (PreparedStatement statement = connection.prepareStatement(sql)) {
+                for (int i = 0; i < 2; i++) {
+                    statement.setInt(1, 5);
+                    try (ResultSet rs = statement.executeQuery()) {
+                        assertResultSet(header + "3,11,24\n", sink, rs);
+                    }
+                }
+            }
+        });
+    }
+
+    // The statement of testLateralOuterConditionBeforeRightJoinKeyOnSlaveNullRejectingPrepared() with
+    // a.id >= ?, which drops the rows that the RIGHT join NULL-extends only while ? is not NULL. With
+    // NULL, o.id > 1 leaves the master side of the RIGHT join empty for o row 1, and NULL >= NULL keeps
+    // its b rows 21 and 23, whose k is 1, while for o row 3 10 >= NULL drops a row 11. With 5 the next
+    // execution returns 3 11 24.
+    @Test
+    public void testLateralOuterConditionBeforeRightJoinKeyOnSlaveNullRejectingNullValue() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (Statement statement = connection.createStatement()) {
+                createKeyAndComparisonTables(statement);
+            }
+            final String sql = "SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (SELECT a.id aid, b.id sid FROM a JOIN c ON c.sid = a.id + 11 AND o.id > 1 RIGHT JOIN b ON a.x = b.k WHERE b.k = o.x AND a.id >= ?) l ORDER BY 1, 2, 3";
+            try (PreparedStatement statement = connection.prepareStatement(sql)) {
+                for (int i = 0; i < 2; i++) {
+                    statement.setNull(1, Types.INTEGER);
+                    try (ResultSet rs = statement.executeQuery()) {
+                        assertResultSet("id[INTEGER],aid[INTEGER],sid[INTEGER]\n1,null,21\n1,null,23\n", sink, rs);
+                    }
+                }
+                statement.setInt(1, 5);
+                try (ResultSet rs = statement.executeQuery()) {
+                    assertResultSet("id[INTEGER],aid[INTEGER],sid[INTEGER]\n3,11,24\n", sink, rs);
+                }
+            }
+        });
+    }
+
+    // Runs the prepared statement once per value of its INTEGER parameter, and checks the rows of each
+    // execution
+    private static void assertExecutions(Connection connection, String sql, String header, Integer[] values, String[] rows) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            for (int i = 0; i < values.length; i++) {
+                if (values[i] == null) {
+                    statement.setNull(1, Types.INTEGER);
+                } else {
+                    statement.setInt(1, values[i]);
+                }
+                try (ResultSet rs = statement.executeQuery()) {
+                    assertResultSet(header + rows[i], sink, rs);
+                }
+            }
+        }
+    }
+
+    private static void bind(PreparedStatement statement, int index, Integer first, Long second) throws SQLException {
+        if (first == null) {
+            statement.setNull(index, Types.INTEGER);
+        } else {
+            statement.setInt(index, first);
+        }
+        if (second == null) {
+            statement.setNull(index + 1, Types.BIGINT);
+        } else {
+            statement.setLong(index + 1, second);
+        }
+    }
+
+    // The tables of LateralJoinTest.createKeyAndComparisonTables()
+    private static void createKeyAndComparisonTables(Statement statement) throws SQLException {
+        statement.execute("CREATE TABLE o (id INT, x INT)");
+        statement.execute("CREATE TABLE a (id INT, x INT)");
+        statement.execute("CREATE TABLE b (id INT, k INT, x INT)");
+        statement.execute("CREATE TABLE c (id INT, sid INT)");
+        statement.execute("INSERT INTO o VALUES (1, 1), (2, NULL), (3, 3)");
+        statement.execute("INSERT INTO a VALUES (10, 1), (11, 3), (12, NULL), (0, 1)");
+        statement.execute("INSERT INTO b VALUES (20, 5, 1), (21, 1, 1), (22, 7, NULL), (23, 1, NULL), (24, 3, 3)");
+        statement.execute("INSERT INTO c VALUES (100, 21), (101, 22), (102, 20), (103, 23), (104, 99)");
+    }
+
+    // Three orders with the keys 1 to 3, and three refunds, one per key
+    private static void createOrdersAndRefunds(Statement statement) throws SQLException {
+        statement.execute("CREATE TABLE orders (id INT, k INT, ts TIMESTAMP) TIMESTAMP(ts)");
+        statement.execute("INSERT INTO orders VALUES (1, 1, 1::timestamp), (2, 2, 2::timestamp), (3, 3, 3::timestamp)");
+        statement.execute("CREATE TABLE refunds (id INT, k INT, ts TIMESTAMP) TIMESTAMP(ts)");
+        statement.execute("INSERT INTO refunds VALUES (100, 1, 1::timestamp), (101, 2, 2::timestamp), (102, 3, 3::timestamp)");
+    }
+}

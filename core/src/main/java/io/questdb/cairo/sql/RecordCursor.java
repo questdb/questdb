@@ -219,6 +219,21 @@ public interface RecordCursor extends RecordRandomAccess, Closeable, SymbolTable
     boolean hasNext();
 
     /**
+     * Returns whether the cursor knows, without reading a row, that it has no rows, such as the
+     * cursor of an empty table, the cursor of a gate whose runtime constant is false, or a join
+     * that such a cursor empties. A parent can then skip work for the rows, such as building a hash
+     * table, without reordering the reads of its children.
+     * <p>
+     * An open cursor answers from state it set when it opened, so the answer is cheap and stays the
+     * same for the execution. False does not mean that the cursor has rows.
+     *
+     * @return true if the cursor has no rows, false if it may have rows
+     */
+    default boolean isKnownEmpty() {
+        return false;
+    }
+
+    /**
      * Indicates whether this cursor is using an index for data access.
      * <p>
      * Index usage typically provides faster access patterns and more efficient

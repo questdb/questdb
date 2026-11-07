@@ -92,6 +92,20 @@ public class NestedLoopLeftJoinRecordCursorFactory extends AbstractJoinRecordCur
         return false;
     }
 
+    // Skips the master rows whose key the INNER hash join that reads this join's rows cannot match, see
+    // SqlCodeGenerator.generateJoins(). The hash join drops every row of such a master row, matched or
+    // NULL-extended alike.
+    public void setJoinKeyFilter(JoinKeyFilter filter) {
+        cursor.keyFilterGate.setFilter(filter);
+    }
+
+    // Returns a master row that a RIGHT or FULL join written after this join NULL-extended once, with NULL in
+    // the slave columns, without reading the slave, see OuterJoinNullCheck. SqlCodeGenerator.generateJoins()
+    // sets the check when this join runs after such outer joins.
+    public void setOuterJoinCheck(OuterJoinNullCheck check) {
+        cursor.outerJoinCheck = check;
+    }
+
     @Override
     public boolean supportsUpdateRowId(TableToken tableToken) {
         return masterFactory.supportsUpdateRowId(tableToken);
@@ -101,6 +115,12 @@ public class NestedLoopLeftJoinRecordCursorFactory extends AbstractJoinRecordCur
     public void toPlan(PlanSink sink) {
         sink.type("Nested Loop Left Join");
         sink.attr("filter").val(filter);
+        if (cursor.keyFilterGate.hasFilter()) {
+            sink.attr("joinKeyCheck").val(true);
+        }
+        if (cursor.outerJoinCheck != null) {
+            sink.attr("outerJoinCheck").val(true);
+        }
         sink.child(masterFactory);
         sink.child(slaveFactory);
     }
@@ -119,11 +139,18 @@ public class NestedLoopLeftJoinRecordCursorFactory extends AbstractJoinRecordCur
 
     private static class NestedLoopLeftRecordCursor extends AbstractJoinCursor {
         private final Function filter;
+        private final JoinKeyFilterGate keyFilterGate = new JoinKeyFilterGate();
         private final OuterJoinRecord record;
         private SqlExecutionCircuitBreaker circuitBreaker;
         private boolean isMasterHasNextPending;
         private boolean isMatch;
+        // the current row is a master row that an outer join NULL-extended, see setOuterJoinCheck()
+        private boolean isOuterJoinNullRow;
         private boolean masterHasNext;
+        private OuterJoinNullCheck outerJoinCheck;
+        // the slave rows that the scan of the current master row has read, which JoinKeyFilterGate takes as
+        // the slave's row count once a scan finishes
+        private long slaveRowsInPass;
 
         public NestedLoopLeftRecordCursor(int columnSplit, Function filter, Record nullRecord) {
             super(columnSplit);
@@ -142,8 +169,19 @@ public class NestedLoopLeftJoinRecordCursorFactory extends AbstractJoinRecordCur
             while (true) {
                 circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 if (isMasterHasNextPending) {
-                    masterHasNext = masterCursor.hasNext();
+                    if (isOuterJoinNullRow) {
+                        isOuterJoinNullRow = false;
+                        record.hasSlave(true);
+                    }
+                    masterHasNext = nextMasterRow();
                     isMasterHasNextPending = false;
+                    slaveRowsInPass = 0;
+                    if (masterHasNext && outerJoinCheck != null && outerJoinCheck.isNullExtended()) {
+                        isOuterJoinNullRow = true;
+                        isMasterHasNextPending = true;
+                        record.hasSlave(false);
+                        return true;
+                    }
                 }
 
                 if (!masterHasNext) {
@@ -151,11 +189,15 @@ public class NestedLoopLeftJoinRecordCursorFactory extends AbstractJoinRecordCur
                 }
 
                 while (slaveCursor.hasNext()) {
+                    slaveRowsInPass++;
                     circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                     if (filter.getBool(record)) {
                         isMatch = true;
                         return true;
                     }
+                }
+                if (keyFilterGate.isCountingSlaveRows()) {
+                    keyFilterGate.setSlaveRowCount(slaveRowsInPass);
                 }
 
                 if (!isMatch) {
@@ -187,16 +229,33 @@ public class NestedLoopLeftJoinRecordCursorFactory extends AbstractJoinRecordCur
             slaveCursor.toTop();
             filter.toTop();
             isMatch = false;
+            isOuterJoinNullRow = false;
             isMasterHasNextPending = true;
             record.hasSlave(true);
+        }
+
+        private boolean nextMasterRow() {
+            while (masterCursor.hasNext()) {
+                if (!keyFilterGate.isRowDropped(record)) {
+                    return true;
+                }
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+            }
+            return false;
         }
 
         void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext executionContext) throws SqlException {
             this.masterCursor = masterCursor;
             this.slaveCursor = slaveCursor;
             filter.init(this, executionContext);
+            if (outerJoinCheck != null) {
+                outerJoinCheck.of();
+            }
             record.of(masterCursor.getRecord(), slaveCursor.getRecord());
+            isOuterJoinNullRow = false;
             isMasterHasNextPending = true;
+            // not the slave's size: a parent may still be opening its other cursors, see JoinKeyFilterGate
+            keyFilterGate.of(slaveCursor);
             circuitBreaker = executionContext.getCircuitBreaker();
         }
     }
