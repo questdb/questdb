@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.qwp;
 
+import io.questdb.Bootstrap;
 import io.questdb.PropertyKey;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -36,6 +37,8 @@ import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
 import org.junit.BeforeClass;
+
+import java.util.function.Supplier;
 
 import static io.questdb.PropertyKey.HTTP_MIN_ENABLED;
 import static io.questdb.PropertyKey.LINE_TCP_ENABLED;
@@ -109,12 +112,22 @@ public abstract class AbstractReusedServerQwpEgressTest extends AbstractBootstra
      * same ports closed can hit EADDRINUSE. Back off and retry until the port frees.
      */
     protected static TestServerMain startServerWithRetry(String... envs) {
-        NetworkError lastError = null;
+        return startServerWithRetry(() -> startWithEnvVariables(envs));
+    }
+
+    /**
+     * As {@link #startServerWithRetry(String...)}, for a server that {@code start} builds and
+     * starts itself. On failure {@code start} must close the half-started server before throwing.
+     */
+    protected static TestServerMain startServerWithRetry(Supplier<TestServerMain> start) {
+        Throwable lastError = null;
         for (int attempt = 0; attempt < 100; attempt++) {
             try {
-                return startWithEnvVariables(envs);
-            } catch (NetworkError e) {
-                // startWithEnvVariables already closed the half-started server before rethrowing.
+                return start.get();
+            } catch (NetworkError | Bootstrap.BootstrapException e) {
+                // The lifecycle reports a listener that failed to bind as a startup failure
+                // of its component, so the bind error can arrive wrapped in either. start
+                // already closed the half-started server before rethrowing.
                 if (e.getMessage() == null || !Chars.contains(e.getMessage(), "could not bind socket")) {
                     throw e;
                 }
@@ -123,6 +136,9 @@ public abstract class AbstractReusedServerQwpEgressTest extends AbstractBootstra
                 Os.sleep(100);
             }
         }
-        throw lastError;
+        if (lastError instanceof Bootstrap.BootstrapException e) {
+            throw e;
+        }
+        throw (NetworkError) lastError;
     }
 }

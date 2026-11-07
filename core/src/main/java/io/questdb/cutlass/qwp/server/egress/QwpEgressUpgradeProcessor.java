@@ -1308,6 +1308,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         RecordCursorFactory factory = null;
         RecordCursor cursor = null;
         PageFrameCursor pageFrameCursor = null;
+        boolean isPageFrameBackward = false;
         try {
             // Seed requestId before decoding so a decode failure (e.g. a malformed
             // query_flags trailer) still reports the right id instead of 0.
@@ -1421,17 +1422,19 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                     // reads the same values from the index sidecar row by row, as fast,
                     // without buffering a decoded frame. Factories that don't support page
                     // frames (filtered/joined/grouped queries) keep the RecordCursor path
-                    // without change.
+                    // without change. A backward scan takes its frames newest first, and
+                    // the stream reads each one from its last row down.
                     int forcedStalePlanRecompiles = DEBUG_FORCE_STALE_PLAN_RECOMPILES;
                     if (forcedStalePlanRecompiles > 0) {
                         DEBUG_FORCE_STALE_PLAN_RECOMPILES = forcedStalePlanRecompiles - 1;
                         throw TableReferenceOutOfDateException.of("qwp_debug_stale_plan");
                     }
                     if (factory.supportsPageFrameCursor() && factory.producesMaterializedPageFrames()) {
-                        int order = factory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_BACKWARD
-                                ? PartitionFrameCursorFactory.ORDER_DESC
-                                : PartitionFrameCursorFactory.ORDER_ASC;
-                        pageFrameCursor = factory.getPageFrameCursor(sqlCtx, order);
+                        isPageFrameBackward = factory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_BACKWARD;
+                        pageFrameCursor = factory.getPageFrameCursor(
+                                sqlCtx,
+                                isPageFrameBackward ? PartitionFrameCursorFactory.ORDER_DESC : PartitionFrameCursorFactory.ORDER_ASC
+                        );
                     }
                     if (pageFrameCursor == null) {
                         cursor = factory.getCursor(sqlCtx);
@@ -1472,8 +1475,16 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                 // the server's working set. Unlike SEQUENTIAL_EVICT (used by
                 // the parquet exporter), the partition stays mapped on pool
                 // return so the next QWP query reuses the FdCache.
-                pageFrameCursor.setScanProfile(ReaderScanProfile.SEQUENTIAL_CACHED);
-                state.beginStreamingPageFrame(requestId, factory, pageFrameCursor,
+                // The hint is only for forward scans: readahead runs forward,
+                // so under MADV_SEQUENTIAL the descending walk of a backward
+                // scan faults in uncached pages one at a time. Backward scans
+                // keep the default mapping, whose fault read-around reaches
+                // below the faulting page, and read each frame ahead
+                // themselves, see streamResults.
+                if (!isPageFrameBackward) {
+                    pageFrameCursor.setScanProfile(ReaderScanProfile.SEQUENTIAL_CACHED);
+                }
+                state.beginStreamingPageFrame(requestId, factory, pageFrameCursor, isPageFrameBackward,
                         columnCount, decoder.initialCredit, cacheKey, compiledQueryType, queryCacheable);
             } else {
                 state.beginStreaming(requestId, factory, cursor,
@@ -2037,6 +2048,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         // everything else comes through the RecordCursor path. Both feed the same
         // batchBuffer; the only difference is how we walk rows.
         final boolean isPageFrame = state.isStreamingPageFrame();
+        final boolean isPageFrameBackward = isPageFrame && state.isStreamingPageFrameBackward();
         final RecordCursor cursor = isPageFrame ? null : state.getStreamingCursor();
         final NetworkSqlExecutionCircuitBreaker circuitBreaker = context.getOrCreateCircuitBreaker(engine);
 
@@ -2120,11 +2132,18 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             if (isPageFrame) {
                 PageFrame frame = null;
                 while (rowsToAdd > 0 && (frame = state.advanceToPageFrame()) != null) {
-                    long lo = state.getStreamingPageFrameRow();
-                    long rowsAvailable = state.getStreamingPageFrameRowHi() - lo;
-                    int sliceRows = (int) Math.min(Math.min(rowsToAdd, rowsAvailable), 1024L);
-                    long hi = lo + sliceRows;
-                    batchBuffer.appendPageFrame(frame, state.getStreamingPageFrameMemoryRecord(), lo, hi);
+                    final long rowsEmitted = state.getStreamingPageFrameRow();
+                    final long frameRows = state.getStreamingPageFrameRowHi();
+                    if (isPageFrameBackward && rowsEmitted == 0) {
+                        // Readahead only follows forward access, so read a backward
+                        // frame forward once before walking it down.
+                        metrics.markReadAhead(batchBuffer.prefetchPageFrame(frame));
+                    }
+                    final int sliceRows = (int) Math.min(Math.min(rowsToAdd, frameRows - rowsEmitted), 1024L);
+                    // A backward frame goes out last row first: the next slice is the
+                    // top of the rows it has left, appended in reverse.
+                    final long lo = isPageFrameBackward ? frameRows - rowsEmitted - sliceRows : rowsEmitted;
+                    batchBuffer.appendPageFrame(frame, state.getStreamingPageFrameMemoryRecord(), lo, lo + sliceRows, isPageFrameBackward);
                     state.consumePageFrameRows(sliceRows);
                     rowsToAdd -= sliceRows;
                     if (batchBuffer.currentBatchDeltaWireBytes() > dictBudgetWireBytes) {

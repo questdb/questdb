@@ -39,6 +39,7 @@ import io.questdb.cutlass.qwp.protocol.QwpGorillaEncoder;
 import io.questdb.cutlass.qwp.protocol.QwpVarint;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.std.Decimals;
+import io.questdb.std.Files;
 import io.questdb.std.IntIntHashMap;
 import io.questdb.std.Long256;
 import io.questdb.std.Misc;
@@ -105,6 +106,9 @@ public class QwpResultBatchBuffer implements QuietCloseable {
     // on every probe.
     private int inlineSchemaBytes;
     private int physicalRowCount;
+    // Sum of the bytes prefetchPageFrame loads. Storing it keeps the JIT from dropping
+    // loads whose values nothing else reads; nothing reads it back.
+    private long prefetchSink;
     private int[] qdbTypesArr = EMPTY_INTS;
     private QwpColumnScratch[] scratchesArr = EMPTY_SCRATCHES;
     private int startRow;
@@ -151,8 +155,15 @@ public class QwpResultBatchBuffer implements QuietCloseable {
      * The parquet-format fallback iterates rows through {@code record} /
      * {@link #appendRow}, preserving correctness without the columnar speedup.
      * Replace with a parquet-specific columnar decoder as a follow-up.
+     * <p>
+     * {@code isBackward} appends the rows last first, {@code hi - 1} down to
+     * {@code lo}. A backward page-frame cursor hands out frames newest first, but
+     * each frame stores its rows oldest first, so a descending scan reads every
+     * frame from its top, as the engine's own {@code PageFrameBwdRowCursor} does.
+     * Each columnar case calls the backward twin of its kernel, which walks the
+     * page memory down; the forward kernels are unchanged.
      */
-    public void appendPageFrame(PageFrame frame, PageFrameMemoryRecord record, long lo, long hi) {
+    public void appendPageFrame(PageFrame frame, PageFrameMemoryRecord record, long lo, long hi, boolean isBackward) {
         final int rows = (int) (hi - lo);
         if (rows <= 0) {
             return;
@@ -161,9 +172,16 @@ public class QwpResultBatchBuffer implements QuietCloseable {
             // Parquet frame: no contiguous column addresses we can memcpy from.
             // Fall back to per-row using the existing single-row path. Row count
             // advances via appendRow itself.
-            for (long r = lo; r < hi; r++) {
-                record.setRowIndex(r);
-                appendRow(record);
+            if (isBackward) {
+                for (long r = hi - 1; r >= lo; r--) {
+                    record.setRowIndex(r);
+                    appendRow(record);
+                }
+            } else {
+                for (long r = lo; r < hi; r++) {
+                    record.setRowIndex(r);
+                    appendRow(record);
+                }
             }
             return;
         }
@@ -185,7 +203,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                 case QwpConstants.TYPE_DECIMAL64:
                     if (ColumnType.tagOf(qts[ci]) != ColumnType.DECIMAL64) {
                         // DECIMAL8/16/32 store 1/2/4 bytes per row; widen them per row.
-                        perColumnRowLoop(record, lo, hi, ci);
+                        perColumnRowLoop(record, lo, hi, ci, isBackward);
                         break;
                     }
                     // fall through: DECIMAL64 storage is 8 bytes per row, like LONG
@@ -196,6 +214,8 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                     long base = frame.getPageAddress(ci);
                     if (base == 0) {
                         fillNulls(scratch, rows);
+                    } else if (isBackward) {
+                        scratch.appendColumnLong8WithSentinelBwd(base + lo * 8L, rows);
                     } else {
                         scratch.appendColumnLong8WithSentinel(base + lo * 8L, rows);
                     }
@@ -205,6 +225,8 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                     long base = frame.getPageAddress(ci);
                     if (base == 0) {
                         fillNulls(scratch, rows);
+                    } else if (isBackward) {
+                        scratch.appendColumnDouble8Bwd(base + lo * 8L, rows);
                     } else {
                         scratch.appendColumnDouble8(base + lo * 8L, rows);
                     }
@@ -214,6 +236,8 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                     long base = frame.getPageAddress(ci);
                     if (base == 0) {
                         fillNulls(scratch, rows);
+                    } else if (isBackward) {
+                        scratch.appendColumnInt4WithSentinelBwd(base + lo * 4L, rows, Numbers.INT_NULL);
                     } else {
                         scratch.appendColumnInt4WithSentinel(base + lo * 4L, rows, Numbers.INT_NULL);
                     }
@@ -224,6 +248,8 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                     long base = frame.getPageAddress(ci);
                     if (base == 0) {
                         fillNulls(scratch, rows);
+                    } else if (isBackward) {
+                        scratch.appendColumnInt4WithSentinelBwd(base + lo * 4L, rows, Numbers.IPv4_NULL);
                     } else {
                         scratch.appendColumnInt4WithSentinel(base + lo * 4L, rows, Numbers.IPv4_NULL);
                     }
@@ -233,6 +259,8 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                     long base = frame.getPageAddress(ci);
                     if (base == 0) {
                         fillNulls(scratch, rows);
+                    } else if (isBackward) {
+                        scratch.appendColumnFloat4Bwd(base + lo * 4L, rows);
                     } else {
                         scratch.appendColumnFloat4(base + lo * 4L, rows);
                     }
@@ -248,6 +276,8 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                         // zero values rather than driving fillNulls (which would
                         // set bits in the null bitmap that the client rejects).
                         scratch.appendColumnFixedZero(rows, 2);
+                    } else if (isBackward) {
+                        scratch.appendColumnFixedNoNullBwd(base + lo * 2L, rows, 2);
                     } else {
                         scratch.appendColumnFixedNoNull(base + lo * 2L, rows, 2);
                     }
@@ -259,6 +289,8 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                         // Wire spec sec 11.5: BYTE cannot carry NULL. See the
                         // SHORT / CHAR case above for the column-top rationale.
                         scratch.appendColumnFixedZero(rows, 1);
+                    } else if (isBackward) {
+                        scratch.appendColumnFixedNoNullBwd(base + lo, rows, 1);
                     } else {
                         scratch.appendColumnFixedNoNull(base + lo, rows, 1);
                     }
@@ -271,6 +303,8 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                         // column-top fill is n bit-packed false values; the
                         // null bitmap stays clear.
                         scratch.appendColumnBooleanZero(rows);
+                    } else if (isBackward) {
+                        scratch.appendColumnBooleanBwd(base + lo, rows);
                     } else {
                         scratch.appendColumnBoolean(base + lo, rows);
                     }
@@ -281,12 +315,14 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                     long base = frame.getPageAddress(ci);
                     if (base == 0) {
                         fillNulls(scratch, rows);
-                    } else if (st != null) {
-                        scratch.appendColumnSymbolKeys(base + lo * 4L, rows, st, connDict);
-                    } else {
+                    } else if (st == null) {
                         // No per-column symbol table (synthetic records): per-row fallback
                         // through record.getSymA + bytes-keyed dedup in the conn dict.
-                        perColumnRowLoop(record, lo, hi, ci);
+                        perColumnRowLoop(record, lo, hi, ci, isBackward);
+                    } else if (isBackward) {
+                        scratch.appendColumnSymbolKeysBwd(base + lo * 4L, rows, st, connDict);
+                    } else {
+                        scratch.appendColumnSymbolKeys(base + lo * 4L, rows, st, connDict);
                     }
                     break;
                 }
@@ -295,7 +331,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                     // ARRAYS: columnar path not implemented yet -- fall back to per-row
                     // for this one column. Other columns on this frame still took the
                     // columnar path above.
-                    perColumnRowLoop(record, lo, hi, ci);
+                    perColumnRowLoop(record, lo, hi, ci, isBackward);
             }
         }
         assert physicalRowCount <= Integer.MAX_VALUE - rows : "physicalRowCount int overflow";
@@ -526,6 +562,58 @@ public class QwpResultBatchBuffer implements QuietCloseable {
 
     public int getRowCount() {
         return physicalRowCount - startRow;
+    }
+
+    /**
+     * Reads the column pages of a NATIVE {@code frame} once, first byte to last, and
+     * returns how many bytes that covered. A backward scan emits every frame from its
+     * last row down, and kernel readahead only follows forward access: walking down
+     * over pages that are not cached faults them in a few at a time, each fault a
+     * synchronous read. Reading the frame forward first lets readahead fetch it in
+     * large requests, so the walk down finds it in page cache. When the frame is
+     * cached already, this costs one load per page.
+     * <p>
+     * Each column covers exactly the frame's own bytes: the page extent of a
+     * fixed-size column; for a var-size column its aux entries, and its data from
+     * where the frame's first row points to the end of the data extent. The page
+     * extents of the frame bound every read.
+     */
+    public long prefetchPageFrame(PageFrame frame) {
+        if (frame.getFormat() != PartitionFormat.NATIVE) {
+            // the stream decodes a parquet frame into memory when it navigates to it
+            return 0;
+        }
+        long bytes = 0;
+        long sink = 0;
+        for (int ci = 0, n = columnCount; ci < n; ci++) {
+            final long pageAddress = frame.getPageAddress(ci);
+            final long pageSize = frame.getPageSize(ci);
+            final int columnType = qdbTypesArr[ci];
+            if (ColumnType.isVarSize(columnType)) {
+                final long auxAddress = frame.getAuxPageAddress(ci);
+                final long auxSize = frame.getAuxPageSize(ci);
+                // a column top publishes no aux entries: the frame stores nothing for it
+                if (auxAddress != 0 && auxSize > 0) {
+                    sink += readPagesForward(auxAddress, auxSize);
+                    bytes += auxSize;
+                    // The data extent starts at the column's first stored row and ends at the
+                    // frame's last row; the frame's own data starts where its first aux entry
+                    // points. Values that all sit inline in the aux vector leave no data.
+                    if (pageAddress != 0) {
+                        final long dataLo = ColumnType.getDriver(columnType).getDataVectorOffset(auxAddress, 0);
+                        if (dataLo >= 0 && dataLo < pageSize) {
+                            sink += readPagesForward(pageAddress + dataLo, pageSize - dataLo);
+                            bytes += pageSize - dataLo;
+                        }
+                    }
+                }
+            } else if (pageAddress != 0 && pageSize > 0) {
+                sink += readPagesForward(pageAddress, pageSize);
+                bytes += pageSize;
+            }
+        }
+        prefetchSink += sink;
+        return bytes;
     }
 
     public void reset() {
@@ -804,6 +892,19 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         if (precisionBits <= 15) return record.getGeoShort(col);
         if (precisionBits <= 31) return record.getGeoInt(col);
         return record.getGeoLong(col);
+    }
+
+    /**
+     * Loads one byte of every page {@code [address, address + size)} touches, in address
+     * order, and returns their sum. {@code size} must be positive.
+     */
+    private static long readPagesForward(long address, long size) {
+        long sink = 0;
+        for (long p = address, lim = address + size; p < lim; p += Files.PAGE_SIZE) {
+            sink += Unsafe.getByte(p);
+        }
+        // the last byte can sit on one page past the last stride when address is not page-aligned
+        return sink + Unsafe.getByte(address + size - 1);
     }
 
     /**
@@ -1285,18 +1386,26 @@ public class QwpResultBatchBuffer implements QuietCloseable {
     /**
      * Per-column fallback used by {@link #appendPageFrame} for wire types that
      * don't have a columnar fast path yet (VARCHAR, STRING, BINARY, UUID, etc.).
-     * Walks rows in {@code [lo, hi)} and writes only column {@code ci}; other
-     * columns of the same frame are handled by the columnar dispatch.
+     * Walks rows in {@code [lo, hi)}, or {@code hi - 1} down to {@code lo} when
+     * {@code isBackward}, and writes only column {@code ci}; other columns of the
+     * same frame are handled by the columnar dispatch.
      */
-    private void perColumnRowLoop(PageFrameMemoryRecord record, long lo, long hi, int ci) {
+    private void perColumnRowLoop(PageFrameMemoryRecord record, long lo, long hi, int ci, boolean isBackward) {
         final QwpColumnScratch scratch = scratchesArr[ci];
         final byte wt = wireTypesArr[ci];
         final int qt = qdbTypesArr[ci];
         final QwpEgressColumnDef def = defsArr[ci];
         final SymbolTable st = symbolTablesArr[ci];
-        for (long r = lo; r < hi; r++) {
-            record.setRowIndex(r);
-            appendCell(record, ci, scratch, wt, qt, def, st);
+        if (isBackward) {
+            for (long r = hi - 1; r >= lo; r--) {
+                record.setRowIndex(r);
+                appendCell(record, ci, scratch, wt, qt, def, st);
+            }
+        } else {
+            for (long r = lo; r < hi; r++) {
+                record.setRowIndex(r);
+                appendCell(record, ci, scratch, wt, qt, def, st);
+            }
         }
     }
 

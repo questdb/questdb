@@ -56,7 +56,7 @@ public class QwpEgressProcessorStatePageFrameTest extends AbstractCairoTest {
                 Assert.assertNotNull(cursor);
                 boolean isRejected = false;
                 try {
-                    state.beginStreamingPageFrame(1, factory, cursor, 1, 0, sql, CompiledQuery.SELECT, true);
+                    state.beginStreamingPageFrame(1, factory, cursor, false, 1, 0, sql, CompiledQuery.SELECT, true);
                 } catch (AssertionError e) {
                     TestUtils.assertContains(e.getMessage(), "page-frame streaming over metadata-only page frames");
                     isRejected = true;

@@ -51,9 +51,11 @@ import org.junit.Test;
  *       before the query runs.</li>
  *   <li>Inserts those values as literal rows (single multi-row {@code INSERT VALUES}).</li>
  *   <li>Picks a random query shape -- full scan, projection reorder, id-range
- *       filter, reverse-order limit, or the rows of one key or two keys of the
- *       SYMBOL key column. A POSTING index that INCLUDEs every data column turns
- *       the key shapes into single-key and multi-key covering index scans.</li>
+ *       filter, reverse-order limit, the rows of one key or two keys of the
+ *       SYMBOL key column, or a descending designated-timestamp scan of the
+ *       whole table or of a timestamp interval. A POSTING index that INCLUDEs
+ *       every data column turns the key shapes into single-key and multi-key
+ *       covering index scans.</li>
  *   <li>Streams the results over QWP and asserts per-row-per-cell that the
  *       observed hash matches the stored expected hash. Null cells are checked
  *       against a parallel null map.</li>
@@ -118,11 +120,15 @@ public class QwpEgressFuzzTest extends AbstractQwpBootstrapTest {
     private static final Log LOG = LogFactory.getLog(QwpEgressFuzzTest.class);
     private static final int MAX_ROWS_PER_CASE = 500;
     private static final int ROUNDTRIP_CASES = 15;
-    private static final int SEQUENCE_SHAPE_COUNT = 7;
-    private static final int SHAPE_COUNT = 6;
+    private static final int SEQUENCE_SHAPE_COUNT = 8;
+    private static final int SHAPE_BACKWARD_INTERVAL = 7;
+    private static final int SHAPE_BACKWARD_SCAN = 6;
+    private static final int SHAPE_COUNT = 8;
     private static final int SHAPE_MULTI_KEY = 5;
     private static final int SHAPE_SINGLE_KEY = 4;
     private Rnd random;
+    // ts spacing of the rows runOneCase inserts, read back by planQuery
+    private long tsSpacingMicros;
 
     @Before
     public void setUp() {
@@ -169,7 +175,7 @@ public class QwpEgressFuzzTest extends AbstractQwpBootstrapTest {
     @Test
     public void testSelectAlterSequenceFuzz() throws Exception {
         // Fuzz sequences of SELECT / ALTER TABLE ADD COLUMN against the same
-        // table, mixing seven SELECT shapes in random order with occasional
+        // table, mixing eight SELECT shapes in random order with occasional
         // schema evolutions. Each operation draws from:
         // <ul>
         //   <li>plain scan (PageFrameCursor)</li>
@@ -181,6 +187,8 @@ public class QwpEgressFuzzTest extends AbstractQwpBootstrapTest {
         //       PageFrameCursor)</li>
         //   <li>the rows of one cat value -- a single-key covering scan over
         //       the POSTING index on cat, which INCLUDEs id and v</li>
+        //   <li>descending designated ts, whole table or an interval (backward
+        //       PageFrameCursor)</li>
         //   <li>ALTER TABLE ADD COLUMN (stamps new tableId, invalidates the
         //       server's compile cache; next SELECT with the same SQL text
         //       must detect stale factory and recompile)</li>
@@ -297,10 +305,12 @@ public class QwpEgressFuzzTest extends AbstractQwpBootstrapTest {
         for (int shape = 0; shape < SHAPE_COUNT; shape++) {
             Assert.assertTrue("shape " + shape + " is never drawn", seen[shape]);
         }
-        // a small case falls back to the full scan, except for the key shapes
+        // a small case falls back to the full scan, except for the key and backward shapes
         Assert.assertEquals(0, pickShape(1, 3));
         Assert.assertEquals(SHAPE_SINGLE_KEY, pickShape(SHAPE_SINGLE_KEY, 1));
         Assert.assertEquals(SHAPE_MULTI_KEY, pickShape(SHAPE_MULTI_KEY, 1));
+        Assert.assertEquals(SHAPE_BACKWARD_SCAN, pickShape(SHAPE_BACKWARD_SCAN, 1));
+        Assert.assertEquals(SHAPE_BACKWARD_INTERVAL, pickShape(SHAPE_BACKWARD_INTERVAL, 1));
     }
 
     @Test
@@ -319,11 +329,11 @@ public class QwpEgressFuzzTest extends AbstractQwpBootstrapTest {
     }
 
     /**
-     * Runs one of seven SELECT shapes against the stable {@code fz_seq} table and
+     * Runs one of eight SELECT shapes against the stable {@code fz_seq} table and
      * asserts BOTH the row count AND the per-cell data correctness. Shapes
      * span both cursor paths: PageFrameCursor (plain / predicate / interval /
-     * projection / star) and RecordCursor (GROUP BY, the single-key covering
-     * index scan). Filter thresholds and
+     * projection / star / backward) and RecordCursor (GROUP BY, the single-key
+     * covering index scan). Filter thresholds and
      * projection sets are randomised per call so repeat invocations of the
      * same shape don't trivially hit the same cached factory every time.
      * <p>
@@ -526,6 +536,37 @@ public class QwpEgressFuzzTest extends AbstractQwpBootstrapTest {
                         });
                 return;
             }
+            case 7: {
+                // Descending designated timestamp: a backward page-frame scan, over the whole
+                // table or a random ts interval. A structural op makes the cached plan stale;
+                // the retry recompiles it. ts order is id order, so row N -> id = hiRow - N.
+                final int loRow;
+                final int hiRow;
+                final String where;
+                if (random.nextBoolean()) {
+                    loRow = 1;
+                    hiRow = totalRows;
+                    where = "";
+                } else {
+                    loRow = 1 + random.nextInt(totalRows);
+                    hiRow = loRow + random.nextInt(totalRows - loRow + 1);
+                    // row x has ts (x - 1) * spacingMicros; the casts keep the bounds micros
+                    where = " WHERE ts BETWEEN " + (loRow - 1) * spacingMicros + "::TIMESTAMP AND "
+                            + (hiRow - 1) * spacingMicros + "::TIMESTAMP";
+                }
+                assertRows(client, "SELECT id, v, cat FROM fz_seq" + where + " ORDER BY ts DESC",
+                        hiRow - loRow + 1, (batch, startRow) -> {
+                            int n = batch.getRowCount();
+                            for (int r = 0; r < n; r++) {
+                                long id = hiRow - (startRow + r);
+                                verifyBaseColumn(batch, 0, r, "id", id, spacingMicros, "shape 7");
+                                verifyBaseColumn(batch, 1, r, "v", id, spacingMicros, "shape 7");
+                                verifyBaseColumn(batch, 2, r, "cat", id, spacingMicros, "shape 7");
+                            }
+                            return startRow + n;
+                        });
+                return;
+            }
             default:
                 throw new IllegalStateException("unknown shape: " + shape);
         }
@@ -714,7 +755,8 @@ public class QwpEgressFuzzTest extends AbstractQwpBootstrapTest {
         // SHAPE_COUNT shapes rotate deterministically to guarantee every shape gets
         // exercised across iterations, regardless of random seed.
         final int shape = Math.floorMod(caseIdx, SHAPE_COUNT);
-        // small cases: just scan everything, unless the shape selects rows by key
+        // small cases: just scan everything, unless the shape selects rows by key or
+        // scans backward
         return rowCount < 4 && shape < SHAPE_SINGLE_KEY ? 0 : shape;
     }
 
@@ -753,14 +795,14 @@ public class QwpEgressFuzzTest extends AbstractQwpBootstrapTest {
         return rows.stream().mapToInt(Integer::intValue).toArray();
     }
 
-    private String buildInsert(String table, ColumnGenerator[] cols, String[][] literals, int rowCount) {
+    private String buildInsert(String table, ColumnGenerator[] cols, String[][] literals, int rowCount, long tsSpacingMicros) {
         int colCount = cols.length;
         StringBuilder sb = new StringBuilder("INSERT INTO ").append(table).append(" VALUES ");
         for (int r = 0; r < rowCount; r++) {
             if (r > 0) sb.append(", ");
-            // id, ts, then generated column literals. ts = r * 1000us (1ms per row) keeps
-            // the whole run inside a single partition for all practical row counts.
-            sb.append('(').append(r + 1).append(", CAST(").append((long) r * 1_000L).append(" AS TIMESTAMP)");
+            // id, ts, then generated column literals. ts grows with id, so ts order is id
+            // order; the spacing decides how many DAY partitions the rows spread over.
+            sb.append('(').append(r + 1).append(", CAST(").append(r * tsSpacingMicros).append(" AS TIMESTAMP)");
             for (int c = 0; c < colCount; c++) {
                 sb.append(", ").append(literals[r][c]);
             }
@@ -849,6 +891,29 @@ public class QwpEgressFuzzTest extends AbstractQwpBootstrapTest {
                         .append(" IN ('").append(pool[first]).append("', '").append(pool[second]).append("')");
                 return new QueryPlan(sql.toString(), map, rowsWithKey(rowKeys, pool[first], pool[second]));
             }
+            case SHAPE_BACKWARD_SCAN: {
+                // Descending designated timestamp, no LIMIT: a backward page-frame scan,
+                // newest frame first and every frame read from its last row down.
+                int[] map = identity(colCount);
+                String sql = "SELECT " + allDataCols(colCount) + " FROM " + table + " ORDER BY ts DESC";
+                return new QueryPlan(sql, map, rowRange(1, rowCount, true));
+            }
+            case SHAPE_BACKWARD_INTERVAL: {
+                // The backward scan over a random ts interval, through a scrambled projection
+                // that may include the key column.
+                final int[] map = scrambledProjection(colCount + 1);
+                final int lo = 1 + random.nextInt(rowCount);
+                final int hi = lo + random.nextInt(rowCount - lo + 1);
+                final StringBuilder sql = new StringBuilder("SELECT ");
+                appendProjection(sql, map, colCount);
+                // row N has ts (N - 1) * spacing, see buildInsert; the casts keep the bounds
+                // micros, as a bare integer bound can parse as a date string
+                sql.append(" FROM ").append(table)
+                        .append(" WHERE ts BETWEEN ").append((lo - 1) * tsSpacingMicros)
+                        .append("::TIMESTAMP AND ").append((hi - 1) * tsSpacingMicros)
+                        .append("::TIMESTAMP ORDER BY ts DESC");
+                return new QueryPlan(sql.toString(), map, rowRange(lo, hi, true));
+            }
             default: {
                 int[] map = identity(colCount);
                 String sql = "SELECT " + allDataCols(colCount) + " FROM " + table + " ORDER BY id";
@@ -906,14 +971,18 @@ public class QwpEgressFuzzTest extends AbstractQwpBootstrapTest {
             }
         }
 
-        server.execute(buildInsert(table, cols, literals, rowCount));
+        // 1 ms keeps every row in one partition; 1 h and 6 h spread up to 500 rows over
+        // about 21 and 125 partitions, so backward scans cross partition and frame edges.
+        final long[] spacings = {1_000L, 3_600_000_000L, 21_600_000_000L};
+        tsSpacingMicros = spacings[random.nextInt(spacings.length)];
+        server.execute(buildInsert(table, cols, literals, rowCount, tsSpacingMicros));
         // WAL tables commit rows asynchronously; wait for the server-side apply job
         // to catch up before the SELECT, otherwise we'd race the stream with an
         // empty table view.
         server.awaitTable(table);
         // A POSTING index that INCLUDEs every data column turns the key shapes into
         // covering index scans. The other shapes do not use it, so they draw it at random.
-        if (shape >= SHAPE_SINGLE_KEY || random.nextBoolean()) {
+        if (shape == SHAPE_SINGLE_KEY || shape == SHAPE_MULTI_KEY || random.nextBoolean()) {
             server.execute("ALTER TABLE " + table + " ALTER COLUMN " + KEY_COLUMN
                     + " ADD INDEX TYPE POSTING INCLUDE (" + allDataCols(colCount) + ")");
             server.awaitTable(table);
