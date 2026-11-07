@@ -74,14 +74,14 @@ public class TableReader implements Closeable, SymbolTableSource {
     private static final int PARTITIONS_SLOT_OFFSET_COLUMN_VERSION = PARTITIONS_SLOT_OFFSET_NAME_TXN + 1;
     private static final int PARTITIONS_SLOT_OFFSET_FORMAT = PARTITIONS_SLOT_OFFSET_COLUMN_VERSION + 1;
     private static final int PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN = PARTITIONS_SLOT_OFFSET_FORMAT + 1;
-    private static final int PARTITIONS_SLOT_OFFSET_PARQUET_FILE_SIZE = PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN + 1;
-    // Catalog id of the Delta base an open partition reads, 0 when it was opened without one.
-    private static final int PARTITIONS_SLOT_OFFSET_BASE_ID = PARTITIONS_SLOT_OFFSET_PARQUET_FILE_SIZE + 1;
     // _cv version and parquet file size a parquet partition's indexes were last found valid at, see checkParquetIndexes()
-    private static final int PARTITIONS_SLOT_OFFSET_INDEX_CHECK_CV = PARTITIONS_SLOT_OFFSET_BASE_ID + 1;
+    private static final int PARTITIONS_SLOT_OFFSET_INDEX_CHECK_CV = PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN + 1;
     private static final int PARTITIONS_SLOT_OFFSET_INDEX_CHECK_PARQUET_SIZE = PARTITIONS_SLOT_OFFSET_INDEX_CHECK_CV + 1;
-    private static final int PARTITIONS_SLOT_SIZE = 16; // must be power of 2
+    private static final int PARTITIONS_SLOT_SIZE = 8; // must be power of 2
     private static final int PARTITIONS_SLOT_SIZE_MSB = Numbers.msb(PARTITIONS_SLOT_SIZE);
+    // Catalog id of the Delta base an open partition reads, 0 when it was opened without one. It outlives the state.
+    private static final int PARTITION_STATES_SLOT_OFFSET_BASE_ID = 1;
+    private static final int PARTITION_STATES_SLOT_SIZE = 2;
     // Retries that must pass with no version change before a torn live area counts as terminal rather
     // than contention. A power of 2. Far longer than any commit's publish window, yet still a short wait.
     private static final int TORN_DIAGNOSIS_WINDOW = 1 << 16;
@@ -120,6 +120,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private int partitionCount;
     private PartitionFrameSource partitionFrameSource;
     private PartitionFrameStateFactory partitionFrameStateFactory;
+    // A reader without Delta partitions holds no list, and all its base ids are 0.
     private LongList partitionFrameStates;
     // The lowest partition with a state, so that destroyPartitionFrameStates() walks from it only,
     // e.g. on each pool return. Integer.MAX_VALUE when no state opened since the last walk.
@@ -572,9 +573,10 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     /** Returns the extent of the selected Parquet source, including remote sources without a local mapping. */
     public long getParquetFileSize(int partitionIndex) {
-        if (getOrOpenPartitionState(partitionIndex) != 0) {
+        final long state = getOrOpenPartitionState(partitionIndex);
+        if (state != 0) {
             openPartition(partitionIndex);
-            return openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_PARQUET_FILE_SIZE);
+            return PartitionFrameState.getParquetFileSize(state);
         }
         return txFile.getPartitionParquetFileSize(partitionIndex);
     }
@@ -1215,7 +1217,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         Misc.free(parquetPartitions.get(partitionIndex));
         parquetMetaDecoders.remove(partitionIndex);
         if (partitionFrameStates != null) {
-            partitionFrameStates.removeIndexBlock(partitionIndex, 1);
+            partitionFrameStates.removeIndexBlock(partitionIndex * PARTITION_STATES_SLOT_SIZE, PARTITION_STATES_SLOT_SIZE);
         }
         parquetMetadataPartitions.remove(partitionIndex);
         parquetPartitions.remove(partitionIndex);
@@ -1302,7 +1304,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, -1);
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN, 0);
-        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_BASE_ID, 0);
+        setPartitionBaseId(partitionIndex, 0);
     }
 
     /**
@@ -1491,11 +1493,11 @@ public class TableReader implements Closeable, SymbolTableSource {
         if (partitionFrameStates == null) {
             return;
         }
-        final long state = partitionFrameStates.getQuick(partitionIndex);
+        final long state = getOpenPartitionState(partitionIndex);
         if (state != 0 && partitionFrameStateFactory != null) {
             partitionFrameStateFactory.destroy(state);
         }
-        partitionFrameStates.setQuick(partitionIndex, 0);
+        partitionFrameStates.setQuick(partitionIndex * PARTITION_STATES_SLOT_SIZE, 0);
     }
 
     private void destroyPartitionFrameStates() {
@@ -1504,7 +1506,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
         for (int i = partitionFrameStatesLo, n = partitionCount; i < n; i++) {
             // Stores only to the slots that hold a state, so the walk reads the other slots only.
-            if (partitionFrameStates.getQuick(i) != 0) {
+            if (getOpenPartitionState(i) != 0) {
                 if (getPartitionRowCount(i) >= 0) {
                     if (getPartitionFormat(i) == PartitionFormat.PARQUET) {
                         // The partition's shared base mapping outlives this snapshot. The decoder's
@@ -1604,7 +1606,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private long getOpenPartitionState(int partitionIndex) {
-        return partitionFrameStates != null ? partitionFrameStates.getQuick(partitionIndex) : 0;
+        return partitionFrameStates != null ? partitionFrameStates.getQuick(partitionIndex * PARTITION_STATES_SLOT_SIZE) : 0;
     }
 
     private ParquetPartitionDecoder getOrCreatePartitionDecoder(int partitionIndex) {
@@ -1620,11 +1622,9 @@ public class TableReader implements Closeable, SymbolTableSource {
      * Shares one pinned snapshot between index readers and lazy data-frame binding.
      */
     private long getOrOpenPartitionState(int partitionIndex) {
-        if (partitionFrameStates != null) {
-            final long existing = partitionFrameStates.getQuick(partitionIndex);
-            if (existing != 0) {
-                return existing;
-            }
+        final long existing = getOpenPartitionState(partitionIndex);
+        if (existing != 0) {
+            return existing;
         }
         if (!txFile.getPartitionHasDelta(partitionIndex)) {
             return 0;
@@ -1659,23 +1659,29 @@ public class TableReader implements Closeable, SymbolTableSource {
             // A partition kept open from an earlier snapshot reopens when its base or folder changed.
             final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
             if (openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE) > -1
-                    && (openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_BASE_ID) != PartitionFrameState.getBaseId(state)
+                    && (getPartitionBaseId(partitionIndex) != PartitionFrameState.getBaseId(state)
                     || openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN) != partitionFrameSource.getPartitionNameTxn())) {
                 closePartition(partitionIndex);
             }
             openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_FORMAT, format);
             // A reader without Delta partitions holds no list.
             if (partitionFrameStates == null) {
-                partitionFrameStates = new LongList(partitionCount, 0);
-                partitionFrameStates.setAll(partitionCount, 0);
+                partitionFrameStates = new LongList(partitionCount * PARTITION_STATES_SLOT_SIZE, 0);
+                partitionFrameStates.setAll(partitionCount * PARTITION_STATES_SLOT_SIZE, 0);
             }
         } catch (Throwable th) {
             partitionFrameStateFactory.destroy(state);
             throw th;
         }
-        partitionFrameStates.setQuick(partitionIndex, state);
+        partitionFrameStates.setQuick(partitionIndex * PARTITION_STATES_SLOT_SIZE, state);
         partitionFrameStatesLo = Math.min(partitionFrameStatesLo, partitionIndex);
         return state;
+    }
+
+    private long getPartitionBaseId(int partitionIndex) {
+        return partitionFrameStates != null
+                ? partitionFrameStates.getQuick(partitionIndex * PARTITION_STATES_SLOT_SIZE + PARTITION_STATES_SLOT_OFFSET_BASE_ID)
+                : 0;
     }
 
     private long getPartitionTimestamp(int partitionIndex) {
@@ -1740,6 +1746,9 @@ public class TableReader implements Closeable, SymbolTableSource {
         parquetPartitions.setAll(partitionCount, NullMemoryCMR.INSTANCE);
         parquetMetaDecoders = new ObjList<>(partitionCount);
         parquetMetaDecoders.setAll(partitionCount, null);
+        // Sized lazily to partitionCount. A downgrade destroys the states before it gets here.
+        partitionFrameStates = null;
+        partitionFrameStatesLo = Integer.MAX_VALUE;
         columns = new ObjList<>(capacity + 2);
         columns.setPos(capacity + 2);
         columns.setQuick(0, NullMemoryCMR.INSTANCE);
@@ -1776,7 +1785,6 @@ public class TableReader implements Closeable, SymbolTableSource {
             openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, columnVersionReader.getMaxPartitionVersion(partitionTimestamp));
             openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_FORMAT, isParquet ? PartitionFormat.PARQUET : PartitionFormat.NATIVE);
             openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN, 0);
-            openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_BASE_ID, 0);
             openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_INDEX_CHECK_CV, -1);
             openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_INDEX_CHECK_PARQUET_SIZE, -1);
         }
@@ -1794,8 +1802,10 @@ public class TableReader implements Closeable, SymbolTableSource {
         parquetPartitions.insert(partitionIndex, 1, NullMemoryCMR.INSTANCE);
         parquetMetaDecoders.insert(partitionIndex, 1, null);
         if (partitionFrameStates != null) {
-            partitionFrameStates.insert(partitionIndex, 1);
-            partitionFrameStates.setQuick(partitionIndex, 0);
+            final int statesOffset = partitionIndex * PARTITION_STATES_SLOT_SIZE;
+            partitionFrameStates.insert(statesOffset, PARTITION_STATES_SLOT_SIZE);
+            partitionFrameStates.setQuick(statesOffset, 0);
+            partitionFrameStates.setQuick(statesOffset + PARTITION_STATES_SLOT_OFFSET_BASE_ID, 0);
         }
 
         final int topBase = columnBase / 2;
@@ -1811,7 +1821,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, -1);
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_FORMAT, -1);
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN, 0);
-        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_BASE_ID, 0);
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_INDEX_CHECK_CV, -1);
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_INDEX_CHECK_PARQUET_SIZE, -1);
         partitionCount++;
@@ -1982,14 +1991,13 @@ public class TableReader implements Closeable, SymbolTableSource {
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN, partitionNameTxn);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, columnVersion);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_FORMAT, PartitionFormat.PARQUET);
-                        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_BASE_ID, state != 0 ? PartitionFrameState.getBaseId(state) : 0);
+                        setPartitionBaseId(partitionIndex, state != 0 ? PartitionFrameState.getBaseId(state) : 0);
 
                         // A Delta base is mapped once per partition in Rust and read through the state header.
                         final long parquetFileSize = state != 0 ? PartitionFrameState.getParquetFileSize(state) : openParquetMetadata(partitionIndex);
                         final boolean isRemoteSource = isRemoteBase || (txFile.isPartitionRemote(partitionIndex)
                                 && (state == 0 || (partitionNameTxn == txFile.getPartitionNameTxn(partitionIndex)
                                 && metadataSlot == 0 && parquetFileSize == txFile.getPartitionParquetFileSize(partitionIndex))));
-                        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_PARQUET_FILE_SIZE, parquetFileSize);
                         path.trimTo(rootLen);
                         pathGenParquetPartition(partitionIndex, partitionNameTxn);
                         final long parquetActualLength = state != 0 ? -1 : ff.length(path.$());
@@ -2339,7 +2347,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                     if (openPartitionSize > -1 && txPartitionSize > -1) { // Don't force re-open if not yet opened
                         closePartition(partitionIndex);
                     }
-                } else if (openPartitionSize > -1 && openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_BASE_ID) == 0) {
+                } else if (openPartitionSize > -1 && getPartitionBaseId(partitionIndex) == 0) {
                     // This one was mapped before its Delta catalog existed and must reopen through the
                     // catalog's base. A kept-open base is checked against the next snapshot's base.
                     closePartition(partitionIndex);
@@ -2824,6 +2832,12 @@ public class TableReader implements Closeable, SymbolTableSource {
                 // new instance
                 renewSymbolMapReader(null, i);
             }
+        }
+    }
+
+    private void setPartitionBaseId(int partitionIndex, long baseId) {
+        if (partitionFrameStates != null) {
+            partitionFrameStates.setQuick(partitionIndex * PARTITION_STATES_SLOT_SIZE + PARTITION_STATES_SLOT_OFFSET_BASE_ID, baseId);
         }
     }
 }
