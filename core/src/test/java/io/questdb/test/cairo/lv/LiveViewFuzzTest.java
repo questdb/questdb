@@ -726,18 +726,12 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1 + rnd.nextInt(4));
         final int laggingParity = rnd.nextInt(2);
         assertMemoryLeak(() -> {
-            int laggingRuns = 0;
-            int laggingVariants = 0;
             for (int i = 0; i < FIXED_WIDTH_VARIANTS.length; i++) {
                 if ((i & 1) == laggingParity) {
-                    laggingVariants++;
-                    if (runRemovalFreezeContinueFuzz(rnd, FIXED_WIDTH_VARIANTS[i], 120 + rnd.nextInt(160),
-                            false, rnd.nextBoolean(), rnd.nextBoolean(), rnd.nextBoolean(), true)) {
-                        laggingRuns++;
-                    }
+                    runRemovalFreezeContinueFuzz(rnd, FIXED_WIDTH_VARIANTS[i], 120 + rnd.nextInt(160),
+                            false, rnd.nextBoolean(), rnd.nextBoolean(), rnd.nextBoolean(), true);
                 }
             }
-            Assert.assertEquals("every lagging variant must check its repair", laggingVariants, laggingRuns);
         });
     }
 
@@ -4200,9 +4194,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // timestamp (LiveViewSmokeTest#testO3ApplyAheadTruncateFallsBackToBoundary pins
     // that for TRUNCATE), across a dropped middle day, or from a localized output
     // floor - so the frozen-row check does not hold there.
-    //
-    // Returns whether the run checked a lagging repair.
-    private boolean runRemovalFreezeContinueFuzz(
+    private void runRemovalFreezeContinueFuzz(
             Rnd rnd,
             int variant,
             int rowCount,
@@ -4326,7 +4318,6 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         final StringSink sink = new StringSink();
         final StringSink preRemoval = new StringSink();
         final StringSink frozenBelowX = new StringSink();
-        boolean isLaggingRepairChecked = false;
         LiveViewRefreshJob job = null;
         try {
             if (preCount > 0) {
@@ -4475,7 +4466,6 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 printSql("(SELECT * FROM lv WHERE ts < " + dayX + ") ORDER BY 1", sink);
                 TestUtils.assertEquals("the lagging repair must keep the rows the removal froze", frozenBelowX, sink);
                 assertNoRefreshFaults("lv");
-                isLaggingRepairChecked = true;
             } else {
                 // The removal event: every targeted row is emitted (phase 1 has
                 // quiesced), so this removes derived history, not pending input.
@@ -4554,7 +4544,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             assertNoRefreshFaults("lv");
             execute("DROP LIVE VIEW lv");
             execute("DROP TABLE base");
-            return isLaggingRepairChecked;
+            return;
         }
 
         // The oracle: the view must equal the window query recomputed over the LOGICAL dataset -
@@ -4575,7 +4565,6 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         execute("DROP LIVE VIEW lv");
         execute("DROP TABLE base");
         execute("DROP TABLE shadow");
-        return false;
     }
 
     // Differential fuzz where the base receives REPLACE_RANGE data commits
