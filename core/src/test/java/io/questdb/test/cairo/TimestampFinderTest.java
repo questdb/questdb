@@ -34,6 +34,8 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.TimestampFinder;
 import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
+import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -298,6 +300,54 @@ public class TimestampFinderTest extends AbstractCairoTest {
                 Assert.assertEquals(4, parquetFinder.countBefore(start + 450));
                 Assert.assertEquals(1, nativeFinder.searchCount);
                 Assert.assertEquals(1, parquetFinder.searchCount);
+            }
+        });
+    }
+
+    @Test
+    public void testParquetTimestampAtDecodesEachBlockOnce() throws Exception {
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 6000);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT timestamp_sequence(0, 1000) ts FROM long_sequence(10000)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES (172800000000::timestamp)");
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts < 86400000000::timestamp");
+            final int[] decodes = {0};
+            try (
+                    TableReader reader = newOffPoolReader(configuration, "x");
+                    ParquetPartitionDecoder partitionDecoder = new ParquetPartitionDecoder() {
+                        @Override
+                        public int decodeRowGroup(RowGroupBuffers rowGroupBuffers, DirectIntList columns, int rowGroupIndex, int rowLo, int rowHi) {
+                            decodes[0]++;
+                            return super.decodeRowGroup(rowGroupBuffers, columns, rowGroupIndex, rowLo, rowHi);
+                        }
+                    };
+                    ParquetTimestampFinder finder = new ParquetTimestampFinder(partitionDecoder)
+            ) {
+                reader.openPartition(0);
+                finder.of(reader, 0, 0);
+                finder.prepare();
+                Assert.assertEquals(2, partitionDecoder.metadata().getRowGroupCount());
+
+                // Row groups of 6000 and 4000 rows hold the blocks [0, 4096), [4096, 6000) and [6000, 10000).
+                for (int row = 0; row < 10_000; row++) {
+                    Assert.assertEquals(row * 1000L, finder.timestampAt(row));
+                }
+                Assert.assertEquals(3, decodes[0]);
+
+                // The backward scan starts in the block the forward scan left cached.
+                decodes[0] = 0;
+                for (int row = 9_999; row >= 0; row--) {
+                    Assert.assertEquals(row * 1000L, finder.timestampAt(row));
+                }
+                Assert.assertEquals(2, decodes[0]);
+
+                // A search decodes into the same buffer, so it must drop the cached block.
+                Assert.assertEquals(5000_000L, finder.timestampAt(5000));
+                decodes[0] = 0;
+                Assert.assertEquals(8001, finder.countThrough(8000_000L));
+                Assert.assertEquals(1, decodes[0]);
+                Assert.assertEquals(5001_000L, finder.timestampAt(5001));
+                Assert.assertEquals(2, decodes[0]);
             }
         });
     }

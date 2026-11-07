@@ -892,6 +892,16 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         recordAtSlices.put(runFrame, Numbers.encodeLowHighInts(runStart, (int) kept));
     }
 
+    public boolean usesCustomDecode(int frameIndex) {
+        // The address cache sets hasDecodedFrames for every frame that needs materialization.
+        // Native-only queries skip the state read, which the record path runs once per row.
+        if (!addressCache.hasDecodedFrames()) {
+            return false;
+        }
+        final long state = addressCache.getPartitionFrameState(frameIndex);
+        return state != 0 && PartitionFrameState.requiresMaterialization(state, addressCache.getParquetRowGroup(frameIndex));
+    }
+
     private void accountDecode(DecodedFrameBuffers parquetBuffers) {
         if (parquetBuffers.decodedBytes > parquetBuffers.retainedBytes) {
             cachedBytes += parquetBuffers.decodedBytes - parquetBuffers.retainedBytes;
@@ -1660,16 +1670,6 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             bound.usageFlags &= (byte) ~usageBit;
             setBound(usageBit, null);
         }
-    }
-
-    private boolean usesCustomDecode(int frameIndex) {
-        // The address cache sets hasDecodedFrames for every frame that needs materialization.
-        // Native-only queries skip the state read, which the record path runs once per row.
-        if (!addressCache.hasDecodedFrames()) {
-            return false;
-        }
-        final long state = addressCache.getPartitionFrameState(frameIndex);
-        return state != 0 && PartitionFrameState.requiresMaterialization(state, addressCache.getParquetRowGroup(frameIndex));
     }
 
     boolean isFrameStable(int frameIndex) {

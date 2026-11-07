@@ -1651,6 +1651,9 @@ public class TableReader implements Closeable, SymbolTableSource {
         parquetPartitions.setAll(partitionCount, NullMemoryCMR.INSTANCE);
         parquetMetaDecoders = new ObjList<>(partitionCount);
         parquetMetaDecoders.setAll(partitionCount, null);
+        // Sized lazily to partitionCount. A downgrade destroys the states before it gets here.
+        partitionFrameStates = null;
+        partitionFrameStatesLo = Integer.MAX_VALUE;
         columns = new ObjList<>(capacity + 2);
         columns.setPos(capacity + 2);
         columns.setQuick(0, NullMemoryCMR.INSTANCE);
