@@ -126,7 +126,7 @@ public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCu
     }
 
     protected void init(@Nullable MemoryTracker memoryTracker) {
-        frameAddressCache.of(metadata, frameCursor.getColumnMapping(), frameCursor.isExternal());
+        frameAddressCache.of(metadata, frameCursor);
         frameMemoryPool.setMemoryTracker(memoryTracker);
         frameMemoryPool.of(frameAddressCache);
         frameCount = 0;
@@ -147,16 +147,20 @@ public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCu
      * must call this first, and only from the top of the cursor: it renumbers frames from zero.
      */
     protected void resetFrameCache() {
-        frameAddressCache.of(metadata, frameCursor.getColumnMapping(), frameCursor.isExternal());
         // A decoded Parquet frame is keyed by frame ordinal, and so is the pool's bound frame memory;
-        // both describe the numbering being dropped here. releaseParquetBuffers() ignores the pool's pin
+        // both describe the numbering being dropped here. releaseDecodedFrameBuffers() ignores the pool's pin
         // bits and closes the DirectLongLists a bound record reads its addresses through, so abandon both
         // records first, as that method's contract demands. The pool's bindGeneration bump only guards the
         // NEXT navigateTo(); a read through a record still bound from an earlier recordAt() goes straight
         // to the freed lists.
         recordA.clear();
         recordB.clear();
-        frameMemoryPool.releaseParquetBuffers();
+        // A custom partition-frame window borrows native mappings recorded in the address cache and uses
+        // the decoded frame's query-memory tracker. Close it before either owner is reset. Otherwise a skip
+        // walk can replace the cache while the native decoder still reads the previous walk's VARCHAR views.
+        frameMemoryPool.releasePartitionFrameWindow();
+        frameMemoryPool.releaseDecodedFrameBuffers();
+        frameAddressCache.of(metadata, frameCursor);
         frameCount = 0;
     }
 }

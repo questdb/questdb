@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ReaderScanProfile;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
@@ -54,6 +55,34 @@ public interface TablePageFrameCursor extends PageFrameCursor {
                             : readerMetadata.getWriterIndex(colIdx)
             );
         }
+        final int timestampIndex = readerMetadata.getTimestampIndex();
+        if (timestampIndex >= 0) {
+            columnMapping.setTimestamp(
+                    timestampIndex,
+                    readerMetadata.getWriterIndex(timestampIndex),
+                    readerMetadata.getColumnType(timestampIndex)
+            );
+        }
+    }
+
+    /**
+     * Narrows a row position, counted from the start of a partition window (a Parquet row group or a
+     * delta-active partition's window), to the int a page frame carries. Throws when the position
+     * does not fit, rather than wrapping.
+     */
+    static int toWindowRow(TableReader reader, int partitionIndex, int window, long row) {
+        if (row > Integer.MAX_VALUE) {
+            final long partitionTimestamp = reader.getPartitionTimestampByIndex(partitionIndex);
+            final int timestampType = reader.getMetadata().getTimestampType();
+            throw CairoException.nonCritical()
+                    .put("partition window is too large to query, a window holds at most ")
+                    .put(Integer.MAX_VALUE).put(" rows [table=").put(reader.getTableToken().getTableName())
+                    .put(", partition=").ts(timestampType, partitionTimestamp)
+                    .put(", window=").put(window)
+                    .put(", row=").put(row)
+                    .put(']');
+        }
+        return (int) row;
     }
 
     /**

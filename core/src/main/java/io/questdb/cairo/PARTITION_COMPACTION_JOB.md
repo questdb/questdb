@@ -91,6 +91,8 @@ and the writer drops a command whose partition has moved on; the next sweep deci
 before its swap removes its own staging directory. MAKE-PLAIN's reader-safety wait still applies, so the
 sweep's reader is closed before the writer runs.
 
+`TableWriter.compactParquetPartition` does `dispatchParquet`'s rebuild on the writer, for a caller that cannot go on without the result: the Enterprise Delta switch, which freezes the partition. It decides on the same `isParquetPartitionCompact` and builds straight into the directory its commit names, so it never touches a staged build; the swap of such a build then finds the partition moved on and discards itself.
+
 ## Requests
 
 Other jobs can ask for a logical partition to be folded into one plain folder through the engine's

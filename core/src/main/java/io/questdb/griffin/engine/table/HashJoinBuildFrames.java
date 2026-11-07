@@ -367,8 +367,8 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCl
      * frame. Each probe reader decodes the Parquet row groups that its matches land on into its own
      * share of the decode cache, while a payload copy decodes each row group once.
      */
-    public boolean hasParquetFrames() {
-        return addressCache.hasParquetFrames();
+    public boolean hasDecodedFrames() {
+        return addressCache.hasDecodedFrames();
     }
 
     /**
@@ -408,7 +408,8 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCl
         }
         final DirectLongList pageAddresses = addressCache.getPageAddresses();
         for (int f = 0; f < frameIndex; f++) {
-            final boolean isNative = addressCache.getFrameFormat(f) == PartitionFormat.NATIVE;
+            final boolean isNative = addressCache.getFrameFormat(f) == PartitionFormat.NATIVE
+                    && addressCache.getPartitionFrameState(f) == 0;
             final int columnOffset = addressCache.toColumnOffset(f);
             for (int column : payloadColumns) {
                 payloadAddresses.add(isNative ? pageAddresses.get(columnOffset + column) : 0);
@@ -440,7 +441,7 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCl
      * Releases what a copy reader decoded, once its thread has copied a frame's rows.
      */
     public void releaseCopyBuffers(int reader) {
-        copyReaders.getQuick(reader).pool.releaseParquetBuffers();
+        copyReaders.getQuick(reader).pool.releaseDecodedFrameBuffers();
     }
 
     /**
@@ -462,7 +463,7 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCl
         assert frameCursor == null;
         memoryTracker = executionContext.getMemoryTracker();
         frameCursor = buildFactory.getPageFrameCursor(executionContext, ORDER_ASC);
-        addressCache.of(buildFactory.getMetadata(), frameCursor.getColumnMapping(), frameCursor.isExternal());
+        addressCache.of(buildFactory.getMetadata(), frameCursor);
     }
 
     /**
@@ -1011,7 +1012,8 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCl
             if (frameIndex != this.frameIndex) {
                 this.frameIndex = frameIndex;
                 addressBase = frameIndex * payloadColumns.length;
-                isDirect = addressCache.getFrameFormat(frameIndex) == PartitionFormat.NATIVE;
+                isDirect = addressCache.getFrameFormat(frameIndex) == PartitionFormat.NATIVE
+                        && addressCache.getPartitionFrameState(frameIndex) == 0;
             }
             row = Rows.toLocalRowID(rowId);
         }

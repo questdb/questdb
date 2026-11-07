@@ -582,6 +582,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private ParquetPartitionConverter parquetPartitionConverter;
     private ParquetPartitionIndexBuilder parquetPartitionIndexBuilder;
     private PartitionCompactionPolicy partitionCompactionPolicy;
+    private PartitionDeltaWriter partitionDeltaWriter;
+    private boolean partitionDeltaWriterInitialized;
     private PartitionGeometry partitionGeometry;
     // The txn at which this writer last left partition versions to the async purge, or -1. On an adaptive table
     // they may wait for a save point, and each save point queues a purge until the older pin reaches this txn.
@@ -601,6 +603,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private LongConsumer timestampSetter;
     private long todoTxn;
     private UpdateOperatorImpl updateOperatorImpl;
+    private long walApplyCommitTimestamp;
     // seqTxn of the WAL apply in progress, stamped into native partitions; -1 when not applying.
     // For a block apply this is the block's last seqTxn.
     private long walApplySeqTxn = -1;
@@ -1064,6 +1067,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             throw CairoException.duplicateColumn(columnName);
         }
 
+        // Existing rows get a column top, so only delta-active partitions block a new index.
+        // A Delta switch applied after WalWriter's check reaches a WAL table here through WAL apply,
+        // where a throw would suspend it for good, so add the column without the index.
+        if (indexType != IndexType.NONE && txWriter.hasAnyDeltaActive()) {
+            if (!tableToken.isWal()) {
+                throw CairoException.invalidMetadataRecoverable("cannot create index, table has a delta-active partition", columnName);
+            }
+            LOG.error().$("index not created on this instance [table=").$(tableToken)
+                    .$(", column=").$safe(columnName)
+                    .$(", seqTxn=").$(txWriter.getSeqTxn())
+                    .$(", reason=table has a delta-active partition]")
+                    .$();
+            indexType = IndexType.NONE;
+        }
+
         commit();
 
         long columnNameTxn = getTxn();
@@ -1161,6 +1179,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         TableColumnMetadata columnMetadata = metadata.getColumnMetadata(columnIndex);
+
+        checkIndexCreation(columnName);
 
         commit();
 
@@ -1468,6 +1488,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     return AttachDetachStatus.ATTACH_ERR_MISSING_PARQUET_DATA;
                 }
 
+                // DETACH refuses a delta-active partition, so a _delta folder belongs to no detached partition.
+                detachedPath.trimTo(detachedRootLen).concat(DELTA_DIR_NAME);
+                final boolean hasDelta = ff.exists(detachedPath.$());
+                detachedPath.trimTo(detachedRootLen);
+                if (hasDelta) {
+                    LOG.error().$("cannot attach partition with delta state [path=").$(detachedPath).I$();
+                    return AttachDetachStatus.ATTACH_ERR_DELTA;
+                }
+
                 // detached metadata files validation
                 CharSequence timestampColName = metadata.getColumnMetadata(metadata.getTimestampIndex()).getColumnName();
                 if (partitionSize > -1L) {
@@ -1746,6 +1775,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (txWriter.isPartitionReadOnly(i)) {
                 formatPartitionForTimestamp(txWriter.getPartitionTimestampByIndex(i), -1);
                 throw CairoException.nonCritical().put("cannot change column type, partition is read-only [table=")
+                        .put(tableToken.getTableName()).put(", column=").put(columnName)
+                        .put(", partition=").put(utf8Sink).put(']');
+            }
+            // A delta-active partition's frozen base cannot be rewritten in place, and its
+            // delta runs carry the old physical type.
+            if (txWriter.isPartitionDeltaActive(i)) {
+                formatPartitionForTimestamp(txWriter.getPartitionTimestampByIndex(i), -1);
+                throw CairoException.nonCritical().put("cannot change column type, partition is delta-active [table=")
                         .put(tableToken.getTableName()).put(", column=").put(columnName)
                         .put(", partition=").put(utf8Sink).put(']');
             }
@@ -2087,7 +2124,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public void commitWalInsertTransactions(
             @Transient Path walPath,
             long seqTxn,
-            TableWriterPressureControl pressureControl
+            TableWriterPressureControl pressureControl,
+            long txnCommitTimestamp
     ) {
         if (hasO3() || columnVersionWriter.hasChanges()) {
             // When the writer is returned to the pool, it should be rolled back. Having an open transaction is very suspicious.
@@ -2104,6 +2142,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         dedupRowsRemovedSinceLastCommit.reset();
         hasTtlEvictedPartitionsSinceLastCommit = false;
         txWriter.beginPartitionSizeUpdate();
+        walApplyCommitTimestamp = txnCommitTimestamp;
         long commitToTimestamp = walTxnDetails.getCommitToTimestamp(seqTxn);
         if (!avgRecordSizeMeasured && !avgRecordSizeFromWal) {
             sampleWalRecordSize(walPath, seqTxn);
@@ -2248,6 +2287,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final boolean stale = isTransactionConflict
                 || !isParquet
                 || isRemote
+                || txWriter.isPartitionDeltaActive(partitionIndex)
                 || txWriter.getPartitionNameTxn(partitionIndex) != expectedSrcNameTxn
                 || liveParquetFileSize != expectedParquetFileSize
                 || liveMetadataVersion != expectedMetadataVersion;
@@ -2299,36 +2339,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 .$(", aroundOpenTransaction=").$(isInTransaction)
                 .I$();
 
-        // Neither call touches the READ ONLY bit of the entry's masked-size word, so a frozen partition stays
-        // frozen in this same commit.
-        txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, partitionRowCount);
-        txWriter.setPartitionParquet(partitionTimestamp, newParquetFileSize);
-        if (isFullyMaterialized) {
-            // Every column was copied from row 0 into the new file, so no column has a top.
-            zeroColumnTopsAfterFullMaterialization(partitionTimestamp, partitionRowCount, true);
-        } else {
-            // QuestDB 9.3.4 - 10.0.1 merged O3 rows into the file and reset every column top inside it, but not
-            // in _cv. The copy keeps the file's columns as they are, so they start at row 0. The metadata version
-            // check above keeps the writer indexes valid.
-            for (int i = 0, n = staleColumnTops.size(); i < n; i++) {
-                final int columnIndex = staleColumnTops.getQuick(i);
-                if (metadata.getColumnType(columnIndex) > 0 && columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex) != 0) {
-                    LOG.info().$("zeroing stale parquet column top [table=").$(tableToken)
-                            .$(", partition=").$ts(timestampDriver, partitionTimestamp)
-                            .$(", column=").$safe(metadata.getColumnName(columnIndex))
-                            .I$();
-                    columnVersionWriter.upsertColumnTop(partitionTimestamp, columnIndex, 0);
-                }
-            }
-        }
-        columnVersionWriter.commit();
-        txWriter.setColumnVersion(columnVersionWriter.getVersion());
-        txWriter.bumpPartitionTableVersion();
-        if (isInTransaction) {
-            commitSwapAroundOpenTransaction(partitionIndex, partitionIndex + 1, 1);
-        } else {
-            commitTxWriter();
-        }
+        publishCompactedParquetPartition(
+                partitionIndex,
+                partitionTimestamp,
+                partitionRowCount,
+                newParquetFileSize,
+                isFullyMaterialized,
+                staleColumnTops,
+                isInTransaction
+        );
 
         // Best-effort cleanup: it must not roll back the committed transaction.
         try {
@@ -2336,6 +2355,172 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } catch (Throwable e) {
             handleHousekeepingException(e);
         }
+    }
+
+    /**
+     * Rebuilds a parquet partition that {@link PartitionCompactionScanJob#isParquetPartitionCompact} finds not compact:
+     * current column types, no index row map, no stale column tops, no dead bytes. The job does the same off a reader;
+     * this is for a caller that needs the result before it goes on, holding the writer for the copy.
+     * <p>
+     * Builds straight into the directory the commit names, which no job's staging directory can collide with. A
+     * directory left there by a failed attempt or a crash is not in {@code _txn}: this txn's retry replaces it, the
+     * writer open removes it, and the purge job leaves it alone as its version is not below the last txn.
+     *
+     * @return true when the partition was rebuilt and committed; false when there is nothing to do, or the partition
+     * is delta-active or not one {@code isParquetRebuildTarget} takes
+     * @throws CairoException when the {@code _pm} cannot be read, as nothing then says the partition is compact
+     */
+    public boolean compactParquetPartition(int partitionIndex) {
+        if (inTransaction()) {
+            // Nothing else commits here: the WAL apply flushes its lag ahead of a non-data transaction.
+            throw CairoException.critical(0)
+                    .put("cannot compact parquet partition in an open transaction [table=").put(tableToken)
+                    .put(']');
+        }
+        if (txWriter.isPartitionDeltaActive(partitionIndex) || !PartitionCompactionScanJob.isParquetRebuildTarget(txWriter, partitionIndex)) {
+            return false;
+        }
+        final long partitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
+        final long srcNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
+        final long parquetFileSize = txWriter.getPartitionParquetFileSize(partitionIndex);
+        final long partitionRowCount = txWriter.getPartitionSize(partitionIndex);
+        final ParquetPartitionSwapCommand command = new ParquetPartitionSwapCommand();
+        command.of(tableToken, tableToken.getTableId(), partitionTimestamp, srcNameTxn, parquetFileSize, getMetadataVersion());
+
+        setPathForParquetPartitionMetadata(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, srcNameTxn);
+        long addr = 0;
+        try {
+            addr = ParquetMetaFileReader.openAndMapRO(ff, path.$(), parquetMetaReader);
+            if (addr == 0 || !parquetMetaReader.resolveFooter(parquetFileSize)) {
+                throw CairoException.critical(0)
+                        .put("_pm tail does not match parquet file size [path=").put(path)
+                        .put(", parquetFileSize=").put(parquetFileSize).put(']');
+            }
+            if (PartitionCompactionScanJob.isParquetPartitionCompact(txWriter, partitionIndex, metadata, columnVersionWriter, parquetMetaReader)) {
+                return false;
+            }
+            PartitionCompactionScanJob.collectStaleParquetColumnTops(
+                    metadata,
+                    columnVersionWriter,
+                    partitionTimestamp,
+                    partitionRowCount,
+                    parquetMetaReader,
+                    command.getStaleColumnTops()
+            );
+        } finally {
+            path.trimTo(pathSize);
+            final long mappedSize = parquetMetaReader.getFileSize();
+            parquetMetaReader.clear();
+            if (addr != 0) {
+                ff.munmap(addr, mappedSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+            }
+        }
+
+        final int flushCommitMode = getFlushCommitMode();
+        final long newNameTxn = txWriter.getTxn();
+        LOG.info().$("compacting parquet partition [table=").$(tableToken)
+                .$(", partition=").$ts(timestampDriver, partitionTimestamp)
+                .$(", srcNameTxn=").$(srcNameTxn)
+                .$(", newNameTxn=").$(newNameTxn)
+                .I$();
+        boolean isDirCreated = false;
+        try {
+            setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, newNameTxn);
+            final int dstDirLen = other.size();
+            if (ff.exists(other.$()) && !ff.rmdir(other, false)) {
+                throw CairoException.critical(ff.errno()).put("could not remove partition dir of a failed compaction [path=").put(other).put(']');
+            }
+            other.trimTo(dstDirLen);
+            isDirCreated = true;
+            setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, srcNameTxn);
+            final int srcDirLen = path.size();
+            // NOSYNC: nothing names this directory yet, so both files are flushed below instead, data first.
+            O3PartitionJob.compactParquetPartition(
+                    configuration,
+                    CommitMode.NOSYNC,
+                    ff,
+                    tableToken,
+                    metadata,
+                    symbolTableProvider,
+                    path,
+                    other,
+                    txWriter.getSeqTxn(),
+                    command
+            );
+            if (flushCommitMode != CommitMode.NOSYNC) {
+                if (CommitMode.isPowerLossDurable(flushCommitMode)) {
+                    TableUtils.fsyncFileDurable(ff, other.trimTo(dstDirLen).concat(PARQUET_PARTITION_NAME).$());
+                }
+                TableUtils.fsyncFileDurable(ff, other.trimTo(dstDirLen).concat(PARQUET_METADATA_FILE_NAME).$());
+            }
+            other.trimTo(dstDirLen);
+            if (command.isFullyMaterialized() || command.isIndexRowMapDropped() || command.getStaleColumnTops().size() > 0) {
+                getParquetPartitionIndexBuilder().buildIndexes(
+                        other,
+                        command.getNewParquetFileSize(),
+                        metadata,
+                        columnVersionWriter,
+                        partitionTimestamp,
+                        partitionRowCount,
+                        newNameTxn,
+                        flushCommitMode
+                );
+            } else {
+                // Only dead bytes went: row numbers and column tops stand, and with them the source's index files.
+                linkPartitionIndexFiles(partitionTimestamp, srcNameTxn, srcDirLen, dstDirLen);
+            }
+            if (flushCommitMode != CommitMode.NOSYNC && !Os.isWindows()) {
+                // The link above trims the path back to the table root.
+                setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, newNameTxn);
+                final long dirFd = TableUtils.openRONoCache(ff, other.$(), LOG);
+                if (dirFd != -1) {
+                    ff.fsyncAndClose(dirFd);
+                }
+            }
+            fsyncConvertedPartitionDir(partitionTimestamp);
+        } catch (Throwable th) {
+            if (isDirCreated) {
+                setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, newNameTxn);
+                if (ff.exists(other.$()) && !ff.rmdir(other, false)) {
+                    LOG.error().$("could not remove partition dir of a failed compaction [path=").$substr(pathRootSize, other).I$();
+                }
+            }
+            if (engine.isDataSyncFailureFatal(th)) {
+                distressed = true;
+                engine.handleDataSyncFailure(th);
+            }
+            throw th;
+        } finally {
+            path.trimTo(pathSize);
+            other.trimTo(pathSize);
+        }
+
+        try {
+            publishCompactedParquetPartition(
+                    partitionIndex,
+                    partitionTimestamp,
+                    partitionRowCount,
+                    command.getNewParquetFileSize(),
+                    command.isFullyMaterialized(),
+                    command.getStaleColumnTops(),
+                    false
+            );
+        } catch (Throwable th) {
+            // The in-memory _txn may already name the new directory, which therefore stays.
+            distressed = true;
+            if (engine.isDataSyncFailureFatal(th)) {
+                engine.handleDataSyncFailure(th);
+            }
+            throw th;
+        }
+
+        // Best-effort cleanup: it must not roll back the committed transaction.
+        try {
+            safeDeletePartitionDir(partitionTimestamp, srcNameTxn);
+        } catch (Throwable e) {
+            handleHousekeepingException(e);
+        }
+        return true;
     }
 
     /**
@@ -2409,6 +2594,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         if (txWriter.isPartitionParquet(partitionIndex)) {
             return true; // Partition is already in Parquet format.
+        }
+
+        // Delta readers and Run window maps depend on this base's format and window grid.
+        // Conversion requires a replacement PhysicalBase and compatible navigation. SQL refuses
+        // it before WAL; WAL apply tolerates a partition that turned delta-active since.
+        if (txWriter.isPartitionDeltaActive(partitionIndex)) {
+            formatPartitionForTimestamp(partitionTimestamp, -1);
+            throw CairoException.partitionManipulationRecoverable().put("cannot convert partition to parquet, partition is delta-active [table=")
+                    .put(tableToken.getTableName())
+                    .put(", partition=").put(utf8Sink).put(']');
         }
 
         final int partitionCount = txWriter.getPartitionCount();
@@ -2575,6 +2770,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .put(']');
         }
 
+        // The retrofit delta switch clears read_only, so the guard above no longer covers a
+        // delta-active partition; conversion needs the later base-rewrite protocol. SQL refuses
+        // it before WAL; WAL apply tolerates a partition that turned delta-active since.
+        if (txWriter.isPartitionDeltaActive(partitionIndex)) {
+            formatPartitionForTimestamp(partitionTimestamp, -1);
+            throw CairoException.partitionManipulationRecoverable().put("cannot convert parquet partition to native, partition is delta-active [table=")
+                    .put(tableToken.getTableName())
+                    .put(", partition=").put(utf8Sink)
+                    .put(']');
+        }
+
         lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
         // Unlike native-to-parquet, this conversion does not squash split siblings. Compare the
         // physical timestamps so converting a parquet prefix does not close the active native tail.
@@ -2736,6 +2942,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             LOG.error().$("cannot detach remotely served partition [table=").$(tableToken)
                     .$(", partition=").$ts(timestampDriver, timestamp).I$();
             return AttachDetachStatus.DETACH_ERR_REMOTE;
+        }
+
+        // The partition's Delta catalog changes in place, so a detached copy cannot carry it.
+        if (txWriter.isPartitionDeltaActive(partitionIndex)) {
+            LOG.error().$("cannot detach delta-active partition [table=").$(tableToken)
+                    .$(", partition=").$ts(timestampDriver, timestamp).I$();
+            return AttachDetachStatus.DETACH_ERR_DELTA;
         }
 
         // Detach hard-links the directory into <ts>.detached with its pieces intact, while attach reads
@@ -2997,7 +3210,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 dropIndexOperator = new DropIndexOperator(configuration, this, path, other, pathSize, getPurgingOperator());
             }
             dropIndexOperator.executeDropIndex(columnName, columnIndex); // upserts column version in partitions
-            // swap meta commit
+
+            dropColdDeltaIndex(columnIndex, getSeqTxn());
 
             // refresh metadata
             columnMetadata.setIndexType(IndexType.NONE);
@@ -3062,6 +3276,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public boolean enableDeduplicationWithUpsertKeys(LongList columnsIndexes) {
         assert txWriter.getLagRowCount() == 0;
         checkDistressed();
+        for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
+            // Delta writes are insert-only. Reads do not select deduplication survivors
+            // across the base and residual Runs.
+            if (txWriter.isPartitionDeltaActive(i)) {
+                throw CairoException.nonCritical().put("cannot enable deduplication, table has a delta-active partition [table=")
+                        .put(tableToken.getTableName())
+                        .put(", partition=").ts(timestampDriver, txWriter.getPartitionTimestampByIndex(i))
+                        .put(']');
+            }
+        }
         LogRecord logRec = LOG.info().$("enabling row deduplication [table=").$(tableToken).$(", columns=[");
 
         boolean isSubsetOfOldKeys = true;
@@ -3181,6 +3405,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, activePartitionTs, txn);
                         try {
                             readPartitionMinMaxTimestamps(activePartitionTs, path, metadata.getColumnName(metadata.getTimestampIndex()), isParquet, parquetFileSize, activePartitionRows);
+                            includeDeltaTimestampBounds(partitionIndex);
                             maxTimestamp = attachMaxTimestamp;
                         } finally {
                             path.trimTo(pathSize);
@@ -3267,6 +3492,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return colTop > -1L ? colTop : defaultValue;
     }
 
+    public long getColumnVersion() {
+        return txWriter.getColumnVersion();
+    }
+
     public ColumnVersionWriter getColumnVersionWriter() {
         return columnVersionWriter;
     }
@@ -3294,6 +3523,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public String getDesignatedTimestampColumnName() {
         return designatedTimestampColumnName;
+    }
+
+    public CairoEngine getEngine() {
+        return engine;
     }
 
     @Override
@@ -3376,6 +3609,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return txWriter.getMinTimestamp();
     }
 
+    public long getNativePartitionSeqTxn(int partitionIndexRaw) {
+        return txWriter.getNativePartitionSeqTxn(partitionIndexRaw / LONGS_PER_TX_ATTACHED_PARTITION);
+    }
+
     /**
      * Flat {@code [minTs, maxTs]} pairs, one per transaction in the block being applied, or empty when
      * nothing should be clustered. Written before the O3 fan-out and only read after it.
@@ -3441,6 +3678,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public byte getPartitionFormat(int partitionIndex) {
         return txWriter.isPartitionParquet(partitionIndex) ? PartitionFormat.PARQUET : PartitionFormat.NATIVE;
+    }
+
+    /**
+     * Returns the first physical partition starting at or after the timestamp,
+     * or {@link #getPartitionCount()} if none exists.
+     */
+    public int getPartitionIndexAtOrAfter(long timestamp) {
+        int partitionIndex = txWriter.findAttachedPartitionIndexByLoTimestamp(timestamp);
+        if (partitionIndex < 0) {
+            return -partitionIndex - 1;
+        }
+        return partitionIndex;
     }
 
     public int getPartitionIndexByTimestamp(long timestamp) {
@@ -3689,6 +3938,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 || txWriter.isPartitionParquetGenerated(partitionIndex)
                 || txWriter.isPartitionComposite(partitionIndex)
                 || txWriter.isPartitionRemote(partitionIndex)
+                || txWriter.isPartitionDeltaActive(partitionIndex)
                 || liveNameTxn != expectedNameTxn
                 || txWriter.getPartitionSize(partitionIndex) != expectedRowCount
                 || columnVersionWriter.getMaxPartitionVersion(partitionTimestamp) != expectedColumnVersion
@@ -3802,12 +4052,31 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return tempMem16b != 0;
     }
 
+    public boolean isPartitionDeltaActive(int partitionIndex) {
+        return txWriter.isPartitionDeltaActive(partitionIndex);
+    }
+
     public boolean isPartitionParquet(int partitionIndex) {
         return txWriter.isPartitionParquet(partitionIndex);
     }
 
     public boolean isPartitionReadOnly(int partitionIndex) {
         return txWriter.isPartitionReadOnly(partitionIndex);
+    }
+
+    public boolean isPartitionSoftLink(int partitionIndex) {
+        try {
+            setPathForNativePartition(
+                    other.trimTo(pathSize),
+                    timestampType,
+                    partitionBy,
+                    txWriter.getPartitionTimestampByIndex(partitionIndex),
+                    txWriter.getPartitionNameTxn(partitionIndex)
+            );
+            return ff.isSoftLink(other.$());
+        } finally {
+            other.trimTo(pathSize);
+        }
     }
 
     /**
@@ -3885,6 +4154,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (isInTransaction
                 || partitionIndex < 0
                 || txWriter.isPartitionRemote(partitionIndex)
+                || txWriter.isPartitionDeltaActive(partitionIndex)
                 || liveWriterTxn != expectedWriterTxn
                 || txWriter.getPartitionNameTxn(partitionIndex) != expectedSrcNameTxn
                 || getMetadataVersion() != expectedMetadataVersion
@@ -4290,6 +4560,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         commit();
+
+        if (indexType != IndexType.NONE) {
+            dropColdDeltaIndex(index, getSeqTxn());
+        }
 
         // Tombstone any cover slot in other POSTING indexes that references
         // this column. Must run BEFORE metadata.removeColumn so the
@@ -4957,9 +5231,64 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return txWriter.getRowCount() + getO3RowCount();
     }
 
+    public void skipWalTransactions(long seqTxn) {
+        for (int i = 0, n = getPartitionCount(); i < n; i++) {
+            if (isPartitionDeltaActive(i)) {
+                final PartitionDeltaWriter deltaWriter = getPartitionDeltaWriter();
+                if (deltaWriter != null && deltaWriter.rollback(this, i, getSeqTxn()) && !txWriter.getPartitionHasDelta(i)) {
+                    txWriter.setPartitionHasDelta(i, true);
+                    txWriter.bumpPartitionTableVersion();
+                }
+            }
+        }
+        commitSeqTxn(seqTxn);
+    }
+
     @TestOnly
     public void squashAllPartitionsIntoOne() {
         squashSplitPartitions(0, txWriter.getPartitionCount(), 1, false);
+    }
+
+    /**
+     * Squashes one logical partition, copying its base if readers pin it.
+     * The resulting partition retains the supplied index.
+     *
+     * @param partitionIndex index of the logical partition's first physical partition
+     */
+    public void squashPartitionForce(int partitionIndex) {
+        evictCompositeFrames();
+        // Delta switches freeze this directory even when the logical partition has no split siblings.
+        compactPartitionToPlain(partitionIndex, "forced squash");
+        int lastLogicalPartitionIndex = partitionIndex;
+        long lastLogicalPartitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
+        if (lastLogicalPartitionTimestamp != txWriter.getLogicalPartitionTimestamp(lastLogicalPartitionTimestamp)) {
+            lastLogicalPartitionTimestamp = txWriter.getLogicalPartitionTimestamp(lastLogicalPartitionTimestamp);
+            // We can have a split partition without the parent logical partition
+            // after some replace commits
+            // We need to create a logical partition to squash into
+            txWriter.insertPartition(partitionIndex, lastLogicalPartitionTimestamp, 0, txWriter.txn);
+            setStateForTimestamp(other, lastLogicalPartitionTimestamp);
+            if (ff.mkdir(other.$(), configuration.getMkDirMode()) != 0) {
+                throw CairoException.critical(ff.errno()).put("could not create directory [path='").put(other).put("']");
+            }
+            partitionIndex++;
+        }
+
+        // Do not cache txWriter.getPartitionCount() as it changes during the squashing
+        while (partitionIndex < txWriter.getPartitionCount()) {
+            long partitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
+            long logicalPartitionTimestamp = txWriter.getLogicalPartitionTimestamp(partitionTimestamp);
+            if (logicalPartitionTimestamp != lastLogicalPartitionTimestamp) {
+                if (partitionIndex > lastLogicalPartitionIndex + 1) {
+                    squashSplitPartitions(lastLogicalPartitionIndex, partitionIndex, 1, true);
+                }
+                return;
+            }
+            partitionIndex++;
+        }
+        if (partitionIndex > lastLogicalPartitionIndex + 1) {
+            squashSplitPartitions(lastLogicalPartitionIndex, partitionIndex, 1, true);
+        }
     }
 
     @Override
@@ -5038,6 +5367,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final boolean stale = isTransactionConflict
                 || partitionIndex < 0
                 || isRemote
+                || txWriter.isPartitionDeltaActive(partitionIndex)
                 || !txWriter.isPartitionComposite(partitionIndex)
                 || txWriter.getPartitionNameTxn(partitionIndex) != expectedSrcNameTxn
                 || liveWriterTxn != expectedWriterTxn
@@ -5201,6 +5531,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     || txWriter.getPartitionNameTxn(partitionIndex) != folders.getQuick(offset + 1)
                     // A parquet conversion carries an upload over - see below; nothing else may drop one.
                     || (!isParquetConversion && txWriter.isPartitionRemote(partitionIndex))
+                    || txWriter.isPartitionDeltaActive(partitionIndex)
                     || txWriter.isPartitionParquet(partitionIndex)
                     || txWriter.getPartitionSize(partitionIndex) != folders.getQuick(offset + 3)
                     || compositePartitionGeneration(partitionIndex) != folders.getQuick(offset + 2)
@@ -5421,6 +5752,29 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public void upsertColumnVersion(long partitionTimestamp, int columnIndex, long columnTop) {
         columnVersionWriter.upsert(partitionTimestamp, columnIndex, txWriter.txn, columnTop);
+    }
+
+    /**
+     * Whether any WAL transaction in {@code [seqTxnLo, seqTxnHi]} may touch a
+     * delta-active partition, judged by each transaction's timestamp range (the
+     * replace range for a replace commit) against the attached partitions whose
+     * delta-write bit is set. Conservative: a false positive only reduces
+     * batching; a false negative would mix transactions in one commit run and
+     * break the MVCC window, so the test errs wide.
+     */
+    public boolean walTxnRangeOverlapsDeltaActivePartition(long seqTxnLo, long seqTxnHi) {
+        for (long s = seqTxnLo; s <= seqTxnHi; s++) {
+            long minTs = walTxnDetails.getMinTimestamp(s);
+            long maxTs = walTxnDetails.getMaxTimestamp(s);
+            if (walTxnDetails.getDedupMode(s) == WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE) {
+                minTs = Math.min(minTs, walTxnDetails.getReplaceRangeTsLow(s));
+                maxTs = Math.max(maxTs, walTxnDetails.getReplaceRangeTsHi(s) - 1);
+            }
+            if (timestampRangeOverlapsDeltaActivePartition(minTs, maxTs)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -5866,7 +6220,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // ignore the return are additionally kept off this method for a
                 // legacy head by the Possible-predicate guard; the block-apply gate
                 // bails earlier still. See lastPartitionHasLegacyCoveringHead().
-                && !lastPartitionHasLegacyCoveringHead()) {
+                && !lastPartitionHasLegacyCoveringHead()
+                // A delta-active last partition takes no direct appends: its rows must go
+                // through the O3 path, which routes them into the table-scoped delta.
+                && !txWriter.isPartitionDeltaActiveByPartitionTimestamp(lastPartitionTimestamp)) {
             // There is some data in LAG, it's ordered, and it's already written to the last partition.
             // We can simply increase the last partition transient row count to make it committed.
 
@@ -6152,7 +6509,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // covered-read OOB): fall back to the full commit, whose reseal
                 // migrates the head to format 1. Mirrors the block-apply gate;
                 // together they cover every fast-lag extend path.
-                && !lastPartitionHasLegacyCoveringHead();
+                && !lastPartitionHasLegacyCoveringHead()
+                // A delta-active last partition takes no direct appends: its rows must go
+                // through the O3 path, which routes them into the table-scoped delta.
+                && !txWriter.isPartitionDeltaActiveByPartitionTimestamp(lastPartitionTimestamp);
     }
 
     private void applyLagToLastPartition(long maxTimestamp, int lagRowCount, long lagMinTimestamp) {
@@ -6852,6 +7212,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             );
             return 1;
         }
+        // Delta publication assigns one seqTxn to every captured row. Apply transactions
+        // separately to preserve snapshot visibility. The range test is conservative:
+        // a false positive only reduces batching.
+        if (walTxnRangeOverlapsDeltaActivePartition(seqTxn, seqTxn)) {
+            pressureControl.updateInflightTxnBlockLength(
+                    1,
+                    Math.max(1, walTxnDetails.getSegmentRowHi(seqTxn) - walTxnDetails.getSegmentRowLo(seqTxn))
+            );
+            return 1;
+        }
         // In-order optimization applies only when commit timestamps >= inOrderMinTimestamp.
         // For native last partition: use the partition's max timestamp, so only appending data is optimized.
         // For parquet last partition: use Long.MAX_VALUE to disable optimization entirely,
@@ -6861,15 +7231,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // takes is the live row count, so the rows have to go through the O3 path, which writes at E and
         // records what it wrote in the geometry.
         long inOrderMinTimestamp = isLastPartitionAppendBlocked() ? Long.MAX_VALUE : txWriter.getMaxTimestamp();
-        final long blockSize = configuration.getWalApplyBlockSize();
-        return walTxnDetails.calculateInsertTransactionBlock(
+        final long maxBlockBytes = configuration.getWalApplyBlockSize();
+        int blockSize = walTxnDetails.calculateInsertTransactionBlock(
                 seqTxn,
                 pressureControl,
                 getWalMaxBlockRows(),
                 inOrderMinTimestamp,
                 isCommitDedupMode(),
-                blockSize > 0 ? walBlockBudget.of(blockSize) : null
+                maxBlockBytes > 0 ? walBlockBudget.of(maxBlockBytes) : null
         );
+        // Cap a multi-transaction block before the first future transaction that may touch a
+        // delta-active partition, so that transaction starts its own size-1 apply.
+        for (int k = 1; k < blockSize; k++) {
+            if (walTxnRangeOverlapsDeltaActivePartition(seqTxn + k, seqTxn + k)) {
+                blockSize = k;
+                break;
+            }
+        }
+        return blockSize;
     }
 
     private void cancelRowAndBump() {
@@ -7001,6 +7380,27 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return;
         }
         throw new CairoError("Table '" + tableToken.getTableName() + "' is distressed");
+    }
+
+    private void checkIndexCreation(CharSequence columnName) {
+        // ADD INDEX indexes existing rows, which remotely served and delta-active partitions
+        // cannot provide yet. WAL apply skips the ALTER on an instance that has one at apply time.
+        for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
+            if (txWriter.isPartitionDeltaActive(i) || txWriter.isPartitionRemotelyServed(i)) {
+                if (walApplySeqTxn > 0) {
+                    // WAL apply tolerates this failure and skips the ALTER, so say so at ERROR.
+                    LOG.error().$("index not created on this instance [table=").$(tableToken)
+                            .$(", column=").$safe(columnName)
+                            .$(", seqTxn=").$(walApplySeqTxn)
+                            .$(", reason=table has a delta-active or remotely served partition]")
+                            .$();
+                }
+                throw CairoException.invalidMetadataRecoverable(
+                        "cannot create index, table has a delta-active or remotely served partition",
+                        columnName
+                );
+            }
+        }
     }
 
     private void checkO3Errors() {
@@ -9568,6 +9968,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         Misc.free(slaveTxReader);
         Misc.free(commandQueue);
         Misc.free(dedupColumnCommitAddresses);
+        partitionDeltaWriter = Misc.free(partitionDeltaWriter);
         Misc.free(parquetDecoder);
         Misc.free(parquetFileDecoder);
         parquetPartitionConverter = Misc.free(parquetPartitionConverter);
@@ -9633,6 +10034,30 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void drainPendingPostingSealPurgesBeforeIndexerRelease() {
         for (int i = 0, n = denseIndexers.size(); i < n; i++) {
             deferPendingPostingSealPurges(denseIndexers.getQuick(i), txWriter.getTxn());
+        }
+    }
+
+    private void dropColdDeltaIndex(
+            int columnIndex,
+            long dropSeqTxn
+    ) {
+        PartitionDeltaWriter deltaWriter = null;
+        for (int partitionIndex = 0, n = txWriter.getPartitionCount(); partitionIndex < n; partitionIndex++) {
+            if (!txWriter.getPartitionHasDelta(partitionIndex)) {
+                continue;
+            }
+            if (deltaWriter == null) {
+                deltaWriter = getPartitionDeltaWriter();
+                if (deltaWriter == null) {
+                    return;
+                }
+            }
+            deltaWriter.dropIndex(
+                    this,
+                    partitionIndex,
+                    columnIndex,
+                    dropSeqTxn
+            );
         }
     }
 
@@ -9778,6 +10203,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     try {
                         setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, prevTimestamp, txWriter.getPartitionNameTxn(prevIndex));
                         readPartitionMinMaxTimestamps(prevTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), prevIsParquet, parquetFileSize, newTransientRowCount);
+                        includeDeltaTimestampBounds(prevIndex);
                         nextMaxTimestamp = attachMaxTimestamp;
                     } finally {
                         path.trimTo(pathSize);
@@ -10599,6 +11025,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return parquetPartitionIndexBuilder;
     }
 
+    private PartitionDeltaWriter getPartitionDeltaWriter() {
+        if (!partitionDeltaWriterInitialized) {
+            partitionDeltaWriter = configuration.newPartitionDeltaWriter();
+            partitionDeltaWriterInitialized = true;
+        }
+        return partitionDeltaWriter;
+    }
+
     /**
      * The live squash tracker of the folder at {@code partitionIndex} - see {@link TableUtils#readPartitionSquashTracker}.
      */
@@ -11040,6 +11474,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    private void includeDeltaTimestampBounds(int partitionIndex) {
+        if (txWriter.getPartitionHasDelta(partitionIndex)) {
+            readDeltaTimestampBounds(partitionIndex);
+            attachMinTimestamp = Math.min(attachMinTimestamp, Unsafe.getLong(tempMem16b));
+            attachMaxTimestamp = Math.max(attachMaxTimestamp, Unsafe.getLong(tempMem16b + Long.BYTES));
+        }
+    }
+
     private void indexHistoricPartitions(SymbolColumnIndexer indexer, CharSequence columnName, int indexValueBlockSize, byte indexType, int columnIndex) {
         long ts = txWriter.getMaxTimestamp();
         if (ts > Numbers.LONG_NULL) {
@@ -11420,6 +11862,35 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (parquetMetaAddr != 0) {
                 ff.munmap(parquetMetaAddr, parquetMetaSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
             }
+        }
+    }
+
+    private void initDeltaPartitions(long minTimestamp, long maxTimestamp) {
+        // O(1) exit for tables without delta-active partitions: skips the walk on each WAL apply.
+        if (minTimestamp > maxTimestamp || !txWriter.hasAnyDeltaActive()) {
+            return;
+        }
+        int i = txWriter.findAttachedPartitionIndexByLoTimestamp(minTimestamp);
+        if (i < 0) {
+            i = Math.max(-i - 2, 0);
+        }
+        boolean hasInitialized = false;
+        for (int n = txWriter.getPartitionCount(); i < n && getPartitionTimestamp(i) <= maxTimestamp; i++) {
+            if (!isPartitionDeltaActive(i) || txWriter.getPartitionHasDelta(i)) {
+                continue;
+            }
+            final PartitionDeltaWriter deltaWriter = getPartitionDeltaWriter();
+            if (deltaWriter == null) {
+                return;
+            }
+            deltaWriter.initialize(this, i);
+            txWriter.setPartitionHasDelta(i, true);
+            txWriter.bumpPartitionTableVersion();
+            hasInitialized = true;
+        }
+        if (hasInitialized) {
+            // Publish complete, empty catalogs before applying any rows; keep the WAL seqTxn.
+            commitTxWriter();
         }
     }
 
@@ -13123,6 +13594,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         if (!readCompositePartitionBoundaryTimestamp(0, path, tsColumnName, false)) {
                             readPartitionMinMaxTimestamps(firstPartitionTimestamp, path, tsColumnName, txWriter.isPartitionParquet(0), -1, partitionSize);
                         }
+                        includeDeltaTimestampBounds(0);
                         txWriter.minTimestamp = attachMinTimestamp;
                     }
 
@@ -13135,6 +13607,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         if (!readCompositePartitionBoundaryTimestamp(lastPartitionIndex, path, tsColumnName, true)) {
                             readPartitionMinMaxTimestamps(lastPartitionTimestamp, path, tsColumnName, txWriter.isPartitionParquet(lastPartitionIndex), -1, partitionSize);
                         }
+                        includeDeltaTimestampBounds(lastPartitionIndex);
                         txWriter.maxTimestamp = attachMaxTimestamp;
                         // partitionTimestampHi still names the partition this commit deleted, and nothing else lowers
                         // it: processO3Block's replace-mode update only raises it, and finishO3Commit's openPartition.
@@ -13403,6 +13876,49 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    /**
+     * Publishes one WAL transaction's timestamp-ordered O3 slice before its
+     * {@code _txn} commit. Catalog activation already set {@code has_delta};
+     * this commit exposes the Runs. Publication follows the configured commit mode.
+     * Without a Delta writer, this path logs and drops the rows as for a read-only
+     * partition; the partition switch requires a Delta-capable enterprise build.
+     */
+    private void o3CommitPartitionDelta(
+            long partitionTimestamp,
+            int partitionIndexRaw,
+            long partitionNameTxn,
+            long sortedTimestampsAddr,
+            long srcOooLo,
+            long srcOooHi
+    ) {
+        final PartitionDeltaWriter deltaWriter = getPartitionDeltaWriter();
+        if (deltaWriter == null) {
+            LOG.critical()
+                    .$("o3 ignoring write on delta-active partition, this build has no delta writer [table=").$(tableToken)
+                    .$(", timestamp=").$ts(timestampDriver, partitionTimestamp)
+                    .$(", numRows=").$(srcOooHi - srcOooLo + 1)
+                    .$();
+            return;
+        }
+        assert txWriter.getPartitionHasDeltaByRawIndex(partitionIndexRaw);
+        deltaWriter.writeCommit(
+                this,
+                partitionTimestamp,
+                partitionNameTxn,
+                o3Columns,
+                sortedTimestampsAddr,
+                srcOooLo,
+                srcOooHi,
+                walApplySeqTxn,
+                walApplyCommitTimestamp
+        );
+        final long minTimestamp = getTimestampIndexValue(sortedTimestampsAddr, srcOooLo);
+        if (minTimestamp < txWriter.getMinTimestamp()) {
+            // The setter makes _txn persist the minimum even on subsequent Delta-only commits.
+            txWriter.setMinTimestamp(minTimestamp);
+        }
+    }
+
     private void o3ConsumePartitionUpdates() {
         final Sequence partitionSubSeq = messageBus.getO3PartitionSubSeq();
         final RingQueue<O3PartitionTask> partitionQueue = messageBus.getO3PartitionQueue();
@@ -13529,6 +14045,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         try {
                             setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, prevTimestamp, txWriter.getPartitionNameTxn(prevIndex));
                             readPartitionMinMaxTimestamps(prevTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), prevIsParquet, parquetFileSize, prevSize);
+                            includeDeltaTimestampBounds(prevIndex);
                             o3MoveUncommittedMaxTimestamp = attachMaxTimestamp;
                         } finally {
                             path.trimTo(pathSize);
@@ -14300,7 +14817,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             .$(", rssMemUsed=").$size(Unsafe.getRssMemUsed())
                             .I$();
 
+                    if (partitionIndexRaw > -1 && txWriter.isPartitionDeltaActiveByRawIndex(partitionIndexRaw)) {
+                        // Late rows into a delta-active partition land in its table-scoped delta;
+                        // the frozen base (native or parquet) is never touched. Ahead of the
+                        // append/merge dispatch so every strategy is captured, and the delta
+                        // seal is durable before this transaction's _txn commit.
+                        o3CommitPartitionDelta(partitionTimestamp, partitionIndexRaw, srcNameTxn, sortedTimestampsAddr, srcOooLo, srcOooHi);
+                        continue;
+                    }
                     if (partitionIsReadOnly) {
+                        if (metadata.isWalEnabled() && srcOooBatchRowSize > 0 && isDeduplicationEnabled()) {
+                            // Dedup rows may replace sealed rows: fail the transaction so WAL apply
+                            // rolls it back and suspends the table instead of dropping them.
+                            // The read-only flag is sequenced, so every instance fails the same way.
+                            throw CairoException.nonCritical()
+                                    .put("cannot insert into read-only partition [table=").put(tableToken.getTableName())
+                                    .put(", partitionTimestamp=").ts(timestampType, partitionTimestamp)
+                                    .put(", rowCount=").put(srcOooBatchRowSize)
+                                    .put(']');
+                        }
                         // move over read-only partitions
                         LOG.critical()
                                 .$("o3 ignoring write on read-only partition [table=").$(tableToken)
@@ -14629,6 +15164,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final boolean isPurgeLeftToSavePoint = isDropPartition && isHeldBySavePoint && !isHeldByReader && !checkpointInProgress;
         // This flag will determine to schedule O3PartitionPurgeJob at the end or all done already.
         boolean scheduleAsyncPurge = false;
+        final PartitionDeltaWriter deltaWriter = getPartitionDeltaWriter();
 
         for (int i = 0; i < n; i += 2) {
             try {
@@ -14653,7 +15189,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     );
                     other.$();
                     engine.getPartitionOverwriteControl().notifyPartitionMutates(tableToken, timestampType, timestamp, txn, 0);
-                    if (!ff.unlinkOrRemove(other, LOG)) {
+                    if (deltaWriter != null && !deltaWriter.purge(other)) {
+                        // Delta files of this version remain; the async purge retries both.
+                        scheduleAsyncPurge = true;
+                    } else if (!ff.unlinkOrRemove(other, LOG)) {
                         LOG.info()
                                 .$("could not purge partition version, async purge will be scheduled [path=").$substr(pathRootSize, other)
                                 .$(", errno=").$(ff.errno())
@@ -14778,7 +15317,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // and processWalCommit only ever runs on a WAL table. See MergeAppendLagGuardTest.
                 boolean noLag = lastPartitionBlocksAppend
                         || isParquetTableEmptyPlaceholder
-                        || isMergeAppendTable();
+                        || isMergeAppendTable()
+                        || timestampRangeOverlapsDeltaActivePartition(o3TimestampMin, o3TimestampMax);
                 boolean needFullCommit = forceFullCommit
                         // No LAG available (parquet partition or parquet table)
                         || noLag
@@ -15002,6 +15542,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         walRowsProcessed = rowHi - rowLo;
 
         if (dedupMode == WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE) {
+            if (timestampRangeOverlapsDeltaActivePartition(replaceRangeTsLo, replaceRangeTsHi - 1)
+                    || timestampRangeOverlapsDeltaActivePartition(txnMinTs, txnMaxTs)) {
+                // The insert-only Delta writer cannot express a range replacement over a
+                // frozen base; suspend rather than half-apply or silently drop the range.
+                throw CairoException.nonCritical()
+                        .put("cannot apply replace-range commit over a delta-active partition [table=")
+                        .put(tableToken.getTableName())
+                        .put(", replaceRangeTsLo=").ts(timestampDriver, replaceRangeTsLo)
+                        .put(", replaceRangeTsHi=").ts(timestampDriver, replaceRangeTsHi)
+                        .put(']');
+            }
             processWalCommitDedupReplace(
                     walPath,
                     inOrder,
@@ -15030,6 +15581,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             return true;
         } else {
+            initDeltaPartitions(
+                    Math.min(txnMinTs, txWriter.getLagMinTimestamp()),
+                    Math.max(txnMaxTs, txWriter.getLagMaxTimestamp())
+            );
             return processWalCommit(
                     walPath,
                     inOrder,
@@ -16570,6 +17125,47 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         retiredGeometryGenerations.clear();
     }
 
+    private void publishCompactedParquetPartition(
+            int partitionIndex,
+            long partitionTimestamp,
+            long partitionRowCount,
+            long newParquetFileSize,
+            boolean isFullyMaterialized,
+            IntList staleColumnTops,
+            boolean isInTransaction
+    ) {
+        // Neither call touches the READ ONLY bit of the entry's masked-size word, so a frozen partition stays
+        // frozen in this same commit.
+        txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, partitionRowCount);
+        txWriter.setPartitionParquet(partitionTimestamp, newParquetFileSize);
+        if (isFullyMaterialized) {
+            // Every column was copied from row 0 into the new file, so no column has a top.
+            zeroColumnTopsAfterFullMaterialization(partitionTimestamp, partitionRowCount, true);
+        } else {
+            // QuestDB 9.3.4 - 10.0.1 merged O3 rows into the file and reset every column top inside it, but not
+            // in _cv. The copy keeps the file's columns as they are, so they start at row 0. The writer indexes
+            // are valid: the swap checks the metadata version, and the writer-side rebuild holds the metadata.
+            for (int i = 0, n = staleColumnTops.size(); i < n; i++) {
+                final int columnIndex = staleColumnTops.getQuick(i);
+                if (metadata.getColumnType(columnIndex) > 0 && columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex) != 0) {
+                    LOG.info().$("zeroing stale parquet column top [table=").$(tableToken)
+                            .$(", partition=").$ts(timestampDriver, partitionTimestamp)
+                            .$(", column=").$safe(metadata.getColumnName(columnIndex))
+                            .I$();
+                    columnVersionWriter.upsertColumnTop(partitionTimestamp, columnIndex, 0);
+                }
+            }
+        }
+        columnVersionWriter.commit();
+        txWriter.setColumnVersion(columnVersionWriter.getVersion());
+        txWriter.bumpPartitionTableVersion();
+        if (isInTransaction) {
+            commitSwapAroundOpenTransaction(partitionIndex, partitionIndex + 1, 1);
+        } else {
+            commitTxWriter();
+        }
+    }
+
     /**
      * Refreshes the metadata cache's has-parquet-partitions flag only on a flip: its write lock is global.
      */
@@ -16917,6 +17513,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    private void readDeltaTimestampBounds(int partitionIndex) {
+        final PartitionDeltaWriter deltaWriter = getPartitionDeltaWriter();
+        if (deltaWriter == null) {
+            throw CairoException.critical(0)
+                    .put("cannot read Delta timestamp bounds without a delta writer [table=").put(tableToken).put(']');
+        }
+        deltaWriter.readTimestampBounds(this, partitionIndex, tempMem16b);
+    }
+
     private boolean readCompositePartitionBoundaryTimestamp(int partitionIndex, Path partitionPath, CharSequence columnName, boolean readMax) {
         final PartitionGeometry geometry = getGeometry();
         if (!geometry.isComposite(partitionIndex)) {
@@ -16950,7 +17555,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final boolean isParquet = txWriter.isPartitionParquet(partitionIndex);
         try {
             setStateForTimestamp(other, timestamp);
-            return isParquet ? readMinTimestampParquet(other, partitionIndex) : readMinTimestampNative(other, timestamp);
+            final long minTimestamp = isParquet
+                    ? readMinTimestampParquet(other, partitionIndex)
+                    : readMinTimestampNative(other, timestamp);
+            if (txWriter.getPartitionHasDelta(partitionIndex)) {
+                readDeltaTimestampBounds(partitionIndex);
+                return Math.min(minTimestamp, Unsafe.getLong(tempMem16b));
+            }
+            return minTimestamp;
         } finally {
             other.trimTo(pathSize);
         }
@@ -17799,7 +18411,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             final long dirTimestamp = partitionDirFmt.parse(utf8Sink.asAsciiCharSequence(), 0, txnSep, EN_LOCALE);
             final int partitionIndex = txWriter.getPartitionIndex(dirTimestamp);
-            if (partitionIndex < 0 || txWriter.getPartitionNameTxn(partitionIndex) != srcNameTxn) {
+            if (partitionIndex < 0
+                    || txWriter.getPartitionNameTxn(partitionIndex) != srcNameTxn
+                    || txWriter.isPartitionDeltaActive(partitionIndex)) {
                 stale = true;
             } else if (txWriter.isPartitionParquet(partitionIndex)) {
                 stale = txWriter.getPartitionParquetFileSize(partitionIndex) != generation;
@@ -17849,7 +18463,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     || txWriter.getPartitionNameTxn(partitionIndex) != srcNameTxn
                     || txWriter.isPartitionParquet(partitionIndex)
                     || txWriter.isPartitionParquetGenerated(partitionIndex)
-                    || txWriter.isPartitionComposite(partitionIndex);
+                    || txWriter.isPartitionComposite(partitionIndex)
+                    || txWriter.isPartitionDeltaActive(partitionIndex);
         } catch (NumericException ignore) {
             // Not a name this writer's compaction produced; leave the directory rather than guess.
             path.trimTo(pathSize);
@@ -19503,40 +20118,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void squashPartitionForce(int partitionIndex) {
-        evictCompositeFrames();
-        int lastLogicalPartitionIndex = partitionIndex;
-        long lastLogicalPartitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
-        if (lastLogicalPartitionTimestamp != txWriter.getLogicalPartitionTimestamp(lastLogicalPartitionTimestamp)) {
-            lastLogicalPartitionTimestamp = txWriter.getLogicalPartitionTimestamp(lastLogicalPartitionTimestamp);
-            // We can have a split partition without the parent logical partition
-            // after some replace commits
-            // We need to create a logical partition to squash into
-            txWriter.insertPartition(partitionIndex, lastLogicalPartitionTimestamp, 0, txWriter.txn);
-            setStateForTimestamp(other, lastLogicalPartitionTimestamp);
-            if (ff.mkdir(other.$(), configuration.getMkDirMode()) != 0) {
-                throw CairoException.critical(ff.errno()).put("could not create directory [path='").put(other).put("']");
-            }
-            partitionIndex++;
-        }
-
-        // Do not cache txWriter.getPartitionCount() as it changes during the squashing
-        while (partitionIndex < txWriter.getPartitionCount()) {
-            long partitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
-            long logicalPartitionTimestamp = txWriter.getLogicalPartitionTimestamp(partitionTimestamp);
-            if (logicalPartitionTimestamp != lastLogicalPartitionTimestamp) {
-                if (partitionIndex > lastLogicalPartitionIndex + 1) {
-                    squashSplitPartitions(lastLogicalPartitionIndex, partitionIndex, 1, true);
-                }
-                return;
-            }
-            partitionIndex++;
-        }
-        if (partitionIndex > lastLogicalPartitionIndex + 1) {
-            squashSplitPartitions(lastLogicalPartitionIndex, partitionIndex, 1, true);
-        }
-    }
-
     private boolean squashColdLogicalPartition(int partitionIndex, long deadlineMicros) {
         final long logicalTimestamp = txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(partitionIndex));
         int lo = partitionIndex;
@@ -19625,11 +20206,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final long lastCommitTxn = txWriter.getTxn();
         final long deadline = configuration.getMicrosecondClock().getTicks() + configuration.getPartitionCompactionTimeBudgetMs() * Micros.MILLI_MICROS;
         long logicalPartitionTimestamp = txWriter.getLogicalPartitionTimestamp(timestampMin);
-        int partitionIndexLo = squashSplitPartitions_findPartitionIndexAtOrGreaterTimestamp(logicalPartitionTimestamp);
+        int partitionIndexLo = getPartitionIndexAtOrAfter(logicalPartitionTimestamp);
 
         boolean splitsKept = false;
         if (partitionIndexLo < txWriter.getPartitionCount()) {
-            int partitionIndexHi = Math.min(squashSplitPartitions_findPartitionIndexAtOrGreaterTimestamp(timestampMax) + 1, txWriter.getPartitionCount());
+            int partitionIndexHi = Math.min(getPartitionIndexAtOrAfter(timestampMax) + 1, txWriter.getPartitionCount());
             int partitionIndex = partitionIndexLo + 1;
 
             for (; partitionIndex < partitionIndexHi; partitionIndex++) {
@@ -19648,8 +20229,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         logicalPartitionTimestamp = nextPartitionTimestamp;
 
                         // Squashing changes the partitions, re-calculate the loop index and boundaries
-                        partitionIndexLo = partitionIndex = squashSplitPartitions_findPartitionIndexAtOrGreaterTimestamp(nextPartitionTimestamp);
-                        partitionIndexHi = Math.min(squashSplitPartitions_findPartitionIndexAtOrGreaterTimestamp(timestampMax) + 1, txWriter.getPartitionCount());
+                        partitionIndexLo = partitionIndex = getPartitionIndexAtOrAfter(nextPartitionTimestamp);
+                        partitionIndexHi = Math.min(getPartitionIndexAtOrAfter(timestampMax) + 1, txWriter.getPartitionCount());
                     } else {
                         partitionIndexLo = partitionIndex;
                         logicalPartitionTimestamp = nextPartitionLogicalTimestamp;
@@ -20180,14 +20761,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         commitTxWriterAndPublishPendingPostingSealPurges(effectiveCommitMode);
     }
 
-    private int squashSplitPartitions_findPartitionIndexAtOrGreaterTimestamp(long timestampMax) {
-        int partitionIndex = txWriter.findAttachedPartitionIndexByLoTimestamp(timestampMax);
-        if (partitionIndex < 0) {
-            return -partitionIndex - 1;
-        }
-        return partitionIndex;
-    }
-
     private void squashSplitPartitions_updateSquashTimestampFile(long targetPartition, long targetPartitionNameTxn) {
         try {
             setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, targetPartition, targetPartitionNameTxn);
@@ -20603,7 +21176,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             txnScoreboard.releaseTxn(newSlotId, otherEpochTxn);
             tracker.setPinnedEpoch(priorEpochTxn, priorSlotA, -1, tracker.getPinnedEpochGeneration());
         }
-        if (!txnScoreboard.incrementTxn(newSlotId, epochTxn)) {
+        if (!txnScoreboard.incrementTxn(newSlotId, epochTxn, TxnScoreboard.NO_SEQ_TXN_FLOOR)) {
             restoreEpochPinAfterFailedPublication(tracker, newSlotId, otherEpochTxn);
             // Keep both prior pins, the current save point and the frontier; the next batch retries.
             LOG.error().$("epoch pin slot busy, skipping epoch publish [table=").$(tableToken)
@@ -20672,7 +21245,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // A failed open can leave the overwritten generation intact. Restore its pin conservatively until replacement.
     private void restoreEpochPinAfterFailedPublication(SeqTxnTracker tracker, int slotId, long txn) {
         if (txn >= 0) {
-            if (!txnScoreboard.incrementTxn(slotId, txn)) {
+            if (!txnScoreboard.incrementTxn(slotId, txn, TxnScoreboard.NO_SEQ_TXN_FLOOR)) {
                 distressed = true;
                 throw CairoException.critical(0).put("could not restore epoch pin after failed publication [table=")
                         .put(tableToken.getTableName()).put(", txn=").put(txn).put(']');
@@ -20931,6 +21504,37 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         distressed = true;
         throw new CairoError(cause);
+    }
+
+    /**
+     * Whether {@code [minTs, maxTs]} intersects an attached partition whose
+     * delta-write bit is set, judged over partition floor intervals. Gaps
+     * between attached partitions count toward the earlier partition's
+     * interval, so the test is conservative (never a false negative).
+     */
+    private boolean timestampRangeOverlapsDeltaActivePartition(long minTs, long maxTs) {
+        // O(1) exit for tables without delta-active partitions: skips the walk on each WAL apply.
+        if (minTs > maxTs || !txWriter.hasAnyDeltaActive()) {
+            return false;
+        }
+
+        // WAL apply calls this per transaction, so a binary search skips the partitions that
+        // end at or before minTs. Example: partitions 01-01, 01-03 and minTs 01-02 start at 01-01.
+        int i = txWriter.findAttachedPartitionIndexByLoTimestamp(minTs);
+        if (i < 0) {
+            // Not found: the partition before the insertion point holds minTs, if there is one.
+            i = Math.max(-i - 2, 0);
+        }
+
+        for (int n = txWriter.getPartitionCount(); i < n; i++) {
+            if (txWriter.getPartitionTimestampByIndex(i) > maxTs) {
+                return false;
+            }
+            if (txWriter.isPartitionDeltaActive(i)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void tombstoneCoveredColumnInOtherIndexes(int droppedWriterIdx) {

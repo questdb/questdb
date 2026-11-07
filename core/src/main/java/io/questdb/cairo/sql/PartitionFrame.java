@@ -55,6 +55,13 @@ public interface PartitionFrame {
     byte getPartitionFormat();
 
     /**
+     * Opaque Rust logical-frame state; zero for a base-only partition.
+     */
+    default long getPartitionFrameState() {
+        return 0;
+    }
+
+    /**
      * @return numeric index of the frame's partition
      */
     int getPartitionIndex();
@@ -68,4 +75,18 @@ public interface PartitionFrame {
      * @return first row of a partition frame
      */
     long getRowLo();
+
+    /**
+     * Inclusive timestamp bound that produced this frame's logical row range.
+     */
+    default long getTimestampHi() {
+        return Long.MAX_VALUE;
+    }
+
+    /**
+     * Inclusive timestamp bound that produced this frame's logical row range.
+     */
+    default long getTimestampLo() {
+        return Long.MIN_VALUE;
+    }
 }

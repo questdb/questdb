@@ -9579,6 +9579,79 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCoveringReaderWithoutColumnVersionReader() throws Exception {
+        // A self-contained bundle names its sidecars without covered column txns, such as index.pc0.0.<seal>.
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final String name = "index";
+                final int plen = path.size();
+                final int rowCount = 4;
+                final long colAddr = Unsafe.malloc((long) rowCount * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    for (int i = 0; i < rowCount; i++) {
+                        Unsafe.putLong(colAddr + (long) i * Long.BYTES, 100L + i);
+                    }
+                    try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                        writer.configureCovering(
+                                new long[]{colAddr},
+                                new long[]{0},
+                                new int[]{3},
+                                new int[]{1},
+                                new int[]{ColumnType.LONG},
+                                1
+                        );
+                        for (int row = 0; row < rowCount; row++) {
+                            writer.add(row % 2, row);
+                        }
+                        writer.setMaxValue(rowCount - 1);
+                        writer.commit();
+                    }
+
+                    final RecordMetadata metadata = coveringMetadata(new int[]{1}, new int[]{ColumnType.LONG});
+                    try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0, metadata, null, 0)) {
+                        try (RowCursor cursor = reader.getCursor(1, 0, Long.MAX_VALUE, new int[]{0})) {
+                            CoveringRowCursor cc = (CoveringRowCursor) cursor;
+                            assertTrue(cc.isCoveredAvailable(0));
+                            assertTrue(cc.hasNext());
+                            assertEquals(1, cc.next());
+                            assertEquals(101L, cc.getCoveredLong(0));
+                            assertTrue(cc.hasNext());
+                            assertEquals(3, cc.next());
+                            assertEquals(103L, cc.getCoveredLong(0));
+                            assertFalse(cc.hasNext());
+                        }
+                    }
+
+                    // The table's covered column moved to name txn 5, which the sidecars were never written under.
+                    try (
+                            ColumnVersionReader movedCvr = new ColumnVersionReader() {
+                                @Override
+                                public long getColumnNameTxn(long partitionTimestamp, int columnIndex) {
+                                    return columnIndex == 1 ? 5 : COLUMN_NAME_TXN_NONE;
+                                }
+                            };
+                            PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                                    configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0, metadata, movedCvr, 0);
+                            RowCursor cursor = reader.getCursor(1, 0, Long.MAX_VALUE, new int[]{0})
+                    ) {
+                        CoveringRowCursor cc = (CoveringRowCursor) cursor;
+                        assertTrue(cc.hasNext());
+                        assertEquals(1, cc.next());
+                        cc.getCoveredLong(0);
+                        Assert.fail("expected the sidecar under the moved txn to be missing");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "covering index data is missing");
+                        TestUtils.assertContains(e.getFlyweightMessage(), name + ".pc0.0.5.");
+                    }
+                } finally {
+                    Unsafe.free(colAddr, (long) rowCount * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testCoveringRecord_AllColumnTypes() throws Exception {
         // Exercise every column type the covering writer supports
         // (writeCoveredRow's switch enumerates them). assertQueryNoLeakCheck

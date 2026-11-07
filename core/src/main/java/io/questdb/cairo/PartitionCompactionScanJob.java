@@ -231,10 +231,10 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
 
     /**
      * Whether this job would find nothing to rewrite in the parquet folder at {@code partitionIndex}. The sweep, the
-     * request path and the Enterprise cold-storage upload all decide on this one predicate. An upload therefore never
-     * ships a partition this job is about to rewrite, and this job never rewrites a partition an upload took. The
-     * sweep's idle threshold, probe budget and IO budget decide WHEN the job acts, not WHETHER, so none of them is
-     * part of it.
+     * request path, {@link TableWriter#compactParquetPartition} and the Enterprise cold-storage upload all decide on
+     * this one predicate. An upload therefore never ships a partition this job is about to rewrite, and this job never
+     * rewrites a partition an upload took. The sweep's idle threshold, probe budget and IO budget decide WHEN the job
+     * acts, not WHETHER, so none of them is part of it.
      * <p>
      * A folder this job never rebuilds counts as compact: a REMOTE one, or one that is not the whole of its logical
      * partition (see {@link #isParquetRebuildTarget}). Any other is compact unless its footer carries dead row-group
@@ -273,6 +273,57 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     @TestOnly
     public void setMemoCapacity(int memoCapacity) {
         this.memoCapacity = memoCapacity;
+    }
+
+    /**
+     * Collects the writer indexes of the columns whose stale column top a rebuild of this folder zeroes, see
+     * {@link #hasStaleParquetColumnTops}: every live column the file carries whose {@code _cv} top is not 0. All of
+     * them, since the merge that left a value inside one top reset every top inside the file. A column the file does
+     * not carry keeps its top. Collects nothing for a folder whose tops are sound: a part-way top there is real,
+     * BOOLEAN, BYTE, SHORT and CHAR read NULL through it.
+     *
+     * @param parquetMeta the folder's {@code _pm}, its footer resolved
+     */
+    static void collectStaleParquetColumnTops(
+            TableMetadata metadata,
+            ColumnVersionReader columnVersions,
+            long partitionTimestamp,
+            long partitionRowCount,
+            ParquetMetaFileReader parquetMeta,
+            IntList staleColumnTops
+    ) {
+        staleColumnTops.clear();
+        if (!hasStaleParquetColumnTops(metadata, columnVersions, partitionTimestamp, partitionRowCount, parquetMeta)) {
+            return;
+        }
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            if (metadata.getColumnType(i) > 0
+                    && parquetMeta.getColumnIndexById(metadata.getColumnMetadata(i).getOriginalWriterIndex()) > -1
+                    && columnVersions.getColumnTop(partitionTimestamp, metadata.getWriterIndex(i)) != 0) {
+                staleColumnTops.add(metadata.getWriterIndex(i));
+            }
+        }
+    }
+
+    /**
+     * Whether the folder at {@code partitionIndex} is a parquet folder this job rebuilds at all: not REMOTE, with a
+     * committed file size, and the whole of its logical partition.
+     * <p>
+     * {@link TableWriter#swapCompactedParquetPartition} floors the timestamp it is handed to the logical partition
+     * start, so it can only ever address a parquet folder that IS the whole logical partition. A parquet folder
+     * sharing its period with a split is left alone rather than swapped through a lookup that resolves to a
+     * different directory.
+     */
+    static boolean isParquetRebuildTarget(TxReader txFile, int partitionIndex) {
+        if (!txFile.isPartitionParquet(partitionIndex)
+                || txFile.isPartitionRemote(partitionIndex)
+                || txFile.getPartitionParquetFileSize(partitionIndex) <= 0) {
+            return false;
+        }
+        final long partitionTimestamp = txFile.getPartitionTimestampByIndex(partitionIndex);
+        final long logicalPartitionTimestamp = txFile.getLogicalPartitionTimestamp(partitionTimestamp);
+        return partitionTimestamp == logicalPartitionTimestamp
+                && findLogicalPartitionRunEnd(txFile, partitionIndex, logicalPartitionTimestamp) == partitionIndex + 1;
     }
 
     /**
@@ -413,27 +464,6 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             }
         }
         return true;
-    }
-
-    /**
-     * Whether the folder at {@code partitionIndex} is a parquet folder this job rebuilds at all: not REMOTE, with a
-     * committed file size, and the whole of its logical partition.
-     * <p>
-     * {@link TableWriter#swapCompactedParquetPartition} floors the timestamp it is handed to the logical partition
-     * start, so it can only ever address a parquet folder that IS the whole logical partition. A parquet folder
-     * sharing its period with a split is left alone rather than swapped through a lookup that resolves to a
-     * different directory.
-     */
-    private static boolean isParquetRebuildTarget(TxReader txFile, int partitionIndex) {
-        if (!txFile.isPartitionParquet(partitionIndex)
-                || txFile.isPartitionRemote(partitionIndex)
-                || txFile.getPartitionParquetFileSize(partitionIndex) <= 0) {
-            return false;
-        }
-        final long partitionTimestamp = txFile.getPartitionTimestampByIndex(partitionIndex);
-        final long logicalPartitionTimestamp = txFile.getLogicalPartitionTimestamp(partitionTimestamp);
-        return partitionTimestamp == logicalPartitionTimestamp
-                && findLogicalPartitionRunEnd(txFile, partitionIndex, logicalPartitionTimestamp) == partitionIndex + 1;
     }
 
     /**
@@ -948,11 +978,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     }
 
     /**
-     * Collects the column tops the swap has to zero when the parquet folder at {@code path} has stale ones (see
-     * {@link #hasStaleParquetColumnTops}): the writer index of every live column the file carries whose {@code _cv}
-     * top is not 0. All of them, since the merge that left a value inside one top reset every top inside the file. A
-     * column the file does not carry keeps its top. Collects nothing for a folder whose tops are sound: a part-way
-     * top there is real, BOOLEAN, BYTE, SHORT and CHAR read NULL through it.
+     * Collects the column tops the swap has to zero when the parquet folder at {@code path} has stale ones.
      * <p>
      * Reads the {@code _pm} of the source partition directory in {@link #path}, which is trimmed back on return.
      */
@@ -963,7 +989,6 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             long parquetFileSize,
             IntList staleColumnTops
     ) {
-        staleColumnTops.clear();
         final TableMetadata metadata = reader.getMetadata();
         final ColumnVersionReader cvr = reader.getColumnVersionReader();
         final long partitionRowCount = reader.getTxFile().getPartitionSize(partitionIndex);
@@ -975,16 +1000,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                         .put("_pm tail does not match parquet file size [path=").put(path)
                         .put(", parquetFileSize=").put(parquetFileSize).put(']');
             }
-            if (!hasStaleParquetColumnTops(metadata, cvr, partitionTimestamp, partitionRowCount, parquetMetaReader)) {
-                return;
-            }
-            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-                if (metadata.getColumnType(i) > 0
-                        && parquetMetaReader.getColumnIndexById(metadata.getColumnMetadata(i).getOriginalWriterIndex()) > -1
-                        && cvr.getColumnTop(partitionTimestamp, metadata.getWriterIndex(i)) != 0) {
-                    staleColumnTops.add(metadata.getWriterIndex(i));
-                }
-            }
+            collectStaleParquetColumnTops(metadata, cvr, partitionTimestamp, partitionRowCount, parquetMetaReader, staleColumnTops);
         } finally {
             path.trimTo(dirLen);
             // Capture before clear() zeros the fields so the mapping can be released.
@@ -994,10 +1010,12 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                 ff.munmap(addr, mappedSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
             }
         }
-        LOG.info().$("parquet partition has stale column tops, rebuilding indexes [table=").$(reader.getTableToken())
-                .$(", partition=").$ts(ColumnType.getTimestampDriver(metadata.getTimestampType()), partitionTimestamp)
-                .$(", columns=").$(staleColumnTops.size())
-                .I$();
+        if (staleColumnTops.size() > 0) {
+            LOG.info().$("parquet partition has stale column tops, rebuilding indexes [table=").$(reader.getTableToken())
+                    .$(", partition=").$ts(ColumnType.getTimestampDriver(metadata.getTimestampType()), partitionTimestamp)
+                    .$(", columns=").$(staleColumnTops.size())
+                    .I$();
+        }
     }
 
     /**
@@ -1092,7 +1110,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             }
 
             final int lo = findLogicalPartitionRunStart(txReader, logicalPartitionTimestamp);
-            if (lo < 0) {
+            if (lo < 0 || txReader.isPartitionDeltaActive(lo)) {
                 return false;
             }
             final int hi = findLogicalPartitionRunEnd(txReader, lo, logicalPartitionTimestamp);
@@ -2158,6 +2176,10 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             long nowMicros,
             long nowInTableUnits
     ) {
+        // Delta catalogs identify frozen base files; only the Delta lifecycle can replace them.
+        if (txReader.isPartitionDeltaActive(lo)) {
+            return true;
+        }
         final int partitionCount = txReader.getPartitionCount();
         final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(timestampType);
         // The END of the logical partition, not of one split inside it: every folder of it is a candidate,

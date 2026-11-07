@@ -78,6 +78,11 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
         return getWithSupervisor(tableToken, asReaderSupervisor(supervisor));
     }
 
+    /**
+     * Returns a reader fixed at the source reader's current snapshot.
+     * The source reader must stay active at that snapshot until the returned reader closes.
+     * Do not close, reload, or make the source reader passive while the returned reader remains active.
+     */
     public TableReader getCopyOf(TableReader srcReader, @Nullable ResourcePoolSupervisor<TableReader> supervisor) {
         return getCopyOf((ReaderPool.R) srcReader, asReaderSupervisor(supervisor));
     }

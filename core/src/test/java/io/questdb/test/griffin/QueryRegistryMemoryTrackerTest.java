@@ -55,6 +55,29 @@ public class QueryRegistryMemoryTrackerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExplainCursorAcquiresAndReleasesTracker() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab AS (SELECT x FROM long_sequence(3))");
+            drainWalQueue();
+
+            // EXPLAIN opens its base cursor, which may allocate tracked memory.
+            Assert.assertNull(sqlExecutionContext.getMemoryTracker());
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                final CompiledQuery cq = compiler.compile("EXPLAIN SELECT x FROM tab", sqlExecutionContext);
+                try (RecordCursorFactory factory = cq.getRecordCursorFactory()) {
+                    try (RecordCursor ignored = factory.getCursor(sqlExecutionContext)) {
+                        final MemoryTracker tracker = sqlExecutionContext.getMemoryTracker();
+                        Assert.assertNotNull(tracker);
+                        Assert.assertEquals(MemoryTrackerWorkload.QUERY, tracker.getWorkload());
+                        Assert.assertTrue(tracker.getQueryId() >= 0);
+                    }
+                    Assert.assertNull(sqlExecutionContext.getMemoryTracker());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testNestedRegisterInheritsBackgroundWorkloadTracker() throws Exception {
         // A mat-view refresh / WAL apply job binds its own non-QUERY tracker on a
         // dedicated execution context before running inner SQL. The inner SQL's

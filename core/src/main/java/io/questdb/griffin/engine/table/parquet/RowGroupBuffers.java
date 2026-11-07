@@ -82,6 +82,13 @@ public class RowGroupBuffers implements QuietCloseable, Reopenable {
         }
     }
 
+    /**
+     * Copies the query tracker binding without exposing the tracker object.
+     */
+    public void copyMemoryTrackerFrom(RowGroupBuffers source) {
+        this.memoryTracker = source.memoryTracker;
+    }
+
     public long getChunkAuxPtr(int columnIndex) {
         final long chunksPtr = Unsafe.getLong(ptr + CHUNKS_PTR_OFFSET);
         assert chunksPtr != 0;
@@ -146,6 +153,16 @@ public class RowGroupBuffers implements QuietCloseable, Reopenable {
         return ptr;
     }
 
+    /**
+     * Installs {@code viewCount} non-owning four-long descriptors
+     * {@code [dataPtr, dataSize, auxPtr, auxSize]}. The decoder resource handed
+     * to the page-frame cache owns the addressed allocations; closing or
+     * reusing this shell never frees them.
+     */
+    public void installExternalColumnViews(int columnOffset, long viewsAddress, int viewCount) {
+        installExternalColumnViews(ptr, columnOffset, viewsAddress, viewCount);
+    }
+
     @Override
     public void reopen() {
         if (ptr == 0) {
@@ -195,6 +212,13 @@ public class RowGroupBuffers implements QuietCloseable, Reopenable {
     private static native long create(long allocator);
 
     private static native void destroy(long impl);
+
+    private static native void installExternalColumnViews(
+            long impl,
+            int columnOffset,
+            long viewsAddress,
+            int viewCount
+    );
 
     static {
         Os.init();

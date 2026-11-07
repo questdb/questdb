@@ -332,7 +332,7 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
         this.orderedCursor = cursor;
         this.orderedReduceTask = reduceTask;
         this.orderedFrameSequence = frameSequence;
-        batch.addRows(reduceTask.getFrameRowCount());
+        batch.addRows(reduceTask.getTaskRowCount());
         try {
             if (frameSequence.isActive()) {
                 circuitBreaker.init(frameSequence.getCircuitBreaker());

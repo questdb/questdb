@@ -690,7 +690,7 @@ public class RecoveryCoordinator {
                 scoreboard.releaseTxn(priorSlotA ? TxnScoreboard.EPOCH_ID_B : TxnScoreboard.EPOCH_ID_A, priorOtherEpochTxn);
             }
             int newSlotId = slotA ? TxnScoreboard.EPOCH_ID_A : TxnScoreboard.EPOCH_ID_B;
-            if (!scoreboard.incrementTxn(newSlotId, epochTxn)) {
+            if (!scoreboard.incrementTxn(newSlotId, epochTxn, TxnScoreboard.NO_SEQ_TXN_FLOOR)) {
                 if (priorEpochTxn >= 0) {
                     throw CairoException.critical(0)
                             .put("could not pin recovered adaptive epoch [table=").put(token.getTableName())
@@ -698,7 +698,7 @@ public class RecoveryCoordinator {
                 }
                 slotA = false;
                 newSlotId = TxnScoreboard.EPOCH_ID_B;
-                if (!scoreboard.incrementTxn(newSlotId, epochTxn)) {
+                if (!scoreboard.incrementTxn(newSlotId, epochTxn, TxnScoreboard.NO_SEQ_TXN_FLOOR)) {
                     throw CairoException.critical(0)
                             .put("could not pin recovered adaptive epoch [table=").put(token.getTableName())
                             .put(", epochTxn=").put(epochTxn).put(']');
@@ -712,7 +712,7 @@ public class RecoveryCoordinator {
             }
             // The other generation, which a later recovery falls back to if the selected one is damaged.
             long pinnedOtherEpochTxn = otherEpochTxn;
-            if (otherEpochTxn >= 0 && !scoreboard.incrementTxn(slotA ? TxnScoreboard.EPOCH_ID_B : TxnScoreboard.EPOCH_ID_A, otherEpochTxn)) {
+            if (otherEpochTxn >= 0 && !scoreboard.incrementTxn(slotA ? TxnScoreboard.EPOCH_ID_B : TxnScoreboard.EPOCH_ID_A, otherEpochTxn, TxnScoreboard.NO_SEQ_TXN_FLOOR)) {
                 LOG.critical().$("could not pin the other adaptive save point, a fallback to it may miss partition versions [table=")
                         .$(token).$(", epochTxn=").$(otherEpochTxn).I$();
                 pinnedOtherEpochTxn = -1;

@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.ops;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -48,6 +49,55 @@ public class AlterOperationFlagsTest {
     private static final long V1_BIT_DEDUP_KEY = 0x02L;
     private static final long V1_BIT_INDEXED = 0x01L;
     private static final long V2_FORMAT_MARKER = 1L << 63;
+
+    @Test
+    public void testIndexedAdditionDetection() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final TableToken token = new TableToken("t", "t~1", null, 1, false, false, true);
+            for (byte type : new byte[]{IndexType.NONE, IndexType.BITMAP, IndexType.POSTING, IndexType.POSTING_DELTA, IndexType.POSTING_EF}) {
+                final AlterOperationBuilder builder = new AlterOperationBuilder().ofAddColumn(0, token, token.getTableId());
+                builder.addColumnToList("plain", 0, ColumnType.LONG, 0, false, IndexType.NONE, 0, false);
+                builder.addColumnToList("k", 0, ColumnType.SYMBOL, 128, true, type, 256, false);
+                try (AlterOperation source = builder.build();
+                     AlterOperation decoded = new AlterOperation();
+                     MemoryCARW memory = new MemoryCARWImpl(256, 1, MemoryTag.NATIVE_DEFAULT)) {
+                    Assert.assertEquals(type != IndexType.NONE, source.isIndexedColumnAdded());
+                    source.serializeBody(memory);
+                    decoded.deserializeBody(memory, 0, memory.getAppendOffset());
+                    Assert.assertEquals(type != IndexType.NONE, decoded.isIndexedColumnAdded());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testLegacyIndexedAdditionDetection() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final TableToken token = new TableToken("t", "t~1", null, 1, false, false, true);
+            for (long flags : new long[]{0, V1_BIT_DEDUP_KEY, V1_BIT_INDEXED, V1_BIT_INDEXED | V1_BIT_DEDUP_KEY}) {
+                try (AlterOperation source = new AlterOperation();
+                     AlterOperation decoded = new AlterOperation();
+                     MemoryCARW memory = new MemoryCARWImpl(256, 1, MemoryTag.NATIVE_DEFAULT)) {
+                    source.ofAddColumn(1, token, 0, "k", 0, ColumnType.SYMBOL, 128, true, IndexType.NONE, 256, false);
+                    source.serializeBody(memory);
+                    // Serialized header (10 bytes), then flags at extraInfo[3].
+                    memory.putLong(10 + 3 * Long.BYTES, flags);
+                    decoded.deserializeBody(memory, 0, memory.getAppendOffset());
+                    Assert.assertEquals((flags & V1_BIT_INDEXED) != 0, decoded.isIndexedColumnAdded());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testOtherCommandsAreNotIndexedAdditions() {
+        final TableToken token = new TableToken("t", "t~1", null, 1, false, false, true);
+        final AlterOperationBuilder builder = new AlterOperationBuilder();
+        builder.ofAddIndex(0, token, token.getTableId(), "k", 256, IndexType.BITMAP, null);
+        try (AlterOperation alter = builder.build()) {
+            Assert.assertFalse(alter.isIndexedColumnAdded());
+        }
+    }
 
     @Test
     public void testRoundTripAllIndexTypes() {

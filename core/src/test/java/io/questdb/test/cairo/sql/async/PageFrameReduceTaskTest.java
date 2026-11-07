@@ -36,6 +36,7 @@ import io.questdb.network.NetworkError;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
+import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.tools.TestUtils;
@@ -351,6 +352,25 @@ public class PageFrameReduceTaskTest extends AbstractTest {
                 NumericException ne = (NumericException) re;
                 Assert.assertEquals(17, ne.getPosition());
                 TestUtils.assertContains(ne.getFlyweightMessage(), "integer constant expected");
+            } finally {
+                Misc.free(task);
+            }
+        });
+    }
+
+    @Test
+    public void testSubFrameRowsAreLazy() throws Exception {
+        // Only a run of several sub-frames fills the accumulated rows, so an idle task holds no list.
+        TestUtils.assertMemoryLeak(() -> {
+            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
+            final long expected = Long.BYTES * (configuration.getPageFrameReduceRowIdListCapacity()
+                    + 2L * configuration.getPageFrameReduceColumnListCapacity());
+            final long before = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_OFFLOAD);
+            PageFrameReduceTask task = new PageFrameReduceTask(configuration, MemoryTag.NATIVE_OFFLOAD);
+            try {
+                Assert.assertEquals(expected, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_OFFLOAD) - before);
+                task.clear();
+                Assert.assertEquals(expected, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_OFFLOAD) - before);
             } finally {
                 Misc.free(task);
             }
