@@ -69,13 +69,15 @@ import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
  * Index MVCC of in-place parquet O3 under concurrency. The test thread commits random
  * in-place O3 inserts, replace commits and native appends to parquet partitions, while
  * readers query a symbol index (bitmap, posting or covering) at any point of a commit, some
- * pausing mid-scan across later commits, and a background thread runs
- * {@link ColumnPurgeJob} and {@link PostingSealPurgeJob}.
+ * pausing mid-scan across later commits (one reader holds each paused scan until an in-place
+ * commit lands), and a background thread runs {@link ColumnPurgeJob} and
+ * {@link PostingSealPurgeJob}.
  * <p>
  * Every row an index cursor returns must match the queried key. When no commit overlapped
  * a reader's cursor opening (seqlock), the index and full-scan cursors must return the same
- * rows. At the end, only the live index version may remain on disk, and the table must
- * match its native twin.
+ * rows. At least one such scan, opened on a stable snapshot, must pause mid-scan across an
+ * in-place commit. At the end, only the live index version may remain on disk, and the table
+ * must match its native twin.
  */
 public class ParquetInPlaceIndexConcurrentReaderTest extends AbstractCairoTest {
     private static final long DAY1 = 1_704_067_200_000_000L; // 2024-01-01T00:00:00Z
@@ -257,16 +259,21 @@ public class ParquetInPlaceIndexConcurrentReaderTest extends AbstractCairoTest {
 
             // odd while the test thread commits to pq, even otherwise
             final AtomicLong commitSeq = new AtomicLong();
+            // the commitSeq that started the latest pq commit that updated a parquet partition
+            // in place, set only after that commit completed
+            final AtomicLong inPlaceCommitStartSeq = new AtomicLong();
+            final AtomicBoolean isCommitLoopDone = new AtomicBoolean();
             final AtomicBoolean stop = new AtomicBoolean();
             final AtomicReference<Throwable> error = new AtomicReference<>();
             final AtomicLong stableComparisons = new AtomicLong();
-            final AtomicLong midScanAcrossCommit = new AtomicLong();
+            final AtomicLong midScanAcrossInPlaceCommit = new AtomicLong();
             final AtomicLong indexRowsChecked = new AtomicLong();
             final CountDownLatch started = new CountDownLatch(READER_COUNT + 1);
             final Thread[] threads = new Thread[READER_COUNT + 1];
 
             for (int r = 0; r < READER_COUNT; r++) {
                 final long readerSeed = rnd.nextLong();
+                final boolean isHoldingPausedScan = r == 0;
                 threads[r] = new Thread(() -> {
                     final Rnd rr = new Rnd(readerSeed, readerSeed ^ 0x5DEECE66DL);
                     final RecordCursorFactory[] indexFactories = new RecordCursorFactory[KEY_COUNT];
@@ -310,14 +317,17 @@ public class ParquetInPlaceIndexConcurrentReaderTest extends AbstractCairoTest {
                                     CursorPrinter.println(record, metadata, indexSink);
                                     read++;
                                 }
+                                boolean isPausedAcrossInPlaceCommit = false;
                                 if (hasMore && rr.nextInt(3) == 0) {
+                                    // reader 0 holds the scan until an in-place commit that started after its cursors
+                                    // opened has completed, however long it takes; the others pause at most 50 ms
                                     final long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(50);
-                                    while (commitSeq.get() < seqAfter + 2 && System.nanoTime() < deadline && !stop.get()) {
+                                    while (inPlaceCommitStartSeq.get() <= seqAfter
+                                            && (isHoldingPausedScan || System.nanoTime() < deadline)
+                                            && !isCommitLoopDone.get() && !stop.get()) {
                                         Os.pause();
                                     }
-                                    if (commitSeq.get() >= seqAfter + 2) {
-                                        midScanAcrossCommit.incrementAndGet();
-                                    }
+                                    isPausedAcrossInPlaceCommit = read > 0 && inPlaceCommitStartSeq.get() > seqAfter;
                                 }
                                 while (hasMore && indexCursor.hasNext()) {
                                     prevTs = verifyIndexRow(record, key, keyIndex, prevTs);
@@ -332,6 +342,9 @@ public class ParquetInPlaceIndexConcurrentReaderTest extends AbstractCairoTest {
                                                 + "\nfull scan:\n" + plainSink + "index:\n" + indexSink);
                                     }
                                     stableComparisons.incrementAndGet();
+                                    if (isPausedAcrossInPlaceCommit) {
+                                        midScanAcrossInPlaceCommit.incrementAndGet();
+                                    }
                                 }
                             }
                         }
@@ -403,15 +416,21 @@ public class ParquetInPlaceIndexConcurrentReaderTest extends AbstractCairoTest {
                         rows[2 * i + 1] = v;
                     }
                     sortRows(rows);
-                    commitSeq.incrementAndGet();
+                    final long inPlaceBefore = O3ParquetCounters.getInPlaceCount();
+                    final long startSeq = commitSeq.incrementAndGet();
                     try {
                         applyRound("pq", op, rows, lo, hi);
                     } finally {
                         commitSeq.incrementAndGet();
                     }
+                    if (O3ParquetCounters.getInPlaceCount() > inPlaceBefore) {
+                        // the pq commit updated a parquet partition in place, superseding its index version
+                        inPlaceCommitStartSeq.set(startSeq);
+                    }
                     Assert.assertFalse("pq suspended", engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("pq")));
                     applyRound("nat", op, rows, lo, hi);
                 }
+                isCommitLoopDone.set(true);
                 // let the readers and the purge overlap the last commits
                 final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
                 while (stableComparisons.get() < 20 && error.get() == null && System.nanoTime() < deadline) {
@@ -429,12 +448,13 @@ public class ParquetInPlaceIndexConcurrentReaderTest extends AbstractCairoTest {
             }
             LOG.info().$("concurrent pq index readers [index=").$(indexClause)
                     .$(", stableComparisons=").$(stableComparisons.get())
-                    .$(", midScanAcrossCommit=").$(midScanAcrossCommit.get())
+                    .$(", midScanAcrossInPlaceCommit=").$(midScanAcrossInPlaceCommit.get())
                     .$(", indexRowsChecked=").$(indexRowsChecked.get())
                     .$(", inPlace=").$(O3ParquetCounters.getInPlaceCount() - inPlaceBase)
                     .$(", dropInPlace=").$(O3ParquetCounters.getDropInPlaceCount() - dropInPlaceBase)
                     .I$();
             Assert.assertTrue("no comparison on a stable snapshot", stableComparisons.get() > 0);
+            Assert.assertTrue("no compared index scan paused mid-scan across an in-place commit", midScanAcrossInPlaceCommit.get() > 0);
             Assert.assertTrue("no in-place parquet commit", O3ParquetCounters.getInPlaceCount() > inPlaceBase);
 
             assertSqlCursors("nat", "pq");
