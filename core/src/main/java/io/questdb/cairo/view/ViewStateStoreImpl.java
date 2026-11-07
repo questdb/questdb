@@ -38,7 +38,11 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
+import java.util.concurrent.atomic.AtomicLong;
+
 public class ViewStateStoreImpl implements ViewStateStore {
+    // one word, so that a reader gets both counts from one read, see getCompileRunActivity()
+    private final AtomicLong compileRunActivity = new AtomicLong();
     private final CairoEngine engine;
     private final MicrosecondClock microsecondClock;
     private final ConcurrentHashMap<ViewState> stateByTableDirName = new ConcurrentHashMap<>();
@@ -53,6 +57,8 @@ public class ViewStateStoreImpl implements ViewStateStore {
         this.microsecondClock = engine.getConfiguration().getMicrosecondClock();
     }
 
+    // Leaves the compile run counts alone: a run that is still running would finish after the
+    // reset and drive the running count below zero.
     @TestOnly
     @Override
     public void clear() {
@@ -87,6 +93,16 @@ public class ViewStateStoreImpl implements ViewStateStore {
     }
 
     @Override
+    public void finishCompileRun() {
+        compileRunActivity.decrementAndGet();
+    }
+
+    @Override
+    public long getCompileRunActivity() {
+        return compileRunActivity.get();
+    }
+
+    @Override
     public ViewState getViewState(TableToken viewToken) {
         return stateByTableDirName.get(viewToken.getDirName());
     }
@@ -94,6 +110,12 @@ public class ViewStateStoreImpl implements ViewStateStore {
     @Override
     public void removeViewState(TableToken viewToken) {
         stateByTableDirName.remove(viewToken.getDirName());
+    }
+
+    @Override
+    public void startCompileRun() {
+        // one more run started, and one more running
+        compileRunActivity.addAndGet((1L << 32) + 1);
     }
 
     @Override

@@ -37,6 +37,19 @@ import org.jetbrains.annotations.Nullable;
  */
 public interface ViewStateStore extends Mutable {
 
+    /**
+     * Tells whether a view compile run was running at the first of two reads of
+     * {@link #getCompileRunActivity()}, or started between the two reads. A borrow of a table that
+     * a run made between the reads shows up in one of the two ways.
+     */
+    static boolean hasCompileRunOverlapped(long activityBefore, long activityAfter) {
+        return isCompileRunRunning(activityBefore) || (activityBefore >>> 32) != (activityAfter >>> 32);
+    }
+
+    static boolean isCompileRunRunning(long activity) {
+        return (int) activity != 0;
+    }
+
     default void createViewState(ViewDefinition viewDefinition) {
         createViewState(viewDefinition, null);
     }
@@ -45,10 +58,29 @@ public interface ViewStateStore extends Mutable {
 
     void enqueueCompile(@NotNull TableToken viewToken);
 
+    /**
+     * Ends the view compile run that {@link #startCompileRun()} started.
+     */
+    void finishCompileRun();
+
+    /**
+     * Returns the view compile activity in one read: the high 32 bits count the compile runs
+     * started so far, the low 32 bits count the runs still running.
+     */
+    long getCompileRunActivity();
+
     @Nullable
     ViewState getViewState(TableToken viewToken);
 
     void removeViewState(TableToken viewToken);
+
+    /**
+     * Starts a view compile run: a drain of the compile queue, or the startup compile of all
+     * views. A run borrows the readers and the metadata of the tables its views read, so a
+     * DROP, RENAME or TRUNCATE of a non-WAL table that fails to lock the table waits until no
+     * run is running when a run overlapped its lock attempt.
+     */
+    void startCompileRun();
 
     boolean tryDequeueCompilerTask(ViewCompilerTask task);
 }

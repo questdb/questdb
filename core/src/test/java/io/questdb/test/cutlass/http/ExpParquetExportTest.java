@@ -32,6 +32,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cutlass.http.ActiveConnectionTracker;
 import io.questdb.cutlass.http.client.HttpClient;
@@ -39,7 +40,10 @@ import io.questdb.cutlass.http.client.HttpClientException;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.cutlass.http.processors.ExportQueryProcessorState;
 import io.questdb.cutlass.parquet.CopyExportRequestTask;
+import io.questdb.cutlass.parquet.ParquetExportMode;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.parquet.ParquetEncoding;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -807,6 +811,41 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     // fragmentation from getExportTester(), slow on Mac/Windows. The assertGetParquet
                     // calls above already cover every row_group_size, so fewer rounds suffice.
                     assertParquetExportDataCorrectness(engine, sqlExecutionContext, new String[]{"test_table"}, Os.isLinux() ? 10 : 3, 10091);
+                });
+    }
+
+    @Test
+    public void testParquetExportBinaryColumnKeepsParquetEncodings() throws Exception {
+        // A BINARY column in a select without page frames routes /exp through a temp table, which /exp encodes with
+        // its streaming writer.
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute(
+                            "CREATE TABLE bt (metric INT PARQUET(RLE_DICTIONARY), bin BINARY PARQUET(PLAIN), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                            sqlExecutionContext
+                    );
+                    engine.execute("""
+                            INSERT INTO bt VALUES
+                                (10, rnd_bin(2, 2, 0), '2024-01-01T00:00:00.000000Z'),
+                                (10, rnd_bin(2, 2, 0), '2024-01-01T01:00:00.000000Z'),
+                                (20, rnd_bin(2, 2, 0), '2024-01-02T00:00:00.000000Z'),
+                                (NULL, NULL, '2024-01-02T01:00:00.000000Z')
+                            """, sqlExecutionContext);
+                    final String query = "SELECT * FROM bt WHERE metric > 0";
+                    assertExportMode(engine, sqlExecutionContext, query, ParquetExportMode.TEMP_TABLE);
+                    try (
+                            TestHttpClient httpClient = new TestHttpClient();
+                            var sink = new DirectUtf8Sink(16_384)
+                    ) {
+                        exportParquet(httpClient, sink, query);
+                        assertParquetMatchesQuery(engine, sqlExecutionContext, sink, query, "binary_settings.parquet");
+                    }
+                    final String parquetPath = root + "/export/binary_settings.parquet";
+                    final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+                    ParquetTestUtils.assertColumnsUseDictionaryEncoding(parquetPath, ff, 0);
+                    // BINARY defaults to DELTA_LENGTH_BYTE_ARRAY
+                    ParquetTestUtils.assertColumnsUseEncoding(parquetPath, ff, ParquetEncoding.ENCODING_PLAIN, 1);
+                    ParquetTestUtils.assertColumnsDoNotUseEncoding(parquetPath, ff, ParquetEncoding.ENCODING_DELTA_LENGTH_BYTE_ARRAY, 1);
                 });
     }
 
@@ -2501,6 +2540,29 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testParquetExportTempTableKeepsParquetEncodingsOfEveryType() throws Exception {
+        // /exp encodes a temp table with its streaming writer, which takes the setting of each column from the
+        // metadata of the temp table. The BINARY column of a select without page frames routes the export there.
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    ParquetTestUtils.createTableWithParquetSettingPerType(engine, sqlExecutionContext, "ty");
+                    final String query = "SELECT * FROM ty CROSS JOIN long_sequence(1)";
+                    assertExportMode(engine, sqlExecutionContext, query, ParquetExportMode.TEMP_TABLE);
+                    try (
+                            TestHttpClient httpClient = new TestHttpClient();
+                            var sink = new DirectUtf8Sink(16_384)
+                    ) {
+                        exportParquet(httpClient, sink, query);
+                        assertParquetMatchesQuery(engine, sqlExecutionContext, sink, query, "ty.parquet");
+                    }
+                    ParquetTestUtils.assertColumnsUseParquetSettingPerType(
+                            root + "/export/ty.parquet",
+                            engine.getConfiguration().getFilesFacade()
+                    );
+                });
+    }
+
+    @Test
     public void testParquetExportTimeout() throws Exception {
         getExportTester()
                 .run((_, _) -> {
@@ -2546,6 +2608,104 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                         );
                     }
 
+                });
+    }
+
+    @Test
+    public void testParquetExportViewOverConvertedColumn() throws Exception {
+        // Regression test for #7807. An export through a view over a Parquet partition with a
+        // column whose type changed since took the zero-copy path, which hands the encoder the
+        // column in its old layout: here, the raw STRING bytes as LONG values.
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute(
+                            "CREATE TABLE converted_t (c STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                            sqlExecutionContext
+                    );
+                    engine.execute("""
+                            INSERT INTO converted_t
+                            SELECT (x * 1_000_003)::STRING, timestamp_sequence('2024-01-01T00:00:00.000000Z', 28_800_000_000)
+                            FROM long_sequence(6)""", sqlExecutionContext);
+                    engine.execute("ALTER TABLE converted_t CONVERT PARTITION TO PARQUET LIST '2024-01-01'", sqlExecutionContext);
+                    engine.execute("ALTER TABLE converted_t ALTER COLUMN c TYPE LONG", sqlExecutionContext);
+                    engine.execute("CREATE VIEW converted_v AS (SELECT * FROM converted_t)", sqlExecutionContext);
+
+                    final String query = "SELECT * FROM converted_v";
+                    try (
+                            TestHttpClient httpClient = new TestHttpClient();
+                            var sink = new DirectUtf8Sink(16_384)
+                    ) {
+                        exportParquet(httpClient, sink, query);
+                        assertParquetMatchesQuery(engine, sqlExecutionContext, sink, query, "converted_view.parquet");
+                        assertQuery("SELECT * FROM read_parquet('converted_view.parquet')")
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .expectSize()
+                                .timestamp("ts")
+                                .columnType(0, ColumnType.LONG)
+                                .returns("""
+                                        c\tts
+                                        1000003\t2024-01-01T00:00:00.000000Z
+                                        2000006\t2024-01-01T08:00:00.000000Z
+                                        3000009\t2024-01-01T16:00:00.000000Z
+                                        4000012\t2024-01-02T00:00:00.000000Z
+                                        5000015\t2024-01-02T08:00:00.000000Z
+                                        6000018\t2024-01-02T16:00:00.000000Z
+                                        """);
+                    }
+                });
+    }
+
+    @Test
+    public void testParquetExportViewOverConvertedColumnKeepsParquetEncodings() throws Exception {
+        // An export through a view over a Parquet partition with a retyped column materializes through a temp table:
+        // ascending with a designated timestamp, descending without one.
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute("""
+                            CREATE TABLE converted_t (
+                                metric INT PARQUET(RLE_DICTIONARY),
+                                c INT,
+                                total LONG PARQUET(DELTA_BINARY_PACKED, ZSTD(3)),
+                                ts TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY""", sqlExecutionContext);
+                    engine.execute("""
+                            INSERT INTO converted_t VALUES
+                                (10, 1, 1000, '2024-01-01T00:00:00.000000Z'),
+                                (20, 2, 2000, '2024-01-01T08:00:00.000000Z'),
+                                (NULL, 3, NULL, '2024-01-01T16:00:00.000000Z'),
+                                (10, 4, 1000, '2024-01-02T00:00:00.000000Z'),
+                                (30, 5, 3000, '2024-01-02T08:00:00.000000Z'),
+                                (NULL, 6, NULL, '2024-01-02T16:00:00.000000Z'),
+                                (20, 7, 2000, '2024-01-03T00:00:00.000000Z'),
+                                (40, 8, 4000, '2024-01-03T08:00:00.000000Z'),
+                                (NULL, 9, NULL, '2024-01-03T16:00:00.000000Z')
+                            """, sqlExecutionContext);
+                    engine.execute("ALTER TABLE converted_t CONVERT PARTITION TO PARQUET LIST '2024-01-01'", sqlExecutionContext);
+                    engine.execute("ALTER TABLE converted_t ALTER COLUMN c TYPE LONG", sqlExecutionContext);
+                    engine.execute("CREATE VIEW converted_v AS (SELECT * FROM converted_t)", sqlExecutionContext);
+
+                    final String[] queries = {"SELECT * FROM converted_v", "SELECT * FROM converted_v ORDER BY ts DESC"};
+                    final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+                    for (int i = 0; i < queries.length; i++) {
+                        final String query = queries[i];
+                        assertExportMode(engine, sqlExecutionContext, query, ParquetExportMode.TEMP_TABLE);
+                        final String fileName = "converted_settings_" + i + ".parquet";
+                        try (
+                                TestHttpClient httpClient = new TestHttpClient();
+                                var sink = new DirectUtf8Sink(16_384)
+                        ) {
+                            exportParquet(httpClient, sink, query);
+                            assertParquetMatchesQuery(engine, sqlExecutionContext, sink, query, fileName);
+                        }
+                        final String parquetPath = root + "/export/" + fileName;
+                        ParquetTestUtils.assertColumnsUseDictionaryEncoding(parquetPath, ff, 0);
+                        ParquetTestUtils.assertColumnsUseEncoding(parquetPath, ff, ParquetEncoding.ENCODING_DELTA_BINARY_PACKED, 2);
+                        // c has no setting, so it keeps the LONG default, PLAIN
+                        ParquetTestUtils.assertColumnsDoNotUseDictionaryEncoding(parquetPath, ff, 1);
+                        ParquetTestUtils.assertColumnsDoNotUseEncoding(parquetPath, ff, ParquetEncoding.ENCODING_DELTA_BINARY_PACKED, 1);
+                    }
                 });
     }
 
@@ -2655,6 +2815,18 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
             Assert.assertEquals(2, requestCompileCount.get());
         } finally {
             engine.getSqlCompilerPool().setPoolListener(null);
+        }
+    }
+
+    private static void assertExportMode(
+            CairoEngine engine,
+            SqlExecutionContext sqlExecutionContext,
+            String query,
+            ParquetExportMode expectedMode
+    ) throws SqlException {
+        try (RecordCursorFactory factory = engine.select(query, sqlExecutionContext)) {
+            final boolean isDescending = factory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_BACKWARD;
+            Assert.assertEquals(query, expectedMode, ParquetExportMode.determineExportMode(factory, isDescending, sqlExecutionContext));
         }
     }
 
