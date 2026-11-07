@@ -612,6 +612,40 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
     }
 
     @Test
+    public void testOverridableVariableReadsNoColumnOnlyOtherReadsScanInAnyBranch() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // Every branch of a set operation takes the reader's value of a variable its own DECLARE block marks
+            // OVERRIDABLE, so a reader that sets a variable of a later branch reads through the view only the columns
+            // the plan of the view reads, like one that sets a variable of the first branch.
+            final String laterBranch = "DECLARE OVERRIDABLE @s := 'k1' SELECT 'src' src, k FROM (SELECT * FROM x JOIN y ON (k)) WHERE k = @s";
+            final String overrideReadSql = "DECLARE @s := CASE WHEN d = 6 THEN 'k1' ELSE 'k2' END SELECT * FROM v";
+            assertReads("SELECT 'a' src, k FROM x WHERE k = 'none' UNION ALL " + laterBranch, "{x=[?*, k], y=[?*, k]}", "SELECT src FROM v");
+            for (String setOperation : new String[]{"UNION ALL", "UNION", "EXCEPT", "INTERSECT"}) {
+                assertOverrideDenied(
+                        "SELECT 'a' src, k FROM x WHERE k = 'none' " + setOperation + ' ' + laterBranch,
+                        overrideReadSql,
+                        "permission denied [table=y, columns=d]"
+                );
+            }
+            // the variable as an output of the third branch
+            assertOverrideDenied(
+                    """
+                            SELECT 'a' v, k FROM x WHERE k = 'none'
+                            UNION ALL SELECT 'b' v, k FROM y WHERE k = 'none'
+                            UNION ALL DECLARE OVERRIDABLE @c := 'c' SELECT @c AS v, k FROM (SELECT * FROM x JOIN y ON (k))
+                            """,
+                    "DECLARE @c := d::STRING SELECT * FROM v",
+                    "permission denied [table=y, columns=d]"
+            );
+            // a later branch of a view the view reads
+            execute("CREATE VIEW v_in AS (SELECT 'a' src, k FROM x WHERE k = 'none' UNION ALL " + laterBranch + ")");
+            drainWalAndViewQueues();
+            assertOverrideDenied("SELECT 'o' o, src, k FROM v_in", overrideReadSql, "permission denied [table=y, columns=d]");
+        });
+    }
+
+    @Test
     public void testOverridableVariableReadsNoColumnOnlyOtherReadsScanInAnyScan() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE zi (ts TIMESTAMP, k SYMBOL INDEX, k2 SYMBOL, v LONG, w LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -1812,6 +1846,28 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
     }
 
     @Test
+    public void testUnreachableWildcardHolder() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (a LONG, b LONG)");
+            try (SqlCompiler parsedCompiler = engine.getSqlCompiler(); SqlCompiler optimisedCompiler = engine.getSqlCompiler()) {
+                final IQueryModel parsed = parsedCompiler.testParseExpression(
+                        "(SELECT count() FROM (SELECT * FROM x))",
+                        QueryModel.FACTORY.newInstance()
+                ).queryModel;
+                final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = new LowerCaseCharSequenceObjHashMap<>();
+                final SqlUtil.ViewWildcardSources wildcardSources = new SqlUtil.ViewWildcardSources();
+                SqlUtil.collectTableAndColumnReferences(engine, parsed, dependencies, wildcardSources);
+                Assert.assertEquals("{x=[]}", dependenciesOf(dependencies));
+
+                // The recorded holder is outside this graph: it must not lend '*' just because it has no top-down columns.
+                final IQueryModel optimised = optimisedCompiler.generateExecutionModel("SELECT a FROM x", sqlExecutionContext).getQueryModel();
+                SqlUtil.collectTableColumnReads(engine, optimised, dependencies, wildcardSources, new SqlUtil.ViewCompileRecord(), true);
+                Assert.assertEquals("{x=[a]}", dependenciesOf(dependencies));
+            }
+        });
+    }
+
+    @Test
     public void testViewCompiledAgainForReadsPlannedOtherwise() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
@@ -1889,28 +1945,6 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
                         .withContext(context)
                         .noLeakCheck()
                         .returns(expected);
-            }
-        });
-    }
-
-    @Test
-    public void testUnreachableWildcardHolder() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (a LONG, b LONG)");
-            try (SqlCompiler parsedCompiler = engine.getSqlCompiler(); SqlCompiler optimisedCompiler = engine.getSqlCompiler()) {
-                final IQueryModel parsed = parsedCompiler.testParseExpression(
-                        "(SELECT count() FROM (SELECT * FROM x))",
-                        QueryModel.FACTORY.newInstance()
-                ).queryModel;
-                final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = new LowerCaseCharSequenceObjHashMap<>();
-                final SqlUtil.ViewWildcardSources wildcardSources = new SqlUtil.ViewWildcardSources();
-                SqlUtil.collectTableAndColumnReferences(engine, parsed, dependencies, wildcardSources);
-                Assert.assertEquals("{x=[]}", dependenciesOf(dependencies));
-
-                // The recorded holder is outside this graph: it must not lend '*' just because it has no top-down columns.
-                final IQueryModel optimised = optimisedCompiler.generateExecutionModel("SELECT a FROM x", sqlExecutionContext).getQueryModel();
-                SqlUtil.collectTableColumnReads(engine, optimised, dependencies, wildcardSources, new SqlUtil.ViewCompileRecord(), true);
-                Assert.assertEquals("{x=[a]}", dependenciesOf(dependencies));
             }
         });
     }

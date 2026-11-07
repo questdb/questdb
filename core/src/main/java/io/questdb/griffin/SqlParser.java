@@ -1521,8 +1521,12 @@ public class SqlParser {
         }
         // The views the body reads were expanded with it, so the outermost view knows whether the statement sets a
         // variable of any of them. The scans of the body read through the outermost view, see setViewNameExpr().
-        if (!isViewReadOverridden && isAnyDeclared(viewReaderDecls, viewModel.getOverridableDecls())) {
-            isViewReadOverridden = true;
+        // Every branch of a set operation takes the statement's value of a variable its own DECLARE block marks
+        // OVERRIDABLE, see parseDml(), so the variables of every branch count, not only those of the first.
+        for (IQueryModel branch = viewModel; branch != null && !isViewReadOverridden; branch = branch.getUnionModel()) {
+            if (isAnyDeclared(viewReaderDecls, branch.getOverridableDecls())) {
+                isViewReadOverridden = true;
+            }
         }
         final ExpressionNode viewExpr = literal(viewDefinition.getViewToken().getTableName(), viewPosition);
         // the definition the model is expanded from, whose dependencies the view's authority covers,
