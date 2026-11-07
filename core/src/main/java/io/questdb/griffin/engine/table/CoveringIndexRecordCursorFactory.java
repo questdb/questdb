@@ -589,9 +589,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
      * frame buffers, so its raw page addresses are directly readable. Single-key
      * ({@code sym = 'x'}) frame production is metadata-only — the covered columns are
      * decoded on the async reduce workers and the raw addresses are placeholders — so a
-     * DIRECT_PAGE_FRAME parquet reader would export all-null covered columns. Reporting
-     * false routes the single-key parquet export through the row-wise cursor path, which
-     * decodes the covered columns the same way the query path does.
+     * raw page-frame reader (the DIRECT_PAGE_FRAME parquet export, QWP egress) would ship
+     * all-null covered columns. Reporting false routes those readers through the row-wise
+     * cursor path, which reads the covered columns the same way the query path does.
      */
     @Override
     public boolean producesMaterializedPageFrames() {

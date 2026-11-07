@@ -1410,18 +1410,24 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                         state.beginSqlExecutionOwner(decoder.sql, sqlCtx, compiledQueryType);
                     }
                     // Acquire the cursor inside the retry loop so a stale SELECT factory
-                    // can be recompiled. Prefer the PageFrameCursor fast path
-                    // when the factory supports it: it hands us flat column addresses
-                    // per frame and lets the SYMBOL fast path resolve dict keys via
-                    // PageFrameMemoryRecord.getInt. Factories that don't support it
-                    // (filtered/joined/grouped queries) keep the existing RecordCursor
-                    // path without change.
+                    // can be recompiled. Prefer the PageFrameCursor fast path when the
+                    // factory supports it and its frames carry their column data: the
+                    // columnar emit reads each frame's page addresses directly, and the
+                    // SYMBOL fast path resolves dict keys via PageFrameMemoryRecord.getInt.
+                    // A single-key covering index scan (sym = 'x') supports page frames
+                    // but produces them metadata-only: its covered columns exist only once
+                    // the engine's parallel decode has drained the frame cursor, frozen the
+                    // posting readers and decoded each frame on a worker. Its RecordCursor
+                    // reads the same values from the index sidecar row by row, as fast,
+                    // without buffering a decoded frame. Factories that don't support page
+                    // frames (filtered/joined/grouped queries) keep the RecordCursor path
+                    // without change.
                     int forcedStalePlanRecompiles = DEBUG_FORCE_STALE_PLAN_RECOMPILES;
                     if (forcedStalePlanRecompiles > 0) {
                         DEBUG_FORCE_STALE_PLAN_RECOMPILES = forcedStalePlanRecompiles - 1;
                         throw TableReferenceOutOfDateException.of("qwp_debug_stale_plan");
                     }
-                    if (factory.supportsPageFrameCursor()) {
+                    if (factory.supportsPageFrameCursor() && factory.producesMaterializedPageFrames()) {
                         int order = factory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_BACKWARD
                                 ? PartitionFrameCursorFactory.ORDER_DESC
                                 : PartitionFrameCursorFactory.ORDER_ASC;

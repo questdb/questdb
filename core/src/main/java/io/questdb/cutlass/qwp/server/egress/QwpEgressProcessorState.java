@@ -432,6 +432,10 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
      * {@link PageFrameMemoryRecord}) on first call and rebinds them to the new
      * query. The cursor is owned by the state from this point on and is freed by
      * {@link #endStreaming}.
+     * <p>
+     * The factory's page frames must carry their column data, see
+     * {@link RecordCursorFactory#producesMaterializedPageFrames()}: the columnar emit
+     * path reads the frames' page addresses directly.
      */
     public void beginStreamingPageFrame(
             long requestId,
@@ -443,6 +447,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
             short compiledQueryType,
             boolean queryCacheable
     ) {
+        assert factory.producesMaterializedPageFrames() : "page-frame streaming over metadata-only page frames";
         if (streamingActive) {
             endStreaming();
         }
