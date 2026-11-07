@@ -315,7 +315,19 @@ fn row_group_page_indexable(
 /// takes the n-th mark.
 fn remove_marked<T>(values: &mut Vec<T>, removed: &[bool]) {
     let mut marks = removed.iter();
-    values.retain(|_| !marks.next().copied().unwrap_or(false));
+    values.retain(|_| {
+        #[cfg(test)]
+        REMOVE_MARKED_VISITS.set(REMOVE_MARKED_VISITS.get() + 1);
+        !marks.next().copied().unwrap_or(false)
+    });
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Test hook, absent outside this crate's unit tests: the retain-predicate
+    /// calls of `remove_marked` on this thread, one per element visited, so a
+    /// test can count the passes `ParquetFile::end` makes over its vectors.
+    static REMOVE_MARKED_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Writes the page index for `row_groups`, recording each column's index
@@ -1589,6 +1601,19 @@ mod tests {
         )
     }
 
+    /// Runs end() and returns its result with the number of elements that
+    /// `remove_marked` visited meanwhile, i.e. the length of each vector its
+    /// passes compacted, summed.
+    fn end_counting_remove_marked_visits(
+        file: &mut ParquetFile<Cursor<Vec<u8>>>,
+    ) -> UpdResult<(u64, usize)> {
+        // Drop counts left by earlier tests: libtest runs a test on its main
+        // thread, after others, when it cannot spawn a thread for it.
+        REMOVE_MARKED_VISITS.take();
+        let end = file.end(None)?;
+        Ok((end, REMOVE_MARKED_VISITS.take()))
+    }
+
     #[test]
     fn update_remove_middle_row_group() -> UpdResult<()> {
         let mut file = marker_updater(&[10, 11, 12], &[5, 6, 7], None);
@@ -1822,7 +1847,10 @@ mod tests {
         for ordinal in 0..half {
             file.remove(ordinal as i32)?;
         }
-        let end = file.end(None)?;
+        let (end, visits) = end_counting_remove_marked_visits(&mut file)?;
+        // One pass over each lockstep vector (row groups, sources, origins),
+        // each visiting all 32,768 groups once: 3 x 32,768.
+        assert_eq!(visits, 98_304);
         let expected_origins: Vec<RowGroupOrigin> = (half..count)
             .map(|orig_idx| RowGroupOrigin::Existing { orig_idx })
             .collect();
@@ -1881,7 +1909,10 @@ mod tests {
         let mut file = marker_updater(&[10, 11, 12], &[1, 2, 3], Some(cache));
         file.write_raw_row_group(&[], marker_rg(21, 4, 1))?; // k=0 replaces group 1
         file.insert(empty_group(), 0, &[])?; // k=1 at final position 0
-        let end = file.end(None)?;
+        let (end, visits) = end_counting_remove_marked_visits(&mut file)?;
+        // No compaction pass runs. The output cannot show that: a pass with
+        // no marks keeps every group.
+        assert_eq!(visits, 0);
         assert_eq!(
             file.row_group_origins(),
             &[
