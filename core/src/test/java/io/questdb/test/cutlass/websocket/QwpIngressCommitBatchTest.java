@@ -148,13 +148,43 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     }
 
     /**
-     * On a durable-ack connection with no work awaiting upload, the server waits for
-     * the client to echo its role-change CLOSE before tearing the connection down: the
-     * echo proves the client read the frames before that CLOSE. A CLOSE the client
-     * pipelined before the server's CLOSE reached it proves nothing of the kind, so it
-     * must not complete the handshake, whether it directly follows the refused batch
-     * or sits behind another frame.
+     * As {@link #testCommitFailureOnLaterTableAcksFramesBeforeItsFirstFrame}, but the batch
+     * commits at a frame that cannot join it, the fourth, which needs a column a lacks,
+     * instead of at the end of the receive pass. b's commit fails after a's succeeded:
+     * the ack covers frame 0, the only frame before b's first, the NACK names frame 1,
+     * where the client's replay starts, and the fourth frame is not processed.
      */
+    @Test
+    public void testBoundaryCommitFailureOnLaterTableNacksItsFirstFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("CREATE TABLE a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE b (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+            ObjList<byte[]> sent = ingestInOnePass(
+                    processor,
+                    httpConfig,
+                    failCommitAfterBatchChecks("b"),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 100L, 1_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 200L, 2_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 300L, 3_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, qwpMessage(tableBlockWithExtraColumn("a", 400L, 7L, 4_000_000L)))
+            );
+
+            drainWalQueue();
+            assertQuery("SELECT v FROM a").noLeakCheck().expectSize().returns("v\n100\n300\n");
+            assertQuery("SELECT count() FROM b").noLeakCheck().inferRandomAccess().sizeMayVary().returns("count\n0\n");
+            Assert.assertEquals("the ack stops before the failed table's first frame", 0, maxCumulativeOkAck(sent));
+            Assert.assertTrue("the failed commit must be NACKed at the failed table's first frame", hasErrorResponseForSeq(sent, 1));
+            Assert.assertFalse("no NACK may name a frame the ack covers", hasErrorResponseForSeq(sent, 0));
+            Assert.assertFalse(hasErrorResponseForSeq(sent, 2));
+            Assert.assertFalse("the frame that cannot join is not processed", hasErrorResponseForSeq(sent, 3));
+            Assert.assertTrue("the ack must precede the NACK",
+                    indexOfBinaryFrame(sent, QwpConstants.STATUS_OK, 0) < indexOfErrorResponse(sent, 1));
+        });
+    }
+
     // QuestDB table names are case-insensitive, but a client may buffer each spelling apart
     // and send two blocks of one table, with different columns, in every frame.
     @Test
@@ -162,6 +192,14 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         assertBlocksWithDifferentColumnsJoinCommitBatch("WEATHER");
     }
 
+    /**
+     * On a durable-ack connection with no work awaiting upload, the server waits for
+     * the client to echo its role-change CLOSE before tearing the connection down: the
+     * echo proves the client read the frames before that CLOSE. A CLOSE the client
+     * pipelined before the server's CLOSE reached it proves nothing of the kind, so it
+     * must not complete the handshake, whether it directly follows the refused batch
+     * or sits behind another frame.
+     */
     @Test
     public void testClientClosePipelinedBeforeRoleChangeCloseIsNotTheEcho() throws Exception {
         assertPipelinedClientCloseIsNotTheEcho(clientCloseFrame());
