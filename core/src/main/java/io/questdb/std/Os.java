@@ -231,8 +231,12 @@ public final class Os {
         try {
             File tempLib = null;
             try {
-                int dot = lib.indexOf('.');
-                tempLib = File.createTempFile(lib.substring(0, dot), lib.substring(dot));
+                // Derive the prefix and suffix from the file name alone: a dot in a
+                // directory name would otherwise leak path separators into the suffix,
+                // which File.createTempFile rejects.
+                String fileName = lib.substring(Math.max(lib.lastIndexOf('/'), lib.lastIndexOf('\\')) + 1);
+                int dot = fileName.indexOf('.');
+                tempLib = File.createTempFile(fileName.substring(0, dot), fileName.substring(dot));
                 // copy to tempLib
                 try (FileOutputStream out = new FileOutputStream(tempLib)) {
                     byte[] buf = new byte[4096];
