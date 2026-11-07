@@ -307,6 +307,11 @@ public class ParquetPartitionDecoder implements ParquetDecoder, QuietCloseable {
     }
 
     public void of(long parquetMetaAddr, long parquetMetaSize, long parquetAddr, long parquetSize, TableToken table, int partitionBy, int timestampType, long timestamp, int memoryTag) {
+        of(parquetMetaAddr, parquetMetaSize, parquetAddr, parquetSize, table, partitionBy, timestampType, timestamp, memoryTag, 0);
+    }
+
+    /** Borrows the pinned partition state for the same lifetime as the metadata mapping. */
+    public void of(long parquetMetaAddr, long parquetMetaSize, long parquetAddr, long parquetSize, TableToken table, int partitionBy, int timestampType, long timestamp, int memoryTag, long partitionState) {
         of(parquetMetaAddr, parquetMetaSize, parquetAddr, parquetSize, memoryTag);
     }
 

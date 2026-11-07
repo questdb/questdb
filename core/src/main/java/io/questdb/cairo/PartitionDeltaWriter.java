@@ -24,12 +24,17 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.PartitionFrameSource;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.ReadOnlyObjList;
 import io.questdb.std.str.Path;
 
 public interface PartitionDeltaWriter extends QuietCloseable {
+
+    /** Stops background work on a removed partition version while old readers finish. */
+    default void cancel(Path partitionDir) {
+    }
 
     @Override
     default void close() {
@@ -53,6 +58,14 @@ public interface PartitionDeltaWriter extends QuietCloseable {
      * Returns false to keep the directory for the next purge pass.
      */
     boolean purge(Path partitionDir);
+
+    /**
+     * Writes the physical base the catalog selects at the writer's current sequence transaction.
+     * The default clears the target, which callers read as "no catalog base".
+     */
+    default void readBaseSource(TableWriter writer, int partitionIndex, PartitionFrameSource target) {
+        target.clear();
+    }
 
     /**
      * Writes the Delta bounds visible at the writer's current sequence transaction.

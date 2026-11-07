@@ -253,6 +253,11 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         this.isExecutedAtParseTime = false;
     }
 
+    public void ofCompact() {
+        of(COMPACT);
+        this.isExecutedAtParseTime = true;
+    }
+
     public void ofCompileView() {
         of(COMPILE_VIEW);
         this.isExecutedAtParseTime = true;

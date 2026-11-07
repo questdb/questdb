@@ -46,7 +46,8 @@ public enum AttachDetachStatus {
     ATTACH_ERR_DELTA(false),
     ATTACH_ERR_READ_PARTITION,
     ATTACH_ERR_CREATE_PM_FILE,
-    ATTACH_ERR_GENERATE_PM_FILE;
+    ATTACH_ERR_GENERATE_PM_FILE,
+    ATTACH_ERR_STAMP_PM_FILE(false);
 
     private final boolean isCritical;
 

@@ -60,8 +60,15 @@ public class AlterTableSetTypeTest extends AbstractCairoTest {
             for (int i = 0; i < 30; i++) {
                 final boolean walEnabled = sqlExecutionContext.getRandom().nextBoolean();
                 execute("alter table " + tableName + " set type " + (walEnabled ? "wal" : "bypass wal"));
-                final Path convertFilePath1 = assertConvertFileExists(tableName);
-                assertConvertFileContent(convertFilePath1, walEnabled ? WAL : NON_WAL);
+                if (walEnabled) {
+                    final Path convertFilePath1 = assertConvertFileExists(tableName);
+                    assertConvertFileContent(convertFilePath1, WAL);
+                } else {
+                    // The table's own type converts nothing: it cancels a pending request.
+                    final TableToken token = engine.verifyTableName(tableName);
+                    final Path path = Path.PATH.get().of(configuration.getDbRoot()).concat(token).concat(WalUtils.CONVERT_FILE_NAME);
+                    Assert.assertFalse(Utf8s.toString(path), Files.exists(path.$()));
+                }
             }
         });
     }

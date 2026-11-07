@@ -51,6 +51,10 @@ public class SeqTxnTracker {
     // A commit that moves the txn without a WAL transaction (a partition removed or converted by the writer
     // itself) leaves it above the newest save point's pin, which WalPurgeJob reads for the idle save point.
     private volatile long committedTxn = -1;
+    // The table txn of the latest Delta catalog init that moved no seqTxn, -1 before one. A reader below it may read
+    // the partition's native base with no catalog pin, so Delta retention waits for it. In memory only: no reader
+    // predates a restart.
+    private volatile long deltaCatalogInitTxn = -1;
     // The seqTxn of the table's newest durable save point. 0 means none yet, which keeps all WAL of a fresh
     // adaptive table; it advances as save points publish. WalPurgeJob reads it as the purge floor under
     // adaptive, and in any mode while the table holds a save point pin.
@@ -213,6 +217,10 @@ public class SeqTxnTracker {
 
     public long getDedupSignalTrackedFromSeqTxn() {
         return dedupSignalTrackedFromSeqTxn;
+    }
+
+    public long getDeltaCatalogInitTxn() {
+        return deltaCatalogInitTxn;
     }
 
     public String getErrorMessage() {
@@ -505,6 +513,10 @@ public class SeqTxnTracker {
      */
     public void setCommittedTxn(long committedTxn) {
         this.committedTxn = committedTxn;
+    }
+
+    public void setDeltaCatalogInitTxn(long txn) {
+        deltaCatalogInitTxn = txn;
     }
 
     public void setHardSuspended(boolean hardSuspended) {

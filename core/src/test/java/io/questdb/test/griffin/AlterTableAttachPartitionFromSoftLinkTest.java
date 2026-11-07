@@ -38,6 +38,7 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.TxWriter;
+import io.questdb.griffin.SqlException;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.NumericException;
@@ -134,58 +135,33 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
     }
 
     @Test
-    public void testDetachPartitionAttachedFromSoftLink() throws Exception {
+    public void testDetachPartitionAttachedFromSoftLinkIsRefused() throws Exception {
         Assume.assumeFalse(Os.isWindows());
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
             final String tableName = testName.getMethodName();
             attachPartitionFromSoftLink(tableName, "SNOW", tableToken -> {
                         try {
-                            execute("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + readOnlyPartitionName + "'", sqlExecutionContext);
+                            try {
+                                execute("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + readOnlyPartitionName + "'", sqlExecutionContext);
+                                Assert.fail("DETACH of a soft-linked partition must be refused");
+                            } catch (SqlException e) {
+                                TestUtils.assertContains(
+                                        e.getFlyweightMessage(),
+                                        "cannot detach partition, partition is read-only [table=" + tableName + ", partition=" + readOnlyPartitionName + "]"
+                                );
+                            }
                             assertQuery("SELECT min(ts), max(ts), count() FROM " + tableName)
                                     .noLeakCheck()
                                     .noRandomAccess()
                                     .expectSize()
-                                    .returns(replaceTimestampSuffix1("""
-                                            min\tmax\tcount
-                                            2022-10-18T00:00:16.779900Z\t2022-10-18T23:59:59.000000Z\t5000
-                                            """, timestampTypeName));
+                                    .returns(replaceTimestampSuffix1("min\tmax\tcount\n" +
+                                            expectedMinTimestamp + "\t" + expectedMaxTimestamp + "\t10000\n", timestampTypeName));
 
-                            // verify cold storage folder exists
+                            // the link and its target are untouched
+                            path.of(configuration.getDbRoot()).concat(tableToken).concat(readOnlyPartitionName);
+                            TestUtils.txnPartitionConditionally(path, 2);
+                            Assert.assertTrue(ff.isSoftLink(path.$()));
                             Assert.assertTrue(Files.exists(other.$()));
-                            AtomicInteger fileCount = new AtomicInteger();
-                            ff.walk(other, (_, _) -> fileCount.incrementAndGet());
-                            Assert.assertTrue(fileCount.get() > 0);
-
-                            // verify the link was removed
-                            other.of(configuration.getDbRoot())
-                                    .concat(tableToken)
-                                    .concat(readOnlyPartitionName)
-                                    .put(configuration.getAttachPartitionSuffix())
-                                    .$();
-                            Assert.assertFalse(ff.exists(other.$()));
-
-                            // insert a row at the end of the partition, the only row, which will create the partition
-                            // at this point there is no longer information as to weather it was read-only in the past
-                            execute("INSERT INTO " + tableName + " (l, i, ts) VALUES(0, 0, '" + readOnlyPartitionName + "T23:59:59.500001Z')");
-                            assertQuery("SELECT min(ts), max(ts), count() FROM " + tableName)
-                                    .noLeakCheck()
-                                    .noRandomAccess()
-                                    .expectSize()
-                                    .returns(replaceTimestampSuffix("""
-                                            min\tmax\tcount
-                                            2022-10-17T23:59:59.500001Z\t2022-10-18T23:59:59.000000Z\t5001
-                                            """));
-
-                            // drop the partition
-                            execute("ALTER TABLE " + tableName + " DROP PARTITION LIST '" + readOnlyPartitionName + "'", sqlExecutionContext);
-                            assertQuery("SELECT min(ts), max(ts), count() FROM " + tableName)
-                                    .noLeakCheck()
-                                    .noRandomAccess()
-                                    .expectSize()
-                                    .returns(replaceTimestampSuffix1("""
-                                            min\tmax\tcount
-                                            2022-10-18T00:00:16.779900Z\t2022-10-18T23:59:59.000000Z\t5000
-                                            """, timestampTypeName));
                         } catch (Exception ex) {
                             Assert.fail(ex.getMessage());
                         }

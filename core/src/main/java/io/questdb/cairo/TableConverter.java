@@ -88,11 +88,15 @@ public class TableConverter {
                                 .$(", walEnabled=").$(walEnabled)
                                 .I$();
 
-                        // Before the WAL replay below, so a skipped table keeps its WAL and save points.
+                        // Before the WAL replay below, so a cancelled table keeps its WAL and save points.
                         path.trimTo(rootLen).concat(dirNameSink);
-                        if (hasDeltaState(ff, path, path.size())) {
-                            LOG.error().$("skipping table type conversion, table has a delta-active partition or delta data [dirName=")
+                        if (hasDeltaOrColdState(ff, path, path.size())) {
+                            LOG.advisory().$("cancelled the pending table type conversion, table has delta or cold storage state [dirName=")
                                     .$(dirNameSink).I$();
+                            path.concat(CONVERT_FILE_NAME);
+                            if (!ff.removeQuiet(path.$())) {
+                                LOG.critical().$("could not remove _convert file [path=").$(path).I$();
+                            }
                             continue;
                         }
 
@@ -149,81 +153,87 @@ public class TableConverter {
                                     txWriter = new TxWriter(ff, configuration);
                                 }
                                 txWriter.ofRW(path.trimTo(rootLen).concat(dirNameSink).concat(TXN_FILE_NAME).$());
-                                // The WAL replay above may have made Delta active.
-                                if (txWriter.hasDeltaState()) {
-                                    LOG.error().$("skipping table type conversion, table has a delta-active partition or delta data [dirName=")
-                                            .$(dirNameSink).I$();
-                                    continue;
-                                }
-                                // Nothing commits through this TxWriter: the resets below write the mapped _txn in
-                                // place, so the grade set here does not apply to them. Under ADAPTIVE the baseline
-                                // save point of a conversion to WAL flushes _txn below.
-                                txWriter.setCommitMode(CommitMode.structuralCommitMode(configuration.getCommitMode()));
-
-                                // A type conversion resets the table's WAL lineage: resetLagValuesUnsafe()
-                                // below zeroes _txn.seqTxn, and the WAL branch re-seeds txn_seq from txn 0.
-                                // The save point files belong to the lineage that ends here, so they go, as on
-                                // every other path that rewinds a table. A stale save point would post-date the
-                                // reset _txn, and startup recovery would refuse to bring the instance up. A crash
-                                // after the removal leaves the table without a save point, so not enrolled, and
-                                // _convert runs the conversion again on the next boot.
-                                path.trimTo(rootLen).concat(dirNameSink);
-                                RecoveryCoordinator.removeAdaptiveEpochArtifacts(ff, path, path.size());
-
-                                int convertedTimestampType = ColumnType.TIMESTAMP;
-                                int convertedPartitionBy = PartitionBy.NONE;
-                                if (walEnabled) {
-                                    txWriter.resetLagValuesUnsafe();
-                                    try (TableWriterMetadata metadata = new TableWriterMetadata(token)) {
-                                        metadata.reload(metaPath, metaMem);
-                                        convertedTimestampType = metadata.getTimestampIndex() < 0
-                                                ? ColumnType.TIMESTAMP
-                                                : metadata.getColumnType(metadata.getTimestampIndex());
-                                        convertedPartitionBy = metadata.getPartitionBy();
-                                        tableSequencerAPI.registerTable(tableId, metadata, token);
-                                    }
-
-                                    // Reset structure version in _meta and _txn files. Through
-                                    // resetMetadataVersion, never a raw putLong: the metadataVersion is
-                                    // checksummed into the meta-format minor-version field, so rewriting it
-                                    // in place otherwise switches off every version-gated tail field and the
-                                    // converted table silently loses its TTL and table format.
-                                    TableUtils.resetMetadataVersion(metaMem, 0);
-                                    path.trimTo(rootLen).concat(dirNameSink);
-                                    txWriter.resetStructureVersionUnsafe();
+                                // The WAL replay above may have made Delta active, or an upload may have run since
+                                // SQL accepted the request, and SQL now refuses a new one. Cancel it rather than
+                                // keep it for a restart that would convert a table cold storage holds keys for.
+                                boolean isConverted = !txWriter.hasDeltaState() && !txWriter.hasUploadedPartitions();
+                                if (!isConverted) {
+                                    LOG.advisory().$("cancelled the pending table type conversion, table has delta or cold storage state [table=")
+                                            .$(token).I$();
                                 } else {
-                                    if (!tableNameRegistry.isWalTableDropped(dirName) && tableSequencerAPI.prepareToConvertToNonWal(token)) {
-                                        removeWalPersistence(path, rootLen, ff, dirNameSink);
-                                        // Only once the WAL is gone: a kill before it leaves _txn at the replayed
-                                        // seqTxn, so the next start finds nothing to replay.
+                                    // Nothing commits through this TxWriter: the resets below write the mapped _txn in
+                                    // place, so the grade set here does not apply to them. Under ADAPTIVE the baseline
+                                    // save point of a conversion to WAL flushes _txn below.
+                                    txWriter.setCommitMode(CommitMode.structuralCommitMode(configuration.getCommitMode()));
+
+                                    // A type conversion resets the table's WAL lineage: resetLagValuesUnsafe()
+                                    // below zeroes _txn.seqTxn, and the WAL branch re-seeds txn_seq from txn 0.
+                                    // The save point files belong to the lineage that ends here, so they go, as on
+                                    // every other path that rewinds a table. A stale save point would post-date the
+                                    // reset _txn, and startup recovery would refuse to bring the instance up. A crash
+                                    // after the removal leaves the table without a save point, so not enrolled, and
+                                    // _convert runs the conversion again on the next boot.
+                                    path.trimTo(rootLen).concat(dirNameSink);
+                                    RecoveryCoordinator.removeAdaptiveEpochArtifacts(ff, path, path.size());
+
+                                    int convertedTimestampType = ColumnType.TIMESTAMP;
+                                    int convertedPartitionBy = PartitionBy.NONE;
+                                    if (walEnabled) {
                                         txWriter.resetLagValuesUnsafe();
+                                        try (TableWriterMetadata metadata = new TableWriterMetadata(token)) {
+                                            metadata.reload(metaPath, metaMem);
+                                            convertedTimestampType = metadata.getTimestampIndex() < 0
+                                                    ? ColumnType.TIMESTAMP
+                                                    : metadata.getColumnType(metadata.getTimestampIndex());
+                                            convertedPartitionBy = metadata.getPartitionBy();
+                                            tableSequencerAPI.registerTable(tableId, metadata, token);
+                                        }
+
+                                        // Reset structure version in _meta and _txn files. Through
+                                        // resetMetadataVersion, never a raw putLong: the metadataVersion is
+                                        // checksummed into the meta-format minor-version field, so rewriting it
+                                        // in place otherwise switches off every version-gated tail field and the
+                                        // converted table silently loses its TTL and table format.
+                                        TableUtils.resetMetadataVersion(metaMem, 0);
+                                        path.trimTo(rootLen).concat(dirNameSink);
+                                        txWriter.resetStructureVersionUnsafe();
                                     } else {
-                                        LOG.info().$("WAL table will not be converted to non-WAL, table is dropped [dirName=").$(dirNameSink).I$();
-                                        continue;
+                                        if (!tableNameRegistry.isWalTableDropped(dirName) && tableSequencerAPI.prepareToConvertToNonWal(token)) {
+                                            removeWalPersistence(path, rootLen, ff, dirNameSink);
+                                            // Only once the WAL is gone: a kill before it leaves _txn at the replayed
+                                            // seqTxn, so the next start finds nothing to replay.
+                                            txWriter.resetLagValuesUnsafe();
+                                        } else {
+                                            // The request lapses with the table.
+                                            LOG.info().$("WAL table will not be converted to non-WAL, table is dropped [dirName=").$(dirNameSink).I$();
+                                            isConverted = false;
+                                        }
                                     }
-                                }
-                                metaMem.putBool(TableUtils.META_OFFSET_WAL_ENABLED, walEnabled);
+                                    if (isConverted) {
+                                        metaMem.putBool(TableUtils.META_OFFSET_WAL_ENABLED, walEnabled);
 
-                                // The converted table is a fresh WAL lineage at seqTxn 0, so give it its own
-                                // generation-zero save point here, as the REBASE WAL clone does. A non-adaptive
-                                // instance publishes nothing.
-                                path.trimTo(rootLen).concat(dirNameSink);
-                                // Boot conversion precedes role installation and keeps the configured grade.
-                                if (walEnabled && configuration.getCommitMode() == CommitMode.ADAPTIVE) {
-                                    final long baselineTxn = DurableEpochManifest.publishInitialAt(
-                                            configuration,
-                                            token,
-                                            path,
-                                            convertedTimestampType,
-                                            convertedPartitionBy
-                                    );
-                                    RecoveryCoordinator.pinPublishedBaseline(engine, token, baselineTxn);
-                                }
+                                        // The converted table is a fresh WAL lineage at seqTxn 0, so give it its own
+                                        // generation-zero save point here, as the REBASE WAL clone does. A non-adaptive
+                                        // instance publishes nothing.
+                                        path.trimTo(rootLen).concat(dirNameSink);
+                                        // Boot conversion precedes role installation and keeps the configured grade.
+                                        if (walEnabled && configuration.getCommitMode() == CommitMode.ADAPTIVE) {
+                                            final long baselineTxn = DurableEpochManifest.publishInitialAt(
+                                                    configuration,
+                                                    token,
+                                                    path,
+                                                    convertedTimestampType,
+                                                    convertedPartitionBy
+                                            );
+                                            RecoveryCoordinator.pinPublishedBaseline(engine, token, baselineTxn);
+                                        }
 
-                                convertedTables.add(token);
+                                        convertedTables.add(token);
 
-                                try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-                                    metadataRW.hydrateTable(token);
+                                        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                                            metadataRW.hydrateTable(token);
+                                        }
+                                    }
                                 }
                             }
 
@@ -314,13 +324,14 @@ public class TableConverter {
         return refusal;
     }
 
-    // Whether the table's _txn names a delta-active partition or Delta data. A _txn that does not load reads as
-    // none, and the conversion fails on it later. The partition unit does not affect the attached-partition scan.
-    private static boolean hasDeltaState(FilesFacade ff, Path path, int tableRootLen) {
+    // Whether the table's _txn names a delta-active partition, Delta data or an uploaded partition. A _txn that does
+    // not load reads as none, and the conversion fails on it later. The partition unit does not affect the
+    // attached-partition scan.
+    private static boolean hasDeltaOrColdState(FilesFacade ff, Path path, int tableRootLen) {
         path.trimTo(tableRootLen).concat(TXN_FILE_NAME);
         try (TxReader txReader = new TxReader(ff)) {
             txReader.ofRO(path.$(), ColumnType.TIMESTAMP, PartitionBy.DAY);
-            return txReader.unsafeLoadAll() && txReader.hasDeltaState();
+            return txReader.unsafeLoadAll() && (txReader.hasDeltaState() || txReader.hasUploadedPartitions());
         } catch (CairoException e) {
             return false;
         } finally {

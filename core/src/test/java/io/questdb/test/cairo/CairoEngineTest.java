@@ -62,6 +62,7 @@ import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.cairo.TableUtils.TABLE_EXISTS;
@@ -210,6 +211,34 @@ public class CairoEngineTest extends AbstractCairoTest {
                     ff = null;
                 }
                 Path.clearThreadLocals();
+            }
+        });
+    }
+
+    @Test
+    public void testDroppedTablePurgeWaitsForBackgroundWork() throws Exception {
+        assertMemoryLeak(() -> {
+            AtomicBoolean isReady = new AtomicBoolean();
+            AtomicBoolean isNotified = new AtomicBoolean();
+            try (CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(temp.newFolder().getAbsolutePath())) {
+                @Override
+                public boolean notifyDroppedTablePurge(TableToken tableToken) {
+                    isNotified.set(true);
+                    return isReady.get();
+                }
+            }; Path path = new Path()) {
+                engine.execute("CREATE TABLE x(ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                TableToken token = engine.verifyTableName("x");
+                engine.execute("DROP TABLE x");
+
+                TestUtils.drainWalQueue(engine);
+                Assert.assertTrue(isNotified.get());
+                path.of(engine.getConfiguration().getDbRoot()).concat(token).concat(TableUtils.TXN_FILE_NAME);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                isReady.set(true);
+                TestUtils.drainWalQueue(engine);
+                Assert.assertFalse(Files.exists(path.$()));
             }
         });
     }

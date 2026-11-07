@@ -272,6 +272,7 @@ public class PostingIndexWriter implements IndexWriter {
     private int[] genMetaStrideCounts;
     private boolean hasPendingData;
     private boolean hasSpillData;
+    private boolean isCoverStreaming;
     private boolean isLastRollbackStreaming;
     private boolean isLastSealIncremental;
     private boolean isLastSealSnapshotDeferred;
@@ -312,6 +313,7 @@ public class PostingIndexWriter implements IndexWriter {
     private long postingColumnNameTxn; // host column-instance txn
     private long[] savedSidecarBufs;
     private long[] savedSidecarSizes;
+    private PostingSidecarSource sealCoverSource;
     private MemoryMARW sealTarget; // points to sealValueMem during seal, valueMem during flush
     // sealTxn is the suffix of the .pv file the writer is currently mapped
     // to. Updated on truncate, on switchToSealedValueFile, and at writer
@@ -630,6 +632,7 @@ public class PostingIndexWriter implements IndexWriter {
                 maxValue = 0;
                 hasPendingData = false;
                 isPoisoned = false;
+                isCoverStreaming = false;
                 isLastSealStreaming = false;
                 isLastSealIncremental = false;
                 isLastSealSnapshotDeferred = false;
@@ -1048,6 +1051,19 @@ public class PostingIndexWriter implements IndexWriter {
         for (int i = pendingPurges.size() - 1; i >= writePos; i--) {
             pendingPurges.remove(i);
         }
+    }
+
+    /**
+     * Selects sidecar-based sealing for a new unpublished build. Each input batch must configure its
+     * borrowed covers, add rows, and call commit() before releasing those buffers.
+     * Covers use generated column-name txn -1; existing table indexes keep the normal seal path.
+     */
+    public void enableCoverStreaming() {
+        checkNotPoisoned();
+        if (genCount != 0 || hasPendingData || keyCount != 0) {
+            throw CairoException.critical(0).put("cover streaming requires a new index");
+        }
+        isCoverStreaming = true;
     }
 
     @TestOnly
@@ -1829,7 +1845,7 @@ public class PostingIndexWriter implements IndexWriter {
 
         // Incremental seal: gen 0 dense covering every current key, all later
         // gens sparse. sealIncremental writes a fresh .pv via sealValueMem.
-        boolean isIncrementalCandidate = gen0KeyCount >= 0
+        boolean isIncrementalCandidate = !isCoverStreaming && gen0KeyCount >= 0
                 && gen0KeyCount == keyCount
                 && partitionPath.size() > 0;
         if (isIncrementalCandidate) {
@@ -1861,6 +1877,10 @@ public class PostingIndexWriter implements IndexWriter {
 
         boolean isSealed = false;
         try {
+            if (isCoverStreaming && coverCount > 0) {
+                sealCoverSource = new PostingSidecarSource(configuration, Path.getThreadLocal(partitionPath),
+                        indexName, postingColumnNameTxn, coveredColumnIndices, coveredColumnTypes);
+            }
             // Sidecar snapshot lives inside this try so a malloc OOM mid-loop
             // gets cleaned up by the finally instead of leaking partial bufs.
             //
@@ -2028,6 +2048,7 @@ public class PostingIndexWriter implements IndexWriter {
             }
             throw th;
         } finally {
+            sealCoverSource = Misc.free(sealCoverSource);
             if (haveSavedSidecars) {
                 for (int c = 0; c < coverCount; c++) {
                     if (savedSidecarBufs[c] != 0) {
@@ -7316,11 +7337,17 @@ public class PostingIndexWriter implements IndexWriter {
                         .put(", decoded=").put(decoded).put(']');
             }
 
+            if (sealCoverSource != null) {
+                sealCoverSource.ofKey(j, c);
+            }
+
             // Materialise this key's covered values into sidecarBuf, then compress.
             long rawOffset = 0;
             for (int i = 0; i < count; i++) {
                 long rowId = Unsafe.getLong(keyBuffer + (long) i * Long.BYTES);
-                if (rowId < colTop) {
+                if (sealCoverSource != null) {
+                    sealCoverSource.copyFixed(rowId, sidecarBuf + rawOffset, colType);
+                } else if (rowId < colTop) {
                     writeNullSentinel(sidecarBuf + rawOffset, valueSize, colType);
                 } else {
                     long srcOffset = (rowId - colTop) << shift;
@@ -7389,13 +7416,19 @@ public class PostingIndexWriter implements IndexWriter {
                     continue;
                 }
 
+                if (sealCoverSource != null) {
+                    sealCoverSource.ofKey(j, c);
+                }
+
                 // Assemble this key's raw values into sidecarBuf.
                 long keyOff = keyOffsets[j];
                 long rawOffset = 0;
                 for (int i = 0; i < count; i++) {
                     long rowId = Unsafe.getLong(
                             mergedValuesAddr + (keyOff + i) * Long.BYTES);
-                    if (rowId < colTop) {
+                    if (sealCoverSource != null) {
+                        sealCoverSource.copyFixed(rowId, sidecarBuf + rawOffset, colType);
+                    } else if (rowId < colTop) {
                         writeNullSentinel(sidecarBuf + rawOffset, valueSize, colType);
                     } else {
                         long srcOffset = (rowId - colTop) << shift;
@@ -7457,6 +7490,9 @@ public class PostingIndexWriter implements IndexWriter {
             for (int s = 0; s < sc; s++) {
                 int ks = PostingIndexUtils.keysInStride(keyCount, s);
                 int strideStart = s * PostingIndexUtils.DENSE_STRIDE;
+                if (sealCoverSource != null) {
+                    sealCoverSource.ofStride(strideStart);
+                }
 
                 // Compute per-key counts and base offsets within stride buffer
                 int strideValCount = 0;
@@ -7565,6 +7601,9 @@ public class PostingIndexWriter implements IndexWriter {
             for (int s = 0; s < sc; s++) {
                 int ks = PostingIndexUtils.keysInStride(keyCount, s);
                 int strideStart = s * PostingIndexUtils.DENSE_STRIDE;
+                if (sealCoverSource != null) {
+                    sealCoverSource.ofStride(strideStart);
+                }
 
                 // hasAnyValues rather than a summed count, see streaming
                 // reencode path for rationale.
@@ -7939,7 +7978,14 @@ public class PostingIndexWriter implements IndexWriter {
                     Unsafe.getInt(totalCountsAddr + (long) key * Integer.BYTES));
         }
 
-        if (coveredColumnNames.size() > 0 && coveredPartitionPath.size() > 0) {
+        if (sealCoverSource != null) {
+            for (int c = 0; c < coverCount; c++) {
+                if (coveredColumnIndices.getQuick(c) < 0) {
+                    continue;
+                }
+                writeSidecarForColumn(c, sc, siSize, totalCountsAddr, strideValsAddr, globalMaxKeyCount);
+            }
+        } else if (coveredColumnNames.size() > 0 && coveredPartitionPath.size() > 0) {
             Path p = Path.getThreadLocal(coveredPartitionPath);
             try {
                 for (int c = 0; c < coverCount; c++) {
@@ -7994,7 +8040,14 @@ public class PostingIndexWriter implements IndexWriter {
         int siSize = PostingIndexUtils.strideIndexSize(keyCount);
         int[] keyCounts = strideKeyCounts;
 
-        if (coveredColumnNames.size() > 0 && coveredPartitionPath.size() > 0) {
+        if (sealCoverSource != null) {
+            for (int c = 0; c < coverCount; c++) {
+                if (coveredColumnIndices.getQuick(c) < 0) {
+                    continue;
+                }
+                writeSidecarForColumnStreaming(c, sc, siSize, totalCountsAddr, keyBuffer, maxKeyCount, keyCounts);
+            }
+        } else if (coveredColumnNames.size() > 0 && coveredPartitionPath.size() > 0) {
             Path p = Path.getThreadLocal(coveredPartitionPath);
             try {
                 for (int c = 0; c < coverCount; c++) {
@@ -8088,6 +8141,9 @@ public class PostingIndexWriter implements IndexWriter {
                         .put(", expected=").put(count)
                         .put(", decoded=").put(decoded).put(']');
             }
+            if (sealCoverSource != null && count > 0) {
+                sealCoverSource.ofKey(j, c);
+            }
             for (int i = 0; i < count; i++) {
                 long rowId = Unsafe.getLong(keyBuffer + (long) i * Long.BYTES);
                 long off = mem.getAppendOffset() - dataStart;
@@ -8128,6 +8184,9 @@ public class PostingIndexWriter implements IndexWriter {
         for (int j = 0; j < ks; j++) {
             int count = keyCounts[j];
             long keyOff = keyOffsets[j];
+            if (sealCoverSource != null && count > 0) {
+                sealCoverSource.ofKey(j, covIdx);
+            }
             for (int i = 0; i < count; i++) {
                 long rowId = Unsafe.getLong(mergedValuesAddr + (keyOff + i) * Long.BYTES);
                 long off = mem.getAppendOffset() - dataStart;
@@ -8144,6 +8203,10 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     private void writeVarValue(MemoryMARW mem, int covIdx, long colTop, long rowId, int colType) {
+        if (sealCoverSource != null) {
+            sealCoverSource.appendVar(rowId, mem);
+            return;
+        }
         if (rowId < colTop) {
             return; // NULL — zero-length (offset[i] == offset[i+1])
         }
