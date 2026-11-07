@@ -55,7 +55,6 @@ import io.questdb.cairo.mv.MatViewStateStore;
 import io.questdb.cairo.mv.MatViewStateStoreImpl;
 import io.questdb.cairo.mv.MatViewTimerTask;
 import io.questdb.cairo.mv.NoOpMatViewStateStore;
-import io.questdb.cairo.mv.WalTxnRangeLoader;
 import io.questdb.cairo.pool.AbstractMultiTenantPool;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ReaderPool;
@@ -165,7 +164,6 @@ import io.questdb.std.FiberLocal;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
-import io.questdb.std.LongList;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.MemoryTrackerProvider;
@@ -4763,44 +4761,6 @@ public class CairoEngine implements Closeable, WriterSource {
         return state.getViewMetadata();
     }
 
-    // Scans the base-table WAL gap (lastRefreshBaseTxn, baseTableLastTxn] for a TRUNCATE, using the
-    // same range and loader an incremental refresh would use (so there is no off-by-one vs interval
-    // planning). A truncate in the gap means a resumed incremental refresh would keep stale
-    // pre-truncate rows, so the caller must invalidate the view instead. Runs only on the cold
-    // load/hydrate path, so a transient loader is fine.
-    private boolean hasBaseTableTruncateInWalGap(TableToken baseTableToken, long lastRefreshBaseTxn, long baseTableLastTxn) {
-        if (lastRefreshBaseTxn >= baseTableLastTxn) {
-            return false;
-        }
-        // This load-time probe scans the same (lastRefreshBaseTxn, baseTableLastTxn] gap that the
-        // enqueued incremental refresh re-scans to build its intervals, so the no-truncate promote path
-        // reads the gap twice (and allocates a fresh loader per view). It is bounded to lagging views on
-        // the cold boot/promote path, so the redundant scan is a tracked optimization, not a steady-state
-        // cost.
-        try (
-                Path path = new Path();
-                WalTxnRangeLoader loader = new WalTxnRangeLoader(configuration)
-        ) {
-            final LongList intervals = new LongList();
-            loader.load(this, path, baseTableToken, intervals, lastRefreshBaseTxn, baseTableLastTxn);
-            return loader.hasTruncate();
-        } catch (CairoException e) {
-            // Missing or purged WAL files in the gap. Treat as "no truncate found" so the caller
-            // still schedules the normal incremental refresh. The refresh path's own interval planning
-            // hits the same read failure and falls back to a full refresh; note that fallback is a
-            // REPLACE_RANGE over the current range, so if the purged gap held a truncate, pre-truncate
-            // buckets outside the current range can survive (a stale-valid view). That purge-during-the-
-            // pending-window residual is a known, tracked deferral. Letting the exception escape would
-            // cause loadMatViewIntoStore's logging-only catch to swallow it, skipping
-            // enqueueIncrementalRefresh and leaving the view silently unscheduled after a promote-hydrate.
-            LOG.info().$("could not scan base WAL gap for truncate, scheduling refresh [baseTable=").$(baseTableToken)
-                    .$(", errno=").$(e.getErrno())
-                    .$(", msg=").$safe(e.getFlyweightMessage())
-                    .I$();
-            return false;
-        }
-    }
-
     private boolean holdsPath(CharSequence path) {
         return isUnderRoot(path, configuration.getDbRoot())
                 || isUnderRoot(path, configuration.getCheckpointRoot())
@@ -5001,19 +4961,9 @@ public class CairoEngine implements Closeable, WriterSource {
                             .$(", baseTableTxn=").$(baseTableLastTxn)
                             .I$();
                     target.enqueueInvalidate(tableToken, "materialized view is ahead of base table and cannot be synchronized");
-                } else if (state.getLastRefreshBaseTxn() > -1 && hasBaseTableTruncateInWalGap(baseTableToken, state.getLastRefreshBaseTxn(), baseTableLastTxn)) {
-                    // A truncate in the base WAL gap (lastRefreshBaseTxn, baseTableLastTxn] carries no
-                    // data interval, so resuming an incremental refresh would silently advance past it
-                    // and keep stale pre-truncate rows. Invalidate instead, the same way a primary
-                    // already invalidates dependents on a truncate. Only for a view that has refreshed
-                    // at least once (a never-refreshed view has nothing stale to retain).
-                    LOG.info().$("materialized view base table was truncated, invalidating on load [table=")
-                            .$safe(viewDefinition.getBaseTableName())
-                            .$(", view=").$(tableToken)
-                            .I$();
-                    target.enqueueInvalidate(tableToken, "truncate operation");
                 } else if (viewDefinition.getRefreshType() == MatViewDefinition.REFRESH_TYPE_IMMEDIATE) {
-                    // Kickstart immediate refresh.
+                    // Kickstart immediate refresh. A base TRUNCATE in the gap the refresh scans keeps the view
+                    // valid: the scan's TRUNCATE cut drops the intervals queued before it.
                     target.enqueueIncrementalRefresh(tableToken);
                 }
             }

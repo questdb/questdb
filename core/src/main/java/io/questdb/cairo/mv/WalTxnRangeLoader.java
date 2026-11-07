@@ -68,14 +68,18 @@ public class WalTxnRangeLoader implements QuietCloseable {
         return minTimestamp;
     }
 
-    // True when the last load() scan saw a base-table TRUNCATE in the scanned (txnLo, txnHi] range.
-    // A truncate carries no data interval (it is skipped for interval computation), but it is an
-    // invalidating barrier for an incremental mat-view refresh: the caller must not advance the
-    // refresh base txn past it.
+    // True when the last load() scan saw a base-table TRUNCATE in the scanned (txnLo, txnHi] range. The scan
+    // then keeps only the intervals of the transactions after the last truncate (the TRUNCATE cut), and the
+    // caller must drop the intervals it collected before the scan too, since they all predate the truncate.
     public boolean hasTruncate() {
         return hasTruncate;
     }
 
+    /**
+     * Loads the data intervals of the base table's transactions in {@code (txnLo, txnHi]} into {@code intervals},
+     * which the caller passes empty. A TRUNCATE drops the intervals of the transactions before it, see
+     * {@link #hasTruncate()}.
+     */
     public void load(
             @NotNull CairoEngine engine,
             @NotNull Path tempPath,
@@ -147,15 +151,15 @@ public class WalTxnRangeLoader implements QuietCloseable {
                         }
 
                         if (!WalTxnType.isDataType(walEventCursor.getType())) {
-                            // Skip non-inserts for interval computation, but flag a TRUNCATE: it carries
-                            // no data interval yet is an invalidating barrier for an incremental mat-view
-                            // refresh. The caller must not advance the refresh base txn past a truncate.
-                            // Scoped to TRUNCATE only for now: DROP/DETACH PARTITION and rows-affected
-                            // UPDATE also delete base rows and likewise commit as non-data SQL txns the
-                            // interval scan skips, so they share the same gap-skip loss class. Treating any
-                            // invalidating non-data txn in the gap as a barrier is a tracked follow-up.
+                            // Skip non-inserts for interval computation. A TRUNCATE cuts: the base no longer
+                            // holds the rows of the transactions before it, and recomputing their intervals
+                            // would delete the view's rows there, so the scan drops them. DROP / DETACH
+                            // PARTITION get no cut: the partition clip keeps a refresh out of the removed
+                            // range while it stays removed. ATTACH PARTITION and UPDATE reach the view's cache
+                            // through the range tasks of the WAL apply job instead.
                             if (walEventCursor.getType() == WalTxnType.TRUNCATE) {
                                 hasTruncate = true;
+                                intervals.clear();
                             }
                             continue;
                         }

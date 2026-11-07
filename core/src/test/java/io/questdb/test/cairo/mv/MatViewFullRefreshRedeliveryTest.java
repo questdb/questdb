@@ -114,8 +114,12 @@ public class MatViewFullRefreshRedeliveryTest extends AbstractCairoTest {
             execute("INSERT INTO base SELECT 'a', x::DOUBLE, timestamp_sequence('2024-01-01', 600_000_000L) FROM long_sequence(1_440)");
             drainWalAndMatViewQueues();
 
-            // TRUNCATE invalidates the view. The new base rows are 'b' prices 1..1440, ten minutes apart from
-            // 2024-02-01, so each of the 240 hours holds six of them and its last price is 6 * (hour + 1).
+            // A base rename invalidates the view; renaming the base back leaves a base that FULL can rebuild the
+            // view from. The new base rows, written after a TRUNCATE, are 'b' prices 1..1440, ten minutes apart
+            // from 2024-02-01, so each of the 240 hours holds six of them and its last price is 6 * (hour + 1).
+            execute("RENAME TABLE base TO base_tmp");
+            execute("RENAME TABLE base_tmp TO base");
+            drainWalAndMatViewQueues();
             execute("TRUNCATE TABLE base");
             drainWalAndMatViewQueues();
             execute("INSERT INTO base SELECT 'b', x::DOUBLE, timestamp_sequence('2024-02-01', 600_000_000L) FROM long_sequence(1_440)");
@@ -166,7 +170,7 @@ public class MatViewFullRefreshRedeliveryTest extends AbstractCairoTest {
                         .noRandomAccess()
                         .returns("""
                                 view_status\tinvalidation_reason
-                                invalid\ttruncate operation
+                                invalid\ttable rename operation
                                 """);
                 assertQuery("SELECT count() > 0 AND count() < 240 is_partial FROM v")
                         .withEngine(restarted)
@@ -415,8 +419,8 @@ public class MatViewFullRefreshRedeliveryTest extends AbstractCairoTest {
                 .returns("view_status\n" + expectedStatus + "\n");
     }
 
-    // Creates view mv over base joined with dim, then truncates base and inserts new rows, which leaves mv
-    // invalid with its pre-truncate rows until a REFRESH FULL.
+    // Creates view mv over base joined with dim, then renames base and renames it back, which leaves mv invalid,
+    // and truncates base and inserts new rows, so mv holds its pre-truncate rows until a REFRESH FULL.
     private MatViewState createInvalidJoinedView() throws Exception {
         execute("CREATE TABLE base (k SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
         execute("CREATE TABLE dim (k SYMBOL, name VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -435,6 +439,9 @@ public class MatViewFullRefreshRedeliveryTest extends AbstractCairoTest {
                 ) PARTITION BY DAY""");
         drainWalAndMatViewQueues();
 
+        execute("RENAME TABLE base TO base_tmp");
+        execute("RENAME TABLE base_tmp TO base");
+        drainWalAndMatViewQueues();
         execute("TRUNCATE TABLE base");
         execute("""
                 INSERT INTO base VALUES

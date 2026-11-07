@@ -56,6 +56,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Rows;
@@ -114,6 +115,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
             final RecordCursorFactory factory = op.getFactory();
 
             purgingOperator.clear();
+            op.setRewrittenPartitionTimestamps(Numbers.LONG_NULL, Numbers.LONG_NULL);
             if (tableWriter.inTransaction()) {
                 assert !tableWriter.getTableToken().isWal();
                 LOG.info().$("committing current transaction before UPDATE execution [table=").$(tableToken).$(" instance=").$(op.getCorrelationId()).I$();
@@ -122,6 +124,10 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
 
             // Partition to update
             int partitionIndex = -1;
+            // The timestamps of the first and the last partition the update rewrites. The cursor returns rows in
+            // ascending row id order, so the partitions come in ascending timestamp order.
+            long rewrittenPartitionTimestampLo = Numbers.LONG_NULL;
+            long rewrittenPartitionTimestampHi = Numbers.LONG_NULL;
             boolean isFatalFlushFailure = false;
             try {
                 final TableRecordMetadata tableMetadata = tableWriter.getMetadata();
@@ -180,6 +186,10 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
 
                         if (rowPartitionIndex != partitionIndex) {
                             checkPartitionCanUpdate(tableToken, rowPartitionIndex);
+                            rewrittenPartitionTimestampHi = tableWriter.getPartitionTimestamp(rowPartitionIndex);
+                            if (rewrittenPartitionTimestampLo == Numbers.LONG_NULL) {
+                                rewrittenPartitionTimestampLo = rewrittenPartitionTimestampHi;
+                            }
                             if (partitionIndex > -1) {
                                 LOG.info()
                                         .$("updating partition [partitionIndex=").$(partitionIndex)
@@ -238,6 +248,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                 if (partitionIndex > -1) {
                     op.forceTestTimeout();
                     tableWriter.commit();
+                    op.setRewrittenPartitionTimestamps(rewrittenPartitionTimestampLo, rewrittenPartitionTimestampHi);
                     tableWriter.openLastPartition();
                     purgingOperator.purge(
                             path.trimTo(rootLen),

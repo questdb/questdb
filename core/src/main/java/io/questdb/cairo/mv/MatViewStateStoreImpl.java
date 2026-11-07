@@ -51,6 +51,7 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
     private static final Log LOG = LogFactory.getLog(MatViewStateStoreImpl.class);
     private static final FiberLocal<MatViewTimerTask> tlTimerTask = new FiberLocal<>(MatViewTimerTask::new);
     private final Function<CharSequence, AtomicLong> createLastNotifiedTxn;
+    private final Function<CharSequence, AtomicLong> createLastTruncateTxn;
     private final CairoEngine engine;
     private final AtomicBoolean isPendingTaskReenqueueRequested = new AtomicBoolean();
     private final AtomicBoolean isPendingTaskReenqueueRunning = new AtomicBoolean();
@@ -59,6 +60,10 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
     // The goal is to avoid sending excessive incremental refresh messages to the underlying queue.
     // Note: this map is grow-only, i.e. keys are never removed.
     private final ConcurrentHashMap<AtomicLong> lastNotifiedTxnByTableName = new ConcurrentHashMap<>(false);
+    // Base table directory name to the seqTxn of the last TRUNCATE the WAL apply job applied to it. The directory
+    // name tells a base dropped and re-created under the same name from the original. Kept only for tables some
+    // view used as its base, see notifyBaseTableTruncate(). Grow-only, like lastNotifiedTxnByTableName.
+    private final ConcurrentHashMap<AtomicLong> lastTruncateTxnByTableDirName = new ConcurrentHashMap<>();
     private final MicrosecondClock microsecondClock;
     private final ConcurrentHashMap<MatViewState> stateByTableDirName = new ConcurrentHashMap<>();
     private final CarrierLocal<MatViewRefreshTask> taskHolder = new CarrierLocal<>(MatViewRefreshTask::new);
@@ -80,6 +85,7 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
         this.timerTaskQueue = engine.getMatViewTimerQueue();
         this.microsecondClock = engine.getConfiguration().getMicrosecondClock();
         this.createLastNotifiedTxn = name -> new AtomicLong();
+        this.createLastTruncateTxn = name -> new AtomicLong(-1);
     }
 
     // kept public for tests
@@ -137,6 +143,7 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
         onTaskQueueAppendForTesting = null;
         taskQueue.clear();
         lastNotifiedTxnByTableName.clear();
+        lastTruncateTxnByTableDirName.clear();
     }
 
     @Override
@@ -154,6 +161,31 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
     @Override
     public void createViewState(MatViewDefinition viewDefinition) {
         addViewState(viewDefinition).init();
+    }
+
+    @Override
+    public void enqueueAddRefreshRange(
+            TableToken matViewToken,
+            TableToken baseTableToken,
+            long rangeFrom,
+            long rangeTo,
+            long baseTableTxn
+    ) {
+        final MatViewState state = stateByTableDirName.get(matViewToken.getDirName());
+        if (state == null || state.isDropped()) {
+            logDroppedRequest(matViewToken, state, MatViewRefreshTask.getRefreshOperationName(MatViewRefreshTask.ADD_REFRESH_RANGE));
+            return;
+        }
+        final MatViewRefreshTask task = taskHolder.get();
+        task.clear();
+        task.matViewToken = matViewToken;
+        task.baseTableToken = baseTableToken;
+        task.baseTableTxn = baseTableTxn;
+        task.operation = MatViewRefreshTask.ADD_REFRESH_RANGE;
+        task.rangeFrom = rangeFrom;
+        task.rangeTo = rangeTo;
+        runTaskQueueAppendSeamForTesting();
+        taskQueue.enqueue(task);
     }
 
     @Override
@@ -275,6 +307,12 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
         enqueueTaskIfStateExists(matViewToken, MatViewRefreshTask.UPDATE_REFRESH_INTERVALS, null);
     }
 
+    @Override
+    public long getLastBaseTableTruncateTxn(TableToken baseTableToken) {
+        final AtomicLong lastTruncateTxn = lastTruncateTxnByTableDirName.get(baseTableToken.getDirName());
+        return lastTruncateTxn != null ? lastTruncateTxn.get() : -1;
+    }
+
     @TestOnly
     public Queue<MatViewRefreshTask> getTaskQueue() {
         return taskQueue;
@@ -337,6 +375,21 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
             } else {
                 LOG.debug().$("no need to notify to refresh job [baseTable=").$(baseTableToken).I$();
             }
+        }
+    }
+
+    @Override
+    public void notifyBaseTableTruncate(TableToken baseTableToken, long seqTxn) {
+        if (lastNotifiedTxnByTableName.get(baseTableToken.getTableName()) == null) {
+            // No view has used a table of this name as its base since the store was built, so no range of an
+            // older operation on this table is queued.
+            return;
+        }
+        final AtomicLong lastTruncateTxn = lastTruncateTxnByTableDirName.computeIfAbsent(baseTableToken.getDirName(), createLastTruncateTxn);
+        // The WAL apply job applies a table's transactions one at a time, under the table's writer, in seqTxn order,
+        // so the record only grows; a truncate applied again after a failed attempt keeps its seqTxn.
+        if (seqTxn > lastTruncateTxn.get()) {
+            lastTruncateTxn.set(seqTxn);
         }
     }
 

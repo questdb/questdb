@@ -140,8 +140,9 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
                                             gbpusd\t1.321\t2024-09-10T13:00:00.000000Z
                                             """));
 
+                    // A base TRUNCATE no longer invalidates the view; a base rename still does.
                     execute("2024-10-24T17:00:41.000000Z", refreshJob, telemetryJob,
-                            "truncate table base_price"
+                            "rename table base_price to base_price2"
                     );
                 }
 
@@ -153,7 +154,7 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
                                 created\tevent\tview_table_id\tbase_table_txn\tinvalidation_reason\tlatency
                                 2024-10-24T17:00:15.000000Z\t200\t6\tnull\t\t0.0
                                 2024-10-24T17:00:25.000000Z\t204\t6\t1\t\t10000.0
-                                2024-10-24T17:00:41.000000Z\t202\t6\tnull\ttruncate operation\t0.0
+                                2024-10-24T17:00:41.000000Z\t202\t6\tnull\tbase table is dropped or renamed\t0.0
                                 """);
             }
         });

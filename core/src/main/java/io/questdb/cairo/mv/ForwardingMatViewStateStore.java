@@ -71,6 +71,17 @@ public class ForwardingMatViewStateStore implements MatViewStateStore {
     }
 
     @Override
+    public void enqueueAddRefreshRange(
+            TableToken matViewToken,
+            TableToken baseTableToken,
+            long rangeFrom,
+            long rangeTo,
+            long baseTableTxn
+    ) {
+        delegate.enqueueAddRefreshRange(matViewToken, baseTableToken, rangeFrom, rangeTo, baseTableTxn);
+    }
+
+    @Override
     public void enqueueFullRefresh(TableToken matViewToken) {
         delegate.enqueueFullRefresh(matViewToken);
     }
@@ -127,6 +138,11 @@ public class ForwardingMatViewStateStore implements MatViewStateStore {
     }
 
     @Override
+    public long getLastBaseTableTruncateTxn(TableToken baseTableToken) {
+        return delegate.getLastBaseTableTruncateTxn(baseTableToken);
+    }
+
+    @Override
     public @Nullable MatViewState getViewState(TableToken matViewToken) {
         return delegate.getViewState(matViewToken);
     }
@@ -149,6 +165,11 @@ public class ForwardingMatViewStateStore implements MatViewStateStore {
     @Override
     public void notifyBaseTableCommit(MatViewRefreshTask task, long seqTxn) {
         delegate.notifyBaseTableCommit(task, seqTxn);
+    }
+
+    @Override
+    public void notifyBaseTableTruncate(TableToken baseTableToken, long seqTxn) {
+        delegate.notifyBaseTableTruncate(baseTableToken, seqTxn);
     }
 
     @Override

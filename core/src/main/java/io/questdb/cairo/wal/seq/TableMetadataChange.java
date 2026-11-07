@@ -54,17 +54,11 @@ public interface TableMetadataChange {
     /**
      * Returns a non-null reason when the operation on the base table may remove or retype a column that a dependent
      * live view reads. The WAL apply job then invalidates, with this reason, each live view on the base that reads
-     * a column missing from the base's metadata after the change. The WAL apply job reads this reason apart from
-     * {@link #matViewInvalidationReason()}, so mat view invalidation can change without changing live views.
+     * a column missing from the base's metadata after the change. No base operation invalidates a materialized view
+     * when it applies: the view's next refresh that recomputes rows compiles the view's SQL and decides, apart from
+     * the bare-name guard, see {@link #getChangedColumnNameCount()}.
      */
     default String liveViewInvalidationReason() {
-        return null;
-    }
-
-    /**
-     * Should return a non-null string in case when the operation on the base table leaves dependent mat views in invalid state.
-     */
-    default String matViewInvalidationReason() {
         return null;
     }
 

@@ -45,6 +45,7 @@ import io.questdb.log.LogRecord;
 import io.questdb.std.Chars;
 import io.questdb.std.LongList;
 import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.DirectString;
 import io.questdb.tasks.TableWriterTask;
@@ -101,9 +102,12 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     private final LongList extraInfo;
     private final ObjCharSequenceList extraStrInfo;
     private CharSequenceList activeExtraStrInfo;
+    // The highest and the lowest partition timestamp an ATTACH PARTITION attached, LONG_NULL before it
+    // attached any. The WAL apply job queues the attached range for the base's materialized views.
+    private long attachedPartitionTimestampHi = Numbers.LONG_NULL;
+    private long attachedPartitionTimestampLo = Numbers.LONG_NULL;
     private short command;
     private MemoryFCRImpl deserializeMem;
-    private boolean keepMatViewsValid;
 
     public AlterOperation() {
         this(new LongList(), new ObjList<>());
@@ -154,7 +158,8 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     @Override
     public long apply(MetadataService svc, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
         final QueryRegistry queryRegistry = sqlExecutionContext != null ? getCairoEngine().getQueryRegistry() : null;
-        keepMatViewsValid = false;
+        attachedPartitionTimestampLo = Numbers.LONG_NULL;
+        attachedPartitionTimestampHi = Numbers.LONG_NULL;
         long queryId = -1;
         try {
             if (queryRegistry != null) {
@@ -237,7 +242,8 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         directExtraStrInfo.clear();
         activeExtraStrInfo = extraStrInfo;
         extraInfo.clear();
-        keepMatViewsValid = false;
+        attachedPartitionTimestampLo = Numbers.LONG_NULL;
+        attachedPartitionTimestampHi = Numbers.LONG_NULL;
         clearCommandCorrelationId();
     }
 
@@ -307,6 +313,23 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         activeExtraStrInfo = directExtraStrInfo;
     }
 
+    /**
+     * Returns the highest partition timestamp that the last {@link #apply} of an ATTACH PARTITION attached, or
+     * {@link Numbers#LONG_NULL} when it attached none or the command is another one. An ATTACH that fails part-way
+     * reports the partitions it attached before the failure.
+     */
+    public long getAttachedPartitionTimestampHi() {
+        return attachedPartitionTimestampHi;
+    }
+
+    /**
+     * Returns the lowest partition timestamp that the last {@link #apply} of an ATTACH PARTITION attached, or
+     * {@link Numbers#LONG_NULL}, see {@link #getAttachedPartitionTimestampHi()}.
+     */
+    public long getAttachedPartitionTimestampLo() {
+        return attachedPartitionTimestampLo;
+    }
+
     @Override
     public CharSequence getChangedColumnName(int index) {
         assert index > -1 && index < getChangedColumnNameCount();
@@ -350,32 +373,12 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     @Override
     public String liveViewInvalidationReason() {
         // Only DROP, RENAME and CHANGE COLUMN TYPE can remove or retype a column that a live view reads.
-        // The partition operations, which matViewInvalidationReason() reports, commit as non-structural
-        // SQL transactions, and the WAL apply job invalidates no live view for those.
+        // The partition operations commit as non-structural SQL transactions, and the WAL apply job
+        // invalidates no live view for those.
         return switch (command) {
             case DROP_COLUMN -> "drop column operation";
             case RENAME_COLUMN -> "rename column operation";
             case CHANGE_COLUMN_TYPE -> "change column type operation";
-            default -> null;
-        };
-    }
-
-    @Override
-    public String matViewInvalidationReason() {
-        // Don't invalidate mat views in case when the operation was "harmless".
-        if (keepMatViewsValid) {
-            return null;
-        }
-        // Table rename is not in the list since it's handled by the engine directly. That's because the invalidation
-        // looks up dependent views by table name which has already changed at this point, not directory name.
-        // DROP, RENAME and CHANGE COLUMN TYPE invalidate no mat view: the view's next refresh that recomputes rows
-        // compiles its SQL, which fails, and so invalidates the view, only when the SQL reads the changed column.
-        // The WAL apply job guards the one case that the compile cannot catch, a bare name that a column change
-        // switches between a column and a call to a zero-argument function, see getChangedColumnNameCount().
-        return switch (command) {
-            case DROP_PARTITION -> "drop partition operation";
-            case DETACH_PARTITION -> "detach partition operation";
-            case ATTACH_PARTITION -> "attach partition operation";
             default -> null;
         };
     }
@@ -546,6 +549,12 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                     );
                 }
                 attached = true;
+                if (attachedPartitionTimestampLo == Numbers.LONG_NULL || partitionTimestamp < attachedPartitionTimestampLo) {
+                    attachedPartitionTimestampLo = partitionTimestamp;
+                }
+                if (partitionTimestamp > attachedPartitionTimestampHi) {
+                    attachedPartitionTimestampHi = partitionTimestamp;
+                }
             }
         } finally {
             // An attach consumes its .attachable directory, so no WAL replay can redo it. One durable epoch covers
@@ -865,7 +874,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                 squashPartitions(svc);
                 break;
             case SET_DEDUP_ENABLE:
-                keepMatViewsValid = enableDeduplication(svc);
+                enableDeduplication(svc);
                 break;
             case SET_DEDUP_DISABLE:
                 svc.disableDeduplication();
@@ -904,9 +913,9 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         }
     }
 
-    private boolean enableDeduplication(MetadataService svc) {
+    private void enableDeduplication(MetadataService svc) {
         assert extraInfo.size() > 0;
-        return svc.enableDeduplicationWithUpsertKeys(extraInfo);
+        svc.enableDeduplicationWithUpsertKeys(extraInfo);
     }
 
     private ObjList<CharSequence> getAuthColumnNames() {

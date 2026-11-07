@@ -56,11 +56,12 @@ import static io.questdb.cairo.wal.WalUtils.*;
  * buckets that overlap an existing base partition, so its REPLACE_RANGE commits never delete view
  * rows in a range the base no longer holds.
  * <p>
- * Base DROP / DETACH PARTITION and TRUNCATE still invalidate dependent views, so the tests remove
- * base partitions with TTL, which drops the oldest ones, and with replace-range commits written
- * through the WalWriter API, which remove every partition they empty. TTL counts from the base's
- * newest timestamp capped at the clock, so the tests that set the clock keep it at or after the
- * base's newest row whenever TTL should drop a partition.
+ * The tests remove base partitions with TTL, which drops the oldest ones, with replace-range commits
+ * written through the WalWriter API, which remove every partition they empty, and with base DROP
+ * PARTITION, which leaves the views valid and can leave a gap between the base's partitions. TTL
+ * counts from the base's newest timestamp capped at the clock, so the tests that set the clock keep
+ * it at or after the base's newest row whenever TTL should drop a partition. The refresh step,
+ * which cairo.mat.view.rows.per.query.estimate sizes, spans many partitions unless a test lowers it.
  */
 @RunWith(Parameterized.class)
 public class MatViewPartitionClipTest extends AbstractCairoTest {
@@ -209,6 +210,20 @@ public class MatViewPartitionClipTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIncrementalRefreshOfIntervalsQueuedBeforeInteriorDropKeepsRows() throws Exception {
+        // A step of one partition's buckets at most.
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, 1);
+        assertMemoryLeak(this::assertIncrementalRefreshOfIntervalsQueuedBeforeInteriorDropKeepsRows);
+    }
+
+    @Test
+    public void testIncrementalRefreshOfIntervalsQueuedBeforeInteriorDropKeepsRowsWithLargeStep() throws Exception {
+        // A step that spans many partitions: a step-group that ran past its interval's end would span the gap.
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, 1_000_000);
+        assertMemoryLeak(this::assertIncrementalRefreshOfIntervalsQueuedBeforeInteriorDropKeepsRows);
+    }
+
+    @Test
     public void testIncrementalRefreshOfIntervalsQueuedBeforeTtlDropKeepsRows() throws Exception {
         // A MANUAL view queues a late row into 2024-01-01; TTL drops that day before the view
         // refreshes. The incremental refresh of the queued interval keeps the view's row there.
@@ -240,6 +255,47 @@ public class MatViewPartitionClipTest extends AbstractCairoTest {
             drainWalAndMatViewQueues();
             assertViewRows(allFourDays());
             assertViewCaughtUp("price_1h");
+        });
+    }
+
+    @Test
+    public void testLateRowsRecreatingDroppedPartitionChangeOnlyTheirBuckets() throws Exception {
+        // Known limitation: DROP PARTITION gets no cut. A MANUAL view queues a change to the 00:00 bucket of
+        // 2024-01-02, the base drops that partition, and a late row recreates it in the 05:00 bucket. The refresh
+        // recomputes the buckets of the queued change and of the late row from the rows the base holds now: the
+        // 00:00 bucket goes, the 05:00 bucket gets the late row, and the 10:00 bucket keeps its row.
+        assertMemoryLeak(() -> {
+            createBase("DAY", null);
+            createManualView();
+            execute("""
+                    INSERT INTO base VALUES
+                    ('a', 1.0, '2024-01-01T00:10:00.000000Z'),
+                    ('b', 2.0, '2024-01-02T00:10:00.000000Z'),
+                    ('x', 7.0, '2024-01-02T10:10:00.000000Z'),
+                    ('c', 3.0, '2024-01-03T00:10:00.000000Z')
+                    """);
+            drainWalQueue();
+            execute("REFRESH MATERIALIZED VIEW price_1h INCREMENTAL");
+            drainWalAndMatViewQueues();
+
+            execute("INSERT INTO base VALUES ('b', 22.0, '2024-01-02T00:20:00.000000Z')");
+            drainWalQueue();
+            execute("ALTER TABLE base DROP PARTITION LIST '2024-01-02'");
+            drainWalQueue();
+            execute("INSERT INTO base VALUES ('y', 8.0, '2024-01-02T05:10:00.000000Z')");
+            drainWalQueue();
+            execute("REFRESH MATERIALIZED VIEW price_1h INCREMENTAL");
+            drainWalAndMatViewQueues();
+
+            assertViewRows("""
+                    ts\tsym\tprice
+                    2024-01-01T00:00:00.000000Z\ta\t1.0
+                    2024-01-02T05:00:00.000000Z\ty\t8.0
+                    2024-01-02T10:00:00.000000Z\tx\t7.0
+                    2024-01-03T00:00:00.000000Z\tc\t3.0
+                    """);
+            assertViewCaughtUp("price_1h");
+            assertViewValid();
         });
     }
 
@@ -324,6 +380,20 @@ public class MatViewPartitionClipTest extends AbstractCairoTest {
                     """);
             assertViewCaughtUp("price_1h");
         });
+    }
+
+    @Test
+    public void testMinMaxRecomputeAfterMissingWalFilesKeepsInteriorDroppedRows() throws Exception {
+        setProperty(PropertyKey.DEBUG_MAT_VIEW_REFRESH_MISSING_WAL_FILES_FATAL, "false");
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, 1);
+        assertMemoryLeak(this::assertMinMaxRecomputeAfterMissingWalFilesKeepsInteriorDroppedRows);
+    }
+
+    @Test
+    public void testMinMaxRecomputeAfterMissingWalFilesKeepsInteriorDroppedRowsWithLargeStep() throws Exception {
+        setProperty(PropertyKey.DEBUG_MAT_VIEW_REFRESH_MISSING_WAL_FILES_FATAL, "false");
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, 1_000_000);
+        assertMemoryLeak(this::assertMinMaxRecomputeAfterMissingWalFilesKeepsInteriorDroppedRows);
     }
 
     @Test
@@ -596,6 +666,18 @@ public class MatViewPartitionClipTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUserRangeAcrossDroppedInteriorPartitionKeepsRows() throws Exception {
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, 1);
+        assertMemoryLeak(this::assertUserRangeAcrossDroppedInteriorPartitionKeepsRows);
+    }
+
+    @Test
+    public void testUserRangeAcrossDroppedInteriorPartitionKeepsRowsWithLargeStep() throws Exception {
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, 1_000_000);
+        assertMemoryLeak(this::assertUserRangeAcrossDroppedInteriorPartitionKeepsRows);
+    }
+
+    @Test
     public void testUserRangeAcrossTtlDroppedRangeKeepsRows() throws Exception {
         // A user RANGE recomputes only where the base still holds rows. TTL has dropped 2024-01-01,
         // and a replace-range commit has emptied, and so removed, 2024-01-03, which lies between the
@@ -693,6 +775,13 @@ public class MatViewPartitionClipTest extends AbstractCairoTest {
                 """;
     }
 
+    private void assertBasePartitions(String partitions) throws Exception {
+        assertQuery("SELECT name FROM table_partitions('base') ORDER BY name")
+                .noLeakCheck()
+                .expectSize()
+                .returns("name\n" + partitions);
+    }
+
     private void assertBasePartitionsStart(String firstPartition) throws Exception {
         assertQuery("SELECT min(name) first FROM table_partitions('base')")
                 .noLeakCheck()
@@ -759,6 +848,67 @@ public class MatViewPartitionClipTest extends AbstractCairoTest {
                     "(SELECT ts, sym, last(price) AS price FROM " + base + " SAMPLE BY 1h) ORDER BY ts, sym"
             );
         }
+    }
+
+    // A MANUAL view queues changes to 2024-01-02 and 2024-01-03, and the base then drops 2024-01-02, which lies
+    // between partitions it keeps. The incremental refresh of the queued intervals keeps the view's row of
+    // 2024-01-02, with its value from before the queued change, and follows the change to 2024-01-03.
+    private void assertIncrementalRefreshOfIntervalsQueuedBeforeInteriorDropKeepsRows() throws Exception {
+        createBase("DAY", null);
+        createManualView();
+        insertFourDays();
+        drainWalQueue();
+        execute("REFRESH MATERIALIZED VIEW price_1h INCREMENTAL");
+        drainWalAndMatViewQueues();
+
+        execute("INSERT INTO base VALUES ('b', 22.0, '2024-01-02T00:20:00.000000Z'), ('c', 33.0, '2024-01-03T00:20:00.000000Z')");
+        drainWalQueue();
+        execute("ALTER TABLE base DROP PARTITION LIST '2024-01-02'");
+        drainWalQueue();
+        assertBasePartitions("2024-01-01\n2024-01-03\n2024-01-04\n");
+
+        execute("REFRESH MATERIALIZED VIEW price_1h INCREMENTAL");
+        drainWalAndMatViewQueues();
+        assertViewRows("""
+                ts\tsym\tprice
+                2024-01-01T00:00:00.000000Z\ta\t1.0
+                2024-01-02T00:00:00.000000Z\tb\t2.0
+                2024-01-03T00:00:00.000000Z\tc\t33.0
+                2024-01-04T00:00:00.000000Z\td\t4.0
+                """);
+        assertViewCaughtUp("price_1h");
+        assertViewValid();
+    }
+
+    // The base drops its interior partition 2024-01-02, then the refresh cannot read the base's WAL transactions
+    // and recomputes the base's whole [minTs, maxTs]. The recompute keeps the view's row of 2024-01-02 and follows
+    // the base in the other partitions.
+    private void assertMinMaxRecomputeAfterMissingWalFilesKeepsInteriorDroppedRows() throws Exception {
+        createBase("DAY", null);
+        createManualView();
+        insertFourDays();
+        drainWalQueue();
+        execute("REFRESH MATERIALIZED VIEW price_1h INCREMENTAL");
+        drainWalAndMatViewQueues();
+
+        execute("ALTER TABLE base DROP PARTITION LIST '2024-01-02'");
+        execute("INSERT INTO base VALUES ('c', 33.0, '2024-01-03T00:20:00.000000Z'), ('e', 5.0, '2024-01-05T00:10:00.000000Z')");
+        drainWalQueue();
+        assertBasePartitions("2024-01-01\n2024-01-03\n2024-01-04\n2024-01-05\n");
+
+        removeWalEventFiles(engine.verifyTableName("base"));
+        execute("REFRESH MATERIALIZED VIEW price_1h INCREMENTAL");
+        drainWalAndMatViewQueues();
+        assertViewRows("""
+                ts\tsym\tprice
+                2024-01-01T00:00:00.000000Z\ta\t1.0
+                2024-01-02T00:00:00.000000Z\tb\t2.0
+                2024-01-03T00:00:00.000000Z\tc\t33.0
+                2024-01-04T00:00:00.000000Z\td\t4.0
+                2024-01-05T00:00:00.000000Z\te\t5.0
+                """);
+        assertViewCaughtUp("price_1h");
+        assertViewValid();
     }
 
     private void assertSqlEquals(String actual, String expected) throws Exception {
@@ -849,6 +999,32 @@ public class MatViewPartitionClipTest extends AbstractCairoTest {
                 .returns("view_status\nvalid\n");
     }
 
+    // The base drops its interior partition 2024-01-02, and the view keeps its row there. The view's own
+    // 2024-01-04 partition is dropped, so that a user RANGE across the gap has work to do: it restores 2024-01-04
+    // and keeps 2024-01-02.
+    private void assertUserRangeAcrossDroppedInteriorPartitionKeepsRows() throws Exception {
+        // A fixed clock past the base's newest row keeps the view's refresh timestamps, and so its status,
+        // deterministic.
+        currentMicros = parseFloorPartialTimestamp("2024-01-05T00:00:00.000000Z");
+        createBase("DAY", null);
+        createView("1h", "DAY");
+        insertFourDays();
+        drainWalAndMatViewQueues();
+        execute("ALTER TABLE base DROP PARTITION LIST '2024-01-02'");
+        drainWalAndMatViewQueues();
+        assertBasePartitions("2024-01-01\n2024-01-03\n2024-01-04\n");
+        assertViewRows(allFourDays());
+        assertViewValid();
+
+        execute("ALTER MATERIALIZED VIEW price_1h DROP PARTITION LIST '2024-01-04'");
+        drainWalAndMatViewQueues();
+        execute("REFRESH MATERIALIZED VIEW price_1h RANGE FROM '2023-12-31T00:00:00.000000Z' TO '2024-01-05T00:00:00.000000Z'");
+        drainWalAndMatViewQueues();
+        assertViewRows(allFourDays());
+        assertViewCaughtUp("price_1h");
+        assertViewValid();
+    }
+
     private void assertViewCaughtUp(String viewName) throws Exception {
         assertQuery("SELECT refresh_base_table_txn = base_table_txn AS caught_up FROM materialized_views() WHERE view_name = '" + viewName + "'")
                 .noLeakCheck()
@@ -889,6 +1065,10 @@ public class MatViewPartitionClipTest extends AbstractCairoTest {
     // Builds price_1h over a DAY base with TTL 2 DAYS so the view holds four days (2024-01-01..04)
     // while the base has dropped its oldest day (2024-01-01). The two-phase insert builds the view
     // while 2024-01-01 is still present, then advances the base so TTL drops it.
+    private void createManualView() throws Exception {
+        execute("CREATE MATERIALIZED VIEW price_1h REFRESH MANUAL AS (SELECT ts, sym, last(price) AS price FROM base SAMPLE BY 1h) PARTITION BY DAY");
+    }
+
     private void createTtlBaseViewWithOldestDropped() throws Exception {
         createBase("DAY", "2 DAYS");
         createView("1h", "DAY");
@@ -926,6 +1106,16 @@ public class MatViewPartitionClipTest extends AbstractCairoTest {
                 }
             }
         }
+    }
+
+    private void insertFourDays() throws Exception {
+        execute("""
+                INSERT INTO base VALUES
+                ('a', 1.0, '2024-01-01T00:10:00.000000Z'),
+                ('b', 2.0, '2024-01-02T00:10:00.000000Z'),
+                ('c', 3.0, '2024-01-03T00:10:00.000000Z'),
+                ('d', 4.0, '2024-01-04T00:10:00.000000Z')
+                """);
     }
 
     private String replaceTs(String expected) {

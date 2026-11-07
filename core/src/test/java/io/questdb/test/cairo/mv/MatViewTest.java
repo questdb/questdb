@@ -357,12 +357,13 @@ public class MatViewTest extends AbstractCairoTest {
 
             // The rebase replaced price_1h's target token (old dir dropped, new dir created) and reset its
             // sequencer, so its dependents' watermarks no longer map onto it: both direct dependents are
-            // invalidated, and the cascade carries the invalidation down to the grandchild (price_1w). The
-            // reason the direct dependents see is "base table is dropped or renamed" (the only source of that
-            // string is MatViewRefreshJob.checkIfBaseTableDropped, which fires when the base token fails
-            // verification during the rebase teardown) rather than the "base table rebase" reason CairoEngine
-            // enqueues -- accurate either way, since a rebase drops and recreates the target token. The
-            // rebased price_1h itself comes back valid (fresh default state, data preserved via hard links).
+            // invalidated. The invalidation no longer cascades to the grandchild (price_1w), which stays valid
+            // on price_1d's rows. The reason the direct dependents see is "base table is dropped or renamed"
+            // (the only source of that string is MatViewRefreshJob.checkIfBaseTableDropped, which fires when
+            // the base token fails verification during the rebase teardown) rather than the "base table
+            // rebase" reason CairoEngine enqueues -- accurate either way, since a rebase drops and recreates
+            // the target token. The rebased price_1h itself comes back valid (fresh default state, data
+            // preserved via hard links).
             assertQuery("select view_name, base_table_name, view_status, invalidation_reason from materialized_views order by view_name")
                     .noLeakCheck()
                     .returns("""
@@ -370,7 +371,7 @@ public class MatViewTest extends AbstractCairoTest {
                             price_1d\tprice_1h\tinvalid\tbase table is dropped or renamed
                             price_1d_2\tprice_1h\tinvalid\tbase table is dropped or renamed
                             price_1h\tbase_price\tvalid\t
-                            price_1w\tprice_1d\tinvalid\tbase materialized view is invalidated
+                            price_1w\tprice_1d\tvalid\t
                             """);
 
             // A full refresh of the dependents recovers them against the rebased price_1h.
@@ -2322,8 +2323,9 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testBaseTableInvalidateOnAttachPartition() throws Exception {
+        // ATTACH PARTITION invalidates no view: it queues the attached partition's range for the view's refresh.
         final String partition = "2024-01-01";
-        testBaseTableInvalidateOnOperation(
+        testBaseTableKeepsViewValidOnOperation(
                 () -> {
                     // insert a few rows to have a detachable partition
                     execute(
@@ -2340,8 +2342,7 @@ public class MatViewTest extends AbstractCairoTest {
                         Assert.assertTrue(Files.rename(path.$(), other.$()) > -1);
                     }
                 },
-                "alter table base_price attach partition list '" + partition + "';",
-                "attach partition operation"
+                "alter table base_price attach partition list '" + partition + "';"
         );
     }
 
@@ -2396,7 +2397,8 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testBaseTableInvalidateOnDetachPartition() throws Exception {
-        testBaseTableInvalidateOnOperation("alter table base_price detach partition where ts > 0;", "detach partition operation");
+        // DETACH PARTITION invalidates no view: the view keeps its rows there.
+        testBaseTableKeepsViewValidOnOperation("alter table base_price detach partition where ts > 0;");
     }
 
     @Test
@@ -2408,7 +2410,8 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testBaseTableInvalidateOnDropPartition() throws Exception {
-        testBaseTableInvalidateOnOperation("alter table base_price drop partition where ts > 0;", "drop partition operation");
+        // DROP PARTITION invalidates no view: the view keeps its rows there.
+        testBaseTableKeepsViewValidOnOperation("alter table base_price drop partition where ts > 0;");
     }
 
     @Test
@@ -2425,12 +2428,15 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testBaseTableInvalidateOnTruncate() throws Exception {
-        testBaseTableInvalidateOnOperation("truncate table base_price;", "truncate operation");
+        // TRUNCATE invalidates no view: the view keeps its rows, and its refreshes drop the intervals queued
+        // before the truncate.
+        testBaseTableKeepsViewValidOnOperation("truncate table base_price;");
     }
 
     @Test
     public void testBaseTableInvalidateOnUpdate() throws Exception {
-        testBaseTableInvalidateOnOperation("update base_price set amount = 42;", "update operation");
+        // UPDATE invalidates no view: it queues the range of the partitions it rewrote for the view's refresh.
+        testBaseTableKeepsViewValidOnOperation("update base_price set amount = 42;");
     }
 
     @Test
@@ -4591,7 +4597,7 @@ public class MatViewTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns(replaceExpectedTimestamp(bothDays));
 
-            // Dropping a base partition invalidates the view and leaves the now-stale bucket behind.
+            // Dropping a base partition leaves the view valid, with the bucket the base no longer holds.
             execute("alter table base_price drop partition list '2024-09-10';");
             drainQueues();
 
@@ -4600,7 +4606,7 @@ public class MatViewTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("""
                             view_name\tview_status
-                            price_1h\tinvalid
+                            price_1h\tvalid
                             """);
             assertQuery("price_1h")
                     .timestamp("ts")
@@ -7541,7 +7547,12 @@ public class MatViewTest extends AbstractCairoTest {
                             x_1h\timmediate\tx\tvalid\t\t2024-01-01T01:01:01.842574Z\t2024-01-01T01:01:01.842574Z\t2\t2
                             """);
 
-            // Make the view invalid. Range refresh should be ignored.
+            // Make the view invalid: a base rename invalidates it, and renaming the base back keeps it invalid.
+            // Range refresh should be ignored. Each rename is a base transaction, so the base reaches txn 6: two
+            // inserts, two renames, the truncate and the insert.
+            execute("rename table x to x_tmp;");
+            execute("rename table x_tmp to x;");
+            drainQueues();
             execute("truncate table x;");
             execute(insertOlderRows);
             drainQueues();
@@ -7558,7 +7569,7 @@ public class MatViewTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("""
                             view_name\trefresh_type\tbase_table_name\tview_status\tinvalidation_reason\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\trefresh_base_table_txn\tbase_table_txn
-                            x_1h\timmediate\tx\tinvalid\ttruncate operation\t2024-01-01T01:01:01.842574Z\t2024-01-01T01:01:01.842574Z\t2\t4
+                            x_1h\timmediate\tx\tinvalid\ttable rename operation\t2024-01-01T01:01:01.842574Z\t2024-01-01T01:01:01.842574Z\t2\t6
                             """);
         });
     }
@@ -7847,17 +7858,18 @@ public class MatViewTest extends AbstractCairoTest {
 
             drainQueues();
 
-            // all views should be invalid
+            // A base TRUNCATE invalidates no view: the chain keeps its rows and follows the rows written after it.
             assertQuery("select view_name, refresh_type, base_table_name, view_status, invalidation_reason from materialized_views order by view_name")
                     .noLeakCheck()
                     .returns("""
                             view_name\trefresh_type\tbase_table_name\tview_status\tinvalidation_reason
-                            v1_base\timmediate\tbase\tinvalid\ttruncate operation
-                            v2_v1\timmediate\tv1_base\tinvalid\tbase materialized view is invalidated
-                            v3_v1\timmediate\tv1_base\tinvalid\tbase materialized view is invalidated
-                            v4_v3\timmediate\tv3_v1\tinvalid\tbase materialized view is invalidated
+                            v1_base\timmediate\tbase\tvalid\t
+                            v2_v1\timmediate\tv1_base\tvalid\t
+                            v3_v1\timmediate\tv1_base\tvalid\t
+                            v4_v3\timmediate\tv3_v1\tvalid\t
                             """);
 
+            // Neither does a parent FULL refresh, which truncates the parent before it rebuilds it.
             execute("refresh materialized view " + view1Name + " full");
             drainQueues();
 
@@ -7866,9 +7878,9 @@ public class MatViewTest extends AbstractCairoTest {
                     .returns("""
                             view_name\trefresh_type\tbase_table_name\tview_status\tinvalidation_reason
                             v1_base\timmediate\tbase\tvalid\t
-                            v2_v1\timmediate\tv1_base\tinvalid\tbase materialized view is invalidated
-                            v3_v1\timmediate\tv1_base\tinvalid\tbase materialized view is invalidated
-                            v4_v3\timmediate\tv3_v1\tinvalid\tbase materialized view is invalidated
+                            v2_v1\timmediate\tv1_base\tvalid\t
+                            v3_v1\timmediate\tv1_base\tvalid\t
+                            v4_v3\timmediate\tv3_v1\tvalid\t
                             """);
 
             // Refresh the rest
@@ -7944,7 +7956,7 @@ public class MatViewTest extends AbstractCairoTest {
                             view_name\trefresh_type\tbase_table_name\tview_status\tinvalidation_reason
                             v2_v1\timmediate\tv1_base\tinvalid\tbase table is dropped or renamed
                             v3_v1\timmediate\tv1_base\tinvalid\tbase table is dropped or renamed
-                            v4_v3\timmediate\tv3_v1\tinvalid\tbase materialized view is invalidated
+                            v4_v3\timmediate\tv3_v1\tvalid\t
                             """);
         });
     }
@@ -7976,10 +7988,10 @@ public class MatViewTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("""
                             view_name\trefresh_type\tbase_table_name\tview_status\tinvalidation_reason
-                            price_1d\timmediate\tprice_1h\tinvalid\tbase materialized view refresh failed
-                            price_1d_2\timmediate\tprice_1h\tinvalid\tbase materialized view refresh failed
+                            price_1d\timmediate\tprice_1h\tvalid\t
+                            price_1d_2\timmediate\tprice_1h\tvalid\t
                             price_1h\timmediate\tbase_price\tinvalid\t[-1]: unexpected reduce error
-                            price_1w\timmediate\tprice_1d\tinvalid\tbase materialized view is invalidated
+                            price_1w\timmediate\tprice_1d\tvalid\t
                             """);
         });
     }
@@ -13643,12 +13655,15 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testTruncateBarrierDoesNotAdvanceRefreshBaseTxnPastTruncate() throws Exception {
+        // The truncate is no longer a barrier but a cut: a refresh that scans a TRUNCATE drops the intervals queued
+        // before it, keeps the view's rows and advances the refresh position past the truncate.
         assertMemoryLeak(() -> {
             execute("create table base (sym symbol, val double, ts timestamp) timestamp(ts) partition by DAY WAL");
             createMatView("mv", "select ts, count() cnt from base sample by 1h");
             execute("insert into base values ('a', 1.0, '2024-09-10T12:00'), ('a', 2.0, '2024-09-10T12:30')");
             drainQueues(); // applies base WAL and converges the view
 
+            final TableToken baseToken = engine.verifyTableName("base");
             final TableToken viewToken = engine.verifyTableName("mv");
             final MatViewStateStoreImpl store = (MatViewStateStoreImpl) engine.getMatViewStateStore();
             final MatViewState state = store.getViewState(viewToken);
@@ -13656,54 +13671,58 @@ public class MatViewTest extends AbstractCairoTest {
             final long baseTxnBeforeTruncate = state.getLastRefreshBaseTxn();
             Assert.assertTrue(baseTxnBeforeTruncate > -1);
 
-            // Truncate (the barrier) then add a later bucket. Apply only the base WAL so the truncate sits
-            // in the gap the next incremental refresh scans, WITHOUT processing mat-view tasks yet.
+            // A row before the truncate, the truncate, and a later bucket. Apply only the base WAL so that all
+            // three sit in the gap the next incremental refresh scans, WITHOUT processing mat-view tasks yet.
+            execute("insert into base values ('a', 3.0, '2024-09-10T12:45')");
             execute("truncate table base");
             execute("insert into base values ('a', 9.0, '2024-09-10T20:00')");
             drainWalQueue();
 
-            // Drain any queued mat-view task (including the apply-time INVALIDATE) before the lone
-            // refresh run, so the refresh run itself -- not a separately-queued INVALIDATE -- is what
-            // must avoid advancing the watermark past the truncate.
+            // Drain any queued mat-view task before the lone refresh run, so the refresh run itself is what scans
+            // the truncate.
             final MatViewRefreshTask discard = new MatViewRefreshTask();
             while (store.tryDequeueRefreshTask(discard)) {
                 // drop
             }
 
-            // Drive ONE fresh incremental refresh. The truncate in the scanned range must NOT let the
-            // no-rows commit advance the persisted base txn past the truncate. The same drain that runs the
-            // refresh also dequeues the barrier's INVALIDATE and finalizes it, so the view ends invalid.
             store.enqueueIncrementalRefresh(viewToken);
             try (MatViewRefreshJob job = createMatViewRefreshJob()) {
                 job.run();
             }
 
             Assert.assertEquals(
-                    "a truncate-barrier refresh must not advance the persisted base txn past the truncate",
-                    baseTxnBeforeTruncate,
+                    "a refresh that scans a truncate advances the persisted base txn past it",
+                    engine.getTableSequencerAPI().getTxnTracker(baseToken).getWriterTxn(),
                     state.getLastRefreshBaseTxn()
             );
-            // The user-visible half of the barrier: the durable INVALIDATE the refresh enqueued must take
-            // effect, leaving the view actually invalid with the truncate reason -- not silently valid.
-            Assert.assertTrue("the truncate barrier must invalidate the view", state.isInvalid());
+            Assert.assertTrue(state.getLastRefreshBaseTxn() > baseTxnBeforeTruncate);
+            Assert.assertFalse("the truncate must leave the view valid", state.isInvalid());
             drainWalAndMatViewQueues();
             assertQuery("select view_status, invalidation_reason from materialized_views where view_name = 'mv'")
                     .noRandomAccess()
                     .noLeakCheck()
-                    .returns("view_status\tinvalidation_reason\ninvalid\ttruncate operation\n");
+                    .returns("view_status\tinvalidation_reason\nvalid\t\n");
+            // The 12:00 bucket keeps its count from before the truncate: the interval of the 12:45 row, written
+            // before the truncate, is dropped.
+            assertQuery("mv")
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ts\tcnt
+                            2024-09-10T12:00:00.000000Z\t2
+                            2024-09-10T20:00:00.000000Z\t1
+                            """);
         });
     }
 
     @Test
     public void testRefreshIntervalsAdvanceOnlyAfterFirstDataRefresh() throws Exception {
-        // Pins the bootstrap invariant behind the truncate-barrier's never-refreshed guard in
-        // updateRefreshIntervals0: refreshIntervalsBaseTxn advances (the setRefreshIntervalsBaseTxn call)
-        // only inside if (lastRefreshTxn > -1), where lastRefreshTxn = max(lastRefreshBaseTxn,
-        // refreshIntervalsBaseTxn). With both at the -1 default that block is skipped, so the first advance
-        // requires lastRefreshBaseTxn already > -1 -- a never-data-refreshed view can never reach
-        // refreshIntervalsBaseTxn > -1. That makes the never-refreshed side of the truncate barrier
-        // (lastRefreshBaseTxn == -1) unreachable: an external review argued it stalls a view forever, but
-        // the precondition cannot form.
+        // Pins the bootstrap invariant of updateRefreshIntervals0: refreshIntervalsBaseTxn advances (the
+        // setRefreshIntervalsBaseTxn call) only inside if (lastRefreshTxn > -1), where lastRefreshTxn =
+        // max(lastRefreshBaseTxn, refreshIntervalsBaseTxn). With both at the -1 default that block is skipped, so
+        // the first advance requires lastRefreshBaseTxn already > -1 -- a never-data-refreshed view can never
+        // reach refreshIntervalsBaseTxn > -1, and its first build recomputes the whole base.
         //
         // A built-in positive control keeps the no-advance assertion honest: the SAME
         // UPDATE_REFRESH_INTERVALS pass DOES advance refreshIntervalsBaseTxn once the view has refreshed, so
@@ -13761,10 +13780,8 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testTruncateBarrierInvalidatesChainedMatView() throws Exception {
-        // A truncate barrier that invalidates a mat-view must cascade to mat-views chained on top of it.
-        // The refresh-path barrier invalidates view A inline; A's dependent view B (built on A) is then
-        // stale and must be invalidated too -- the same cascade invalidateView performs on a successful
-        // invalidation. Without the cascade, B is silently left valid with stale pre-truncate rows.
+        // A truncate under view A no longer invalidates A, nor cascades to view B, built on A. A's refresh drops
+        // the intervals queued before the truncate and keeps its rows, and B follows A's commits.
         assertMemoryLeak(() -> {
             execute("create table base (sym symbol, val double, ts timestamp) timestamp(ts) partition by DAY WAL");
             createMatView("mv_a", "select ts, count() cnt from base sample by 1h");
@@ -13790,34 +13807,37 @@ public class MatViewTest extends AbstractCairoTest {
             execute("insert into base values ('a', 9.0, '2024-09-10T20:00')");
             drainWalQueue();
 
-            // Drop any queued mat-view task (including the apply-time INVALIDATE that already cascades) so
-            // the refresh-path barrier on A -- not a separately-queued INVALIDATE -- is the sole trigger.
-            final MatViewRefreshTask discard = new MatViewRefreshTask();
-            while (store.tryDequeueRefreshTask(discard)) {
-                // drop
-            }
-            Assert.assertFalse("view B must still look valid before the barrier refresh", stateB.isInvalid());
-
-            // Drive A's incremental refresh: it hits the truncate barrier and invalidates A inline, which
-            // must cascade an INVALIDATE to B. Drain so B's INVALIDATE is processed.
             store.enqueueIncrementalRefresh(viewA);
             drainWalAndMatViewQueues();
+            drainWalAndMatViewQueues();
 
-            Assert.assertTrue("view A must be invalidated by the truncate barrier", stateA.isInvalid());
-            Assert.assertTrue(
-                    "a chained mat-view must be invalidated when its base mat-view is invalidated by a truncate barrier",
-                    stateB.isInvalid()
-            );
+            Assert.assertFalse("view A must stay valid across the truncate", stateA.isInvalid());
+            Assert.assertFalse("a chained mat-view must stay valid when its base mat-view refreshes over a truncate", stateB.isInvalid());
+            assertQuery("mv_a")
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ts\tcnt
+                            2024-09-10T12:00:00.000000Z\t2
+                            2024-09-10T20:00:00.000000Z\t1
+                            """);
+            // B recomputes its day bucket from A's rows: 2 + 1.
+            assertQuery("mv_b")
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ts\tcnt
+                            2024-09-10T00:00:00.000000Z\t3
+                            """);
         });
     }
 
     @Test
     public void testTruncateBarrierHoldsWatermarkForPeriodMatView() throws Exception {
-        // The truncate barrier must hold the refresh watermark for PERIOD mat-views too, not only plain
-        // ones. A period view's incremental refresh synthesizes a fresh range from the period bounds, so
-        // even when the barrier clears the incremental intervals the refresh would otherwise build a
-        // non-empty range, commit, and advance lastRefreshBaseTxn past the truncate -- blinding the
-        // load-time backstop if the queued invalidation is later lost across a role switch.
+        // A period mat-view also refreshes over a truncate: its refresh drops the intervals queued before the
+        // truncate, keeps the view's rows, recomputes the newly completed period and advances the watermark.
         assertMemoryLeak(() -> {
             execute("create table base (sym symbol, val double, ts timestamp) timestamp(ts) partition by DAY WAL");
             currentMicros = parseFloorPartialTimestamp("2024-09-10T00:00:00.000000Z");
@@ -13832,6 +13852,7 @@ public class MatViewTest extends AbstractCairoTest {
             drainMatViewTimerQueue(timerJob);
             drainQueues();
 
+            final TableToken baseToken = engine.verifyTableName("base");
             final TableToken viewToken = engine.verifyTableName("mv");
             final MatViewStateStoreImpl store = (MatViewStateStoreImpl) engine.getMatViewStateStore();
             final MatViewState state = store.getViewState(viewToken);
@@ -13839,47 +13860,54 @@ public class MatViewTest extends AbstractCairoTest {
             final long baseTxnBeforeTruncate = state.getLastRefreshBaseTxn();
             Assert.assertTrue("precondition: the period view refreshed at least once", baseTxnBeforeTruncate > -1);
 
-            // Truncate (the barrier) then add a later bucket in a NEW complete period. Apply only the base
-            // WAL so the truncate sits in the gap the next incremental refresh scans, and advance "now"
-            // past the new period's end so the period branch synthesizes a non-empty range for it.
+            // A row before the truncate, the truncate and a later bucket in a NEW complete period. Apply only the
+            // base WAL so the truncate sits in the gap the next incremental refresh scans, and advance "now" past
+            // the new period's end so the period branch includes it.
+            execute("insert into base values ('a', 3.0, '2024-09-10T12:45')");
             execute("truncate table base");
             execute("insert into base values ('a', 9.0, '2024-09-11T20:00')");
             currentMicros = parseFloorPartialTimestamp("2024-09-12T00:00:00.000000Z");
             drainWalQueue();
 
-            // Drop any queued mat-view task (including the apply-time INVALIDATE) so the lone refresh run is
-            // what must avoid advancing the watermark past the truncate.
             final MatViewRefreshTask discard = new MatViewRefreshTask();
             while (store.tryDequeueRefreshTask(discard)) {
                 // drop
             }
 
-            // Drive ONE fresh incremental refresh. The truncate in the scanned range must NOT let the
-            // period branch's synthesized range commit a watermark advance past the truncate.
             store.enqueueIncrementalRefresh(viewToken);
             try (MatViewRefreshJob job = createMatViewRefreshJob()) {
                 job.run();
             }
 
             Assert.assertEquals(
-                    "a truncate-barrier refresh of a period view must not advance the persisted base txn past the truncate",
-                    baseTxnBeforeTruncate,
+                    "a refresh of a period view that scans a truncate advances the persisted base txn past it",
+                    engine.getTableSequencerAPI().getTxnTracker(baseToken).getWriterTxn(),
                     state.getLastRefreshBaseTxn()
             );
-            Assert.assertTrue("the truncate barrier must invalidate the period view", state.isInvalid());
+            Assert.assertFalse("the truncate must leave the period view valid", state.isInvalid());
             drainWalAndMatViewQueues();
             assertQuery("select view_status, invalidation_reason from materialized_views where view_name = 'mv'")
                     .noRandomAccess()
                     .noLeakCheck()
-                    .returns("view_status\tinvalidation_reason\ninvalid\ttruncate operation\n");
+                    .returns("view_status\tinvalidation_reason\nvalid\t\n");
+            assertQuery("mv")
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ts\tcnt
+                            2024-09-10T12:00:00.000000Z\t2
+                            2024-09-11T20:00:00.000000Z\t1
+                            """);
         });
     }
 
     @Test
     public void testWalTxnRangeLoaderDetectsTruncate() throws Exception {
-        // Direct unit coverage for the detection primitive the whole truncate barrier rests on:
-        // a range with a TRUNCATE reports hasTruncate()==true; a data-only range reports false; and a
-        // second clean load resets the flag back to false (no stale carry-over on a reused loader).
+        // Direct unit coverage for the TRUNCATE cut of the WAL interval scan: a range with a TRUNCATE reports
+        // hasTruncate()==true and keeps only the intervals of the transactions after the truncate; a data-only
+        // range reports false and keeps every interval; and a second clean load resets the flag back to false
+        // (no stale carry-over on a reused loader).
         assertMemoryLeak(() -> {
             execute("create table base (sym symbol, val double, ts timestamp) timestamp(ts) partition by DAY WAL");
             execute("insert into base values ('a', 1.0, '2024-09-10T12:00')");
@@ -13887,6 +13915,7 @@ public class MatViewTest extends AbstractCairoTest {
             final TableToken baseToken = engine.verifyTableName("base");
             final long txnAfterFirstInsert = engine.getTableSequencerAPI().getTxnTracker(baseToken).getWriterTxn();
 
+            execute("insert into base values ('a', 2.0, '2024-09-10T15:00')");
             execute("truncate table base");
             execute("insert into base values ('a', 9.0, '2024-09-10T20:00')");
             drainWalQueue();
@@ -13901,11 +13930,22 @@ public class MatViewTest extends AbstractCairoTest {
                 // Data-only range (the very first insert): no truncate.
                 loader.load(engine, path, baseToken, intervals, 0, txnAfterFirstInsert);
                 Assert.assertFalse("a data-only range must not report a truncate", loader.hasTruncate());
+                final long firstTs = parseFloorPartialTimestamp("2024-09-10T12:00:00.000000Z");
+                Assert.assertEquals(2, intervals.size());
+                Assert.assertEquals(firstTs, intervals.getQuick(0));
+                Assert.assertEquals(firstTs, intervals.getQuick(1));
 
-                // Range that spans the truncate: detected.
+                // Range that spans the 15:00 insert, the truncate and the 20:00 insert: the cut drops the 15:00
+                // interval, written before the truncate.
                 intervals.clear();
                 loader.load(engine, path, baseToken, intervals, txnAfterFirstInsert, txnAfterTruncate);
                 Assert.assertTrue("a range containing a TRUNCATE must report a truncate", loader.hasTruncate());
+                final long lastTs = parseFloorPartialTimestamp("2024-09-10T20:00:00.000000Z");
+                Assert.assertEquals(2, intervals.size());
+                Assert.assertEquals(lastTs, intervals.getQuick(0));
+                Assert.assertEquals(lastTs, intervals.getQuick(1));
+                Assert.assertEquals(lastTs, loader.getMinTimestamp());
+                Assert.assertEquals(lastTs, loader.getMaxTimestamp());
 
                 // A second clean (data-only) load must reset the flag, proving no stale carry-over.
                 intervals.clear();
@@ -14997,7 +15037,14 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     private void testBaseTableKeepsViewValidOnOperation(String operationSql) throws Exception {
-        testBaseTableOperation(null, operationSql, "view_name\tbase_table_name\tview_status\tinvalidation_reason\n" +
+        testBaseTableKeepsViewValidOnOperation(null, operationSql);
+    }
+
+    private void testBaseTableKeepsViewValidOnOperation(
+            @Nullable TestUtils.LeakProneCode runBeforeMatViewCreate,
+            String operationSql
+    ) throws Exception {
+        testBaseTableOperation(runBeforeMatViewCreate, operationSql, "view_name\tbase_table_name\tview_status\tinvalidation_reason\n" +
                 "price_1h\tbase_price\tvalid\t\n");
     }
 

@@ -38,6 +38,7 @@ import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.MemoryTrackerWorkload;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 
 import java.io.Closeable;
@@ -48,6 +49,10 @@ class OperationExecutor implements Closeable {
     private final WalApplySqlExecutionContext executionContext;
     private final int maxRecompilationAttempts;
     private final Rnd rnd;
+    // The partitions that the last executed ATTACH PARTITION attached or UPDATE rewrote, see
+    // getChangedPartitionTimestampLo().
+    private long changedPartitionTimestampHi = Numbers.LONG_NULL;
+    private long changedPartitionTimestampLo = Numbers.LONG_NULL;
 
     OperationExecutor(
             CairoEngine engine,
@@ -93,10 +98,12 @@ class OperationExecutor implements Closeable {
     }
 
     /**
-     * Returns result of underlying {@link AlterOperation#matViewInvalidationReason()}.
+     * Applies the ALTER statement. When it is an ATTACH PARTITION, {@link #getChangedPartitionTimestampLo()} and
+     * {@link #getChangedPartitionTimestampHi()} report the partitions it attached, also when it fails part-way.
      */
-    public String executeAlter(TableWriter tableWriter, CharSequence alterSql, long seqTxn) throws SqlException {
+    public void executeAlter(TableWriter tableWriter, CharSequence alterSql, long seqTxn) throws SqlException {
         final TableToken tableToken = tableWriter.getTableToken();
+        clearChangedPartitionTimestamps();
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             executionContext.remapTableNameResolutionTo(tableToken);
             CompiledQuery compiledQuery;
@@ -127,8 +134,12 @@ class OperationExecutor implements Closeable {
             try (AlterOperation alterOp = compiledQuery.getAlterOperation()) {
                 alterOp.withContext(executionContext);
                 assert !alterOp.isStructural() : "alter operation must not be structural when applied as SQL";
-                tableWriter.apply(alterOp, seqTxn);
-                return alterOp.matViewInvalidationReason();
+                try {
+                    tableWriter.apply(alterOp, seqTxn);
+                } finally {
+                    changedPartitionTimestampLo = alterOp.getAttachedPartitionTimestampLo();
+                    changedPartitionTimestampHi = alterOp.getAttachedPartitionTimestampHi();
+                }
             }
         } catch (SqlException ex) {
             tableWriter.markSeqTxnCommitted(seqTxn);
@@ -136,15 +147,23 @@ class OperationExecutor implements Closeable {
         }
     }
 
+    /**
+     * Applies the UPDATE statement and returns the number of rows it changed. {@link #getChangedPartitionTimestampLo()}
+     * and {@link #getChangedPartitionTimestampHi()} report the partitions it rewrote.
+     */
     public long executeUpdate(TableWriter tableWriter, CharSequence updateSql, long seqTxn) throws SqlException {
         final TableToken tableToken = tableWriter.getTableToken();
+        clearChangedPartitionTimestamps();
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             executionContext.remapTableNameResolutionTo(tableToken);
             final CompiledQuery compiledQuery = compiler.compile(updateSql, executionContext);
             try (UpdateOperation updateOperation = compiledQuery.getUpdateOperation()) {
                 updateOperation.withSqlStatement(updateSql);
                 updateOperation.withContext(executionContext);
-                return tableWriter.apply(updateOperation, seqTxn);
+                final long rowsAffected = tableWriter.apply(updateOperation, seqTxn);
+                changedPartitionTimestampLo = updateOperation.getRewrittenPartitionTimestampLo();
+                changedPartitionTimestampHi = updateOperation.getRewrittenPartitionTimestampHi();
+                return rowsAffected;
             }
         }
         // Do not catch the exception and mark transaction as committed
@@ -153,6 +172,22 @@ class OperationExecutor implements Closeable {
 
     public BindVariableService getBindVariableService() {
         return bindVariableService;
+    }
+
+    /**
+     * Returns the highest timestamp of the partitions that the last {@link #executeAlter} attached or the last
+     * {@link #executeUpdate} rewrote, or {@link Numbers#LONG_NULL} when the statement changed no partition.
+     */
+    public long getChangedPartitionTimestampHi() {
+        return changedPartitionTimestampHi;
+    }
+
+    /**
+     * Returns the lowest timestamp of the partitions that the last statement changed, see
+     * {@link #getChangedPartitionTimestampHi()}.
+     */
+    public long getChangedPartitionTimestampLo() {
+        return changedPartitionTimestampLo;
     }
 
     /**
@@ -169,6 +204,11 @@ class OperationExecutor implements Closeable {
 
     public void setNowAndFixClock(long now, int nowTimestampType) {
         executionContext.setNowAndFixClock(now, nowTimestampType);
+    }
+
+    private void clearChangedPartitionTimestamps() {
+        changedPartitionTimestampLo = Numbers.LONG_NULL;
+        changedPartitionTimestampHi = Numbers.LONG_NULL;
     }
 
     /**

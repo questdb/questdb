@@ -31,6 +31,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoKeywords;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.ErrorTag;
@@ -67,6 +68,7 @@ import io.questdb.std.LongList;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.Micros;
@@ -100,6 +102,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private static Log LOG = LogFactory.getLog(ApplyWal2TableJob.class);
     private final BlockFileWriter blockFileWriter;
     private final CairoConfiguration config;
+    private final ObjList<TableToken> dependentViewSink = new ObjList<>();
     private final CairoEngine engine;
     private final MatViewBareNameGuard matViewBareNameGuard;
     // Reader + reusable state reader for the backfill-frontier read-modify-write of the _mv.s
@@ -124,6 +127,13 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private boolean lastCommitDiverged;
     private long lastAttemptSeqTxn;
     private long lastCommittedRows;
+    // The union of the base ranges, inclusive, that the ATTACH PARTITION and UPDATE operations of the current apply
+    // batch changed, and the seqTxn of the newest of them; LONG_NULL while the batch has none. The WAL interval scan
+    // of a mat view refresh skips these SQL transactions, so the batch queues the range for the dependent views once
+    // it commits. A TRUNCATE in the batch clears the range collected before it.
+    private long changedRangeHi = Numbers.LONG_NULL;
+    private long changedRangeLo = Numbers.LONG_NULL;
+    private long changedRangeSeqTxn = Numbers.LONG_NULL;
 
     public ApplyWal2TableJob(CairoEngine engine, int sharedQueryWorkerCount) {
         super(engine.getMessageBus().getWalTxnNotificationQueue(), engine.getMessageBus().getWalTxnNotificationSubSequence());
@@ -439,10 +449,11 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         boolean isTerminating;
         boolean finishedAll = true;
         long initialSeqTxn = writer.getSeqTxn();
-        // Default to incremental mat view refresh.
+        // Every apply batch notifies the dependent mat views with an incremental refresh.
         mvRefreshTask.clear();
         mvRefreshTask.operation = MatViewRefreshTask.INCREMENTAL_REFRESH;
         mvRefreshTask.baseTableToken = writer.getTableToken();
+        clearChangedRange();
         // Before anything is applied lazily, match the table's adaptive durable-epoch anchor to the local
         // durability policy: no anchor on a replica, where it would go stale behind purged WAL, and a real one
         // once the node is primary again. A no-op until the policy changes.
@@ -532,13 +543,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                         // refresh whose base reader sees the change compiles the switched reading.
                                         matViewBareNameGuard.beforeColumnChange(writer.getTableToken(), metadataChangeOp, seqTxn);
                                         metadataChangeOp.apply(writer, true);
-                                        final String matViewInvalidationReason = metadataChangeOp.matViewInvalidationReason();
-                                        if (matViewInvalidationReason != null) {
-                                            mvRefreshTask.operation = MatViewRefreshTask.INVALIDATE;
-                                            mvRefreshTask.invalidationReason = matViewInvalidationReason;
-                                        }
-                                        // Live views have their own reason, so mat view invalidation
-                                        // can change without changing live views.
+                                        // No column change invalidates a mat view here: its next refresh that
+                                        // recomputes rows compiles its SQL and decides. Live views keep their
+                                        // invalidation on a column they read.
                                         final String liveViewInvalidationReason = metadataChangeOp.liveViewInvalidationReason();
                                         if (liveViewInvalidationReason != null) {
                                             // Narrow live-view invalidation: only views that read a
@@ -705,13 +712,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 }
 
                 if (initialSeqTxn < writer.getSeqTxn()) {
-                    if (mvRefreshTask.operation == MatViewRefreshTask.INVALIDATE) {
-                        // One INVALIDATE notification replaces every incremental notification in this
-                        // apply batch. Treat the batch end as the covered frontier so a full snapshot may
-                        // consume it only when it also includes later transactions that got no notification.
-                        mvRefreshTask.invalidationBaseTableToken = mvRefreshTask.baseTableToken;
-                        mvRefreshTask.invalidationBaseTxn = writer.getSeqTxn();
-                    }
+                    // The batch has committed. The range tasks go out in addition to the incremental
+                    // notification, and the refresh job handles them in either order.
+                    publishChangedRange(writer.getTableToken());
                     engine.notifyMatViewBaseTableCommit(mvRefreshTask, writer.getSeqTxn());
                 }
             } catch (Throwable th) {
@@ -793,6 +796,35 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
      */
     private void advance(TableWriter writer, long nowMs) {
         writer.advanceDurableEpoch(nowMs);
+    }
+
+    private void clearChangedRange() {
+        changedRangeLo = Numbers.LONG_NULL;
+        changedRangeHi = Numbers.LONG_NULL;
+        changedRangeSeqTxn = Numbers.LONG_NULL;
+    }
+
+    // Adds the partitions that the SQL transaction just applied attached or rewrote to the batch's changed range.
+    private void collectChangedRange(TableWriter writer, OperationExecutor operationExecutor, long seqTxn) {
+        final long partitionTimestampLo = operationExecutor.getChangedPartitionTimestampLo();
+        if (partitionTimestampLo == Numbers.LONG_NULL) {
+            return;
+        }
+        final long partitionTimestampHi = operationExecutor.getChangedPartitionTimestampHi();
+        final TimestampDriver.TimestampCeilMethod partitionCeilMethod = ColumnType.getTimestampDriver(writer.getTimestampType())
+                .getPartitionCeilMethod(writer.getPartitionBy());
+        // A WAL table is always partitioned by time.
+        assert partitionCeilMethod != null;
+        // The ceiling of the highest partition is exclusive, while the range is inclusive.
+        final long rangeHi = partitionCeilMethod.ceil(partitionTimestampHi) - 1;
+        if (changedRangeSeqTxn == Numbers.LONG_NULL) {
+            changedRangeLo = partitionTimestampLo;
+            changedRangeHi = rangeHi;
+        } else {
+            changedRangeLo = Math.min(changedRangeLo, partitionTimestampLo);
+            changedRangeHi = Math.max(changedRangeHi, rangeHi);
+        }
+        changedRangeSeqTxn = seqTxn;
     }
 
     private void doStoreTelemetry(short event, short origin) {
@@ -1023,6 +1055,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     final WalEventCursor.SqlInfo sqlInfo = walEventCursor.getSqlInfo();
                     walTelemetryFacade.store(WAL_TXN_APPLY_START, writer.getTableToken(), walId, seqTxn, -1L, -1L, start - commitTimestamp, Numbers.LONG_NULL, Numbers.LONG_NULL);
                     processWalSql(writer, sqlInfo, operationExecutor, seqTxn);
+                    // An ATTACH PARTITION or an UPDATE that changed rows reports the partitions it changed,
+                    // including an ATTACH whose WAL-tolerable failure skipped the rest of its list.
+                    collectChangedRange(writer, operationExecutor, seqTxn);
                     walTelemetryFacade.store(WAL_TXN_SQL_APPLIED, writer.getTableToken(), walId, seqTxn, -1L, -1L, microClock.getTicks() - start, Numbers.LONG_NULL, Numbers.LONG_NULL);
                     lastCommittedRows = 0;
                     return 1;
@@ -1048,6 +1083,15 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             "base materialized view was rebuilt"
                     );
                 }
+                // A TRUNCATE invalidates no dependent mat view: the views keep their rows, and their refreshes
+                // drop the intervals queued before it (the TRUNCATE cut of the WAL interval scan). The ranges
+                // that ATTACH and UPDATE operations queued before it must go too. A range collected earlier in
+                // this batch goes here, and the refresh job drops a range of an older batch by comparing its
+                // seqTxn with this record. It is written before the truncate commits, so a range task never sees
+                // the truncate applied and the record missing; a truncate that then fails is applied again later
+                // under the same seqTxn.
+                engine.getMatViewStateStore().notifyBaseTableTruncate(writer.getTableToken(), seqTxn);
+                clearChangedRange();
                 long txn = writer.getTxn();
                 writer.setSeqTxn(seqTxn);
                 writer.removeAllPartitions();
@@ -1056,9 +1100,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     writer.markSeqTxnCommitted(seqTxn);
                 }
                 lastCommittedRows = 0;
-                // Invalidate dependent materialized views on truncate.
-                mvRefreshTask.operation = MatViewRefreshTask.INVALIDATE;
-                mvRefreshTask.invalidationReason = "truncate operation";
                 return 1;
             case MAT_VIEW_INVALIDATE:
                 try (WalEventReader eventReader = walEventReader) {
@@ -1136,6 +1177,39 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         }
     }
 
+    // Queues the batch's changed range, one task per dependent mat view. A view whose task gets lost recomputes the
+    // range only when a later change covers it, as after a restart, so a failure to queue it is logged and does not
+    // fail the batch, which has committed already.
+    private void publishChangedRange(TableToken baseTableToken) {
+        if (changedRangeSeqTxn == Numbers.LONG_NULL) {
+            return;
+        }
+        dependentViewSink.clear();
+        engine.getDependentViewGraph().getDependentViews(baseTableToken, dependentViewSink);
+        for (int i = 0, n = dependentViewSink.size(); i < n; i++) {
+            final TableToken viewToken = dependentViewSink.getQuick(i);
+            if (!viewToken.isMatView()) {
+                continue;
+            }
+            try {
+                engine.getMatViewStateStore().enqueueAddRefreshRange(
+                        viewToken,
+                        baseTableToken,
+                        changedRangeLo,
+                        changedRangeHi,
+                        changedRangeSeqTxn
+                );
+            } catch (Throwable th) {
+                LOG.error().$("could not queue base table range for materialized view refresh [view=").$(viewToken)
+                        .$(", baseTable=").$(baseTableToken)
+                        .$(", seqTxn=").$(changedRangeSeqTxn)
+                        .$(", error=").$(th)
+                        .I$();
+            }
+        }
+        dependentViewSink.clear();
+    }
+
     private void processWalSql(TableWriter tableWriter, WalEventCursor.SqlInfo sqlInfo, OperationExecutor operationExecutor, long seqTxn) {
         final int cmdType = sqlInfo.getCmdType();
         final CharSequence sql = sqlInfo.getSql();
@@ -1146,31 +1220,26 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 try {
                     switch (cmdType) {
                         case CMD_ALTER_TABLE:
-                            final String matViewInvalidationReason = operationExecutor.executeAlter(tableWriter, sql, seqTxn);
-                            if (matViewInvalidationReason != null) {
-                                mvRefreshTask.operation = MatViewRefreshTask.INVALIDATE;
-                                mvRefreshTask.invalidationReason = matViewInvalidationReason;
-                                // Mat views re-aggregate base data, so base data removal
-                                // legitimately invalidates them above. Live views must NOT
-                                // be invalidated here: the non-structural alters routed
-                                // through this branch (DROP/DETACH/ATTACH PARTITION, SET
-                                // PARAM, ...) never change a live view's column projection,
-                                // and base data removal (DROP PARTITION, base TTL) is
-                                // transparent to live views. A live view is a forward-computed
-                                // row stream, not a re-derivable aggregate, so removing old
-                                // base data does not retract its already-computed rows; the
-                                // refresh worker walks past these non-data commits on its own.
-                                // Schema changes that DO touch a referenced column travel the
-                                // structural path and invalidate live views narrowly via
-                                // invalidateLiveViewsForBaseSchemaChange.
-                            }
+                            // No ALTER applied here invalidates a view. Mat views keep their rows across
+                            // DROP / DETACH PARTITION, and the refresh's partition clip stops later refreshes
+                            // from deleting them; an ATTACH PARTITION queues its range for the mat views (see
+                            // collectChangedRange). Live views must NOT be invalidated here either: the
+                            // non-structural alters routed through this branch (DROP/DETACH/ATTACH PARTITION,
+                            // SET PARAM, ...) never change a live view's column projection, and base data
+                            // removal (DROP PARTITION, base TTL) is transparent to live views. A live view is
+                            // a forward-computed row stream, not a re-derivable aggregate, so removing old base
+                            // data does not retract its already-computed rows; the refresh worker walks past
+                            // these non-data commits on its own. Schema changes that DO touch a referenced
+                            // column travel the structural path and invalidate live views narrowly via
+                            // invalidateLiveViewsForBaseSchemaChange.
+                            operationExecutor.executeAlter(tableWriter, sql, seqTxn);
                             return;
                         case CMD_UPDATE_TABLE:
                             final long rowsAffected = operationExecutor.executeUpdate(tableWriter, sql, seqTxn);
                             if (rowsAffected > 0) {
-                                mvRefreshTask.operation = MatViewRefreshTask.INVALIDATE;
-                                mvRefreshTask.invalidationReason = UpdateOperation.MAT_VIEW_INVALIDATION_REASON;
-                                // Live views must be invalidated too. An UPDATE rewrites base rows in
+                                // Mat views stay valid: the UPDATE queues the range of the partitions it
+                                // rewrote for them (see collectChangedRange), and their refresh recomputes it.
+                                // Live views must be invalidated. An UPDATE rewrites base rows in
                                 // place, which the data-removal operations routed through the ALTER
                                 // branch above never do: those only retire settled data below the view's
                                 // replay window, so the view's already-computed rows stay consistent with
@@ -1185,7 +1254,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                 // recreate it.
                                 engine.invalidateLiveViewsForBaseTable(
                                         tableWriter.getTableToken(),
-                                        UpdateOperation.MAT_VIEW_INVALIDATION_REASON
+                                        UpdateOperation.LIVE_VIEW_INVALIDATION_REASON
                                 );
                             }
                             return;

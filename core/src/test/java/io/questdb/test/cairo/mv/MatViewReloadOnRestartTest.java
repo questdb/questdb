@@ -209,10 +209,11 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testBootLoadInvalidatesOnBaseTableTruncateInGap() throws Exception {
-        // The boot path (buildViewGraphs, forceCreateState=false) must invalidate a view whose base table
-        // was truncated in the unscanned WAL gap past its persisted last-refresh base txn -- the same way
-        // the promote-hydrate path does. All other tests cover only the promote-hydrate path.
+    public void testBootLoadKeepsViewValidOnBaseTableTruncateInGap() throws Exception {
+        // The boot path (buildViewGraphs, forceCreateState=false) loads a view whose base table was truncated in
+        // the unscanned WAL gap past its persisted last-refresh base txn as valid, as the promote-hydrate path
+        // does. The first refresh scans the gap: the TRUNCATE cut drops the interval of the 12:30 row written
+        // before the truncate, so the view keeps its 12:00 bucket and adds the 20:00 bucket written after it.
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain main1 = startMainPortsDisabled()) {
                 execute(main1, "create table b (sym symbol, val double, ts timestamp) timestamp(ts) partition by DAY WAL");
@@ -221,23 +222,31 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                 try (var refreshJob = createMatViewRefreshJob(main1.getEngine())) {
                     drainWalAndMatViewQueues(refreshJob, main1.getEngine());
                 }
-                // Truncate + a later bucket; apply ONLY the base WAL, so the view stays stale-valid with the
-                // truncate sitting in the gap past its persisted last-refresh base txn.
+                // A row before the truncate, the truncate and a later bucket; apply ONLY the base WAL, so the view
+                // stays behind with the truncate sitting in the gap past its persisted last-refresh base txn.
+                execute(main1, "insert into b values ('a', 2.0, '2024-09-10T12:30')");
                 execute(main1, "truncate table b");
                 execute(main1, "insert into b values ('a', 9.0, '2024-09-10T20:00')");
                 drainWalQueue(main1.getEngine());
             }
 
-            // Restart: main2's boot runs buildViewGraphs over the on-disk state, sees the truncate in the
-            // gap, and invalidates the view with reason "truncate operation".
             try (final TestServerMain main2 = startMainPortsDisabled()) {
                 try (var refreshJob = createMatViewRefreshJob(main2.getEngine())) {
                     drainWalAndMatViewQueues(refreshJob, main2.getEngine());
                 }
                 assertSql(
                         main2,
-                        "view_status\tinvalidation_reason\ninvalid\ttruncate operation\n",
-                        "select view_status, invalidation_reason from materialized_views where view_name = 'bm'"
+                        "view_status\tinvalidation_reason\tcaught_up\nvalid\t\ttrue\n",
+                        "select view_status, invalidation_reason, refresh_base_table_txn = base_table_txn caught_up from materialized_views where view_name = 'bm'"
+                );
+                assertSql(
+                        main2,
+                        """
+                                ts\tcnt
+                                2024-09-10T12:00:00.000000Z\t1
+                                2024-09-10T20:00:00.000000Z\t1
+                                """,
+                        "bm order by ts"
                 );
             }
         });
@@ -1011,13 +1020,16 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                     assertSql(main1, replaceExpectedTimestamp(expected), "select sym, last(price) as price, ts from base_price sample by 1h order by ts, sym");
                     assertSql(main1, replaceExpectedTimestamp(expected), "price_1h order by ts, sym");
 
-                    execute(main1, "truncate table base_price");
+                    // A base TRUNCATE no longer invalidates the view. A base rename still does, and renaming
+                    // the base back leaves the view invalid, with a base that FULL can rebuild it from.
+                    execute(main1, "rename table base_price to base_price_tmp");
+                    execute(main1, "rename table base_price_tmp to base_price");
                     drainWalAndMatViewQueues(refreshJob, main1.getEngine());
                     assertSql(
                             main1,
                             """
                                     view_name\tview_status\tinvalidation_reason
-                                    price_1h\tinvalid\ttruncate operation
+                                    price_1h\tinvalid\ttable rename operation
                                     """,
                             "select view_name, view_status, invalidation_reason from materialized_views()"
                     );
@@ -1029,7 +1041,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                         main2,
                         """
                                 view_name\tview_status\tinvalidation_reason
-                                price_1h\tinvalid\ttruncate operation
+                                price_1h\tinvalid\ttable rename operation
                                 """,
                         "select view_name, view_status, invalidation_reason from materialized_views()"
                 );

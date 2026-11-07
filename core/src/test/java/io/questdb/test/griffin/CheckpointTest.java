@@ -45,6 +45,7 @@ import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.IndexType;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SymbolCountProvider;
 import io.questdb.cairo.TableColumnMetadata;
@@ -1243,6 +1244,62 @@ public class CheckpointTest extends AbstractCairoTest {
         // A file system that reports no entry types (XFS without ftype, some FUSE and network file systems) lists
         // the soft link of a table IN VOLUME as unknown: the flush has to ask, or it flushes no volume.
         assertCheckpointRestoreFlushesEachVolumeOnce(true);
+    }
+
+    private void assertCheckpointCutsMatViewIntervalsAtTruncate(boolean hasRowAfterTruncate) throws Exception {
+        execute("create table base_price (sym varchar, price double, ts timestamp) timestamp(ts) partition by DAY WAL");
+        execute("create materialized view price_1h refresh manual as (select sym, last(price) as price, ts from base_price sample by 1h) partition by DAY");
+        execute("insert into base_price values ('BTC', 100.0, '2024-01-01T00:00:00.000000Z')");
+        drainWalQueue();
+        execute("refresh materialized view price_1h incremental");
+        drainWalAndMatViewQueues();
+
+        final TableToken baseTableToken = engine.verifyTableName("base_price");
+        final TableToken matViewToken = engine.verifyTableName("price_1h");
+
+        // The view caches the interval of a row written before the truncate.
+        execute("insert into base_price values ('BTC', 200.0, '2024-01-01T01:00:00.000000Z')");
+        drainWalQueue();
+        engine.getMatViewStateStore().enqueueUpdateRefreshIntervals(matViewToken);
+        drainWalAndMatViewQueues();
+        Assert.assertEquals(2, engine.getMatViewStateStore().getViewState(matViewToken).getRefreshIntervals().size());
+
+        // A row before the truncate that the cache has not seen, the truncate and, optionally, a row after it.
+        execute("insert into base_price values ('BTC', 250.0, '2024-01-01T01:30:00.000000Z')");
+        execute("truncate table base_price");
+        if (hasRowAfterTruncate) {
+            execute("insert into base_price values ('BTC', 300.0, '2024-01-01T02:00:00.000000Z')");
+        }
+        drainWalQueue();
+        final long seqTxnAfterTruncate = engine.getTableSequencerAPI().getTxnTracker(baseTableToken).getSeqTxn();
+
+        engine.checkpointCreate(sqlExecutionContext.getCircuitBreaker(), true);
+
+        try (
+                Path checkpointPath = new Path();
+                io.questdb.cairo.file.BlockFileReader reader = new io.questdb.cairo.file.BlockFileReader(configuration)
+        ) {
+            checkpointPath.of(configuration.getCheckpointRoot())
+                    .concat(configuration.getDbDirectory())
+                    .concat(matViewToken)
+                    .concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$();
+            reader.of(checkpointPath.$());
+            final io.questdb.cairo.mv.MatViewStateReader stateReader = new io.questdb.cairo.mv.MatViewStateReader();
+            stateReader.of(reader, matViewToken);
+
+            Assert.assertFalse(stateReader.isInvalid());
+            Assert.assertEquals(seqTxnAfterTruncate, stateReader.getRefreshIntervalsBaseTxn());
+            if (hasRowAfterTruncate) {
+                final long afterTruncateTs = MicrosTimestampDriver.floor("2024-01-01T02:00:00.000000Z");
+                Assert.assertEquals(2, stateReader.getRefreshIntervals().size());
+                Assert.assertEquals(afterTruncateTs, stateReader.getRefreshIntervals().getQuick(0));
+                Assert.assertEquals(afterTruncateTs, stateReader.getRefreshIntervals().getQuick(1));
+            } else {
+                Assert.assertEquals(0, stateReader.getRefreshIntervals().size());
+            }
+        }
+
+        execute("checkpoint release");
     }
 
     // A table created IN VOLUME lives on another filesystem behind a soft link, so flushing the database root's
@@ -4835,6 +4892,67 @@ public class CheckpointTest extends AbstractCairoTest {
             engine.checkpointRelease();
 
             Assert.assertFalse(engine.isWalPurgeJobLocked());
+        });
+    }
+
+    @Test
+    public void testIncrementalCheckpointPrepareCutsMatViewIntervalsAtTruncate() throws Exception {
+        // The checkpoint merges the base's WAL gap into the view's cached intervals with the refresh's TRUNCATE cut:
+        // the interval of the row written before the truncate goes, from the cache and from the gap, and only the
+        // interval of the row written after it stays. The restored view keeps its rows from before the truncate.
+        assertMemoryLeak(() -> assertCheckpointCutsMatViewIntervalsAtTruncate(true));
+    }
+
+    @Test
+    public void testIncrementalCheckpointPrepareCutsMatViewIntervalsAtTruncateWithoutLaterRows() throws Exception {
+        // With no row after the truncate, the cut leaves the checkpointed cache empty.
+        assertMemoryLeak(() -> assertCheckpointCutsMatViewIntervalsAtTruncate(false));
+    }
+
+    @Test
+    public void testIncrementalCheckpointPrepareKeepsMatViewIntervalsWithoutDataInGap() throws Exception {
+        // A gap that holds no data transaction and no truncate adds no interval: the checkpoint keeps the view's
+        // cached interval and moves its cache position to the checkpoint's base txn.
+        assertMemoryLeak(() -> {
+            execute("create table base_price (sym varchar, price double, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("create materialized view price_1h refresh manual as (select sym, last(price) as price, ts from base_price sample by 1h) partition by DAY");
+            execute("insert into base_price values ('BTC', 100.0, '2024-01-01T00:00:00.000000Z')");
+            drainWalQueue();
+            execute("refresh materialized view price_1h incremental");
+            drainWalAndMatViewQueues();
+
+            final TableToken baseTableToken = engine.verifyTableName("base_price");
+            final TableToken matViewToken = engine.verifyTableName("price_1h");
+            execute("insert into base_price values ('BTC', 200.0, '2024-01-01T01:00:00.000000Z')");
+            drainWalQueue();
+            engine.getMatViewStateStore().enqueueUpdateRefreshIntervals(matViewToken);
+            drainWalAndMatViewQueues();
+
+            // An UPDATE that changes no row is a SQL transaction without data.
+            execute("update base_price set price = 0 where price < 0");
+            drainWalQueue();
+            final long seqTxn = engine.getTableSequencerAPI().getTxnTracker(baseTableToken).getSeqTxn();
+
+            engine.checkpointCreate(sqlExecutionContext.getCircuitBreaker(), true);
+            try (
+                    Path checkpointPath = new Path();
+                    io.questdb.cairo.file.BlockFileReader reader = new io.questdb.cairo.file.BlockFileReader(configuration)
+            ) {
+                checkpointPath.of(configuration.getCheckpointRoot())
+                        .concat(configuration.getDbDirectory())
+                        .concat(matViewToken)
+                        .concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$();
+                reader.of(checkpointPath.$());
+                final io.questdb.cairo.mv.MatViewStateReader stateReader = new io.questdb.cairo.mv.MatViewStateReader();
+                stateReader.of(reader, matViewToken);
+
+                Assert.assertEquals(seqTxn, stateReader.getRefreshIntervalsBaseTxn());
+                final long cachedTs = MicrosTimestampDriver.floor("2024-01-01T01:00:00.000000Z");
+                Assert.assertEquals(2, stateReader.getRefreshIntervals().size());
+                Assert.assertEquals(cachedTs, stateReader.getRefreshIntervals().getQuick(0));
+                Assert.assertEquals(cachedTs, stateReader.getRefreshIntervals().getQuick(1));
+            }
+            execute("checkpoint release");
         });
     }
 

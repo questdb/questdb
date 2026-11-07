@@ -927,17 +927,19 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                 TableToken baseTableToken = engine.verifyTableName(baseTableName);
                 intervals.clear();
                 walTxnRangeLoader.load(engine, Path.PATH.get(), baseTableToken, intervals, mvLastRefreshTxn, checkpointBaseSeqTxn);
-                // Known gap (tracked follow-up): this path rewrites the checkpoint state with the base txn
-                // advanced to checkpointBaseSeqTxn without consulting walTxnRangeLoader.hasTruncate(). If the
-                // scanned gap holds a truncate, restoring from this checkpoint resumes the view past the
-                // truncate with stale pre-truncate rows. The barrier primitive this loader now exposes can
-                // wire this up the same way the refresh path does; it is left for a follow-up.
+                // The TRUNCATE cut, as in the refresh: when the gap holds a base TRUNCATE, the loader keeps only
+                // the intervals after it, and the view's cached intervals, which all predate it, go too. Otherwise
+                // the restored view would recompute pre-truncate intervals against a base that no longer holds
+                // their rows, and delete the view's rows there.
+                final boolean hasTruncate = walTxnRangeLoader.hasTruncate();
 
                 if (intervals.size() > 0) {
-                    // Merge with existing intervals
-                    final int dividerIndex = intervals.size();
-                    intervals.addAll(matViewStateReader.getRefreshIntervals());
-                    IntervalUtils.unionInPlace(intervals, dividerIndex);
+                    if (!hasTruncate) {
+                        // Merge with existing intervals
+                        final int dividerIndex = intervals.size();
+                        intervals.addAll(matViewStateReader.getRefreshIntervals());
+                        IntervalUtils.unionInPlace(intervals, dividerIndex);
+                    }
 
                     // Cap the number of intervals
                     final int cacheCapacity = configuration.getMatViewMaxRefreshIntervals() << 1;
@@ -956,7 +958,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                         matViewStateReader.isInvalid(),
                         matViewStateReader.getInvalidationReason(),
                         matViewStateReader.getLastPeriodHi(),
-                        intervals.size() > 0 ? intervals : matViewStateReader.getRefreshIntervals(),
+                        intervals.size() > 0 || hasTruncate ? intervals : matViewStateReader.getRefreshIntervals(),
                         checkpointBaseSeqTxn,
                         matViewStateReader.getBackfillFrontier(),
                         matViewStateReader.getFrozenBoundaryFloor(),

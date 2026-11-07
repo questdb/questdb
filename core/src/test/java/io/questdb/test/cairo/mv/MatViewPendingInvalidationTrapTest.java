@@ -42,7 +42,6 @@ import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.Micros;
@@ -189,42 +188,196 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testApplyWalBatchStampsInvalidationWithBatchEndTxn() throws Exception {
+    public void testAddRefreshRangeDroppedOnSuspendedWriterAcquire() throws Exception {
+        assertMemoryLeak(() -> {
+            final MatViewFixture fixture = createAutoPriceViewFixture();
+            final TableToken viewToken = fixture.viewToken();
+            final MatViewState state = fixture.state();
+
+            // The view is suspended between the range task's suspended-view gate and its writer acquire. The task
+            // cannot persist the range and drops it, as a restart would, without invalidating the view.
+            execute("UPDATE base_price SET price = 9.9 WHERE sym = 'jpyusd'");
+            drainWalQueue();
+            walSuspendedRefusalToken.set(viewToken);
+            drainWalAndMatViewQueues();
+
+            Assert.assertNull("the range task must consume the one-shot refusal", walSuspendedRefusalToken.get());
+            Assert.assertFalse(state.isInvalid());
+            Assert.assertEquals(0, state.getRefreshIntervals().size());
+            assertPriceViewValid();
+            assertJpyPrice("103.21");
+        });
+    }
+
+    @Test
+    public void testAddRefreshRangeFailureInvalidatesView() throws Exception {
+        assertMemoryLeak(() -> {
+            final MatViewFixture fixture = createAutoPriceViewFixture();
+            final TableToken viewToken = fixture.viewToken();
+            final MatViewState state = fixture.state();
+
+            // A generic writer-acquire failure of the range task is a refresh failure: the view goes invalid with
+            // the error in memory, as for the refresh-intervals update.
+            execute("UPDATE base_price SET price = 9.9 WHERE sym = 'jpyusd'");
+            drainWalQueue();
+            walGenericFailureToken.set(viewToken);
+            drainMatViewQueue(engine);
+
+            Assert.assertNull("the range task must consume the one-shot failure", walGenericFailureToken.get());
+            Assert.assertTrue(state.isInvalid());
+            Assert.assertFalse(state.isLocked());
+            Assert.assertTrue(state.tryLock());
+            try {
+                TestUtils.assertContains(state.getInvalidationReason(), "test generic wal writer failure [table=price_1h]");
+            } finally {
+                state.unlock();
+            }
+            assertJpyPrice("103.21");
+        });
+    }
+
+    @Test
+    public void testAddRefreshRangeFollowsRenamedView() throws Exception {
+        assertMemoryLeak(() -> {
+            final MatViewFixture fixture = createAutoPriceViewFixture();
+            final TableToken viewToken = fixture.viewToken();
+
+            // The view is renamed at the storage level after the UPDATE queues its range task, so the task carries
+            // the old name and cannot open the view's writer. It re-queues itself under the new name, which then
+            // recomputes the range. RENAME TABLE rejects materialized views, so the test renames the storage.
+            execute("UPDATE base_price SET price = 9.9 WHERE sym = 'jpyusd'");
+            drainWalQueue();
+            engine.applyTableRename(viewToken, viewToken.renamed("price_1h_renamed"));
+            drainWalAndMatViewQueues();
+
+            assertQuery("SELECT view_name, view_status FROM materialized_views()")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            view_name\tview_status
+                            price_1h_renamed\tvalid
+                            """);
+            assertQuery("SELECT sym, price FROM price_1h_renamed WHERE sym = 'jpyusd'")
+                    .noLeakCheck()
+                    .returns("sym\tprice\njpyusd\t9.9\n");
+        });
+    }
+
+    @Test
+    public void testAddRefreshRangeRetriesAfterReadOnlyRefusal() throws Exception {
+        assertMemoryLeak(() -> {
+            final MatViewFixture fixture = createAutoPriceViewFixture();
+            final TableToken viewToken = fixture.viewToken();
+            final MatViewState state = fixture.state();
+
+            // The view's writer refuses with a read-only authorization error while the node still reports itself
+            // writable (the enterprise demote TOCTOU). The range task re-queues itself instead of failing the view,
+            // and recomputes the range once the refusal clears. Only the range task can bring the UPDATE's value:
+            // the WAL scan of the incremental refresh skips the UPDATE.
+            execute("UPDATE base_price SET price = 9.9 WHERE sym = 'jpyusd'");
+            drainWalQueue();
+            walRefusalToken.set(viewToken);
+            try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
+                final AtomicInteger dequeueCount = new AtomicInteger();
+                job.setOnRefreshTaskDequeuedForTesting(() -> {
+                    final int dequeue = dequeueCount.incrementAndGet();
+                    if (dequeue == 3) {
+                        walRefusalToken.set(null);
+                    }
+                    Assert.assertTrue("the refused tasks must not grow the queue", dequeue <= 10);
+                });
+                drainMatViewQueue(job);
+                Assert.assertTrue("the refused range task must run again", dequeueCount.get() > 2);
+            } finally {
+                walRefusalToken.set(null);
+            }
+            drainWalAndMatViewQueues();
+
+            Assert.assertFalse(state.isInvalid());
+            Assert.assertEquals(0, state.getRefreshIntervals().size());
+            assertPriceViewValid();
+            assertJpyPrice("9.9");
+        });
+    }
+
+    @Test
+    public void testAddRefreshRangeStopsOnInvalidationPublishedBeforeLock() throws Exception {
+        assertMemoryLeak(() -> {
+            final MatViewFixture fixture = createAutoPriceViewFixture();
+            final MatViewState state = fixture.state();
+
+            // An invalidation lands between the range task's checks and its lock. Once the task holds the lock it
+            // finds the view no longer refreshable, adds nothing and releases the lock, whose release wakes the
+            // invalidation.
+            execute("UPDATE base_price SET price = 9.9 WHERE sym = 'jpyusd'");
+            drainWalQueue();
+            final AtomicBoolean hasFired = new AtomicBoolean();
+            try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
+                job.setOnBeforeRefreshLockForTesting(() -> {
+                    if (hasFired.compareAndSet(false, true)) {
+                        state.markAsPendingInvalidation("invalidation before the lock");
+                    }
+                });
+                drainMatViewQueue(job);
+            }
+            drainWalAndMatViewQueues();
+
+            Assert.assertTrue(hasFired.get());
+            Assert.assertTrue(state.isInvalid());
+            Assert.assertEquals(0, state.getRefreshIntervals().size());
+            assertQuery("select view_name, base_table_name, view_status, invalidation_reason from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tbase_table_name\tview_status\tinvalidation_reason
+                            price_1h\tbase_price\tinvalid\tinvalidation before the lock
+                            """);
+            assertJpyPrice("103.21");
+        });
+    }
+
+    @Test
+    public void testApplyWalBatchWithUpdatePublishesNoInvalidation() throws Exception {
         assertMemoryLeak(() -> {
             final MatViewFixture fixture = createAutoPriceViewFixture();
 
+            final TableToken viewToken = fixture.viewToken();
             final MatViewState state = fixture.state();
 
-            // Hold the latch so the INVALIDATE publishes its marker and loses the lock: the marker
-            // stays observable instead of being consumed by the invalid mint.
+            // Hold the latch, so that an INVALIDATE would publish its marker and lose the lock: the marker would
+            // stay observable instead of being consumed by the invalid mint.
             Assert.assertTrue(state.tryLock());
             try {
-                // Three commits form ONE apply batch. The sticky task operation collapses them into a
-                // single INVALIDATE whose txn stamp must be the batch-end frontier (the trailing
-                // INSERT), not the mid-batch UPDATE that triggered the invalidation: a FULL with a
-                // snapshot at the UPDATE txn must not consume a marker that also stands for the
-                // trailing INSERT.
+                // Three commits form ONE apply batch. The UPDATE in the middle no longer replaces the batch's
+                // incremental notification with an INVALIDATE: the batch publishes the notification and the
+                // UPDATE's range task, and neither publishes an invalidation marker.
                 execute("insert into base_price (sym, price, ts) values('gbpusd', 1.320, '2024-09-10T16:00')");
                 execute("update base_price set price = 1.111 where sym = 'gbpusd'");
                 execute("insert into base_price (sym, price, ts) values('gbpusd', 1.321, '2024-09-10T17:00')");
                 drainWalQueue();
                 drainMatViewQueue(engine);
 
-                final TableToken baseToken = engine.getTableTokenIfExists("base_price");
-                Assert.assertNotNull(baseToken);
-                final long batchEndTxn = engine.getTableSequencerAPI().lastTxn(baseToken);
-
-                Assert.assertTrue("the losing INVALIDATE must leave its marker", state.isPendingInvalidation());
-                Assert.assertEquals(baseToken, state.getPendingInvalidationBaseTableTokenForTesting());
-                Assert.assertEquals(
-                        "the marker must carry the batch-end txn, not the invalidating txn",
-                        batchEndTxn,
-                        state.getPendingInvalidationBaseTxnForTesting()
-                );
-                state.clearPendingInvalidationForTesting();
+                Assert.assertFalse("the UPDATE must not publish an invalidation", state.isPendingInvalidation());
+                Assert.assertFalse(state.isInvalid());
             } finally {
-                state.unlock();
+                MatViewRefreshJob.finalizeAndUnlock(engine, engine.getMatViewStateStore(), viewToken, state, false);
             }
+
+            // The deferred range task and the incremental notification then refresh the view with every row of the
+            // batch, the UPDATE's included.
+            drainWalAndMatViewQueues();
+            assertPriceViewValid();
+            assertQuery("price_1h order by ts, sym")
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            sym\tprice\tts
+                            gbpusd\t1.111\t2024-09-10T12:00:00.000000Z
+                            jpyusd\t103.21\t2024-09-10T12:00:00.000000Z
+                            gbpusd\t1.111\t2024-09-10T16:00:00.000000Z
+                            gbpusd\t1.321\t2024-09-10T17:00:00.000000Z
+                            """);
         });
     }
 
@@ -290,12 +443,12 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
     public void testDeclinedInvalidationDoesNotCascadeToChainedView() throws Exception {
         assertMemoryLeak(() -> {
             createBasePriceTable();
-            // A MANUAL DEFERRED parent never refreshes incrementally, so lastRefreshBaseTxn stays -1 and an
-            // apply-time base-table invalidation (delivered force=false) declines to invalidate it.
+            // A MANUAL DEFERRED parent never refreshes incrementally, so lastRefreshBaseTxn stays -1 and a
+            // base-table invalidation (delivered force=false) declines to invalidate it.
             execute("create materialized view price_1h refresh manual deferred as (" +
                     "select sym, last(price) as price, ts from base_price sample by 1h" +
                     ") partition by DAY");
-            // A chained child on the parent view: its only invalidation route is the parent's cascade.
+            // A chained child on the parent view: a parent cascade would be its only invalidation route.
             execute("create materialized view price_1d refresh manual deferred as (" +
                     "select sym, last(price) as price, ts from price_1h sample by 1d" +
                     ") partition by DAY");
@@ -305,16 +458,14 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                     ",('jpyusd', 103.21, '2024-09-10T12:02')");
             drainWalQueue(); // apply the base rows; MANUAL DEFERRED views do not refresh on base writes
 
-            // A rows-affected UPDATE fires an apply-time INVALIDATE task for the base table's dependents.
-            execute("update base_price set amount = 42;");
+            // A base rename fires a base-table INVALIDATE task for the base table's dependents.
+            execute("rename table base_price to base_price2");
             drainWalQueue();
             drainMatViewQueue(engine);
             drainWalQueue();
 
             // The parent declines the non-forced invalidation (never incrementally refreshed) and stays
-            // valid, so nothing may cascade: the chained child must stay valid too. Pre-fix, the decline
-            // still fell through to enqueueInvalidateDependentViews, and the per-child task re-delivered
-            // force=true, hard-minting the child invalid under a reason claiming the parent was invalidated.
+            // valid, so nothing may cascade: the chained child must stay valid too.
             assertQuery("select view_name, base_table_name, view_status from materialized_views order by view_name")
                     .noLeakCheck()
                     .returns("""
@@ -323,8 +474,8 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                             price_1h\tbase_price\tvalid
                             """);
 
-            // Positive control: a real (force=true, view-scoped) invalidation of the parent must still
-            // cascade -- the guard must not suppress the legitimate post-mint cascade.
+            // A real (force=true, view-scoped) invalidation of the parent mints it invalid, and no longer
+            // cascades either: the child stays valid, consistent with the parent's rows.
             engine.getMatViewStateStore().enqueueInvalidate(engine.verifyTableName("price_1h"), "test invalidation");
             drainMatViewQueue(engine);
             drainWalQueue();
@@ -335,7 +486,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("""
                             view_name\tbase_table_name\tview_status\tinvalidation_reason
-                            price_1d\tprice_1h\tinvalid\tbase materialized view is invalidated
+                            price_1d\tprice_1h\tvalid\t
                             price_1h\tbase_price\tinvalid\ttest invalidation
                             """);
         });
@@ -851,15 +1002,16 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             Assert.assertTrue(state.tryLock());
             try {
                 try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
-                    // Apply UPDATE T and consume its base-cascade task while this synthetic holder owns the
+                    // Apply commit T and consume its apply-time invalidation while this synthetic holder owns the
                     // view latch. invalidateView publishes the reason marker, loses the latch, and consumes
                     // the original task without enqueueing a duplicate.
-                    execute("UPDATE base_price SET amount = 7 WHERE sym = 'gbpusd'");
+                    execute("INSERT INTO base_price (sym, amount, ts) VALUES ('gbpusd', 11, '2024-09-10T12:03')");
                     drainWalQueue();
+                    enqueueBaseInvalidation(viewToken);
                     drainMatViewQueue(job);
-                    Assert.assertTrue("the UPDATE invalidation must defer behind the holder", state.isPendingInvalidation());
+                    Assert.assertTrue("the base invalidation must defer behind the holder", state.isPendingInvalidation());
 
-                    // Put FULL ahead of the holder's handoff. Its fixed reader includes UPDATE T, so the
+                    // Put FULL ahead of the holder's handoff. Its fixed reader includes commit T, so the
                     // successful rebuild covers the deferred invalidation. The already-queued handoff task
                     // that follows FULL must also recognize that coverage instead of invalidating the view.
                     engine.getMatViewStateStore().enqueueFullRefresh(viewToken);
@@ -905,13 +1057,14 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             final TableToken viewToken = fixture.viewToken();
             final MatViewState state = fixture.state();
 
-            // Hold UPDATE T's notification outside the queue. FULL will fix a snapshot that includes T,
-            // then its holding-latch seam delivers the notification through a second refresh job.
-            execute("UPDATE base_price SET amount = 7 WHERE sym = 'gbpusd'");
-            drainWalQueue();
+            // Hold the invalidation of commit T outside the queue. FULL will fix a snapshot that includes T,
+            // then its holding-latch seam delivers the invalidation through a second refresh job.
+            execute("INSERT INTO base_price (sym, amount, ts) VALUES ('gbpusd', 11, '2024-09-10T12:03')");
+            drainWalAndMatViewQueues();
+            enqueueBaseInvalidation(viewToken);
             final MatViewRefreshTask delayedInvalidation = new MatViewRefreshTask();
             Assert.assertTrue(
-                    "the UPDATE must enqueue an invalidation task",
+                    "the base invalidation must enqueue an invalidation task",
                     engine.getMatViewStateStore().tryDequeueRefreshTask(delayedInvalidation)
             );
             Assert.assertEquals(MatViewRefreshTask.INVALIDATE, delayedInvalidation.operation);
@@ -1016,14 +1169,15 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             drainWalQueue();
             Assert.assertTrue("precondition: FULL must start from an invalid view", state.isInvalid());
 
-            // Hold the real UPDATE notification outside the queue, then place it behind FULL. This pins
+            // Hold the invalidation of commit T outside the queue, then place it behind FULL. This pins
             // the delayed-delivery case: no reason marker exists during the pump, so invalidateView must
             // consult the last successful FULL coverage after recovery has already completed.
-            execute("UPDATE base_price SET amount = 7 WHERE sym = 'gbpusd'");
-            drainWalQueue();
+            execute("INSERT INTO base_price (sym, amount, ts) VALUES ('gbpusd', 11, '2024-09-10T12:03')");
+            drainWalAndMatViewQueues();
+            enqueueBaseInvalidation(viewToken);
             final MatViewRefreshTask delayedInvalidation = new MatViewRefreshTask();
             Assert.assertTrue(
-                    "the UPDATE must enqueue an invalidation task",
+                    "the base invalidation must enqueue an invalidation task",
                     engine.getMatViewStateStore().tryDequeueRefreshTask(delayedInvalidation)
             );
             Assert.assertEquals(MatViewRefreshTask.INVALIDATE, delayedInvalidation.operation);
@@ -1155,8 +1309,8 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             final TableToken viewToken = fixture.viewToken();
             final MatViewState state = fixture.state();
 
-            // FULL has already fixed reader snapshot S when this seam applies UPDATE S+1. A second worker
-            // delivers that real apply-time INVALIDATE against FULL's held latch. resetInvalidState must not
+            // FULL has already fixed reader snapshot S when this seam applies commit S+1. A second worker
+            // delivers the apply-time invalidation of S+1 against FULL's held latch. resetInvalidState must not
             // consume the newer owner: after FULL commits only S, the handoff must mint the view invalid.
             final AtomicBoolean hasFired = new AtomicBoolean();
             try (
@@ -1166,11 +1320,12 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                 fullJob.setOnBaseReaderSnapshotForTesting(() -> {
                     if (hasFired.compareAndSet(false, true)) {
                         try {
-                            execute("UPDATE base_price SET price = 9.9 WHERE sym = 'gbpusd'");
+                            execute("INSERT INTO base_price (sym, price, ts) VALUES ('gbpusd', 9.9, '2024-09-10T13:00')");
                         } catch (Exception e) {
                             throw new RuntimeException(e);
                         }
                         drainWalQueue();
+                        enqueueBaseInvalidation(viewToken);
                         drainMatViewQueue(invalidationJob);
                     }
                 });
@@ -1180,14 +1335,14 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                 drainWalQueue();
             }
 
-            Assert.assertTrue("the base update must land after FULL fixes its reader", hasFired.get());
+            Assert.assertTrue("the base commit must land after FULL fixes its reader", hasFired.get());
             Assert.assertFalse("the newer invalidation must reach a durable terminal state", state.isPendingInvalidation());
             assertQuery("select view_name, base_table_name, view_status, invalidation_reason from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             view_name\tbase_table_name\tview_status\tinvalidation_reason
-                            price_1h\tbase_price\tinvalid\tupdate operation
+                            price_1h\tbase_price\tinvalid\tbase invalidation
                             """);
         });
     }
@@ -1200,9 +1355,9 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             final TableToken viewToken = fixture.viewToken();
             final MatViewState state = fixture.state();
 
-            // FULL starts as recovery from a durable invalid state. Once it fixes reader snapshot S, UPDATE
-            // S+1 must still publish ownership even though the old invalid flag remains set until FULL's
-            // reset. Otherwise FULL can turn the view valid at S while silently dropping S+1.
+            // FULL starts as recovery from a durable invalid state. Once it fixes reader snapshot S, the
+            // invalidation of commit S+1 must still publish ownership even though the old invalid flag remains
+            // set until FULL's reset. Otherwise FULL can turn the view valid at S while silently dropping S+1.
             engine.getMatViewStateStore().enqueueInvalidate(viewToken, "test invalidation");
             drainMatViewQueue(engine);
             drainWalQueue();
@@ -1216,11 +1371,12 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                 fullJob.setOnBaseReaderSnapshotForTesting(() -> {
                     if (hasFired.compareAndSet(false, true)) {
                         try {
-                            execute("UPDATE base_price SET price = 9.9 WHERE sym = 'gbpusd'");
+                            execute("INSERT INTO base_price (sym, price, ts) VALUES ('gbpusd', 9.9, '2024-09-10T13:00')");
                         } catch (Exception e) {
                             throw new RuntimeException(e);
                         }
                         drainWalQueue();
+                        enqueueBaseInvalidation(viewToken);
                         drainMatViewQueue(invalidationJob);
                     }
                 });
@@ -1230,14 +1386,14 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                 drainWalQueue();
             }
 
-            Assert.assertTrue("the base update must land during invalid-view recovery", hasFired.get());
+            Assert.assertTrue("the base commit must land during invalid-view recovery", hasFired.get());
             Assert.assertFalse("the newer invalidation must reach a durable terminal state", state.isPendingInvalidation());
             assertQuery("select view_name, base_table_name, view_status, invalidation_reason from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             view_name\tbase_table_name\tview_status\tinvalidation_reason
-                            price_1h\tbase_price\tinvalid\tupdate operation
+                            price_1h\tbase_price\tinvalid\tbase invalidation
                             """);
         });
     }
@@ -2271,15 +2427,15 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             // as it would against a real second worker.
             Assert.assertTrue(state.tryLock());
             try {
-                execute("update base_price set amount = 42;"); // rows-affected UPDATE -> apply-time INVALIDATE
-                drainWalQueue();           // apply the UPDATE -> enqueue the INVALIDATE
+                execute("rename table base_price to base_price2"); // base rename -> base-table INVALIDATE
+                drainWalQueue();
                 // The drain processes the INVALIDATE: it publishes intent, loses this latch, and returns
                 // without adding a contender retry to the shared queue.
                 drainMatViewQueue(engine);
 
                 // The real defer site must record the cause so a later finalize can mint with it.
                 Assert.assertTrue("invalidation should have deferred", state.isPendingInvalidation());
-                Assert.assertEquals(UpdateOperation.MAT_VIEW_INVALIDATION_REASON, state.getPendingInvalidationReason());
+                Assert.assertEquals("base table is dropped or renamed", state.getPendingInvalidationReason());
                 // The deferral alone must not mint: the view is still valid on disk while pending in memory.
                 Assert.assertFalse("deferral alone must not mark the view invalid", state.isInvalid());
             } finally {
@@ -2294,7 +2450,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("""
                             view_name\tbase_table_name\tview_status\tinvalidation_reason
-                            price_1h\tbase_price\tinvalid\tupdate operation
+                            price_1h\tbase_price\tinvalid\tbase table is dropped or renamed
                             """);
         });
     }
@@ -3167,15 +3323,16 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
 
             final MatViewState state = fixture.state();
 
-            // The real apply-time INVALIDATE publishes ownership, then the suspended-view gate consumes its
-            // only task. RESUME WAL must redeliver that retained owner without relying on another base write.
+            // The real base-table INVALIDATE of a base rename publishes ownership, then the suspended-view gate
+            // consumes its only task. RESUME WAL must redeliver that retained owner without relying on another
+            // base write.
             execute("ALTER MATERIALIZED VIEW price_1h SUSPEND WAL");
-            execute("UPDATE base_price SET amount = 7");
+            execute("rename table base_price to base_price2");
             drainWalAndMatViewQueues();
 
             Assert.assertTrue("the suspended invalidation must retain ownership", state.isPendingInvalidation());
             Assert.assertFalse("the suspended view cannot mint invalid state yet", state.isInvalid());
-            Assert.assertEquals("update operation", state.getPendingInvalidationReason());
+            Assert.assertEquals("base table is dropped or renamed", state.getPendingInvalidationReason());
 
             execute("ALTER MATERIALIZED VIEW price_1h RESUME WAL");
             drainWalAndMatViewQueues();
@@ -3186,7 +3343,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("""
                             view_name\tbase_table_name\tview_status\tinvalidation_reason
-                            price_1h\tbase_price\tinvalid\tupdate operation
+                            price_1h\tbase_price\tinvalid\tbase table is dropped or renamed
                             """);
         });
     }
@@ -3198,10 +3355,10 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             final MatViewFixture fixture = createAutoPriceViewFixture();
             final MatViewState state = fixture.state();
 
-            // Suspend, then let an apply-time INVALIDATE park its marker (same choreography as
+            // Suspend, then let a base-table INVALIDATE park its marker (same choreography as
             // testResumeWalRedeliversSuspendedInvalidation).
             execute("ALTER MATERIALIZED VIEW price_1h SUSPEND WAL");
-            execute("UPDATE base_price SET price = 42");
+            execute("rename table base_price to base_price2");
             drainWalAndMatViewQueues();
             Assert.assertTrue(state.isPendingInvalidation());
             Assert.assertFalse(state.isInvalid());
@@ -3227,7 +3384,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("""
                             view_name\tbase_table_name\tview_status\tinvalidation_reason
-                            price_1h\tbase_price\tinvalid\tupdate operation
+                            price_1h\tbase_price\tinvalid\tbase table is dropped or renamed
                             """);
         });
     }
@@ -4349,6 +4506,12 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
         }
     }
 
+    private void assertJpyPrice(String expectedPrice) throws Exception {
+        assertQuery("SELECT sym, price FROM price_1h WHERE sym = 'jpyusd'")
+                .noLeakCheck()
+                .returns("sym\tprice\njpyusd\t" + expectedPrice + "\n");
+    }
+
     private void assertPriceViewValid() throws Exception {
         assertQuery("select view_name, base_table_name, view_status from materialized_views")
                 .noRandomAccess()
@@ -4444,6 +4607,16 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
         createAutoPriceViewDefinition();
         drainWalAndMatViewQueues();
         return resolvePriceViewFixture();
+    }
+
+    // Publishes the invalidation that an apply-time base change publishes for the view at the base's last applied
+    // transaction, as the bare-name guard does for a base column change: a view-scoped, non-forced INVALIDATE that
+    // carries the base table and the txn, which a FULL refresh whose fixed base snapshot includes the txn consumes.
+    // No other base operation invalidates a mat view when it applies.
+    private void enqueueBaseInvalidation(TableToken viewToken) {
+        final TableToken baseToken = engine.verifyTableName("base_price");
+        final long baseTxn = engine.getTableSequencerAPI().getTxnTracker(baseToken).getWriterTxn();
+        engine.getMatViewStateStore().enqueueInvalidate(viewToken, "base invalidation", baseToken, baseTxn, false);
     }
 
     private void insertBasePriceRows() throws SqlException {

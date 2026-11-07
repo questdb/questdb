@@ -92,7 +92,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     // Refresh tasks a single run() may consume before it yields to the rest of the worker's jobs.
     private static final int MAX_TASKS_PER_RUN = 32;
     private final ObjList<TableToken> childViewSink = new ObjList<>();
-    private final ObjList<TableToken> childViewSink2 = new ObjList<>();
     // Scratch list for the post-cluster working copy of refresh intervals.
     // Decouples downstream cluster/period/limit mutations from the live
     // viewState.refreshIntervals reference -- mutating the cache would persist
@@ -823,6 +822,147 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         }
     }
 
+    /**
+     * Adds a base table range that an ATTACH PARTITION or an UPDATE changed to the view's refresh-interval cache.
+     * The WAL interval scan of a refresh skips both, since they commit as SQL transactions, so the WAL apply job
+     * queues their range once the batch that applied them has committed. The range then goes through the
+     * incremental refresh path, which honours REFRESH LIMIT, period completeness and the partition clip: at once
+     * for an IMMEDIATE view, at the next REFRESH ... INCREMENTAL for a MANUAL view and at the next timer firing for a
+     * TIMER view.
+     */
+    private void addRefreshRange(@NotNull MatViewRefreshTask refreshTask) {
+        final TableToken viewToken = refreshTask.matViewToken;
+        assert viewToken != null;
+        final MatViewState viewState = stateStore.getViewState(viewToken);
+        if (viewState == null || viewState.hasPendingInvalidationReason() || viewState.isInvalid() || viewState.isDropped()) {
+            // An invalid view does not track its base's changes.
+            return;
+        }
+
+        final MatViewDefinition viewDefinition = viewState.getViewDefinition();
+        if (isViewWriteSuspended(viewToken)) {
+            // The cache persists through the view's WAL, which takes no write while suspended. The range goes, as
+            // it does when a restart loses the task.
+            LOG.info().$("dropping base table range, materialized view is suspended [view=").$(viewToken)
+                    .$(", from=").$ts(viewDefinition.getBaseTableTimestampDriver(), refreshTask.rangeFrom)
+                    .$(", to=").$ts(viewDefinition.getBaseTableTimestampDriver(), refreshTask.rangeTo)
+                    .I$();
+            return;
+        }
+        runBeforeRefreshLockSeamForTesting();
+        if (!viewState.tryLock()) {
+            // The task goes back on the queue as a deferral. The deferral ends this dispatch pass, so the worker
+            // does not take the task straight back while the lock holder works.
+            LOG.debug().$("could not lock materialized view to add base table range, will retry [view=").$(viewToken).I$();
+            deferRefreshSameKind(viewToken, refreshTask);
+            return;
+        }
+        if (!isStillRefreshable(viewState, false)) {
+            finalizeAndUnlock(viewToken, viewState, false);
+            return;
+        }
+
+        boolean isRangeAdded = false;
+        try (WalWriter walWriter = engine.getWalWriter(viewToken)) {
+            runHoldingLockSeamForTesting();
+            isRangeAdded = addRefreshRange0(refreshTask, viewDefinition, viewState, walWriter);
+        } catch (Throwable th) {
+            if (isTableSuspendedError(th)) {
+                // The view was suspended between the isViewWriteSuspended gate and the getWalWriter acquire.
+                LOG.info().$("dropping base table range, materialized view is suspended [view=").$(viewToken).I$();
+                return;
+            }
+            if (handleErrorRetryRefresh(th, viewToken, stateStore, refreshTask)) {
+                // A read-only refusal or a view rename in progress: the task is re-scheduled.
+                return;
+            }
+            // The view's WAL writer could not be acquired, or the cache could not be persisted.
+            LOG.error().$("could not add base table range to materialized view refresh intervals [view=").$(viewToken)
+                    .$(", ex=").$(th)
+                    .I$();
+            refreshFailState(viewDefinition, viewState, null, th);
+        } finally {
+            finalizeAndUnlock(viewToken, viewState, false);
+        }
+
+        if (isRangeAdded && viewDefinition.getRefreshType() == MatViewDefinition.REFRESH_TYPE_IMMEDIATE) {
+            stateStore.enqueueIncrementalRefresh(viewToken);
+        }
+    }
+
+    // Runs under the view latch. Returns true when it added the range to the cache and persisted the cache.
+    private boolean addRefreshRange0(
+            @NotNull MatViewRefreshTask refreshTask,
+            @NotNull MatViewDefinition viewDefinition,
+            @NotNull MatViewState viewState,
+            @NotNull WalWriter walWriter
+    ) {
+        assert viewState.isLocked();
+        final TableToken viewToken = viewDefinition.getMatViewToken();
+        final TimestampDriver driver = viewDefinition.getBaseTableTimestampDriver();
+
+        // The range belongs to the table that applied the operation. A table now under the base's name with another
+        // id replaced it: the base was dropped and re-created, or renamed while a new table took its name.
+        final TableToken baseTableToken = engine.getTableTokenIfExists(viewDefinition.getBaseTableName());
+        if (baseTableToken == null || baseTableToken.getTableId() != refreshTask.baseTableToken.getTableId()) {
+            LOG.info().$("dropping base table range, base table was replaced [view=").$(viewToken)
+                    .$(", baseTable=").$(refreshTask.baseTableToken)
+                    .$(", from=").$ts(driver, refreshTask.rangeFrom)
+                    .$(", to=").$ts(driver, refreshTask.rangeTo)
+                    .I$();
+            return false;
+        }
+
+        if (viewState.getLastRefreshBaseTxn() == -1) {
+            // The view never completed a refresh, and its first build recomputes the whole base.
+            return false;
+        }
+
+        // Bring the cache up to the base's applied transaction. The scan applies the TRUNCATE cut, so a truncate
+        // applied after the operation has cleared the intervals queued before it by now.
+        final long lastBaseTxn = engine.getTableSequencerAPI().getTxnTracker(baseTableToken).getWriterTxn();
+        updateRefreshIntervals0(lastBaseTxn, baseTableToken, viewDefinition, viewState, walWriter);
+
+        // The WAL apply job records a TRUNCATE before it commits, so a truncate that the scan above could see is
+        // recorded by now. One applied after the operation removed the rows of the range.
+        final long lastTruncateTxn = stateStore.getLastBaseTableTruncateTxn(baseTableToken);
+        if (refreshTask.baseTableTxn < lastTruncateTxn) {
+            LOG.info().$("dropping base table range, base table was truncated after the operation [view=").$(viewToken)
+                    .$(", baseTable=").$(baseTableToken)
+                    .$(", operationTxn=").$(refreshTask.baseTableTxn)
+                    .$(", truncateTxn=").$(lastTruncateTxn)
+                    .$(", from=").$ts(driver, refreshTask.rangeFrom)
+                    .$(", to=").$ts(driver, refreshTask.rangeTo)
+                    .I$();
+            return false;
+        }
+
+        intervals.clear();
+        intervals.add(refreshTask.rangeFrom, refreshTask.rangeTo);
+        mergeIntoCachedIntervals(viewState, intervals);
+        // The cache covers the base's WAL up to the refresh position at least, which is where the next scan starts.
+        if (viewState.getRefreshIntervalsBaseTxn() < viewState.getLastRefreshBaseTxn()) {
+            viewState.setRefreshIntervalsBaseTxn(viewState.getLastRefreshBaseTxn());
+        }
+        fencedResetMatViewState(
+                walWriter,
+                viewState.getLastRefreshBaseTxn(),
+                viewState.getLastRefreshFinishTimestampUs(),
+                false,
+                null,
+                viewState.getLastPeriodHi(),
+                viewState.getRefreshIntervals(),
+                viewState.getRefreshIntervalsBaseTxn()
+        );
+        LOG.info().$("added base table range to materialized view refresh intervals [view=").$(viewToken)
+                .$(", baseTable=").$(baseTableToken)
+                .$(", operationTxn=").$(refreshTask.baseTableTxn)
+                .$(", from=").$ts(driver, refreshTask.rangeFrom)
+                .$(", to=").$ts(driver, refreshTask.rangeTo)
+                .I$();
+        return true;
+    }
+
     private boolean checkIfBaseTableDropped(MatViewRefreshTask refreshTask) {
         final TableToken baseTableToken = refreshTask.baseTableToken;
         final TableToken viewToken = refreshTask.matViewToken;
@@ -1045,12 +1185,14 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         }
     }
 
-    private void enqueueInvalidateDependentViews(TableToken viewToken, String invalidationReason) {
-        childViewSink2.clear();
-        graph.getDependentViews(viewToken, childViewSink2);
-        for (int v = 0, n = childViewSink2.size(); v < n; v++) {
-            stateStore.enqueueInvalidate(childViewSink2.get(v), invalidationReason);
-        }
+    private void enqueueAddRefreshRange(TableToken viewToken, MatViewRefreshTask refreshTask) {
+        stateStore.enqueueAddRefreshRange(
+                viewToken,
+                refreshTask.baseTableToken,
+                refreshTask.rangeFrom,
+                refreshTask.rangeTo,
+                refreshTask.baseTableTxn
+        );
     }
 
     private void finalizeAndUnlock(TableToken viewToken, MatViewState viewState, boolean shouldIncrementRefreshSeq) {
@@ -1584,11 +1726,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     // A null interval iterator cannot leave refreshed false here: the pump reset the
                     // watermark to -1 (resetInvalidState), findRefreshIntervals stamps toBaseTxn with the
                     // reader's seqTxn (>= 0 for a WAL table), so insertAsSelect's no-interval branch always
-                    // advances the watermark and returns true, and the truncate barrier is unreachable in
-                    // FULL (only the incremental WAL scan raises it). The assert pins that invariant.
+                    // advances the watermark and returns true. The assert pins that invariant.
                     assert refreshed || refreshContext.intervalIterator != null;
                     if (refreshed) {
-                        assert !refreshContext.hasTruncateBarrier;
                         viewState.recordFullRefreshSuccess(baseTableToken, refreshContext.toBaseTxn);
                         if (!viewState.clearPendingInvalidationIfCoveredByLastFullRefresh()
                                 && viewState.getPendingInvalidationReason(preSnapshotMarker) != null) {
@@ -1866,8 +2006,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         } else if (refreshTask.operation == MatViewRefreshTask.UPDATE_REFRESH_INTERVALS) {
             stateStore.enqueueUpdateRefreshIntervals(viewToken);
         } else {
-            throw CairoException.critical(0).put("cannot defer materialized view refresh task [operation=")
-                    .put(refreshTask.operation).put(']');
+            // Only the handlers of these five operations defer their task; the INVALIDATE handler passes none.
+            assert refreshTask.operation == MatViewRefreshTask.ADD_REFRESH_RANGE : "cannot defer materialized view refresh task [operation=" + refreshTask.operation + ']';
+            enqueueAddRefreshRange(viewToken, refreshTask);
         }
     }
 
@@ -1974,7 +2115,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     } else if (refreshTask.operation == MatViewRefreshTask.UPDATE_REFRESH_INTERVALS) {
                         stateStore.enqueueUpdateRefreshIntervals(viewToken);
                     } else {
-                        return false;
+                        // Only the handlers of these five operations pass their task; the INVALIDATE handler
+                        // passes none.
+                        assert refreshTask.operation == MatViewRefreshTask.ADD_REFRESH_RANGE : "cannot retry materialized view refresh task [operation=" + refreshTask.operation + ']';
+                        enqueueAddRefreshRange(viewToken, refreshTask);
                     }
                 }
                 // Fires on EVERY read-only refusal, requeued or not: the contract is retry-later, never
@@ -2003,8 +2147,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         } else if (refreshTask.operation == MatViewRefreshTask.UPDATE_REFRESH_INTERVALS) {
                             stateStore.enqueueUpdateRefreshIntervals(updatedToken);
                         } else {
-                            // Invalid task, we cannot retry it.
-                            return false;
+                            // Only the handlers of these five operations pass their task; the INVALIDATE
+                            // handler passes none.
+                            assert refreshTask.operation == MatViewRefreshTask.ADD_REFRESH_RANGE : "cannot retry materialized view refresh task [operation=" + refreshTask.operation + ']';
+                            enqueueAddRefreshRange(updatedToken, refreshTask);
                         }
                     }
                     return true;
@@ -2047,19 +2193,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         viewState.setLastRefreshStartTimestampUs(refreshStartTimestamp);
         final TableToken viewTableToken = viewDefinition.getMatViewToken();
         final SampleByIntervalIterator intervalIterator = refreshContext.intervalIterator;
-
-        if (refreshContext.hasTruncateBarrier) {
-            // A truncate sits in the scanned range and interval planning already finalized the invalidation
-            // inline. Do NOT commit any watermark advance here -- that would push lastRefreshBaseTxn past
-            // the truncate and blind the load-time backstop if the in-memory invalidation is later lost.
-            // This must run regardless of whether an interval iterator was built: a period mat-view
-            // synthesizes a non-null iterator from its period bounds even when the barrier cleared the
-            // incremental intervals, so the check sits above the intervalIterator == null branch to cover
-            // that path too. Restore the in-memory start timestamp bumped above so the view does not report
-            // "refreshing" forever, and end this run without advancing.
-            viewState.setLastRefreshStartTimestampUs(prevRefreshStartTimestamp);
-            return false;
-        }
 
         // If we don't have intervals to query, we may still need to bump base table txn or last period hi.
         if (intervalIterator == null) {
@@ -2581,7 +2714,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     /**
      * Returns true if the materialized view is in the configured refresh block list
      * ({@code cairo.mat.view.refresh.block.list}). Blocked views are skipped by every refresh path -
-     * incremental, full, and range. They may still be invalidated by a base-table/parent cascade or
+     * incremental, full, and range. They may still be invalidated by a base-table invalidation or
      * an explicit INVALIDATE; this is safe because invalidation runs no view SQL (so it can't trigger
      * the crash the block list guards against) and it releases the base table's WAL retention. This
      * is an operator escape hatch for a view whose refresh keeps crashing the database: blocking it
@@ -2643,8 +2776,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             // Set once the auth-refusal catch below defers this invocation's own refused marker; the
             // finally hands it to finalizeAndUnlock0, which suppresses only that marker's wake.
             Object authRefusedMarker = null;
-            // True once setInvalidState persisted the invalid mint; gates the dependent cascade below.
-            boolean isInvalidated = false;
             try {
                 // A publisher can acquire this latch only after FULL consumed its covered marker, and a
                 // delayed task can arrive after FULL completed. Resolve either case before snapshotting the
@@ -2681,7 +2812,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                             // A durable invalid state covers every concurrent invalidation publication,
                             // including one that replaced pendingMarker while the WAL mint ran.
                             viewState.clearPendingInvalidationReason();
-                            isInvalidated = true;
                             break;
                         } catch (CairoException ex) {
                             if (isTableSuspendedError(ex)) {
@@ -2733,15 +2863,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 // If promotion completed concurrently, the post-release handoff queues newer work now.
                 finalizeAndUnlock0(engine, stateStore, viewToken, viewState, false, authRefusedMarker, null);
             }
-            // Invalidate dependent views recursively -- only after an actual mint. The force=false decline
-            // above (a never-incrementally-refreshed view) leaves this view valid, and a valid parent must
-            // not cascade: the per-child tasks re-deliver as force=true (see invalidate()), which would
-            // hard-mint chained views invalid under a reason claiming this parent was invalidated. The
-            // suspended/read-only/auth exits already return before reaching here, and the truncate-barrier
-            // twin cascades only on a successful mint -- the decline was the one fall-through.
-            if (isInvalidated) {
-                enqueueInvalidateDependentViews(viewToken, "base materialized view is invalidated");
-            }
+            // No cascade to the views built on this one: they stay valid, consistent with this view's rows, and
+            // follow its commits once it is valid again.
         }
     }
 
@@ -2834,6 +2957,22 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     .put(", to=").put(viewMetadata.getColumnName(MatViewColumnMapping.getViewColumnIndex(copier, position)))
                     .put(']');
         }
+    }
+
+    // Unions the intervals, sorted and disjoint, with the view's cached refresh intervals into the cache. Past
+    // cairo.mat.view.max.refresh.intervals intervals, the newest ones merge into one.
+    private void mergeIntoCachedIntervals(MatViewState viewState, LongList intervals) {
+        final int dividerIndex = intervals.size();
+        intervals.addAll(viewState.getRefreshIntervals());
+        IntervalUtils.unionInPlace(intervals, dividerIndex);
+
+        final int cacheCapacity = configuration.getMatViewMaxRefreshIntervals() << 1;
+        if (intervals.size() > cacheCapacity) {
+            // Squash the latest intervals into a single one.
+            intervals.setQuick(cacheCapacity - 1, intervals.getQuick(intervals.size() - 1));
+            intervals.setPos(cacheCapacity);
+        }
+        viewState.setRefreshIntervals(intervals);
     }
 
     private boolean processNotifications() {
@@ -2956,6 +3095,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         break;
                     case MatViewRefreshTask.UPDATE_REFRESH_INTERVALS:
                         updateRefreshIntervals(refreshTask);
+                        break;
+                    case MatViewRefreshTask.ADD_REFRESH_RANGE:
+                        addRefreshRange(refreshTask);
                         break;
                     default:
                         throw new RuntimeException("unexpected operation: " + operation);
@@ -3214,9 +3356,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 }
                 if (isViewWriteSuspended(viewToken)) {
                     // The view is hard-suspended and writes are denied. Skip it instead of failing into
-                    // invalidation (which would also cascade-invalidate its dependents). Leaving the view's
-                    // lastRefreshBaseTxn untouched keeps the base WAL it still needs from being purged; the
-                    // refresh resumes on the next base-table commit after RESUME WAL.
+                    // invalidation. Leaving the view's lastRefreshBaseTxn untouched keeps the base WAL it still
+                    // needs from being purged; the refresh resumes on the next base-table commit after RESUME WAL.
                     LOG.debug().$("skipping incremental refresh, materialized view is suspended [view=").$(viewToken).I$();
                     continue;
                 }
@@ -3341,8 +3482,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 }
             }
         }
-        // Invalidate dependent views recursively.
-        enqueueInvalidateDependentViews(viewDefinition.getMatViewToken(), "base materialized view refresh failed");
+        // No cascade to the views built on this one: they keep refreshing from its rows, which the failed refresh
+        // left as they were.
     }
 
     private void refreshFailState(
@@ -3513,8 +3654,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 if (preflightMaterialization(viewDefinition, viewState, walWriter, refreshTask, false) != PREFLIGHT_READY) {
                     return toBaseTxn << 1;
                 }
-                if (viewDefinition.getPeriodLength() == 0 && fromBaseTxn > -1 && fromBaseTxn == toBaseTxn) {
-                    // Non-period mat view which is already up-to-date, after policy preflight.
+                if (viewDefinition.getPeriodLength() == 0 && fromBaseTxn > -1 && fromBaseTxn == toBaseTxn
+                        && viewState.getRefreshIntervals().size() == 0) {
+                    // Non-period mat view which is already up-to-date, after policy preflight. A view whose
+                    // refresh-interval cache holds ranges is not: an ATTACH PARTITION or an UPDATE queues its
+                    // range there without a base data commit, and the range must not wait for one.
                     viewState.resetRefreshRetry();
                     return toBaseTxn << 1;
                 }
@@ -3542,11 +3686,17 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     ) {
         final long commitBaseTxn = refreshContext.toBaseTxn != -1 ? refreshContext.toBaseTxn : viewState.getLastRefreshBaseTxn();
         final long commitPeriodHi = refreshContext.periodHi != Numbers.LONG_NULL ? refreshContext.periodHi : viewState.getLastPeriodHi();
-        // Only commit when the watermark actually advances. Committing an unchanged watermark
+        // An incremental refresh that finds nothing left to recompute in a non-empty refresh-interval cache, since
+        // REFRESH LIMIT, period completeness or the partition clip removed every cached range, clears and persists
+        // the cache. Otherwise a range that an ATTACH PARTITION or an UPDATE queued would stay cached until the next
+        // base data commit, and the partition clip would let it through once a later write recreated a removed
+        // partition. A range refresh (toBaseTxn of -1) leaves the cache to the incremental refreshes.
+        final boolean hasCachedIntervals = refreshContext.toBaseTxn != -1 && viewState.getRefreshIntervals().size() > 0;
+        // Otherwise, only commit when the watermark actually advances. Committing an unchanged watermark
         // writes a no-op replace-range WAL transaction; when the base table apply lags, the
         // self-re-enqueueing refresh loop can emit millions of these, flooding the view's WAL
         // and stalling replicas that apply them.
-        if (commitBaseTxn > viewState.getLastRefreshBaseTxn() || commitPeriodHi > viewState.getLastPeriodHi()) {
+        if (commitBaseTxn > viewState.getLastRefreshBaseTxn() || commitPeriodHi > viewState.getLastPeriodHi() || hasCachedIntervals) {
             refreshSuccessNoRows(
                     viewState,
                     walWriter,
@@ -3770,11 +3920,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 }
                 if (handleErrorRetryRefresh(th, viewToken, stateStore, refreshTask)) {
                     // A read-only refusal (a demote racing this interval update; the writer acquire or
-                    // the inline-mint commit fence refuses) or an in-progress base-table rename is a
+                    // the interval-state commit fence refuses) or an in-progress base-table rename is a
                     // transient condition, not a refresh failure. handleErrorRetryRefresh re-enqueues
                     // the task when still writable and returns true. Mirror the incremental path: do NOT
                     // invalidate. Without this the refusal routes to refreshFailState below, freezing the
-                    // view invalid-in-memory / valid-on-disk and firing a spurious dependent cascade.
+                    // view invalid-in-memory / valid-on-disk.
                     return;
                 }
                 // If we're here, we couldn't obtain the WAL writer or commit the interval state for a
@@ -3799,13 +3949,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     ) {
         assert viewState.isLocked();
 
-        // Reset the barrier signal at the top so a value set by a prior call cannot leak forward on the
-        // shared refresh context. The standalone UPDATE_REFRESH_INTERVALS task path reaches this method
-        // without going through findRefreshIntervals (which clears the context), and insertAsSelect now
-        // reads this flag before the interval-iterator check, so a stale true would otherwise wrongly
-        // abort an unrelated later refresh.
-        refreshContext.hasTruncateBarrier = false;
-
         final TableToken viewToken = viewDefinition.getMatViewToken();
         final long lastRefreshTxn = Math.max(viewState.getLastRefreshBaseTxn(), viewState.getRefreshIntervalsBaseTxn());
 
@@ -3821,75 +3964,20 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 intervals.clear();
                 txnRangeLoader.load(engine, Path.PATH.get(), baseTableToken, intervals, lastRefreshTxn, lastBaseTxn);
                 if (txnRangeLoader.hasTruncate()) {
-                    // The scanned base WAL range contains a TRUNCATE. The loader skips it as a non-data
-                    // txn, so the data intervals alone look like an ordinary advance -- but a truncate
-                    // invalidates the view (the same way ApplyWal2TableJob invalidates dependents on a
-                    // truncate). Do NOT advance refreshIntervalsBaseTxn past the barrier; finalize the
-                    // invalidation inline and stop this refresh. This run already holds the view lock AND
-                    // the view's WalWriter on a primary (the only role that reaches here -- a replica's
-                    // writer acquire already failed upstream), so the invalidation can mint here directly.
-                    // Enqueuing it instead would hand the task to the shared refresh queue, where a second
-                    // pool worker can dequeue it during this run's lock-hold window, fail the lock, and park
-                    // the view as pending-invalidation -- a state the queued task can no longer clear,
-                    // leaving the view silently valid with stale rows. Minting inline avoids that race.
-                    // Mirror invalidateView's never-refreshed guard: only mint invalid for a view that has
-                    // actually refreshed before (lastRefreshBaseTxn != -1). This guard is effectively always
-                    // true at the barrier: refreshIntervalsBaseTxn only advances after a data refresh sets
-                    // lastRefreshBaseTxn (set solely below, gated by lastRefreshTxn > -1), and
-                    // MatViewStateReader resets it when a legacy state file omits the intervals block. Kept
-                    // defensively; the invariant is pinned by testRefreshIntervalsDoNotAdvanceBeforeFirstDataRefresh
-                    // and testReusedReaderResetsStaleStateWhenLaterBlocksAbsent. A never-materialized view has
-                    // no stale rows anyway, so holding the watermark suffices.
-                    if (viewState.getLastRefreshBaseTxn() != -1) {
-                        final long prevRefreshStartTimestampUs = viewState.getLastRefreshStartTimestampUs();
-                        final long invalidationTimestamp = microsecondClock.getTicks();
-                        // ERROR, like the identical mint in invalidateView: this is a real invalidation,
-                        // so an operator watching for ERROR must not have to notice this one via
-                        // view_status alone.
-                        LOG.error().$("marking materialized view as invalid [view=").$(viewToken)
-                                .$(", reason=truncate operation, ts=").$ts(invalidationTimestamp)
-                                .I$();
-                        try {
-                            setInvalidState(viewState, walWriter, "truncate operation", invalidationTimestamp);
-                        } catch (CairoException ex) {
-                            // setInvalidState flips the in-memory invalid flag and bumps the in-memory start
-                            // timestamp BEFORE the fenced commit. If that commit then fails -- a read-only
-                            // fence refusal (a demote flipped the node read-only after the writer acquire) or a
-                            // genuine WAL/IO write failure -- nothing was persisted, so roll both back so the
-                            // in-memory state matches the unchanged on-disk state before re-throwing. The
-                            // refresh's outer handler then decides: a read-only refusal defers (retry-later)
-                            // and the load-time backstop re-detects the truncate on the next promote (the
-                            // watermark never advanced past it); a non-auth failure falls back to a full
-                            // refresh. Restoring the start timestamp keeps the catalogue from reporting this
-                            // still-valid view as "refreshing".
-                            viewState.markAsValid();
-                            viewState.setLastRefreshStartTimestampUs(prevRefreshStartTimestampUs);
-                            throw ex;
-                        }
-                        // Cascade to chained views the same way invalidateView does on a successful mint:
-                        // a mat-view built on top of this one is now stale and must be invalidated too. The
-                        // enqueued tasks target only child tokens, so this is safe while still holding this
-                        // view's lock. Runs only on a successful invalidation (the fence-refusal path above
-                        // re-throws before reaching here).
-                        enqueueInvalidateDependentViews(viewToken, "base materialized view is invalidated");
-                    }
-                    // Signal the surrounding refresh to stop without committing a no-rows watermark advance.
-                    refreshContext.hasTruncateBarrier = true;
-                    intervals.clear();
-                    return intervals;
+                    // The TRUNCATE cut. The scan met a base TRUNCATE and kept only the intervals of the
+                    // transactions after it. The cached intervals all predate the truncate too, so they go as
+                    // well. Recomputing them against a base that no longer holds their rows would delete the
+                    // view's rows there; the view keeps them instead, and follows the rows written after the
+                    // truncate.
+                    LOG.info().$("base table was truncated, dropping refresh intervals queued before the truncate [view=").$(viewToken)
+                            .$(", baseTable=").$(baseTableToken)
+                            .$(", fromTxn=").$(lastRefreshTxn)
+                            .$(", toTxn=").$(lastBaseTxn)
+                            .I$();
+                    viewState.getRefreshIntervals().clear();
                 }
                 if (intervals.size() > 0) {
-                    final int dividerIndex = intervals.size();
-                    intervals.addAll(viewState.getRefreshIntervals());
-                    IntervalUtils.unionInPlace(intervals, dividerIndex);
-
-                    final int cacheCapacity = configuration.getMatViewMaxRefreshIntervals() << 1;
-                    if (intervals.size() > cacheCapacity) {
-                        // Squash the latest intervals into a single one.
-                        intervals.setQuick(cacheCapacity - 1, intervals.getQuick(intervals.size() - 1));
-                        intervals.setPos(cacheCapacity);
-                    }
-                    viewState.setRefreshIntervals(intervals);
+                    mergeIntoCachedIntervals(viewState, intervals);
                 }
                 viewState.setRefreshIntervalsBaseTxn(lastBaseTxn);
 
@@ -3907,10 +3995,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 return viewState.getRefreshIntervals();
             } catch (CairoException ex) {
                 if (ex.isAuthorizationError()) {
-                    // A read-only refusal from a commit fence (the inline truncate invalidation, or the
-                    // interval-state mint above) is a transient role condition, not a missing-WAL read
-                    // failure. Re-throw so the refresh's outer read-only handler defers (retry-later)
-                    // rather than clearing the cached intervals and forcing a full refresh.
+                    // A read-only refusal from the commit fence of the interval-state mint above is a
+                    // transient role condition, not a missing-WAL read failure. Re-throw so the refresh's
+                    // outer read-only handler defers (retry-later) rather than clearing the cached intervals
+                    // and forcing a full refresh.
                     throw ex;
                 }
                 if (configuration.isMatViewRefreshMissingWalFilesFatal()) {
@@ -4117,7 +4205,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private static class RefreshContext implements Mutable {
         public final LongList stepPerInterval = new LongList();
         public long approxBucketSize;
-        public boolean hasTruncateBarrier;
         public SampleByIntervalIterator intervalIterator;
         public long naturalStep;
         // Snapped REPLACE_RANGE.lo computed by findRefreshIntervals, staged for
@@ -4139,7 +4226,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         @Override
         public void clear() {
             approxBucketSize = 0;
-            hasTruncateBarrier = false;
             intervalIterator = null;
             naturalStep = 0;
             pendingFrozenBoundaryFloor = Numbers.LONG_NULL;

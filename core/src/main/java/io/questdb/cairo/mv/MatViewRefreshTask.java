@@ -29,6 +29,10 @@ import io.questdb.mp.ValueHolder;
 import io.questdb.std.Numbers;
 
 public class MatViewRefreshTask implements ValueHolder<MatViewRefreshTask> {
+    // Adds a base table range that an ATTACH PARTITION or an UPDATE changed to the view's refresh-interval
+    // cache: rangeFrom and rangeTo hold the range, inclusive, baseTableToken the base table that applied the
+    // operation and baseTableTxn the operation's seqTxn.
+    public static final int ADD_REFRESH_RANGE = 5;
     public static final int FULL_REFRESH = 1;
     public static final int INCREMENTAL_REFRESH = 0;
     public static final int INVALIDATE = 3;
@@ -36,6 +40,7 @@ public class MatViewRefreshTask implements ValueHolder<MatViewRefreshTask> {
     public static final int UNDEFINED = -1;
     public static final int UPDATE_REFRESH_INTERVALS = 4;
     public TableToken baseTableToken;
+    public long baseTableTxn = Numbers.LONG_NULL;
     public Object fullRefreshOwner;
     public TableToken invalidationBaseTableToken;
     public long invalidationBaseTxn = Numbers.LONG_NULL;
@@ -59,6 +64,8 @@ public class MatViewRefreshTask implements ValueHolder<MatViewRefreshTask> {
                 return "invalidate";
             case UPDATE_REFRESH_INTERVALS:
                 return "update_refresh_intervals";
+            case ADD_REFRESH_RANGE:
+                return "add_refresh_range";
             default:
                 return "unknown";
         }
@@ -72,6 +79,7 @@ public class MatViewRefreshTask implements ValueHolder<MatViewRefreshTask> {
     public void clear() {
         operation = UNDEFINED;
         baseTableToken = null;
+        baseTableTxn = Numbers.LONG_NULL;
         fullRefreshOwner = null;
         invalidationBaseTableToken = null;
         invalidationBaseTxn = Numbers.LONG_NULL;
@@ -87,6 +95,7 @@ public class MatViewRefreshTask implements ValueHolder<MatViewRefreshTask> {
     public void copyTo(MatViewRefreshTask anotherHolder) {
         anotherHolder.operation = operation;
         anotherHolder.baseTableToken = baseTableToken;
+        anotherHolder.baseTableTxn = baseTableTxn;
         anotherHolder.fullRefreshOwner = fullRefreshOwner;
         anotherHolder.invalidationBaseTableToken = invalidationBaseTableToken;
         anotherHolder.invalidationBaseTxn = invalidationBaseTxn;
