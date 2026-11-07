@@ -68,6 +68,133 @@ public class LateralJoinTest extends AbstractCairoTest {
             """;
 
     @Test
+    public void testCorrelatedGroupingSetsRejectedAndGroupByStillWorks() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (k INT)");
+            execute("INSERT INTO o VALUES (1), (2)");
+            execute("CREATE TABLE t (k INT, a INT)");
+            execute("INSERT INTO t VALUES (1, 10), (1, 20), (2, 30)");
+            execute("CREATE TABLE t_sample (ts TIMESTAMP, k INT) TIMESTAMP(ts)");
+
+            String groupingSetsQuery = """
+                    SELECT o.k, l.a, l.cnt
+                    FROM o LEFT JOIN LATERAL (
+                        SELECT a, count(*) AS cnt
+                        FROM t
+                        WHERE t.k = o.k
+                        GROUP BY GROUPING SETS ((a), ())
+                    ) l ON true
+                    ORDER BY o.k, l.a
+                    """;
+            String rollupQuery = """
+                    SELECT o.k, l.a, l.cnt
+                    FROM o LEFT JOIN LATERAL (
+                        SELECT a, count(*) AS cnt
+                        FROM t
+                        WHERE t.k = o.k
+                        GROUP BY ROLLUP(a)
+                    ) l ON true
+                    ORDER BY o.k, l.a
+                    """;
+            String emptyGroupingSetQuery = """
+                    SELECT o.k, l.cnt
+                    FROM o LEFT JOIN LATERAL (
+                        SELECT count(*) AS cnt
+                        FROM t
+                        WHERE t.k = o.k
+                        GROUP BY GROUPING SETS (())
+                    ) l ON true
+                    ORDER BY o.k
+                    """;
+            String nestedEmptyGroupingSetQuery = """
+                    SELECT o.k, l.c
+                    FROM o LEFT JOIN LATERAL (
+                        SELECT count(*) c FROM (
+                            SELECT a FROM t WHERE t.k = o.k
+                        ) GROUP BY GROUPING SETS (())
+                    ) l ON true
+                    ORDER BY o.k
+                    """;
+            String nestedSampleByGroupingSetQuery = """
+                    SELECT o.k, l.ts, l.c
+                    FROM o LEFT JOIN LATERAL (
+                        SELECT ts, count(*) c FROM (
+                            SELECT ts FROM t_sample WHERE t_sample.k = o.k
+                        ) SAMPLE BY 1h GROUPING SETS (())
+                    ) l ON true
+                    ORDER BY o.k
+                    """;
+            String nestedRollupQuery = """
+                    SELECT o.k, l.c
+                    FROM o LEFT JOIN LATERAL (
+                        SELECT count(*) c FROM (
+                            SELECT a FROM t WHERE t.k = o.k
+                        ) GROUP BY ROLLUP(a)
+                    ) l ON true
+                    ORDER BY o.k
+                    """;
+            String sampleByGroupingSetsQuery = """
+                    SELECT o.k, l.ts, l.cnt
+                    FROM o LEFT JOIN LATERAL (
+                        SELECT ts, count(*) AS cnt
+                        FROM t_sample
+                        WHERE t_sample.k = o.k
+                        SAMPLE BY 1h GROUPING SETS (())
+                    ) l ON true
+                    ORDER BY o.k, l.ts
+                    """;
+            String groupByQuery = """
+                    SELECT o.k, l.a, l.cnt
+                    FROM o LEFT JOIN LATERAL (
+                        SELECT a, count(*) AS cnt
+                        FROM t
+                        WHERE t.k = o.k
+                        GROUP BY a
+                    ) l ON true
+                    ORDER BY o.k, l.a
+                    """;
+            String groupByExpected = """
+                    k\ta\tcnt
+                    1\t10\t1
+                    1\t20\t1
+                    2\t30\t1
+                    """;
+            String uncorrelatedGroupingSetsQuery = """
+                    SELECT o.k, l.cnt
+                    FROM o CROSS JOIN LATERAL (
+                        SELECT count(*) AS cnt
+                        FROM t
+                        GROUP BY GROUPING SETS (())
+                    ) l
+                    ORDER BY o.k
+                    """;
+            String uncorrelatedGroupingSetsExpected = """
+                    k\tcnt
+                    1\t3
+                    2\t3
+                    """;
+
+            assertException(groupingSetsQuery, groupingSetsQuery.indexOf("GROUP BY"),
+                    "correlated GROUPING SETS are not supported with LATERAL");
+            assertException(rollupQuery, rollupQuery.indexOf("GROUP BY"),
+                    "correlated GROUPING SETS are not supported with LATERAL");
+            assertException(sampleByGroupingSetsQuery, sampleByGroupingSetsQuery.indexOf("1h"),
+                    "correlated GROUPING SETS are not supported with LATERAL");
+            assertException(emptyGroupingSetQuery, emptyGroupingSetQuery.indexOf("GROUP BY"),
+                    "correlated GROUPING SETS are not supported with LATERAL");
+            assertException(nestedEmptyGroupingSetQuery, nestedEmptyGroupingSetQuery.indexOf("GROUP BY"),
+                    "correlated GROUPING SETS are not supported with LATERAL");
+            assertException(nestedSampleByGroupingSetQuery, nestedSampleByGroupingSetQuery.indexOf("1h"),
+                    "correlated GROUPING SETS are not supported with LATERAL");
+            assertException(nestedRollupQuery, nestedRollupQuery.indexOf("GROUP BY"),
+                    "correlated GROUPING SETS are not supported with LATERAL");
+            assertQuery(groupByQuery).withContext(sqlExecutionContext).returns(groupByExpected);
+            assertQuery(uncorrelatedGroupingSetsQuery).withContext(sqlExecutionContext).expectSize()
+                    .returns(uncorrelatedGroupingSetsExpected);
+        });
+    }
+
+    @Test
     public void testCrossJoinLateral() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");

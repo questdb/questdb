@@ -271,7 +271,6 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
                 populateRowIDHashMapWithMatchedFlag(circuitBreaker, slaveCursor, joinKeyMap, slaveCursorSink, slaveChain, keyRecord);
                 isMapBuilt = true;
                 hasMaster(true);
-                mapCursor = joinKeyMap.getCursor();
             }
 
             if (slaveChainCursor != null && slaveChainCursor.hasNext()) {
@@ -300,6 +299,10 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
 
             hasMaster(false);
             hasSlave(true);
+            // Take the cursor only now: the probe's withKey() can grow the map and move its memory.
+            if (mapCursor == null) {
+                mapCursor = joinKeyMap.getCursor();
+            }
             while (mapCursor.hasNext()) {
                 circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 MapValue value = mapCursor.getRecord().getValue();
@@ -327,9 +330,8 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
         @Override
         public void toTop() {
             super.toTop();
-            if (mapCursor != null) {
-                mapCursor.toTop();
-            }
+            // The next probe can grow the map, so hasNext() takes a fresh cursor after it.
+            mapCursor = null;
             hasMaster(true);
         }
 
@@ -496,7 +498,6 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
                 populateRowIDHashMapWithMatchedFlag(circuitBreaker, slaveCursor, joinKeyMap, slaveKeySink, slaveChain, keyRecord);
                 isMapBuilt = true;
                 record.hasMaster(true);
-                mapCursor = joinKeyMap.getCursor();
             }
 
             if (slaveChainCursor != null && slaveChainCursor.hasNext()) {
@@ -520,6 +521,10 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
             }
 
             record.hasMaster(false);
+            // Take the cursor only now: the probe's withKey() can grow the map and move its memory.
+            if (mapCursor == null) {
+                mapCursor = joinKeyMap.getCursor();
+            }
             while (mapCursor.hasNext()) {
                 circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 MapValue value = mapCursor.getRecord().getValue();
@@ -536,9 +541,8 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
         @Override
         public void toTop() {
             super.toTop();
-            if (mapCursor != null) {
-                mapCursor.toTop();
-            }
+            // The next probe can grow the map, so hasNext() takes a fresh cursor after it.
+            mapCursor = null;
             record.hasMaster(true);
         }
 

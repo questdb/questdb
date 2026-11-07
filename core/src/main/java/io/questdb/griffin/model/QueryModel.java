@@ -73,8 +73,13 @@ public class QueryModel implements IQueryModel {
     private final IntIntHashMap correlatedDepths = new IntIntHashMap();
     private final LowerCaseCharSequenceObjHashMap<ExpressionNode> decls = new LowerCaseCharSequenceObjHashMap<>();
     private final IntHashSet dependencies = new IntHashSet();
+    private final ObjList<ExpressionNode> expiryWindowPartitionBy = new ObjList<>();
     private final ObjList<ExpressionNode> expressionModels = new ObjList<>();
     private final ObjList<ExpressionNode> groupBy = new ObjList<>();
+    // The alias of the column that SqlOptimiser.rewriteSelectClause0 creates for each groupBy key of
+    // a GROUPING SETS model, in groupBy order. Keys and column ASTs name the same input in different
+    // namespaces, so only this list ties a key to its column.
+    private final ObjList<CharSequence> groupingKeyAliases = new ObjList<>();
     private final LowerCaseCharSequenceObjHashMap<CharSequence> hintsMap = new LowerCaseCharSequenceObjHashMap<>();
     private final HorizonJoinContext horizonJoinContext = new HorizonJoinContext();
     private final ObjList<ExpressionNode> joinColumns = new ObjList<>(4);
@@ -137,6 +142,7 @@ public class QueryModel implements IQueryModel {
     private ExpressionNode constWhereClause;
     private JoinContext context;
     private boolean distinct = false;
+    private ExpressionNode expiryViewNameExpr;
     private boolean explicitTimestamp;
     // The timestamp_floor_utc bucket key node that SqlOptimiser.rewriteSampleBy creates.
     // SqlCodeGenerator.generateFill locates the bucket column by this node's identity,
@@ -149,14 +155,21 @@ public class QueryModel implements IQueryModel {
     private ExpressionNode fillTo;
     private ObjList<ExpressionNode> fillValues;
     private boolean forceBackwardScan;
+    private int groupByPosition;
+    // Each IntList contains indices into groupBy for columns active in that grouping set.
+    // Empty IntList = empty set () = grand total. Null means no GROUPING SETS syntax.
+    private ObjList<IntList> groupingSets;
     private boolean isCteModel;
-    private ExpressionNode lateralCountCoalesceGuard;
+    private boolean isExpiryKeepFilter;
+    private boolean isExpiryStructuralPolicy;
+    private boolean isExpiryWindowBarrier;
     private boolean isLateralCountCoalesceRequired;
     // see IQueryModel.isOuterRefJoinChecked()
     private boolean isOuterRefJoinChecked;
     // LateralJoinRewriter marks the final lateral output so SqlOptimiser can hide
     // synthesized alignment columns after wildcard expansion assigns final aliases.
     private boolean isOuterRefWildcardExcluded;
+    private boolean isScalarExpiryRead;
     // A flag to mark intermediate SELECT translation models. Such models do not contain the full list of selected
     // columns (e.g. they lack virtual columns), so they should be skipped when rewriting positional ORDER BY.
     private boolean isSelectTranslation = false;
@@ -164,6 +177,7 @@ public class QueryModel implements IQueryModel {
     private ExpressionNode joinCriteria;
     private int joinKeywordPosition;
     private int joinType = JOIN_NONE;
+    private ExpressionNode lateralCountCoalesceGuard;
     private int latestByType = LATEST_BY_NONE;
     private ExpressionNode limitAdviceHi;
     private ExpressionNode limitAdviceLo;
@@ -296,6 +310,13 @@ public class QueryModel implements IQueryModel {
         groupBy.add(node);
     }
 
+    public void addGroupingSet(IntList columnIndices) {
+        if (groupingSets == null) {
+            groupingSets = new ObjList<>();
+        }
+        groupingSets.add(columnIndices);
+    }
+
     @Override
     public void addHint(CharSequence key, CharSequence value) {
         hintsMap.put(key, value);
@@ -412,8 +433,12 @@ public class QueryModel implements IQueryModel {
         orderByDirectionAdvice.clear();
         orderByPosition = 0;
         orderByAdviceMnemonic = OrderByMnemonic.ORDER_BY_UNKNOWN;
+        isScalarExpiryRead = false;
         isSelectTranslation = false;
         groupBy.clear();
+        groupByPosition = 0;
+        groupingKeyAliases.clear();
+        groupingSets = null;
         dependencies.clear();
         parsedWhere.clear();
         whereClause = null;
@@ -459,6 +484,7 @@ public class QueryModel implements IQueryModel {
         tableId = -1;
         metadataVersion = -1;
         wildcardColumnNames.clear();
+        expiryWindowPartitionBy.clear();
         expressionModels.clear();
         distinct = false;
         nestedModelIsSubQuery = false;
@@ -474,6 +500,10 @@ public class QueryModel implements IQueryModel {
         //  default is SELECT
         isUpdateModel = false;
         isCteModel = false;
+        isExpiryKeepFilter = false;
+        isExpiryStructuralPolicy = false;
+        isExpiryWindowBarrier = false;
+        expiryViewNameExpr = null;
         isLateralCountCoalesceRequired = false;
         lateralCountCoalesceGuard = null;
         isOuterRefJoinChecked = false;
@@ -778,6 +808,16 @@ public class QueryModel implements IQueryModel {
     }
 
     @Override
+    public ExpressionNode getExpiryViewNameExpr() {
+        return expiryViewNameExpr;
+    }
+
+    @Override
+    public ObjList<ExpressionNode> getExpiryWindowPartitionBy() {
+        return expiryWindowPartitionBy;
+    }
+
+    @Override
     public ObjList<ExpressionNode> getExpressionModels() {
         return expressionModels;
     }
@@ -820,6 +860,21 @@ public class QueryModel implements IQueryModel {
     @Override
     public ObjList<ExpressionNode> getGroupBy() {
         return groupBy;
+    }
+
+    @Override
+    public int getGroupByPosition() {
+        return groupByPosition;
+    }
+
+    @Override
+    public ObjList<CharSequence> getGroupingKeyAliases() {
+        return groupingKeyAliases;
+    }
+
+    @Override
+    public ObjList<IntList> getGroupingSets() {
+        return groupingSets;
     }
 
     @NotNull
@@ -1288,6 +1343,11 @@ public class QueryModel implements IQueryModel {
     }
 
     @Override
+    public boolean hasGroupingSets() {
+        return groupingSets != null && groupingSets.size() > 0;
+    }
+
+    @Override
     public boolean hasSharedRefs() {
         return sharedRefs.size() > 0;
     }
@@ -1364,6 +1424,21 @@ public class QueryModel implements IQueryModel {
     }
 
     @Override
+    public boolean isExpiryKeepFilter() {
+        return isExpiryKeepFilter;
+    }
+
+    @Override
+    public boolean isExpiryStructuralPolicy() {
+        return isExpiryStructuralPolicy;
+    }
+
+    @Override
+    public boolean isExpiryWindowBarrier() {
+        return isExpiryWindowBarrier;
+    }
+
+    @Override
     public boolean isForceBackwardScan() {
         return forceBackwardScan;
     }
@@ -1425,6 +1500,11 @@ public class QueryModel implements IQueryModel {
     @Override
     public boolean isPivotGroupByColumnHasNoAlias() {
         return pivotGroupByColumnHasNoAlias;
+    }
+
+    @Override
+    public boolean isScalarExpiryRead() {
+        return isScalarExpiryRead;
     }
 
     @Override
@@ -1540,6 +1620,13 @@ public class QueryModel implements IQueryModel {
     public void moveGroupByFrom(IQueryModel model) {
         ObjList<ExpressionNode> thatGroupBy = model.getGroupBy();
         groupBy.addAll(thatGroupBy);
+        groupByPosition = model.getGroupByPosition();
+        if (model instanceof QueryModel that) {
+            groupingKeyAliases.addAll(that.groupingKeyAliases);
+            that.groupingKeyAliases.clear();
+            groupingSets = that.groupingSets;
+            that.groupingSets = null;
+        }
         // clear the source
         thatGroupBy.clear();
     }
@@ -1775,6 +1862,26 @@ public class QueryModel implements IQueryModel {
     }
 
     @Override
+    public void setExpiryKeepFilter(boolean isExpiryKeepFilter) {
+        this.isExpiryKeepFilter = isExpiryKeepFilter;
+    }
+
+    @Override
+    public void setExpiryStructuralPolicy(boolean isExpiryStructuralPolicy) {
+        this.isExpiryStructuralPolicy = isExpiryStructuralPolicy;
+    }
+
+    @Override
+    public void setExpiryViewNameExpr(ExpressionNode expiryViewNameExpr) {
+        this.expiryViewNameExpr = expiryViewNameExpr;
+    }
+
+    @Override
+    public void setExpiryWindowBarrier(boolean isExpiryWindowBarrier) {
+        this.isExpiryWindowBarrier = isExpiryWindowBarrier;
+    }
+
+    @Override
     public void setFillBucketKey(ExpressionNode fillBucketKey) {
         this.fillBucketKey = fillBucketKey;
     }
@@ -1812,6 +1919,11 @@ public class QueryModel implements IQueryModel {
     @Override
     public void setForceBackwardScan(boolean forceBackwardScan) {
         this.forceBackwardScan = forceBackwardScan;
+    }
+
+    @Override
+    public void setGroupByPosition(int groupByPosition) {
+        this.groupByPosition = groupByPosition;
     }
 
     @Override
@@ -1988,6 +2100,11 @@ public class QueryModel implements IQueryModel {
     @Override
     public void setSampleByTimezoneName(ExpressionNode sampleByTimezoneName) {
         this.sampleByTimezoneName = sampleByTimezoneName;
+    }
+
+    @Override
+    public void setScalarExpiryRead(boolean isScalarExpiryRead) {
+        this.isScalarExpiryRead = isScalarExpiryRead;
     }
 
     @Override
