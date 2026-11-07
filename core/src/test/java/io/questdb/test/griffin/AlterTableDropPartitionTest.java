@@ -197,6 +197,30 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConvertPartitionWhereNowOnTimestampNsWalTable() throws Exception {
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosTimestampDriver.floor("2026-10-05T00:00:00.000000Z"));
+            execute("CREATE TABLE t_ns (v LONG, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            execute("INSERT INTO t_ns VALUES (1, '2026-10-01T10:00:00.000000000Z'), (2, '2026-10-01T12:00:00.000000000Z'), (3, '2026-10-04T12:00:00.000000000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE t_ns CONVERT PARTITION TO PARQUET WHERE ts < dateadd('d', -1, now())");
+            drainWalQueue();
+
+            assertQuery("SELECT name, isParquet FROM table_partitions('t_ns')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            name\tisParquet
+                            2026-10-01T10\ttrue
+                            2026-10-01T12\ttrue
+                            2026-10-04T12\tfalse
+                            """);
+        });
+    }
+
+    @Test
     public void testDetachPartitionWhereNegatedBindVariableStrideIsAccepted() throws Exception {
         assertMemoryLeak(() -> {
             createFourDailyPartitions("det3", false);
