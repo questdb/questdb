@@ -86,7 +86,7 @@ public interface MetadataServiceStub extends MetadataService {
     }
 
     @Override
-    default boolean enableDeduplicationWithUpsertKeys(LongList columnsIndexes) {
+    default boolean enableDeduplication(LongList columnsIndexes, int dedupMode) {
         return false;
     }
 
