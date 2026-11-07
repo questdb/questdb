@@ -25,14 +25,18 @@
 package io.questdb.test.cairo.view;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.file.BlockFileReader;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.view.ViewState;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
@@ -161,6 +165,18 @@ class AbstractViewTest extends AbstractCairoTest {
         }
     }
 
+    // A principal that reads a view, and a base table through it, only on the authority of the view: it is
+    // denied SELECT on the columns of every table, and the error lists the columns the read needs.
+    static SqlExecutionContext denyBaseTableSelectContext() {
+        return new SqlExecutionContextImpl(engine, 1).with(
+                new DenyBaseTableSelectSecurityContext(),
+                bindVariableService,
+                null,
+                -1,
+                null
+        );
+    }
+
     @NotNull
     static String getView1DefinitionSql() {
         final ViewDefinition viewDefinition = getViewDefinition(VIEW1);
@@ -257,5 +273,21 @@ class AbstractViewTest extends AbstractCairoTest {
         assertViewDefinition(viewName, viewQuery, expectedDependencies);
         assertViewDefinitionFile(viewName, viewQuery);
         assertViewState(viewName);
+    }
+
+    private static final class DenyBaseTableSelectSecurityContext extends AllowAllSecurityContext {
+        @Override
+        public void authorizeSelect(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
+            final CairoException e = CairoException.nonCritical()
+                    .put("permission denied [table=").put(tableToken.getTableName())
+                    .put(", columns=");
+            for (int i = 0, n = columnNames.size(); i < n; i++) {
+                if (i > 0) {
+                    e.put(',');
+                }
+                e.put(columnNames.getQuick(i));
+            }
+            throw e.put(']');
+        }
     }
 }

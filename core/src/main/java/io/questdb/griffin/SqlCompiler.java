@@ -44,6 +44,39 @@ import org.jetbrains.annotations.TestOnly;
 
 public interface SqlCompiler extends QuietCloseable, Mutable {
 
+    /**
+     * Adds to the dependency map of a view the columns that the reads of the view read and the plan of the view's
+     * own SELECT does not, see {@link SqlUtil.ViewWildcardSources#hasReadPlannedOtherwise()}. The plan of the
+     * view's own SELECT reads only the columns of a sub-query, CTE or view the view selects, and those its timestamp
+     * and its order need. A read that names only outputs of the view whose columns do not need such a sub-query
+     * gives it no columns to keep, when only the SELECT lists above the sub-query give it columns: the SELECT
+     * joins it without a key, such as with a CROSS JOIN, or an ASOF, LT or SPLICE JOIN without ON, or selects from
+     * it alone. The plan of such a read computes every column of the sub-query, as the plan of
+     * {@code SELECT n FROM v} does for a view {@code SELECT count() n, sum(a) s FROM (SELECT * FROM x)}. A read
+     * that counts the rows of the view drops the ORDER BY of a sub-query, and a temporal join or a SAMPLE BY that
+     * took its timestamp from it takes the timestamp of the source of the sub-query instead. This compiles the
+     * SELECT again, as a sub-query of a read that counts its rows, with every sub-query some read leaves without
+     * columns kept whole, and collects what that plan reads, including a {@code *} for each wildcard it keeps
+     * whole. It adds those columns marked, see {@link SqlUtil#addOtherReadDependencies}: the view lends them only to
+     * a read that sets none of its OVERRIDABLE variables, which could otherwise read any of them through the view.
+     * Call it on a compiler of its own after the SELECT of the view is optimised and before its plan is
+     * generated, with what that compile recorded: this takes the values of the PIVOT IN sub-queries from it
+     * rather than running them again, and finds a table out of date when it scans one of another id than that
+     * compile, and a view out of date when it expands another definition of it than that compile, see
+     * {@link SqlUtil.ViewCompileRecord}.
+     *
+     * @param viewSql          the SELECT of the view
+     * @param executionContext the context to compile the SELECT in
+     * @param dependencies     the dependency map of the view, which this adds to
+     * @param compileRecord    what the compile that optimised the SELECT of the view to plan it recorded
+     */
+    void collectOtherReadDependencies(
+            CharSequence viewSql,
+            SqlExecutionContext executionContext,
+            LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies,
+            SqlUtil.ViewCompileRecord compileRecord
+    ) throws SqlException;
+
     CompiledQuery compile(CharSequence sqlText, SqlExecutionContext ctx) throws SqlException;
 
     void compileBatch(CharSequence batchText, SqlExecutionContext sqlExecutionContext, BatchCallback batchCallback) throws Exception;
@@ -109,18 +142,6 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
     ExecutionModel generateExecutionModel(CharSequence sqlText, SqlExecutionContext executionContext) throws SqlException;
 
     /**
-     * Parses and optimises the SELECT of a view like {@link #generateExecutionModel}, and collects the
-     * tables and columns it reads into {@code outDependencies}, replacing what the map held. The set is
-     * the one CREATE VIEW records, so a caller that stores a view definition grants the view the same
-     * authority CREATE VIEW would.
-     */
-    ExecutionModel generateViewExecutionModel(
-            CharSequence viewSql,
-            SqlExecutionContext executionContext,
-            LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> outDependencies
-    ) throws SqlException;
-
-    /**
      * Parses a single expression text into an {@link ExpressionNode} tree without
      * running it through the optimiser. Useful when callers persist expression
      * fragments and need to recompile them later against a known
@@ -152,6 +173,25 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
             @Transient IQueryModel queryModel,
             @Transient SqlExecutionContext executionContext,
             boolean generateProgressLogger
+    ) throws SqlException;
+
+    /**
+     * Parses and optimises the SELECT of a view, like {@link #generateExecutionModel}, and collects its
+     * dependencies: the objects it names, see {@link SqlUtil#collectTableAndColumnReferences}, and the
+     * columns it reads from each table, see {@link SqlUtil#collectTableColumnReads}, those of the reads of
+     * the view the plan of the SELECT does not read included, see {@link #collectOtherReadDependencies}.
+     * The set is the one CREATE VIEW records, so a caller that stores a view definition grants the view
+     * the same authority CREATE VIEW would.
+     *
+     * @param viewSql          the SELECT of the view
+     * @param executionContext the context to compile the SELECT in
+     * @param dependencies     the dependency map of the view, whose content this replaces
+     * @return the optimised model of the SELECT
+     */
+    ExecutionModel generateViewExecutionModel(
+            CharSequence viewSql,
+            SqlExecutionContext executionContext,
+            LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies
     ) throws SqlException;
 
     BytecodeAssembler getAsm();

@@ -301,6 +301,9 @@ public class SqlParser {
     // lookupExpiryPredicate), so the keep-filter rewrite can null-safely flip only timestamp comparisons.
     private CharSequence expiryTimestampColumnName;
     private boolean isParsingExpiryPredicate;
+    // Whether viewReaderDecls set an OVERRIDABLE variable of a view the parser has expanded since it started on the
+    // outermost view it is expanding, see SqlExecutionContext.TableFunctionView.isReadOverridden().
+    private boolean isViewReadOverridden;
     // For each table (by id) whose EXPIRE ROWS policy this parse read straight from the table metadata while a
     // SET/DROP EXPIRE was still in flight: the metadata version that read saw. The optimiser compares it
     // against the version the reader opens and rejects the compile if they differ, so a filter chosen from the
@@ -317,6 +320,9 @@ public class SqlParser {
     private boolean subQueryMode = false;
     // Number of view bodies compileViewQuery() is expanding at the current parse position.
     private int viewExpansionDepth;
+    // The declarations of the statement where it reads the outermost view compileViewQuery() is expanding: a value
+    // they give a variable that view, or a view it reads, declares OVERRIDABLE replaces the value of the definition.
+    private LowerCaseCharSequenceObjHashMap<ExpressionNode> viewReaderDecls;
     // Where the statement's text reads the outermost view compileViewQuery() is expanding.
     private int viewReferencePosition;
     // The body parseViewSql() last parsed, for a caller that inspects it before the statement runs.
@@ -981,6 +987,23 @@ public class SqlParser {
         return SqlException.$(position, "EXPIRE ROWS predicate can read only the view the policy is set on");
     }
 
+    // whether the declarations give a value to one of the variables
+    private static boolean isAnyDeclared(
+            @NotNull LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
+            @NotNull LowerCaseCharSequenceHashSet variableNames
+    ) {
+        if (variableNames.size() == 0) {
+            return false;
+        }
+        final ObjList<CharSequence> declaredNames = decls.keys();
+        for (int i = 0, n = declaredNames.size(); i < n; i++) {
+            if (variableNames.contains(declaredNames.getQuick(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static boolean isJsonUnnestSupportedType(int type) {
         int tag = ColumnType.tagOf(type);
         return tag == ColumnType.BOOLEAN
@@ -1358,7 +1381,9 @@ public class SqlParser {
         parkedViewsBeingCompiled.clear();
         expiringTablesBeingExpanded.clear();
         auditedViewDepth = 0;
+        isViewReadOverridden = false;
         viewExpansionDepth = 0;
+        viewReaderDecls = null;
         viewReferencePosition = 0;
         viewTextLength = 0;
     }
@@ -1459,6 +1484,8 @@ public class SqlParser {
         viewsBeingCompiled.add(viewName);
         if (viewExpansionDepth++ == 0) {
             viewReferencePosition = viewPosition;
+            viewReaderDecls = model.getDecls();
+            isViewReadOverridden = false;
         }
         try {
             final IQueryModel viewModel = viewDefinition.isAudited()
@@ -1473,7 +1500,9 @@ public class SqlParser {
         } finally {
             // the body's parse moved the digit from 1 to where it is now
             digit = readDigit + digit - 1;
-            viewExpansionDepth--;
+            if (--viewExpansionDepth == 0) {
+                viewReaderDecls = null;
+            }
             viewsBeingCompiled.popLast();
         }
     }
@@ -1490,10 +1519,19 @@ public class SqlParser {
         } finally {
             idleViewLexers.add(viewLexer);
         }
+        // The views the body reads were expanded with it, so the outermost view knows whether the statement sets a
+        // variable of any of them. The scans of the body read through the outermost view, see setViewNameExpr().
+        // Every branch of a set operation takes the statement's value of a variable its own DECLARE block marks
+        // OVERRIDABLE, see parseDml(), so the variables of every branch count, not only those of the first.
+        for (IQueryModel branch = viewModel; branch != null && !isViewReadOverridden; branch = branch.getUnionModel()) {
+            if (isAnyDeclared(viewReaderDecls, branch.getOverridableDecls())) {
+                isViewReadOverridden = true;
+            }
+        }
         final ExpressionNode viewExpr = literal(viewDefinition.getViewToken().getTableName(), viewPosition);
         // the definition the model is expanded from, whose dependencies the view's authority covers,
         // see TableUtils.getTableFunctionView()
-        viewExpr.tableFunctionView = new SqlExecutionContext.TableFunctionView(viewDefinition);
+        viewExpr.tableFunctionView = new SqlExecutionContext.TableFunctionView(viewDefinition, isViewReadOverridden);
         viewModel.setOriginatingViewNameExpr(viewExpr);
         viewModel.setViewNameExpr(viewExpr);
         return viewModel;

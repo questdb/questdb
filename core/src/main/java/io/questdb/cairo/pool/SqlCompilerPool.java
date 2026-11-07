@@ -36,6 +36,7 @@ import io.questdb.griffin.QueryBuilder;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExpressionNode;
@@ -150,6 +151,16 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         }
 
         @Override
+        public void collectOtherReadDependencies(
+                CharSequence viewSql,
+                SqlExecutionContext executionContext,
+                LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies,
+                SqlUtil.ViewCompileRecord compileRecord
+        ) throws SqlException {
+            delegate.collectOtherReadDependencies(viewSql, executionContext, dependencies, compileRecord);
+        }
+
+        @Override
         public CompiledQuery compile(CharSequence sqlText, SqlExecutionContext ctx) throws SqlException {
             return delegate.compile(sqlText, ctx);
         }
@@ -207,9 +218,9 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         public ExecutionModel generateViewExecutionModel(
                 CharSequence viewSql,
                 SqlExecutionContext executionContext,
-                LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> outDependencies
+                LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies
         ) throws SqlException {
-            return delegate.generateViewExecutionModel(viewSql, executionContext, outDependencies);
+            return delegate.generateViewExecutionModel(viewSql, executionContext, dependencies);
         }
 
         @Override

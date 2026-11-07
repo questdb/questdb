@@ -83,6 +83,7 @@ public class ReaderLeakTest extends AbstractCairoTest {
                                                         PartitionFrameCursorFactory.ORDER_ASC,
                                                         null,
                                                         0,
+                                                        false,
                                                         false
                                                 ),
                                                 new PageFrameRowCursorFactory(PartitionFrameCursorFactory.ORDER_ASC),

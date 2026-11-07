@@ -49,9 +49,10 @@ public class IntervalPartitionFrameCursorFactory extends AbstractPartitionFrameC
             int baseOrder,
             String viewName,
             int viewPosition,
+            boolean isViewReadOverridden,
             boolean updateQuery
     ) {
-        super(tableToken, metadataVersion, metadata, viewName, viewPosition, updateQuery);
+        super(tableToken, metadataVersion, metadata, viewName, viewPosition, isViewReadOverridden, updateQuery);
         this.timestampIndex = timestampIndex;
         this.intervalModel = intervalModel;
         this.baseOrder = baseOrder;

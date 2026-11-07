@@ -678,8 +678,15 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     default void toSink(@NotNull CharSink<?> sink) {
     }
 
-    // the view definition, as of the compile, that a table-name function or SHOW statement reads through
-    record TableFunctionView(ViewDefinition definition) {
+    /**
+     * The view definition, as of the compile, that a table-name function, a SHOW statement or a scan reads through.
+     *
+     * @param definition       the definition the parser expanded the view from
+     * @param isReadOverridden whether the statement that reads the view sets an OVERRIDABLE variable of it, or of a
+     *                         view it reads, which the view lends only the columns its own plan reads, see
+     *                         {@link ViewDefinition#OTHER_READ_COLUMN_PREFIX}
+     */
+    record TableFunctionView(ViewDefinition definition, boolean isReadOverridden) {
 
         /**
          * Returns whether the view's definition names the object, i.e. whether CREATE VIEW or ALTER
