@@ -147,7 +147,7 @@ public class FuzzWalIoFailureTest extends AbstractFuzzTest {
             transaction.operationList.add(new FuzzInsertOperation(rnd.nextLong(), rnd.nextLong(), DAY + second * Micros.SECOND_MICROS, 0, 0, 0, 5, SYMBOLS));
             transactions.add(transaction);
             fuzzer.applyNonWal(transactions, "nw", rnd);
-            fuzzer.applyWalWithIoFailure(transactions, "w", rnd, failAfterCalls);
+            fuzzer.applyWalWithIoFailure(transactions, "w", 1, rnd, failAfterCalls);
         } finally {
             Misc.freeObjListAndClear(transactions);
         }

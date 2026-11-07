@@ -553,7 +553,9 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
      * at maxDrawnRounds. With hasWalIoFailures, the first round measures its WAL apply, and the
      * WAL apply of every later round fails at a random file system call when it reaches that
      * call, then resumes. While no failure has fired, the run adds up to maxAddedIoFailureRounds
-     * rounds after the drawn ones.
+     * rounds after the drawn ones. With hasWalIoFailures, each round commits through 1 to 4 WAL
+     * writers, so a failure can also hit an apply that maps several segments, or one that runs
+     * while the table writer caches another segment's fds.
      */
     private void runMultiRoundFuzz(
             Rnd rnd,
@@ -726,8 +728,9 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
                         if (round >= rounds) {
                             addedRounds++;
                         }
+                        final int walWriterCount = 1 + rnd.nextInt(4);
                         final int failAfterCalls = drawFailAfterCalls(rnd, round, rounds, walApplyCallsMax, walApplyCallsMin);
-                        final long calls = fuzzer.applyWalWithIoFailure(transactions, walTable, rnd, failAfterCalls);
+                        final long calls = fuzzer.applyWalWithIoFailure(transactions, walTable, walWriterCount, rnd, failAfterCalls);
                         walApplyCallsMax = Math.max(walApplyCallsMax, calls);
                         walApplyCallsMin = Math.min(walApplyCallsMin, calls);
                     } else {
