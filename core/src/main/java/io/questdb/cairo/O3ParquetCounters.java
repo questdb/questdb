@@ -31,7 +31,8 @@ import java.util.concurrent.atomic.AtomicLong;
 /**
  * Process-wide counts of the paths {@link O3PartitionJob} takes on a parquet partition,
  * so fuzz tests can assert they still reach the paths they target. Counters bump once per
- * partition task (per row group for DROP) and include attempts whose commit later failed.
+ * partition task (per row group for DROP and the replace-range decode) and include attempts
+ * whose commit later failed.
  */
 public final class O3ParquetCounters {
     private static final AtomicLong dedupIdenticalCount = new AtomicLong();
@@ -39,6 +40,7 @@ public final class O3ParquetCounters {
     private static final AtomicLong dropRewriteCount = new AtomicLong();
     private static final AtomicLong inPlaceCount = new AtomicLong();
     private static final AtomicLong replaceNoopCount = new AtomicLong();
+    private static final AtomicLong replaceRangeDecodeCount = new AtomicLong();
     private static final AtomicLong replaceRemovalCount = new AtomicLong();
     private static final AtomicLong rewriteCount = new AtomicLong();
 
@@ -86,6 +88,14 @@ public final class O3ParquetCounters {
     }
 
     /**
+     * Row groups whose timestamp column a replace commit decoded to find whether a row lies in its range.
+     */
+    @TestOnly
+    public static long getReplaceRangeDecodeCount() {
+        return replaceRangeDecodeCount.get();
+    }
+
+    /**
      * Replace commits that removed every row of the partition, removing the partition.
      */
     @TestOnly
@@ -115,6 +125,10 @@ public final class O3ParquetCounters {
 
     static void onReplaceNoop() {
         replaceNoopCount.incrementAndGet();
+    }
+
+    static void onReplaceRangeDecode() {
+        replaceRangeDecodeCount.incrementAndGet();
     }
 
     static void onReplaceRemoval() {

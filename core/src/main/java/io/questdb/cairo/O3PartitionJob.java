@@ -2435,6 +2435,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 if (isReplace) {
                     // Downgrade a filter-only MERGE whose range holds none of the row group's
                     // rows to a COPY, so it does not re-encode the row group unchanged.
+                    // computeMergeActions makes a filter-only MERGE only of a row group the range
+                    // intersects without covering, so when the range holds the row group's min or
+                    // max row, that row is in range: only a range strictly inside the row group
+                    // needs its timestamps decoded.
                     parquetColumns.clear();
                     parquetColumns.add(timestampParquetIdx);
                     parquetColumns.add(timestampColumnType);
@@ -2443,9 +2447,14 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         if (action.type == O3ParquetMergeStrategy.ActionType.MERGE && action.getO3RowCount() == 0) {
                             assert action.rowGroupIndex == action.rowGroupIndexHi;
                             final int rg = action.rowGroupIndex;
-                            final int rgRowCount = (int) O3ParquetMergeStrategy.getRowGroupRowCount(rowGroupBounds, rg);
-                            if (!hasRowInReplaceRange(partitionDecoder, rowGroupBuffers, parquetColumns, rg, rgRowCount, replaceLo, replaceHi)) {
-                                action.setCopyRowGroupSlice(rg, 0, rgRowCount - 1);
+                            final long rgMin = O3ParquetMergeStrategy.getRowGroupMin(rowGroupBounds, rg);
+                            final long rgMax = O3ParquetMergeStrategy.getRowGroupMax(rowGroupBounds, rg);
+                            assert rgMin <= replaceHi && rgMax >= replaceLo;
+                            if (rgMin < replaceLo && rgMax > replaceHi) {
+                                final int rgRowCount = (int) O3ParquetMergeStrategy.getRowGroupRowCount(rowGroupBounds, rg);
+                                if (!hasRowInReplaceRange(partitionDecoder, rowGroupBuffers, parquetColumns, rg, rgRowCount, replaceLo, replaceHi)) {
+                                    action.setCopyRowGroupSlice(rg, 0, rgRowCount - 1);
+                                }
                             }
                         }
                     }
@@ -4850,6 +4859,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long replaceLo,
             long replaceHi
     ) {
+        O3ParquetCounters.onReplaceRangeDecode();
         final int decoded = decoder.decodeRowGroup(rowGroupBuffers, timestampColumn, rowGroupIndex, 0, rowGroupRowCount);
         assert decoded == rowGroupRowCount : "decoded " + decoded + " rows, expected " + rowGroupRowCount;
         final long timestampDataPtr = rowGroupBuffers.getChunkDataPtr(0);

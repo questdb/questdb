@@ -311,11 +311,13 @@ or, when fully covered, a `DROP`. `mergeRowGroup` builds its index with
 `createReplaceMergeIndex` (existing rows before the window, O3 rows, existing rows after
 it) instead of `createMergeIndex`/dedup; replace and dedup never combine. Before any
 full decode, `processParquetPartition` decodes only the timestamp column of each
-filter-only `MERGE` (`hasRowInReplaceRange`); when no row lies in `[replaceLo, replaceHi]`
-(e.g. the window falls strictly between two rows) the action becomes a
-`COPY_ROW_GROUP_SLICE`, so the row group is not re-encoded. A window that misses every
-row with no O3 rows publishes a no-op (file size and name txn unchanged); one that drops
-every row group with no O3 rows publishes a size-0 removal. Neither writes a file.
+filter-only `MERGE` whose window lies strictly inside the row group
+(`hasRowInReplaceRange`; a window holding the row group's min or max row has a row in
+range); when no row lies in `[replaceLo, replaceHi]` (e.g. the window falls strictly
+between two rows) the action becomes a `COPY_ROW_GROUP_SLICE`, so the row group is not
+re-encoded. A window that misses every row with no O3 rows publishes a no-op (file size
+and name txn unchanged); one that drops every row group with no O3 rows publishes a
+size-0 removal. Neither writes a file.
 
 ## Native-memory allocation and lifetime
 

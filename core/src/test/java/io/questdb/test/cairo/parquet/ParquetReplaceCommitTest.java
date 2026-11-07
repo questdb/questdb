@@ -27,6 +27,8 @@ package io.questdb.test.cairo.parquet;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.NanosTimestampDriver;
+import io.questdb.cairo.O3ParquetCounters;
 import io.questdb.cairo.O3PartitionPurgeJob;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
@@ -540,6 +542,127 @@ public class ParquetReplaceCommitTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * Day 1 holds two rows at 06:00, the max row of row group 0 and the min row of row group 1. The range
+     * [06:00, 06:00] holds the one's max row and the other's min row, so the commit filters both row groups
+     * without decoding their timestamps.
+     */
+    @Test
+    public void testFilterMergeAtTiedRowGroupBoundaryDecodesNothing() throws Exception {
+        assertMemoryLeak(() -> {
+            createNarrowTwins("TIMESTAMP", """
+                    VALUES
+                        (1, '2024-01-01T00:00:00.000000Z'),
+                        (2, '2024-01-01T02:00:00.000000Z'),
+                        (3, '2024-01-01T04:00:00.000000Z'),
+                        (4, '2024-01-01T06:00:00.000000Z'),
+                        (5, '2024-01-01T06:00:00.000000Z'),
+                        (6, '2024-01-01T08:00:00.000000Z'),
+                        (7, '2024-01-01T10:00:00.000000Z'),
+                        (8, '2024-01-01T12:00:00.000000Z'),
+                        (9, '2024-01-01T14:00:00.000000Z'),
+                        (10, '2024-01-01T16:00:00.000000Z'),
+                        (11, '2024-01-01T18:00:00.000000Z'),
+                        (12, '2024-01-01T20:00:00.000000Z'),
+                        (13, '2024-01-02T00:00:00.000000Z')
+                    """, "2024-01-02");
+            Assert.assertEquals(3, parquetRowGroupCount("pq", 0));
+            final long txnBefore = partitionNameTxn("pq", 0);
+            final long decodesBefore = O3ParquetCounters.getReplaceRangeDecodeCount();
+            replaceBoth("2024-01-01T06:00:00.000000Z", "2024-01-01T06:00:00.000000Z");
+            Assert.assertEquals(0, O3ParquetCounters.getReplaceRangeDecodeCount() - decodesBefore);
+            assertTwinsEqual();
+            Assert.assertEquals(txnBefore, partitionNameTxn("pq", 0));
+            assertQuery("SELECT id, ts FROM pq WHERE ts BETWEEN '2024-01-01T04:00' AND '2024-01-01T08:00'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            id\tts
+                            3\t2024-01-01T04:00:00.000000Z
+                            6\t2024-01-01T08:00:00.000000Z
+                            """);
+        });
+    }
+
+    /**
+     * A replace commit that filters a row group without bringing it rows decodes the row group's timestamps only
+     * when its range lies strictly inside the row group: a range that holds the row group's min or max row has a
+     * row in range. Day 1's row group 1 holds 08:00, 10:00, 12:00 and 14:00. Each case starts from fresh twins.
+     */
+    @Test
+    public void testFilterMergeDecodesTimestampsOnlyForRangeInsideRowGroup() throws Exception {
+        assertMemoryLeak(() -> {
+            final String allHours = "06 08 10 12 14 16 18";
+            // range lo and hi on day 1, the commit's new row (null for none), the row groups whose timestamps
+            // the commit decodes, and the hours of day 1's rows in [06:00, 18:00] after it
+            final Object[][] cases = {
+                    // the range holds row group 1's min row
+                    {"08:00:00.000000", "09:00:00.000000", null, 0, "06 10 12 14 16 18"},
+                    {"07:00:00.000000", "09:00:00.000000", null, 0, "06 10 12 14 16 18"},
+                    {"08:00:00.000000", "08:00:00.000000", null, 0, "06 10 12 14 16 18"},
+                    // the range holds row group 1's max row
+                    {"13:00:00.000000", "14:00:00.000000", null, 0, "06 08 10 12 16 18"},
+                    {"13:00:00.000000", "15:00:00.000000", null, 0, "06 08 10 12 16 18"},
+                    {"14:00:00.000000", "14:00:00.000000", null, 0, "06 08 10 12 16 18"},
+                    // the range holds row group 1's max row and row group 2's min row
+                    {"13:00:00.000000", "17:00:00.000000", null, 0, "06 08 10 12 18"},
+                    // the range holds row group 1's max row and brings a row for the gap after it
+                    {"13:00:00.000000", "15:00:00.000000", "15:00:00.000000", 0, "06 08 10 12 15 16 18"},
+                    // the range lies strictly inside row group 1 and holds none of its rows
+                    {"08:00:00.000001", "09:00:00.000000", null, 1, allHours},
+                    {"13:00:00.000000", "13:59:59.999999", null, 1, allHours},
+                    {"08:30:00.000000", "09:30:00.000000", null, 1, allHours},
+                    // the range lies strictly inside row group 1 and holds 10:00 and 12:00
+                    {"09:00:00.000000", "13:00:00.000000", null, 1, "06 08 14 16 18"},
+                    {"08:00:00.000001", "13:59:59.999999", null, 1, "06 08 14 16 18"},
+                    // no filter-only merge: the range covers row group 1, or brings it a row
+                    {"08:00:00.000000", "14:00:00.000000", null, 0, "06 16 18"},
+                    {"09:00:00.000000", "13:00:00.000000", "11:00:00.000000", 0, "06 08 11 14 16 18"},
+            };
+            for (Object[] testCase : cases) {
+                final String lo = (String) testCase[0];
+                final String hi = (String) testCase[1];
+                final String newRow = (String) testCase[2];
+                final int decodes = (int) testCase[3];
+                final String hoursLeft = (String) testCase[4];
+                final String range = "range [" + lo + ", " + hi + "]";
+                createTwins(false);
+                final long txnBefore = partitionNameTxn("pq", 0);
+                final long sizeBefore = parquetFileSize("pq", 0);
+                final long decodesBefore = O3ParquetCounters.getReplaceRangeDecodeCount();
+                replaceBoth(
+                        "2024-01-01T" + lo + "Z",
+                        "2024-01-01T" + hi + "Z",
+                        newRow == null ? new String[0] : new String[]{"2024-01-01T" + newRow + "Z"}
+                );
+                Assert.assertEquals(
+                        "timestamp decodes, " + range,
+                        decodes,
+                        O3ParquetCounters.getReplaceRangeDecodeCount() - decodesBefore
+                );
+                assertTwinsEqual();
+                Assert.assertEquals("name txn, " + range, txnBefore, partitionNameTxn("pq", 0));
+                // only a commit that removes no row and brings none leaves the file as it is
+                Assert.assertEquals(
+                        "unchanged file, " + range,
+                        newRow == null && allHours.equals(hoursLeft),
+                        sizeBefore == parquetFileSize("pq", 0)
+                );
+                final StringSink expected = new StringSink();
+                expected.put("ts\n");
+                for (String hour : hoursLeft.split(" ")) {
+                    expected.put("2024-01-01T").put(hour).put(":00:00.000000Z\n");
+                }
+                assertQuery("SELECT ts FROM pq WHERE ts BETWEEN '2024-01-01T06:00' AND '2024-01-01T18:00'")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .returns(expected);
+                execute("DROP TABLE nat");
+                execute("DROP TABLE pq");
+            }
+        });
+    }
+
     @Test
     public void testFirstPartitionHeadUpdatesMinTimestamp() throws Exception {
         assertMemoryLeak(() -> {
@@ -578,6 +701,27 @@ public class ParquetReplaceCommitTest extends AbstractCairoTest {
                     .returns("""
                             count\tmax
                             36\t2024-01-03T22:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testFormatParquetLastPartitionTailFilterMergeDecodesNothing() throws Exception {
+        assertMemoryLeak(() -> {
+            // [21:00, 22:00] on day 3 holds the max row of the last partition's row group 2 (16:00 to 22:00),
+            // so the commit filters that row group without decoding its timestamps
+            createTwins(true);
+            final long decodesBefore = O3ParquetCounters.getReplaceRangeDecodeCount();
+            replaceBoth("2024-01-03T21:00:00.000000Z", "2024-01-03T22:00:00.000000Z");
+            Assert.assertEquals(0, O3ParquetCounters.getReplaceRangeDecodeCount() - decodesBefore);
+            assertTwinsEqual();
+            assertQuery("SELECT count(), max(ts) FROM pq")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count\tmax
+                            35\t2024-01-03T20:00:00.000000Z
                             """);
         });
     }
@@ -793,6 +937,99 @@ public class ParquetReplaceCommitTest extends AbstractCairoTest {
             Assert.assertNotEquals(txnBefore, partitionNameTxn("pq", 0));
             Assert.assertEquals(0, parquetUnusedBytes("pq", 0));
             assertCleanAgainstFreshConversion();
+        });
+    }
+
+    @Test
+    public void testMultiPartitionRangeEdgeFilterMergesDecodeNothing() throws Exception {
+        assertMemoryLeak(() -> {
+            // [01-01T13:00, 01-02T09:00] holds the max row of day 1's row group 1 and the min row of day 2's
+            // row group 1, and covers day 1's row group 2 and day 2's row group 0: the edges of a range over
+            // several partitions. The commit filters both edge row groups without decoding their timestamps.
+            createTwins(false);
+            final long day1TxnBefore = partitionNameTxn("pq", 0);
+            final long day2TxnBefore = partitionNameTxn("pq", 1);
+            final long decodesBefore = O3ParquetCounters.getReplaceRangeDecodeCount();
+            replaceBoth("2024-01-01T13:00:00.000000Z", "2024-01-02T09:00:00.000000Z");
+            Assert.assertEquals(0, O3ParquetCounters.getReplaceRangeDecodeCount() - decodesBefore);
+            assertTwinsEqual();
+            Assert.assertEquals(day1TxnBefore, partitionNameTxn("pq", 0));
+            Assert.assertEquals(day2TxnBefore, partitionNameTxn("pq", 1));
+            assertQuery("SELECT id, ts FROM pq WHERE ts < '2024-01-03'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            id\tts
+                            1\t2024-01-01T00:00:00.000000Z
+                            2\t2024-01-01T02:00:00.000000Z
+                            3\t2024-01-01T04:00:00.000000Z
+                            4\t2024-01-01T06:00:00.000000Z
+                            5\t2024-01-01T08:00:00.000000Z
+                            6\t2024-01-01T10:00:00.000000Z
+                            7\t2024-01-01T12:00:00.000000Z
+                            18\t2024-01-02T10:00:00.000000Z
+                            19\t2024-01-02T12:00:00.000000Z
+                            20\t2024-01-02T14:00:00.000000Z
+                            21\t2024-01-02T16:00:00.000000Z
+                            22\t2024-01-02T18:00:00.000000Z
+                            23\t2024-01-02T20:00:00.000000Z
+                            24\t2024-01-02T22:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testNanosFilterMergeDecodesOnlyInsideRange() throws Exception {
+        assertMemoryLeak(() -> {
+            // nanosecond twins of the createTwins() layout: day 1's row group 1 holds 08:00, 10:00, 12:00 and 14:00
+            createNarrowTwins(
+                    "TIMESTAMP_NS",
+                    "SELECT x::INT, dateadd('h', 2 * (x::INT - 1), '2024-01-01'::TIMESTAMP_NS) FROM long_sequence(36)",
+                    "2024-01-03"
+            );
+            Assert.assertEquals(3, parquetRowGroupCount("pq", 0));
+
+            // the range holds the row group's max row: no decode
+            long decodesBefore = O3ParquetCounters.getReplaceRangeDecodeCount();
+            deleteBoth(
+                    NanosTimestampDriver.floor("2024-01-01T13:00:00.000000000Z"),
+                    NanosTimestampDriver.floor("2024-01-01T14:00:00.000000000Z")
+            );
+            Assert.assertEquals(0, O3ParquetCounters.getReplaceRangeDecodeCount() - decodesBefore);
+            assertTwinsEqual();
+
+            // the range starts one nanosecond after the min row and holds no row: one decode, and no change
+            final long txnBefore = partitionNameTxn("pq", 0);
+            final long sizeBefore = parquetFileSize("pq", 0);
+            decodesBefore = O3ParquetCounters.getReplaceRangeDecodeCount();
+            deleteBoth(
+                    NanosTimestampDriver.floor("2024-01-01T08:00:00.000000001Z"),
+                    NanosTimestampDriver.floor("2024-01-01T09:00:00.000000000Z")
+            );
+            Assert.assertEquals(1, O3ParquetCounters.getReplaceRangeDecodeCount() - decodesBefore);
+            assertTwinsEqual();
+            Assert.assertEquals(txnBefore, partitionNameTxn("pq", 0));
+            Assert.assertEquals(sizeBefore, parquetFileSize("pq", 0));
+
+            // the range lies strictly inside the row group and holds 10:00: one decode
+            decodesBefore = O3ParquetCounters.getReplaceRangeDecodeCount();
+            deleteBoth(
+                    NanosTimestampDriver.floor("2024-01-01T09:00:00.000000000Z"),
+                    NanosTimestampDriver.floor("2024-01-01T11:00:00.000000000Z")
+            );
+            Assert.assertEquals(1, O3ParquetCounters.getReplaceRangeDecodeCount() - decodesBefore);
+            assertTwinsEqual();
+            assertQuery("SELECT id, ts FROM pq WHERE ts BETWEEN '2024-01-01T06:00' AND '2024-01-01T18:00'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            id\tts
+                            4\t2024-01-01T06:00:00.000000000Z
+                            5\t2024-01-01T08:00:00.000000000Z
+                            7\t2024-01-01T12:00:00.000000000Z
+                            9\t2024-01-01T16:00:00.000000000Z
+                            10\t2024-01-01T18:00:00.000000000Z
+                            """);
         });
     }
 
@@ -1122,6 +1359,50 @@ public class ParquetReplaceCommitTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSingleRowGroupFilterMergeDecodesOnlyInsideRange() throws Exception {
+        assertMemoryLeak(() -> {
+            // At the default row group size each parquet partition is one row group, so a filter merge rewrites it.
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, (String) null);
+            createTwins(false);
+            Assert.assertEquals(1, parquetRowGroupCount("pq", 0));
+
+            // [21:00, 22:00] holds the row group's max row: no decode
+            long txnBefore = partitionNameTxn("pq", 0);
+            long decodesBefore = O3ParquetCounters.getReplaceRangeDecodeCount();
+            replaceBoth("2024-01-01T21:00:00.000000Z", "2024-01-01T22:00:00.000000Z");
+            Assert.assertEquals(0, O3ParquetCounters.getReplaceRangeDecodeCount() - decodesBefore);
+            assertTwinsEqual();
+            Assert.assertNotEquals(txnBefore, partitionNameTxn("pq", 0));
+            assertQuery("SELECT count(), min(ts), max(ts) FROM pq WHERE ts IN '2024-01-01'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count\tmin\tmax
+                            11\t2024-01-01T00:00:00.000000Z\t2024-01-01T20:00:00.000000Z
+                            """);
+
+            // [09:00, 11:00] lies strictly inside the row group, now 00:00 to 20:00: one decode finds 10:00
+            txnBefore = partitionNameTxn("pq", 0);
+            decodesBefore = O3ParquetCounters.getReplaceRangeDecodeCount();
+            replaceBoth("2024-01-01T09:00:00.000000Z", "2024-01-01T11:00:00.000000Z");
+            Assert.assertEquals(1, O3ParquetCounters.getReplaceRangeDecodeCount() - decodesBefore);
+            assertTwinsEqual();
+            Assert.assertNotEquals(txnBefore, partitionNameTxn("pq", 0));
+            assertQuery("SELECT id, ts FROM pq WHERE ts BETWEEN '2024-01-01T06:00' AND '2024-01-01T14:00'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            id\tts
+                            4\t2024-01-01T06:00:00.000000Z
+                            5\t2024-01-01T08:00:00.000000Z
+                            7\t2024-01-01T12:00:00.000000Z
+                            8\t2024-01-01T14:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testSingleRowGroupMissingDataIsNoop() throws Exception {
         assertMemoryLeak(() -> {
             // At the default row group size each parquet partition is one row group.
@@ -1327,6 +1608,33 @@ public class ParquetReplaceCommitTest extends AbstractCairoTest {
         } finally {
             Unsafe.free(binAddr, 2, MemoryTag.NATIVE_DEFAULT);
         }
+    }
+
+    /**
+     * Creates nat (native) and pq of an INT id and a designated timestamp of {@code timestampType}, inserts
+     * {@code natRows}, the rest of an INSERT INTO nat, into nat and copies them into pq, then converts pq's
+     * partitions before {@code convertBefore} to parquet.
+     */
+    private static void createNarrowTwins(String timestampType, String natRows, String convertBefore) throws Exception {
+        final String ddl = "CREATE TABLE %s (id INT, ts %s) TIMESTAMP(ts) PARTITION BY DAY WAL";
+        execute(String.format(ddl, "nat", timestampType));
+        execute(String.format(ddl, "pq", timestampType));
+        execute("INSERT INTO nat " + natRows);
+        drainWalQueue();
+        execute("INSERT INTO pq SELECT * FROM nat");
+        drainWalQueue();
+        execute("ALTER TABLE pq CONVERT PARTITION TO PARQUET WHERE ts < '" + convertBefore + "'");
+        drainWalQueue();
+    }
+
+    /**
+     * Commits the same replace range [lo, hi] (inclusive, in the tables' timestamp unit) without rows to nat and pq.
+     */
+    private static void deleteBoth(long lo, long hi) throws Exception {
+        final String noRows = "SELECT x::INT id FROM long_sequence(0)";
+        ReplaceCommitTestUtils.replace(engine, sqlExecutionContext, "nat", noRows, lo, hi);
+        ReplaceCommitTestUtils.replace(engine, sqlExecutionContext, "pq", noRows, lo, hi);
+        drainWalQueue();
     }
 
     /**
