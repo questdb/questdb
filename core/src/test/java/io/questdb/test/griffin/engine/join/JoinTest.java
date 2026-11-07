@@ -43,6 +43,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8s;
@@ -69,6 +70,8 @@ public class JoinTest extends AbstractCairoTest {
             B\t2024-01-01T00:00:20.000000Z\t19.5
             A\t2024-01-01T00:00:30.000000Z\t10.5
             """;
+    // the latest row of each s of pa, picked by a window function rather than by LATEST ON
+    private static final String LATEST_PA_ROWS = "(SELECT id, x, y, z, s, ts FROM (SELECT *, row_number() OVER (PARTITION BY s ORDER BY ts DESC) rn FROM pa) WHERE rn = 1)";
 
     @Test
     public void test2686() throws Exception {
@@ -4906,6 +4909,66 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testImpliedEqualitiesFilterAfterLatestOnMatchReference() throws Exception {
+        // Equalities that join keys imply on pa filter the rows that LATEST ON picked. A window function that
+        // picks the latest rows of pa without LATEST ON gives the reference.
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE pa (id INT, x INT, y INT, z INT, s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE pb (k INT, v INT)");
+            execute("CREATE TABLE pc (m INT, w INT)");
+            execute("CREATE TABLE px (r INT, q INT)");
+            final String[] queries = {
+                    "SELECT pa.id, pc.w FROM pa JOIN pc ON pa.x = pc.m AND pa.y = pc.m ORDER BY pa.id, pc.w",
+                    "SELECT pa.id, pb.v, pc.w FROM pa JOIN pc ON pa.y = pc.m JOIN pb ON pa.x = pb.k AND pc.m = pb.k ORDER BY pa.id, pb.v, pc.w",
+                    "SELECT pa.id, pb.v, pc.w FROM pa JOIN pc ON pa.y = pc.m RIGHT JOIN pb ON pa.x = pb.k AND pc.m = pb.k ORDER BY pb.v, pa.id, pc.w",
+                    "SELECT pa.id, px.q, pc.w FROM pa JOIN pc ON pa.y = pc.m AND pa.x = pc.m FULL JOIN px ON pa.id > px.r ORDER BY px.q, pa.id, pc.w",
+                    "SELECT pa.id, px.q, pc.w FROM pa RIGHT JOIN px ON px.r = pc.m JOIN pc ON pa.y = pc.m AND pa.x = pc.m ORDER BY px.q, pa.id, pc.w",
+            };
+            final StringBuilder sql = new StringBuilder();
+            for (int dataset = 0; dataset < 50; dataset++) {
+                execute("TRUNCATE TABLE pa");
+                execute("TRUNCATE TABLE pb");
+                execute("TRUNCATE TABLE pc");
+                execute("TRUNCATE TABLE px");
+                sql.setLength(0);
+                sql.append("INSERT INTO pa VALUES ");
+                for (int i = 0, n = 1 + rnd.nextInt(6); i < n; i++) {
+                    sql.append(i > 0 ? ", " : "").append('(').append(i + 1).append(", ").append(nullableKey(rnd)).append(", ")
+                            .append(nullableKey(rnd)).append(", ").append(nullableKey(rnd)).append(", '")
+                            .append(rnd.nextBoolean() ? 'a' : 'b').append("', '2024-01-01T0").append(i).append(":00:00.000000Z')");
+                }
+                execute(sql);
+                sql.setLength(0);
+                sql.append("INSERT INTO pb VALUES ");
+                for (int i = 0, n = 1 + rnd.nextInt(4); i < n; i++) {
+                    sql.append(i > 0 ? ", " : "").append('(').append(nullableKey(rnd)).append(", ").append(10 * (i + 1)).append(')');
+                }
+                execute(sql);
+                sql.setLength(0);
+                sql.append("INSERT INTO pc VALUES ");
+                for (int i = 0, n = 1 + rnd.nextInt(4); i < n; i++) {
+                    sql.append(i > 0 ? ", " : "").append('(').append(nullableKey(rnd)).append(", ").append(100 * (i + 1)).append(')');
+                }
+                execute(sql);
+                sql.setLength(0);
+                sql.append("INSERT INTO px VALUES ");
+                for (int i = 0, n = 1 + rnd.nextInt(3); i < n; i++) {
+                    sql.append(i > 0 ? ", " : "").append('(').append(rnd.nextInt(4)).append(", ").append(i + 1).append(')');
+                }
+                execute(sql);
+                for (String query : queries) {
+                    final int orderBy = query.indexOf(" ORDER BY ");
+                    assertSqlCursors(
+                            query.replace("FROM pa ", "FROM " + LATEST_PA_ROWS + " pa "),
+                            query.substring(0, orderBy) + " LATEST ON ts PARTITION BY s" + query.substring(orderBy)
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
     public void testImpliedKeyOverExceptOfSymbolColumns() throws Exception {
         // The code generator outputs a.f as STRING: the EXCEPT casts its operands for the c column, which is INT in
         // one and LONG in the other, and so widens SYMBOL with SYMBOL to STRING. getSetOperationColumnType() reads
@@ -5733,6 +5796,157 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInnerJoinOnKeysSharingColumnFiltersAfterLatestOn() throws Exception {
+        // ON pa.x = pc.m AND pa.y = pc.m implies pa.x = pa.y. LATEST ON picks the latest pa row of each s
+        // before the join, so the equality filters the rows that LATEST ON picked. As a filter on the scan
+        // of pa it ran before LATEST ON, which then picked rows 1 and 4, older rows of a and c that pass it.
+        assertMemoryLeak(() -> {
+            createTablesForLatestOnImpliedEquality();
+            final String expected = """
+                    id\tw
+                    3\t200
+                    """;
+            assertQuery("SELECT pa.id, pc.w FROM pa JOIN pc ON pa.x = pc.m AND pa.y = pc.m LATEST ON ts PARTITION BY s ORDER BY pa.id")
+                    .noLeakCheck()
+                    .withPlan("""
+                            Encode sort
+                              keys: [id]
+                                SelectedRecord
+                                    Hash Join Light
+                                      condition: pc.m=pa.y
+                                        Filter filter: x=y
+                                            LatestByDeferredListValuesFiltered
+                                                Frame backward scan on: pa
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: pc
+                            """)
+                    .returns(expected);
+            assertSqlCursors(
+                    "SELECT pa.id, pc.w FROM " + LATEST_PA_ROWS + " pa JOIN pc ON pa.x = pc.m AND pa.y = pc.m ORDER BY pa.id",
+                    "SELECT pa.id, pc.w FROM pa JOIN pc ON pa.x = pc.m AND pa.y = pc.m LATEST ON ts PARTITION BY s ORDER BY pa.id"
+            );
+            // the deprecated LATEST BY syntax puts LATEST ON on pa as well
+            assertQuery("SELECT pa.id, pc.w FROM pa LATEST BY s JOIN pc ON pa.x = pc.m AND pa.y = pc.m ORDER BY pa.id")
+                    .noLeakCheck()
+                    .withPlanContaining("Filter filter: x=y")
+                    .returns(expected);
+            // a WHERE equality of two tables implies pa.x = pa.y with the key in the same way
+            assertQuery("SELECT pa.id, pc.w FROM pa JOIN pc ON pa.y = pc.m WHERE pa.x = pc.m LATEST ON ts PARTITION BY s ORDER BY pa.id")
+                    .noLeakCheck()
+                    .withPlanContaining("Filter filter: x=y")
+                    .returns(expected);
+            // pb's keys imply pa.x = pc.m, which pc's key turns into pa.x = pa.y
+            final String innerThenInner = "SELECT pa.id, pb.v, pc.w FROM pa JOIN pc ON pa.y = pc.m JOIN pb ON pa.x = pb.k AND pc.m = pb.k";
+            assertQuery(innerThenInner + " LATEST ON ts PARTITION BY s ORDER BY pa.id")
+                    .noLeakCheck()
+                    .withPlanContaining("Filter filter: y=x")
+                    .returns("""
+                            id\tv\tw
+                            3\t20\t200
+                            """);
+            assertSqlCursors(
+                    innerThenInner.replace("FROM pa ", "FROM " + LATEST_PA_ROWS + " pa ") + " ORDER BY pa.id",
+                    innerThenInner + " LATEST ON ts PARTITION BY s ORDER BY pa.id"
+            );
+            // RIGHT JOIN px reads pc, so pc joins before px, after which a filter of the INNER join would
+            // run on pa itself
+            final String forwardRightJoin = "SELECT pa.id, px.q, pc.w FROM pa RIGHT JOIN px ON px.r = pc.m JOIN pc ON pa.y = pc.m AND pa.x = pc.m";
+            assertQuery(forwardRightJoin + " LATEST ON ts PARTITION BY s ORDER BY px.q")
+                    .noLeakCheck()
+                    .withPlanContaining("Filter filter: y=x")
+                    .returns("""
+                            id\tq\tw
+                            null\t10\tnull
+                            3\t20\t200
+                            """);
+            assertSqlCursors(
+                    forwardRightJoin.replace("FROM pa ", "FROM " + LATEST_PA_ROWS + " pa ") + " ORDER BY px.q",
+                    forwardRightJoin + " LATEST ON ts PARTITION BY s ORDER BY px.q"
+            );
+            // A condition that the query writes on pa alone runs before LATEST ON, as WHERE does, and only
+            // the equality that the keys imply runs after it. LATEST ON picks rows 2, 3 and 4 from the rows
+            // with z > 0, and x = y drops row 2.
+            assertQuery("SELECT pa.id, pc.w FROM pa JOIN pc ON pa.x = pc.m AND pa.y = pc.m AND pa.z > 0 LATEST ON ts PARTITION BY s ORDER BY pa.id")
+                    .noLeakCheck()
+                    .withPlanContaining("""
+                            Filter filter: x=y
+                                            LatestByDeferredListValuesFiltered
+                                              jit: true
+                                              filter: 0<z
+                            """)
+                    .returns("""
+                            id\tw
+                            3\t200
+                            4\t500
+                            """);
+            assertSqlCursors(
+                    "SELECT pa.id, pc.w FROM (SELECT id, x, y, z, s, ts FROM (SELECT *, row_number() OVER (PARTITION BY s ORDER BY ts DESC) rn FROM pa WHERE z > 0) WHERE rn = 1) pa"
+                            + " JOIN pc ON pa.x = pc.m AND pa.y = pc.m ORDER BY pa.id",
+                    "SELECT pa.id, pc.w FROM pa JOIN pc ON pa.x = pc.m AND pa.y = pc.m AND pa.z > 0 LATEST ON ts PARTITION BY s ORDER BY pa.id"
+            );
+            // so pa.x = pa.y written in the ON clause runs before LATEST ON too
+            assertQuery("SELECT pa.id, pc.w FROM pa JOIN pc ON pa.y = pc.m AND pa.x = pa.y LATEST ON ts PARTITION BY s ORDER BY pa.id")
+                    .noLeakCheck()
+                    .withPlanContaining("""
+                            LatestByDeferredListValuesFiltered
+                                          jit: true
+                                          filter: x=y
+                            """)
+                    .returns("""
+                            id\tw
+                            1\t100
+                            3\t200
+                            4\t500
+                            """);
+            // With PARTITION BY s1, s2, the implied pq.s1 = pq.s2 reads PARTITION BY columns only and keeps or
+            // drops whole partitions, so LATEST ON picks the same rows with it in the scan of pq: rows 3 and 4
+            // of the partitions (a, a) and (b, b).
+            execute("CREATE TABLE pq (id INT, s1 SYMBOL, s2 SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO pq VALUES
+                    (1, 'a', 'a', '2024-01-01T00:00:00.000000Z'),
+                    (2, 'a', 'b', '2024-01-01T01:00:00.000000Z'),
+                    (3, 'a', 'a', '2024-01-01T02:00:00.000000Z'),
+                    (4, 'b', 'b', '2024-01-01T03:00:00.000000Z'),
+                    (5, 'a', 'b', '2024-01-01T04:00:00.000000Z')
+                    """);
+            execute("CREATE TABLE pr (m SYMBOL, w INT)");
+            execute("INSERT INTO pr VALUES ('a', 1), ('b', 2)");
+            final String partitionKeys = "SELECT pq.id, pr.w FROM pq JOIN pr ON pq.s1 = pr.m AND pq.s2 = pr.m";
+            assertQuery(partitionKeys + " LATEST ON ts PARTITION BY s1, s2 ORDER BY pq.id")
+                    .noLeakCheck()
+                    .withPlanContaining("filter: s1=s2")
+                    .withPlanNotContaining("Filter filter: s1=s2")
+                    .returns("""
+                            id\tw
+                            3\t1
+                            4\t2
+                            """);
+            assertSqlCursors(
+                    "SELECT pq.id, pr.w FROM (SELECT id, s1, s2, ts FROM (SELECT *, row_number() OVER (PARTITION BY s1, s2 ORDER BY ts DESC) rn FROM pq) WHERE rn = 1) pq"
+                            + " JOIN pr ON pq.s1 = pr.m AND pq.s2 = pr.m ORDER BY pq.id",
+                    partitionKeys + " LATEST ON ts PARTITION BY s1, s2 ORDER BY pq.id"
+            );
+            // With PARTITION BY s1, the equality reads s2 as well, so it filters the rows that LATEST ON picked:
+            // row 5 of a fails it. Before LATEST ON, it would make LATEST ON pick row 3 of a.
+            assertQuery(partitionKeys + " LATEST ON ts PARTITION BY s1 ORDER BY pq.id")
+                    .noLeakCheck()
+                    .withPlanContaining("Filter filter: s1=s2")
+                    .returns("""
+                            id\tw
+                            4\t2
+                            """);
+            assertSqlCursors(
+                    "SELECT pq.id, pr.w FROM (SELECT id, s1, s2, ts FROM (SELECT *, row_number() OVER (PARTITION BY s1 ORDER BY ts DESC) rn FROM pq) WHERE rn = 1) pq"
+                            + " JOIN pr ON pq.s1 = pr.m AND pq.s2 = pr.m ORDER BY pq.id",
+                    partitionKeys + " LATEST ON ts PARTITION BY s1 ORDER BY pq.id"
+            );
+        });
+    }
+
+    @Test
     public void testInnerJoinOnLeftJoinStaysAfterNonEquiOuterJoinWhenTimeSeriesJoinMovesAhead() throws Exception {
         // The ASOF/LT join runs ahead of the non-equi RIGHT/FULL join, which drops the designated timestamp.
         // JOIN d keys on c, so the optimiser could run LEFT JOIN c as soon as ta had joined, while the outer
@@ -5859,6 +6073,73 @@ public class JoinTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("a0\tb0\ta1\tb1\ta2\tb2\ta3\tb3\ta4\tb4\ta5\tb5\n");
+        });
+    }
+
+    @Test
+    public void testInnerThenRightJoinOnKeysSharingColumnFiltersAfterLatestOn() throws Exception {
+        // pb's keys imply pa.x = pc.m, as the RIGHT JOIN drops the rows of the INNER join that pb does not
+        // match, and pc's key turns it into pa.x = pa.y. LATEST ON picks the latest pa row of each s before
+        // the joins, so the equality filters the rows that LATEST ON picked. As a filter on the scan of pa it
+        // ran before LATEST ON, which then picked rows 1 and 4, and pb rows 10 and 50 matched them.
+        assertMemoryLeak(() -> {
+            createTablesForLatestOnImpliedEquality();
+            final String expected = """
+                    id\tv\tw
+                    null\t10\tnull
+                    3\t20\t200
+                    null\t50\tnull
+                    null\t70\tnull
+                    null\t90\tnull
+                    """;
+            final String query = "SELECT pa.id, pb.v, pc.w FROM pa JOIN pc ON pa.y = pc.m RIGHT JOIN pb ON pa.x = pb.k AND pc.m = pb.k";
+            assertQuery(query + " LATEST ON ts PARTITION BY s ORDER BY pb.v")
+                    .noLeakCheck()
+                    .withPlan("""
+                            Encode sort
+                              keys: [v]
+                                SelectedRecord
+                                    Hash Right Outer Join Light
+                                      condition: pb.k=pc.m
+                                        Hash Join Light
+                                          condition: pc.m=pa.x
+                                            Filter filter: y=x
+                                                LatestByDeferredListValuesFiltered
+                                                    Frame backward scan on: pa
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: pc
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: pb
+                            """)
+                    .returns(expected);
+            assertSqlCursors(
+                    query.replace("FROM pa ", "FROM " + LATEST_PA_ROWS + " pa ") + " ORDER BY pb.v",
+                    query + " LATEST ON ts PARTITION BY s ORDER BY pb.v"
+            );
+            // the deprecated LATEST BY syntax puts LATEST ON on pa as well
+            assertQuery("SELECT pa.id, pb.v, pc.w FROM pa LATEST BY s JOIN pc ON pa.y = pc.m RIGHT JOIN pb ON pa.x = pb.k AND pc.m = pb.k ORDER BY pb.v")
+                    .noLeakCheck()
+                    .withPlanContaining("Filter filter: y=x")
+                    .returns(expected);
+            // the keys of the INNER join imply pa.x = pa.y ahead of a FULL JOIN, which keeps the rows of the
+            // INNER join that px does not match
+            final String fullJoin = "SELECT pa.id, px.q, pc.w FROM pa JOIN pc ON pa.y = pc.m AND pa.x = pc.m FULL JOIN px ON pa.id > px.r";
+            assertQuery(fullJoin + " LATEST ON ts PARTITION BY s ORDER BY px.q, pa.id")
+                    .noLeakCheck()
+                    .withPlanContaining("Filter filter: y=x")
+                    .returns("""
+                            id\tq\tw
+                            3\t10\t200
+                            3\t20\t200
+                            """);
+            assertSqlCursors(
+                    fullJoin.replace("FROM pa ", "FROM " + LATEST_PA_ROWS + " pa ") + " ORDER BY px.q, pa.id",
+                    fullJoin + " LATEST ON ts PARTITION BY s ORDER BY px.q, pa.id"
+            );
         });
     }
 
@@ -8583,6 +8864,70 @@ public class JoinTest extends AbstractCairoTest {
                             null\t2\t4\t3\tnull\tnull\tnull\t1
                             null\t2\t1\t4\tnull\tnull\tnull\t1
                             """);
+        });
+    }
+
+    @Test
+    public void testJoinKeyMovedOntoFirstTableFiltersAfterLatestOn() throws Exception {
+        // reorderTables moves i.sym = t.sym onto trades and runs trades last, so i.sym = 'A' carries over to
+        // trades as t.sym = 'A'. LATEST ON picks the latest trade of each grp before the joins, so that filter
+        // runs on the trades that LATEST ON picked. In the scan of trades it ran before LATEST ON, which then
+        // picked trade A of g1, older than trade B.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (sym SYMBOL, grp SYMBOL, px DOUBLE, tts TIMESTAMP) TIMESTAMP(tts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO trades VALUES
+                    ('A', 'g1', 10.0, '2024-01-01T00:00:10.000000Z'),
+                    ('B', 'g1', 20.0, '2024-01-01T00:00:20.000000Z'),
+                    ('A', 'g2', 30.0, '2024-01-01T00:00:30.000000Z')
+                    """);
+            execute("CREATE TABLE params (venue SYMBOL, pts TIMESTAMP) TIMESTAMP(pts) PARTITION BY DAY");
+            execute("INSERT INTO params VALUES ('X', '2024-01-01T00:00:01.000000Z')");
+            execute("CREATE TABLE venues (id SYMBOL, vts TIMESTAMP) TIMESTAMP(vts) PARTITION BY DAY");
+            execute("INSERT INTO venues VALUES ('X', '2024-01-01T00:00:01.000000Z')");
+            execute("CREATE TABLE instruments (sym SYMBOL, venue SYMBOL, lot INT, its TIMESTAMP) TIMESTAMP(its) PARTITION BY DAY");
+            execute("INSERT INTO instruments VALUES ('A', 'X', 100, '2024-01-01T00:00:02.000000Z'), ('B', 'X', 200, '2024-01-01T00:00:03.000000Z')");
+            final String joins = " CROSS JOIN params p JOIN venues v ON v.id = p.venue JOIN instruments i ON i.venue = v.id AND i.sym = t.sym WHERE i.sym = 'A'";
+            assertQuery("SELECT t.sym, t.px, i.lot FROM trades t" + joins + " LATEST ON tts PARTITION BY grp ORDER BY t.px")
+                    .noLeakCheck()
+                    .withPlanContaining(
+                            "Hash Join Light\n"
+                                    + "          condition: t.sym=i.sym\n"
+                                    + "          symbolKeyJoin: true\n"
+                                    + "          filter: t.sym='A'\n",
+                            "Hash\n"
+                                    + "                LatestByDeferredListValuesFiltered\n"
+                                    + "                    Frame backward scan on: trades\n"
+                    )
+                    .returns("""
+                            sym\tpx\tlot
+                            A\t30.0\t100
+                            """);
+            assertSqlCursors(
+                    "SELECT t.sym, t.px, i.lot FROM (SELECT sym, grp, px, tts FROM (SELECT *, row_number() OVER (PARTITION BY grp ORDER BY tts DESC) rn FROM trades) WHERE rn = 1) t"
+                            + joins + " ORDER BY t.px",
+                    "SELECT t.sym, t.px, i.lot FROM trades t" + joins + " LATEST ON tts PARTITION BY grp ORDER BY t.px"
+            );
+            // t.sym = 'A' on the PARTITION BY column keeps or drops whole partitions, so LATEST ON picks the
+            // same trades with it in the scan, where it looks up the trades of A only
+            final String expectedBySym = """
+                    sym\tpx\tlot
+                    A\t30.0\t100
+                    """;
+            assertQuery("SELECT t.sym, t.px, i.lot FROM trades t" + joins + " LATEST ON tts PARTITION BY sym ORDER BY t.px")
+                    .noLeakCheck()
+                    .withPlanContaining("""
+                            Hash
+                                            LatestByValueDeferredFiltered
+                                              symbolFilter: sym='A'
+                            """)
+                    .withPlanNotContaining("filter: t.sym")
+                    .returns(expectedBySym);
+            assertSqlCursors(
+                    "SELECT t.sym, t.px, i.lot FROM (SELECT sym, grp, px, tts FROM (SELECT *, row_number() OVER (PARTITION BY sym ORDER BY tts DESC) rn FROM trades) WHERE rn = 1) t"
+                            + joins + " ORDER BY t.px",
+                    "SELECT t.sym, t.px, i.lot FROM trades t" + joins + " LATEST ON tts PARTITION BY sym ORDER BY t.px"
+            );
         });
     }
 
@@ -20996,6 +21341,11 @@ public class JoinTest extends AbstractCairoTest {
         });
     }
 
+    // a join key of 0, 1 or 2, or NULL now and then
+    private static String nullableKey(Rnd rnd) {
+        return rnd.nextInt(7) == 0 ? "null" : Integer.toString(rnd.nextInt(3));
+    }
+
     private void assertFailure(String query, String expectedMessage, int position) {
         try {
             execute(query, sqlExecutionContext);
@@ -21183,6 +21533,27 @@ public class JoinTest extends AbstractCairoTest {
         execute("INSERT INTO f2 VALUES (2, 1)");
         execute("CREATE TABLE f3 (a3 INT, b3 INT)");
         execute("INSERT INTO f3 VALUES (1, 1)");
+    }
+
+    // LATEST ON ts PARTITION BY s picks pa rows 2 (x = 7, y = 8), 3 (x = y = 2) and 5 (x NULL, y = 6). Of
+    // the rows with x = y, it picks rows 1, 3 and 4, so a filter x = y that runs before LATEST ON returns
+    // the rows of 1 and 4, which are not the latest ones of a and c.
+    private void createTablesForLatestOnImpliedEquality() throws SqlException {
+        execute("CREATE TABLE pa (id INT, x INT, y INT, z INT, s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("""
+                INSERT INTO pa VALUES
+                (1, 1, 1, 1, 'a', '2024-01-01T00:00:00.000000Z'),
+                (2, 7, 8, 7, 'a', '2024-01-01T01:00:00.000000Z'),
+                (3, 2, 2, 2, 'b', '2024-01-01T02:00:00.000000Z'),
+                (4, 5, 5, 5, 'c', '2024-01-01T03:00:00.000000Z'),
+                (5, null, 6, null, 'c', '2024-01-01T04:00:00.000000Z')
+                """);
+        execute("CREATE TABLE pb (k INT, v INT)");
+        execute("INSERT INTO pb VALUES (1, 10), (2, 20), (5, 50), (7, 70), (null, 90)");
+        execute("CREATE TABLE pc (m INT, w INT)");
+        execute("INSERT INTO pc VALUES (1, 100), (2, 200), (5, 500), (8, 800), (null, 900)");
+        execute("CREATE TABLE px (r INT, q INT)");
+        execute("INSERT INTO px VALUES (1, 10), (2, 20)");
     }
 
     // a, b and d join on k; a.x = b.y + d.z holds for k = 1 (5 = 2 + 3) and k = 3 (9 = 4 + 5), but not for

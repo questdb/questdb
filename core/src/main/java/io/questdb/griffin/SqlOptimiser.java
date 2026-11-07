@@ -302,6 +302,11 @@ public class SqlOptimiser implements Mutable {
     private final LowerCaseCharSequenceIntHashMap lateralCountCarrierRefCounts = new LowerCaseCharSequenceIntHashMap(8, 0.4, 0);
     private final LowerCaseCharSequenceObjHashMap<ExpressionNode> lateralCountTemplateMap = new LowerCaseCharSequenceObjHashMap<>();
     private final LateralJoinRewriter lateralJoinRewriter;
+    // Equalities that addFilterOrEmitJoin derives from join keys between two columns of a table that
+    // carries LATEST ON. assignFilters places them like the other equalities that join keys imply, and
+    // gives them to the table with addImpliedTableFilter, so that they do not change the rows that LATEST
+    // ON picks.
+    private final ObjList<ExpressionNode> latestByImpliedEqualities = new ObjList<>();
     private final LiteralCheckingVisitor literalCheckingVisitor = new LiteralCheckingVisitor();
     private final LiteralCollector literalCollector = new LiteralCollector();
     private final IntHashSet literalCollectorAIndexes = new IntHashSet();
@@ -634,6 +639,7 @@ public class SqlOptimiser implements Mutable {
         innerWindowModels.clear();
         lateralCountCarrierRefCounts.clear();
         lateralCountTemplateMap.clear();
+        latestByImpliedEqualities.clear();
         tempColumnAlias = null;
         tempQueryModel = null;
         tempIntHashSet.clear();
@@ -1225,6 +1231,29 @@ public class SqlOptimiser implements Mutable {
     // of a LATERAL sub-query. Its ON holds the sub-query's correlated WHERE conjuncts.
     private static boolean isLateralOuterRefJoin(IQueryModel joinModel) {
         return joinModel.getAlias() != null && Chars.startsWith(joinModel.getAlias().token, LateralJoinRewriter.OUTER_REF_PREFIX);
+    }
+
+    // Returns true when the literal, with or without its table prefix, names a PARTITION BY column of the
+    // LATEST ON of the table model. PARTITION BY names the columns of the table without a prefix.
+    private static boolean isLatestByColumn(IQueryModel tableModel, CharSequence literal) {
+        final int columnLo = Chars.indexOfLastUnquoted(literal, '.') + 1;
+        final ObjList<ExpressionNode> latestBy = tableModel.getLatestBy();
+        for (int i = 0, n = latestBy.size(); i < n; i++) {
+            if (Chars.equalsIgnoreCase(latestBy.getQuick(i).token, literal, columnLo, literal.length())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Returns true when the predicate reads PARTITION BY columns of the LATEST ON of the table model only.
+    // A predicate that join keys imply compares a key column, which its left operand names, with another key
+    // column, or with an expression that reads no column: analyseEquals() takes a constant for a key column
+    // only from an equality whose other side reads no column.
+    private static boolean isLatestByPartitionFilter(IQueryModel tableModel, ExpressionNode node) {
+        assert node.paramCount == 2 && node.lhs.type == LITERAL;
+        return isLatestByColumn(tableModel, node.lhs.token)
+                && (node.rhs.type != LITERAL || isLatestByColumn(tableModel, node.rhs.token));
     }
 
     private static boolean isLeftJoin(int joinType) {
@@ -2118,34 +2147,30 @@ public class SqlOptimiser implements Mutable {
             // the join context keeps ao and bo as keys, and the filter push-down rewrites
             // its nodes in place, so the filter gets its own copies
             ExpressionNode node = makeOperation("=", ExpressionNode.deepClone(expressionNodePool, ao), ExpressionNode.deepClone(expressionNodePool, bo));
+            final IQueryModel keyedModel = parent.getJoinModels().getQuick(ai);
             if (ai < contextSlaveIndex && isInnerContext) {
                 // The equality holds for the rows that the INNER join of the context matches. Place it
                 // like an ON conjunct of that join: at the table, unless a master-nulling join executes
                 // between the table and the INNER join. An emitted clause merged here comes from a later
-                // INNER join with no master-nulling join in between, so the context's join stands for it.
+                // INNER join, or from two master keys of a later RIGHT JOIN, with no master-nulling join
+                // in between, so the context's join stands for it.
                 node.innerPredicate = true;
                 parent.addParsedWhereNode(node, true);
                 addModelOnPredicateBehindNullingJoin(parent, node, ai, contextSlaveIndex);
+                addLatestByImpliedEquality(keyedModel, node);
             } else if (isRightJoinMasterKey && !isEmittedClause) {
                 // The equality comes from two keys of the RIGHT JOIN's own ON clause, because an emitted
                 // clause merged into a RIGHT JOIN takes the INNER branch above. A master row that fails
-                // the equality matches no slave row, so the RIGHT JOIN drops it anyway.
-                final IQueryModel keyedModel = parent.getJoinModels().getQuick(ai);
-                if (keyedModel.getLatestBy().size() > 0) {
-                    // A filter on the scan of a table that carries LATEST ON runs before LATEST ON picks
-                    // the latest rows, so LATEST ON would pick an older row that passes the equality. As
-                    // the post-join filter of the table, the equality filters the rows that LATEST ON
-                    // picked, still before the RIGHT JOIN.
-                    addPostJoinWhereClause(keyedModel, node);
-                } else {
-                    // As an inner predicate the equality filters the table before the RIGHT JOIN, and
-                    // moveWhereInsideSubQueries keeps it below the RIGHT JOIN on model 0 too, where it
-                    // holds a WHERE conjunct above the RIGHT JOIN.
-                    node.innerPredicate = true;
-                    parent.addParsedWhereNode(node, true);
-                }
+                // the equality matches no slave row, so the RIGHT JOIN drops it anyway. As an inner
+                // predicate the equality filters the table before the RIGHT JOIN, and
+                // moveWhereInsideSubQueries keeps it below the RIGHT JOIN on model 0 too, where it holds
+                // a WHERE conjunct above the RIGHT JOIN.
+                node.innerPredicate = true;
+                parent.addParsedWhereNode(node, true);
+                addLatestByImpliedEquality(keyedModel, node);
             } else {
-                addWhereNode(parent, ai, node);
+                // a master table gets here only from an ASOF or LT join, see isNullRejectedMasterKey
+                addImpliedTableFilter(keyedModel, node);
             }
         } else {
             // (different tables)
@@ -2228,6 +2253,21 @@ public class SqlOptimiser implements Mutable {
         distinctModel.addBottomUpColumn(innerColumn);
     }
 
+    // Filters the table of the join model with a predicate that join keys imply, rather than one that the
+    // query writes for the table: an equality of two columns, or a constant that a key carries over from
+    // another table. LATEST ON applies the "where" clause of its table before it picks the latest rows, so
+    // the predicate there would make LATEST ON pick an older row that passes it, and the post-join filter
+    // of the table filters the rows that LATEST ON picked instead. A predicate that reads PARTITION BY
+    // columns only keeps or drops whole partitions, so LATEST ON picks the same rows either way, and in the
+    // "where" clause it lets LATEST ON look up only the partitions that it keeps.
+    private void addImpliedTableFilter(IQueryModel tableModel, ExpressionNode node) {
+        if (tableModel.getLatestBy().size() > 0 && !isLatestByPartitionFilter(tableModel, node)) {
+            addPostJoinWhereClause(tableModel, node);
+        } else {
+            addWhereNode(tableModel, node);
+        }
+    }
+
     private void addJoinContext(IQueryModel parent, JoinContext context, boolean isEmittedClause) {
         IQueryModel jm = parent.getJoinModels().getQuick(context.slaveIndex);
         JoinContext other = jm.getJoinContext();
@@ -2235,6 +2275,14 @@ public class SqlOptimiser implements Mutable {
             jm.setContext(context);
         } else {
             jm.setContext(mergeContexts(parent, other, context, isEmittedClause));
+        }
+    }
+
+    // Records an equality that join keys imply between two columns of the table of the keyed model, when
+    // that table carries LATEST ON, so that assignFilters gives it to the table with addImpliedTableFilter.
+    private void addLatestByImpliedEquality(IQueryModel keyedModel, ExpressionNode node) {
+        if (keyedModel.getLatestBy().size() > 0) {
+            latestByImpliedEqualities.add(node);
         }
     }
 
@@ -2833,7 +2881,8 @@ public class SqlOptimiser implements Mutable {
                         node.lhs = ExpressionNode.deepClone(expressionNodePool, jc.aNodes.getQuick(k));
                         node.rhs = ExpressionNode.deepClone(expressionNodePool, constNode);
                         node.paramCount = 2;
-                        addWhereNode(model, jc.slaveIndex, node);
+                        // reorderTables may run model 0, which can carry LATEST ON, as the slave of a join
+                        addImpliedTableFilter(joinModels.getQuick(jc.slaveIndex), node);
                     }
                 }
             }
@@ -3272,7 +3321,13 @@ public class SqlOptimiser implements Mutable {
                     if (nullingJoinIndex < 0) {
                         // get single table reference out of the way right away
                         // we don't have to wait until "our" table comes along
-                        addWhereNode(parent, refs.get(0), node);
+                        if (isLatestByImpliedEquality(node)) {
+                            // unlike a predicate that the query writes for the table, the equality must not
+                            // change the rows that LATEST ON picks
+                            addImpliedTableFilter(parent.getJoinModels().getQuick(refs.get(0)), node);
+                        } else {
+                            addWhereNode(parent, refs.get(0), node);
+                        }
                     } else {
                         // the table sits on the master side of a downstream master-nulling join
                         // (SPLICE/FULL/RIGHT OUTER or its homogenized CROSS variant), which
@@ -8372,6 +8427,17 @@ public class SqlOptimiser implements Mutable {
         return true;
     }
 
+    // assignFilters reads the very nodes that addFilterOrEmitJoin added to the parsed "where" clause, so the
+    // check compares references: a conjunct that the query wrote may read the same as a derived one.
+    private boolean isLatestByImpliedEquality(ExpressionNode node) {
+        for (int i = 0, n = latestByImpliedEqualities.size(); i < n; i++) {
+            if (latestByImpliedEqualities.getQuick(i) == node) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private boolean isLatestKeyEquality(
             ExpressionNode node, IQueryModel model, IQueryModel table, QueryColumn key,
             SqlExecutionContext executionContext, boolean isBindAllowed
@@ -10407,6 +10473,7 @@ public class SqlOptimiser implements Mutable {
             joinModelsByPriority.clear();
             timeSeriesModelOnPredicates.clear();
             timeSeriesModelOnPredicateIndexes.clear();
+            latestByImpliedEqualities.clear();
             hasLinkedLoneEmittedClause = false;
             hasJoinModelReaders = false;
             loneEmittedClauseEdges.clear();

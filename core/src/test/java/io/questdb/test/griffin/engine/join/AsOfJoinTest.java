@@ -2162,6 +2162,62 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinOnKeysSharingSlaveColumnWhereDropsUnmatchedRowsAfterLatestOn() throws Exception {
+        // The keys imply m.s1 = m.s2, which filters m because the WHERE conjunct drops the unmatched m rows.
+        // LATEST ON picks the latest m row of each g before the join, so the equality filters the rows that
+        // LATEST ON picked. As a filter on the scan of m it ran before LATEST ON, which then picked row 1, an
+        // older row of g1 than row 2, and the join matched it with s row 10.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (id INT, s1 SYMBOL, s2 SYMBOL, g SYMBOL, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO m VALUES
+                    (1, 'A', 'A', 'g1', 10::TIMESTAMP),
+                    (2, 'A', 'B', 'g1', 20::TIMESTAMP),
+                    (3, 'B', 'B', 'g2', 30::TIMESTAMP)
+                    """);
+            execute("CREATE TABLE s (id INT, sym SYMBOL, px DOUBLE, sts TIMESTAMP) TIMESTAMP(sts)");
+            execute("INSERT INTO s VALUES (10, 'A', 1.5, 1::TIMESTAMP), (40, 'B', 0.5, 6::TIMESTAMP)");
+            final String expected = """
+                    id\tid1\tpx
+                    3\t40\t0.5
+                    """;
+            assertQuery("SELECT m.id, s.id, s.px FROM m ASOF JOIN s ON m.s1 = s.sym AND m.s2 = s.sym WHERE s.px IS NOT NULL LATEST ON ts PARTITION BY g")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Filter filter: s.px is not null
+                                    AsOf Join Fast
+                                      condition: s.sym=m.s2
+                                        Filter filter: s1=s2
+                                            LatestByDeferredListValuesFiltered
+                                                Frame backward scan on: m
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: s
+                            """)
+                    .returns(expected);
+            assertQuery("SELECT m.id, s.id, s.px FROM m LT JOIN s ON m.s1 = s.sym AND m.s2 = s.sym WHERE s.px IS NOT NULL LATEST ON ts PARTITION BY g")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Lt Join", "Filter filter: s1=s2")
+                    .returns(expected);
+            // the deprecated LATEST BY syntax puts LATEST ON on m as well
+            assertQuery("SELECT m.id, s.id, s.px FROM m LATEST BY g ASOF JOIN s ON m.s1 = s.sym AND m.s2 = s.sym WHERE s.px IS NOT NULL")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Filter filter: s1=s2")
+                    .returns(expected);
+            // a window function picks the latest m rows without LATEST ON
+            assertSqlCursors(
+                    "SELECT m.id, s.id, s.px FROM ((SELECT id, s1, s2, g, ts FROM (SELECT *, row_number() OVER (PARTITION BY g ORDER BY ts DESC) rn FROM m) WHERE rn = 1 ORDER BY ts) TIMESTAMP(ts)) m"
+                            + " ASOF JOIN s ON m.s1 = s.sym AND m.s2 = s.sym WHERE s.px IS NOT NULL",
+                    "SELECT m.id, s.id, s.px FROM m ASOF JOIN s ON m.s1 = s.sym AND m.s2 = s.sym WHERE s.px IS NOT NULL LATEST ON ts PARTITION BY g"
+            );
+        });
+    }
+
+    @Test
     public void testAsOfJoinOnKeysSharingSlaveColumnWhereDropsUnmatchedUnionRows() throws Exception {
         // The slave is a union that widens INT and LONG to LONG, whose NULL record fails s.v = 5, so the WHERE
         // drops every unmatched master row, as over a table: a = b filters m, and the join keeps a single key.
