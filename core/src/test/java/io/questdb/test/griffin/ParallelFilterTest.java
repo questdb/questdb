@@ -28,6 +28,8 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SqlJitMode;
+import io.questdb.cairo.SymbolMapReaderImpl;
+import io.questdb.cairo.SymbolMapSegments;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
@@ -870,6 +872,45 @@ public class ParallelFilterTest extends AbstractCairoTest {
                 configuration,
                 LOG
         );
+    }
+
+    @Test
+    public void testSharedSymbolCacheParallelFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(
+                    pool,
+                    (localEngine, _, context) -> {
+                        localEngine.execute("CREATE TABLE cache_parallel (s SYMBOL CACHE)", context);
+                        localEngine.execute("""
+                                INSERT INTO cache_parallel
+                                SELECT x::STRING FROM long_sequence(10_000)
+                                """, context);
+                        localEngine.execute("CREATE TABLE nocache_parallel (s SYMBOL NOCACHE)", context);
+                        localEngine.execute("INSERT INTO nocache_parallel SELECT s FROM cache_parallel", context);
+                        localEngine.releaseAllReaders();
+                        try (TableReader reader = localEngine.getReader("cache_parallel")) {
+                            SymbolMapReaderImpl symbols = (SymbolMapReaderImpl) reader.getSymbolMapReader(0);
+                            Assert.assertEquals(0, symbols.getCacheSize());
+                            for (String table : new String[]{"cache_parallel", "nocache_parallel", "cache_parallel"}) {
+                                assertQuery("SELECT count() FROM " + table + " WHERE length(s) > 3")
+                                        .withEngine(localEngine)
+                                        .withContext(context)
+                                        .noLeakCheck()
+                                        .noRandomAccess()
+                                        .expectSize()
+                                        .returns("count\n9001\n");
+                            }
+                            TestUtils.assertEquals("1", symbols.valueOf(0));
+                            // this reader loads one segment, the query's workers load the others
+                            Assert.assertTrue(symbols.getCacheSize() > SymbolMapSegments.SEGMENT_KEYS);
+                            Assert.assertTrue(symbols.getCacheSize() <= 10_000);
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
     }
 
     @Test

@@ -40,7 +40,6 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.Chars;
-import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -137,8 +136,8 @@ public class InSymbolFunctionFactory implements FunctionFactory {
         private final CharSequenceHashSet deferredSet;
         private final IntList deferredValuePositions;
         private final ObjList<Function> deferredValues;
-        private final IntHashSet intSet = new IntHashSet();
         private final TestFunc intTest = this::testAsInt;
+        private final StaticSymbolKeys keys = new StaticSymbolKeys();
         private final CharSequenceHashSet set;
         private final TestFunc strTest = this::testAsString;
         private TestFunc testFunc;
@@ -196,15 +195,11 @@ public class InSymbolFunctionFactory implements FunctionFactory {
             }
 
             final StaticSymbolTable symbolTable = arg.getStaticSymbolTable();
+            final boolean isResolved = keys.of(symbolTable, set);
             if (symbolTable != null) {
-                intSet.clear();
-                for (int i = 0, n = set.size(); i < n; i++) {
-                    intSet.add(symbolTable.keyOf(set.get(i)));
-                }
-                if (deferredValues != null) {
+                if (isResolved && deferredValues != null) {
                     for (int i = 0, n = deferredValues.size(); i < n; i++) {
-                        final Function func = deferredValues.getQuick(i);
-                        intSet.add(symbolTable.keyOf(deferredValueToString(func)));
+                        keys.add(symbolTable.keyOf(deferredValueToString(deferredValues.getQuick(i))));
                     }
                 }
                 testFunc = intTest;
@@ -241,6 +236,14 @@ public class InSymbolFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void offerStateTo(Function that) {
+            if (testFunc == intTest && that instanceof Func thatFunc) {
+                keys.offerTo(thatFunc.keys);
+            }
+            UnaryFunction.super.offerStateTo(that);
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val(arg);
             boolean hasLiterals = set != null && set.size() > 0;
@@ -256,7 +259,7 @@ public class InSymbolFunctionFactory implements FunctionFactory {
         }
 
         private boolean testAsInt(Record rec) {
-            return intSet.contains(arg.getInt(rec));
+            return keys.contains(arg.getInt(rec));
         }
 
         private boolean testAsString(Record rec) {

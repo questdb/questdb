@@ -1282,6 +1282,12 @@ public interface CairoConfiguration {
         return 100_000_000L;
     }
 
+    /**
+     * Native memory that the readers' shared symbol value caches may hold in total. Once the limit
+     * is reached, other values are read from the mapped symbol file. Zero disables the caches.
+     */
+    long getSymbolCacheMaxSize();
+
     int getSymbolPatternIndexThreshold();
 
     long getSymbolTableMaxAllocationPageSize();

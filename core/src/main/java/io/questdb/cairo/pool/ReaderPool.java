@@ -28,6 +28,7 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.PartitionOverwriteControl;
+import io.questdb.cairo.SymbolMapCachePool;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TxnScoreboardPool;
@@ -40,12 +41,18 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
 
     private final MessageBus messageBus;
     private final PartitionOverwriteControl partitionOverwriteControl;
+    private final SymbolMapCachePool symbolMapCachePool;
     private final TxnScoreboardPool txnScoreboardPool;
     private ReaderListener readerListener;
 
     public ReaderPool(CairoConfiguration configuration, TxnScoreboardPool scoreboardPool, MessageBus messageBus, PartitionOverwriteControl partitionOverwriteControl) {
+        this(configuration, scoreboardPool, null, messageBus, partitionOverwriteControl);
+    }
+
+    public ReaderPool(CairoConfiguration configuration, TxnScoreboardPool scoreboardPool, @Nullable SymbolMapCachePool symbolMapCachePool, MessageBus messageBus, PartitionOverwriteControl partitionOverwriteControl) {
         super(configuration, configuration.getReaderPoolMaxSegments(), configuration.getInactiveReaderTTL());
         this.txnScoreboardPool = scoreboardPool;
+        this.symbolMapCachePool = symbolMapCachePool;
         this.messageBus = messageBus;
         this.partitionOverwriteControl = partitionOverwriteControl;
     }
@@ -127,12 +134,12 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
 
     @Override
     protected R newCopyOfTenant(R srcReader, Entry<R> rootEntry, Entry<R> entry, int index, ResourcePoolSupervisor<R> supervisor) {
-        return new R(this, rootEntry, entry, index, srcReader, txnScoreboardPool, messageBus, readerListener, partitionOverwriteControl, supervisor);
+        return new R(this, rootEntry, entry, index, srcReader, txnScoreboardPool, symbolMapCachePool, messageBus, readerListener, partitionOverwriteControl, supervisor);
     }
 
     @Override
     protected R newTenant(TableToken tableToken, Entry<R> rootEntry, Entry<R> entry, int index, ResourcePoolSupervisor<R> supervisor) {
-        return new R(this, rootEntry, entry, index, tableToken, txnScoreboardPool, messageBus, readerListener, partitionOverwriteControl, supervisor);
+        return new R(this, rootEntry, entry, index, tableToken, txnScoreboardPool, symbolMapCachePool, messageBus, readerListener, partitionOverwriteControl, supervisor);
     }
 
     @TestOnly
@@ -162,12 +169,13 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
                 int index,
                 TableToken tableToken,
                 TxnScoreboardPool txnScoreboardPool,
+                @Nullable SymbolMapCachePool symbolMapCachePool,
                 MessageBus messageBus,
                 ReaderListener readerListener,
                 PartitionOverwriteControl partitionOverwriteControl,
                 ResourcePoolSupervisor<R> supervisor
         ) {
-            super(entry.getIndex() * pool.getSegmentSize() + index, pool.getConfiguration(), tableToken, txnScoreboardPool, messageBus, partitionOverwriteControl);
+            super(entry.getIndex() * pool.getSegmentSize() + index, pool.getConfiguration(), tableToken, txnScoreboardPool, symbolMapCachePool, messageBus, partitionOverwriteControl);
             this.pool = pool;
             this.rootEntry = rootEntry;
             this.entry = entry;
@@ -183,12 +191,13 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
                 int index,
                 R srcReader,
                 TxnScoreboardPool txnScoreboardPool,
+                @Nullable SymbolMapCachePool symbolMapCachePool,
                 MessageBus messageBus,
                 ReaderListener readerListener,
                 PartitionOverwriteControl partitionOverwriteControl,
                 ResourcePoolSupervisor<R> supervisor
         ) {
-            super(entry.getIndex() * pool.getSegmentSize() + index, pool.getConfiguration(), srcReader, txnScoreboardPool, messageBus, partitionOverwriteControl);
+            super(entry.getIndex() * pool.getSegmentSize() + index, pool.getConfiguration(), srcReader, txnScoreboardPool, symbolMapCachePool, messageBus, partitionOverwriteControl);
             this.pool = pool;
             this.rootEntry = rootEntry;
             this.entry = entry;

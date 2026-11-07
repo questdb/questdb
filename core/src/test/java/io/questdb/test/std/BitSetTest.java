@@ -32,6 +32,59 @@ import org.junit.Test;
 public class BitSetTest {
 
     @Test
+    public void testClearBelow() {
+        BitSet set = new BitSet();
+        for (int i = 0; i < 200; i++) {
+            set.set(i);
+        }
+        final long capacity = set.capacity();
+        set.clearBelow(0);
+        Assert.assertTrue(set.get(0));
+        set.clearBelow(70);
+        for (int i = 0; i < 200; i++) {
+            Assert.assertEquals(i >= 70, set.get(i));
+        }
+        set.clearBelow(128);
+        for (int i = 0; i < 200; i++) {
+            Assert.assertEquals(i >= 128, set.get(i));
+        }
+        set.clearBelow(10_000);
+        for (int i = 0; i < 200; i++) {
+            Assert.assertFalse(set.get(i));
+        }
+        Assert.assertEquals(capacity, set.capacity());
+    }
+
+    @Test
+    public void testCopyBelow() {
+        BitSet source = new BitSet();
+        for (int i = 0; i < 200; i += 3) {
+            source.set(i);
+        }
+        BitSet target = new BitSet(64);
+        for (int i = 0; i < 200; i += 2) {
+            target.set(i);
+        }
+        target.copyBelow(source, 0);
+        for (int i = 0; i < 200; i++) {
+            Assert.assertEquals(i % 2 == 0, target.get(i));
+        }
+        target.copyBelow(source, 70);
+        for (int i = 0; i < 200; i++) {
+            Assert.assertEquals(i < 70 ? i % 3 == 0 : i % 2 == 0, target.get(i));
+        }
+        target.copyBelow(source, 128);
+        for (int i = 0; i < 200; i++) {
+            Assert.assertEquals(i < 128 ? i % 3 == 0 : i % 2 == 0, target.get(i));
+        }
+        BitSet empty = new BitSet(64);
+        empty.copyBelow(source, 130);
+        for (int i = 0; i < 200; i++) {
+            Assert.assertEquals(i < 130 && i % 3 == 0, empty.get(i));
+        }
+    }
+
+    @Test
     public void testGetAndSet() {
         final int N = 1000;
         final Rnd rnd = new Rnd();

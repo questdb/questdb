@@ -39,6 +39,7 @@ import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.RuntimeConstFunction;
 import io.questdb.griffin.engine.functions.ScalarSubQueryBoundRefFunction;
+import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bool.BooleanSubQueryFunction;
@@ -56,6 +57,7 @@ import io.questdb.griffin.engine.functions.cast.CastStrToDoubleArrayFunctionFact
 import io.questdb.griffin.engine.functions.cast.CastStrToGeoHashFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToUuidFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastSymbolToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastUuidToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastUuidToVarcharFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastVarcharToDecimalFunctionFactory;
@@ -729,6 +731,15 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         return ex;
     }
 
+    // The aggregates always compare keys, and a non-static symbol table may give one value several keys.
+    private static boolean isSymbolCastElidable(CharSequence name, CastSymbolToStrFunctionFactory.Func cast) {
+        if (SqlKeywords.isInKeyword(name) || Chars.equals(name, "<>all")) {
+            return true;
+        }
+        return (Chars.equalsIgnoreCase(name, "count_distinct") || Chars.equalsIgnoreCase(name, "string_distinct_agg"))
+                && ((SymbolFunction) cast.getArg()).isSymbolTableStatic();
+    }
+
     private static boolean isUntypedEmptyArrayLiteral(Function arg) {
         // ArrayConstant.emptyUntyped() is the only producer of an ArrayConstant without an element type
         return arg instanceof ArrayConstant && ColumnType.decodeArrayElementType(arg.getType()) == ColumnType.UNDEFINED;
@@ -1179,6 +1190,17 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             }
         }
 
+        // These functions compare symbol keys directly, so the cast would only add per-row text hashing.
+        CastSymbolToStrFunctionFactory.Func elidedCast = null;
+        if (
+                argCount > 0
+                        && args.getQuick(0) instanceof CastSymbolToStrFunctionFactory.Func cast
+                        && isSymbolCastElidable(node.token, cast)
+        ) {
+            elidedCast = cast;
+            args.setQuick(0, cast.getArg());
+        }
+
         undefinedVariables.clear();
         // find all undefined args for the purpose of setting
         // their types when we find suitable candidate function
@@ -1403,6 +1425,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         }
 
         if (candidate == null) {
+            if (elidedCast != null) {
+                // Errors name the type the user wrote; a retry below elides the cast again.
+                args.setQuick(0, elidedCast);
+            }
             // no signature match. A CURSOR argument may be a scalar boolean sub-query used in
             // boolean context (e.g. "a and (select b from x)"); coerce such arguments to
             // BOOLEAN and retry once. Coerced arguments are no longer CURSOR-typed, so the
