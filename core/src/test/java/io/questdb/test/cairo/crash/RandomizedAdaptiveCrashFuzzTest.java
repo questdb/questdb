@@ -35,13 +35,19 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.idx.BitmapIndexUtils;
+import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.pool.WriterPool;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
+import io.questdb.mp.SCSequence;
 import io.questdb.std.NumericException;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.MicrosecondClock;
@@ -167,7 +173,8 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
             // throw is gone). Curated sweeps crash them deterministically: testReplaceOverParquetCrashSafeW0 the
             // rewrite of a one-row-group file, testReplaceOverParquetInPlaceCrashSafeW0 and its process-kill
             // counterpart testReplaceOverParquetInPlaceKillSafeW0 the in-place update of a three-row-group file with an
-            // indexed SYMBOL. ReplaceOverParquetShapeCoverageTest pins that the extracted config below can emit the
+            // indexed SYMBOL, and their testReplaceOverParquetInPlaceCoveringIndex* variants the same update under a
+            // covering index. ReplaceOverParquetShapeCoverageTest pins that the extracted config below can emit the
             // shape when replace is enabled. The shared randomized draw stays 0.0 only to leave the pinned seeds'
             // workloads byte-for-byte unchanged: raising it also exposes the nightly sweep to a pre-existing,
             // replace-independent crash-harness limitation (a live sys.posting_seal_purge_log writer mmap at power loss
@@ -1003,16 +1010,19 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
         }
     }
 
+    private static final String IPQ_BITMAP_INDEX = "INDEX";
     private static final long IPQ_CLOCK_STEP = 3_600_001_000L;
     private static final long IPQ_CLOCK_T0 = 3_600_001_000L;
     private static final int IPQ_COMMIT_COUNT = 3;
+    private static final String IPQ_COVERING_INDEX = "INDEX TYPE POSTING INCLUDE (v)";
     private static final int IPQ_SYMBOL_KEY_COUNT = 3;
     private static final String IPQ_TABLE = "cf_ipq";
     private static final String IPQ_TWIN = "cf_ipq_twin";
 
-    // Set while testReplaceOverParquetInPlaceCrashSafeW0 runs: recoverAfterCrash then runs the restart's column purge
-    // before the WAL replay. The kill sweep leaves it unset: its commit phase runs to the end, so the live purge queue
-    // also holds the tasks of commits the kill rolls back, which no restarted process sees.
+    // Set while a power-loss sweep of the in-place update runs (testReplaceOverParquetInPlace*CrashSafeW0):
+    // recoverAfterCrash then runs the restart's column purge before the WAL replay. The kill sweeps leave it unset:
+    // their commit phase runs to the end, so the live purge queue also holds the tasks of commits the kill rolls back,
+    // which no restarted process sees.
     private ParquetInPlaceWorkload restartPurgeWorkload;
 
     // Deterministic curated crash sweep of the in-place Parquet update, which testReplaceOverParquetCrashSafeW0 cannot
@@ -1022,27 +1032,13 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
     // version it superseded to ColumnPurgeJob. The commits are a replace that filters one row group and drops another
     // in place, a plain O3 row merged into the last row group in place, and a row into the native day. The oracle
     // compares every recovered state with an all-native twin and the index lookups with the twin's index-free filter,
-    // and the restart's column purge must keep the index version the restored save point names (recoverAfterCrash).
+    // and the restart's column purge must hold the purge of the index version the restored save point names
+    // (recoverAfterCrash).
     @Test
     public void testReplaceOverParquetInPlaceCrashSafeW0() throws Exception {
         Assume.assumeTrue("crash sweep is nightly-only; run with -D" + NIGHTLY_PROP + "=true",
                 Boolean.getBoolean(NIGHTLY_PROP));
-        applyParquetInPlaceSweepConfig();
-        try {
-            runWithCrashFacade(() -> {
-                final O3ParquetPathCounts paths = new O3ParquetPathCounts();
-                restartPurgeWorkload = new ParquetInPlaceWorkload(false);
-                try {
-                    final SweepResult r = forEachAdaptiveCrashPoint(restartPurgeWorkload);
-                    Assert.assertFalse("in-place replace-over-parquet sweep truncated (N > cap) - raise the cap", r.truncated);
-                    assertParquetInPlaceSweep(restartPurgeWorkload, r, paths, 0);
-                } finally {
-                    restartPurgeWorkload = null;
-                }
-            });
-        } finally {
-            setCurrentMicros(-1); // -1 => real clock (the harness default); do not leak a fixed clock
-        }
+        assertParquetInPlaceCrashSweep(false);
     }
 
     // The process-kill counterpart of testReplaceOverParquetInPlaceCrashSafeW0. A kill keeps the page cache, so
@@ -1053,18 +1049,26 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
     public void testReplaceOverParquetInPlaceKillSafeW0() throws Exception {
         Assume.assumeTrue("kill sweep is nightly-only; run with -D" + NIGHTLY_PROP + "=true",
                 Boolean.getBoolean(NIGHTLY_PROP));
-        applyParquetInPlaceSweepConfig();
-        try {
-            runWithCrashFacade(() -> {
-                final O3ParquetPathCounts paths = new O3ParquetPathCounts();
-                final ParquetInPlaceWorkload workload = new ParquetInPlaceWorkload(true);
-                final SweepResult r = forEachKillPoint(workload);
-                // The first kill point comes after the first commit's sequencer record, which the page cache keeps.
-                assertParquetInPlaceSweep(workload, r, paths, 1);
-            });
-        } finally {
-            setCurrentMicros(-1); // -1 => real clock (the harness default); do not leak a fixed clock
-        }
+        assertParquetInPlaceKillSweep(false);
+    }
+
+    // testReplaceOverParquetInPlaceCrashSafeW0 with a covering index on sym: a POSTING index that INCLUDEs v. Every
+    // in-place commit then also seals the rebuilt index of the Parquet day and its covering sidecars, the oracle's
+    // lookups read v from those sidecars, and the restart's column purge must keep the restored version's .pk, .pci,
+    // .pv and .pc files.
+    @Test
+    public void testReplaceOverParquetInPlaceCoveringIndexCrashSafeW0() throws Exception {
+        Assume.assumeTrue("crash sweep is nightly-only; run with -D" + NIGHTLY_PROP + "=true",
+                Boolean.getBoolean(NIGHTLY_PROP));
+        assertParquetInPlaceCrashSweep(true);
+    }
+
+    // The process-kill counterpart of testReplaceOverParquetInPlaceCoveringIndexCrashSafeW0.
+    @Test
+    public void testReplaceOverParquetInPlaceCoveringIndexKillSafeW0() throws Exception {
+        Assume.assumeTrue("kill sweep is nightly-only; run with -D" + NIGHTLY_PROP + "=true",
+                Boolean.getBoolean(NIGHTLY_PROP));
+        assertParquetInPlaceKillSweep(true);
     }
 
     @Override
@@ -1080,6 +1084,54 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
             engine.notifyWalTxnRepublisher(tt);
         }
         drainWalQueue();
+    }
+
+    // Sweeps a power loss over every durability op of the in-place commits, with the restart's column purge before
+    // each recovery's WAL replay.
+    private void assertParquetInPlaceCrashSweep(boolean isCoveringIndex) throws Exception {
+        applyParquetInPlaceSweepConfig();
+        try {
+            runWithCrashFacade(() -> {
+                final O3ParquetPathCounts paths = new O3ParquetPathCounts();
+                restartPurgeWorkload = new ParquetInPlaceWorkload(false, isCoveringIndex);
+                try {
+                    final SweepResult r = forEachAdaptiveCrashPoint(restartPurgeWorkload);
+                    Assert.assertFalse("in-place replace-over-parquet sweep truncated (N > cap) - raise the cap", r.truncated);
+                    assertParquetInPlaceSweep(restartPurgeWorkload, r, paths, 0);
+                    // The oracle checked the hold at every point whose restart purge took the task of the restored
+                    // version. Points must exist for both versions an in-place commit supersedes.
+                    LOG.info().$("[in-place parquet sweep] the restart's column purge held the restored baseline version at ")
+                            .$(restartPurgeWorkload.baselineVersionHeldPoints).$(" points, the restored replace's version at ")
+                            .$(restartPurgeWorkload.replaceVersionHeldPoints).$(" points").$();
+                    Assert.assertTrue("no restart's column purge took the purge of the baseline index version, which the"
+                            + " replace superseded, with the save point before the replace restored",
+                            restartPurgeWorkload.baselineVersionHeldPoints > 0);
+                    Assert.assertTrue("no restart's column purge took the purge of the replace's index version, which the"
+                            + " O3 commit superseded, with the save point after the replace restored",
+                            restartPurgeWorkload.replaceVersionHeldPoints > 0);
+                } finally {
+                    restartPurgeWorkload = null;
+                }
+            });
+        } finally {
+            setCurrentMicros(-1); // -1 => real clock (the harness default); do not leak a fixed clock
+        }
+    }
+
+    // Sweeps a process kill over every kill point of the in-place commits.
+    private void assertParquetInPlaceKillSweep(boolean isCoveringIndex) throws Exception {
+        applyParquetInPlaceSweepConfig();
+        try {
+            runWithCrashFacade(() -> {
+                final O3ParquetPathCounts paths = new O3ParquetPathCounts();
+                final ParquetInPlaceWorkload workload = new ParquetInPlaceWorkload(true, isCoveringIndex);
+                final SweepResult r = forEachKillPoint(workload);
+                // The first kill point comes after the first commit's sequencer record, which the page cache keeps.
+                assertParquetInPlaceSweep(workload, r, paths, 1);
+            });
+        } finally {
+            setCurrentMicros(-1); // -1 => real clock (the harness default); do not leak a fixed clock
+        }
     }
 
     // Adaptive W=0 with the clock pinned past the epoch interval, as the other curated sweeps. Row groups of 4 rows and
@@ -1201,31 +1253,87 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
         return "SELECT ts, sym, v FROM " + table + " WHERE concat(sym, '') = '" + key + "'";
     }
 
+    // Consumes the posting seal purge tasks published so far. No PostingSealPurgeJob runs in the in-place sweeps, and
+    // with the queue full a closing writer would persist its tasks to sys.posting_seal_purge_log itself.
+    private static void discardPostingSealPurgeQueue() {
+        final SCSequence subSeq = engine.getMessageBus().getPostingSealPurgeSubSeq();
+        while (true) {
+            final long cursor = subSeq.next();
+            if (cursor == -2) {
+                continue;
+            }
+            if (cursor < 0) {
+                return;
+            }
+            subSeq.done(cursor);
+        }
+    }
+
     // 12 rows at 2h spacing on 2024-01-01, three row groups of 4 once converted, and 2 rows on 2024-01-02. Identical
-    // for the Parquet table and its all-native twin.
-    private static void seedParquetInPlaceTable(String table) throws SqlException {
-        execute("CREATE TABLE " + table + " (id LONG, ts TIMESTAMP, sym SYMBOL INDEX, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+    // for the Parquet table and its all-native twin. indexClause is the index of sym.
+    private static void seedParquetInPlaceTable(String table, String indexClause) throws SqlException {
+        execute("CREATE TABLE " + table + " (id LONG, ts TIMESTAMP, sym SYMBOL " + indexClause + ", v LONG) TIMESTAMP(ts)"
+                + " PARTITION BY DAY WAL");
         execute("INSERT INTO " + table + " SELECT x, '2024-01-01'::TIMESTAMP + (x - 1) * 7_200_000_000L, 's' || (x % 3), x * 10"
                 + " FROM long_sequence(12)");
         execute("INSERT INTO " + table + " VALUES (13, '2024-01-02T06:00:00.000000Z', 's0', 130),"
                 + " (14, '2024-01-02T18:00:00.000000Z', 's1', 140)");
     }
 
+    // Picks the sealed POSTING files of one sym index version, the .pv and .pc files, out of a directory listing.
+    private static final class SealedPostingFileMatcher implements PostingIndexUtils.SealedFileVisitor {
+        private final long symNameTxn;
+        private int coverDataFileCount;
+        private boolean isMatch;
+        private int valueFileCount;
+
+        SealedPostingFileMatcher(long symNameTxn) {
+            this.symNameTxn = symNameTxn;
+        }
+
+        @Override
+        public void onCoverDataFile(int includeIdx, long postingColumnNameTxn, long coveredColumnNameTxn, long sealTxn) {
+            if (postingColumnNameTxn == PostingIndexUtils.coverFilePostingColumnNameTxn(symNameTxn)) {
+                coverDataFileCount++;
+                isMatch = true;
+            }
+        }
+
+        @Override
+        public void onValueFile(long postingColumnNameTxn, long sealTxn) {
+            if (postingColumnNameTxn == symNameTxn) {
+                valueFileCount++;
+                isMatch = true;
+            }
+        }
+    }
+
     private final class ParquetInPlaceWorkload implements AdaptiveCrashWorkload {
         // The twin's full dump and index-free lookups after 0..IPQ_COMMIT_COUNT commits: the independent oracle.
         private final ObjList<String> fingerprints = new ObjList<>();
+        private final boolean isCoveringIndex;      // sym has a covering POSTING index, else a bitmap index
         private final boolean isKillSweep;
         private final ObjList<String> lookupFingerprints = new ObjList<>();
+        // The sym index versions of the Parquet day whose purge the restart's column purge took from the queue, and
+        // those of them it did not complete.
+        private final TreeSet<Long> restartHeldSymNameTxns = new TreeSet<>();
+        private final TreeSet<Long> restartTakenSymNameTxns = new TreeSet<>();
+        private long baselineSymNameTxn;            // the sym index version of the Parquet day after the convert
+        private int baselineVersionHeldPoints;      // crash points whose restart purge held the baseline version
         private String countPassPaths;              // the parquet O3 paths the clean pass took
         private int iteration;
         private O3ParquetPathCounts iterationPaths;
-        private TreeSet<String> keyFilesAfter;      // sym key files of the Parquet day after the clean pass
+        private TreeSet<String> keyFilesAfter;      // sym index key files of the Parquet day after the clean pass
         private TreeSet<String> keyFilesBefore;     // and before it
         private int preSeqTxn;
+        private int replaceVersionHeldPoints;       // crash points whose restart purge held the replace's version
+        // The sym index version of the Parquet day the restored _cv names, until the oracle checks its purge.
+        private long restartRestoredSymNameTxn = Long.MIN_VALUE;
         private TableToken token;
 
-        ParquetInPlaceWorkload(boolean isKillSweep) {
+        ParquetInPlaceWorkload(boolean isKillSweep, boolean isCoveringIndex) {
             this.isKillSweep = isKillSweep;
+            this.isCoveringIndex = isCoveringIndex;
         }
 
         @Override
@@ -1251,6 +1359,9 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
                     fingerprints.getQuick(state), fingerprint(IPQ_TABLE));
             TestUtils.assertEquals("index lookups after " + crashPoint(k) + ", state " + state,
                     lookupFingerprints.getQuick(state), lookupFingerprint(IPQ_TABLE, true));
+            if (!isKillSweep) {
+                assertRestartPurgeHeldRestoredVersion(k);
+            }
             return (int) seqTxn;
         }
 
@@ -1261,11 +1372,13 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
             execute("DROP TABLE IF EXISTS " + IPQ_TABLE);
             // Purge the dropped token, so the facade does not keep re-snapshotting its files (see FuzzCrashWorkload).
             forceWalPurge();
+            // The covering index's seals queue posting seal purges on every iteration; nothing else takes them.
+            discardPostingSealPurgeQueue();
             if (fingerprints.size() == 0) {
                 buildTwin();
                 setCurrentMicros(IPQ_CLOCK_T0);
             }
-            seedParquetInPlaceTable(IPQ_TABLE);
+            seedParquetInPlaceTable(IPQ_TABLE, isCoveringIndex ? IPQ_COVERING_INDEX : IPQ_BITMAP_INDEX);
             drainWalQueue();
             execute("ALTER TABLE " + IPQ_TABLE + " CONVERT PARTITION TO PARQUET LIST '" + ROP_PARQUET_DAY + "'");
             drainWalQueue();
@@ -1273,9 +1386,13 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
             assertBaselinePartitionIsParquet(IPQ_TABLE);
             if (iteration == 0) {
                 // The index serves the oracle's lookups on the Parquet table; the twin's lookups bypass any index.
-                assertQuery(indexedSymbolLookup(IPQ_TABLE, "s1")).noLeakCheck().assertsPlanContaining("Index forward scan on: sym");
+                assertQuery(indexedSymbolLookup(IPQ_TABLE, "s1")).noLeakCheck()
+                        .assertsPlanContaining(isCoveringIndex ? "CoveringIndex on: sym" : "Index forward scan on: sym");
                 assertQuery(plainSymbolLookup(IPQ_TABLE, "s1")).noLeakCheck().assertsPlanNotContaining("Index");
-                keyFilesBefore = parquetDaySymKeyFiles();
+                keyFilesBefore = parquetDayIndexKeyFiles();
+                try (TableReader reader = engine.getReader(token)) {
+                    baselineSymNameTxn = parquetDaySymNameTxn(reader);
+                }
             }
             preSeqTxn = (int) tableSeqTxn(IPQ_TABLE);
             iterationPaths = new O3ParquetPathCounts();
@@ -1288,7 +1405,7 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
                 // The clean pass's outcome, read after the phase the sweep counts: the reader's closes and unmaps are
                 // kill points.
                 countPassPaths = iterationPaths.toString();
-                keyFilesAfter = parquetDaySymKeyFiles();
+                keyFilesAfter = parquetDayIndexKeyFiles();
             }
             execute("DROP TABLE IF EXISTS " + IPQ_TABLE);
         }
@@ -1298,18 +1415,13 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
         // crash. The job's runs take the live queue instead, which stands in for the purge tasks the commit phase queued
         // before the crash, such as the index version an in-place commit superseded. The purge must keep the index
         // version the restored _cv names: readers use it until the replay commits, and the save point that names it is
-        // what the next recovery restores.
+        // what the next recovery restores. The oracle checks that the purge holds that version's task
+        // (assertRestartPurgeHeldRestoredVersion).
         void purgeColumnVersionsBeforeReplay() {
             final ObjList<String> restoredIndexFiles = new ObjList<>();
             try (TableReader reader = engine.getReader(token); Path path = new Path()) {
-                final long dayTimestamp = reader.getTxFile().getPartitionTimestampByIndex(0);
-                final long symNameTxn = reader.getColumnVersionReader()
-                        .getColumnNameTxn(dayTimestamp, reader.getMetadata().getColumnIndex("sym"));
-                final int dirLen = parquetDayDir(reader, path).size();
-                BitmapIndexUtils.keyFileName(path, "sym", symNameTxn);
-                restoredIndexFiles.add(path.toString());
-                BitmapIndexUtils.valueFileName(path.trimTo(dirLen), "sym", symNameTxn);
-                restoredIndexFiles.add(path.toString());
+                restartRestoredSymNameTxn = parquetDaySymNameTxn(reader);
+                collectIndexFiles(parquetDayDir(reader, path), restartRestoredSymNameTxn, restoredIndexFiles);
             }
             engine.releaseAllReaders();
             for (int i = 0, n = restoredIndexFiles.size(); i < n; i++) {
@@ -1321,6 +1433,7 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
                 // Past the retry time of every task the first run took from the queue.
                 setCurrentMicros(currentMicros + 1_000);
                 purgeJob.run();
+                readSymPurges(purgeJob.getLogTableName());
             } catch (SqlException e) {
                 throw new RuntimeException(e);
             }
@@ -1330,11 +1443,30 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
             }
         }
 
+        // The restart's column purge took the purge tasks the commit phase queued before the crash: each in-place commit
+        // that landed queued the index version it superseded, the baseline version (the replace) or the replace's
+        // version (the O3 commit). Where it took the task of the version the restored _cv names, it must hold it.
+        private void assertRestartPurgeHeldRestoredVersion(int k) {
+            Assert.assertNotEquals("no restart's column purge before " + crashPoint(k), Long.MIN_VALUE, restartRestoredSymNameTxn);
+            if (restartTakenSymNameTxns.contains(restartRestoredSymNameTxn)) {
+                Assert.assertTrue("the restart's column purge completed the purge of sym index version " + restartRestoredSymNameTxn
+                                + ", which the restored _cv names, after " + crashPoint(k) + " [taken=" + restartTakenSymNameTxns
+                                + ", held=" + restartHeldSymNameTxns + ']',
+                        restartHeldSymNameTxns.contains(restartRestoredSymNameTxn));
+                if (restartRestoredSymNameTxn == baselineSymNameTxn) {
+                    baselineVersionHeldPoints++;
+                } else {
+                    replaceVersionHeldPoints++;
+                }
+            }
+            restartRestoredSymNameTxn = Long.MIN_VALUE;
+        }
+
         // The all-native twin applies the same commits; its full dump and its index-free lookups after each commit are
         // the oracle. Dropped before any crash() so the facade never sees it.
         private void buildTwin() throws Exception {
             execute("DROP TABLE IF EXISTS " + IPQ_TWIN);
-            seedParquetInPlaceTable(IPQ_TWIN);
+            seedParquetInPlaceTable(IPQ_TWIN, isCoveringIndex ? IPQ_COVERING_INDEX : IPQ_BITMAP_INDEX);
             drainWalQueue();
             fingerprints.add(fingerprint(IPQ_TWIN));
             lookupFingerprints.add(lookupFingerprint(IPQ_TWIN, false));
@@ -1346,6 +1478,38 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
                 Assert.assertNotEquals("commit " + i + " must change the data", fingerprints.getQuick(i), fingerprints.getQuick(i + 1));
             }
             execute("DROP TABLE " + IPQ_TWIN);
+        }
+
+        // Adds the files of sym index version symNameTxn in the directory path points at: the bitmap .k and .v, or the
+        // POSTING .pk and .pci with every sealed .pv and .pc of the version.
+        private void collectIndexFiles(Path path, long symNameTxn, ObjList<String> files) {
+            final int dirLen = path.size();
+            if (!isCoveringIndex) {
+                BitmapIndexUtils.keyFileName(path, "sym", symNameTxn);
+                files.add(path.toString());
+                BitmapIndexUtils.valueFileName(path.trimTo(dirLen), "sym", symNameTxn);
+                files.add(path.toString());
+                return;
+            }
+            PostingIndexUtils.keyFileName(path, "sym", symNameTxn);
+            files.add(path.toString());
+            PostingIndexUtils.coverInfoFileName(path.trimTo(dirLen), "sym", symNameTxn);
+            files.add(path.toString());
+            final File dir = new File(path.trimTo(dirLen).toString());
+            final String[] names = dir.list();
+            Assert.assertNotNull("no Parquet day directory " + dir, names);
+            final SealedPostingFileMatcher matcher = new SealedPostingFileMatcher(symNameTxn);
+            for (String name : names) {
+                matcher.isMatch = false;
+                PostingIndexUtils.parseSealedFileName(name, "sym", matcher);
+                if (matcher.isMatch) {
+                    files.add(new File(dir, name).getPath());
+                }
+            }
+            Assert.assertTrue("no .pv of sym index version " + symNameTxn + " in " + Arrays.toString(names),
+                    matcher.valueFileCount > 0);
+            Assert.assertTrue("no .pc of sym index version " + symNameTxn + " in " + Arrays.toString(names),
+                    matcher.coverDataFileCount > 0);
         }
 
         private String crashPoint(int k) {
@@ -1363,14 +1527,43 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
             return lookups.toString();
         }
 
-        // The sym key files (bitmap .k, one per column name txn) in the Parquet day's directory.
-        private TreeSet<String> parquetDaySymKeyFiles() {
+        // The sym index key files in the Parquet day's directory, one per column name txn: bitmap .k or POSTING .pk.
+        private TreeSet<String> parquetDayIndexKeyFiles() {
+            final String keyFilePrefix = isCoveringIndex ? "sym.pk" : "sym.k";
             try (TableReader reader = engine.getReader(token); Path path = new Path()) {
                 final File dir = new File(parquetDayDir(reader, path).toString());
-                final String[] names = dir.list((d, name) -> name.startsWith("sym.k"));
+                final String[] names = dir.list((d, name) -> name.startsWith(keyFilePrefix));
                 Assert.assertNotNull("no Parquet day directory " + dir, names);
                 return new TreeSet<>(Arrays.asList(names));
             }
+        }
+
+        // Reads from the column purge log the purges of this table's sym index versions: the job logs every task it
+        // takes from the queue, and marks it completed once it removed the files.
+        private void readSymPurges(String purgeLogTable) throws SqlException {
+            restartTakenSymNameTxns.clear();
+            restartHeldSymNameTxns.clear();
+            try (
+                    RecordCursorFactory factory = select("SELECT column_version, completed FROM '" + purgeLogTable
+                            + "' WHERE table_name = '" + token.getDirName() + "' AND column_name = 'sym'");
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                final Record record = cursor.getRecord();
+                while (cursor.hasNext()) {
+                    restartTakenSymNameTxns.add(record.getLong(0));
+                    if (record.getTimestamp(1) == Numbers.LONG_NULL) {
+                        restartHeldSymNameTxns.add(record.getLong(0));
+                    }
+                }
+            }
+        }
+
+        // The sym index version the reader's _cv names for the Parquet day.
+        private long parquetDaySymNameTxn(TableReader reader) {
+            return reader.getColumnVersionReader().getColumnNameTxn(
+                    reader.getTxFile().getPartitionTimestampByIndex(0),
+                    reader.getMetadata().getColumnIndex("sym")
+            );
         }
     }
 
