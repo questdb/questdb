@@ -32,12 +32,13 @@ import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.TickCalendarServiceFactory;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.model.IntervalOperation;
+import io.questdb.griffin.model.CompiledTickExpression;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.LongList;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.cairo.TestTickCalendarService;
+import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.BeforeClass;
@@ -168,6 +169,18 @@ public class TickCalendarTest {
     }
 
     @Test
+    public void testCompiledTickExprWithExchangeFilterHasNoIntervalBound() throws SqlException {
+        // The sessions of a day and its holidays set the interval count, so the JIT filter cannot
+        // compile a fixed number of range checks for the expression and leaves it to the Java filter.
+        for (String expression : new String[]{"$today#XNYS", "[$today, $tomorrow]#XNYS", "$today#XNYS;1h"}) {
+            try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(
+                    ColumnType.getTimestampDriver(ColumnType.TIMESTAMP), configuration, expression, 0, expression.length(), 0)) {
+                Assert.assertEquals(expression, -1, compiled.getMaxIntervalCount(Integer.MAX_VALUE));
+            }
+        }
+    }
+
+    @Test
     public void testDateListBracketExpansionWithPerElementExchangeFilter() throws SqlException {
         // Bracket expansion inside element WITH per-element exchange filter
         // [2025-01-[24..28]#XNYS,2025-02-03] - the #XNYS applies to all expanded dates from 24..28
@@ -179,6 +192,33 @@ public class TickCalendarTest {
                         "{lo=2025-01-28T14:30:00.000000Z, hi=2025-01-28T20:59:59.999999Z}," +
                         "{lo=2025-02-03T00:00:00.000000Z, hi=2025-02-03T23:59:59.999999Z}]",
                 "[2025-01-[24..28]#XNYS,2025-02-03]"
+        );
+    }
+
+    @Test
+    public void testDateListCoveredElementOverMaxIntervalsWithCalendar() throws SqlException {
+        // The 1,200 slots of 10 ms of the second element never touch. With no calendar of its own,
+        // the element adds them to the merge range of the list, whose first element covers them,
+        // and the global calendar keeps the session of 2025-01-02, 14:30 to 21:00 UTC.
+        assertTickInterval(
+                "[{lo=2025-01-02T14:30:00.000000Z, hi=2025-01-02T20:59:59.999999Z}]",
+                "[2025-01-02,2025-01-02T[14..15]:00:[00..59].[0..9]0]#XNYS"
+        );
+        // Its own calendar runs on the element's intervals only, so the element keeps a merge range
+        // of its own and counts its 1,200 slots against the cap (1,024).
+        assertTickIntervalErrorWithNow(
+                "[2025-01-02,2025-01-02T[14..15]:00:[00..59].[0..9]0#XNYS]",
+                "Bracket expansion produces too many intervals (max 1024)",
+                Micros.toMicros(2025, 1, 2, 12, 0)
+        );
+        // The same for a day of a date variable range, $today is 2025-01-02: its calendar cuts the
+        // merged minutes 14:00 to 20:59 at the open. A merge from the start of the list would join
+        // the first element's minute of 2025-01-01 and move the day's first block below the day's
+        // start, where the calendar never reaches it.
+        assertTickIntervalWithNow(
+                "[{lo=2025-01-01T00:00:00.000000Z, hi=2025-01-01T00:00:59.999999Z},{lo=2025-01-02T14:30:00.000000Z, hi=2025-01-02T20:59:59.999999Z}]",
+                "[2025-01-01T00:00:[00..59],$today..$today#XNYS]T[14..20]:[00..59]",
+                Micros.toMicros(2025, 1, 2, 12, 0)
         );
     }
 
@@ -429,6 +469,20 @@ public class TickCalendarTest {
     }
 
     @Test
+    public void testDateVariableRangeWithPerElementExchangeFilterAndDayFilter() throws SqlException {
+        // An element's own exchange filter replaces the list's day filter for that element, as in the
+        // date list below: #Mon keeps Tuesday 2025-01-28 too. The 420 minutes of each day reach the
+        // incremental merge threshold (256), and that merge must not apply the day filter either.
+        // XNYS trades 14:30-21:00 UTC on both days, and the time list covers 14:00-20:59.
+        // now = 2025-01-27 (Monday)
+        final long nowTimestamp = Micros.toMicros(2025, 1, 27, 12, 0);
+        final String expected = "[{lo=2025-01-27T14:30:00.000000Z, hi=2025-01-27T20:59:59.999999Z}," +
+                "{lo=2025-01-28T14:30:00.000000Z, hi=2025-01-28T20:59:59.999999Z}]";
+        assertTickIntervalWithNow(expected, "[$today..$today+1d#XNYS]T[14..20]:[00..59]#Mon", nowTimestamp);
+        assertTickInterval(expected, "[2025-01-27#XNYS,2025-01-28#XNYS]T[14..20]:[00..59]#Mon");
+    }
+
+    @Test
     public void testDateVariableWithExchangeFilter() throws SqlException {
         // $today with exchange filter, now = 2025-01-24 (Friday, trading day)
         // Should return XNYS trading hours for Jan 24
@@ -545,7 +599,7 @@ public class TickCalendarTest {
         // 2025-03#XNYS - March 2025, XNYS trading days only
         LongList out = new LongList();
         TimestampDriver driver = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP);
-        IntervalUtils.parseTickExpr(driver, configuration, "2025-03#XNYS", 0, 12, 0, out, IntervalOperation.INTERSECT, sink, true);
+        IntervalUtils.parseTickExpr(driver, configuration, "2025-03#XNYS", 0, 12, 0, out, sink);
 
         // Should have an even number of elements (pairs)
         Assert.assertEquals("Should have interval pairs", 0, out.size() % 2);
@@ -574,7 +628,7 @@ public class TickCalendarTest {
         // 2025-03#XHKG
         LongList out = new LongList();
         TimestampDriver driver = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP);
-        IntervalUtils.parseTickExpr(driver, configuration, "2025-03#XHKG", 0, 12, 0, out, IntervalOperation.INTERSECT, sink, true);
+        IntervalUtils.parseTickExpr(driver, configuration, "2025-03#XHKG", 0, 12, 0, out, sink);
 
         // Each trading day produces 2 intervals (morning + afternoon due to lunch break)
         Assert.assertEquals("Should have interval pairs", 0, out.size() % 2);
@@ -601,7 +655,7 @@ public class TickCalendarTest {
         // 2025#XNYS - all trading days in 2025
         LongList out = new LongList();
         TimestampDriver driver = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP);
-        IntervalUtils.parseTickExpr(driver, configuration, "2025#XNYS", 0, 9, 0, out, IntervalOperation.INTERSECT, sink, true);
+        IntervalUtils.parseTickExpr(driver, configuration, "2025#XNYS", 0, 9, 0, out, sink);
 
         // Should have interval pairs
         Assert.assertEquals("Should have interval pairs", 0, out.size() % 2);
@@ -856,6 +910,59 @@ public class TickCalendarTest {
                 "[]",
                 "2025-01-24T21:00:00.000000#XNYS"
         );
+    }
+
+    @Test
+    public void testNestedTimeListsCountBeforeCalendar() throws SqlException {
+        // The outer time list values merge whenever they have added 256 intervals since the last
+        // merge, and they count the merged intervals against the cap (1,024) before the calendar
+        // runs after the whole expansion, as the merges of numeric brackets do. Each outer value
+        // adds 50 one-second intervals that never touch, so 24 hours hold 1,200 at the last merge
+        // and fail, although the session of 2025-01-02, 14:30 to 21:00 UTC, keeps 300 of them.
+        final long nowTimestamp = Micros.toMicros(2025, 1, 2, 12, 0);
+        final String overCapError = "Bracket expansion produces too many intervals (max 1024)";
+        final StringBuilder hours20 = new StringBuilder();
+        final StringBuilder hours24 = new StringBuilder();
+        for (int hour = 0; hour < 24; hour++) {
+            if (hour < 20) {
+                hours20.append(hour == 0 ? "" : ",").append(String.format("%02d:", hour));
+            }
+            hours24.append(hour == 0 ? "" : ",").append(String.format("%02d:", hour));
+        }
+        // the even seconds from 00:00 to 01:38, and second 00 of the minutes 00 to 49
+        final StringBuilder evenSeconds = new StringBuilder();
+        final StringBuilder minutes = new StringBuilder();
+        for (int k = 0; k < 50; k++) {
+            evenSeconds.append(k == 0 ? "" : ",").append(String.format("%02d:%02d", 2 * k / 60, 2 * k % 60));
+            minutes.append(k == 0 ? "" : ",").append(String.format("%02d:00", k));
+        }
+        assertTickIntervalErrorWithNow("2025-01-02T[" + hours24 + "][" + evenSeconds + "]#XNYS", overCapError, nowTimestamp);
+        // 20 hours hold 1,000 intervals, and the session keeps the 250 of hours 15 to 19: hour 14's
+        // seconds end at 14:01:38, before the open
+        final LongList evenSecondsInSession = new LongList();
+        for (int hour = 15; hour < 20; hour++) {
+            for (int k = 0; k < 50; k++) {
+                final long lo = Micros.toMicros(2025, 1, 2, hour, 0) + 2 * k * Micros.SECOND_MICROS;
+                evenSecondsInSession.add(lo, lo + Micros.SECOND_MICROS - 1);
+            }
+        }
+        final TimestampDriver driver = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP);
+        assertTickIntervalWithNow(intervalToString(driver, evenSecondsInSession), "2025-01-02T[" + hours20 + "][" + evenSeconds + "]#XNYS", nowTimestamp);
+        // The same intervals as nested time lists and as numeric brackets: second 00 of the minutes
+        // 00 to 49 of each hour. With 20 hours the session keeps 14:30 to 14:49 and hours 15 to 19.
+        assertTickIntervalErrorWithNow("2025-01-02T[" + hours24 + "][" + minutes + "]#XNYS", overCapError, nowTimestamp);
+        assertTickIntervalErrorWithNow("2025-01-02T[00..23]:[00..49]:00#XNYS", overCapError, nowTimestamp);
+        final LongList minutesInSession = new LongList();
+        for (int hour = 14; hour < 20; hour++) {
+            for (int minute = hour == 14 ? 30 : 0; minute < 50; minute++) {
+                final long lo = Micros.toMicros(2025, 1, 2, hour, minute);
+                minutesInSession.add(lo, lo + Micros.SECOND_MICROS - 1);
+            }
+        }
+        Assert.assertEquals(2 * 270, minutesInSession.size());
+        final String expected = intervalToString(driver, minutesInSession);
+        assertTickIntervalWithNow(expected, "2025-01-02T[" + hours20 + "][" + minutes + "]#XNYS", nowTimestamp);
+        assertTickIntervalWithNow(expected, "2025-01-02T[00..19]:[00..49]:00#XNYS", nowTimestamp);
     }
 
     @Test
@@ -1225,8 +1332,8 @@ public class TickCalendarTest {
         String expr1 = "2025-01-[02..8,10..19,21..31]T09:30@America/New_York#workday;6h30m";
         String expr2 = "2025-01-[01..31]#XNYS";
 
-        IntervalUtils.parseTickExpr(driver, configuration, expr1, 0, expr1.length(), 0, out1, IntervalOperation.INTERSECT, sink, true);
-        IntervalUtils.parseTickExpr(driver, configuration, expr2, 0, expr2.length(), 0, out2, IntervalOperation.INTERSECT, sink, true);
+        IntervalUtils.parseTickExpr(driver, configuration, expr1, 0, expr1.length(), 0, out1, sink);
+        IntervalUtils.parseTickExpr(driver, configuration, expr2, 0, expr2.length(), 0, out2, sink);
 
         Assert.assertEquals(intervalToString(driver, out1), intervalToString(driver, out2));
     }
@@ -1253,21 +1360,34 @@ public class TickCalendarTest {
     private void assertTickInterval(String expected, String interval) throws SqlException {
         LongList out = new LongList();
         TimestampDriver driver = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP);
-        IntervalUtils.parseTickExpr(driver, configuration, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, sink, true);
+        IntervalUtils.parseTickExpr(driver, configuration, interval, 0, interval.length(), 0, out, sink);
         Assert.assertEquals(expected, intervalToString(driver, out));
     }
 
     private void assertTickIntervalNanos(String expected, String interval) throws SqlException {
         LongList out = new LongList();
         TimestampDriver driver = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP_NANO);
-        IntervalUtils.parseTickExpr(driver, configuration, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, sink, true);
+        IntervalUtils.parseTickExpr(driver, configuration, interval, 0, interval.length(), 0, out, sink);
         Assert.assertEquals(expected, intervalToString(driver, out));
+    }
+
+    private void assertTickIntervalErrorWithNow(String interval, String expectedError, long nowTimestamp) {
+        final LongList out = new LongList();
+        final TimestampDriver driver = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP);
+        try {
+            IntervalUtils.parseTickExpr(driver, configuration, interval, 0, interval.length(), 0, out, sink, nowTimestamp);
+            Assert.fail("Expected SqlException with message containing: " + expectedError + ", got " + intervalToString(driver, out));
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), expectedError);
+        }
+        // parseTickExpr unwinds the list
+        Assert.assertEquals(0, out.size());
     }
 
     private void assertTickIntervalWithNow(String expected, String interval, long nowTimestamp) throws SqlException {
         LongList out = new LongList();
         TimestampDriver driver = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP);
-        IntervalUtils.parseTickExpr(driver, configuration, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, sink, true, nowTimestamp);
+        IntervalUtils.parseTickExpr(driver, configuration, interval, 0, interval.length(), 0, out, sink, nowTimestamp);
         Assert.assertEquals(expected, intervalToString(driver, out));
     }
 }

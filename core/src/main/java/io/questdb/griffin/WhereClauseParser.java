@@ -42,7 +42,6 @@ import io.questdb.griffin.engine.functions.columns.ColumnFunction;
 import io.questdb.griffin.model.AliasTranslator;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
-import io.questdb.griffin.model.IntervalOperation;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.model.IntrinsicModel;
 import io.questdb.griffin.model.ScalarSubQueryCompileCache;
@@ -1835,9 +1834,7 @@ public final class WhereClauseParser implements Mutable {
                         inArg.token.length() - 1,
                         inArg.position,
                         tempInIntervals,
-                        IntervalOperation.INTERSECT,
-                        intervalSink,
-                        true
+                        intervalSink
                 );
             } catch (SqlException | CairoException e) {
                 return false;

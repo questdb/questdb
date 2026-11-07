@@ -343,8 +343,10 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
     @Test
     public void testParallelHorizonJoinProjectionConcurrent() throws Exception {
         // Queries share one worker pool, so the reading thread of one query reduces the tasks of
-        // another and takes a worker slot of that query's atom. Each thread runs one shape after
-        // another, and every run must return the rows of the serial factory.
+        // another and takes a worker slot of that query's atom. Each thread runs a few consecutive
+        // shapes from a random start, one after another, so the threads run different shapes at
+        // the same time and together cover every shape. Every run must return the rows of the
+        // serial factory.
         final String[] queries = {
                 // Keyed.
                 "SELECT t.ts, t.sym, h.offset, p.bid FROM trades t HORIZON JOIN prices p ON (sym) LIST (-1s, 0s, 1s) AS h",
@@ -368,7 +370,10 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
                 "SELECT t.ts, h.offset, p.bid FROM trades t HORIZON JOIN prices p ON (sym) RANGE FROM 0s TO 199s STEP 1s AS h WHERE t.price > 29",
         };
         final int threadCount = 6;
-        final int iterationCount = 20;
+        // The fewest shapes per thread that cover every shape. Under JaCoCo each query runs
+        // about 10x slower, and 20 random shapes per thread ran past the 20-minute test
+        // timeout with heavy seeds (#8050).
+        final int iterationCount = queries.length - threadCount + 1;
         assertMemoryLeak(() -> {
             final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
             TestUtils.execute(
@@ -392,16 +397,16 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
                         final CyclicBarrier barrier = new CyclicBarrier(threadCount);
                         final SOCountDownLatch haltLatch = new SOCountDownLatch(threadCount);
                         final int workerCount = sqlExecutionContext.getSharedQueryWorkerCount();
+                        final int firstQuery = rnd.nextInt(queries.length);
                         for (int i = 0; i < threadCount; i++) {
                             final int threadId = i;
-                            final Rnd threadRnd = new Rnd(rnd.nextLong(), rnd.nextLong());
                             new Thread(() -> {
                                 // Each thread compiles and runs against a context of its own.
                                 try (SqlExecutionContextImpl threadContext = TestUtils.createSqlExecutionCtx(engine, workerCount)) {
                                     threadContext.setParallelHorizonJoinEnabled(true);
                                     TestUtils.await(barrier);
                                     for (int j = 0; j < iterationCount; j++) {
-                                        final int q = threadRnd.nextInt(queries.length);
+                                        final int q = (firstQuery + threadId + j) % queries.length;
                                         try (RecordCursorFactory factory = engine.select(queries[q], threadContext)) {
                                             // The shapes differ in random access and in whether they
                                             // report a size, so the assertion takes random access from

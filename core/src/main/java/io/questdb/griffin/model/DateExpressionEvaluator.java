@@ -63,6 +63,21 @@ public class DateExpressionEvaluator {
     private static final int SUNDAY = 7;
 
     /**
+     * Checks whether seq[lo..lim) holds a date variable ({@code $now}, {@code $today},
+     * {@code $yesterday}, {@code $tomorrow}) anywhere, see {@link #isDateVariable}. An interval
+     * expression that holds one resolves against the current time, so it has to be evaluated on
+     * every execution rather than once at compile time. Zero-allocation.
+     */
+    public static boolean containsDateVariable(CharSequence seq, int lo, int lim) {
+        for (int i = lo; i < lim - 1; i++) {
+            if (seq.charAt(i) == '$' && isDateVariable(seq, i, lim)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * Evaluates a date expression and returns the resolved timestamp.
      *
      * @param timestampDriver the timestamp driver for time calculations
