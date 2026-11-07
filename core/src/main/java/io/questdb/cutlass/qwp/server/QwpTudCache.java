@@ -305,7 +305,8 @@ public class QwpTudCache implements QwpSchemaCache, QuietCloseable {
 
     /**
      * Commits one table of a QWP commit batch: the rows that the batch's frames
-     * appended to {@code tud}'s writer without committing. The caller first checks that
+     * appended to {@code tud}'s writer without committing. The caller holds the
+     * role-switch read lock and checked the node's role under it, and first checks that
      * the writer holds exactly those rows
      * ({@code QwpIngressProcessorState.isCommitBatchEntryIntact}). Reports the commit's
      * seqTxn to {@code consumer} like {@link #commitAll}. A dropped table throws; the
@@ -313,7 +314,7 @@ public class QwpTudCache implements QwpSchemaCache, QuietCloseable {
      */
     public void commitBatch(WalTableUpdateDetails tud, CommittedTxnConsumer consumer) throws Throwable {
         try {
-            tud.commit(false);
+            tud.commitUnderRoleSwitchFence();
         } catch (CommitFailedException e) {
             if (!e.isTableDropped()) {
                 throw e.getReason();
@@ -389,14 +390,6 @@ public class QwpTudCache implements QwpSchemaCache, QuietCloseable {
     public QwpSchemaCacheEntry getSchemaCacheEntry(DirectUtf8Sequence tableName) {
         final WalTableUpdateDetails tud = getCachedTableUpdateDetails(tableName);
         return tud != null ? tud.getQwpSchemaCacheEntry() : null;
-    }
-
-    /**
-     * True when {@code tud} is this cache's current entry for its table name.
-     */
-    public boolean isCachedEntry(WalTableUpdateDetails tud) {
-        final int keyIndex = tableUpdateDetails.keyIndex(tud.getTableNameUtf8());
-        return keyIndex < 0 && tableUpdateDetails.valueAt(keyIndex) == tud;
     }
 
     public boolean isDistressed() {
@@ -1000,18 +993,23 @@ public class QwpTudCache implements QwpSchemaCache, QuietCloseable {
             return;
         }
         final TableToken cachedToken = tud.getTableToken();
+        final TableToken tokenByDir = engine.getTableTokenByDirName(cachedToken.getDirName());
+        // What the sequencer's token check at commit compares: equal tokens, so that a
+        // token re-minted for the same table commits. A commit batch refuses a renamed
+        // table as it joins, see QwpIngressProcessorState.throwIfJoinRefused(). A directory
+        // that no longer resolves, a drop racing this lookup, is refused the same way: its
+        // commit fails too.
+        tud.setRenamedAtLookup(!cachedToken.equals(tokenByDir));
         // Never bring a renamed table's writer up to date here: the change log
         // contains the RENAME TABLE entry, and replaying it rebinds the writer's
         // token -- defeating the sequencer's token-mismatch check and silently
         // committing rows keyed by the OLD name into the renamed table. Leaving
         // the writer as-is preserves the loud commit-time
         // TableReferenceOutOfDateException.
-        if (engine.getTableTokenByDirName(cachedToken.getDirName()) != cachedToken) {
+        if (tokenByDir != cachedToken) {
             return;
         }
-        final long seqTxn = engine.getTableSequencerAPI()
-                .getTxnTracker(cachedToken)
-                .getSeqTxn();
+        final long seqTxn = tud.getSeqTxnTracker(engine).getSeqTxn();
         if (seqTxn == tud.getLastStructureCheckSeqTxn()) {
             return;
         }

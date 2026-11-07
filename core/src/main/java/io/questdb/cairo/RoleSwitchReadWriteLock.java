@@ -57,6 +57,13 @@ final class RoleSwitchReadWriteLock {
         return delegate.getReadLockCount();
     }
 
+    // A writer is waiting for, or holds, the write lock. A plain read, for a read holder
+    // deciding whether to hand the lock over: a stale answer costs that writer one more
+    // step of the holder's work, never correctness.
+    boolean hasPendingWriter() {
+        return pendingWriterCount.get() != 0;
+    }
+
     Lock readLock() {
         return readLock;
     }

@@ -112,6 +112,88 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     private static final int FUZZ_TWO_BLOCKS = 4;
     // The index of fuzz table fc, which takes v as a VARCHAR of digits in every frame.
     private static final int FUZZ_VARCHAR_TABLE = 2;
+    /**
+     * A batch of three tables takes the role-switch read lock once for all its commits, and
+     * no table's commit takes it again: what each batch pays for the rare role switch.
+     */
+    @Test
+    public void testBatchCommitTakesRoleSwitchLockOnce() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("CREATE TABLE a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE b (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE c (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final AtomicInteger lockCalls = new AtomicInteger();
+            try (CairoEngine countingEngine = new CairoEngine(new DefaultTestCairoConfiguration(root)) {
+                private Lock readLock;
+
+                @Override
+                public Lock getRoleSwitchReadLock() {
+                    if (readLock == null) {
+                        final Lock delegate = super.getRoleSwitchReadLock();
+                        readLock = new Lock() {
+                            @Override
+                            public void lock() {
+                                lockCalls.incrementAndGet();
+                                delegate.lock();
+                            }
+
+                            @Override
+                            public void lockInterruptibly() throws InterruptedException {
+                                lockCalls.incrementAndGet();
+                                delegate.lockInterruptibly();
+                            }
+
+                            @Override
+                            public @NotNull Condition newCondition() {
+                                return delegate.newCondition();
+                            }
+
+                            @Override
+                            public boolean tryLock() {
+                                lockCalls.incrementAndGet();
+                                return delegate.tryLock();
+                            }
+
+                            @Override
+                            public boolean tryLock(long time, @NotNull TimeUnit unit) throws InterruptedException {
+                                lockCalls.incrementAndGet();
+                                return delegate.tryLock(time, unit);
+                            }
+
+                            @Override
+                            public void unlock() {
+                                delegate.unlock();
+                            }
+                        };
+                    }
+                    return readLock;
+                }
+            }) {
+                final ObjList<byte[]> sent;
+                try (Connection connection = new Connection(
+                        countingEngine,
+                        httpConfig,
+                        AllowAllSecurityContext.INSTANCE,
+                        false,
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 100L, 1_000_000L)),
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 200L, 2_000_000L)),
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("c", 300L, 3_000_000L)),
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 400L, 4_000_000L))
+                )) {
+                    connection.deliverFrames(4);
+                    sent = connection.sentFrames();
+                    Assert.assertEquals("one acquisition commits the three tables", 1, lockCalls.get());
+                }
+                Assert.assertEquals("one ack covers the pass", 3, maxCumulativeOkAck(sent));
+                drainWalQueue(countingEngine);
+                assertHookQuery(countingEngine, "SELECT v FROM a").expectSize().returns("v\n100\n400\n");
+                assertHookQuery(countingEngine, "SELECT v FROM b").expectSize().returns("v\n200\n");
+                assertHookQuery(countingEngine, "SELECT v FROM c").expectSize().returns("v\n300\n");
+            }
+        });
+    }
+
     // assertQuery's output for column v of the first ten frames of oneRowFramesThen().
     private static final String V_100_TO_109 = """
             v
@@ -165,7 +247,7 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
             ObjList<byte[]> sent = ingestInOnePass(
                     processor,
                     httpConfig,
-                    failCommitAfterBatchChecks("b"),
+                    failCommitAfterJoin("b"),
                     createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 100L, 1_000_000L)),
                     createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 200L, 2_000_000L)),
                     createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 300L, 3_000_000L)),
@@ -448,7 +530,7 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
             ObjList<byte[]> sent = ingestInOnePass(
                     processor,
                     httpConfig,
-                    failCommitAfterBatchChecks("b"),
+                    failCommitAfterJoin("b"),
                     createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 100L, 1_000_000L)),
                     createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 200L, 2_000_000L)),
                     createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 300L, 3_000_000L))
@@ -492,12 +574,11 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     }
 
     /**
-     * A demote lands as a batch of two tables commits. The batch commit holds the
-     * role-switch lock across every table's commit, so the demote cannot fall between
-     * a's commit and b's: neither table commits, no ack goes out, and the role-change
-     * CLOSE leaves the client to replay the whole batch, without a row of a arriving
-     * twice. The demote is armed at the second acquisition of the lock: a's commit
-     * inside the batch's, where without the batch's it would be b's commit, after a's.
+     * A demote lands as a batch of two tables takes the role-switch lock to commit. The
+     * batch reads the node's role once under the lock, before any table commits, so
+     * neither table commits, no ack goes out, and the role-change CLOSE leaves the client
+     * to replay the whole batch, without a row of a arriving twice. The tables' own
+     * commits run under the batch's hold and take the lock no more.
      */
     @Test
     public void testDemoteAtBatchCommitCommitsNoTable() throws Exception {
@@ -506,7 +587,7 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
             execute("CREATE TABLE a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE TABLE b (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             try (DemotableEngine demotableEngine = new DemotableEngine()) {
-                demotableEngine.demoteAtCommit(2);
+                demotableEngine.demoteAtNextCommit();
                 try (Connection connection = new Connection(
                         demotableEngine,
                         httpConfig,
@@ -571,19 +652,26 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     }
 
     /**
-     * A demote requested during a's commit lands only once no role-switch read hold remains,
-     * as a role switch's write lock does. The batch holds the lock across every table, so
-     * b commits too, one ack covers the pass, and the next frame gets the CLOSE.
+     * A demote requested as the batch takes the role-switch lock waits for the lock, as a
+     * role switch's write lock does. The batch hands the lock over after a's commit, the
+     * demote lands, and the batch reads the role again before b's: b is refused, the ack
+     * covers the frame before b's first, and the role-change CLOSE follows it, with no
+     * error response. The demote waits for one table's commit, not the whole batch's;
+     * the client's replay from b's first frame sends a's later row again.
      */
     @Test
-    public void testDemoteRequestedDuringBatchCommitLandsAfterLastTable() throws Exception {
+    public void testDemoteRequestedDuringBatchCommitLandsBetweenTables() throws Exception {
         assertMemoryLeak(() -> {
             final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
             execute("CREATE TABLE a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE TABLE b (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             try (DemotableEngine demotableEngine = new DemotableEngine()) {
-                // The batch commit's own hold is the first acquisition, a's commit the second.
-                demotableEngine.requestDemoteAtCommit(2);
+                // The batch commit's hold is the pass's only acquisition of the lock.
+                demotableEngine.requestDemoteAtCommit(1);
+                final TableToken aToken = demotableEngine.verifyTableName("a");
+                final TableToken bToken = demotableEngine.verifyTableName("b");
+                final long aTxnBefore = demotableEngine.getTableSequencerAPI().lastTxn(aToken);
+                final long bTxnBefore = demotableEngine.getTableSequencerAPI().lastTxn(bToken);
                 try (Connection connection = new Connection(
                         demotableEngine,
                         httpConfig,
@@ -591,36 +679,42 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
                         false,
                         createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 100L, 1_000_000L)),
                         createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 200L, 2_000_000L)),
-                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 300L, 3_000_000L)),
-                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 400L, 4_000_000L))
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 300L, 3_000_000L))
                 )) {
-                    Assert.assertFalse(connection.deliverFrames(3));
-                    Assert.assertTrue("test setup: the demote must land once the batch commit ends", demotableEngine.isReadOnlyMode());
+                    connection.deliverFrames(3);
+                    Assert.assertTrue("test setup: the demote must land within the batch commit", demotableEngine.isReadOnlyMode());
                     final ObjList<byte[]> sent = connection.sentFrames();
-                    Assert.assertEquals("one ack covers the pass", 2, maxCumulativeOkAck(sent));
-                    Assert.assertEquals("no CLOSE within the pass", -1, indexOfCloseFrame(sent));
-                    Assert.assertFalse(hasErrorResponseForSeq(sent, 1));
-                    final int sentBefore = sent.size();
-                    connection.deliverFrames(1);
-                    Assert.assertEquals("the next frame gets only the CLOSE", sentBefore + 1, sent.size());
-                    Assert.assertEquals(sentBefore, indexOfCloseFrame(sent));
-                    Assert.assertEquals(WebSocketCloseCode.NORMAL_CLOSURE, closeCode(sent.getQuick(sentBefore)));
+                    Assert.assertEquals("the ack stops before b's first frame", 0, maxCumulativeOkAck(sent));
+                    final int closeIndex = indexOfCloseFrame(sent);
+                    Assert.assertTrue("the demote must close the connection", closeIndex >= 0);
+                    Assert.assertEquals(WebSocketCloseCode.NORMAL_CLOSURE, closeCode(sent.getQuick(closeIndex)));
+                    Assert.assertTrue("the ack must precede the CLOSE", indexOfBinaryFrame(sent, QwpConstants.STATUS_OK, 0) < closeIndex);
+                    for (int seq = 0; seq < 3; seq++) {
+                        Assert.assertFalse("a role-change refusal sends no error response", hasErrorResponseForSeq(sent, seq));
+                    }
                 }
+                Assert.assertEquals("a commits before the demote", aTxnBefore + 1,
+                        demotableEngine.getTableSequencerAPI().lastTxn(aToken));
+                Assert.assertEquals("b, after the demote, commits nothing", bTxnBefore,
+                        demotableEngine.getTableSequencerAPI().lastTxn(bToken));
                 drainWalQueue(demotableEngine);
                 assertHookQuery(demotableEngine, "SELECT v FROM a").expectSize().returns("v\n100\n300\n");
-                assertHookQuery(demotableEngine, "SELECT v FROM b").expectSize().returns("v\n200\n");
+                try (TableReader b = demotableEngine.getReader("b")) {
+                    Assert.assertEquals(0, b.size());
+                }
             }
         });
     }
 
     /**
-     * Another connection drops a table while the batch holds rows of it. The batch
-     * commit checks every table before it commits any, so it refuses the whole batch:
-     * no table publishes a transaction, nothing is acked, and the NACK names the
-     * batch's first frame, from which the client replays without a row arriving twice.
+     * Another connection drops a table while the batch holds rows of it. The table joined
+     * before the drop, so its commit fails after the tables before it committed: a
+     * commits, c, after b, does not, the ack covers the frame before b's first, and the
+     * NACK names b's first frame. The client's replay from it sends a's later row again,
+     * as after a storage fault.
      */
     @Test
-    public void testDroppedTableRefusesWholeBatch() throws Exception {
+    public void testDroppedTableInBatchCommitsTablesBeforeIt() throws Exception {
         assertMemoryLeak(() -> {
             final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
             execute("CREATE TABLE a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -661,20 +755,22 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
                 }
                 Assert.assertTrue("test setup: b must have been dropped mid-batch", isDropped.get());
                 drainWalQueue(hookEngine);
-                try (TableReader a = hookEngine.getReader("a"); TableReader c = hookEngine.getReader("c")) {
-                    Assert.assertEquals("a commits nothing", 0, a.size());
-                    Assert.assertEquals(0, c.size());
+                assertHookQuery(hookEngine, "SELECT v FROM a").expectSize().returns("v\n100\n400\n");
+                try (TableReader c = hookEngine.getReader("c")) {
+                    Assert.assertEquals("c, after b, commits nothing", 0, c.size());
                 }
-                Assert.assertEquals("a must not publish a WAL transaction", aBefore,
+                Assert.assertEquals("a commits its batch rows once", aBefore + 1,
                         hookEngine.getTableSequencerAPI().lastTxn(hookEngine.verifyTableName("a")));
                 Assert.assertEquals("c must not publish a WAL transaction", cBefore,
                         hookEngine.getTableSequencerAPI().lastTxn(hookEngine.verifyTableName("c")));
-                Assert.assertEquals("nothing is acked", -1, maxCumulativeOkAck(sent));
-                Assert.assertEquals("the NACK names the batch's first frame",
-                        QwpConstants.STATUS_WRITE_ERROR, errorStatusForSeq(sent, 0));
-                Assert.assertFalse(hasErrorResponseForSeq(sent, 1));
+                Assert.assertEquals("the ack stops before b's first frame", 0, maxCumulativeOkAck(sent));
+                Assert.assertFalse(hasErrorResponseForSeq(sent, 0));
+                Assert.assertEquals("the NACK names b's first frame",
+                        QwpConstants.STATUS_WRITE_ERROR, errorStatusForSeq(sent, 1));
                 Assert.assertFalse(hasErrorResponseForSeq(sent, 2));
                 Assert.assertFalse(hasErrorResponseForSeq(sent, 3));
+                Assert.assertTrue("the ack must precede the NACK",
+                        indexOfBinaryFrame(sent, QwpConstants.STATUS_OK, 0) < indexOfErrorResponse(sent, 1));
             }
         });
     }
@@ -2628,11 +2724,13 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     /**
      * A RENAME of b reaches b's sequencer while the batch holds rows of a and b, and the
      * table registry still names b by its old token, as it does until the rename
-     * finishes. b's commit would fail on the sequencer's token, so the batch is refused
-     * before a commits, and the NACK names the batch's first frame.
+     * finishes. b joined before the rename, so its commit fails on the sequencer's token
+     * after a committed: the ack covers the frame before b's first, and the NACK names
+     * b's first frame. The client's replay from it sends a's later row again, as after a
+     * storage fault.
      */
     @Test
-    public void testRenameWindowOfLaterTableRefusesWholeBatch() throws Exception {
+    public void testRenameWindowOfLaterTableCommitsTablesBeforeIt() throws Exception {
         assertMemoryLeak(() -> {
             final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
             execute("CREATE TABLE a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -2672,13 +2770,17 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
                 Assert.assertTrue("test setup: the rename window must have been frozen", isFrozen.get());
                 Assert.assertEquals("test setup: the registry must still name b by its old token",
                         "b", hookEngine.verifyTableName("b").getTableName());
-                Assert.assertEquals("a must not publish a WAL transaction", aTxnBefore,
+                Assert.assertEquals("a commits its batch rows once", aTxnBefore + 1,
                         hookEngine.getTableSequencerAPI().lastTxn(aToken));
-                Assert.assertEquals("nothing is acked", -1, maxCumulativeOkAck(sent));
-                Assert.assertEquals("the NACK names the batch's first frame",
-                        QwpConstants.STATUS_INTERNAL_ERROR, errorStatusForSeq(sent, 0));
-                Assert.assertFalse(hasErrorResponseForSeq(sent, 1));
+                Assert.assertEquals("the ack stops before b's first frame", 0, maxCumulativeOkAck(sent));
+                Assert.assertFalse(hasErrorResponseForSeq(sent, 0));
+                Assert.assertEquals("the NACK names b's first frame",
+                        QwpConstants.STATUS_INTERNAL_ERROR, errorStatusForSeq(sent, 1));
                 Assert.assertFalse(hasErrorResponseForSeq(sent, 2));
+                Assert.assertTrue("the ack must precede the NACK",
+                        indexOfBinaryFrame(sent, QwpConstants.STATUS_OK, 0) < indexOfErrorResponse(sent, 1));
+                drainWalQueue(hookEngine);
+                assertHookQuery(hookEngine, "SELECT v FROM a").expectSize().returns("v\n100\n300\n");
             }
         });
     }
@@ -3068,6 +3170,127 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     }
 
     /**
+     * The batch hands the role-switch lock to a pending role switch between two tables'
+     * commits, and the re-acquire fails. The batch stops at the table it was about to
+     * commit, as at a failed commit: the table before it stays committed, the ack covers
+     * the frame before that table's first, and the NACK names that frame. Nothing is left
+     * holding the lock or releasing it twice.
+     */
+    @Test
+    public void testRoleSwitchHandOffFailureStopsBatchAtNextTable() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("CREATE TABLE a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE b (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final AtomicInteger lockCalls = new AtomicInteger();
+            try (CairoEngine failingEngine = new CairoEngine(new DefaultTestCairoConfiguration(root)) {
+                private Lock readLock;
+
+                @Override
+                public Lock getRoleSwitchReadLock() {
+                    if (readLock == null) {
+                        final Lock delegate = super.getRoleSwitchReadLock();
+                        readLock = new Lock() {
+                            @Override
+                            public void lock() {
+                                // The batch's own acquire, then the re-acquire after the hand-off.
+                                if (lockCalls.incrementAndGet() == 2) {
+                                    throw new IllegalStateException("test: role-switch lock failed");
+                                }
+                                delegate.lock();
+                            }
+
+                            @Override
+                            public void lockInterruptibly() throws InterruptedException {
+                                delegate.lockInterruptibly();
+                            }
+
+                            @Override
+                            public @NotNull Condition newCondition() {
+                                return delegate.newCondition();
+                            }
+
+                            @Override
+                            public boolean tryLock() {
+                                return delegate.tryLock();
+                            }
+
+                            @Override
+                            public boolean tryLock(long time, @NotNull TimeUnit unit) throws InterruptedException {
+                                return delegate.tryLock(time, unit);
+                            }
+
+                            @Override
+                            public void unlock() {
+                                delegate.unlock();
+                            }
+                        };
+                    }
+                    return readLock;
+                }
+
+                @Override
+                public boolean hasPendingRoleSwitchWriter() {
+                    return true;
+                }
+            }) {
+                final TableToken aToken = failingEngine.verifyTableName("a");
+                final TableToken bToken = failingEngine.verifyTableName("b");
+                final long aTxnBefore = failingEngine.getTableSequencerAPI().lastTxn(aToken);
+                final long bTxnBefore = failingEngine.getTableSequencerAPI().lastTxn(bToken);
+                final ObjList<byte[]> sent;
+                try (Connection connection = new Connection(
+                        failingEngine,
+                        httpConfig,
+                        AllowAllSecurityContext.INSTANCE,
+                        false,
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 100L, 1_000_000L)),
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 200L, 2_000_000L)),
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 300L, 3_000_000L))
+                )) {
+                    Assert.assertFalse("the failure must not tear the connection down", connection.deliverFrames(3));
+                    sent = connection.sentFrames();
+                    Assert.assertEquals("test setup: the hand-off must have re-acquired once", 2, lockCalls.get());
+                    Assert.assertEquals("no role-switch read hold may remain", 0, failingEngine.getRoleSwitchReadLockCount());
+                }
+                Assert.assertEquals("a commits before the hand-off", aTxnBefore + 1,
+                        failingEngine.getTableSequencerAPI().lastTxn(aToken));
+                Assert.assertEquals("b, after it, commits nothing", bTxnBefore,
+                        failingEngine.getTableSequencerAPI().lastTxn(bToken));
+                Assert.assertEquals("the ack stops before b's first frame", 0, maxCumulativeOkAck(sent));
+                Assert.assertFalse(hasErrorResponseForSeq(sent, 0));
+                Assert.assertEquals("the NACK names b's first frame",
+                        QwpConstants.STATUS_INTERNAL_ERROR, errorStatusForSeq(sent, 1));
+                TestUtils.assertContains(errorMessageForSeq(sent, 1), "test: role-switch lock failed");
+                Assert.assertFalse(hasErrorResponseForSeq(sent, 2));
+                drainWalQueue(failingEngine);
+                assertHookQuery(failingEngine, "SELECT v FROM a").expectSize().returns("v\n100\n300\n");
+            }
+        });
+    }
+
+    /**
+     * A role switch that leaves the node writable, such as a reverted demote, takes the
+     * real write lock while a batch of three tables commits. It gets the lock between a's
+     * commit and b's, and the batch then commits b and c: one ack covers the pass.
+     */
+    @Test
+    public void testRoleSwitchWriterGetsLockBetweenTablesAndBatchContinues() throws Exception {
+        assertRoleSwitchWriterGetsLockBetweenTables(false);
+    }
+
+    /**
+     * A demote takes the real role-switch write lock while a batch of three tables
+     * commits. It gets the lock between a's commit and b's, not after the last table, and
+     * the batch, reading the role again, commits neither b nor c: the ack covers the frame
+     * before b's first, and the role-change CLOSE follows, with no error response.
+     */
+    @Test
+    public void testRoleSwitchWriterGetsLockBetweenTablesAndDemoteStopsBatch() throws Exception {
+        assertRoleSwitchWriterGetsLockBetweenTables(true);
+    }
+
+    /**
      * A frame's first block carries no rows, and its second block, of the batch's table,
      * fails on a value. The appender cancels the failed block, which leaves the writer
      * with the batch's rows: the batch commits once, and the frame then gets its own NACK.
@@ -3168,6 +3391,60 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         assertStandaloneFrameCapFailure(false);
     }
 
+    /**
+     * b's sequencer records a DROP right after the lookup acquired b's writer, while the
+     * table registry still names b, as it does within a drop. b is refused as it joins
+     * the batch, before its row appends: a's batch commits, the NACK names b's frame with
+     * the sequencer's refusal, and nothing after it commits. Had b joined, its commit would
+     * have failed after a's, and a's later row would have committed and been replayed.
+     */
+    @Test
+    public void testSequencerDroppedTableIsRefusedAsItJoins() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("CREATE TABLE a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE b (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final AtomicBoolean isDropped = new AtomicBoolean();
+            try (CairoEngine hookEngine = new CairoEngine(new DefaultTestCairoConfiguration(root)) {
+                @Override
+                public WalWriter getWalWriter(TableToken token) {
+                    final WalWriter writer = super.getWalWriter(token);
+                    if (token.getTableName().equals("b") && isDropped.compareAndSet(false, true)) {
+                        getTableSequencerAPI().dropTable(token, false);
+                    }
+                    return writer;
+                }
+            }) {
+                final TableToken aToken = hookEngine.verifyTableName("a");
+                final long aTxnBefore = hookEngine.getTableSequencerAPI().lastTxn(aToken);
+                final ObjList<byte[]> sent;
+                try (Connection connection = new Connection(
+                        hookEngine,
+                        httpConfig,
+                        AllowAllSecurityContext.INSTANCE,
+                        false,
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 100L, 1_000_000L)),
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 200L, 2_000_000L)),
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 300L, 3_000_000L))
+                )) {
+                    connection.deliverFrames(3);
+                    sent = connection.sentFrames();
+                }
+                Assert.assertTrue("test setup: b's sequencer must have been dropped", isDropped.get());
+                Assert.assertEquals("a's batch commits once", aTxnBefore + 1,
+                        hookEngine.getTableSequencerAPI().lastTxn(aToken));
+                Assert.assertEquals("the ack covers a's frame", 0, maxCumulativeOkAck(sent));
+                Assert.assertEquals("the NACK names b's frame",
+                        QwpConstants.STATUS_WRITE_ERROR, errorStatusForSeq(sent, 1));
+                TestUtils.assertContains(errorMessageForSeq(sent, 1), "table is dropped");
+                Assert.assertFalse(hasErrorResponseForSeq(sent, 0));
+                Assert.assertFalse(hasErrorResponseForSeq(sent, 2));
+                drainWalQueue(hookEngine);
+                assertHookQuery(hookEngine, "SELECT v FROM a").expectSize().returns("v\n100\n");
+            }
+        });
+    }
+
     // An operator suspends b's WAL between the passes, while suspended tables deny writes.
     @Test
     public void testSuspendedTableNacksItsFirstFrame() throws Exception {
@@ -3205,6 +3482,44 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
                 Assert.assertFalse(hasErrorResponseForSeq(sent, seq));
             }
             execute("ALTER TABLE b RESUME WAL");
+            drainWalQueue();
+            assertQuery("SELECT v FROM a").noLeakCheck().expectSize().returns("v\n100\n300\n500\n");
+            assertQuery("SELECT v FROM b").noLeakCheck().expectSize().returns("v\n200\n400\n600\n");
+        });
+    }
+
+    /**
+     * Another session renames b and then renames it back between the passes. b is the same
+     * table under its old name, so its frames join pass 2's batch and commit, as its
+     * sequencer would take them, and pass 2 is acked whole.
+     */
+    @Test
+    public void testTableRenamedBackJoinsCommitBatch() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("CREATE TABLE a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE b (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final TableToken bToken = engine.verifyTableName("b");
+            final ObjList<byte[]> sent;
+            try (Connection connection = new Connection(
+                    engine,
+                    httpConfig,
+                    AllowAllSecurityContext.INSTANCE,
+                    false,
+                    tableChangeBetweenPassesFrames()
+            )) {
+                connection.deliverFrames(2);
+                Assert.assertEquals("test setup: pass 1 commits", 1, maxCumulativeOkAck(connection.sentFrames()));
+                execute("RENAME TABLE b TO b2");
+                execute("RENAME TABLE b2 TO b");
+                connection.deliverFrames(4);
+                sent = connection.sentFrames();
+            }
+            Assert.assertEquals("test setup: b keeps its directory", bToken.getDirName(), engine.verifyTableName("b").getDirName());
+            Assert.assertEquals("pass 2 is acked whole", 5, maxCumulativeOkAck(sent));
+            for (int seq = 0; seq < 6; seq++) {
+                Assert.assertFalse(hasErrorResponseForSeq(sent, seq));
+            }
             drainWalQueue();
             assertQuery("SELECT v FROM a").noLeakCheck().expectSize().returns("v\n100\n300\n500\n");
             assertQuery("SELECT v FROM b").noLeakCheck().expectSize().returns("v\n200\n400\n600\n");
@@ -3485,8 +3800,8 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
 
     private static SecurityContext denyCommitAfterJoinTo(String tableName) {
         // Models a refusal that lands after the table joined: passes the check as the table
-        // joins a commit batch, outside the role-switch read lock, and refuses the ones under
-        // it, in the batch's checks and the table's own commit.
+        // joins a commit batch, outside the role-switch read lock, and refuses the one under
+        // it, in the table's own commit.
         return new AllowAllSecurityContext() {
             @Override
             public void authorizeInsert(TableToken tableToken) {
@@ -3499,8 +3814,7 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
 
     private static SecurityContext denyCommitTo(String tableName) {
         // On the QWP path authorizeInsert runs for rows to commit: when a table joins a commit
-        // batch, in the batch's checks before any table commits, and in each table's commit
-        // (TableUpdateDetails.authorizeCommit).
+        // batch, and in each table's commit (TableUpdateDetails.authorizeCommit).
         return new AllowAllSecurityContext() {
             @Override
             public void authorizeInsert(TableToken tableToken) {
@@ -3514,8 +3828,7 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     private static SecurityContext denyCommitsAfterFirst(String tableName) {
         // Denies the table's inserts once it has committed a transaction after this call.
         // On the QWP path authorizeInsert runs only for rows to commit: when a table joins a
-        // commit batch, in the batch's checks before any table commits, and in each table's
-        // commit.
+        // commit batch, and in each table's commit.
         final long txnBefore = engine.getTableSequencerAPI().lastTxn(engine.verifyTableName(tableName));
         return new AllowAllSecurityContext() {
             @Override
@@ -3553,16 +3866,16 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         return index < 0 ? -1 : frames.getQuick(index)[2];
     }
 
-    private static SecurityContext failCommitAfterBatchChecks(String tableName) {
-        // Passes the table's insert checks as it joins a commit batch and in the batch's
-        // checks, which run before any table commits, and refuses the one in the table's own
-        // commit: a commit that fails after the batch's checks passed, as a storage fault does.
+    private static SecurityContext failCommitAfterJoin(String tableName) {
+        // Passes the table's insert check as it joins a commit batch and refuses the one in
+        // the table's own commit: a commit that fails after the table joined, as a storage
+        // fault does.
         return new AllowAllSecurityContext() {
             private int checks;
 
             @Override
             public void authorizeInsert(TableToken tableToken) {
-                if (tableToken.getTableName().equals(tableName) && ++checks > 2) {
+                if (tableToken.getTableName().equals(tableName) && ++checks > 1) {
                     throw CairoException.nonCritical().put("test: commit failed for ").put(tableName);
                 }
             }
@@ -4004,8 +4317,7 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
 
     /**
      * Three tables interleave in one batch, frames a0 b1 c2 a3 b4 c5, and the commit of
-     * table {@code deniedTable} fails after the batch's checks passed, as a storage fault
-     * would. The tables commit in the order of their first frames and stop at the failed
+     * table {@code deniedTable} fails after the table joined, as a storage fault would. The tables commit in the order of their first frames and stop at the failed
      * one: the ack covers the frames before its first frame, the NACK names that frame,
      * and the tables after it publish nothing. On a durable-ack connection the ack names
      * the commits of the tables before it.
@@ -4030,7 +4342,7 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
                 final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
                 final ObjList<byte[]> sent = new ObjList<>();
                 ingestInOnePass(engine, new QwpIngressUpgradeProcessor(engine, httpConfig), httpConfig,
-                        failCommitAfterBatchChecks(tables[deniedTable]), isDurableAck, sent, frames);
+                        failCommitAfterJoin(tables[deniedTable]), isDurableAck, sent, frames);
                 drainWalQueue();
                 for (int t = 0; t < tables.length; t++) {
                     assertQuery("SELECT v FROM " + tables[t]).noLeakCheck().expectSize().returns("v\n" + expectedValues[t]);
@@ -4378,6 +4690,108 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
                 Assert.assertEquals("nothing committed may be acked", -1, maxCumulativeOkAck(sent));
                 Assert.assertTrue("the batch is refused at its first frame", hasErrorResponseForSeq(sent, 0));
                 Assert.assertFalse("the boundary frame is dropped and replayed with the batch", hasErrorResponseForSeq(sent, 1));
+            }
+        });
+    }
+
+    // A role switch takes the engine's real write lock while a batch of a, b and c commits.
+    // The engine starts it when the batch first asks, between a's commit and b's, whether a
+    // role switch is pending, and waits until the switch queues for the lock.
+    private void assertRoleSwitchWriterGetsLockBetweenTables(boolean isDemote) throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            final String[] tables = {"a", "b", "c"};
+            final TableToken[] tokens = new TableToken[tables.length];
+            final long[] txnBefore = new long[tables.length];
+            for (String table : tables) {
+                execute("CREATE TABLE " + table + " (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            }
+            final AtomicBoolean isReadOnly = new AtomicBoolean();
+            final AtomicInteger committedAtGrant = new AtomicInteger(-1);
+            final AtomicReference<Throwable> switchFailure = new AtomicReference<>();
+            final AtomicReference<Thread> roleSwitch = new AtomicReference<>();
+            try (CairoEngine roleSwitchEngine = new CairoEngine(new DefaultTestCairoConfiguration(root)) {
+                @Override
+                public boolean hasPendingRoleSwitchWriter() {
+                    if (roleSwitch.get() == null) {
+                        final Thread thread = new Thread(() -> {
+                            try {
+                                final Lock writeLock = getRoleSwitchWriteLock();
+                                writeLock.lock();
+                                try {
+                                    int committed = 0;
+                                    for (int t = 0; t < tokens.length; t++) {
+                                        if (getTableSequencerAPI().lastTxn(tokens[t]) > txnBefore[t]) {
+                                            committed++;
+                                        }
+                                    }
+                                    committedAtGrant.set(committed);
+                                    isReadOnly.set(isDemote);
+                                } finally {
+                                    writeLock.unlock();
+                                }
+                            } catch (Throwable th) {
+                                switchFailure.set(th);
+                            }
+                        }, "qwp-role-switch");
+                        roleSwitch.set(thread);
+                        thread.start();
+                        while (!super.hasPendingRoleSwitchWriter() && thread.isAlive()) {
+                            Thread.onSpinWait();
+                        }
+                    }
+                    return super.hasPendingRoleSwitchWriter();
+                }
+
+                @Override
+                public boolean isReadOnlyMode() {
+                    return isReadOnly.get();
+                }
+            }) {
+                for (int t = 0; t < tables.length; t++) {
+                    tokens[t] = roleSwitchEngine.verifyTableName(tables[t]);
+                    txnBefore[t] = roleSwitchEngine.getTableSequencerAPI().lastTxn(tokens[t]);
+                }
+                final ObjList<byte[]> sent;
+                try (Connection connection = new Connection(
+                        roleSwitchEngine,
+                        httpConfig,
+                        AllowAllSecurityContext.INSTANCE,
+                        false,
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 100L, 1_000_000L)),
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 200L, 2_000_000L)),
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("c", 300L, 3_000_000L)),
+                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 400L, 4_000_000L))
+                )) {
+                    connection.deliverFrames(4);
+                    sent = connection.sentFrames();
+                }
+                final Thread thread = roleSwitch.get();
+                Assert.assertNotNull("test setup: the batch must ask for a pending role switch", thread);
+                thread.join();
+                Assert.assertNull(switchFailure.get());
+                Assert.assertEquals("the role switch gets the lock after a's commit, before b's", 1, committedAtGrant.get());
+                for (int seq = 0; seq < 4; seq++) {
+                    Assert.assertFalse("no frame gets an error response", hasErrorResponseForSeq(sent, seq));
+                }
+                drainWalQueue(roleSwitchEngine);
+                assertHookQuery(roleSwitchEngine, "SELECT v FROM a").expectSize().returns("v\n100\n400\n");
+                if (isDemote) {
+                    Assert.assertEquals("the ack stops before b's first frame", 0, maxCumulativeOkAck(sent));
+                    final int closeIndex = indexOfCloseFrame(sent);
+                    Assert.assertTrue("the demote must close the connection", closeIndex >= 0);
+                    Assert.assertEquals(WebSocketCloseCode.NORMAL_CLOSURE, closeCode(sent.getQuick(closeIndex)));
+                    Assert.assertTrue("the ack must precede the CLOSE", indexOfBinaryFrame(sent, QwpConstants.STATUS_OK, 0) < closeIndex);
+                    for (int t = 1; t < tables.length; t++) {
+                        Assert.assertEquals(tables[t] + ", after the demote, commits nothing", txnBefore[t],
+                                roleSwitchEngine.getTableSequencerAPI().lastTxn(tokens[t]));
+                    }
+                } else {
+                    Assert.assertEquals("one ack covers the pass", 3, maxCumulativeOkAck(sent));
+                    Assert.assertEquals("no CLOSE", -1, indexOfCloseFrame(sent));
+                    assertHookQuery(roleSwitchEngine, "SELECT v FROM b").expectSize().returns("v\n200\n");
+                    assertHookQuery(roleSwitchEngine, "SELECT v FROM c").expectSize().returns("v\n300\n");
+                }
             }
         });
     }
@@ -5123,9 +5537,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     /**
      * An engine the test demotes to read-only. {@link #demoteAtNextCommit()} arms the
      * demote, and it lands when the next commit takes the role-switch read lock. That
-     * commit's in-lock read-only re-check then refuses it -- the race
-     * {@code TableUpdateDetails.commit} guards against -- while every frame prepared
-     * before it passed the live read-only gate. Durable uploads never catch up, so
+     * commit's read-only check under the lock then refuses it -- the race the role-switch
+     * fence guards against -- while every frame prepared before it passed the live
+     * read-only gate. Durable uploads never catch up, so
      * committed work stays pending a durable ack.
      */
     private static final class DemotableEngine extends CairoEngine {
@@ -5159,6 +5573,8 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
             public void onTableDropped(TableToken tableToken) {
             }
         };
+        // A requested demote waits for the last read hold to go, see requestDemoteAtCommit().
+        private boolean isDemoteRequested;
         private Lock roleSwitchReadLock;
 
         DemotableEngine() {
@@ -5179,6 +5595,11 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         }
 
         @Override
+        public boolean hasPendingRoleSwitchWriter() {
+            return isDemoteRequested;
+        }
+
+        @Override
         public boolean isReadOnlyMode() {
             return isReadOnly.get();
         }
@@ -5194,7 +5615,8 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         /**
          * Requests a demote at the {@code commit}-th acquisition of the role-switch read
          * lock. Unlike {@link #demoteAtCommit}, it lands as a role switch's write lock would:
-         * once no read hold remains.
+         * once no read hold remains, and until then it shows as a pending role-switch
+         * writer, so a batch commit hands it the lock between two tables' commits.
          */
         void requestDemoteAtCommit(int commit) {
             commitsUntilDemoteRequest.set(commit);
@@ -5204,7 +5626,6 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
             private final Lock delegate;
             // Read holds currently open; the connection takes them all on the test thread.
             private int holdCount;
-            private boolean isDemoteRequested;
 
             DemotingLock(Lock delegate) {
                 this.delegate = delegate;

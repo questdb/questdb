@@ -27,6 +27,7 @@ package io.questdb.cutlass.line.tcp;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cutlass.qwp.protocol.QwpSchemaCacheEntry;
 import io.questdb.std.Pool;
 import io.questdb.std.str.Utf8String;
@@ -34,6 +35,11 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 public class WalTableUpdateDetails extends TableUpdateDetails {
+    // Whether the QWP table cache's last lookup of this entry found its table renamed: the
+    // entry's directory resolves to a token that is not equal to the entry's, or no longer
+    // resolves, so a commit through it would fail on the sequencer's token check. Set on
+    // every lookup, never latched. QWP ingest path only.
+    private boolean isRenamedAtLookup;
     // Highest seqTxn already handed to the ingress committed-txn consumer (the QWP
     // ack / durable-upload watermarks). Compared against getLastSeqTxn() so a commit
     // made ANYWHERE -- including QwpWalAppender's force-commit at the
@@ -81,6 +87,11 @@ public class WalTableUpdateDetails extends TableUpdateDetails {
     // joins one. Only a hint: the batch confirms that the entry at this position is this
     // table's before using it, so the batch need not reset it. QWP ingest path only.
     private int qwpCommitBatchSlot = -1;
+    // The table's sequencer txn tracker, fetched on first use. The tracker map keeps one
+    // tracker per table directory, and removes it only when the table's WAL is purged,
+    // which waits for this entry's writer to go; a rename keeps the directory, and a drop
+    // or a re-created table evicts the entry. QWP ingest path only.
+    private SeqTxnTracker seqTxnTracker;
 
     public WalTableUpdateDetails(
             CairoEngine engine,
@@ -118,6 +129,9 @@ public class WalTableUpdateDetails extends TableUpdateDetails {
         } finally {
             qwpColumnMapping = null;
             qwpSchemaCacheEntry = null;
+            // A closed entry has left the table cache: it holds no commit batch slot.
+            qwpCommitBatchSlot = -1;
+            seqTxnTracker = null;
         }
     }
 
@@ -143,6 +157,17 @@ public class WalTableUpdateDetails extends TableUpdateDetails {
         return qwpSchemaCacheEntry;
     }
 
+    /**
+     * The table's sequencer txn tracker, fetched from {@code engine} on first use and kept
+     * for the life of this entry.
+     */
+    public SeqTxnTracker getSeqTxnTracker(CairoEngine engine) {
+        if (seqTxnTracker == null) {
+            seqTxnTracker = engine.getTableSequencerAPI().getTxnTracker(getTableToken());
+        }
+        return seqTxnTracker;
+    }
+
     @Override
     public ThreadLocalDetails getThreadLocalDetails(int workerId) {
         return super.getThreadLocalDetails(0);
@@ -156,6 +181,10 @@ public class WalTableUpdateDetails extends TableUpdateDetails {
         return qwpColumnMapping != null || qwpSchemaCacheEntry != null;
     }
 
+    public boolean isRenamedAtLookup() {
+        return isRenamedAtLookup;
+    }
+
     public void setLastReportedSeqTxn(long seqTxn) {
         this.lastReportedSeqTxn = seqTxn;
     }
@@ -166,6 +195,10 @@ public class WalTableUpdateDetails extends TableUpdateDetails {
 
     public void setQwpCommitBatchSlot(int slot) {
         qwpCommitBatchSlot = slot;
+    }
+
+    public void setRenamedAtLookup(boolean isRenamed) {
+        isRenamedAtLookup = isRenamed;
     }
 
     QwpWalAppender.ColumnMapping getQwpColumnMapping() {

@@ -90,6 +90,7 @@ import java.lang.reflect.Proxy;
 import java.util.HashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.Lock;
 import java.util.function.Consumer;
 
 public class QwpIngressProcessorStateTest extends AbstractCairoTest {
@@ -924,6 +925,7 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                     final ObjList<QwpColumnDef> schema = appendOneRow(decoder, appender, tud, "gone", null, true);
                     Assert.assertTrue(removal + ": the entry keeps the column mapping", appender.isSchemaSettled(schema, tud));
                     Assert.assertSame(removal + ": the entry keeps the parse", schema, tud.getQwpSchemaCacheEntry().getColumns());
+                    tud.setQwpCommitBatchSlot(0);
                     if (removal.equals("commitAll") || removal.equals("commitIfMaxUncommittedRowsReached")) {
                         // A buffered row at the cap makes the commit find the table dropped.
                         appendRow(tud);
@@ -989,6 +991,7 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                     Assert.assertEquals(removal, 0, cache.size());
                     Assert.assertNull(removal, cache.getCachedTableUpdateDetails(gone));
                     Assert.assertFalse(removal + ": a freed entry keeps no cache", tud.hasQwpCaches());
+                    Assert.assertEquals(removal + ": a freed entry holds no commit batch slot", -1, tud.getQwpCommitBatchSlot());
 
                     // The cache goes on serving the table, re-created where it was dropped.
                     if (!removal.equals("failed lookup")) {
@@ -1013,6 +1016,62 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 execute("DROP TABLE gone");
                 drainWalQueue();
             }
+        });
+    }
+
+    /**
+     * A QWP commit batch commits its tables under one hold of the role-switch read lock and
+     * reads the node's role once under it, so a table's commit there neither takes the lock
+     * nor reads the role again. Such a commit outside the lock is a bug the assert catches;
+     * under it, the commit goes through as the batch's does.
+     */
+    @Test
+    public void testFencedCommitRequiresRoleSwitchReadLock() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE fenced (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final TableToken token = engine.verifyTableName("fenced");
+            final long txnBefore = engine.getTableSequencerAPI().lastTxn(token);
+            final DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration));
+            try (QwpTudCache cache = new QwpTudCache(engine, true, true, defaultColumnTypes, PartitionBy.DAY)) {
+                final WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("fenced"), null, null, 1
+                );
+                Assert.assertNotNull(tud);
+                appendRow(tud);
+                try {
+                    tud.commitUnderRoleSwitchFence();
+                    Assert.fail("a fenced commit outside the role-switch read lock must trip the assert");
+                } catch (AssertionError e) {
+                    TestUtils.assertContains(e.getMessage(), "the caller must hold the role-switch read lock");
+                }
+                Assert.assertEquals("the refused commit commits nothing", txnBefore, engine.getTableSequencerAPI().lastTxn(token));
+                Assert.assertFalse("the row stays uncommitted", tud.isFirstRow());
+
+                final Lock lock = engine.getRoleSwitchReadLock();
+                lock.lock();
+                try {
+                    tud.commitUnderRoleSwitchFence();
+                } finally {
+                    lock.unlock();
+                }
+                Assert.assertEquals("the commit under the lock commits once", txnBefore + 1, engine.getTableSequencerAPI().lastTxn(token));
+                Assert.assertTrue(tud.isFirstRow());
+
+                // A batch table always holds rows to commit: a fenced commit of none is a bug.
+                lock.lock();
+                try {
+                    tud.commitUnderRoleSwitchFence();
+                    Assert.fail("a fenced commit without rows must trip the assert");
+                } catch (AssertionError e) {
+                    TestUtils.assertContains(e.getMessage(), "a fenced commit has no rows to commit");
+                } finally {
+                    lock.unlock();
+                }
+                Assert.assertEquals("nothing more commits", txnBefore + 1, engine.getTableSequencerAPI().lastTxn(token));
+            }
+            drainWalQueue();
+            assertQuery("SELECT count() FROM fenced").noLeakCheck().noRandomAccess().expectSize().returns("count\n1\n");
         });
     }
 
@@ -5380,6 +5439,7 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                         AllowAllSecurityContext.INSTANCE, new Utf8String("rename_src"), null, null, 1
                 );
                 Assert.assertNotNull(tud);
+                Assert.assertFalse(tud.isRenamedAtLookup());
 
                 // Buffer an uncommitted row, then rename the table out from
                 // under the cache (which is still keyed by the old name).
@@ -5396,6 +5456,8 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 Assert.assertSame("a renamed (not dropped) table must not be evicted", tud, again);
                 Assert.assertEquals(1, cache.size());
                 Assert.assertFalse("buffered rows must survive a rename", again.isFirstRow());
+                // A commit batch refuses the entry as it joins, as the commit would.
+                Assert.assertTrue("the lookup must flag the rename", again.isRenamedAtLookup());
             }
         });
     }

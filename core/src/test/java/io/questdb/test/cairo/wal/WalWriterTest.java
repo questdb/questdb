@@ -53,7 +53,6 @@ import io.questdb.cairo.mv.MatViewStateReader;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryCMR;
@@ -1807,32 +1806,6 @@ public class WalWriterTest extends AbstractCairoTest {
                 assertFalse(eventCursor.hasNext());
             }
         });
-    }
-
-    @Test
-    public void testCommitRefusalCheckMatchesCommitOfDroppedTable() throws Exception {
-        assertCommitRefusalCheckMatchesCommit("DROP TABLE t", CairoException.class);
-    }
-
-    @Test
-    public void testCommitRefusalCheckMatchesCommitOfLiveTable() throws Exception {
-        assertCommitRefusalCheckMatchesCommit(null, null);
-    }
-
-    @Test
-    public void testCommitRefusalCheckMatchesCommitOfRenamedTable() throws Exception {
-        assertCommitRefusalCheckMatchesCommit("RENAME TABLE t TO t2", TableReferenceOutOfDateException.class);
-    }
-
-    @Test
-    public void testCommitRefusalCheckMatchesCommitOfSuspendedTable() throws Exception {
-        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
-        assertCommitRefusalCheckMatchesCommit("ALTER TABLE t SUSPEND WAL", CairoException.class);
-    }
-
-    @Test
-    public void testCommitRefusalCheckMatchesCommitOfSuspendedTableWithWritesAllowed() throws Exception {
-        assertCommitRefusalCheckMatchesCommit("ALTER TABLE t SUSPEND WAL", null);
     }
 
     @Test
@@ -7570,45 +7543,6 @@ public class WalWriterTest extends AbstractCairoTest {
             assertEquals(expected.getColumnName(i - skip), reader.getColumnName(i));
             assertEquals(expected.getColumnType(i - skip), reader.getColumnType(i));
         }
-    }
-
-    // TableSequencerAPI.throwIfCommitRefused() must refuse exactly what the commit of a writer
-    // holding the same token refuses, with the same exception: run the DDL between the writer's
-    // acquisition and its commit, then compare the check's outcome with the commit's.
-    private void assertCommitRefusalCheckMatchesCommit(String ddl, Class<? extends Throwable> expectedFailure) throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            try (WalWriter walWriter = engine.getWalWriter(engine.verifyTableName("t"))) {
-                if (ddl != null) {
-                    execute(ddl);
-                }
-                Throwable checkFailure = null;
-                try {
-                    engine.getTableSequencerAPI().throwIfCommitRefused(walWriter.getTableToken());
-                } catch (Throwable th) {
-                    checkFailure = th;
-                }
-                TableWriter.Row row = walWriter.newRow(0);
-                row.putInt(1, 1);
-                row.append();
-                Throwable commitFailure = null;
-                try {
-                    walWriter.commit();
-                } catch (Throwable th) {
-                    commitFailure = th;
-                }
-                if (expectedFailure == null) {
-                    Assert.assertNull("the commit must succeed", commitFailure);
-                    Assert.assertNull("the check must not refuse a commit that succeeds", checkFailure);
-                    return;
-                }
-                Assert.assertNotNull("test setup: the commit must be refused", commitFailure);
-                Assert.assertSame(expectedFailure, commitFailure.getClass());
-                Assert.assertNotNull("the check must refuse what the commit refuses", checkFailure);
-                Assert.assertSame(commitFailure.getClass(), checkFailure.getClass());
-                Assert.assertEquals(commitFailure.getMessage(), checkFailure.getMessage());
-            }
-        });
     }
 
     @SuppressWarnings("SameParameterValue")

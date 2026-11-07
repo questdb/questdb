@@ -2971,6 +2971,17 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     /**
+     * Whether a role switch waits for, or holds, the write side of the role-switch lock. A
+     * read holder that commits several tables one at a time asks it between two commits, and
+     * hands the lock over when it is true, so that a role switch waits for one commit rather
+     * than all of them. A hint, not synchronization: the answer can be stale by the time the
+     * caller acts on it, and the caller re-checks {@link #isReadOnlyMode()} under the lock.
+     */
+    public boolean hasPendingRoleSwitchWriter() {
+        return roleSwitchLock.hasPendingWriter();
+    }
+
+    /**
      * Repopulates {@code matViewStateStore} from the view graph and the on-disk {@code _mv}
      * state, for every mat-view already present in {@code dependentViewGraph}. Unlike
      * {@link #buildViewGraphs()} (which only creates state for views not yet in the graph), this
