@@ -692,6 +692,26 @@ public class TableSequencerAPI implements QuietCloseable {
     }
 
     /**
+     * Throws what {@link #nextTxn} throws for {@code tableToken} before it appends a
+     * transaction: the table was renamed or replaced since the caller took its token,
+     * dropped, or hard-suspended while suspended tables deny writes. A caller that
+     * commits several tables one at a time checks them all first, so that a refusal
+     * stops it before any table commits. A storage fault shows only in the commit.
+     */
+    public void throwIfCommitRefused(TableToken tableToken) {
+        try (TableSequencerImpl tableSequencer = openSequencerLocked(tableToken, SequencerLockType.READ)) {
+            try {
+                if (!tableSequencer.getTableToken().equals(tableToken)) {
+                    throw TableReferenceOutOfDateException.of(tableToken);
+                }
+                tableSequencer.throwIfCommitRefused();
+            } finally {
+                tableSequencer.unlockRead();
+            }
+        }
+    }
+
+    /**
      * @see SeqTxnTracker#updateWriterTxns(long, long)
      */
     public boolean updateWriterTxns(final TableToken tableToken, long writerTxn, long dirtyWriterTxn) {

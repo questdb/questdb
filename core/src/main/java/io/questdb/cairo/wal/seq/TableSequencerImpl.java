@@ -896,6 +896,12 @@ public class TableSequencerImpl implements TableSequencer {
         schemaLock.readLock().lock();
     }
 
+    // The refusals nextTxn() checks before it appends a transaction; the caller holds a lock.
+    void throwIfCommitRefused() {
+        checkDropped();
+        checkHardSuspended();
+    }
+
     void unlockRead() {
         schemaLock.readLock().unlock();
     }

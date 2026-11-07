@@ -377,6 +377,46 @@ public class QwpIngressIdleWriterReleaseTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * A writer whose close fails during the release stays set on the released entry, so the
+     * table cache must not serve that entry for the name again. Two frames that re-create the
+     * dropped table in one receive pass must share one commit batch on the new table's writer.
+     */
+    @Test
+    public void testIdleReleaseFailureDoesNotServeReleasedEntry() throws Exception {
+        // See testIdleReleaseSurvivesWriterCloseFailure for the commit mode.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "async");
+        final AtomicBoolean isMsyncFailing = new AtomicBoolean();
+        final AtomicInteger failedMsyncCount = new AtomicInteger();
+        assertMemoryLeak(msyncFailingFacade(isMsyncFailing, failedMsyncCount), () -> {
+            byte[] frame = clientEncodedFrame(1, "tab");
+            try (IdleReleaseFixture f = new IdleReleaseFixture(30_000, concat(frame, frame, PING, frame, frame))) {
+                // The second frame finds tab's entry, which the cache then checks first.
+                f.drive(2 * frame.length);
+
+                execute("DROP TABLE tab");
+                isMsyncFailing.set(true);
+                f.clock.nowMicros += 30_000_000;
+                try {
+                    f.drive(PING.length);
+                } finally {
+                    isMsyncFailing.set(false);
+                }
+                Assert.assertTrue("the release must close the dropped table's writer", failedMsyncCount.get() > 0);
+                Assert.assertEquals(0, f.state.getCachedTableCount());
+
+                f.sentFrames.clear();
+                f.drive(2 * frame.length);
+                Assert.assertFalse(hasErrorResponseForSeq(f.sentFrames, 2));
+                Assert.assertFalse(hasErrorResponseForSeq(f.sentFrames, 3));
+                Assert.assertEquals(3, maxCumulativeOkAck(f.sentFrames));
+            }
+            drainWalQueue();
+            assertQuery("SELECT count() FROM tab").expectSize().noRandomAccess().returns("count\n2\n");
+            Assert.assertEquals("the re-created table takes both frames in one commit", 1, sequencerTxn("tab"));
+        });
+    }
+
     @Test
     public void testIdleReleaseKeepsDistinctTableLimit() throws Exception {
         // qwp.max.tables.per.connection caps the distinct tables one connection
@@ -437,17 +477,7 @@ public class QwpIngressIdleWriterReleaseTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "async");
         final AtomicBoolean isMsyncFailing = new AtomicBoolean();
         final AtomicInteger failedMsyncCount = new AtomicInteger();
-        final FilesFacade ff = new TestFilesFacadeImpl() {
-            @Override
-            public void msync(long addr, long len, boolean async) {
-                if (isMsyncFailing.get()) {
-                    failedMsyncCount.incrementAndGet();
-                    throw CairoException.critical(5).put("could not msync");
-                }
-                super.msync(addr, len, async);
-            }
-        };
-        assertMemoryLeak(ff, () -> {
+        assertMemoryLeak(msyncFailingFacade(isMsyncFailing, failedMsyncCount), () -> {
             execute("CREATE TABLE tab1 (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             byte[] both = clientEncodedFrame(1, "tab", "tab1");
             byte[] more = clientEncodedFrame(1, "tab1");
@@ -667,6 +697,20 @@ public class QwpIngressIdleWriterReleaseTest extends AbstractCairoTest {
     private static String errorMessage(byte[] frame) {
         int length = (frame[11] & 0xFF) | (frame[12] & 0xFF) << 8;
         return new String(frame, 13, length, StandardCharsets.UTF_8);
+    }
+
+    // A files facade whose msync fails while isFailing is set, counting the failures.
+    private static FilesFacade msyncFailingFacade(AtomicBoolean isFailing, AtomicInteger failures) {
+        return new TestFilesFacadeImpl() {
+            @Override
+            public void msync(long addr, long len, boolean async) {
+                if (isFailing.get()) {
+                    failures.incrementAndGet();
+                    throw CairoException.critical(5).put("could not msync");
+                }
+                super.msync(addr, len, async);
+            }
+        };
     }
 
     private static long sequencerTxn(String table) {

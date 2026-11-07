@@ -25,6 +25,7 @@
 package io.questdb.cutlass.qwp.server;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.wal.DurabilityTier;
 import io.questdb.cairo.wal.DurableAckRegistry;
@@ -55,6 +56,7 @@ import io.questdb.std.CharSequenceLongHashMap;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
@@ -886,6 +888,8 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         }
 
         boolean wasAwaitingCloseEcho = state.isAwaitingCloseEcho();
+        // The continuations below finish only what the send buffer holds.
+        finishStagedFrame(context, state);
         switch (state.getSendState()) {
             case QwpIngressProcessorState.SEND_STATE_READY -> {
             }
@@ -1026,6 +1030,41 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
     }
 
     /**
+     * Finishes a staged frame whose send blocked: first the part the send buffer holds, then
+     * the staged rest. Must run before anything else goes out, so that nothing interleaves
+     * with the frame.
+     */
+    private static void finishStagedFrame(HttpConnectionContext context, QwpIngressProcessorState state)
+            throws PeerDisconnectedException, PeerIsSlowToReadException {
+        if (state.hasStagedFrame()) {
+            context.resumeResponseSend();
+            sendStagedFrame(context, state);
+        }
+    }
+
+    /**
+     * Returns the address to write a server frame of {@code frameSize} bytes to: the send
+     * buffer, or, when the frame does not fit it, the connection's staging memory. An ack
+     * names every table it covers, so it can outgrow a lowered {@code http.send.buffer.size}.
+     */
+    private static long reserveFrame(HttpConnectionContext context, QwpIngressProcessorState state, int frameSize)
+            throws PeerDisconnectedException {
+        final HttpRawSocket rawSocket = context.getRawResponseSocket();
+        if (frameSize <= rawSocket.getBufferSize()) {
+            return rawSocket.getBufferAddress();
+        }
+        try {
+            return state.stageFrame(frameSize);
+        } catch (CairoException e) {
+            LOG.critical().$("cannot stage response frame larger than send buffer [fd=").$(context.getFd())
+                    .$(", frameSize=").$(frameSize)
+                    .$(", bufferSize=").$(rawSocket.getBufferSize())
+                    .$(", error=").$((Throwable) e).I$();
+            throw PeerDisconnectedException.INSTANCE;
+        }
+    }
+
+    /**
      * False for a frame that can never join a commit batch. See the commit batch
      * fields of {@link QwpIngressProcessorState} for how batching works.
      */
@@ -1121,6 +1160,35 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             return QwpIngressHttpProcessor.WEBSOCKET_PROTOCOL_QWP_V1;
         }
         return null;
+    }
+
+    /**
+     * Sends the frame of {@code frameSize} bytes written to the address {@link #reserveFrame}
+     * returned: whole from the send buffer, or in pieces when reserveFrame staged it.
+     */
+    private static void sendFrame(HttpConnectionContext context, QwpIngressProcessorState state, int frameSize)
+            throws PeerDisconnectedException, PeerIsSlowToReadException {
+        if (state.hasStagedFrame()) {
+            sendStagedFrame(context, state);
+        } else {
+            context.getRawResponseSocket().send(frameSize);
+        }
+    }
+
+    /**
+     * Copies the staged frame to the send buffer and sends it, one buffer at a time. When a
+     * send blocks, the send buffer keeps the unsent part of its piece, the rest stays staged,
+     * and the caller parks the send state; {@link #finishStagedFrame} resumes from there.
+     */
+    private static void sendStagedFrame(HttpConnectionContext context, QwpIngressProcessorState state)
+            throws PeerDisconnectedException, PeerIsSlowToReadException {
+        final HttpRawSocket rawSocket = context.getRawResponseSocket();
+        while (state.hasStagedFrame()) {
+            final int count = Math.min(rawSocket.getBufferSize(), state.getStagedFrameRemaining());
+            Vect.memcpy(rawSocket.getBufferAddress(), state.getStagedFrameCopyAddress(), count);
+            state.onStagedFrameCopied(count);
+            rawSocket.send(count);
+        }
     }
 
     private static void stageReject(HttpConnectionContext context, int bytesWritten) {
@@ -1284,6 +1352,8 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
 
     private void drainPendingResponse(HttpConnectionContext context, QwpIngressProcessorState state)
             throws PeerDisconnectedException, PeerIsSlowToReadException {
+        // The branches below finish only what the send buffer holds.
+        finishStagedFrame(context, state);
         switch (state.getSendState()) {
             case QwpIngressProcessorState.SEND_STATE_READY -> {
             }
@@ -1673,8 +1743,8 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         byte responseStatus = STATUS_OK;
         String errorMessage = null;
         boolean roleChangeClose = false;
-        // The sequence an error response names: this frame, except when a commit
-        // batch is lost and the client must replay it from its first frame.
+        // The sequence an error response names: this frame, except when the batch itself
+        // fails and the client must replay it from an earlier frame.
         long responseSeq = seq;
 
         boolean deferCommit = false;
@@ -1701,75 +1771,62 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
 
             boolean isNormalPath = true;
             if (isBatchPending) {
-                final long batchFirstSeq = state.getFirstCommitBatchSequence();
-                // Set when the batch's own commit fails: the client replays from its first frame.
-                boolean isBatchCommitFailed = false;
-                if (state.isOk() && state.isPreparedMessageJoinableToCommitBatch()) {
+                if (state.joinCommitBatch(seq)) {
                     isNormalPath = false;
-                    state.processPreparedJoiningMessage();
-                    if (state.isOk()) {
-                        if (state.addToCommitBatch(seq)) {
-                            isBatched = true;
-                        } else {
-                            // The frame appended fine but the batch's rows are no longer
-                            // what its writer holds: nothing of the batch may be acked.
-                            LOG.error().$("WebSocket commit batch lost after a joining frame [fd=").$(context.getFd())
-                                    .$(", firstSeq=").$(batchFirstSeq)
-                                    .$(", seq=").$(seq).I$();
-                            responseStatus = STATUS_INTERNAL_ERROR;
-                            errorMessage = "commit batch lost";
-                            state.abandonCommitBatch();
-                        }
-                    }
-                } else if (state.isOk()) {
-                    // A boundary: commit the batch before this frame touches the engine,
-                    // then process the frame the normal way. If the commit fails, the
-                    // frame is not processed: the finally's clear() discards it and the
-                    // client replays it with the batch.
-                    isBatchCommitFailed = !state.commitBatch();
-                    isNormalPath = !isBatchCommitFailed;
-                }
-                if (!isBatchCommitFailed && !state.isOk() && state.isCommitBatchPending()) {
-                    // This frame failed with the batch still pending: refused by the live
-                    // gate, malformed, or failed while joining (the appender cancelled its
-                    // block). Commit the batch if it is intact, then answer this frame as
-                    // it would be answered without a batch; otherwise the batch is lost.
-                    isNormalPath = false;
+                    isBatched = true;
+                } else {
+                    // The frame failed or cannot join, and joinCommitBatch rewound its rows.
+                    final boolean isFrameFailed = !state.isOk();
                     final byte frameStatus = responseStatusOf(state);
                     final String frameError = state.getErrorText();
                     final boolean isFrameRoleChangeClose = state.isRoleChangeClosePending();
-                    if (state.isCommitBatchIntact()) {
-                        state.clearErrorForBatchSalvage();
-                        isBatchCommitFailed = !state.commitBatch();
-                        if (!isBatchCommitFailed) {
-                            // The watermark is past the batch; this frame gets its own answer.
-                            roleChangeClose = isFrameRoleChangeClose;
-                            errorMessage = frameError;
-                            responseStatus = frameStatus;
-                        }
-                    } else {
-                        // This frame's failure left the batch not intact. Strike this frame,
-                        // retriably: the client replays from its acked watermark, below the
-                        // batch, and the replay normally finds the batch intact and then
-                        // answers this frame with its own status.
+                    if (!state.isCommitBatchIntact()) {
+                        // The frame's failure or its rewind left the writers in doubt, so the
+                        // batch cannot commit. NACK this frame, retriably: the watermark stays
+                        // below the batch, the client replays it, and a failure that recurs
+                        // strikes this frame in the client's poison detector, not the batch's
+                        // first frame.
+                        assert isFrameFailed : "a frame that left the table cache distressed has not failed";
+                        isNormalPath = false;
                         LOG.error().$("WebSocket commit batch lost with a failed frame [fd=").$(context.getFd())
-                                .$(", firstSeq=").$(batchFirstSeq)
+                                .$(", firstSeq=").$(state.getFirstCommitBatchSequence())
                                 .$(", failedSeq=").$(seq)
                                 .$(", error=").$safe(frameError).I$();
                         roleChangeClose = isFrameRoleChangeClose;
                         errorMessage = frameError;
                         responseStatus = STATUS_INTERNAL_ERROR;
                         state.abandonCommitBatch();
+                    } else {
+                        // A boundary: commit the batch before this frame goes on, so that the
+                        // frame is answered as it would be without a batch. If the commit
+                        // fails, the frame is not processed: the finally's clear() discards
+                        // it and the client replays it behind the batch's failed frame.
+                        if (isFrameFailed) {
+                            state.clearFrameErrorForBatchCommit();
+                        }
+                        if (!state.commitBatch()) {
+                            isNormalPath = false;
+                            roleChangeClose = state.isRoleChangeClosePending();
+                            errorMessage = state.getErrorText();
+                            responseStatus = responseStatusOf(state);
+                            responseSeq = state.getCommitBatchFailureSequence();
+                            logCommitBatchFailed(context, state.getFirstCommitBatchSequence(), seq, errorMessage);
+                            state.abandonCommitBatch();
+                        } else if (isFrameFailed) {
+                            // The watermark is past the batch; this frame gets its own answer.
+                            isNormalPath = false;
+                            roleChangeClose = isFrameRoleChangeClose;
+                            errorMessage = frameError;
+                            responseStatus = frameStatus;
+                        }
                     }
                 }
-                if (isBatchCommitFailed) {
-                    roleChangeClose = state.isRoleChangeClosePending();
-                    errorMessage = state.getErrorText();
-                    responseStatus = responseStatusOf(state);
-                    responseSeq = batchFirstSeq;
-                    logCommitBatchFailed(context, batchFirstSeq, seq, errorMessage);
-                    state.abandonCommitBatch();
-                }
+            }
+
+            if (isNormalPath && state.isOk() && !deferCommit && state.joinCommitBatch(seq)) {
+                // No batch was pending: this frame opened one.
+                isNormalPath = false;
+                isBatched = true;
             }
 
             if (isNormalPath) {
@@ -1786,11 +1843,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                     // a frame commits through commit(), which clears the rowless
                     // marker, and never opens a commit batch.
                     closesDeferredGroup = state.hasUncommittedDeferredRows() || state.hasWithheldRowlessDeferredFrame();
-                    if (!closesDeferredGroup && state.tryOpenCommitBatch(seq)) {
-                        isBatched = true;
-                    } else {
-                        state.commit();
-                    }
+                    state.commit();
                 }
                 if (state.isOk() && deferCommit) {
                     // Capture BEFORE the refresh below, for the same reason the
@@ -1930,10 +1983,10 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
      * Commits the pending commit batch outside {@link #handleBinaryMessage}'s frame
      * processing (see the commit batch fields of {@link QwpIngressProcessorState} for
      * where) and sends the failure response itself. On success the watermark is past
-     * the batch. On failure the batch's rows are rolled back, the watermark is pinned below its
-     * first frame, and the failure goes out against that frame (the frame the client
-     * replays first, so a deterministic failure keeps striking it), or as the
-     * role-change close; returns false.
+     * the batch. On failure the tables that did not commit are rolled back, the
+     * watermark is pinned below the failed table's first frame, and the failure goes out
+     * against that frame (the frame the client replays first, so a deterministic
+     * failure keeps striking it), or as the role-change close; returns false.
      */
     private boolean commitPendingBatch(HttpConnectionContext context, QwpIngressProcessorState state)
             throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
@@ -1941,17 +1994,18 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         if (state.commitBatch()) {
             return true;
         }
+        final long failedSeq = state.getCommitBatchFailureSequence();
         final boolean isRoleChangeClose = state.isRoleChangeClosePending();
         final String errorMessage = state.getErrorText();
         final byte status = responseStatusOf(state);
-        logCommitBatchFailed(context, firstSeq, firstSeq, errorMessage);
+        logCommitBatchFailed(context, firstSeq, failedSeq, errorMessage);
         state.abandonCommitBatch();
-        // Rolls the batch's rows back and frees the distressed cache.
+        // Rolls back the tables the batch did not commit and frees the distressed cache.
         state.clear();
         if (isRoleChangeClose) {
             roleChangeCloseWithUploadGrace(context, state, errorMessage);
         } else {
-            rejectFrame(context, state, firstSeq, status, errorMessage);
+            rejectFrame(context, state, failedSeq, status, errorMessage);
         }
         return false;
     }
@@ -2921,30 +2975,19 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             throws PeerDisconnectedException, PeerIsSlowToReadException {
         assert state.isSendReady() : "trySendAck called in wrong state";
 
-        HttpRawSocket rawSocket = context.getRawResponseSocket();
-        long bufferAddr = rawSocket.getBufferAddress();
-        int bufferSize = rawSocket.getBufferSize();
-
         int payloadLen = state.computeAckPayloadSize();
         int frameSize = WebSocketFrameWriter.headerSize(payloadLen, false) + payloadLen;
-
-        if (frameSize > bufferSize) {
-            // Buffer capacity too small for even a single ACK frame
-            LOG.critical().$("Buffer too small for ACK response [fd=").$(context.getFd())
-                    .$(", required=").$(frameSize)
-                    .$(", bufferSize=").$(bufferSize).I$();
-            throw PeerDisconnectedException.INSTANCE;
-        }
+        long frameAddr = reserveFrame(context, state, frameSize);
 
         long sequence = state.getHighestProcessedSequence();
-        int headerLen = WebSocketFrameWriter.writeBinaryFrameHeader(bufferAddr, payloadLen);
-        long writeAddr = bufferAddr + headerLen;
+        int headerLen = WebSocketFrameWriter.writeBinaryFrameHeader(frameAddr, payloadLen);
+        long writeAddr = frameAddr + headerLen;
         Unsafe.putByte(writeAddr, STATUS_OK);
         Unsafe.putLong(writeAddr + 1, sequence);
         QwpIngressProcessorState.writeTableSeqTxnEntries(writeAddr + 9, state.getPendingAckSeqTxns());
 
         try {
-            rawSocket.send(headerLen + payloadLen);
+            sendFrame(context, state, frameSize);
             state.onAckSent(sequence);
             LOG.debug().$("Sent cumulative ACK [fd=").$(context.getFd()).$(", upTo=").$(sequence).I$();
         } catch (PeerIsSlowToReadException e) {
@@ -3003,25 +3046,16 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             CharSequenceLongHashMap progress,
             int payloadLen
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        HttpRawSocket rawSocket = context.getRawResponseSocket();
-        long bufferAddr = rawSocket.getBufferAddress();
-        int bufferSize = rawSocket.getBufferSize();
-
         int frameSize = WebSocketFrameWriter.headerSize(payloadLen, false) + payloadLen;
-        if (frameSize > bufferSize) {
-            LOG.critical().$("Buffer too small for durable ACK response [fd=").$(context.getFd())
-                    .$(", required=").$(frameSize)
-                    .$(", bufferSize=").$(bufferSize).I$();
-            throw PeerDisconnectedException.INSTANCE;
-        }
+        long frameAddr = reserveFrame(context, state, frameSize);
 
-        int headerLen = WebSocketFrameWriter.writeBinaryFrameHeader(bufferAddr, payloadLen);
-        long writeAddr = bufferAddr + headerLen;
+        int headerLen = WebSocketFrameWriter.writeBinaryFrameHeader(frameAddr, payloadLen);
+        long writeAddr = frameAddr + headerLen;
         Unsafe.putByte(writeAddr, status);
         QwpIngressProcessorState.writeTableSeqTxnEntries(writeAddr + 1, progress);
 
         try {
-            rawSocket.send(headerLen + payloadLen);
+            sendFrame(context, state, frameSize);
             state.onDurableAckSent();
             LOG.debug().$("Sent durable ACK [fd=").$(context.getFd())
                     .$(", status=").$(status)

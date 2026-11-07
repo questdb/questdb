@@ -47,6 +47,8 @@ import io.questdb.cutlass.line.tcp.WalTableUpdateDetails;
 import io.questdb.cutlass.qwp.protocol.QwpArrayColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpColumnDef;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
+import io.questdb.cutlass.qwp.protocol.QwpSchemaCache;
+import io.questdb.cutlass.qwp.protocol.QwpSchemaCacheEntry;
 import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -58,16 +60,20 @@ import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.WeakClosableObjectPool;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 import io.questdb.tasks.TelemetryTask;
+import org.jetbrains.annotations.TestOnly;
 
 /**
- * Cache for table update details in QWP v1 processing.
+ * Cache for table update details in QWP v1 processing. It is also the schema cache of
+ * the connection's block cursor: each table's last schema parse lives on the table's
+ * entry, so it goes when the entry goes.
  */
-public class QwpTudCache implements QuietCloseable {
+public class QwpTudCache implements QwpSchemaCache, QuietCloseable {
     private static final Log LOG = LogFactory.getLog(QwpTudCache.class);
     // States of a releasedTables entry.
     private static final int TABLE_REACQUIRED = 0;
@@ -104,6 +110,10 @@ public class QwpTudCache implements QuietCloseable {
     private CommittedTxnConsumer committedTxnConsumer;
     private MemoryMARW ddlMem;
     private boolean isDistressed = false;
+    // The entry getCachedTableUpdateDetails() found last, checked before the hash
+    // lookup: null or an entry of the map. onEntryRemoved(), reset() and the
+    // distressed clear() forget it.
+    private WalTableUpdateDetails lastCachedTud;
     private Path path;
     // Number of releasedTables entries in state TABLE_RELEASED.
     private int releasedTableCount;
@@ -194,6 +204,7 @@ public class QwpTudCache implements QuietCloseable {
             tableUpdateDetails.clear();
             cachedTableCount = 0;
             isDistressed = false;
+            lastCachedTud = null;
             // Freeing every cached table frees its slot under the table limit;
             // released tables give theirs up too.
             releasedTables.clear();
@@ -269,7 +280,7 @@ public class QwpTudCache implements QuietCloseable {
 
             if (tud.isDropped()) {
                 tableUpdateDetails.removeAtQuick(keyIndex, i);
-                cachedTableCount = tableUpdateDetails.size();
+                onEntryRemoved(tud);
                 // The free below rolls back this dropped table's buffered rows.
                 // On the QWP deferred-ack path the caller must NOT clear its
                 // uncommitted-deferred-rows clamp, or the cumulative durable-ack
@@ -293,11 +304,12 @@ public class QwpTudCache implements QuietCloseable {
     }
 
     /**
-     * Commits a QWP commit batch: the rows that consecutive frames appended to
-     * {@code tud}'s writer without committing. The caller first checks that the
-     * writer holds exactly those rows ({@code QwpIngressProcessorState.isCommitBatchIntact}).
-     * Reports the commit's seqTxn to {@code consumer} like {@link #commitAll}. A
-     * dropped table throws; the caller rolls everything back and refuses the batch.
+     * Commits one table of a QWP commit batch: the rows that the batch's frames
+     * appended to {@code tud}'s writer without committing. The caller first checks that
+     * the writer holds exactly those rows
+     * ({@code QwpIngressProcessorState.isCommitBatchEntryIntact}). Reports the commit's
+     * seqTxn to {@code consumer} like {@link #commitAll}. A dropped table throws; the
+     * caller stops the batch commit there and refuses the rest of the batch.
      */
     public void commitBatch(WalTableUpdateDetails tud, CommittedTxnConsumer consumer) throws Throwable {
         try {
@@ -333,6 +345,50 @@ public class QwpTudCache implements QuietCloseable {
             }
         }
         return false;
+    }
+
+    /**
+     * This cache's entry for the table name, or null when it has none. A plain lookup:
+     * unlike {@link #getTableUpdateDetails}, it neither checks the entry for staleness
+     * nor applies pending structure changes, so it cannot commit, roll back or evict
+     * anything. The entry found last is checked first: a block's schema lookup and its
+     * commit batch lookup ask for the same table one after the other.
+     */
+    public WalTableUpdateDetails getCachedTableUpdateDetails(Utf8Sequence tableNameUtf8) {
+        WalTableUpdateDetails tud = lastCachedTud;
+        if (tud == null || !Utf8s.equalsIgnoreCaseAscii(tud.getTableNameUtf8(), tableNameUtf8)) {
+            tud = tableUpdateDetails.get(tableNameUtf8);
+            if (tud != null) {
+                lastCachedTud = tud;
+            }
+        }
+        return tud;
+    }
+
+    /**
+     * The number of open tables whose entry holds a schema parse.
+     */
+    @TestOnly
+    public int getCachedSchemaCount() {
+        int count = 0;
+        final ObjList<Utf8Sequence> keys = tableUpdateDetails.keys();
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            if (tableUpdateDetails.valueQuick(i).getQwpSchemaCacheEntry().getRetainedBytes() > 0) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    /**
+     * The table's slot for its last schema parse, on the table's entry, or null when
+     * this cache has no entry for the table yet. Like
+     * {@link #getCachedTableUpdateDetails}, it changes nothing in the cache.
+     */
+    @Override
+    public QwpSchemaCacheEntry getSchemaCacheEntry(DirectUtf8Sequence tableName) {
+        final WalTableUpdateDetails tud = getCachedTableUpdateDetails(tableName);
+        return tud != null ? tud.getQwpSchemaCacheEntry() : null;
     }
 
     /**
@@ -385,7 +441,7 @@ public class QwpTudCache implements QuietCloseable {
 
             if (tud.isDropped()) {
                 tableUpdateDetails.removeAtQuick(keyIndex, i);
-                cachedTableCount = tableUpdateDetails.size();
+                onEntryRemoved(tud);
                 // See commitAll: a mid-group forced commit that discards a
                 // dropped table's buffered rows must not let the deferred-ack
                 // clamp release, or the group-closing commit would phantom-ack
@@ -473,7 +529,7 @@ public class QwpTudCache implements QuietCloseable {
 
             if (tud.isDropped()) {
                 tableUpdateDetails.removeAtQuick(keyIndex, i);
-                cachedTableCount = tableUpdateDetails.size();
+                onEntryRemoved(tud);
                 try {
                     Misc.free(tud);
                 } catch (Throwable th) {
@@ -552,7 +608,7 @@ public class QwpTudCache implements QuietCloseable {
 
             if (tud.isDropped()) {
                 tableUpdateDetails.removeAtQuick(keyIndex, i);
-                cachedTableCount = tableUpdateDetails.size();
+                onEntryRemoved(tud);
                 try {
                     Misc.free(tud);
                 } catch (Throwable th) {
@@ -583,22 +639,21 @@ public class QwpTudCache implements QuietCloseable {
             WalTableUpdateDetails tud = tableUpdateDetails.valueAt(key);
             if (!isTableTokenStale(tud)) {
                 try {
+                    throwIfWriterDistressed(tud);
                     applyPendingStructureChanges(tud);
                 } catch (Throwable th) {
-                    // Two ways to get here. (1) goActive() failed: the writer is
-                    // distressed (the flag never clears) while the table is alive,
-                    // so no staleness check would ever evict this entry and the
-                    // table would be wedged on this receiver until restart.
-                    // (2) goActive() replayed a concurrent RENAME (see
-                    // applyPendingStructureChanges): buffered rows are already
-                    // salvaged and the entry must not serve another lookup under
-                    // the old name. Either way: evict and free the entry --
-                    // rolling back any still-uncommitted rows -- and rethrow so
-                    // the QWP layer refuses the frame (the deferred-ack clamp
-                    // holds; the client replays). The next lookup acquires a
+                    // Two ways to get here. (1) The writer is distressed, by an
+                    // earlier failure (see throwIfWriterDistressed) or by the
+                    // goActive() that just failed. (2) goActive() replayed a
+                    // concurrent RENAME (see applyPendingStructureChanges): buffered
+                    // rows are already salvaged and the entry must not serve another
+                    // lookup under the old name. Either way: evict and free the
+                    // entry -- rolling back any still-uncommitted rows -- and
+                    // rethrow so the QWP layer refuses the frame (the deferred-ack
+                    // clamp holds; the client replays). The next lookup acquires a
                     // fresh writer from the pool.
                     tableUpdateDetails.removeAt(key);
-                    cachedTableCount = tableUpdateDetails.size();
+                    onEntryRemoved(tud);
                     Misc.free(tud, th);
                     throw th;
                 }
@@ -688,7 +743,7 @@ public class QwpTudCache implements QuietCloseable {
                 releasedTables.putAt(releasedIndex, releasedName, TABLE_RELEASED);
                 releasedTableCount++;
                 tableUpdateDetails.removeAtQuick(keyIndex, i);
-                cachedTableCount = tableUpdateDetails.size();
+                onEntryRemoved(tud);
                 try {
                     Misc.free(tud);
                 } catch (Throwable th) {
@@ -727,6 +782,7 @@ public class QwpTudCache implements QuietCloseable {
         }
         tableUpdateDetails.clear();
         cachedTableCount = 0;
+        lastCachedTud = null;
         releasedTables.clear();
         releasedTableCount = 0;
     }
@@ -871,6 +927,19 @@ public class QwpTudCache implements QuietCloseable {
                 seqTxn
         );
         tud.setLastReportedSeqTxn(seqTxn);
+    }
+
+    // A distressed writer takes no more rows and no commit: WalWriter.commit refuses it,
+    // rollback0 skips it, and TableUpdateDetails.commit never calls it while it holds no
+    // rows, so neither the commit loops nor clear() evict it. The lookup evicts it, as
+    // after a failed goActive(); rows it still holds are already lost, and the caller
+    // refuses the frame or datagram, so no ack covers them.
+    private static void throwIfWriterDistressed(WalTableUpdateDetails tud) {
+        if (tud.getWriter() instanceof WalWriter walWriter && walWriter.isDistressed()) {
+            throw CairoException.critical(0)
+                    .put("WAL writer is distressed, discarding cached table [table=").put(tud.getTableNameUtf8())
+                    .put(", uncommittedRows=").put(walWriter.getUncommittedRowCount()).put(']');
+        }
     }
 
     private static boolean isValidQwpSchemaColumnName(QwpColumnDef columnDef, int maxFileNameLength) {
@@ -1019,7 +1088,7 @@ public class QwpTudCache implements QuietCloseable {
             }
         }
         tableUpdateDetails.removeAt(key);
-        cachedTableCount = tableUpdateDetails.size();
+        onEntryRemoved(tud);
         try {
             // Freeing a commitOnClose=false TUD rolls back whatever is still
             // uncommitted -- real file IO that can fail on ENOSPC/EIO.
@@ -1132,6 +1201,15 @@ public class QwpTudCache implements QuietCloseable {
         // commit latches writerInError -- a deliberate change from master,
         // which retried the wedged entry forever.
         return byName != null || engine.getTableTokenByDirName(cachedToken.getDirName()) == null;
+    }
+
+    // Every entry that leaves the map passes through here: getCachedTableUpdateDetails()
+    // serves lastCachedTud without checking that it is still mapped.
+    private void onEntryRemoved(WalTableUpdateDetails tud) {
+        cachedTableCount = tableUpdateDetails.size();
+        if (tud == lastCachedTud) {
+            lastCachedTud = null;
+        }
     }
 
     /**

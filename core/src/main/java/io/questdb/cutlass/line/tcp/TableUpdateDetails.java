@@ -184,6 +184,17 @@ public class TableUpdateDetails implements Closeable {
         }
     }
 
+    /**
+     * Throws when this entry's identity may not insert into the table, the check every
+     * commit of the entry's rows runs. QWP also runs it when a table joins a commit batch,
+     * and for every table of the batch before committing any of them.
+     */
+    public void authorizeCommit() {
+        if (ownSecurityContext != null) {
+            ownSecurityContext.authorizeInsert(tableToken);
+        }
+    }
+
     @Override
     public void close() {
         synchronized (this) {
@@ -446,12 +457,6 @@ public class TableUpdateDetails implements Closeable {
      */
     public void updateTableToken(TableToken tableToken) {
         this.tableToken = tableToken;
-    }
-
-    private void authorizeCommit() {
-        if (ownSecurityContext != null) {
-            ownSecurityContext.authorizeInsert(tableToken);
-        }
     }
 
     private void handleCommitException(Throwable ex) {

@@ -28,6 +28,7 @@ import io.questdb.cutlass.qwp.protocol.QwpColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.protocol.QwpMessageCursor;
 import io.questdb.cutlass.qwp.protocol.QwpParseException;
+import io.questdb.cutlass.qwp.protocol.QwpSchemaCache;
 import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
@@ -138,6 +139,13 @@ public class QwpStreamingDecoder implements QuietCloseable {
      */
     public void reset() {
         messageCursor.clear();
+    }
+
+    /**
+     * Sets where table blocks keep each table's schema parse; null parses every block.
+     */
+    public void setSchemaCache(QwpSchemaCache schemaCache) {
+        messageCursor.setSchemaCache(schemaCache);
     }
 
     void releaseCachedResources() {

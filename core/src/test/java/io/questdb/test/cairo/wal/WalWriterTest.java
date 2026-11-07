@@ -53,6 +53,7 @@ import io.questdb.cairo.mv.MatViewStateReader;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryCMR;
@@ -1542,6 +1543,67 @@ public class WalWriterTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * A cancelled columnar write that cannot rewind its columns leaves them at unknown
+     * positions: the writer latches distressed, so caches evict it and the pool expels
+     * it, and the table takes rows through a fresh writer afterwards.
+     */
+    @Test
+    public void testCancelColumnarWriteFailureDistressesWriter() throws Exception {
+        final long pageSize = 16_384;
+        setProperty(PropertyKey.CAIRO_WAL_WRITER_DATA_APPEND_PAGE_SIZE, pageSize);
+        final AtomicBoolean isMmapFailing = new AtomicBoolean();
+        final AtomicInteger failedMmaps = new AtomicInteger();
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                if (isMmapFailing.compareAndSet(true, false)) {
+                    failedMmaps.incrementAndGet();
+                    return FilesFacade.MAP_FAILED;
+                }
+                return super.mmap(fd, len, offset, flags, memoryTag);
+            }
+        };
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final TableToken token = engine.verifyTableName("t");
+            final WalWriter w = engine.getWalWriter(token);
+            try {
+                final ColumnarRowAppender appender = w.getColumnarRowAppender();
+                final int rowCount = rowsCrossingAppendPages(pageSize);
+                appender.beginColumnarWrite(rowCount);
+                // The designated timestamp column crosses onto later pages: the cancel
+                // maps its first page again.
+                w.putServerAssignedTimestampColumnar(rowCount, 1_000_000L);
+                isMmapFailing.set(true);
+                try {
+                    appender.cancelColumnarWrite();
+                    Assert.fail("the cancel must fail");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not mmap");
+                }
+                Assert.assertEquals("test setup: the cancel must map a page", 1, failedMmaps.get());
+                Assert.assertTrue(w.isDistressed());
+                Assert.assertTrue(w.isInColumnarWrite());
+            } finally {
+                w.close();
+            }
+            Assert.assertFalse("the pool must expel the distressed writer", w.isOpen());
+            try (WalWriter w2 = engine.getWalWriter(token)) {
+                Assert.assertNotSame(w, w2);
+                TableWriter.Row row = w2.newRow(2_000_000L);
+                row.putInt(1, 7);
+                row.append();
+                w2.commit();
+            }
+            drainWalQueue();
+            assertQuery("SELECT ts, val FROM t").expectSize().timestamp("ts").returns("""
+                    ts\tval
+                    1970-01-01T00:00:02.000000Z\t7
+                    """);
+        });
+    }
+
     @Test
     public void testCancelRowDoesNotStartsNewSegment() throws Exception {
         assertMemoryLeak(() -> {
@@ -1745,6 +1807,32 @@ public class WalWriterTest extends AbstractCairoTest {
                 assertFalse(eventCursor.hasNext());
             }
         });
+    }
+
+    @Test
+    public void testCommitRefusalCheckMatchesCommitOfDroppedTable() throws Exception {
+        assertCommitRefusalCheckMatchesCommit("DROP TABLE t", CairoException.class);
+    }
+
+    @Test
+    public void testCommitRefusalCheckMatchesCommitOfLiveTable() throws Exception {
+        assertCommitRefusalCheckMatchesCommit(null, null);
+    }
+
+    @Test
+    public void testCommitRefusalCheckMatchesCommitOfRenamedTable() throws Exception {
+        assertCommitRefusalCheckMatchesCommit("RENAME TABLE t TO t2", TableReferenceOutOfDateException.class);
+    }
+
+    @Test
+    public void testCommitRefusalCheckMatchesCommitOfSuspendedTable() throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertCommitRefusalCheckMatchesCommit("ALTER TABLE t SUSPEND WAL", CairoException.class);
+    }
+
+    @Test
+    public void testCommitRefusalCheckMatchesCommitOfSuspendedTableWithWritesAllowed() throws Exception {
+        assertCommitRefusalCheckMatchesCommit("ALTER TABLE t SUSPEND WAL", null);
     }
 
     @Test
@@ -4610,6 +4698,346 @@ public class WalWriterTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * A second mark in one transaction replaces the first: the rollback keeps the rows
+     * appended between the two marks.
+     */
+    @Test
+    public void testSavepointMarkedAgainReplacesEarlierMark() throws Exception {
+        setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try (WalWriter w = engine.getWalWriter(engine.verifyTableName("t"))) {
+                appendSavepointRow(w, 1, 1_000_000L);
+                w.markSavepoint();
+                appendSavepointRow(w, 2, 2_000_000L);
+                w.markSavepoint();
+                appendSavepointRow(w, 91, 9_000_000L);
+                w.rollbackToSavepoint();
+                Assert.assertEquals(2, w.getUncommittedRowCount());
+                appendSavepointRow(w, 3, 3_000_000L);
+                w.commit();
+            }
+            drainWalQueue();
+            assertQuery("SELECT minTimestamp, maxTimestamp, rowCount FROM wal_transactions('t')")
+                    .noRandomAccess()
+                    .returns("""
+                            minTimestamp\tmaxTimestamp\trowCount
+                            1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:03.000000Z\t3
+                            """);
+            assertQuery("SELECT v, ts FROM t").expectSize().timestamp("ts").returns("""
+                    v\tts
+                    1\t1970-01-01T00:00:01.000000Z
+                    2\t1970-01-01T00:00:02.000000Z
+                    3\t1970-01-01T00:00:03.000000Z
+                    """);
+        });
+    }
+
+    /**
+     * A row that was started, but neither appended nor cancelled, has written its
+     * timestamp and a value past the savepoint. The rollback drops them too, so the next
+     * row starts clean: its timestamp lands in its own slot, and the value it does not set
+     * is null.
+     */
+    @Test
+    public void testSavepointRollbackDropsStartedRow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try (WalWriter w = engine.getWalWriter(engine.verifyTableName("t"))) {
+                appendSavepointRow(w, 1, 1_000_000L);
+                w.markSavepoint();
+                w.newRow(2_000_000L).putInt(0, 99);
+                w.rollbackToSavepoint();
+                Assert.assertEquals(1, w.getUncommittedRowCount());
+                w.newRow(3_000_000L).append();
+                w.commit();
+            }
+            drainWalQueue();
+            assertQuery("SELECT v, ts FROM t").expectSize().timestamp("ts").returns("""
+                    v\tts
+                    1\t1970-01-01T00:00:01.000000Z
+                    null\t1970-01-01T00:00:03.000000Z
+                    """);
+        });
+    }
+
+    /**
+     * The rollback's rewind of a column has to map an earlier page of the column's file
+     * again, and the mapping fails: the writer is distressed, refuses a second rollback,
+     * and commits nothing. The table takes rows through a fresh writer afterwards.
+     */
+    @Test
+    public void testSavepointRollbackFailureDistressesWriter() throws Exception {
+        final long pageSize = 16_384;
+        setProperty(PropertyKey.CAIRO_WAL_WRITER_DATA_APPEND_PAGE_SIZE, pageSize);
+        final AtomicBoolean isMmapFailing = new AtomicBoolean();
+        final AtomicInteger failedMmaps = new AtomicInteger();
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                if (isMmapFailing.compareAndSet(true, false)) {
+                    failedMmaps.incrementAndGet();
+                    return FilesFacade.MAP_FAILED;
+                }
+                return super.mmap(fd, len, offset, flags, memoryTag);
+            }
+        };
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final TableToken token = engine.verifyTableName("t");
+            try (WalWriter w = engine.getWalWriter(token)) {
+                appendSavepointRow(w, 1, 1_000_000L);
+                w.markSavepoint();
+                // The designated timestamp column crosses onto later pages: the rollback to row
+                // 1 maps its first page again.
+                for (int i = 0, n = rowsCrossingAppendPages(pageSize); i < n; i++) {
+                    appendSavepointRow(w, 100 + i, 2_000_000L + i);
+                }
+                isMmapFailing.set(true);
+                try {
+                    w.rollbackToSavepoint();
+                    Assert.fail("the rollback must fail");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not mmap");
+                }
+                Assert.assertEquals("test setup: the rewind must map a page", 1, failedMmaps.get());
+                Assert.assertTrue(w.isDistressed());
+                try {
+                    w.rollbackToSavepoint();
+                    Assert.fail("a distressed writer must refuse the rollback");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "WAL writer is distressed");
+                }
+                Assert.assertEquals("the refusal does no I/O", 1, failedMmaps.get());
+            }
+            try (WalWriter w = engine.getWalWriter(token)) {
+                appendSavepointRow(w, 7, 7_000_000L);
+                w.commit();
+            }
+            drainWalQueue();
+            assertQuery("SELECT v, ts FROM t").expectSize().timestamp("ts").returns("""
+                    v\tts
+                    7\t1970-01-01T00:00:07.000000Z
+                    """);
+        });
+    }
+
+    /**
+     * The rollback refuses a writer in the middle of a columnar write, whose columns are
+     * past the rows it counts, and leaves it as it was: the write then completes and its
+     * rows commit.
+     */
+    @Test
+    public void testSavepointRollbackRefusedDuringColumnarWrite() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try (WalWriter w = engine.getWalWriter(engine.verifyTableName("t"))) {
+                appendSavepointRow(w, 1, 1_000_000L);
+                w.markSavepoint();
+                final ColumnarRowAppender appender = w.getColumnarRowAppender();
+                appender.beginColumnarWrite(2);
+                w.putServerAssignedTimestampColumnar(2, 2_000_000L);
+                try {
+                    w.rollbackToSavepoint();
+                    Assert.fail("the rollback must refuse a columnar write in progress");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "cannot rollback to savepoint during columnar write");
+                }
+                Assert.assertTrue(w.isInColumnarWrite());
+                Assert.assertFalse(w.isDistressed());
+                appender.endColumnarWrite(2_000_000L, 2_000_000L, false);
+                Assert.assertEquals(3, w.getUncommittedRowCount());
+                w.commit();
+            }
+            drainWalQueue();
+            assertQuery("SELECT v, ts FROM t").expectSize().timestamp("ts").returns("""
+                    v\tts
+                    1\t1970-01-01T00:00:01.000000Z
+                    null\t1970-01-01T00:00:02.000000Z
+                    null\t1970-01-01T00:00:02.000000Z
+                    """);
+        });
+    }
+
+    /**
+     * The transaction's rows before the mark are out of order, the rolled back row is in
+     * order: the rollback keeps the out-of-order flag the mark saw, which the WAL event
+     * carries to the apply job, and the table reads back sorted.
+     */
+    @Test
+    public void testSavepointRollbackRestoresOutOfOrderOfRowsBeforeMark() throws Exception {
+        setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final TableToken token = engine.verifyTableName("t");
+            final String walName;
+            final int segmentId;
+            try (WalWriter w = engine.getWalWriter(token)) {
+                walName = w.getWalName();
+                segmentId = w.getSegmentId();
+                appendSavepointRow(w, 2, 3_000_000L);
+                appendSavepointRow(w, 1, 2_000_000L);
+                w.markSavepoint();
+                appendSavepointRow(w, 91, 9_000_000L);
+                w.rollbackToSavepoint();
+                appendSavepointRow(w, 3, 4_000_000L);
+                w.commit();
+            }
+            assertWalEventOutOfOrder(token, walName, segmentId, 3, true);
+            drainWalQueue();
+            assertQuery("SELECT minTimestamp, maxTimestamp, rowCount FROM wal_transactions('t')")
+                    .noRandomAccess()
+                    .returns("""
+                            minTimestamp\tmaxTimestamp\trowCount
+                            1970-01-01T00:00:02.000000Z\t1970-01-01T00:00:04.000000Z\t3
+                            """);
+            assertQuery("SELECT v, ts FROM t").expectSize().timestamp("ts").returns("""
+                    v\tts
+                    1\t1970-01-01T00:00:02.000000Z
+                    2\t1970-01-01T00:00:03.000000Z
+                    3\t1970-01-01T00:00:04.000000Z
+                    """);
+        });
+    }
+
+    /**
+     * Rows appended after the mark widen both timestamp bounds of the transaction and
+     * put it out of order. The rollback drops them and restores the bounds and the
+     * in-order flag of the rows before the mark, which the sequencer records and the WAL
+     * event carries once the transaction commits. A rollback with nothing appended since
+     * the mark changes nothing.
+     */
+    @Test
+    public void testSavepointRollbackRestoresTransactionBounds() throws Exception {
+        setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final TableToken token = engine.verifyTableName("t");
+            final String walName;
+            final int segmentId;
+            try (WalWriter w = engine.getWalWriter(token)) {
+                walName = w.getWalName();
+                segmentId = w.getSegmentId();
+                appendSavepointRow(w, 1, 2_000_000L);
+                appendSavepointRow(w, 2, 3_000_000L);
+                w.markSavepoint();
+                appendSavepointRow(w, 91, 9_000_000L);
+                appendSavepointRow(w, 92, 1_000_000L);
+                Assert.assertEquals(4, w.getUncommittedRowCount());
+                w.rollbackToSavepoint();
+                Assert.assertEquals(2, w.getUncommittedRowCount());
+                w.rollbackToSavepoint();
+                Assert.assertEquals("nothing appended since the mark", 2, w.getUncommittedRowCount());
+                appendSavepointRow(w, 3, 4_000_000L);
+                w.commit();
+            }
+            assertWalEventOutOfOrder(token, walName, segmentId, 3, false);
+            drainWalQueue();
+            assertQuery("SELECT minTimestamp, maxTimestamp, rowCount FROM wal_transactions('t')")
+                    .noRandomAccess()
+                    .returns("""
+                            minTimestamp\tmaxTimestamp\trowCount
+                            1970-01-01T00:00:02.000000Z\t1970-01-01T00:00:04.000000Z\t3
+                            """);
+            assertQuery("SELECT v, ts FROM t").expectSize().timestamp("ts").returns("""
+                    v\tts
+                    1\t1970-01-01T00:00:02.000000Z
+                    2\t1970-01-01T00:00:03.000000Z
+                    3\t1970-01-01T00:00:04.000000Z
+                    """);
+        });
+    }
+
+    /**
+     * The rollback rewinds every kind of column to the row at the mark: fixed-size,
+     * designated timestamp, var-size with an aux file (VARCHAR, STRING, BINARY, arrays) and
+     * symbol columns. The rolled back rows carry longer values than the rows around
+     * them, so a var-size column left at the wrong data offset would show in the rows
+     * after the rollback, as would a column left with a value of a rolled back row
+     * where the next rows leave it null.
+     */
+    @Test
+    public void testSavepointRollbackRewindsEveryColumnType() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (
+                        i INT, vc VARCHAR, s STRING, bin BINARY, arr DOUBLE[], sym SYMBOL, l256 LONG256, u UUID, ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL""");
+            final long bin = Unsafe.malloc(2, MemoryTag.NATIVE_DEFAULT);
+            try (DirectArray array = new DirectArray(); WalWriter w = engine.getWalWriter(engine.verifyTableName("t"))) {
+                appendEveryTypeRow(w, array, bin, 1, "v1-\u00e9\u20ac", 1_000_000L);
+                appendEveryTypeRow(w, array, bin, 2, "v2-\u00e9\u20ac", 2_000_000L);
+                w.markSavepoint();
+                appendEveryTypeRow(w, array, bin, 91, "a rolled back VARCHAR too long to be inlined, 91", 3_000_000L);
+                appendEveryTypeRow(w, array, bin, 92, "a rolled back VARCHAR too long to be inlined, 92", 4_000_000L);
+                w.rollbackToSavepoint();
+                appendEveryTypeRow(w, array, bin, 3, "v3-\u00e9\u20ac", 5_000_000L);
+                final TableWriter.Row row = w.newRow(6_000_000L);
+                row.putInt(0, 4);
+                row.append();
+                w.commit();
+            } finally {
+                Unsafe.free(bin, 2, MemoryTag.NATIVE_DEFAULT);
+            }
+            drainWalQueue();
+            assertQuery("SELECT i, vc, s, base64(bin, 100) bin, arr, sym, l256, u, ts FROM t").expectSize().timestamp("ts").returns("""
+                    i\tvc\ts\tbin\tarr\tsym\tl256\tu\tts
+                    1\tv1-\u00e9\u20ac\ts1\tAQI=\t[1.0,1.5]\tsym1\t0x01000000000000000100000000000000010000000000000001\ta0eebc99-9c0b-4ef8-bb6d-6bb9bd380001\t1970-01-01T00:00:01.000000Z
+                    2\tv2-\u00e9\u20ac\ts2\tAgM=\t[2.0,2.5]\tsym2\t0x02000000000000000200000000000000020000000000000002\ta0eebc99-9c0b-4ef8-bb6d-6bb9bd380002\t1970-01-01T00:00:02.000000Z
+                    3\tv3-\u00e9\u20ac\ts3\tAwQ=\t[3.0,3.5]\tsym3\t0x03000000000000000300000000000000030000000000000003\ta0eebc99-9c0b-4ef8-bb6d-6bb9bd380003\t1970-01-01T00:00:05.000000Z
+                    4\t\t\t\tnull\t\t\t\t1970-01-01T00:00:06.000000Z
+                    """);
+        });
+    }
+
+    /**
+     * A savepoint of no rows, marked while the writer holds a segment roll for its next
+     * row. The next block rolls the transaction into a new segment, and the rollback
+     * still drops exactly the rows after the mark: the savepoint counts rows from the
+     * transaction's start, not from the segment's.
+     */
+    @Test
+    public void testSavepointWithoutRowsSurvivesSegmentRoll() throws Exception {
+        setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
+        setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 2);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try (WalWriter w = engine.getWalWriter(engine.verifyTableName("t"))) {
+                appendSavepointRow(w, 1, 1_000_000L);
+                appendSavepointRow(w, 2, 2_000_000L);
+                // The segment reached the rollover row count: the next row rolls it.
+                w.commit();
+                final int segmentId = w.getSegmentId();
+                w.markSavepoint();
+                final ColumnarRowAppender appender = w.getColumnarRowAppender();
+                appender.beginColumnarWrite(3);
+                w.putServerAssignedTimestampColumnar(3, 5_000_000L);
+                appender.endColumnarWrite(5_000_000L, 5_000_000L, false);
+                Assert.assertEquals("test setup: the block must roll the segment", segmentId + 1, w.getSegmentId());
+                Assert.assertEquals(3, w.getUncommittedRowCount());
+                w.rollbackToSavepoint();
+                Assert.assertEquals(0, w.getUncommittedRowCount());
+                appendSavepointRow(w, 3, 3_000_000L);
+                w.commit();
+            }
+            drainWalQueue();
+            assertQuery("SELECT segmentId, minTimestamp, maxTimestamp, rowCount FROM wal_transactions('t')")
+                    .noRandomAccess()
+                    .returns("""
+                            segmentId\tminTimestamp\tmaxTimestamp\trowCount
+                            0\t1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:02.000000Z\t2
+                            1\t1970-01-01T00:00:03.000000Z\t1970-01-01T00:00:03.000000Z\t1
+                            """);
+            assertQuery("SELECT v, ts FROM t").expectSize().timestamp("ts").returns("""
+                    v\tts
+                    1\t1970-01-01T00:00:01.000000Z
+                    2\t1970-01-01T00:00:02.000000Z
+                    3\t1970-01-01T00:00:03.000000Z
+                    """);
+        });
+    }
+
     @Test
     public void testSequencerFilesNotCached() throws Exception {
         AtomicInteger fdOpenCount = new AtomicInteger();
@@ -6880,6 +7308,49 @@ public class WalWriterTest extends AbstractCairoTest {
         });
     }
 
+    // A row of the table of testSavepointRollbackRewindsEveryColumnType with every column
+    // set from i, and the VARCHAR as given.
+    private static void appendEveryTypeRow(WalWriter w, DirectArray array, long bin, int i, String varchar, long ts) {
+        final TableWriter.Row row = w.newRow(ts);
+        row.putInt(0, i);
+        row.putVarchar(1, new Utf8String(varchar));
+        row.putStr(2, "s" + i);
+        Unsafe.putByte(bin, (byte) i);
+        Unsafe.putByte(bin + 1, (byte) (i + 1));
+        row.putBin(3, bin, 2);
+        array.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, 1));
+        array.setDimLen(0, 2);
+        array.applyShape();
+        array.putDouble(0, i);
+        array.putDouble(1, i + 0.5);
+        row.putArray(4, array);
+        row.putSym(5, "sym" + i);
+        row.putLong256(6, i, i, i, i);
+        row.putUuid(7, "a0eebc99-9c0b-4ef8-bb6d-6bb9bd38" + (i < 10 ? "000" : "00") + i);
+        row.append();
+    }
+
+    // A row of a table (v INT, ts TIMESTAMP).
+    private static void appendSavepointRow(WalWriter w, int v, long ts) {
+        final TableWriter.Row row = w.newRow(ts);
+        row.putInt(0, v);
+        row.append();
+    }
+
+    // The out-of-order flag that the WAL event of the segment's only transaction carries.
+    private static void assertWalEventOutOfOrder(TableToken token, String walName, int segmentId, long segmentRows, boolean expected) {
+        try (WalReader reader = engine.getWalReader(AllowAllSecurityContext.INSTANCE, token, walName, segmentId, segmentRows)) {
+            final WalEventCursor eventCursor = reader.getWalEventCursor();
+            assertTrue(eventCursor.hasNext());
+            assertEquals(WalTxnType.DATA, eventCursor.getType());
+            final WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
+            assertEquals(0, dataInfo.getStartRowID());
+            assertEquals(segmentRows, dataInfo.getEndRowID());
+            assertEquals(expected, dataInfo.isOutOfOrder());
+            assertFalse(eventCursor.hasNext());
+        }
+    }
+
     @SuppressWarnings("SameParameterValue")
     private static void checkWalEvents(TableToken tableToken, long refreshTxn, boolean newFormat) {
         try (Path path = new Path();
@@ -7099,6 +7570,45 @@ public class WalWriterTest extends AbstractCairoTest {
             assertEquals(expected.getColumnName(i - skip), reader.getColumnName(i));
             assertEquals(expected.getColumnType(i - skip), reader.getColumnType(i));
         }
+    }
+
+    // TableSequencerAPI.throwIfCommitRefused() must refuse exactly what the commit of a writer
+    // holding the same token refuses, with the same exception: run the DDL between the writer's
+    // acquisition and its commit, then compare the check's outcome with the commit's.
+    private void assertCommitRefusalCheckMatchesCommit(String ddl, Class<? extends Throwable> expectedFailure) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try (WalWriter walWriter = engine.getWalWriter(engine.verifyTableName("t"))) {
+                if (ddl != null) {
+                    execute(ddl);
+                }
+                Throwable checkFailure = null;
+                try {
+                    engine.getTableSequencerAPI().throwIfCommitRefused(walWriter.getTableToken());
+                } catch (Throwable th) {
+                    checkFailure = th;
+                }
+                TableWriter.Row row = walWriter.newRow(0);
+                row.putInt(1, 1);
+                row.append();
+                Throwable commitFailure = null;
+                try {
+                    walWriter.commit();
+                } catch (Throwable th) {
+                    commitFailure = th;
+                }
+                if (expectedFailure == null) {
+                    Assert.assertNull("the commit must succeed", commitFailure);
+                    Assert.assertNull("the check must not refuse a commit that succeeds", checkFailure);
+                    return;
+                }
+                Assert.assertNotNull("test setup: the commit must be refused", commitFailure);
+                Assert.assertSame(expectedFailure, commitFailure.getClass());
+                Assert.assertNotNull("the check must refuse what the commit refuses", checkFailure);
+                Assert.assertSame(commitFailure.getClass(), checkFailure.getClass());
+                Assert.assertEquals(commitFailure.getMessage(), checkFailure.getMessage());
+            }
+        });
     }
 
     @SuppressWarnings("SameParameterValue")
