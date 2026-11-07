@@ -60,6 +60,15 @@ public interface PartitionFrameDecoder extends DecodeResourceReleaser, QuietClos
     long decodeSubframe(RowGroupBuffers buffers, int rowLo, int rowHi);
 
     /**
+     * Returns the heap bytes the most recent decode's resource retains beyond the data
+     * and aux views it installed: the value buffers its {@code VARCHAR_SLICE} entries
+     * point into. The page-frame cache counts them against its budget.
+     */
+    default long getLastRetainedHeapBytes() {
+        return 0;
+    }
+
+    /**
      * Materialize the requested remaining columns in the supplied order for a previously
      * discovered subframe. Install the views into {@code buffers} at {@code columnOffset}
      * and return the owning, non-zero decode-resource handle. Columns must belong to the
@@ -82,7 +91,10 @@ public interface PartitionFrameDecoder extends DecodeResourceReleaser, QuietClos
      * projection pairs are one contiguous {@code [columnId, columnType]}
      * array whose first {@code primaryColumnCount} entries are the primary
      * projection and the rest the remaining projection. Each column ID is the
-     * original writer index, preserved across type changes.
+     * original writer index, preserved across type changes. A {@code VARCHAR_SLICE}
+     * projection type decodes to slice entries. {@code isBaseStable} promises that the
+     * base views outlive every decode resource built from the window, so slice entries
+     * may point into them; otherwise base values are copied into the resource.
      */
     void prepareWindow(
             int windowIndex,
@@ -90,6 +102,7 @@ public interface PartitionFrameDecoder extends DecodeResourceReleaser, QuietClos
             int primaryColumnCount,
             long baseViewsAddress,
             int baseViewCount,
+            boolean isBaseStable,
             long memoryTrackerAddress
     );
 

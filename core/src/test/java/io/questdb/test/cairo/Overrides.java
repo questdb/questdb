@@ -487,6 +487,8 @@ public class Overrides {
         // TESTS ONLY: TableWriter verifies its column-mapping and truncation invariants after every commit,
         // structural change and close; TestUtils.LeakCheck and the AbstractTest rule fail the test on any violation.
         properties.setProperty(PropertyKey.DEBUG_CAIRO_WRITER_INVARIANT_CHECK_ENABLED.getPropertyPath(), "true");
+        // TESTS ONLY: a released Parquet base lease overwrites its decoded buffers, so a slice read past it fails.
+        properties.setProperty(PropertyKey.DEBUG_CAIRO_FREED_BUFFER_POISON_ENABLED.getPropertyPath(), "true");
         properties.setProperty(PropertyKey.CAIRO_O3_MAX_LAG.getPropertyPath(), "300000");
         properties.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED.getPropertyPath(), "true");
         properties.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED.getPropertyPath(), "true");
