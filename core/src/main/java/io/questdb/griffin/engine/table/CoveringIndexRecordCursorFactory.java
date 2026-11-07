@@ -1129,6 +1129,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         // Each fillFrameForKey() call allocates fresh buffers so that
         // PageFrameAddressCache can hold addresses from multiple frames
         // simultaneously (vectorized GROUP BY collects all frames before processing).
+        // Frames append their buffers in order, so a streaming caller that is done
+        // with the older frames frees a prefix: see releaseConsumedFrames() and
+        // releaseOpenPartitions().
         protected final LongList allocatedBuffers = new LongList();
         protected final IntList columnIndexes;
         protected final ColumnMapping columnMapping = new ColumnMapping();
@@ -1166,6 +1169,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         protected final int queryColCount;
         protected final int[] queryColToIncludeIdx;
         protected final int[] requiredIncludeIndices;
+        // Index in allocatedBuffers of the first buffer of the frame next() returned
+        // last, -1 while no frame handed out since the last release holds buffers.
+        private int currentFrameBuffersLo = -1;
         private MemoryTracker memoryTracker;
         // When true, emit frames in descending timestamp order (DESC partition
         // iteration, high row-range sub-frames first) to serve a negative LIMIT.
@@ -1322,6 +1328,24 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         }
 
         @Override
+        public void releaseConsumedFrames() {
+            // The caller is done with every frame handed out, the current one included.
+            assert poisonFrameBuffers(allocatedBuffers.size());
+            freeFrameBuffers(allocatedBuffers.size());
+            currentFrameBuffersLo = -1;
+        }
+
+        @Override
+        public void releaseOpenPartitions() {
+            // The caller still reads the current frame; free the frames before it.
+            if (currentFrameBuffersLo > 0) {
+                assert poisonFrameBuffers(currentFrameBuffersLo);
+                freeFrameBuffers(currentFrameBuffersLo);
+                currentFrameBuffersLo = 0;
+            }
+        }
+
+        @Override
         public long size() {
             return -1;
         }
@@ -1373,13 +1397,36 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         }
 
         private void freeBuffers() {
-            for (int i = 0, n = allocatedBuffers.size(); i < n; i += 2) {
-                long addr = allocatedBuffers.getQuick(i);
-                if (addr != 0) {
-                    Unsafe.free(addr, allocatedBuffers.getQuick(i + 1), MemoryTag.NATIVE_INDEX_READER, memoryTracker);
-                }
+            freeFrameBuffers(allocatedBuffers.size());
+            currentFrameBuffersLo = -1;
+        }
+
+        /**
+         * Frees the buffers in allocatedBuffers[0, hi) and moves the entries from hi on to
+         * the front.
+         */
+        private void freeFrameBuffers(int hi) {
+            for (int i = 0; i < hi; i += 2) {
+                final long addr = allocatedBuffers.getQuick(i);
+                // allocBuffer() and growBuffer() track only what malloc returned for a
+                // non-zero size, so no entry is 0.
+                assert addr != 0;
+                Unsafe.free(addr, allocatedBuffers.getQuick(i + 1), MemoryTag.NATIVE_INDEX_READER, memoryTracker);
             }
-            allocatedBuffers.clear();
+            allocatedBuffers.removeIndexBlock(0, hi);
+        }
+
+        /**
+         * Overwrites the buffers in allocatedBuffers[0, hi) before a release frees them.
+         * Freed memory tends to keep its old bytes, so a caller that read a frame after
+         * releasing it would still see the right values; under assertions it sees garbage
+         * instead, and the tests catch it. Returns true for use in an assert statement.
+         */
+        private boolean poisonFrameBuffers(int hi) {
+            for (int i = 0; i < hi; i += 2) {
+                Unsafe.setMemory(allocatedBuffers.getQuick(i), allocatedBuffers.getQuick(i + 1), (byte) 0x5A);
+            }
+            return true;
         }
 
         /**
@@ -1490,10 +1537,13 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
          * Allocate the per-frame column and symbol buffers at
          * {@link #INITIAL_CAPACITY} and reset var-data positions. Returns the
          * starting row capacity; {@link #growFrameBuffers} grows it as rows are
-         * written. Buffers stay reachable via {@code allocatedBuffers} until the
-         * AsyncFilter dispatch frees them.
+         * written. Buffers stay reachable via {@code allocatedBuffers} until
+         * {@link #close()}, {@link #toTop()} or a streaming caller's
+         * {@link #releaseConsumedFrames()} / {@link #releaseOpenPartitions()} frees them;
+         * the async consumers collect every frame before reading one, so they never release.
          */
         protected int allocFrameBuffers() {
+            currentFrameBuffersLo = allocatedBuffers.size();
             int capacity = INITIAL_CAPACITY;
             Arrays.fill(frameVarDataAddrs, 0);
             Arrays.fill(frameVarDataPos, 0);

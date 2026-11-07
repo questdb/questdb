@@ -352,6 +352,12 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     public PageFrame advanceToPageFrame() {
         // Skip zero-row frames (iteratively, to keep the stack bounded).
         while (streamingPageFrameRow >= streamingPageFrameRowHi) {
+            if (streamingPageFrameIndex > 0) {
+                // Every row of the frames returned so far sits in a batch, which copied it,
+                // and the stream never goes back to them, so the cursor may free their
+                // memory before it builds the next frame.
+                streamingPageFrameCursor.releaseConsumedFrames();
+            }
             PageFrame frame = streamingPageFrameCursor.next();
             if (frame == null) {
                 streamingCurrentPageFrame = null;

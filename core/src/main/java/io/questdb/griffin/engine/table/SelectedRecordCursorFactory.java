@@ -634,6 +634,11 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
+        public void releaseConsumedFrames() {
+            baseCursor.releaseConsumedFrames();
+        }
+
+        @Override
         public void releaseOpenPartitions() {
             baseCursor.releaseOpenPartitions();
         }

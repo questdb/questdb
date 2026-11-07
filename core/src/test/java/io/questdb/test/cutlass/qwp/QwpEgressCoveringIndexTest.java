@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.qwp;
 
+import io.questdb.PropertyKey;
 import io.questdb.client.cutlass.qwp.client.QwpBindSetter;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatch;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatchHandler;
@@ -32,6 +33,7 @@ import io.questdb.client.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.client.std.Decimal128;
 import io.questdb.client.std.Decimal256;
 import io.questdb.client.std.Decimal64;
+import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
@@ -46,6 +48,9 @@ import java.util.Arrays;
  * are decoded from the index sidecar only by the in-engine parallel decode. Each test checks the
  * values the client receives against the inserted data or against the same query under
  * {@code /*+ no_covering *}{@code /}, which reads the column files instead of the sidecar.
+ * A multi-key scan ({@code sym IN (...)}) merges the keys into frames it fills itself, and the
+ * stream frees each frame once it has copied its rows, so the tests that cap covering frames
+ * at a few rows stream many frames and free them as they go.
  */
 public class QwpEgressCoveringIndexTest extends AbstractReusedServerQwpEgressTest {
 
@@ -102,6 +107,12 @@ public class QwpEgressCoveringIndexTest extends AbstractReusedServerQwpEgressTes
                  '2024-01-02T04:00:00.000000Z')
             """;
 
+    @Override
+    public void tearDown() throws Exception {
+        CoveringIndexRecordCursorFactory.setMaxRowsPerFrameForTesting(-1);
+        super.tearDown();
+    }
+
     @Test
     public void testIssueReproductionLongDoubleAndDecimals() throws Exception {
         // GitHub issue 8266: the fixed-width INCLUDE columns of a single-key covering scan
@@ -146,6 +157,286 @@ public class QwpEgressCoveringIndexTest extends AbstractReusedServerQwpEgressTes
                 final String noCovering = "SELECT /*+ no_covering */ sym, price, dbl FROM tp WHERE sym = 'A'";
                 assertPlanNotContains(serverMain, noCovering, "CoveringIndex");
                 Assert.assertEquals("A\t1\t1.5\nA\t3\t3.5\n", queryQwp(noCovering));
+            }
+        });
+    }
+
+    @Test
+    public void testMultiKeyBindVariablesExecutedTwice() throws Exception {
+        // force_use_covering drops the no_covering backup a bind key would otherwise bring, so
+        // the IN list streams merged page frames. The connection reuses the cached factory, and
+        // with it the page-frame cursor, for each execution after frames were freed.
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = startEgressServer()) {
+                createPriceTable(serverMain, "tp", true);
+                CoveringIndexRecordCursorFactory.setMaxRowsPerFrameForTesting(1);
+                final String sql = "SELECT /*+ force_use_covering */ sym, price, dbl FROM tp WHERE sym IN ($1, $2)";
+                try (QwpQueryClient client = newClient()) {
+                    client.connect();
+                    final String ac = "A\t1\t1.5\nA\t3\t3.5\nC\t4\t4.5\n";
+                    Assert.assertEquals(ac, queryQwp(client, sql, binds -> binds.setVarchar(0, "A").setVarchar(1, "C")));
+                    Assert.assertEquals("B\t2\t2.5\n", queryQwp(client, sql, binds -> binds.setVarchar(0, "B").setVarchar(1, "nope")));
+                    Assert.assertEquals("", queryQwp(client, sql, binds -> binds.setVarchar(0, "nope").setVarchar(1, "other")));
+                    Assert.assertEquals(ac, queryQwp(client, sql, binds -> binds.setVarchar(0, "C").setVarchar(1, "A")));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testMultiKeyCancelledMidStreamThenRerun() throws Exception {
+        // The client cancels after the first batch, with frames already freed and one current;
+        // the stream's teardown frees the rest, and the next execution streams every row.
+        final int rows = 60_000;
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = startEgressServer()) {
+                createKeyTable(serverMain, "tx", rows);
+                CoveringIndexRecordCursorFactory.setMaxRowsPerFrameForTesting(1_000);
+                final String sql = "SELECT price FROM tx WHERE sym IN ('A', 'C')";
+                assertPlanContains(serverMain, sql, "CoveringIndex on: sym with: price");
+                try (QwpQueryClient client = QwpQueryClient.fromConfig("ws::addr=127.0.0.1:" + HTTP_PORT + ";failover=off;").withInitialCredit(1)) {
+                    client.connect();
+                    final byte[] status = {-1};
+                    final boolean[] ended = {false};
+                    final int[] batches = {0};
+                    client.execute(sql, new QwpColumnBatchHandler() {
+                        @Override
+                        public void onBatch(QwpColumnBatch batch) {
+                            if (++batches[0] == 1) {
+                                client.cancel();
+                            }
+                        }
+
+                        @Override
+                        public void onEnd(long totalRows) {
+                            ended[0] = true;
+                        }
+
+                        @Override
+                        public void onError(byte s, String message) {
+                            status[0] = s;
+                        }
+                    });
+                    Assert.assertFalse(ended[0]);
+                    Assert.assertEquals(QwpConstants.STATUS_CANCELLED, status[0]);
+                    assertKeyTableStream(client, sql, rows);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testMultiKeyEveryIncludeTypeAcrossManyFrames() throws Exception {
+        // Frames of 7 rows make the stream free a frame every 7 rows while a batch spans many
+        // frames, for every column type an INCLUDE list accepts, var-size ones included.
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = startEgressServer()) {
+                serverMain.execute(ALL_TYPES_DDL);
+                serverMain.execute(ALL_TYPES_INSERT);
+                serverMain.execute("""
+                        INSERT INTO t_all SELECT
+                            rnd_symbol('A', 'B', 'C', NULL),
+                            x % 3 = 0, (x % 100)::BYTE, (x % 30_000)::SHORT, rnd_char(),
+                            CASE WHEN x % 10 = 0 THEN NULL ELSE x::INT END, x * 1_000_003, (x / 3.0)::FLOAT, x / 7.0,
+                            (x * 86_400_000L)::DATE, (x * 1_000_000L)::TIMESTAMP, (x * 1_000_000_000L)::TIMESTAMP_NS, rnd_ipv4(),
+                            (x % 9)::DECIMAL(2,1), (x % 99)::DECIMAL(4,2), x::DECIMAL(9,2), x::DECIMAL(18,2), x::DECIMAL(38,2), x::DECIMAL(76,2),
+                            rnd_varchar(1, 40, 1), rnd_str(1, 30, 1), rnd_symbol('x', 'y', 'z', NULL), rnd_uuid4(), rnd_long256(),
+                            rnd_geohash(5), rnd_geohash(10), rnd_geohash(20), rnd_geohash(40),
+                            CASE WHEN x % 13 = 0 THEN NULL ELSE ARRAY[x::DOUBLE, -x::DOUBLE, x / 3.0] END,
+                            CASE WHEN x % 17 = 0 THEN NULL ELSE ARRAY[[x::DOUBLE], [x / 7.0]] END,
+                            rnd_bin(1, 48, 1),
+                            '2024-01-01T05:00:00.000000Z'::TIMESTAMP + x * 60_000_000L
+                        FROM long_sequence(3_000)
+                        """);
+                serverMain.awaitTable("t_all");
+                serverMain.execute("ALTER TABLE t_all ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (" + ALL_TYPES_INCLUDE + ")");
+                serverMain.awaitTable("t_all");
+                CoveringIndexRecordCursorFactory.setMaxRowsPerFrameForTesting(7);
+                final String[] projections = {
+                        // the covering factory itself is the root: no projection wrapper
+                        "*",
+                        // a SelectedRecord projection: reordered, a column repeated, the key column in the middle
+                        "d18, l, l, sym, vc, s, bin, arr, arr2, ts, i",
+                };
+                final String[] keyLists = {"'A', 'C'", "'B', 'nope'"};
+                for (String projection : projections) {
+                    for (String keys : keyLists) {
+                        final String covering = "SELECT " + projection + " FROM t_all WHERE sym IN (" + keys + ")";
+                        assertPlanContains(serverMain, covering, "CoveringIndex on: sym");
+                        final String reference = "SELECT /*+ no_covering */ " + projection + " FROM t_all WHERE sym IN (" + keys + ")";
+                        assertPlanNotContains(serverMain, reference, "CoveringIndex");
+                        final String expected = queryQwp(reference);
+                        Assert.assertTrue(countLines(expected) > 500);
+                        Assert.assertEquals(covering, expected, queryQwp(covering));
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testMultiKeyIncludeColumnAddedAfterData() throws Exception {
+        // Rows written before the INCLUDE column existed read as NULL (a column top), in frames
+        // of one row that the stream frees one by one.
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = startEgressServer()) {
+                serverMain.execute("CREATE TABLE tt (sym SYMBOL, price LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.execute("INSERT INTO tt VALUES ('A', 1, '2024-01-01T00:00:00Z'), ('C', 2, '2024-01-02T00:00:00Z')");
+                serverMain.awaitTable("tt");
+                serverMain.execute("ALTER TABLE tt ADD COLUMN qty DOUBLE");
+                serverMain.execute("INSERT INTO tt VALUES ('A', 3, '2024-01-02T01:00:00Z', 3.5), ('B', 4, '2024-01-02T02:00:00Z', 4.5), ('C', 5, '2024-01-02T03:00:00Z', 5.5)");
+                serverMain.awaitTable("tt");
+                serverMain.execute("ALTER TABLE tt ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)");
+                serverMain.awaitTable("tt");
+                CoveringIndexRecordCursorFactory.setMaxRowsPerFrameForTesting(1);
+                final String sql = "SELECT price, qty FROM tt WHERE sym IN ('A', 'C')";
+                assertPlanContains(serverMain, sql, "CoveringIndex on: sym with: price, qty");
+                Assert.assertEquals("1\tnull\n2\tnull\n3\t3.5\n5\t5.5\n", queryQwp(sql));
+            }
+        });
+    }
+
+    @Test
+    public void testMultiKeyLimitAndOrderBy() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = startEgressServer()) {
+                createPriceTable(serverMain, "tp", true);
+                CoveringIndexRecordCursorFactory.setMaxRowsPerFrameForTesting(1);
+                final String[] suffixes = {"", " ORDER BY ts", " ORDER BY ts DESC", " LIMIT 2", " LIMIT -2", " LIMIT 1, 3"};
+                final String[] expected = {
+                        "1\t1.5\n3\t3.5\n4\t4.5\n",
+                        "1\t1.5\n3\t3.5\n4\t4.5\n",
+                        "4\t4.5\n3\t3.5\n1\t1.5\n",
+                        "1\t1.5\n3\t3.5\n",
+                        "3\t3.5\n4\t4.5\n",
+                        "3\t3.5\n4\t4.5\n",
+                };
+                for (int i = 0; i < suffixes.length; i++) {
+                    final String sql = "SELECT price, dbl FROM tp WHERE sym IN ('A', 'C')" + suffixes[i];
+                    Assert.assertEquals(sql, expected[i], queryQwp(sql));
+                    Assert.assertEquals(sql, expected[i], queryQwp("SELECT /*+ no_covering */ price, dbl FROM tp WHERE sym IN ('A', 'C')" + suffixes[i]));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testMultiKeyNonWalAndNonPartitionedTables() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = startEgressServer()) {
+                createPriceTable(serverMain, "tp_bypass", false);
+                CoveringIndexRecordCursorFactory.setMaxRowsPerFrameForTesting(1);
+                assertPlanContains(serverMain, "SELECT price, dbl FROM tp_bypass WHERE sym IN ('A', 'C')", "CoveringIndex");
+                Assert.assertEquals("1\t1.5\n3\t3.5\n4\t4.5\n", queryQwp("SELECT price, dbl FROM tp_bypass WHERE sym IN ('A', 'C')"));
+
+                // one partition: the merge splits it into a frame per row
+                serverMain.execute("CREATE TABLE tp_none (sym SYMBOL, price LONG, dbl DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY NONE");
+                serverMain.execute("INSERT INTO tp_none VALUES ('A', 1, 1.5, '2024-01-01T00:00:00Z'), ('B', 2, 2.5, '2024-01-01T01:00:00Z'), ('C', 3, 3.5, '2024-01-02T00:00:00Z'), ('A', 4, 4.5, '2024-01-02T01:00:00Z')");
+                serverMain.execute("ALTER TABLE tp_none ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, dbl)");
+                assertPlanContains(serverMain, "SELECT price, dbl FROM tp_none WHERE sym IN ('A', 'C')", "CoveringIndex");
+                Assert.assertEquals("1\t1.5\n3\t3.5\n4\t4.5\n", queryQwp("SELECT price, dbl FROM tp_none WHERE sym IN ('A', 'C')"));
+            }
+        });
+    }
+
+    @Test
+    public void testMultiKeyParquetPartition() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = startEgressServer()) {
+                createPriceTable(serverMain, "tp", true);
+                // rows 1 and 2 sit in the first day partition; the last (active) one stays native
+                serverMain.execute("ALTER TABLE tp CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'");
+                serverMain.awaitTable("tp");
+                CoveringIndexRecordCursorFactory.setMaxRowsPerFrameForTesting(1);
+                final String sql = "SELECT price, dbl FROM tp WHERE sym IN ('A', 'C')";
+                assertPlanContains(serverMain, sql, "CoveringIndex");
+                Assert.assertEquals("1\t1.5\n3\t3.5\n4\t4.5\n", queryQwp(sql));
+                Assert.assertEquals(queryQwp("SELECT /*+ no_covering */ price, dbl FROM tp WHERE sym IN ('A', 'C')"), queryQwp(sql));
+            }
+        });
+    }
+
+    @Test
+    public void testMultiKeyStreamStaysUnderQueryMemoryLimit() throws Exception {
+        // The merge fills each frame into buffers of its own: 4096 rows of price, dbl and the
+        // symbol key. The query memory limit holds three such frames. The stream frees each
+        // frame before it pulls the next, so its 40 frames fit; keeping every frame until the
+        // query ends would breach the limit at the fourth.
+        final int rows = 60_000;
+        final long frameBytes = 4_096L * (Long.BYTES + Double.BYTES + Integer.BYTES);
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = startServerWithRetry(
+                    PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES.getEnvVarName(), Long.toString(3 * frameBytes + frameBytes / 2),
+                    PropertyKey.DEBUG_HTTP_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), Integer.toString(recvChunk),
+                    PropertyKey.DEBUG_HTTP_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), Integer.toString(sendChunk)
+            )) {
+                createKeyTable(serverMain, "tm", rows);
+                final String sql = "SELECT price, dbl FROM tm WHERE sym IN ('A', 'C')";
+                assertPlanContains(serverMain, sql, "CoveringIndex on: sym with: price, dbl");
+                try (QwpQueryClient client = newClient()) {
+                    client.connect();
+                    // a single frame of 40_000 rows outgrows the limit on its own
+                    CoveringIndexRecordCursorFactory.setMaxRowsPerFrameForTesting(rows);
+                    final String[] error = {null};
+                    client.execute(sql, new QwpColumnBatchHandler() {
+                        @Override
+                        public void onBatch(QwpColumnBatch batch) {
+                            Assert.fail("the frame cannot be built under the limit");
+                        }
+
+                        @Override
+                        public void onEnd(long totalRows) {
+                            Assert.fail("the frame cannot be built under the limit");
+                        }
+
+                        @Override
+                        public void onError(byte status, String message) {
+                            error[0] = message;
+                        }
+                    });
+                    Assert.assertNotNull(error[0]);
+                    TestUtils.assertContains(error[0], "query memory limit exceeded");
+
+                    // the same connection streams the 40 frames of 1_000 rows under the same limit
+                    CoveringIndexRecordCursorFactory.setMaxRowsPerFrameForTesting(1_000);
+                    assertKeyTableStream(client, sql, rows);
+                    assertKeyTableStream(client, sql, rows);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testMultiKeyThroughViewCteAndSubquery() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = startEgressServer()) {
+                createPriceTable(serverMain, "tp", true);
+                CoveringIndexRecordCursorFactory.setMaxRowsPerFrameForTesting(1);
+                serverMain.execute("CREATE VIEW tp_ac AS (SELECT price, dbl FROM tp WHERE sym IN ('A', 'C'))");
+                assertPlanContains(serverMain, "SELECT * FROM tp_ac", "CoveringIndex");
+                Assert.assertEquals("1\t1.5\n3\t3.5\n4\t4.5\n", queryQwp("SELECT * FROM tp_ac"));
+                Assert.assertEquals("1\t1.5\n3\t3.5\n4\t4.5\n", queryQwp("WITH c AS (SELECT price, dbl FROM tp WHERE sym IN ('A', 'C')) SELECT * FROM c"));
+                Assert.assertEquals("1.5\t1\n3.5\t3\n4.5\t4\n", queryQwp("SELECT dbl, price FROM (SELECT price, dbl FROM tp WHERE sym IN ('A', 'C'))"));
+            }
+        });
+    }
+
+    @Test
+    public void testMultiKeyUnknownKeysAndEmptyTable() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = startEgressServer()) {
+                serverMain.execute("CREATE TABLE tn (sym SYMBOL, price LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.execute("ALTER TABLE tn ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price)");
+                serverMain.awaitTable("tn");
+                CoveringIndexRecordCursorFactory.setMaxRowsPerFrameForTesting(1);
+                Assert.assertEquals(0, queryQwpRowCount("SELECT price FROM tn WHERE sym IN ('A', 'B')"));
+
+                serverMain.execute("INSERT INTO tn VALUES ('A', 1, '2024-01-01T00:00:00Z'), (NULL, 2, '2024-01-01T01:00:00Z'), ('B', 3, '2024-01-02T00:00:00Z'), (NULL, 4, '2024-01-02T01:00:00Z')");
+                serverMain.awaitTable("tn");
+                Assert.assertEquals(0, queryQwpRowCount("SELECT price FROM tn WHERE sym IN ('nope', 'other')"));
+                Assert.assertEquals("1\n", queryQwp("SELECT price FROM tn WHERE sym IN ('A', 'nope')"));
+                Assert.assertEquals("1\n3\n", queryQwp("SELECT price FROM tn WHERE sym IN ('A', 'B')"));
+                Assert.assertEquals("1\n2\n4\n", queryQwp("SELECT price FROM tn WHERE sym IN ('A', NULL)"));
             }
         });
     }
@@ -564,6 +855,39 @@ public class QwpEgressCoveringIndexTest extends AbstractReusedServerQwpEgressTes
         });
     }
 
+    // Streams sql, whose first column is the price of a createKeyTable() table and second, if
+    // any, its dbl, and checks that every row of keys 'A' and 'C' arrives once, in order.
+    private static void assertKeyTableStream(QwpQueryClient client, String sql, int rows) {
+        final long[] next = {2};
+        final long[] count = {0};
+        client.execute(sql, new QwpColumnBatchHandler() {
+            @Override
+            public void onBatch(QwpColumnBatch batch) {
+                for (int r = 0, n = batch.getRowCount(); r < n; r++) {
+                    final long x = next[0];
+                    Assert.assertEquals(x, batch.getLongValue(0, r));
+                    if (batch.getColumnCount() > 1) {
+                        Assert.assertEquals(x / 2.0, batch.getDoubleValue(1, r), 0.0);
+                    }
+                    // x % 3 == 2 is a 'C' row, followed by the 'A' row x + 1; an 'A' row by x + 2
+                    next[0] += x % 3 == 2 ? 1 : 2;
+                    count[0]++;
+                }
+            }
+
+            @Override
+            public void onEnd(long totalRows) {
+                Assert.assertEquals(rows / 3 * 2, totalRows);
+            }
+
+            @Override
+            public void onError(byte status, String message) {
+                Assert.fail("[" + sql + "] failed: " + message);
+            }
+        });
+        Assert.assertEquals(rows / 3 * 2, count[0]);
+    }
+
     private static void assertPlan(TestServerMain serverMain, String sql, String expectedPlan) throws Exception {
         Assert.assertEquals(expectedPlan, plan(serverMain, sql));
     }
@@ -586,6 +910,16 @@ public class QwpEgressCoveringIndexTest extends AbstractReusedServerQwpEgressTes
             }
         }
         return n;
+    }
+
+    // Rows x = 1..rows one second apart, all in one day partition: x % 3 picks the key
+    // (0 'A', 1 'B', 2 'C'), price is x and dbl x / 2.
+    private static void createKeyTable(TestServerMain serverMain, String name, int rows) {
+        serverMain.execute("CREATE TABLE " + name + " (sym SYMBOL, price LONG, dbl DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        serverMain.execute("INSERT INTO " + name + " SELECT CASE x % 3 WHEN 0 THEN 'A' WHEN 1 THEN 'B' ELSE 'C' END, x, x / 2.0, (x * 1_000_000L)::TIMESTAMP FROM long_sequence(" + rows + ")");
+        serverMain.awaitTable(name);
+        serverMain.execute("ALTER TABLE " + name + " ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, dbl)");
+        serverMain.awaitTable(name);
     }
 
     // 'A' rows: (1, 1.5) on day 1 and (3, 3.5) on day 2; 'B': (2, 2.5); 'C': (4, 4.5) on day 2.

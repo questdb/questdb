@@ -28,6 +28,7 @@ import io.questdb.client.cutlass.qwp.client.QwpColumnBatch;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatchHandler;
 import io.questdb.client.cutlass.qwp.client.QwpQueryClient;
 import io.questdb.client.std.str.DirectUtf8Sequence;
+import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Rnd;
@@ -991,24 +992,31 @@ public class QwpEgressFuzzTest extends AbstractQwpBootstrapTest {
         // Plan a query shape; compute which rows / cols appear + in what order.
         QueryPlan plan = planQuery(table, colCount, rowCount, shape, rowKeys);
 
-        // Run query + verify per row-per col.
+        // Run query + verify per row-per col. A covering scan emits a frame per partition at
+        // most; half the cases cap covering frames at a few rows instead, so the multi-key
+        // shape streams many frames per partition and frees each before it builds the next.
         AssertionState state = new AssertionState(plan, cols, expected, expectedNull);
-        client.execute(plan.sql, new QwpColumnBatchHandler() {
-            @Override
-            public void onBatch(QwpColumnBatch batch) {
-                state.observe(batch);
-            }
+        CoveringIndexRecordCursorFactory.setMaxRowsPerFrameForTesting(random.nextBoolean() ? -1 : 1 + random.nextInt(16));
+        try {
+            client.execute(plan.sql, new QwpColumnBatchHandler() {
+                @Override
+                public void onBatch(QwpColumnBatch batch) {
+                    state.observe(batch);
+                }
 
-            @Override
-            public void onEnd(long totalRows) {
-                state.end(totalRows);
-            }
+                @Override
+                public void onEnd(long totalRows) {
+                    state.end(totalRows);
+                }
 
-            @Override
-            public void onError(byte status, String message) {
-                Assert.fail("egress error [" + table + "]: " + message);
-            }
-        });
+                @Override
+                public void onError(byte status, String message) {
+                    Assert.fail("egress error [" + table + "]: " + message);
+                }
+            });
+        } finally {
+            CoveringIndexRecordCursorFactory.setMaxRowsPerFrameForTesting(-1);
+        }
 
         server.execute("DROP TABLE " + table);
     }
