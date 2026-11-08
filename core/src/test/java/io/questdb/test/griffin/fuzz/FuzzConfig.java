@@ -42,6 +42,7 @@ public final class FuzzConfig {
     public static final String FAULTS_PROP = "questdb.fuzz.faults";
     public static final String FAULT_PARALLEL_PROP = "questdb.fuzz.fault.parallel";
     public static final String FAULT_PCT_PROP = "questdb.fuzz.fault.pct";
+    public static final String GROUPING_SETS_PROP = "questdb.fuzz.groupingsets";
     public static final String HASH_JOIN_BUILD_PROP = "questdb.fuzz.hashjoin.build";
     public static final String HASH_JOIN_PAYLOAD_PROP = "questdb.fuzz.hashjoin.payload";
     public static final String HASH_JOIN_PROP = "questdb.fuzz.hashjoin";
@@ -79,6 +80,7 @@ public final class FuzzConfig {
     private final boolean isDiffMapPageEnabled;
     private final boolean isDiffShadowEnabled;
     private final boolean isFaultInjectionEnabled;
+    private final boolean isGroupingSetsEnabled;
     private final boolean isHashJoinEnabled;
     private final boolean isHorizonJoinEnabled;
     private final boolean isLatestOnEnabled;
@@ -156,6 +158,10 @@ public final class FuzzConfig {
         // -Dquestdb.fuzz.hashjoin=false to drop them, for example while investigating a failure,
         // and give the band back to GROUP BY.
         this.isHashJoinEnabled = Boolean.parseBoolean(System.getProperty(HASH_JOIN_PROP, "true"));
+        // ROLLUP, CUBE and GROUPING SETS shapes also carve a band out of the GROUP BY range (see
+        // QueryGenerator), and QueryRunner checks each against its UNION ALL rewrite. On by
+        // default; pass -Dquestdb.fuzz.groupingsets=false to drop them.
+        this.isGroupingSetsEnabled = Boolean.parseBoolean(System.getProperty(GROUPING_SETS_PROP, "true"));
         // The fuzz tables share one row count, so the default rule copies a build's payload unless
         // a probe interval leaves the probe under half the build. Pass
         // -Dquestdb.fuzz.hashjoin.payload=row_ids or =copied to force every fused query onto one
@@ -239,6 +245,10 @@ public final class FuzzConfig {
 
     public boolean isFaultInjectionEnabled() {
         return isFaultInjectionEnabled;
+    }
+
+    public boolean isGroupingSetsEnabled() {
+        return isGroupingSetsEnabled;
     }
 
     public boolean isHashJoinEnabled() {
