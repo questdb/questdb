@@ -147,6 +147,23 @@ public interface FilesFacade {
         return Os.isLinux();
     }
 
+    /**
+     * Whether {@link #madviseWillNeed(long, long)} makes the OS read the advised pages, see
+     * {@link Files#isMadviseWillNeedSupported()}.
+     */
+    default boolean isMadviseWillNeedSupported() {
+        return Files.isMadviseWillNeedSupported();
+    }
+
+    /**
+     * Asks the OS to read {@code [address, address + len)} of a file mapping into the page
+     * cache without waiting for it, see {@link Files#madviseWillNeed(long, long)}. Returns
+     * how many requests it sent.
+     */
+    default int madviseWillNeed(long address, long len) {
+        return Files.madviseWillNeed(address, len);
+    }
+
     long getDirSize(Path path);
 
     long getDiskFreeSpace(LPSZ path);

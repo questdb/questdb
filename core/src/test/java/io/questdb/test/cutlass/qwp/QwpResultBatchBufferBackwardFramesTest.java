@@ -38,6 +38,7 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cutlass.qwp.codec.QwpEgressColumnDef;
 import io.questdb.cutlass.qwp.codec.QwpEgressConnSymbolDict;
 import io.questdb.cutlass.qwp.codec.QwpResultBatchBuffer;
+import io.questdb.cutlass.qwp.server.egress.QwpBackwardReadAhead;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.MemoryTag;
@@ -54,7 +55,8 @@ import org.junit.Test;
  * frames. Appending a frame backward must produce exactly the batch that appending its
  * rows one at a time, last to first, through the forward path produces - with the
  * columnar kernels and with the per-row fallbacks, which a SYMBOL column takes when the
- * batch has no symbol tables to resolve keys with.
+ * batch has no symbol tables to resolve keys with. Reading each frame ahead covers the
+ * same bytes whether it reads the frame at once or asks for it in MADV_WILLNEED windows.
  */
 public class QwpResultBatchBufferBackwardFramesTest extends AbstractCairoTest {
 
@@ -157,6 +159,11 @@ public class QwpResultBatchBufferBackwardFramesTest extends AbstractCairoTest {
                 def.of(metadata.getColumnName(i), metadata.getColumnType(i));
                 defs.add(def);
             }
+            final QwpBackwardReadAhead readFrame = new QwpBackwardReadAhead(new QwpBackwardReadAheadTest.RecordingFacade(false));
+            readFrame.of(metadata);
+            final QwpBackwardReadAheadTest.RecordingFacade willNeed = new QwpBackwardReadAheadTest.RecordingFacade(true);
+            final QwpBackwardReadAhead adviseFrame = new QwpBackwardReadAhead(willNeed);
+            adviseFrame.of(metadata);
             addressCache.of(metadata, cursor.getColumnMapping(), cursor.isExternal());
             pool.of(addressCache);
             record.of(cursor);
@@ -181,12 +188,27 @@ public class QwpResultBatchBufferBackwardFramesTest extends AbstractCairoTest {
                     assertBackwardFrame(context, frame, record, rows, defs, cursor, backward, backwardDict, oracle, oracleDict);
                     assertBackwardFrame(context, frame, record, rows, defs, null, backward, backwardTextDict, oracle, oracleTextDict);
 
+                    // the whole-frame read and the MADV_WILLNEED windows cover the same bytes,
+                    // each once and inside the frame's published extents
+                    readFrame.ofFrame(frame, rows);
+                    final long frameBytes = readFrame.advise(Math.max(0, rows - 1_024));
+                    willNeed.clear();
+                    adviseFrame.ofFrame(frame, rows);
+                    long advisedBytes = 0;
+                    for (long emitted = 0; emitted < rows; ) {
+                        final long slice = Math.min(1_024, rows - emitted);
+                        advisedBytes += adviseFrame.advise(rows - emitted - slice);
+                        emitted += slice;
+                    }
+                    Assert.assertEquals(context, frameBytes, advisedBytes);
+                    Assert.assertEquals(context, frameBytes, willNeed.requestedBytes());
+                    willNeed.assertWithinExtents(context, frame);
                     if (frame.getFormat() == PartitionFormat.NATIVE) {
                         frameCounts[0]++;
-                        Assert.assertTrue(context, backward.prefetchPageFrame(frame) > 0);
+                        Assert.assertTrue(context, frameBytes > 0);
                     } else {
                         frameCounts[1]++;
-                        Assert.assertEquals(context, 0, backward.prefetchPageFrame(frame));
+                        Assert.assertEquals(context, 0, frameBytes);
                     }
                     frameIndex++;
                 }

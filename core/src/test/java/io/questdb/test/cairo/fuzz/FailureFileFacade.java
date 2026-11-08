@@ -332,6 +332,11 @@ public class FailureFileFacade implements FilesFacade {
     }
 
     @Override
+    public boolean isMadviseWillNeedSupported() {
+        return ff.isMadviseWillNeedSupported();
+    }
+
+    @Override
     public boolean isRestrictedFileSystem() {
         return ff.isRestrictedFileSystem();
     }
@@ -370,6 +375,11 @@ public class FailureFileFacade implements FilesFacade {
     @Override
     public void madvise(long address, long len, int advise) {
         ff.madvise(address, len, advise);
+    }
+
+    @Override
+    public int madviseWillNeed(long address, long len) {
+        return ff.madviseWillNeed(address, len);
     }
 
     @Override

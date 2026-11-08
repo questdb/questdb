@@ -1479,8 +1479,8 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                 // so under MADV_SEQUENTIAL the descending walk of a backward
                 // scan faults in uncached pages one at a time. Backward scans
                 // keep the default mapping, whose fault read-around reaches
-                // below the faulting page, and read each frame ahead
-                // themselves, see streamResults.
+                // below the faulting page, and read their frames ahead
+                // themselves, see QwpBackwardReadAhead.
                 if (!isPageFrameBackward) {
                     pageFrameCursor.setScanProfile(ReaderScanProfile.SEQUENTIAL_CACHED);
                 }
@@ -2134,15 +2134,15 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                 while (rowsToAdd > 0 && (frame = state.advanceToPageFrame()) != null) {
                     final long rowsEmitted = state.getStreamingPageFrameRow();
                     final long frameRows = state.getStreamingPageFrameRowHi();
-                    if (isPageFrameBackward && rowsEmitted == 0) {
-                        // Readahead only follows forward access, so read a backward
-                        // frame forward once before walking it down.
-                        metrics.markReadAhead(batchBuffer.prefetchPageFrame(frame));
-                    }
                     final int sliceRows = (int) Math.min(Math.min(rowsToAdd, frameRows - rowsEmitted), 1024L);
                     // A backward frame goes out last row first: the next slice is the
                     // top of the rows it has left, appended in reverse.
                     final long lo = isPageFrameBackward ? frameRows - rowsEmitted - sliceRows : rowsEmitted;
+                    if (isPageFrameBackward) {
+                        // Readahead only follows forward access: have this slice and the rows
+                        // below it on their way into memory before the walk down reads them.
+                        metrics.markReadAhead(state.getBackwardReadAhead().advise(lo));
+                    }
                     batchBuffer.appendPageFrame(frame, state.getStreamingPageFrameMemoryRecord(), lo, lo + sliceRows, isPageFrameBackward);
                     state.consumePageFrameRows(sliceRows);
                     rowsToAdd -= sliceRows;

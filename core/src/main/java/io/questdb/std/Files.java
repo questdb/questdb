@@ -51,6 +51,11 @@ public final class Files {
     public static final int FILES_RENAME_ERR_EXDEV = 1;
     public static final int FILES_RENAME_ERR_OTHER = 2;
     public static final int FILES_RENAME_OK = 0;
+    // Largest single request madviseWillNeed() sends. Linux reads at most max(read_ahead_kb,
+    // max_sectors_kb) of one MADV_WILLNEED request and drops the rest without an error, so a
+    // larger range goes out in pieces of the kernel's default readahead size, which every
+    // device honours in full.
+    public static final long MADV_WILLNEED_REQUEST_SIZE = 128 * 1024;
     public static final int MAP_RO = 1;
     public static final int MAP_RW = 2;
     public static final int NFS_MAGIC = 0x6969;
@@ -76,6 +81,9 @@ public final class Files {
     public static final int TMPFS_MAGIC = 0x01021994;
     public static final Charset UTF_8;
     public static final int WINDOWS_ERROR_FILE_EXISTS = 0x50;
+    // MADV_WILLNEED in the Linux UAPI (include/uapi/asm-generic/mman-common.h), the same on every
+    // architecture QuestDB ships. libquestdb has no getter for it; madvise0 passes it through.
+    private static final int MADV_WILLNEED_LINUX = 3;
     private static final int VIRTIO_FS_MAGIC = 0x6a656a63;
     private static final FdCache fdCache = new FdCache();
     private static final MmapCache mmapCache = MmapCache.INSTANCE;
@@ -442,6 +450,15 @@ public final class Files {
                 (Os.isWindows() && errno == CairoException.ERRNO_FILE_DOES_NOT_EXIST_WIN);
     }
 
+    /**
+     * Whether {@link #madviseWillNeed} makes the OS read the advised pages. Only on Linux:
+     * libquestdb binds madvise on no other platform, and the MADV_WILLNEED of FreeBSD maps
+     * only pages already in memory.
+     */
+    public static boolean isMadviseWillNeedSupported() {
+        return Os.isLinux();
+    }
+
     public native static boolean isSoftLink(long lpszPath);
 
     public static boolean isSoftLink(LPSZ path) {
@@ -467,6 +484,30 @@ public final class Files {
     }
 
     public static native void madvise0(long address, long len, int advise);
+
+    /**
+     * Asks the kernel to read the file pages behind {@code [address, address + len)} of a
+     * mapping into the page cache, and returns without waiting for them. Unlike
+     * {@link #madvise}, this changes no state of the mapping, so it applies to mappings that
+     * other readers share as well. Linux caps each request, see
+     * {@link #MADV_WILLNEED_REQUEST_SIZE}, so the range goes out as page-aligned requests of at
+     * most that size. Returns how many requests it sent: none for an empty range, or where
+     * {@link #isMadviseWillNeedSupported()} is false.
+     */
+    public static int madviseWillNeed(long address, long len) {
+        if (len <= 0 || !isMadviseWillNeedSupported()) {
+            return 0;
+        }
+        final long hi = address + len;
+        // the request size is a multiple of the page size, so every request starts page-aligned
+        final long requestSize = Math.max(MADV_WILLNEED_REQUEST_SIZE, PAGE_SIZE);
+        int requests = 0;
+        for (long lo = address & -PAGE_SIZE; lo < hi; lo += requestSize) {
+            madvise0(lo, Math.min(requestSize, hi - lo), MADV_WILLNEED_LINUX);
+            requests++;
+        }
+        return requests;
+    }
 
     public static int mkdir(LPSZ path, int mode) {
         return mkdir(path.ptr(), mode);

@@ -219,9 +219,10 @@ public class QwpEgressFuzzTest extends AbstractQwpBootstrapTest {
                 .$(", spacingMicros=").$(spacingMicros)
                 .$(", opCount=").$(opCount)
                 .$(", structuralProbPermil=").$(structuralProbPermil)
-                .$(", maxLiveAddedColumns=").$(maxLiveAddedColumns).$();
+                .$(", maxLiveAddedColumns=").$(maxLiveAddedColumns)
+                .$(", readAheadWillNeed=").$(isReadAheadWillNeed).$();
         TestUtils.assertMemoryLeak(() -> {
-            try (TestServerMain server = startWithEnvVariables()) {
+            try (TestServerMain server = startWithEnvVariables(new ReadAheadFilesFacade(isReadAheadWillNeed))) {
                 server.execute("CREATE TABLE fz_seq(id LONG, v DOUBLE, cat SYMBOL, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 // Stable population: rowCount rows, id 1..rowCount, cat cycles 4

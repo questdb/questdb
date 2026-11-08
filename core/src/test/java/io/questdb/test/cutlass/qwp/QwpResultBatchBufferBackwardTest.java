@@ -25,15 +25,11 @@
 package io.questdb.test.cutlass.qwp;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.ColumnTypeDriver;
-import io.questdb.cairo.StringTypeDriver;
-import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
-import io.questdb.cairo.vm.MemoryCARWImpl;
 import io.questdb.cutlass.qwp.codec.QwpEgressColumnDef;
 import io.questdb.cutlass.qwp.codec.QwpEgressConnSymbolDict;
 import io.questdb.cutlass.qwp.codec.QwpResultBatchBuffer;
@@ -45,7 +41,6 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf8String;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -174,129 +169,6 @@ public class QwpResultBatchBufferBackwardTest {
                     }
                     Assert.assertEquals(expected.toString(), unsignedCsv(wire));
                 }
-            }
-        });
-    }
-
-    @Test
-    public void testPrefetchCoversTheFrameBytesOnly() throws Exception {
-        // The prefetch reads ahead exactly what the frame stores: each fixed-size column's
-        // page extent, and for a var-size column its aux entries plus its data from the
-        // frame's first row on - never the data of the rows before the frame, which the
-        // data extent starts at. Column tops and parquet frames read nothing.
-        TestUtils.assertMemoryLeak(() -> {
-            final int rowCount = 1_000;
-            final int lo = 300;
-            final int hi = 700;
-            final int[] types = {
-                    ColumnType.LONG, ColumnType.STRING, ColumnType.VARCHAR, ColumnType.VARCHAR,
-                    ColumnType.INT, ColumnType.VARCHAR, ColumnType.DOUBLE, ColumnType.STRING
-            };
-            try (
-                    NativeFrame fixed = new NativeFrame(new int[]{ColumnType.LONG, ColumnType.INT}, rowCount);
-                    MemoryCARWImpl strAux = new MemoryCARWImpl(4_096, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
-                    MemoryCARWImpl strData = new MemoryCARWImpl(4_096, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
-                    MemoryCARWImpl vcAux = new MemoryCARWImpl(4_096, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
-                    MemoryCARWImpl vcData = new MemoryCARWImpl(4_096, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
-                    MemoryCARWImpl inlineAux = new MemoryCARWImpl(4_096, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
-                    MemoryCARWImpl inlineData = new MemoryCARWImpl(4_096, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
-                    QwpResultBatchBuffer buffer = new QwpResultBatchBuffer();
-                    QwpEgressConnSymbolDict dict = new QwpEgressConnSymbolDict()
-            ) {
-                StringTypeDriver.INSTANCE.configureAuxMemO3RSS(strAux);
-                for (int r = 0; r < rowCount; r++) {
-                    if (r % 7 == 0) {
-                        StringTypeDriver.INSTANCE.appendNull(strAux, strData);
-                    } else {
-                        StringTypeDriver.appendValue(strAux, strData, "string value " + r);
-                    }
-                    VarcharTypeDriver.appendValue(
-                            vcAux,
-                            vcData,
-                            r % 5 == 0 ? null : new Utf8String(r % 3 == 0 ? "short" : "a varchar too long to inline " + r)
-                    );
-                    // short enough to sit inline in the aux vector, so the data vector stays empty
-                    VarcharTypeDriver.appendValue(inlineAux, inlineData, new Utf8String("v" + (r % 10)));
-                }
-                Assert.assertEquals(0, inlineData.getAppendOffset());
-
-                // rows [lo, hi) addressed the way the backward page-frame cursor publishes them
-                final AddressedFrame frame = new AddressedFrame(types.length, hi - lo);
-                frame.set(0, fixed.address(0) + 8L * lo, 8L * (hi - lo), 0, 0);
-                setVarSizeColumn(frame, 1, StringTypeDriver.INSTANCE, strAux, strData, lo, hi);
-                setVarSizeColumn(frame, 2, VarcharTypeDriver.INSTANCE, vcAux, vcData, lo, hi);
-                setVarSizeColumn(frame, 3, VarcharTypeDriver.INSTANCE, inlineAux, inlineData, lo, hi);
-                frame.set(4, fixed.address(1) + 4L * lo, 4L * (hi - lo), 0, 0);
-                // column tops: no addresses, only the size hint a top frame publishes
-                frame.set(5, 0, hi - lo, 0, 0);
-                frame.set(6, 0, 8L * (hi - lo), 0, 0);
-                frame.set(7, 0, hi - lo, 0, 0);
-
-                final long strAuxBytes = 8L * (hi - lo);
-                final long strDataBytes = StringTypeDriver.INSTANCE.getDataVectorSizeAt(strAux.addressOf(0), hi - 1)
-                        - StringTypeDriver.INSTANCE.getDataVectorOffset(strAux.addressOf(0), lo);
-                final long vcAuxBytes = 16L * (hi - lo);
-                final long vcDataBytes = VarcharTypeDriver.INSTANCE.getDataVectorSizeAt(vcAux.addressOf(0), hi - 1)
-                        - VarcharTypeDriver.INSTANCE.getDataVectorOffset(vcAux.addressOf(0), lo);
-                Assert.assertTrue(strDataBytes > 0 && strDataBytes < strData.getAppendOffset());
-                Assert.assertTrue(vcDataBytes > 0 && vcDataBytes < vcData.getAppendOffset());
-
-                buffer.beginBatch(columnDefs(types), null, dict);
-                Assert.assertEquals(
-                        8L * (hi - lo) + strAuxBytes + strDataBytes + vcAuxBytes + vcDataBytes + 16L * (hi - lo) + 4L * (hi - lo),
-                        buffer.prefetchPageFrame(frame)
-                );
-                // prefetching changes nothing the batch holds
-                Assert.assertEquals(0, buffer.getRowCount());
-
-                frame.format = PartitionFormat.PARQUET;
-                Assert.assertEquals(0, buffer.prefetchPageFrame(frame));
-            }
-        });
-    }
-
-    @Test
-    public void testPrefetchReadsNothingOutsideThePublishedExtents() throws Exception {
-        // Extents that describe no bytes read nothing, so a frame source that publishes an
-        // empty extent or an aux entry pointing outside the data extent cannot steer the
-        // prefetch out of bounds.
-        TestUtils.assertMemoryLeak(() -> {
-            final int[] types = {ColumnType.VARCHAR, ColumnType.STRING, ColumnType.STRING, ColumnType.LONG};
-            try (
-                    MemoryCARWImpl vcAux = new MemoryCARWImpl(4_096, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
-                    MemoryCARWImpl vcData = new MemoryCARWImpl(4_096, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
-                    MemoryCARWImpl strAux = new MemoryCARWImpl(4_096, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
-                    MemoryCARWImpl strData = new MemoryCARWImpl(4_096, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
-                    QwpResultBatchBuffer buffer = new QwpResultBatchBuffer();
-                    QwpEgressConnSymbolDict dict = new QwpEgressConnSymbolDict()
-            ) {
-                // 100 values too long to inline, then 100 that inline: a frame over the second
-                // hundred has a data extent that ends where its first row's data would start
-                for (int r = 0; r < 200; r++) {
-                    VarcharTypeDriver.appendValue(vcAux, vcData, new Utf8String(r < 100 ? "a varchar too long to inline " + r : "v" + (r % 10)));
-                }
-                StringTypeDriver.INSTANCE.configureAuxMemO3RSS(strAux);
-                for (int r = 0; r < 10; r++) {
-                    StringTypeDriver.appendValue(strAux, strData, "s" + r);
-                }
-                // an aux entry whose data offset is negative
-                Unsafe.putLong(strAux.addressOf(8L * 5), -8);
-
-                final AddressedFrame frame = new AddressedFrame(types.length, 100);
-                setVarSizeColumn(frame, 0, VarcharTypeDriver.INSTANCE, vcAux, vcData, 100, 200);
-                Assert.assertEquals(
-                        VarcharTypeDriver.INSTANCE.getDataVectorOffset(vcAux.addressOf(0), 100),
-                        frame.getPageSize(0)
-                );
-                frame.set(1, strData.addressOf(0), strData.getAppendOffset(), strAux.addressOf(8L * 5), 8L * 5);
-                // an aux address with an empty aux extent
-                frame.set(2, strData.addressOf(0), strData.getAppendOffset(), strAux.addressOf(0), 0);
-                // a fixed-size address with an empty extent
-                frame.set(3, strData.addressOf(0), 0, 0, 0);
-
-                buffer.beginBatch(columnDefs(types), null, dict);
-                // only the aux entries of columns 0 and 1
-                Assert.assertEquals(16L * 100 + 8L * 5, buffer.prefetchPageFrame(frame));
             }
         });
     }
@@ -475,123 +347,12 @@ public class QwpResultBatchBufferBackwardTest {
         }
     }
 
-    private static void setVarSizeColumn(
-            AddressedFrame frame,
-            int column,
-            ColumnTypeDriver driver,
-            MemoryCARWImpl aux,
-            MemoryCARWImpl data,
-            int lo,
-            int hi
-    ) {
-        final long auxBase = aux.addressOf(0);
-        frame.set(
-                column,
-                data.getAppendOffset() > 0 ? data.addressOf(0) : 0,
-                driver.getDataVectorSizeAt(auxBase, hi - 1),
-                auxBase + driver.getAuxVectorOffset(lo),
-                driver.getAuxVectorOffset(hi) - driver.getAuxVectorOffset(lo)
-        );
-    }
-
     private static String unsignedCsv(byte[] bytes) {
         final StringSink sink = new StringSink();
         for (byte b : bytes) {
             sink.put(b & 0xFF).put(',');
         }
         return sink.toString();
-    }
-
-    /**
-     * Page frame whose column addresses and sizes the test sets directly.
-     */
-    private static final class AddressedFrame implements PageFrame {
-        private final long[] auxAddresses;
-        private final long[] auxSizes;
-        private final long[] pageAddresses;
-        private final long[] pageSizes;
-        private final long rowCount;
-        private byte format = PartitionFormat.NATIVE;
-
-        AddressedFrame(int columnCount, long rowCount) {
-            this.rowCount = rowCount;
-            pageAddresses = new long[columnCount];
-            pageSizes = new long[columnCount];
-            auxAddresses = new long[columnCount];
-            auxSizes = new long[columnCount];
-        }
-
-        @Override
-        public long getAuxPageAddress(int columnIndex) {
-            return auxAddresses[columnIndex];
-        }
-
-        @Override
-        public long getAuxPageSize(int columnIndex) {
-            return auxSizes[columnIndex];
-        }
-
-        @Override
-        public int getColumnCount() {
-            return pageAddresses.length;
-        }
-
-        @Override
-        public byte getFormat() {
-            return format;
-        }
-
-        @Override
-        public IndexReader getIndexReader(int columnIndex, int direction) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public long getPageAddress(int columnIndex) {
-            return pageAddresses[columnIndex];
-        }
-
-        @Override
-        public long getPageSize(int columnIndex) {
-            return pageSizes[columnIndex];
-        }
-
-        @Override
-        public int getParquetRowGroup() {
-            return -1;
-        }
-
-        @Override
-        public int getParquetRowGroupHi() {
-            return -1;
-        }
-
-        @Override
-        public int getParquetRowGroupLo() {
-            return -1;
-        }
-
-        @Override
-        public long getPartitionHi() {
-            return rowCount;
-        }
-
-        @Override
-        public int getPartitionIndex() {
-            return 0;
-        }
-
-        @Override
-        public long getPartitionLo() {
-            return 0;
-        }
-
-        void set(int column, long pageAddress, long pageSize, long auxAddress, long auxSize) {
-            pageAddresses[column] = pageAddress;
-            pageSizes[column] = pageSize;
-            auxAddresses[column] = auxAddress;
-            auxSizes[column] = auxSize;
-        }
     }
 
     /**

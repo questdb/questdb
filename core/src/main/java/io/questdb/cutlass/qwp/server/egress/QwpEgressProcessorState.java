@@ -80,6 +80,8 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     public static volatile int defaultMaxDictEntriesOverrideForTest = -1;
     @TestOnly
     public static volatile int defaultMaxDictHeapBytesOverrideForTest = -1;
+    // Reads the frames of a backward stream ahead of the walk down; bound in beginStreamingPageFrame.
+    private final QwpBackwardReadAhead backwardReadAhead;
     private final QwpResultBatchBuffer batchBuffer = new QwpResultBatchBuffer();
     private final BindVariableServiceImpl bindVariableService;
     private final CairoConfiguration cairoConfiguration;
@@ -297,6 +299,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
 
     public QwpEgressProcessorState(CairoConfiguration cairoConfiguration) {
         this.cairoConfiguration = cairoConfiguration;
+        this.backwardReadAhead = new QwpBackwardReadAhead(cairoConfiguration.getFilesFacade());
         this.bindVariableService = new BindVariableServiceImpl(cairoConfiguration);
         // Pick up any test-only default overrides active at construction time
         // so tests that need tiny soft caps don't have to reach into every
@@ -369,6 +372,9 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
             streamingPageFrameRow = 0;
             streamingPageFrameRowHi = frame.getPartitionHi() - frame.getPartitionLo();
             streamingPageFrameIndex++;
+            if (isStreamingPageFrameBackward) {
+                backwardReadAhead.ofFrame(frame, streamingPageFrameRowHi);
+            }
         }
         return streamingCurrentPageFrame;
     }
@@ -497,6 +503,11 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         this.streamingPageFrameRow = 0;
         this.streamingPageFrameRowHi = 0;
         this.isStreamingPageFrameBackward = isBackward;
+        if (isBackward) {
+            backwardReadAhead.of(factory.getMetadata());
+        } else {
+            backwardReadAhead.clear();
+        }
         this.streamingSqlText = sqlText != null ? Chars.toString(sqlText) : null;
         this.streamingActive = true;
         batchBuffer.resetForNewQuery();
@@ -670,6 +681,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     public void endStreaming() {
         streamingActive = false;
         streamingCurrentPageFrame = null;
+        backwardReadAhead.clear();
         final RecordCursor streamingCursor = this.streamingCursor;
         this.streamingCursor = null;
         final PageFrameCursor streamingPageFrameCursor = this.streamingPageFrameCursor;
@@ -724,6 +736,14 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
             cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
         }
         CairoException.rethrowCleanupFailure(cleanupFailure);
+    }
+
+    /**
+     * The read-ahead of a backward page-frame stream, bound to the frame
+     * {@link #advanceToPageFrame} returned last.
+     */
+    public QwpBackwardReadAhead getBackwardReadAhead() {
+        return backwardReadAhead;
     }
 
     public QwpResultBatchBuffer getBatchBuffer() {

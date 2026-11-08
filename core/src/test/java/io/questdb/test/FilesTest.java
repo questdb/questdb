@@ -912,6 +912,54 @@ public class FilesTest {
     }
 
     @Test
+    public void testMadviseWillNeedSplitsTheRangeIntoRequests() throws Exception {
+        // Linux reads at most its readahead size of one MADV_WILLNEED request and drops the
+        // rest, so madviseWillNeed() sends a range as page-aligned requests of at most
+        // 128 KiB. Other platforms send nothing.
+        assertMemoryLeak(() -> {
+            final long fileSize = 1024 * 1024;
+            final File temp = temporaryFolder.newFile();
+            try (Path path = new Path().of(temp.getAbsolutePath())) {
+                final long fdrw = Files.openRW(path.$());
+                try {
+                    Assert.assertTrue(Files.allocate(fdrw, fileSize));
+                } finally {
+                    Files.close(fdrw);
+                }
+                final long fd = Files.openRO(path.$());
+                try {
+                    final long address = Files.mmap(fd, fileSize, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
+                    try {
+                        final boolean isLinux = Os.isLinux();
+                        Assert.assertEquals(isLinux, Files.isMadviseWillNeedSupported());
+                        Assert.assertEquals(isLinux, FilesFacadeImpl.INSTANCE.isMadviseWillNeedSupported());
+                        final long requestSize = 128 * 1024;
+                        Assert.assertEquals(requestSize, Files.MADV_WILLNEED_REQUEST_SIZE);
+                        // the whole file
+                        Assert.assertEquals(isLinux ? 8 : 0, Files.madviseWillNeed(address, fileSize));
+                        Assert.assertEquals(isLinux ? 8 : 0, FilesFacadeImpl.INSTANCE.madviseWillNeed(address, fileSize));
+                        // a range that starts inside a page starts the requests at that page:
+                        // 100 + 300 KiB from the start of the mapping
+                        Assert.assertEquals(isLinux ? 3 : 0, Files.madviseWillNeed(address + 100, 300 * 1024));
+                        // a range that ends on a request boundary
+                        Assert.assertEquals(isLinux ? 2 : 0, Files.madviseWillNeed(address, 2 * requestSize));
+                        Assert.assertEquals(isLinux ? 1 : 0, Files.madviseWillNeed(address + fileSize - 1, 1));
+                        // nothing to ask for
+                        Assert.assertEquals(0, Files.madviseWillNeed(address, 0));
+                        Assert.assertEquals(0, Files.madviseWillNeed(address, -1));
+                        // the advice changes nothing the mapping reads
+                        Assert.assertEquals(0, Unsafe.getByte(address + fileSize - 1));
+                    } finally {
+                        Files.munmap(address, fileSize, MemoryTag.MMAP_DEFAULT);
+                    }
+                } finally {
+                    Files.close(fd);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testMixedIOConcurrent() throws Exception {
         final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
 

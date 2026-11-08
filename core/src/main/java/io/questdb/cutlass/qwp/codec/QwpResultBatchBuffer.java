@@ -39,7 +39,6 @@ import io.questdb.cutlass.qwp.protocol.QwpGorillaEncoder;
 import io.questdb.cutlass.qwp.protocol.QwpVarint;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.std.Decimals;
-import io.questdb.std.Files;
 import io.questdb.std.IntIntHashMap;
 import io.questdb.std.Long256;
 import io.questdb.std.Misc;
@@ -106,9 +105,6 @@ public class QwpResultBatchBuffer implements QuietCloseable {
     // on every probe.
     private int inlineSchemaBytes;
     private int physicalRowCount;
-    // Sum of the bytes prefetchPageFrame loads. Storing it keeps the JIT from dropping
-    // loads whose values nothing else reads; nothing reads it back.
-    private long prefetchSink;
     private int[] qdbTypesArr = EMPTY_INTS;
     private QwpColumnScratch[] scratchesArr = EMPTY_SCRATCHES;
     private int startRow;
@@ -564,58 +560,6 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         return physicalRowCount - startRow;
     }
 
-    /**
-     * Reads the column pages of a NATIVE {@code frame} once, first byte to last, and
-     * returns how many bytes that covered. A backward scan emits every frame from its
-     * last row down, and kernel readahead only follows forward access: walking down
-     * over pages that are not cached faults them in a few at a time, each fault a
-     * synchronous read. Reading the frame forward first lets readahead fetch it in
-     * large requests, so the walk down finds it in page cache. When the frame is
-     * cached already, this costs one load per page.
-     * <p>
-     * Each column covers exactly the frame's own bytes: the page extent of a
-     * fixed-size column; for a var-size column its aux entries, and its data from
-     * where the frame's first row points to the end of the data extent. The page
-     * extents of the frame bound every read.
-     */
-    public long prefetchPageFrame(PageFrame frame) {
-        if (frame.getFormat() != PartitionFormat.NATIVE) {
-            // the stream decodes a parquet frame into memory when it navigates to it
-            return 0;
-        }
-        long bytes = 0;
-        long sink = 0;
-        for (int ci = 0, n = columnCount; ci < n; ci++) {
-            final long pageAddress = frame.getPageAddress(ci);
-            final long pageSize = frame.getPageSize(ci);
-            final int columnType = qdbTypesArr[ci];
-            if (ColumnType.isVarSize(columnType)) {
-                final long auxAddress = frame.getAuxPageAddress(ci);
-                final long auxSize = frame.getAuxPageSize(ci);
-                // a column top publishes no aux entries: the frame stores nothing for it
-                if (auxAddress != 0 && auxSize > 0) {
-                    sink += readPagesForward(auxAddress, auxSize);
-                    bytes += auxSize;
-                    // The data extent starts at the column's first stored row and ends at the
-                    // frame's last row; the frame's own data starts where its first aux entry
-                    // points. Values that all sit inline in the aux vector leave no data.
-                    if (pageAddress != 0) {
-                        final long dataLo = ColumnType.getDriver(columnType).getDataVectorOffset(auxAddress, 0);
-                        if (dataLo >= 0 && dataLo < pageSize) {
-                            sink += readPagesForward(pageAddress + dataLo, pageSize - dataLo);
-                            bytes += pageSize - dataLo;
-                        }
-                    }
-                }
-            } else if (pageAddress != 0 && pageSize > 0) {
-                sink += readPagesForward(pageAddress, pageSize);
-                bytes += pageSize;
-            }
-        }
-        prefetchSink += sink;
-        return bytes;
-    }
-
     public void reset() {
         for (int i = 0, n = scratches.size(); i < n; i++) {
             scratches.getQuick(i).beginBatch(null);
@@ -892,19 +836,6 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         if (precisionBits <= 15) return record.getGeoShort(col);
         if (precisionBits <= 31) return record.getGeoInt(col);
         return record.getGeoLong(col);
-    }
-
-    /**
-     * Loads one byte of every page {@code [address, address + size)} touches, in address
-     * order, and returns their sum. {@code size} must be positive.
-     */
-    private static long readPagesForward(long address, long size) {
-        long sink = 0;
-        for (long p = address, lim = address + size; p < lim; p += Files.PAGE_SIZE) {
-            sink += Unsafe.getByte(p);
-        }
-        // the last byte can sit on one page past the last stride when address is not page-aligned
-        return sink + Unsafe.getByte(address + size - 1);
     }
 
     /**

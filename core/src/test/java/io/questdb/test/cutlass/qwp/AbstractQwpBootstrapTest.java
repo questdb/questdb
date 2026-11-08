@@ -42,11 +42,15 @@ import org.junit.Before;
  * {@link #startFragmented(String...)}, which threads the chunks through
  * {@code DEBUG_HTTP_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE} and
  * {@code DEBUG_HTTP_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE} alongside any extra
- * env vars the test wants to set.
+ * env vars the test wants to set. The same seed picks how the server reads the frames
+ * of a backward stream ahead, see {@link ReadAheadFilesFacade}, so the fuzzers cover
+ * both ways on every platform.
  */
 public abstract class AbstractQwpBootstrapTest extends AbstractBootstrapTest {
 
     private static final Log LOG = LogFactory.getLog(AbstractQwpBootstrapTest.class);
+    // reads the frames of backward streams ahead through MADV_WILLNEED windows, or reads each frame at once
+    protected boolean isReadAheadWillNeed;
     protected int recvChunk;
     protected int sendChunk;
 
@@ -67,6 +71,7 @@ public abstract class AbstractQwpBootstrapTest extends AbstractBootstrapTest {
         // machine, so a finer split adds no coverage. Tests that need a
         // specific 1-byte split pin sendChunk themselves.
         sendChunk = 64 + rnd.nextInt(437);
+        isReadAheadWillNeed = rnd.nextBoolean();
     }
 
     protected long firstBatchTimeoutMs(long baseMs) {
@@ -86,6 +91,6 @@ public abstract class AbstractQwpBootstrapTest extends AbstractBootstrapTest {
         all[2] = PropertyKey.DEBUG_HTTP_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE.getEnvVarName();
         all[3] = Integer.toString(sendChunk);
         System.arraycopy(extra, 0, all, 4, extra.length);
-        return startWithEnvVariables(all);
+        return startWithEnvVariables(new ReadAheadFilesFacade(isReadAheadWillNeed), all);
     }
 }
