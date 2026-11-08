@@ -15147,12 +15147,9 @@ public class JoinTest extends AbstractCairoTest {
                         .noLeakCheck()
                         .fullFatJoins()
                         .expectSize()
+                        .withPlanContaining("Hash Left Outer Join\n", "condition: b.k=a.w", timeSeriesJoin)
+                        .withPlanNotContaining("Nested Loop")
                         .returns(expected);
-                printSql("EXPLAIN " + query, true);
-                TestUtils.assertContains(sink, "Hash Left Outer Join\n");
-                TestUtils.assertContains(sink, "condition: b.k=a.w");
-                TestUtils.assertContains(sink, timeSeriesJoin);
-                Assert.assertFalse(sink.toString(), Chars.contains(sink, "Nested Loop"));
             }
         });
     }
