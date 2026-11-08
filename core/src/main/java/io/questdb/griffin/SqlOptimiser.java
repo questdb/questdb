@@ -236,10 +236,17 @@ public class SqlOptimiser implements Mutable {
     private final IntList deferredInnerKeyEdges = new IntList();
     private final IntHashSet deletedContexts = new IntHashSet();
     private final ObjectPool<ExpressionNode> expressionNodePool;
-    // Scratch state of runFromModelFirst: the models that model 0 waits for, by join model index the
-    // position at which it places them, or -1, and the models in the order it places them.
+    // Scratch state of runFromModelFirst: the models that model 0 waits for, and by join model index the
+    // position at which it places them, or -1.
     private final IntList fromModelAncestorRanks = new IntList();
     private final IntHashSet fromModelAncestors = new IntHashSet();
+    // Scratch state of runFromModelFirst, by join model index: the first link of the list of the models
+    // that a key or a deferred edge links to the model, or -1, and true once it places one of them.
+    private final IntList fromModelLinkHeads = new IntList();
+    private final BoolList fromModelLinkedToPlaced = new BoolList();
+    // (linked model index, next link) pairs of the lists that fromModelLinkHeads starts; -1 ends a list
+    private final IntList fromModelLinks = new IntList();
+    // Scratch state of runFromModelFirst: the models in the order it places them.
     private final IntList fromModelPlacement = new IntList();
     private final FunctionParser functionParser;
     private final ObjectPool<WindowExpression> windowExpressionPool;
@@ -435,6 +442,10 @@ public class SqlOptimiser implements Mutable {
     // the origin that resolveConflictingKeys gives the next key it derives, see keyOrigins
     private int derivedKeyOrigin;
     private ObjList<JoinContext> emittedJoinClauses;
+    // The number of links, see fromModelLinkHeads, that runFromModelFirst has added and followed over the
+    // life of the optimiser; it adds each link once and follows it when it places the model of the list.
+    // clear() keeps it, so tests read the delta around a compile.
+    private long fromModelLinkReads;
     // True when joinModelMaxRefs, joinModelReaderHeads and joinModelReaderLinks hold what every ON clause of
     // the level that optimiseJoins orders reads: constrainRightAndFullJoinsAfterPrefix resolved them all.
     private boolean hasJoinModelReaders;
@@ -666,6 +677,11 @@ public class SqlOptimiser implements Mutable {
         constNameToToken.clear();
         tempExprs.clear();
         tempIntList.clear();
+    }
+
+    @TestOnly
+    public long getFromModelLinkReadsForTesting() {
+        return fromModelLinkReads;
     }
 
     public FunctionFactoryCache getFunctionFactoryCache() {
@@ -8591,24 +8607,6 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    // Returns true when a key or a deferred edge links the candidate to an ancestor that runFromModelFirst
-    // placed.
-    private boolean isLinkedToPlaced(ObjList<IQueryModel> joinModels, IntHashSet ancestors, int candidate) {
-        final JoinContext cc = joinModels.getQuick(candidate).getJoinContext();
-        for (int i = 0, n = ancestors.size(); i < n; i++) {
-            final int other = ancestors.get(i);
-            if (other == candidate || fromModelAncestorRanks.getQuick(other) == -1) {
-                continue;
-            }
-            final JoinContext oc = joinModels.getQuick(other).getJoinContext();
-            if ((cc != null && hasJoinKey(cc, other)) || (oc != null && hasJoinKey(oc, candidate))
-                    || isDeferredInnerKeyEdge(other, candidate) || isDeferredInnerKeyEdge(candidate, other)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     /**
      * Checks if a literal expression references the timestamp column, either directly or through
      * nested model aliases. This handles the case where qualified column references like "t.timestamp"
@@ -9096,6 +9094,21 @@ public class SqlOptimiser implements Mutable {
         return alias != null ? lateralCountTemplateMap.get(alias) : null;
     }
 
+    // Adds a link between two models that a key or a deferred edge links to the lists of both, see
+    // fromModelLinkHeads. A link that reaches a model that model 0 does not wait for has no effect, as
+    // runFromModelFirst places only the models that model 0 waits for.
+    private void linkFromModelAncestors(int index, int otherIndex) {
+        if (index != otherIndex) {
+            fromModelLinkReads += 2;
+            fromModelLinks.add(otherIndex);
+            fromModelLinks.add(fromModelLinkHeads.getQuick(index));
+            fromModelLinkHeads.setQuick(index, fromModelLinks.size() - 2);
+            fromModelLinks.add(index);
+            fromModelLinks.add(fromModelLinkHeads.getQuick(otherIndex));
+            fromModelLinkHeads.setQuick(otherIndex, fromModelLinks.size() - 2);
+        }
+    }
+
     // Links the emitted clauses that no other ordering edge links. Left unlinked, such a clause leaves
     // doReorderTables unable to order the level. A clause that processEmittedJoinClauses merges into the
     // slave's context later can replace the lone clause, and mergeContexts then drops the lone clause's
@@ -9156,6 +9169,14 @@ public class SqlOptimiser implements Mutable {
         node.lhs = lhs;
         node.rhs = rhs;
         return node;
+    }
+
+    // Marks the models that a key or a deferred edge links to the model that runFromModelFirst placed.
+    private void markLinkedToPlaced(int index) {
+        for (int link = fromModelLinkHeads.getQuick(index); link != -1; link = fromModelLinks.getQuick(link + 1)) {
+            fromModelLinkReads++;
+            fromModelLinkedToPlaced.setQuick(fromModelLinks.getQuick(link), true);
+        }
     }
 
     /**
@@ -17947,12 +17968,35 @@ public class SqlOptimiser implements Mutable {
             }
         }
 
+        // The loop below changes neither the keys nor the deferred edges, so a model stays linked to a
+        // placed one from the placement of the first model that a key or a deferred edge links it to. The
+        // lists give each placed model the models that it links to, so the loop reads each link twice, when
+        // it places either end, instead of comparing every model it has not placed with every placed one.
+        fromModelLinkHeads.setAll(joinModels.size(), -1);
+        fromModelLinks.clear();
+        for (int i = 0, n = ancestors.size(); i < n; i++) {
+            final int index = ancestors.get(i);
+            final JoinContext jc = joinModels.getQuick(index).getJoinContext();
+            if (jc != null) {
+                for (int k = 0, m = jc.aIndexes.size(); k < m; k++) {
+                    linkFromModelAncestors(index, jc.aIndexes.getQuick(k));
+                    linkFromModelAncestors(index, jc.bIndexes.getQuick(k));
+                }
+            }
+        }
+        for (int i = 0, n = deferredInnerKeyEdges.size(); i < n; i += 2) {
+            linkFromModelAncestors(deferredInnerKeyEdges.getQuick(i), deferredInnerKeyEdges.getQuick(i + 1));
+        }
+
         final IntList placement = fromModelPlacement;
         final IntList rank = fromModelAncestorRanks;
+        final BoolList linkedToPlaced = fromModelLinkedToPlaced;
         placement.clear();
         placement.add(0);
         rank.setAll(joinModels.size(), -1);
         rank.setQuick(0, 0);
+        linkedToPlaced.setAll(joinModels.size(), false);
+        markLinkedToPlaced(0);
         while (placement.size() < ancestors.size()) {
             int next = -1;
             boolean isNextLinked = false;
@@ -17962,7 +18006,7 @@ public class SqlOptimiser implements Mutable {
                     continue;
                 }
                 // a model that no key links to a placed model would join as a CROSS join, so it waits
-                final boolean isLinked = isLinkedToPlaced(joinModels, ancestors, candidate);
+                final boolean isLinked = linkedToPlaced.get(candidate);
                 if (next == -1 || (isLinked && !isNextLinked)
                         || (isLinked == isNextLinked && getJoinModelPriority(candidate) < getJoinModelPriority(next))) {
                     next = candidate;
@@ -17971,6 +18015,7 @@ public class SqlOptimiser implements Mutable {
             }
             rank.setQuick(next, placement.size());
             placement.add(next);
+            markLinkedToPlaced(next);
         }
 
         final ObjList<JoinContext> rooted = rootedJoinContexts;

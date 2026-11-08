@@ -767,6 +767,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return engine;
     }
 
+    @TestOnly
+    public long getFromModelLinkReadsForTesting() {
+        return optimiser.getFromModelLinkReadsForTesting();
+    }
+
     public FunctionFactoryCache getFunctionFactoryCache() {
         return functionParser.getFunctionFactoryCache();
     }
