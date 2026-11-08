@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.parquet;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.PartitionFormat;
@@ -124,12 +125,15 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
             StringSink partName = new StringSink();
             try (TableReader reader = engine.getReader(walTable)) {
                 Assert.assertEquals("expected exactly 1 partition", 1, reader.getPartitionCount());
-                partitionTs = reader.getPartitionTimestampByIndex(0);
+                final int timestampType = reader.getMetadata().getTimestampType();
+                final long partitionTsNative = reader.getPartitionTimestampByIndex(0);
+                // FuzzRunner.generateTransactions() takes micros regardless of the table timestamp type
+                partitionTs = ColumnType.getTimestampDriver(timestampType).toMicros(partitionTsNative);
                 PartitionBy.setSinkForPartition(
                         partName,
-                        reader.getMetadata().getTimestampType(),
+                        timestampType,
                         reader.getPartitionedBy(),
-                        partitionTs
+                        partitionTsNative
                 );
             }
             execute("ALTER TABLE " + walTable + " CONVERT PARTITION TO PARQUET LIST '" + partName + "'");
@@ -292,12 +296,15 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
             StringSink partName = new StringSink();
             try (TableReader reader = engine.getReader(walTable)) {
                 Assert.assertTrue("expected at least 2 partitions", reader.getPartitionCount() >= 2);
-                partitionTs = reader.getPartitionTimestampByIndex(0);
+                final int timestampType = reader.getMetadata().getTimestampType();
+                final long partitionTsNative = reader.getPartitionTimestampByIndex(0);
+                // FuzzRunner.generateTransactions() takes micros regardless of the table timestamp type
+                partitionTs = ColumnType.getTimestampDriver(timestampType).toMicros(partitionTsNative);
                 PartitionBy.setSinkForPartition(
                         partName,
-                        reader.getMetadata().getTimestampType(),
+                        timestampType,
                         reader.getPartitionedBy(),
-                        partitionTs
+                        partitionTsNative
                 );
             }
             execute("ALTER TABLE " + walTable + " CONVERT PARTITION TO PARQUET LIST '" + partName + "'");
@@ -462,12 +469,15 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
             StringSink partName = new StringSink();
             try (TableReader reader = engine.getReader(walTable)) {
                 Assert.assertTrue("expected at least 2 partitions", reader.getPartitionCount() >= 2);
-                partitionTs = reader.getPartitionTimestampByIndex(0);
+                final int timestampType = reader.getMetadata().getTimestampType();
+                final long partitionTsNative = reader.getPartitionTimestampByIndex(0);
+                // FuzzRunner.generateTransactions() takes micros regardless of the table timestamp type
+                partitionTs = ColumnType.getTimestampDriver(timestampType).toMicros(partitionTsNative);
                 PartitionBy.setSinkForPartition(
                         partName,
-                        reader.getMetadata().getTimestampType(),
+                        timestampType,
                         reader.getPartitionedBy(),
-                        partitionTs
+                        partitionTsNative
                 );
             }
             execute("ALTER TABLE " + walTable + " CONVERT PARTITION TO PARQUET LIST '" + partName + "'");
@@ -591,12 +601,15 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
             StringSink partName = new StringSink();
             try (TableReader reader = engine.getReader(walTable)) {
                 Assert.assertTrue("expected at least 2 partitions", reader.getPartitionCount() >= 2);
-                partitionTs = reader.getPartitionTimestampByIndex(0);
+                final int timestampType = reader.getMetadata().getTimestampType();
+                final long partitionTsNative = reader.getPartitionTimestampByIndex(0);
+                // FuzzRunner.generateTransactions() takes micros regardless of the table timestamp type
+                partitionTs = ColumnType.getTimestampDriver(timestampType).toMicros(partitionTsNative);
                 PartitionBy.setSinkForPartition(
                         partName,
-                        reader.getMetadata().getTimestampType(),
+                        timestampType,
                         reader.getPartitionedBy(),
-                        partitionTs
+                        partitionTsNative
                 );
             }
             execute("ALTER TABLE " + walTable + " CONVERT PARTITION TO PARQUET LIST '" + partName + "'");
@@ -751,12 +764,15 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
             StringSink partName = new StringSink();
             try (TableReader reader = engine.getReader(walTable)) {
                 Assert.assertTrue("expected at least 2 partitions", reader.getPartitionCount() >= 2);
-                partitionTs = reader.getPartitionTimestampByIndex(0);
+                final int timestampType = reader.getMetadata().getTimestampType();
+                final long partitionTsNative = reader.getPartitionTimestampByIndex(0);
+                // FuzzRunner.generateTransactions() takes micros regardless of the table timestamp type
+                partitionTs = ColumnType.getTimestampDriver(timestampType).toMicros(partitionTsNative);
                 PartitionBy.setSinkForPartition(
                         partName,
-                        reader.getMetadata().getTimestampType(),
+                        timestampType,
                         reader.getPartitionedBy(),
-                        partitionTs
+                        partitionTsNative
                 );
             }
             execute("ALTER TABLE " + walTable + " CONVERT PARTITION TO PARQUET LIST '" + partName + "'");
