@@ -80,6 +80,7 @@ import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.PerWorkerFunctionList;
 import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.griffin.engine.functions.bool.AndFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.BooleanSubQueryFunction;
 import io.questdb.griffin.engine.functions.cast.CastByteToCharFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastByteToDecimalFunctionFactory;
@@ -432,6 +433,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     public static final int GKK_NANO_HOUR_INT = 2;
     public static final int GKK_VANILLA_INT = 0;
     public static final boolean[] joinsRequiringTimestamp = new boolean[IQueryModel.JOIN_MAX + 1];
+    private static final AndFunctionFactory AND_FUNCTION_FACTORY = new AndFunctionFactory();
     // Each grouping set needs one map for the owner and one for each worker.
     private static final int ASYNC_GROUPING_SETS_MAP_BUDGET = 256;
     private static final VectorAggregateFunctionConstructor COUNT_CONSTRUCTOR = (keyKind, _, _, _) -> new CountVectorAggregateFunction(keyKind);
@@ -15713,6 +15715,43 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return slaveKeyColumns;
     }
 
+    // Compiles the condition, and returns it when it has the same value however often it runs for one row: it reads
+    // no random value, nor one that changes during the execution, such as systimestamp(). rnd_interval() reports
+    // isRandom() only, so stability alone does not rule out a random value. Frees the condition and returns null
+    // otherwise.
+    private @Nullable Function compileStableJoinCondition(
+            ExpressionNode condition,
+            RecordMetadata joinMetadata,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        final Function function = compileJoinFilter(condition, joinMetadata, executionContext);
+        if (function.isStableWithinExecution() && !function.isRandom()) {
+            return function;
+        }
+        Misc.free(function);
+        return null;
+    }
+
+    // The AND of two compiled conditions, which owns both once it returns: AndFunctionFactory makes the function that
+    // FunctionParser compiles for lhs AND rhs, and folds a constant side. Returns rhs when lhs is null.
+    private Function conjoin(
+            @Nullable Function lhs,
+            Function rhs,
+            int position,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        if (lhs == null) {
+            return rhs;
+        }
+        final ObjList<Function> args = new ObjList<>(2);
+        args.add(lhs);
+        args.add(rhs);
+        final IntList argPositions = new IntList(2);
+        argPositions.add(position);
+        argPositions.add(position);
+        return AND_FUNCTION_FACTORY.newInstance(position, args, argPositions, configuration, executionContext);
+    }
+
     private ExpressionNode conjoin(@Nullable ExpressionNode lhs, ExpressionNode rhs) {
         if (lhs == null) {
             return rhs;
@@ -16187,22 +16226,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return limit != Numbers.LONG_NULL && limit < 0;
     }
 
-    // True when the condition has the same value however often it runs for one row: it reads no random value,
-    // nor one that changes during the execution, such as systimestamp(). rnd_interval() reports isRandom()
-    // only, so stability alone does not rule out a random value.
-    private boolean isStableJoinCondition(
-            ExpressionNode condition,
-            RecordMetadata joinMetadata,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        final Function function = compileJoinFilter(deepClone(expressionNodePool, condition), joinMetadata, executionContext);
-        try {
-            return function.isStableWithinExecution() && !function.isRandom();
-        } finally {
-            Misc.free(function);
-        }
-    }
-
     // Stable partition of the join key positions: first occurrences of each slave column, then repeats.
     private void moveRepeatedSlaveKeysLast() {
         final int n = listColumnFilterA.getColumnCount();
@@ -16243,7 +16266,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     // the filter after the join that reads no other master column, and has one value per row however often it
     // runs, into the join, see HashJoinLightRecordCursorFactory.setSlaveFilter(). A conjunct that reads no
     // column stays, as the filter after the join evaluates a runtime constant once per execution. Returns the
-    // rest of the filter, or null when no conjunct stays.
+    // rest of the filter, or null when no conjunct stays. The join keeps the function that decided that a conjunct
+    // moves, so such a conjunct compiles once; one that this check finds unstable compiles again, in the filter after
+    // the join.
     private @Nullable ExpressionNode moveSlaveConditionsIntoHashJoin(
             HashJoinLightRecordCursorFactory hashJoin,
             ExpressionNode filterExpr,
@@ -16253,23 +16278,33 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final RecordMetadata joinMetadata = hashJoin.getMetadata();
         final ObjList<ExpressionNode> conjuncts = new ObjList<>();
         collectAndConjuncts(filterExpr, conjuncts);
-        ExpressionNode slaveFilterExpr = null;
         ExpressionNode keptFilterExpr = null;
-        for (int i = 0, n = conjuncts.size(); i < n; i++) {
-            final ExpressionNode conjunct = conjuncts.getQuick(i);
-            final ExpressionNode rewritten = deepClone(expressionNodePool, conjunct);
-            if (readsColumn(conjunct)
-                    && rewriteMasterKeysOntoSlave(rewritten, joinMetadata, slaveKeyColumns)
-                    && isStableJoinCondition(rewritten, joinMetadata, executionContext)) {
-                slaveFilterExpr = conjoin(slaveFilterExpr, rewritten);
-            } else {
-                keptFilterExpr = conjoin(keptFilterExpr, conjunct);
+        // the AND of the conjuncts that moved so far, and the next one until that AND owns it
+        Function slaveFilter = null;
+        Function condition = null;
+        try {
+            for (int i = 0, n = conjuncts.size(); i < n; i++) {
+                final ExpressionNode conjunct = conjuncts.getQuick(i);
+                final ExpressionNode rewritten = deepClone(expressionNodePool, conjunct);
+                condition = readsColumn(conjunct) && rewriteMasterKeysOntoSlave(rewritten, joinMetadata, slaveKeyColumns)
+                        ? compileStableJoinCondition(rewritten, joinMetadata, executionContext)
+                        : null;
+                if (condition == null) {
+                    keptFilterExpr = conjoin(keptFilterExpr, conjunct);
+                } else {
+                    slaveFilter = conjoin(slaveFilter, condition, rewritten.position, executionContext);
+                    condition = null;
+                }
             }
+        } catch (Throwable th) {
+            Misc.free(condition, th);
+            Misc.free(slaveFilter, th);
+            throw th;
         }
-        if (slaveFilterExpr == null) {
+        if (slaveFilter == null) {
             return filterExpr;
         }
-        hashJoin.setSlaveFilter(compileJoinFilter(slaveFilterExpr, joinMetadata, executionContext));
+        hashJoin.setSlaveFilter(slaveFilter);
         return keptFilterExpr;
     }
 

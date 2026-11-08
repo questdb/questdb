@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.engine.functions.test.TestCloseCounterFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestThrowingFilterFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestTimestampCounterFactory;
 import io.questdb.std.Numbers;
@@ -268,27 +269,26 @@ public class HashJoinKeyConditionTest extends AbstractCairoTest {
         });
     }
 
-    // The code generator compiles a condition that moves into the join twice: once to check that it has one
-    // value per row however often it runs, and once for the join. A failure in either fails the query and
-    // closes what it built.
+    // The code generator compiles a condition that moves into the join once, to check that it has one value per row
+    // however often it runs, and the join keeps that function. A failure to compile a conjunct fails the query and
+    // frees what the compile built: the conditions that moved before it, which their AND owns, and, when the filter
+    // after the join fails, the join with the conditions it took.
     @Test
     public void testCompileFailure() throws Exception {
         node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
         assertMemoryLeak(() -> {
             createTables();
             final String sql = "SELECT m.id, s.id FROM m JOIN s ON s.k = m.k WHERE test_throwing_filter() OR s.v > m.k ORDER BY 1, 2";
-            for (int call = 1; call <= 2; call++) {
-                TestThrowingFilterFunctionFactory.reset(call);
-                assertExceptionNoLeakCheck(sql, sql.indexOf("test_throwing_filter"), "test_throwing_filter: configured to throw on call " + call);
-                Assert.assertEquals(call - 1, TestThrowingFilterFunctionFactory.CLOSE_COUNT.get());
-            }
-            TestThrowingFilterFunctionFactory.reset(-1);
-            try (RecordCursorFactory factory = select(sql)) {
-                Assert.assertEquals(2, TestThrowingFilterFunctionFactory.CONSTRUCT_COUNT.get());
-                Assert.assertEquals(1, TestThrowingFilterFunctionFactory.CLOSE_COUNT.get());
-                Assert.assertNotNull(factory);
-            }
-            Assert.assertEquals(2, TestThrowingFilterFunctionFactory.CLOSE_COUNT.get());
+            assertCompileFailures(sql);
+            // three conjuncts that move: the third fails once the AND of the first two owns them
+            assertCompileFailures("SELECT m.id, s.id FROM m JOIN s ON s.k = m.k "
+                    + "WHERE (test_throwing_filter() OR s.v > m.k + test_close_counter('0')::INT) "
+                    + "AND (test_throwing_filter() OR s.v < m.k + test_close_counter('8')::INT) "
+                    + "AND (test_throwing_filter() OR s.v <> m.k + test_close_counter('5')::INT)");
+            // m.y is no key: the second conjunct stays, and fails in the filter after the join, which took the first
+            assertCompileFailures("SELECT m.id, s.id FROM m JOIN s ON s.k = m.k "
+                    + "WHERE (test_throwing_filter() OR s.v > m.k + test_close_counter('0')::INT) "
+                    + "AND (test_throwing_filter() OR s.v * 10 > m.y)");
             // test_throwing_filter() is true, so every row of the join passes
             assertQuery(sql)
                     .noLeakCheck()
@@ -376,6 +376,108 @@ public class HashJoinKeyConditionTest extends AbstractCairoTest {
                             2\t11
                             3\t11
                             """);
+        });
+    }
+
+    // Each conjunct that moves into the join compiles once: the join keeps the function that decided that it moves,
+    // and ANDs them as FunctionParser does, one function for up to four conjuncts, so here the AND of the first four
+    // and the fifth. A conjunct that stays because it is random compiles twice, once to find that out and once after
+    // the join: rnd_int() is not stable, rnd_interval() is stable but random. One that reads a master column that is
+    // no key, or no column, compiles once, after the join, as does the whole filter when no conjunct moves.
+    // test_close_counter('<n>')::INT is n, and the random terms are 0. Each conjunct that moves drops one s row that
+    // no other drops: v >= 2 drops row 10, v < 9 row 11, v <> 6 row 12, id <> 13 row 13 and v + id < 21 row 14
+    // (8 + 14). Rows 15 and 16 pass every conjunct, and every row passes the conjuncts that stay.
+    @Test
+    public void testConjunctsCompileOnce() throws Exception {
+        node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (id INT, k INT, y INT)");
+            execute("CREATE TABLE s (id INT, k INT, v INT)");
+            execute("INSERT INTO m VALUES (1, 1, 0)");
+            execute("INSERT INTO s VALUES (10, 1, 1), (11, 1, 9), (12, 1, 6), (13, 1, 4), (14, 1, 8), (15, 1, 2), (16, 1, 3)");
+            final String keptConjuncts = """
+                    s.v < m.k + test_close_counter('99')::INT + rnd_int(0, 1, 0) * 0
+                    AND s.v < m.k + test_close_counter('98')::INT + interval_start(rnd_interval())::LONG * 0
+                    AND s.v > m.y - test_close_counter('50')::INT""";
+            final String keptFilter = "Filter filter: (s.v<m.k+test_close_counter('99')::int+rnd_int(0,1,0)*0"
+                    + " and s.v<m.k+test_close_counter('98')::int+interval_start(rnd_interval())::long*0"
+                    + " and m.y-test_close_counter('50')::int<s.v and 0<test_close_counter('7')::int)";
+            final String sql = """
+                    SELECT m.id, s.id FROM m JOIN s ON s.k = m.k AND test_close_counter('7')::INT > 0
+                    WHERE s.v >= m.k + test_close_counter('1')::INT
+                    AND s.v < m.k + test_close_counter('8')::INT
+                    AND s.v <> m.k + test_close_counter('5')::INT
+                    AND s.id <> m.k + test_close_counter('12')::INT
+                    AND s.v + s.id < m.k + test_close_counter('20')::INT
+                    AND %s
+                    ORDER BY 1, 2""".formatted(keptConjuncts);
+            assertCompiledFunctions(sql, new String[]{"1", "8", "5", "12", "20", "50", "7"}, new String[]{"99", "98"});
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .withPlanContaining(
+                            "filter: ((s.v>=s.k+test_close_counter('1')::int and s.v<s.k+test_close_counter('8')::int"
+                                    + " and s.v!=s.k+test_close_counter('5')::int and s.id!=s.k+test_close_counter('12')::int)"
+                                    + " and s.v+s.id<s.k+test_close_counter('20')::int)",
+                            keptFilter
+                    )
+                    .returns("""
+                            id\tid1
+                            1\t15
+                            1\t16
+                            """);
+            final String keptOnlySql = "SELECT m.id, s.id FROM m JOIN s ON s.k = m.k AND test_close_counter('7')::INT > 0 WHERE "
+                    + keptConjuncts + " ORDER BY 1, 2";
+            assertCompiledFunctions(keptOnlySql, new String[]{"50", "7"}, new String[]{"99", "98"});
+            assertQuery(keptOnlySql)
+                    .noLeakCheck()
+                    .withPlanContaining(keptFilter)
+                    .withPlanNotContaining("Hash Join Light\n              condition: s.k=m.k\n              filter:")
+                    .returns("""
+                            id\tid1
+                            1\t10
+                            1\t11
+                            1\t12
+                            1\t13
+                            1\t14
+                            1\t15
+                            1\t16
+                            """);
+        });
+    }
+
+    // A conjunct that reads columns but compiles to a constant moves into the join as well, and the join ANDs it
+    // as FunctionParser does: a TRUE conjunct drops out, before or after another, and a FALSE one makes the AND
+    // FALSE. s.v < m.k + 8 keeps s rows 10 (v 1), 11 (v 4) and 13 (v 6) for m rows 1 and 2 (k = 1), and s row 14
+    // (v 3) for m row 3 (k = 2).
+    @Test
+    public void testConstantConjuncts() throws Exception {
+        assertMemoryLeak(() -> {
+            createConjunctTables();
+            final String rows = """
+                    id\tid1
+                    1\t10
+                    1\t11
+                    1\t13
+                    2\t10
+                    2\t11
+                    2\t13
+                    3\t14
+                    """;
+            assertQuery("SELECT m.id, s.id FROM m JOIN s ON s.k = m.k WHERE (s.v > m.k OR true) AND s.v < m.k + 8 ORDER BY 1, 2")
+                    .noLeakCheck()
+                    .withPlanContaining("filter: s.v<s.k+8")
+                    .withPlanNotContaining("Filter filter")
+                    .returns(rows);
+            assertQuery("SELECT m.id, s.id FROM m JOIN s ON s.k = m.k WHERE s.v < m.k + 8 AND (s.v > m.k OR true) ORDER BY 1, 2")
+                    .noLeakCheck()
+                    .withPlanContaining("filter: s.v<s.k+8")
+                    .withPlanNotContaining("Filter filter")
+                    .returns(rows);
+            assertQuery("SELECT m.id, s.id FROM m JOIN s ON s.k = m.k WHERE s.v < m.k + 8 AND (s.v > m.k AND false OR false) ORDER BY 1, 2")
+                    .noLeakCheck()
+                    .withPlanContaining("filter: false")
+                    .withPlanNotContaining("Filter filter")
+                    .returns("id\tid1\n");
         });
     }
 
@@ -703,6 +805,57 @@ public class HashJoinKeyConditionTest extends AbstractCairoTest {
                 Assert.assertEquals(sql + ", skip " + skip, rowCount - skip, counter.get());
             }
         }
+    }
+
+    // Compiles the query with each of its test_throwing_filter() calls failing in turn, in the order of the query,
+    // which is the order in which they compile, once each. Checks the error, and that the compile stopped and freed
+    // the function of each call before the failing one, and each test_close_counter() function once. Then compiles
+    // the query with every call succeeding, and checks that the factory owns the function of each call, and frees it.
+    private static void assertCompileFailures(String sql) throws Exception {
+        int callCount = 0;
+        for (int position = sql.indexOf("test_throwing_filter"); position > -1; position = sql.indexOf("test_throwing_filter", position + 1)) {
+            callCount++;
+            TestThrowingFilterFunctionFactory.reset(callCount);
+            TestCloseCounterFunctionFactory.reset();
+            assertExceptionNoLeakCheck(sql, position, "test_throwing_filter: configured to throw on call " + callCount);
+            Assert.assertEquals(sql, callCount, TestThrowingFilterFunctionFactory.CONSTRUCT_COUNT.get());
+            Assert.assertEquals(sql, callCount - 1, TestThrowingFilterFunctionFactory.CLOSE_COUNT.get());
+            Assert.assertEquals(sql, TestCloseCounterFunctionFactory.created(), TestCloseCounterFunctionFactory.closeCalls());
+            Assert.assertEquals(sql, 0, TestCloseCounterFunctionFactory.multiClosed());
+        }
+        TestThrowingFilterFunctionFactory.reset(-1);
+        TestCloseCounterFunctionFactory.reset();
+        try (RecordCursorFactory ignore = select(sql)) {
+            Assert.assertEquals(sql, callCount, TestThrowingFilterFunctionFactory.CONSTRUCT_COUNT.get());
+            Assert.assertEquals(sql, 0, TestThrowingFilterFunctionFactory.CLOSE_COUNT.get());
+        }
+        Assert.assertEquals(sql, callCount, TestThrowingFilterFunctionFactory.CLOSE_COUNT.get());
+        Assert.assertEquals(sql, TestCloseCounterFunctionFactory.created(), TestCloseCounterFunctionFactory.closeCalls());
+        Assert.assertEquals(sql, 0, TestCloseCounterFunctionFactory.multiClosed());
+    }
+
+    // Compiles the query, and checks that it made one test_close_counter('<tag>') function for each of onceTags, and
+    // two for each of twiceTags, one of which it freed, and no other; and that the factory frees the rest, once each.
+    private static void assertCompiledFunctions(String sql, String[] onceTags, String[] twiceTags) throws Exception {
+        TestCloseCounterFunctionFactory.reset();
+        try (RecordCursorFactory ignore = select(sql)) {
+            for (String tag : onceTags) {
+                Assert.assertEquals(tag, 1, TestCloseCounterFunctionFactory.created(tag));
+                Assert.assertEquals(tag, 0, TestCloseCounterFunctionFactory.closeCalls(tag));
+            }
+            for (String tag : twiceTags) {
+                Assert.assertEquals(tag, 2, TestCloseCounterFunctionFactory.created(tag));
+                Assert.assertEquals(tag, 1, TestCloseCounterFunctionFactory.closeCalls(tag));
+            }
+            Assert.assertEquals(onceTags.length + 2 * twiceTags.length, TestCloseCounterFunctionFactory.created());
+        }
+        for (String tag : onceTags) {
+            Assert.assertEquals(tag, 1, TestCloseCounterFunctionFactory.closeCalls(tag));
+        }
+        for (String tag : twiceTags) {
+            Assert.assertEquals(tag, 2, TestCloseCounterFunctionFactory.closeCalls(tag));
+        }
+        Assert.assertEquals(0, TestCloseCounterFunctionFactory.multiClosed());
     }
 
     // Reads the rows of the query once, and checks the number of evaluations of test_timestamp_counter() and of rows
