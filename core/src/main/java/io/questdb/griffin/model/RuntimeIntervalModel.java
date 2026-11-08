@@ -558,10 +558,10 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
             try {
                 IntervalUtils.parseTickExprAndIntersect(timestampDriver, configuration, strInterval, outIntervals, 0, sink, true);
             } catch (SqlException e) {
-                return true;
+                return false;
             }
-            return false;
+            return true;
         }
-        return true;
+        return false;
     }
 }
