@@ -52,6 +52,8 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.Queue;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -149,17 +151,22 @@ public class QwpEgressBackwardScanTest extends AbstractReusedServerQwpEgressTest
     @Test
     public void testBackwardScanMapsPartitionsWithoutSequentialHint() throws Exception {
         // MADV_SEQUENTIAL points readahead forward, the wrong way for a backward scan, so
-        // only forward streams map the partitions they open with it.
+        // only forward streams open their partitions under the sequential scan profile,
+        // which maps them with it. Only Linux has the hint: elsewhere POSIX_MADV_SEQUENTIAL
+        // is -1, the "no advice" value every unhinted mapping passes to madvise() too.
+        final boolean hasSequentialHint = Files.POSIX_MADV_SEQUENTIAL != -1;
         final AtomicInteger sequentialHints = new AtomicInteger();
         final FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public void madvise(long address, long len, int advise) {
-                if (advise == Files.POSIX_MADV_SEQUENTIAL) {
+                if (hasSequentialHint && advise == Files.POSIX_MADV_SEQUENTIAL) {
                     sequentialHints.incrementAndGet();
                 }
                 super.madvise(address, len, advise);
             }
         };
+        // the partitions of t a query opens, each with the scan profile it opens under
+        final Queue<String> partitionOpens = new ConcurrentLinkedQueue<>();
         TestUtils.assertMemoryLeak(() -> {
             try (TestServerMain serverMain = startServerWithRetry(() -> {
                 final TestServerMain server = new TestServerMain(new Bootstrap(new DefaultBootstrapConfiguration() {
@@ -169,6 +176,12 @@ public class QwpEgressBackwardScanTest extends AbstractReusedServerQwpEgressTest
                     }
                 }, Bootstrap.getServerMainArgs(root)));
                 try {
+                    // set before start(), so every worker that creates a reader sees it
+                    server.getEngine().setReaderListener((reader, partitionIndex) -> {
+                        if ("t".equals(reader.getTableToken().getTableName())) {
+                            partitionOpens.add(partitionIndex + ":" + reader.getScanProfile());
+                        }
+                    });
                     server.start();
                     return server;
                 } catch (Throwable th) {
@@ -180,16 +193,26 @@ public class QwpEgressBackwardScanTest extends AbstractReusedServerQwpEgressTest
                 serverMain.execute("INSERT INTO t SELECT x, 'v' || x, (x * 3_600_000_000L)::TIMESTAMP FROM long_sequence(100)");
                 serverMain.awaitTable("t");
                 try (QwpQueryClient client = connect("")) {
-                    // a released reader maps its partitions afresh on the next query
+                    // a released reader opens and maps its partitions afresh on the next query
                     serverMain.getEngine().releaseAllReaders();
+                    partitionOpens.clear();
                     sequentialHints.set(0);
                     Assert.assertEquals(descendingLongs(100, 1), column(qwpRows(client, "SELECT x, v FROM t ORDER BY ts DESC"), 0));
+                    // ts runs from 1970-01-01T01:00 to 1970-01-05T04:00: daily partitions 0 to 4
+                    Assert.assertEquals(
+                            "[4:DEFAULT, 3:DEFAULT, 2:DEFAULT, 1:DEFAULT, 0:DEFAULT]",
+                            partitionOpens.toString()
+                    );
                     Assert.assertEquals(0, sequentialHints.get());
 
                     serverMain.getEngine().releaseAllReaders();
+                    partitionOpens.clear();
                     Assert.assertEquals(100, qwpRows(client, "SELECT x, v FROM t ORDER BY ts").size());
-                    // Windows has no MADV_SEQUENTIAL
-                    if (Files.POSIX_MADV_SEQUENTIAL != -1) {
+                    Assert.assertEquals(
+                            "[0:SEQUENTIAL_CACHED, 1:SEQUENTIAL_CACHED, 2:SEQUENTIAL_CACHED, 3:SEQUENTIAL_CACHED, 4:SEQUENTIAL_CACHED]",
+                            partitionOpens.toString()
+                    );
+                    if (hasSequentialHint) {
                         Assert.assertTrue("hints=" + sequentialHints.get(), sequentialHints.get() > 0);
                     }
                 }
