@@ -1567,6 +1567,36 @@ public class PropServerConfigurationTest {
         newPropServerConfiguration(properties);
     }
 
+    @Test
+    public void testInvalidBoolean() throws Exception {
+        final Properties properties = new Properties();
+        properties.setProperty("pg.enabled", "tru");
+        // Without strict validation a malformed boolean reads as false.
+        Assert.assertFalse(newPropServerConfiguration(properties).getPGWireConfiguration().isEnabled());
+
+        properties.setProperty("config.validation.strict", "true");
+        properties.setProperty("pg.enabled", "FALSE");
+        Assert.assertFalse(newPropServerConfiguration(properties).getPGWireConfiguration().isEnabled());
+        properties.setProperty("pg.enabled", "True");
+        Assert.assertTrue(newPropServerConfiguration(properties).getPGWireConfiguration().isEnabled());
+
+        properties.setProperty("pg.enabled", "tru");
+        TestUtils.assertContains(
+                Assert.assertThrows(ServerConfigurationException.class, () -> newPropServerConfiguration(properties)).getMessage(),
+                "invalid configuration value [key=pg.enabled, value=tru, expected true or false]"
+        );
+
+        // An environment override is checked the same way.
+        properties.setProperty("pg.enabled", "true");
+        final Map<String, String> env = new HashMap<>();
+        env.put("QDB_PG_ENABLED", "1");
+        TestUtils.assertContains(
+                Assert.assertThrows(ServerConfigurationException.class,
+                        () -> newPropServerConfiguration(root, properties, env, new BuildInformationHolder())).getMessage(),
+                "invalid configuration value [key=pg.enabled, value=1, expected true or false]"
+        );
+    }
+
     @Test(expected = ServerConfigurationException.class)
     public void testInvalidConfigKeys() throws Exception {
         try (InputStream inputStream = PropServerConfigurationTest.class.getResourceAsStream("/server.conf")) {

@@ -3297,7 +3297,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             @Nullable Map<String, String> env,
             ConfigPropertyKey key,
             boolean isFiberHostByDefault
-    ) {
+    ) throws ServerConfigurationException {
         return getBoolean(properties, env, key, isFiberHostByDefault)
                 ? WorkerPoolMode.FIBER_HOST
                 : WorkerPoolMode.LEGACY;
@@ -3416,8 +3416,14 @@ public class PropServerConfiguration implements ServerConfiguration {
         return result;
     }
 
-    protected boolean getBoolean(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, boolean defaultValue) {
-        return Boolean.parseBoolean(getString(properties, env, key, Boolean.toString(defaultValue)));
+    protected boolean getBoolean(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, boolean defaultValue) throws ServerConfigurationException {
+        final String value = getString(properties, env, key, Boolean.toString(defaultValue));
+        // Strict validation rejects a value other than true or false; otherwise it reads as false.
+        if (!"true".equalsIgnoreCase(value) && !"false".equalsIgnoreCase(value)
+                && Boolean.parseBoolean(getString(properties, env, PropertyKey.CONFIG_VALIDATION_STRICT, "false"))) {
+            throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), value + ", expected true or false");
+        }
+        return Boolean.parseBoolean(value);
     }
 
     String getCanonicalPath(String path) throws ServerConfigurationException {
