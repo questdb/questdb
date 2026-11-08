@@ -560,7 +560,7 @@ public class SymbolCacheBenchmark {
         }
     }
 
-    // Each of the first 1,000 rows of the second day of t holds a key in another 256-key block.
+    // Adds a day to t whose rows read each 256-key block of its dictionary once.
     @State(Scope.Benchmark)
     public static class Scattered {
         private SymbolCacheBenchmark benchmark;
@@ -574,7 +574,11 @@ public class SymbolCacheBenchmark {
         @Setup(Level.Trial)
         public void setUpTrial(SymbolCacheBenchmark benchmark) throws SqlException {
             this.benchmark = benchmark;
-            keys = benchmark.engine.select("SELECT s FROM t WHERE " + DAY_TWO + " LIMIT 1000", benchmark.context);
+            final CairoEngine engine = benchmark.engine;
+            final SqlExecutionContext context = benchmark.context;
+            engine.execute("INSERT INTO t SELECT 'symbol' || ((x - 1) * 256), timestamp_sequence('2024-01-03', 1) FROM long_sequence(3_907)", context);
+            engine.releaseAllWriters();
+            keys = engine.select("SELECT s FROM t WHERE ts IN '2024-01-03'", context);
         }
 
         @TearDown(Level.Trial)
