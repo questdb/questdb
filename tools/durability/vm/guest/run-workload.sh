@@ -282,6 +282,7 @@ case "$ARM" in
             -Dqwp.password="$([ "${QDB_EDITION:-oss}" = ent ] && echo "${QDB_ENT_PASSWORD:-quest}" || echo "")" \
             -Dqwp.sf.dir="$QWP_SF_DIR" \
             -Dqwp.sf.durability="${QDB_QWP_SF_DURABILITY:-periodic}" \
+            -Dqwp.sf.sync.ms="${QDB_QWP_SF_SYNC_MS:-20}" \
             -Dqwp.batch="${QDB_QWP_BATCH:-1000}" \
             -Dmax.rows="${QDB_QWP_ROWS:-2000000000}" \
             org.questdb.QwpCrashIngestClient "$DB" >> /mnt/qdb/writer.log 2>&1
