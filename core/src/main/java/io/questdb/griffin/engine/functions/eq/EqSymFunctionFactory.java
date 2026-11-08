@@ -121,7 +121,7 @@ public class EqSymFunctionFactory implements FunctionFactory {
             if (index < 0) {
                 matchingRightKey = lookupCache.valueAt(index);
             } else {
-                final CharSequence leftSym = leftView != null ? leftView.valueOf(leftKey) : leftTable.valueOf(leftKey);
+                final CharSequence leftSym = leftView != null ? leftView.valueOfOnce(leftKey) : leftTable.valueOf(leftKey);
                 matchingRightKey = rightTable.keyOf(leftSym);
                 lookupCache.putAt(index, leftKey + 1, matchingRightKey);
             }

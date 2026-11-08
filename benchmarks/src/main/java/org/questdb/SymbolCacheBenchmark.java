@@ -195,6 +195,14 @@ public class SymbolCacheBenchmark {
     @BenchmarkMode(Mode.SingleShotTime)
     @Warmup(iterations = 5, batchSize = 1)
     @Measurement(iterations = 20, batchSize = 1)
+    public long firstProjectionScatteredNoOtherReader(Scattered state) throws SqlException {
+        return readSymbols(state.keys);
+    }
+
+    @Benchmark
+    @BenchmarkMode(Mode.SingleShotTime)
+    @Warmup(iterations = 5, batchSize = 1)
+    @Measurement(iterations = 20, batchSize = 1)
     public long firstProjectionWithOpenReader(OpenReader state) throws SqlException {
         return readSymbols(denseHighKeys);
     }
@@ -267,6 +275,12 @@ public class SymbolCacheBenchmark {
     @Benchmark
     public long readLowKeysStoppedCache(StoppedCache state) throws SqlException {
         return readSymbols(lowKeys);
+    }
+
+    // Reads a CACHE and a NOCACHE column in turn, so the shared read sites see both.
+    @Benchmark
+    public long readMixedCacheModes(MixedCacheModes mixed, NoCache noCache) throws SqlException {
+        return readSymbols(lowKeys) + readSymbols(noCache.keys) + readCount(mixed.lowFunction) + readCount(noCache.function);
     }
 
     @Benchmark
@@ -430,6 +444,22 @@ public class SymbolCacheBenchmark {
         }
     }
 
+    // Compiles its query apart from setUp(), which keeps the JIT state of the other benchmarks.
+    @State(Scope.Benchmark)
+    public static class MixedCacheModes {
+        private RecordCursorFactory lowFunction;
+
+        @Setup(Level.Trial)
+        public void setUp(SymbolCacheBenchmark benchmark) throws SqlException {
+            lowFunction = benchmark.engine.select("SELECT sum(length(s)) FROM low", benchmark.context);
+        }
+
+        @TearDown(Level.Trial)
+        public void tearDown() {
+            lowFunction = Misc.free(lowFunction);
+        }
+    }
+
     // Adds a symbol before each run, in a partition the query does not scan.
     @State(Scope.Benchmark)
     public static class NewSymbol {
@@ -527,6 +557,29 @@ public class SymbolCacheBenchmark {
         public void tearDown() {
             keys = Misc.free(keys);
             filterWorkers = Misc.free(filterWorkers);
+        }
+    }
+
+    // Each of the first 1,000 rows of the second day of t holds a key in another 256-key block.
+    @State(Scope.Benchmark)
+    public static class Scattered {
+        private SymbolCacheBenchmark benchmark;
+        private RecordCursorFactory keys;
+
+        @Setup(Level.Invocation)
+        public void setUp() {
+            benchmark.engine.releaseInactive();
+        }
+
+        @Setup(Level.Trial)
+        public void setUpTrial(SymbolCacheBenchmark benchmark) throws SqlException {
+            this.benchmark = benchmark;
+            keys = benchmark.engine.select("SELECT s FROM t WHERE " + DAY_TWO + " LIMIT 1000", benchmark.context);
+        }
+
+        @TearDown(Level.Trial)
+        public void tearDown() {
+            keys = Misc.free(keys);
         }
     }
 

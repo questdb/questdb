@@ -24,12 +24,37 @@
 
 package io.questdb.test.griffin.engine.functions.eq;
 
-
+import com.sun.management.ThreadMXBean;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.QueryAssertion;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class EqSymFunctionFactoryTest extends AbstractCairoTest {
+
+    @Test
+    public void testCachedColumnsAllocateLittleHeapPerExecution() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (a SYMBOL CACHE, b SYMBOL CACHE)");
+            execute("INSERT INTO x VALUES ('k1', 'k1'), ('k2', 'k3'), ('k3', 'k3')");
+            try (
+                    RecordCursorFactory factory = select("SELECT count() FROM x WHERE a = b");
+                    TestUtils.ThreadMetricsScope<ThreadMXBean> scope = TestUtils.threadAllocationScope()
+            ) {
+                // the first round fills the pools the query reuses
+                assertCount(factory, 100);
+                final ThreadMXBean threadMXBean = scope.getBean();
+                final long threadId = Thread.currentThread().threadId();
+                final long before = threadMXBean.getThreadAllocatedBytes(threadId);
+                assertCount(factory, 1_000);
+                final long allocated = threadMXBean.getThreadAllocatedBytes(threadId) - before;
+                Assert.assertTrue("1,000 executions allocated " + allocated + " bytes", allocated < 4_000_000);
+            }
+        });
+    }
 
     @Test
     public void testLargeSymbolTable() throws Exception {
@@ -255,5 +280,14 @@ public class EqSymFunctionFactoryTest extends AbstractCairoTest {
                             1\t1
                             """);
         });
+    }
+
+    private static void assertCount(RecordCursorFactory factory, int executions) throws Exception {
+        for (int i = 0; i < executions; i++) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                Assert.assertTrue(cursor.hasNext());
+                Assert.assertEquals(2, cursor.getRecord().getLong(0));
+            }
+        }
     }
 }
