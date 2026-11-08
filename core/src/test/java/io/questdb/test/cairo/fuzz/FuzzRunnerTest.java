@@ -54,6 +54,58 @@ public class FuzzRunnerTest extends AbstractCairoTest {
     // sub-second.
     private static final long RETRY_TIMEOUT_MILLIS = 300;
     private final FuzzRunner fuzzer = new FuzzRunner();
+    private final Rnd rnd = TestUtils.generateRandom(LOG);
+
+    @Test
+    public void testApplyManyWalParallelDrainsAfterWritersDoneCallback() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTable("callback");
+            fuzzer.withDb(engine, sqlExecutionContext);
+            ObjList<ObjList<FuzzTransaction>> transactions = new ObjList<>();
+            ObjList<FuzzTransaction> tableTransactions = new ObjList<>();
+            FuzzTransaction transaction = new FuzzTransaction();
+            transaction.operationList.add((rnd, cairoEngine, writer, timestampIndex, excludedIntervals) -> {
+                var row = writer.newRow(0);
+                row.putSym(0, "ingest");
+                row.append();
+                return false;
+            });
+            tableTransactions.add(transaction);
+            transactions.add(tableTransactions);
+            AtomicInteger callbackCount = new AtomicInteger();
+
+            fuzzer.applyManyWalParallel(transactions, new Rnd(), "callback", false, true, () -> {
+                Assert.assertEquals(1, engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("callback")));
+                callbackCount.incrementAndGet();
+                // Model a background producer's final commit. Apply workers must still drain it.
+                TestUtils.unchecked(() -> execute("INSERT INTO callback VALUES ('final', 'value', 1)"));
+            });
+
+            Assert.assertEquals(1, callbackCount.get());
+            assertQuery("SELECT sym FROM callback ORDER BY sym").expectSize().returns("sym\nfinal\ningest\n");
+        });
+    }
+
+    @Test
+    public void testApplyManyWalParallelDrainsAfterWritersDoneCallbackFails() throws Exception {
+        assertMemoryLeak(() -> {
+            createWalTable("callback_failure");
+            fuzzer.withDb(engine, sqlExecutionContext);
+            ObjList<ObjList<FuzzTransaction>> transactions = new ObjList<>();
+            transactions.add(new ObjList<>());
+            RuntimeException failure = new RuntimeException("callback failure");
+
+            RuntimeException thrown = Assert.assertThrows(RuntimeException.class, () ->
+                    fuzzer.applyManyWalParallel(transactions, new Rnd(), "callback_failure", false, true, () -> {
+                        TestUtils.unchecked(() -> execute("INSERT INTO callback_failure VALUES ('final', 'value', 1)"));
+                        throw failure;
+                    })
+            );
+
+            Assert.assertSame(failure, thrown.getCause());
+            assertQuery("SELECT sym FROM callback_failure").expectSize().returns("sym\nfinal\n");
+        });
+    }
 
     @Test
     public void testAssertStringColDensityUsesRetries() throws Exception {
@@ -92,9 +144,9 @@ public class FuzzRunnerTest extends AbstractCairoTest {
             RetryInjectingFuzzRunner retryingFuzzer = newFuzzer(1, "Transaction read timeout [src=drain]");
             ObjList<FuzzTransaction> transactions = new ObjList<>();
 
-            retryingFuzzer.applyWal(transactions, "drain", 1, new Rnd());
+            retryingFuzzer.applyWal(transactions, "drain", 1, rnd);
 
-            assertRetryRouting(retryingFuzzer, 4, 4, 0);
+            assertRetryRouting(retryingFuzzer, 2, 2, 0);
             Assert.assertEquals(2, retryingFuzzer.readTimeoutAttempts.get());
         });
     }
@@ -105,7 +157,7 @@ public class FuzzRunnerTest extends AbstractCairoTest {
             createWalTable("symbols");
             RetryInjectingFuzzRunner retryingFuzzer = newFuzzer(1, "Column Version read timeout [src=symbols]");
 
-            String[] symbols = retryingFuzzer.generateSymbols(new Rnd(), 3, 4, "symbols");
+            String[] symbols = retryingFuzzer.generateSymbols(rnd, 3, 4, "symbols");
 
             Assert.assertEquals(3, symbols.length);
             assertRetryRouting(retryingFuzzer, 1, 0, 0);
@@ -118,7 +170,7 @@ public class FuzzRunnerTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createWalTable("generate");
             RetryInjectingFuzzRunner retryingFuzzer = newFuzzer(1, "Metadata read timeout [src=generate]");
-            ObjList<FuzzTransaction> transactions = retryingFuzzer.generateTransactions("generate", new Rnd(), 0, 1);
+            ObjList<FuzzTransaction> transactions = retryingFuzzer.generateTransactions("generate", rnd, 0, 1);
 
             try {
                 assertRetryRouting(retryingFuzzer, 1, 0, 0);
@@ -167,7 +219,7 @@ public class FuzzRunnerTest extends AbstractCairoTest {
             transactions.add(new ObjList<>());
             Thread caller = new Thread(() -> {
                 try {
-                    failingFuzzer.applyManyWalParallel(transactions, new Rnd(), "late_error", false, true);
+                    failingFuzzer.applyManyWalParallel(transactions, rnd, "late_error", false, true);
                 } catch (Throwable e) {
                     callerFailure.set(e);
                 } finally {
@@ -225,7 +277,7 @@ public class FuzzRunnerTest extends AbstractCairoTest {
             ObjList<ObjList<FuzzTransaction>> transactions = new ObjList<>();
             transactions.add(new ObjList<>());
 
-            retryingFuzzer.applyManyWalParallel(transactions, new Rnd(), "purge", false, true);
+            retryingFuzzer.applyManyWalParallel(transactions, rnd, "purge", false, true);
 
             assertRetryRouting(retryingFuzzer, 2, 2, 2);
         });

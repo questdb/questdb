@@ -34,13 +34,13 @@ import org.jetbrains.annotations.NotNull;
 public class DefaultTestCairoConfiguration extends DefaultCairoConfiguration {
 
     /**
-     * The suite's commit mode, not the shipped one. A test that never touches a property lands here rather
-     * than on {@code Overrides}, and the two must agree or coverage depends on whether a test happened to
-     * set something unrelated.
+     * The suite's commit mode, or a fuzz test class's own, not the shipped one. A test that never touches a
+     * property lands here rather than on {@code Overrides}, and the two must agree or coverage depends on whether
+     * a test happened to set something unrelated.
      */
     @Override
     public int getCommitMode() {
-        return CommitMode.fromString(Overrides.TEST_COMMIT_MODE);
+        return CommitMode.fromString(Overrides.getTestCommitMode());
     }
 
     private final Metrics metrics = Metrics.ENABLED;

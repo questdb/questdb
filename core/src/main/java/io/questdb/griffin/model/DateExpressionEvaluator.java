@@ -216,6 +216,15 @@ public class DateExpressionEvaluator {
     }
 
     /**
+     * Returns true if {@code seq} contains a date variable ({@code $now}, {@code $today},
+     * {@code $yesterday}, {@code $tomorrow}) at any position, as recognised by
+     * {@link #isDateVariable(CharSequence, int, int)}.
+     */
+    public static boolean hasDateVariable(CharSequence seq) {
+        return containsDateVariable(seq, 0, seq.length());
+    }
+
+    /**
      * Returns the index of the first date variable in seq[lo..lim), or -1 when it holds none.
      * <p>
      * A TICK expression with a date variable resolves against the time of each execution, so a
