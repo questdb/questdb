@@ -1104,10 +1104,10 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
                             .$(restartPurgeWorkload.baselineVersionHeldPoints).$(" points, the restored replace's version at ")
                             .$(restartPurgeWorkload.replaceVersionHeldPoints).$(" points").$();
                     Assert.assertTrue("no restart's column purge took the purge of the baseline index version, which the"
-                            + " replace superseded, with the save point before the replace restored",
+                                    + " replace superseded, with the save point before the replace restored",
                             restartPurgeWorkload.baselineVersionHeldPoints > 0);
                     Assert.assertTrue("no restart's column purge took the purge of the replace's index version, which the"
-                            + " O3 commit superseded, with the save point after the replace restored",
+                                    + " O3 commit superseded, with the save point after the replace restored",
                             restartPurgeWorkload.replaceVersionHeldPoints > 0);
                 } finally {
                     restartPurgeWorkload = null;
