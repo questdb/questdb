@@ -1801,6 +1801,8 @@ public class QueryAssertion {
                             } else {
                                 TestUtils.assertEquals(a, b);
                                 Assert.assertEquals(a.size(), record.getVarcharSize(i));
+                                TestUtils.assertPtrCompliance(a);
+                                TestUtils.assertPtrCompliance(b);
                             }
                             break;
                         }
