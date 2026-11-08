@@ -36,6 +36,7 @@ import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Files;
+import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
@@ -43,6 +44,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -58,6 +60,8 @@ public class ViewCheckpointTest extends AbstractCairoTest {
 
     @Before
     public void setUp() {
+        // Like CheckpointTest, this suite restores checkpoints, which Windows does not support.
+        Assume.assumeFalse(Os.isWindows());
         super.setUp();
         ff = testFilesFacade;
         testFilesFacade.beforeViewWrite = null;
