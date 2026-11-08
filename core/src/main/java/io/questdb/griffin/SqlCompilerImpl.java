@@ -7074,8 +7074,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
-    private SqlBinder newBinder(FunctionParser parser, BindScopeStack scopes, BoundExpressionRewriter rewriter, FunctionInstantiator instantiator) {
-        return new SqlBinder(configuration, parser, this, new ExpiryPolicyParser(this.parser), scopes, sqlNodePool, characterStore, planNodePools, planTables,
+    private SqlBinder newBinder(FunctionParser functionParser, BindScopeStack scopes, BoundExpressionRewriter rewriter, FunctionInstantiator instantiator) {
+        return new SqlBinder(configuration, functionParser, this, new ExpiryPolicyParser(parser), scopes, sqlNodePool, characterStore, planNodePools, planTables,
                 preparedFunctions, functionSources, rewriter, instantiator, joinGraphBuilder, updateTarget, emptySchema, traversalAlgo,
                 planReadIds, temporaries);
     }
