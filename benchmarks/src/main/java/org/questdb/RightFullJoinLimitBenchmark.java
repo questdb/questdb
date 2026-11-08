@@ -84,7 +84,12 @@ import java.util.stream.Stream;
 @Measurement(iterations = 5, time = 2)
 @Fork(1)
 public class RightFullJoinLimitBenchmark {
-    @Param({"right_join_limit", "right_join_no_match_limit", "right_join_negative_limit", "filter_limit_range", "inner_join_limit_range"})
+    @Param({
+            "right_join_limit", "right_join_no_match_limit", "right_join_negative_limit", "filter_limit_range",
+            "inner_join_limit_range", "filter_first_rows_limit", "filter_no_match_limit", "filter_no_match_limit_range",
+            "filter_sparse_deep_limit_range", "filter_offset_only", "inner_join_no_match_limit_range",
+            "horizon_first_rows_limit_range", "horizon_no_match_limit"
+    })
     public String shape;
     @Param({"4"})
     public int workers;
@@ -152,12 +157,27 @@ public class RightFullJoinLimitBenchmark {
                 + " timestamp_sequence(0, 10_000) ts FROM long_sequence(20_000_000)) TIMESTAMP(ts) PARTITION BY DAY", context);
         engine.execute("CREATE TABLE watch AS (SELECT ('S' || (x * 10))::SYMBOL sym FROM long_sequence(5))", context);
         engine.execute("CREATE TABLE inst AS (SELECT ('S' || (x - 1))::SYMBOL sym, x::INT lot FROM long_sequence(100))", context);
+        engine.execute("CREATE TABLE quotes AS (SELECT x::DOUBLE px, timestamp_sequence(0, 100_000) ts FROM long_sequence(2_000_000))"
+                + " TIMESTAMP(ts) PARTITION BY DAY", context);
         final String rightJoin = "SELECT t.sym, t.qty, w.sym wsym FROM trades t RIGHT JOIN watch w ON t.sym = w.sym";
         final String sql = switch (shape) {
             case "right_join_limit" -> rightJoin + " WHERE t.qty > 1000 LIMIT 10";
             case "right_join_no_match_limit" -> rightJoin + " WHERE t.qty > 1990 LIMIT 10";
             case "right_join_negative_limit" -> rightJoin + " WHERE t.qty > 1000 LIMIT -10";
             case "filter_limit_range" -> "SELECT sym, qty FROM trades WHERE qty > 1000 LIMIT 5, 15";
+            // qty runs over 0..1999: no row passes qty > 2000, and qty = 7 holds once per 2000 rows
+            case "filter_first_rows_limit" -> "SELECT sym, qty FROM trades WHERE qty > 1000 LIMIT 10";
+            case "filter_no_match_limit" -> "SELECT sym, qty FROM trades WHERE qty > 2000 LIMIT 10";
+            case "filter_no_match_limit_range" -> "SELECT sym, qty FROM trades WHERE qty > 2000 LIMIT 0, 10";
+            case "filter_sparse_deep_limit_range" -> "SELECT sym, qty FROM trades WHERE qty = 7 LIMIT 9_000, 9_010";
+            // questdb-connect renders OFFSET 5 without a LIMIT this way
+            case "filter_offset_only" -> "SELECT sym, qty FROM trades WHERE qty = 7 LIMIT 5, 9_223_372_036_854_775_807";
+            case "inner_join_no_match_limit_range" ->
+                    "SELECT t.sym, t.qty, i.lot FROM trades t JOIN inst i ON t.sym = i.sym WHERE t.qty > 2000 LIMIT 0, 10";
+            case "horizon_first_rows_limit_range" ->
+                    "SELECT t.sym, t.qty, q.px FROM trades t HORIZON JOIN quotes q LIST (0s) AS h WHERE t.qty > 1000 LIMIT 5, 15";
+            case "horizon_no_match_limit" ->
+                    "SELECT t.sym, t.qty, q.px FROM trades t HORIZON JOIN quotes q LIST (0s) AS h WHERE t.qty > 2000 LIMIT 10";
             case "inner_join_limit_range" ->
                     "SELECT t.sym, t.qty, i.lot FROM trades t JOIN inst i ON t.sym = i.sym WHERE t.qty > 1000 LIMIT 3_000_000, 3_000_010";
             default -> throw new IllegalArgumentException(shape);

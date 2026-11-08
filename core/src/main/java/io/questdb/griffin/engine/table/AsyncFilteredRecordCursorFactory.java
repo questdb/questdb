@@ -239,6 +239,15 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         return cursor;
     }
 
+    /**
+     * Returns the number of page frame tasks that the open cursor may keep in flight when it
+     * fetches its next frame.
+     */
+    @TestOnly
+    public int getDispatchLimit() {
+        return cursor.getDispatchLimit();
+    }
+
     @Override
     public @NotNull Function getFilter() {
         return filter;

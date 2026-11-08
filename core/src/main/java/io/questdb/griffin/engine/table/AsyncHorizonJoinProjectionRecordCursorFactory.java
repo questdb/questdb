@@ -238,6 +238,15 @@ public class AsyncHorizonJoinProjectionRecordCursorFactory extends AbstractRecor
         }
     }
 
+    /**
+     * Returns the number of page frame tasks that the open cursor may keep in flight when it
+     * fetches its next frame.
+     */
+    @TestOnly
+    public int getDispatchLimit() {
+        return cursor.getDispatchLimit();
+    }
+
     @Override
     public int getScanDirection() {
         // Rows follow the master in ascending timestamp order, one row per offset.

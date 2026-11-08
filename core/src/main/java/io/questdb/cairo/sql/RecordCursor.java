@@ -143,8 +143,8 @@ public interface RecordCursor extends RecordRandomAccess, Closeable, SymbolTable
     /**
      * Signals the cursor that outer code/cursor will do a limited iteration through
      * the rows, e.g. it implements LIMIT N. In such a case, some parallel cursors
-     * like async filtered cursor may optimize their execution by limiting the number
-     * of dispatched page frame tasks.
+     * like async filtered cursor may optimize their execution by sizing the page
+     * frame tasks they dispatch ahead of the reader to the rows that it reads.
      */
     default void expectLimitedIteration() {
     }
