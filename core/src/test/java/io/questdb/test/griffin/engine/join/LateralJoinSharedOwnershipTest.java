@@ -283,7 +283,7 @@ public class LateralJoinSharedOwnershipTest extends AbstractCairoTest {
             assertException("SELECT o.id oid, l.*, l.aid + 'abc' f " + from, 0, "inconvertible value: `abc` [STRING -> INT]");
             assertException("SELECT o.id oid, l.* " + from + " ORDER BY l.aid + 'abc'", 0, "inconvertible value: `abc` [STRING -> INT]");
             final String sql = lateralSql(OUTER, "JOIN", body);
-            assertMemoryLeak(() -> assertQuery(sql).noLeakCheck().sizeMayVary().returns(expectedRows(OUTER_ROWS, "JOIN", body)));
+            assertQuery(sql).sizeMayVary().returns(expectedRows(OUTER_ROWS, "JOIN", body));
         }
     }
 
@@ -298,11 +298,10 @@ public class LateralJoinSharedOwnershipTest extends AbstractCairoTest {
                 for (String join : LATERAL_JOINS) {
                     final String sql = lateralSql(OUTER, join, body);
                     try {
-                        assertMemoryLeak(() -> assertQuery(sql)
+                        assertQuery(sql)
                                 .withContext(context)
-                                .noLeakCheck()
                                 .sizeMayVary()
-                                .returns(expectedRows(OUTER_ROWS, join, body)));
+                                .returns(expectedRows(OUTER_ROWS, join, body));
                     } catch (Throwable th) {
                         throw new AssertionError(sql, th);
                     }
@@ -415,7 +414,7 @@ public class LateralJoinSharedOwnershipTest extends AbstractCairoTest {
                     for (String join : LATERAL_JOINS) {
                         final String sql = lateralSql("ot o", join, body);
                         try {
-                            assertMemoryLeak(() -> assertQuery(sql).noLeakCheck().sizeMayVary().returns(expectedRows(outerRows, type, join, body)));
+                            assertQuery(sql).sizeMayVary().returns(expectedRows(outerRows, type, join, body));
                         } catch (Throwable th) {
                             throw new AssertionError(type + ": " + sql, th);
                         }
@@ -599,7 +598,7 @@ public class LateralJoinSharedOwnershipTest extends AbstractCairoTest {
                     final String expected1 = expectedRows(OUTER_ROWS, join1, body1);
                     final String expected2 = expectedRows(OUTER_ROWS, join2, body2);
                     try {
-                        assertMemoryLeak(() -> assertQuery(sql).noLeakCheck().sizeMayVary().returns(product(expected1, expected2)));
+                        assertQuery(sql).sizeMayVary().returns(product(expected1, expected2));
                     } catch (Throwable th) {
                         throw new AssertionError(sql, th);
                     }
@@ -709,7 +708,7 @@ public class LateralJoinSharedOwnershipTest extends AbstractCairoTest {
     private void assertLateral(String outer, String outerRows, String join, String body, StringSink failures) {
         final String sql = lateralSql(outer, join, body);
         try {
-            assertMemoryLeak(() -> assertQuery(sql).noLeakCheck().sizeMayVary().returns(expectedRows(outerRows, join, body)));
+            assertQuery(sql).sizeMayVary().returns(expectedRows(outerRows, join, body));
         } catch (Throwable th) {
             failures.put(sql).put("\n    ").put(th.toString().replace('\n', ' ')).put('\n');
         }
