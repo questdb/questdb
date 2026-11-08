@@ -169,6 +169,11 @@ public class ReplaceOverParquetShapeCoverageTest extends AbstractCairoTest {
         );
         assertShape("the next day", false, insert(f), convert(c), replace(f + day, f + day + hour));
         assertShape("a midnight cutoff converts nothing", false, insert(f), convert(f), replace(f - day, f + day));
+        assertShape(
+                "a midnight cutoff converts neither the day before it nor its own",
+                false,
+                insert(f - hour), insert(f), convert(f), replace(f - day, f + day)
+        );
         assertShape("the only row comes after the convert", false, convert(c), insert(f), replace(f, f + day));
         assertShape(
                 "a rolled-back row creates no partition",
