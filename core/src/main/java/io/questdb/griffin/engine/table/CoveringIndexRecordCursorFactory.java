@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.ParanoiaState;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnVersionReader;
@@ -1330,7 +1331,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         @Override
         public void releaseConsumedFrames() {
             // The caller is done with every frame handed out, the current one included.
-            assert poisonFrameBuffers(allocatedBuffers.size());
+            if (ParanoiaState.FRAME_RELEASE_PARANOIA_MODE) {
+                poisonFrameBuffers(allocatedBuffers.size());
+            }
             freeFrameBuffers(allocatedBuffers.size());
             currentFrameBuffersLo = -1;
         }
@@ -1339,7 +1342,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         public void releaseOpenPartitions() {
             // The caller still reads the current frame; free the frames before it.
             if (currentFrameBuffersLo > 0) {
-                assert poisonFrameBuffers(currentFrameBuffersLo);
+                if (ParanoiaState.FRAME_RELEASE_PARANOIA_MODE) {
+                    poisonFrameBuffers(currentFrameBuffersLo);
+                }
                 freeFrameBuffers(currentFrameBuffersLo);
                 currentFrameBuffersLo = 0;
             }
@@ -1419,14 +1424,14 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         /**
          * Overwrites the buffers in allocatedBuffers[0, hi) before a release frees them.
          * Freed memory tends to keep its old bytes, so a caller that read a frame after
-         * releasing it would still see the right values; under assertions it sees garbage
-         * instead, and the tests catch it. Returns true for use in an assert statement.
+         * releasing it would still see the right values; under
+         * {@link ParanoiaState#FRAME_RELEASE_PARANOIA_MODE}, which is on only inside JUnit, it
+         * sees garbage instead, and the tests catch it.
          */
-        private boolean poisonFrameBuffers(int hi) {
+        private void poisonFrameBuffers(int hi) {
             for (int i = 0; i < hi; i += 2) {
                 Unsafe.setMemory(allocatedBuffers.getQuick(i), allocatedBuffers.getQuick(i + 1), (byte) 0x5A);
             }
-            return true;
         }
 
         /**

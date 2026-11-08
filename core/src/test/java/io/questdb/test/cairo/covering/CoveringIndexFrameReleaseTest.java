@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.covering;
 
+import io.questdb.ParanoiaState;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
@@ -51,6 +52,12 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.io.File;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.util.concurrent.TimeUnit;
+
 /**
  * Covers how a multi-key covering page-frame cursor frees the buffers it materializes
  * frames into. {@code releaseOpenPartitions()}, which the parquet exporters call after each
@@ -71,6 +78,57 @@ public class CoveringIndexFrameReleaseTest extends AbstractCairoTest {
     public void tearDown() throws Exception {
         CoveringIndexRecordCursorFactory.setMaxRowsPerFrameForTesting(-1);
         super.tearDown();
+    }
+
+    @Test
+    public void testFrameReleaseParanoiaOffOutsideJUnit() throws Exception {
+        // The server runs with -ea (questdb.sh, the Docker entrypoint), so an assert cannot keep
+        // the memset of every released frame out of production. A JVM with no test framework on
+        // the stack, started with -ea like the server, must find the mode off.
+        File javaExecutable = new File(new File(System.getProperty("java.home"), "bin"), "java");
+        if (!javaExecutable.exists()) {
+            javaExecutable = new File(javaExecutable.getPath() + ".exe");
+        }
+        final String classPath = Paths.get(
+                FrameReleaseParanoiaMain.class.getProtectionDomain().getCodeSource().getLocation().toURI()
+        ) + File.pathSeparator + Paths.get(
+                ParanoiaState.class.getProtectionDomain().getCodeSource().getLocation().toURI()
+        );
+        final File outFile = temp.newFile();
+        final File errFile = temp.newFile();
+        final Process process = new ProcessBuilder(
+                javaExecutable.getAbsolutePath(),
+                "-ea",
+                "-cp",
+                classPath,
+                FrameReleaseParanoiaMain.class.getName()
+        ).redirectOutput(outFile).redirectError(errFile).start();
+        try {
+            process.getOutputStream().close();
+            if (!process.waitFor(15, TimeUnit.SECONDS)) {
+                Assert.fail("process timed out:\n" + Files.readString(errFile.toPath(), StandardCharsets.UTF_8));
+            }
+            final String err = Files.readString(errFile.toPath(), StandardCharsets.UTF_8);
+            Assert.assertEquals(err, 0, process.exitValue());
+            Assert.assertEquals(
+                    err,
+                    "FRAME_RELEASE_PARANOIA_MODE=false" + System.lineSeparator(),
+                    Files.readString(outFile.toPath(), StandardCharsets.UTF_8)
+            );
+        } finally {
+            if (process.isAlive()) {
+                process.destroyForcibly().onExit().join();
+            }
+        }
+    }
+
+    @Test
+    public void testFrameReleaseParanoiaOnInsideJUnit() {
+        // Every test that streams covered frames relies on the release overwriting the freed
+        // buffers: without it, a frame read after its release passes on the stale bytes freed
+        // memory keeps. ParanoiaState turns the mode on when it finds a test framework on the
+        // stack of the thread that initializes it, as it does for LOG_PARANOIA_MODE.
+        Assert.assertTrue(ParanoiaState.FRAME_RELEASE_PARANOIA_MODE);
     }
 
     @Test

@@ -26,6 +26,12 @@ package io.questdb;
 
 // Constants that enable various diagnostics to catch leaks, double closes, etc.
 public class ParanoiaState {
+    // Overwrites the buffers a covering index scan frees when a streaming caller releases its
+    // frames (see CoveringIndexRecordCursorFactory), so a frame read after its release sees
+    // garbage and fails the test instead of passing on the stale bytes freed memory keeps. It
+    // writes every released byte, so it runs only inside JUnit/Surefire. An assert cannot gate
+    // it: the server runs with -ea.
+    public static final boolean FRAME_RELEASE_PARANOIA_MODE;
     /**
      * <pre>
      * BASIC -> validates UTF-8 in log records (throws a LogError if invalid),
@@ -81,6 +87,8 @@ public class ParanoiaState {
     }
 
     static {
-        LOG_PARANOIA_MODE = isInsideJUnitTest() ? LOG_PARANOIA_MODE_BASIC : LOG_PARANOIA_MODE_NONE;
+        final boolean isInsideJUnitTest = isInsideJUnitTest();
+        FRAME_RELEASE_PARANOIA_MODE = isInsideJUnitTest;
+        LOG_PARANOIA_MODE = isInsideJUnitTest ? LOG_PARANOIA_MODE_BASIC : LOG_PARANOIA_MODE_NONE;
     }
 }
