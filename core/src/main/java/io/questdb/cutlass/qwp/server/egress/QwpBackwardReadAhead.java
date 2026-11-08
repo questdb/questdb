@@ -29,11 +29,11 @@ import io.questdb.cairo.ColumnTypeDriver;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * Reads the frames of a backward page-frame stream ahead of the stream. The stream emits
@@ -61,6 +61,9 @@ public class QwpBackwardReadAhead implements Mutable {
     public static final long MAX_WINDOW_BYTES = 16L * 1024 * 1024;
     // The egress appends a frame in slices of at most this many rows; a window holds at least one.
     private static final long MIN_WINDOW_ROWS = 1_024;
+    // The OS page, the unit the OS reads a mapping in. Files.PAGE_SIZE aligns where a mapping
+    // starts: on Windows it is the 64 KiB allocation granularity, sixteen 4 KiB pages.
+    private static final long OS_PAGE_SIZE = Unsafe.getUnsafe().pageSize();
     private final IntList columnTypes = new IntList();
     private final FilesFacade ff;
     // the frame's rows [advisedLo, frameRows) have been advised, or read
@@ -72,7 +75,7 @@ public class QwpBackwardReadAhead implements Mutable {
     private long marker;
     private long maxWindowRows;
     // Sum of the bytes the whole-frame read loads. Storing it keeps the JIT from dropping
-    // loads whose values nothing else reads; nothing reads it back.
+    // loads whose values nothing else reads; only tests read it back.
     private long touchSink;
     private long windowRows;
 
@@ -118,6 +121,14 @@ public class QwpBackwardReadAhead implements Mutable {
     }
 
     /**
+     * Returns the sum of the bytes the whole-frame reads loaded, see {@link #advise(long)}.
+     */
+    @TestOnly
+    public long getTouchSink() {
+        return touchSink;
+    }
+
+    /**
      * Binds the projected columns of a backward stream, in the order its page frames
      * publish them.
      */
@@ -159,12 +170,12 @@ public class QwpBackwardReadAhead implements Mutable {
     }
 
     /**
-     * Loads one byte of every page {@code [address, address + size)} touches, in address
+     * Loads one byte of every OS page {@code [address, address + size)} touches, in address
      * order, and returns their sum. {@code size} must be positive.
      */
     private static long readPagesForward(long address, long size) {
         long sink = 0;
-        for (long p = address, lim = address + size; p < lim; p += Files.PAGE_SIZE) {
+        for (long p = address, lim = address + size; p < lim; p += OS_PAGE_SIZE) {
             sink += Unsafe.getByte(p);
         }
         // the last byte can sit on one page past the last stride when address is not page-aligned

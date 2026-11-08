@@ -36,9 +36,12 @@ import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.vm.MemoryCARWImpl;
 import io.questdb.cutlass.qwp.server.egress.QwpBackwardReadAhead;
+import io.questdb.std.Files;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -262,6 +265,50 @@ public class QwpBackwardReadAheadTest {
                 frame.format = PartitionFormat.PARQUET;
                 readAhead.ofFrame(frame, hi - lo);
                 Assert.assertEquals(0, readAhead.advise(0));
+            }
+        });
+    }
+
+    @Test
+    public void testTouchPathLoadsEveryOsPage() throws Exception {
+        // Without MADV_WILLNEED the read-ahead loads one byte of every OS page of the frame.
+        // Files.PAGE_SIZE is the OS page on POSIX, but on Windows it is the 64 KiB allocation
+        // granularity, sixteen 4 KiB pages: a read that steps by it loads one page in sixteen.
+        TestUtils.assertMemoryLeak(() -> {
+            final long osPageSize = Os.isWindows() ? 4_096 : Files.PAGE_SIZE;
+            final int pageCount = 20;
+            // pageCount + 1 pages from a page boundary, and the slack to find the boundary
+            final long allocSize = (pageCount + 2) * osPageSize;
+            final long alloc = Unsafe.malloc(allocSize, MemoryTag.NATIVE_DEFAULT);
+            try {
+                final long base = (alloc + osPageSize - 1) & -osPageSize;
+                // every byte of page p holds p + 1, so the sum of the loads names the pages they hit
+                for (int p = 0; p <= pageCount; p++) {
+                    Vect.memset(base + p * osPageSize, osPageSize, p + 1);
+                }
+                final long size = pageCount * osPageSize;
+                final long rows = size / Long.BYTES;
+                final AddressedFrame frame = new AddressedFrame(2, rows);
+                // column 0 starts on a page boundary and covers pages [0, pageCount)
+                frame.set(0, base, size, 0, 0);
+                // column 1 starts mid-page and covers pages [0, pageCount]
+                frame.set(1, base + osPageSize / 2, size, 0, 0);
+                long expectedSink = 0;
+                for (int p = 0; p < pageCount; p++) {
+                    // the stride loads page p once in each column
+                    expectedSink += 2L * (p + 1);
+                }
+                // the read of the last byte loads page pageCount - 1 again in column 0, and
+                // page pageCount, which no stride reaches, in column 1
+                expectedSink += pageCount + (pageCount + 1);
+
+                final QwpBackwardReadAhead readAhead = new QwpBackwardReadAhead(new RecordingFacade(false));
+                readAhead.of(metadata(new int[]{ColumnType.LONG, ColumnType.LONG}));
+                readAhead.ofFrame(frame, rows);
+                Assert.assertEquals(2 * size, readAhead.advise(rows - SLICE_ROWS));
+                Assert.assertEquals(expectedSink, readAhead.getTouchSink());
+            } finally {
+                Unsafe.free(alloc, allocSize, MemoryTag.NATIVE_DEFAULT);
             }
         });
     }
