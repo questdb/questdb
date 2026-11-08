@@ -254,7 +254,11 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
      * example, opens its build side before its probe side. An implementation therefore
      * opens the owner state (the base cursor that the primary aggregates and the
      * functions bound to it) on the first of the two calls, and the other call reuses it.
-     * The primary cursor still owns that state and releases it when it closes.
+     * The primary cursor owns that state from when it opens and releases it when it closes.
+     * Until then, the shared cursors that are open hold it, and the last of them to close
+     * releases it: an execution can end before the primary opens, when it fails between the
+     * two calls or a parent never opens the primary, and must leave no owner state open
+     * for the next execution of the factory to read.
      *
      * @param executionContext SQL execution context
      * @param sharedId         unique consumer identifier (0-based)

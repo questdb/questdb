@@ -53,6 +53,7 @@ import io.questdb.griffin.engine.functions.groupby.MaxTimestampGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.MinTimestampGroupByFunction;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory;
+import io.questdb.griffin.engine.groupby.SharedCursorOwnership;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
@@ -78,8 +79,8 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
     private AsyncGroupByNotKeyedRecordCursor cursor;
     private UnorderedPageFrameSequence<AsyncGroupByNotKeyedAtom> frameSequence;
     private ObjList<GroupByFunction> groupByFunctions;
-    // set when getSharedCursor() opened the owner state before the primary getCursor() of the same execution
-    private boolean isOwnerOpenedBySharedCursor;
+    // who holds the owner state that a shared cursor opened, created with the first shared cursor
+    private SharedCursorOwnership sharedCursorOwnership;
     private @Nullable ObjList<ObjList<Function>> sharedRecordFunctions;
     private final boolean vectorized;
     private final int workerCount;
@@ -228,10 +229,9 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        if (isOwnerOpenedBySharedCursor) {
+        if (sharedCursorOwnership != null && sharedCursorOwnership.claim()) {
             // A shared consumer opened before this primary in the current execution and already
             // opened the owner state, which its functions are bound to. Hand it over as is.
-            isOwnerOpenedBySharedCursor = false;
             return cursor;
         }
         openOwner(executionContext);
@@ -251,12 +251,18 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
         }
         if (sharedCursors == null) {
             sharedCursors = new ObjList<>();
+            sharedCursorOwnership = new SharedCursorOwnership(cursor);
         }
         int idx = sharedId - 1;
         AsyncGroupByNotKeyedSharedCursor shared = sharedCursors.getQuiet(idx);
         if (shared == null) {
             assert idx < sharedRecordFunctions.size();
-            shared = new AsyncGroupByNotKeyedSharedCursor(cursor, sharedRecordFunctions.getQuick(idx), frameSequence.getAtom().getOwnerMapValue());
+            shared = new AsyncGroupByNotKeyedSharedCursor(
+                    cursor,
+                    sharedRecordFunctions.getQuick(idx),
+                    frameSequence.getAtom().getOwnerMapValue(),
+                    sharedCursorOwnership.newHolder()
+            );
             sharedCursors.extendAndSet(idx, shared);
         }
         // Donate the owner state to the consumer's aligned clones before they initialize, so
@@ -278,15 +284,14 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
         final boolean isOwnerOpenedHere = !cursor.isOpen();
         if (isOwnerOpenedHere) {
             openOwner(executionContext);
-            isOwnerOpenedBySharedCursor = true;
+            sharedCursorOwnership.markOpenedBySharedCursor();
         }
         try {
             shared.of(executionContext, frameSequence);
         } catch (Throwable th) {
             if (isOwnerOpenedHere) {
                 // no primary holds the owner state yet, so release it under the current tracker
-                isOwnerOpenedBySharedCursor = false;
-                cursor.close();
+                sharedCursorOwnership.releaseUnclaimed();
             }
             throw th;
         }
@@ -619,6 +624,9 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
         this.sharedCursors = null;
         final ObjList<ObjList<Function>> sharedRecordFunctions = this.sharedRecordFunctions;
         this.sharedRecordFunctions = null;
+        if (sharedCursorOwnership != null) {
+            sharedCursorOwnership.clear();
+        }
 
         Throwable cleanupFailure = Misc.freeBestEffort(null, base);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, cursor);

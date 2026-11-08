@@ -52,6 +52,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.PerWorkerLocks;
+import io.questdb.griffin.engine.groupby.SharedCursorOwnership;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.MCSequence;
@@ -102,9 +103,9 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private final int workerCount;
     private RecordCursorFactory base;
     private ObjList<PageFrameMemoryPool> frameMemoryPools; // per worker pools
-    // set when getSharedCursor() opened the owner state before the primary getCursor() of the same execution
-    private boolean isOwnerOpenedBySharedCursor;
     private long[] pRosti;
+    // who holds the owner state that a shared cursor opened, created with the first shared cursor
+    private SharedCursorOwnership sharedCursorOwnership;
     private ObjList<RostiSharedCursor> sharedCursors;
     private ObjList<VectorAggregateFunction> vafList;
 
@@ -233,10 +234,9 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        if (isOwnerOpenedBySharedCursor) {
+        if (sharedCursorOwnership != null && sharedCursorOwnership.claim()) {
             // A shared consumer opened before this primary in the current execution and already
             // opened the owner state, which its symbol tables point into. Hand it over as is.
-            isOwnerOpenedBySharedCursor = false;
             return cursor;
         }
         return openOwner(executionContext);
@@ -246,11 +246,12 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     public RecordCursor getSharedCursor(SqlExecutionContext executionContext, int sharedId) throws SqlException {
         if (sharedCursors == null) {
             sharedCursors = new ObjList<>();
+            sharedCursorOwnership = new SharedCursorOwnership(cursor);
         }
         int idx = sharedId - 1;
         RostiSharedCursor shared = sharedCursors.getQuiet(idx);
         if (shared == null) {
-            shared = new RostiSharedCursor();
+            shared = new RostiSharedCursor(sharedCursorOwnership.newHolder());
             sharedCursors.extendAndSet(idx, shared);
         }
         // The shared cursor serves the symbol tables of the owner's page frame cursor, and its
@@ -259,7 +260,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         // has not.
         if (cursor.frameCursor == null) {
             openOwner(executionContext);
-            isOwnerOpenedBySharedCursor = true;
+            sharedCursorOwnership.markOpenedBySharedCursor();
         }
         shared.of();
         return shared;
@@ -381,13 +382,22 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             vafList.getQuick(i).clear();
         }
         final PageFrameCursor pageFrameCursor = base.getPageFrameCursor(executionContext, ORDER_ASC);
-        return cursor.of(
-                base.getMetadata(),
-                pageFrameCursor,
-                executionContext.getMessageBus(),
-                executionContext.getCircuitBreaker(),
-                executionContext.getMemoryTracker()
-        );
+        try {
+            return cursor.of(
+                    base.getMetadata(),
+                    pageFrameCursor,
+                    executionContext.getMessageBus(),
+                    executionContext.getCircuitBreaker(),
+                    executionContext.getMemoryTracker()
+            );
+        } catch (Throwable th) {
+            // of() adopts the page frame cursor before it reopens the address cache, which can breach the
+            // memory limit: close the half-open owner state, so that getSharedCursor() of the next
+            // execution does not take it for open
+            cursor.close();
+            Misc.free(pageFrameCursor);
+            throw th;
+        }
     }
 
     private void resetRostiMemorySize() {
@@ -400,6 +410,15 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     protected void _close() {
+        // Release the owner state while the maps that its close() resets still exist: a caller that never closed a
+        // cursor of the factory left it open, and nothing else frees the page frame address cache.
+        Throwable failure = null;
+        if (cursor != null) {
+            failure = Misc.freeBestEffort(null, cursor);
+        }
+        if (sharedCursorOwnership != null) {
+            sharedCursorOwnership.clear();
+        }
         final RecordCursorFactory base = this.base;
         this.base = null;
         final ObjList<PageFrameMemoryPool> frameMemoryPools = this.frameMemoryPools;
@@ -411,7 +430,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         final ObjList<VectorAggregateFunction> vafList = this.vafList;
         this.vafList = null;
 
-        Throwable failure = Misc.freeObjListAndKeepObjectsBestEffort(null, frameMemoryPools);
+        failure = Misc.freeObjListAndKeepObjectsBestEffort(failure, frameMemoryPools);
         failure = Misc.freeObjListBestEffort(failure, vafList);
         if (pRosti != null) {
             for (int i = 0, n = pRosti.length; i < n; i++) {
@@ -1006,6 +1025,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     private class RostiSharedCursor implements RecordCursor {
+        private final SharedCursorOwnership.Holder ownerHolder;
         private final RostiRecordCursor.RostiRecord record;
         private long count;
         private long ctrl;
@@ -1016,7 +1036,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         private long size;
         private long slots;
 
-        RostiSharedCursor() {
+        RostiSharedCursor(SharedCursorOwnership.Holder ownerHolder) {
+            this.ownerHolder = ownerHolder;
             this.record = cursor.new RostiRecord(cursor.columnCount);
         }
 
@@ -1031,6 +1052,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public void close() {
+            ownerHolder.release();
         }
 
         @Override
@@ -1129,6 +1151,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
         void of() {
             isBuilt = false;
+            ownerHolder.hold();
         }
     }
 }
