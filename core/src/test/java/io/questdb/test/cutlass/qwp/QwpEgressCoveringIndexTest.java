@@ -1016,7 +1016,8 @@ public class QwpEgressCoveringIndexTest extends AbstractReusedServerQwpEgressTes
         }
         switch (wireType) {
             case QwpConstants.TYPE_INT -> sb.append(batch.getIntValue(col, row));
-            case QwpConstants.TYPE_IPv4 -> sb.append("ip(").append(Integer.toUnsignedString(batch.getIntValue(col, row))).append(')');
+            case QwpConstants.TYPE_IPv4 ->
+                    sb.append("ip(").append(Integer.toUnsignedString(batch.getIntValue(col, row))).append(')');
             case QwpConstants.TYPE_LONG, QwpConstants.TYPE_DATE, QwpConstants.TYPE_TIMESTAMP,
                  QwpConstants.TYPE_TIMESTAMP_NANOS -> sb.append(batch.getLongValue(col, row));
             case QwpConstants.TYPE_FLOAT -> sb.append(batch.getFloatValue(col, row));

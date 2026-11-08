@@ -833,7 +833,8 @@ public class QwpEgressBackwardScanTest extends AbstractReusedServerQwpEgressTest
                         switch (batch.getColumnWireType(c)) {
                             case QwpConstants.TYPE_LONG -> text.append(batch.getLongValue(c, r));
                             case QwpConstants.TYPE_DOUBLE -> text.append(batch.getDoubleValue(c, r));
-                            case QwpConstants.TYPE_VARCHAR, QwpConstants.TYPE_SYMBOL -> text.append(batch.getString(c, r));
+                            case QwpConstants.TYPE_VARCHAR, QwpConstants.TYPE_SYMBOL ->
+                                    text.append(batch.getString(c, r));
                             case QwpConstants.TYPE_TIMESTAMP -> {
                                 final StringSink sink = new StringSink();
                                 ColumnType.getTimestampDriver(ColumnType.TIMESTAMP).append(sink, batch.getLongValue(c, r));
@@ -880,11 +881,15 @@ public class QwpEgressBackwardScanTest extends AbstractReusedServerQwpEgressTest
                  QwpConstants.TYPE_TIMESTAMP_NANOS -> sink.append(batch.getLongValue(col, row));
             case QwpConstants.TYPE_DECIMAL64 ->
                     sink.append(batch.getLongValue(col, row)).append('e').append(batch.getDecimalScale(col));
-            case QwpConstants.TYPE_FLOAT -> sink.append("f").append(Float.floatToRawIntBits(batch.getFloatValue(col, row)));
-            case QwpConstants.TYPE_DOUBLE -> sink.append("d").append(Double.doubleToRawLongBits(batch.getDoubleValue(col, row)));
-            case QwpConstants.TYPE_VARCHAR, QwpConstants.TYPE_SYMBOL -> sink.append('\'').append(batch.getString(col, row)).append('\'');
+            case QwpConstants.TYPE_FLOAT ->
+                    sink.append("f").append(Float.floatToRawIntBits(batch.getFloatValue(col, row)));
+            case QwpConstants.TYPE_DOUBLE ->
+                    sink.append("d").append(Double.doubleToRawLongBits(batch.getDoubleValue(col, row)));
+            case QwpConstants.TYPE_VARCHAR, QwpConstants.TYPE_SYMBOL ->
+                    sink.append('\'').append(batch.getString(col, row)).append('\'');
             case QwpConstants.TYPE_BINARY -> sink.append(Arrays.toString(batch.getBinary(col, row)));
-            case QwpConstants.TYPE_UUID -> sink.append(batch.getUuidHi(col, row)).append('/').append(batch.getUuidLo(col, row));
+            case QwpConstants.TYPE_UUID ->
+                    sink.append(batch.getUuidHi(col, row)).append('/').append(batch.getUuidLo(col, row));
             case QwpConstants.TYPE_LONG256, QwpConstants.TYPE_DECIMAL256 -> {
                 for (int w = 3; w >= 0; w--) {
                     sink.append(batch.getLong256Word(col, row, w)).append(w > 0 ? "/" : "");

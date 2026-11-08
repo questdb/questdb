@@ -155,7 +155,8 @@ public class QwpPageFrameAppendBenchmark {
                 case ColumnType.BYTE -> Unsafe.putByte(base + r, rnd.nextByte());
                 case ColumnType.BOOLEAN -> Unsafe.putByte(base + r, (byte) (rnd.nextBoolean() ? 1 : 0));
                 // 64 distinct keys: the dictionary fills on the first pass, later passes hit its cache
-                case ColumnType.SYMBOL -> Unsafe.putInt(base + 4L * r, isNull ? SymbolTable.VALUE_IS_NULL : rnd.nextInt(64));
+                case ColumnType.SYMBOL ->
+                        Unsafe.putInt(base + 4L * r, isNull ? SymbolTable.VALUE_IS_NULL : rnd.nextInt(64));
                 default -> throw new IllegalArgumentException(type);
             }
         }
