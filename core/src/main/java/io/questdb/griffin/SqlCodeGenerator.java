@@ -8384,7 +8384,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 if (!fullFatJoins && isOverStreamGroupBy(slaveToFree)) {
                                     final RecordCursorFactory slaveToMaterialize = slaveToFree;
                                     slaveToFree = null;
-                                    slaveToFree = materialize(slaveToMaterialize, true);
+                                    slaveToFree = materialize(slaveToMaterialize, true, true);
                                 }
 
                                 master = createHashJoin(
@@ -15772,6 +15772,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * Consumes the base on entry, including on failure.
      */
     private RecordCursorFactory materialize(RecordCursorFactory base, boolean isStrict) {
+        return materialize(base, isStrict, false);
+    }
+
+    private RecordCursorFactory materialize(RecordCursorFactory base, boolean isStrict, boolean isCopiedInBatches) {
         final RecordSink recordSink;
         try {
             entityColumnFilter.of(base.getMetadata().getColumnCount());
@@ -15780,7 +15784,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             Misc.free(base, th);
             throw th;
         }
-        return new MaterializedRecordCursorFactory(configuration, base, recordSink, isStrict, !isRandomAccessLostToStream(base));
+        return new MaterializedRecordCursorFactory(configuration, base, recordSink, isStrict, !isRandomAccessLostToStream(base), isCopiedInBatches);
     }
 
     // A copy of stream GROUP BY rows stands in for the map of a hash GROUP BY, which only the query memory limit bounds.

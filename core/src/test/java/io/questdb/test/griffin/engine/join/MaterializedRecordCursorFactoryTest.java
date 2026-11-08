@@ -27,7 +27,11 @@ package io.questdb.test.griffin.engine.join;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.EntityColumnFilter;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.RecordSinkFactory;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -36,8 +40,11 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory;
 import io.questdb.griffin.engine.join.MaterializedRecordCursorFactory;
+import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.MemoryTrackerWorkload;
+import io.questdb.std.Misc;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.griffin.CustomisableRunnable;
@@ -158,12 +165,88 @@ public class MaterializedRecordCursorFactoryTest extends AbstractCairoTest {
                 };
                 // RecordArray reads column types during construction, after the wrapper adopts base.
                 // No rows reach the sink: this tests consume-on-entry, including constructor failure.
-                try (RecordCursorFactory ignored = new MaterializedRecordCursorFactory(configuration, base, null, true, true)) {
+                try (RecordCursorFactory ignored = new MaterializedRecordCursorFactory(configuration, base, null, true, true, false)) {
                     Assert.fail("expected metadata failure");
                 } catch (RuntimeException e) {
                     Assert.assertSame(failure, e);
                 }
                 Assert.assertEquals(1, closeCount[0]);
+            }
+        });
+    }
+
+    @Test
+    public void testCopiesInBatches() throws Exception {
+        run((engine, compiler, context) -> {
+            final LongList rowIds = new LongList();
+            for (int rowCount : new int[]{0, 1, 255, 256, 257, 600}) {
+                for (boolean isCopiedInBatches : new boolean[]{false, true}) {
+                    final String label = rowCount + " rows, batches: " + isCopiedInBatches;
+                    try (
+                            RecordCursorFactory copy = strictCopy(compiler, context, "SELECT x FROM long_sequence(" + rowCount + ")", isCopiedInBatches);
+                            RecordCursor cursor = copy.getCursor(context)
+                    ) {
+                        final Record record = cursor.getRecord();
+                        rowIds.clear();
+                        for (int i = 1; i <= rowCount; i++) {
+                            Assert.assertTrue(label, cursor.hasNext());
+                            Assert.assertEquals(label, i, record.getLong(0));
+                            Assert.assertEquals(label, isCopiedInBatches ? Math.min(rowCount, (i + 255) / 256 * 256) : i, cursor.preComputedStateSize());
+                            rowIds.add(record.getRowId());
+                        }
+                        Assert.assertFalse(label, cursor.hasNext());
+                        Assert.assertEquals(label, rowCount, cursor.preComputedStateSize());
+
+                        cursor.toTop();
+                        final Record recordB = cursor.getRecordB();
+                        for (int i = 1; i <= rowCount; i++) {
+                            Assert.assertTrue(label, cursor.hasNext());
+                            Assert.assertEquals(label, i, record.getLong(0));
+                            cursor.recordAt(recordB, rowIds.getQuick(rowCount - i));
+                            Assert.assertEquals(label, rowCount - i + 1, recordB.getLong(0));
+                        }
+                        Assert.assertFalse(label, cursor.hasNext());
+                        Assert.assertEquals(label, rowCount, cursor.preComputedStateSize());
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCopiesInBatchesUntilMemoryLimit() throws Exception {
+        // The 24-byte rows reach the limit inside a batch rather than on a batch boundary.
+        setProperty(PropertyKey.CAIRO_SQL_HASH_JOIN_LIGHT_VALUE_PAGE_SIZE, 256);
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_MEMORY_LIMIT_BYTES, 10_000);
+        run((engine, compiler, context) -> {
+            try (RecordCursorFactory copy = strictCopy(compiler, context, "SELECT x, x * 2 y, x * 3 z FROM long_sequence(1_000)", true)) {
+                long rowCount = 0;
+                try (MemoryTracker tracker = engine.getMemoryTrackerProvider().acquire(context.getSecurityContext(), 42, MemoryTrackerWorkload.MAT_VIEW_REFRESH)) {
+                    context.setMemoryTracker(tracker);
+                    try (RecordCursor cursor = copy.getCursor(context)) {
+                        final Record record = cursor.getRecord();
+                        while (cursor.hasNext()) {
+                            Assert.assertEquals(++rowCount, record.getLong(0));
+                        }
+                        Assert.fail("expected memory limit breach");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded [workload=MAT_VIEW_REFRESH");
+                    } finally {
+                        context.setMemoryTracker(null);
+                    }
+                    Assert.assertEquals(0, tracker.getUsed());
+                }
+                // The breach fails the batch that holds it, after the parent read every earlier batch.
+                Assert.assertTrue(rowCount > 0);
+                Assert.assertEquals(0, rowCount % 256);
+                try (RecordCursor cursor = copy.getCursor(context)) {
+                    final Record record = cursor.getRecord();
+                    for (int i = 1; i <= 1_000; i++) {
+                        Assert.assertTrue(cursor.hasNext());
+                        Assert.assertEquals(i, record.getLong(0));
+                    }
+                    Assert.assertFalse(cursor.hasNext());
+                }
             }
         });
     }
@@ -200,6 +283,32 @@ public class MaterializedRecordCursorFactoryTest extends AbstractCairoTest {
         run((engine, compiler, context) -> {
             createTables(engine, context);
             assertMaterialized(engine, context, FULL_JOIN, null, true, false);
+        });
+    }
+
+    @Test
+    public void testHashJoinCopiesStreamInBatches() throws Exception {
+        run((engine, compiler, context) -> {
+            // The 1_000 rows of the aggregation fill three batches and part of a fourth.
+            engine.execute(
+                    """
+                            CREATE TABLE b AS (
+                                SELECT timestamp_sequence('2024-01-01', 1_000_000L) ts, x v FROM long_sequence(1_000)
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
+                    context
+            );
+            engine.execute("CREATE TABLE b_hash (ts TIMESTAMP, v LONG)", context);
+            engine.execute("INSERT INTO b_hash SELECT * FROM b", context);
+            engine.execute("CREATE TABLE h AS (SELECT timestamp_sequence('2024-01-01', 3_000_000L) ts, x FROM long_sequence(400))", context);
+            final String[] subquery = {
+                    "SELECT ts, count() c, sum(v) s FROM b WHERE test_match() GROUP BY ts",
+                    "SELECT ts, count() c, sum(v) s FROM b_hash GROUP BY ts ORDER BY ts",
+                    "ts"
+            };
+            for (String join : new String[]{"JOIN", "LEFT JOIN", "RIGHT JOIN", "FULL JOIN"}) {
+                final String query = "SELECT h.x, s.* FROM h " + join + " ($sub) s ON h.ts = s.ts ORDER BY x, $keys";
+                Assert.assertEquals(join, 0, assertMaterialized(engine, context, query, subquery, null, true, false));
+            }
         });
     }
 
@@ -684,6 +793,25 @@ public class MaterializedRecordCursorFactoryTest extends AbstractCairoTest {
                 "CREATE TABLE q AS (SELECT timestamp_sequence('2024-01-01T00:30', 3_600_000_000L) ts, x FROM long_sequence(10)) TIMESTAMP(ts) PARTITION BY DAY",
                 context
         );
+    }
+
+    private static RecordCursorFactory strictCopy(
+            SqlCompiler compiler,
+            SqlExecutionContext context,
+            String sql,
+            boolean isCopiedInBatches
+    ) throws SqlException {
+        final RecordCursorFactory base = compiler.compile(sql, context).getRecordCursorFactory();
+        final RecordSink recordSink;
+        try {
+            final EntityColumnFilter columns = new EntityColumnFilter();
+            columns.of(base.getMetadata().getColumnCount());
+            recordSink = RecordSinkFactory.getInstance(configuration, new BytecodeAssembler(), base.getMetadata(), columns);
+        } catch (Throwable th) {
+            Misc.free(base);
+            throw th;
+        }
+        return new MaterializedRecordCursorFactory(configuration, base, recordSink, true, false, isCopiedInBatches);
     }
 
     private static String[] withNegativeLimit(String[] subquery) {

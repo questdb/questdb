@@ -117,7 +117,7 @@ public class TemporalStreamJoinTest extends AbstractCairoTest {
             columns.of(base.getMetadata().getColumnCount());
             try (
                     RecordCursorFactory copy = new MaterializedRecordCursorFactory(configuration, base,
-                            RecordSinkFactory.getInstance(configuration, new BytecodeAssembler(), base.getMetadata(), columns), true, true);
+                            RecordSinkFactory.getInstance(configuration, new BytecodeAssembler(), base.getMetadata(), columns), true, true, false);
                     MemoryTracker tracker = engine.getMemoryTrackerProvider().acquire(context.getSecurityContext(), 42, MemoryTrackerWorkload.MAT_VIEW_REFRESH)
             ) {
                 Assert.assertTrue(copy.recordCursorSupportsRandomAccess());

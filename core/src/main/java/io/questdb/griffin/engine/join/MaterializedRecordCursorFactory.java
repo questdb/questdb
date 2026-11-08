@@ -52,7 +52,8 @@ import org.jetbrains.annotations.Nullable;
  * Copies the rows of its base into a record array as a cursor first reads them and replays the copy after every
  * rewind, so a parent that rewinds its input computes the base rows once per execution. If the copy reaches its
  * page budget or the query memory limit, it releases the copy and streams the base. A strict factory fails with a
- * limit error instead, and gives random access to the copied rows to a parent that relies on their row ids.
+ * limit error instead, and gives random access to the copied rows to a parent that relies on their row ids. A strict
+ * factory can also copy rows in batches ahead of the reads, for a parent that reads every row.
  */
 public class MaterializedRecordCursorFactory extends AbstractRecordCursorFactory {
     private final boolean isStrict;
@@ -69,7 +70,8 @@ public class MaterializedRecordCursorFactory extends AbstractRecordCursorFactory
             RecordCursorFactory base,
             RecordSink recordSink,
             boolean isStrict,
-            boolean hasJoinBudget
+            boolean hasJoinBudget,
+            boolean isCopiedInBatches
     ) {
         super(base.getMetadata());
         this.base = base;
@@ -86,7 +88,7 @@ public class MaterializedRecordCursorFactory extends AbstractRecordCursorFactory
                     maxBytes,
                     isStrict
             );
-            cursor = new MaterializedRecordCursor(rows, maxBytes, isStrict);
+            cursor = new MaterializedRecordCursor(rows, maxBytes, isStrict, isCopiedInBatches);
         } catch (Throwable th) {
             Misc.free(rows, th);
             Misc.free(this, th);
@@ -216,6 +218,8 @@ public class MaterializedRecordCursorFactory extends AbstractRecordCursorFactory
      * to the base record, so the parent needs no rebinding.
      */
     private static class MaterializedRecordCursor implements DelegatingRecordCursor {
+        private static final int COPY_BATCH_ROWS = 256;
+        private final boolean isCopiedInBatches;
         private final boolean isStrict;
         private final long maxBytes;
         private final DelegatingRecord record = new DelegatingRecord();
@@ -225,10 +229,12 @@ public class MaterializedRecordCursorFactory extends AbstractRecordCursorFactory
         private boolean isBaseExhausted;
         private boolean isStreaming;
 
-        private MaterializedRecordCursor(RecordArray rows, long maxBytes, boolean isStrict) {
+        private MaterializedRecordCursor(RecordArray rows, long maxBytes, boolean isStrict, boolean isCopiedInBatches) {
+            assert isStrict || !isCopiedInBatches;
             this.rows = rows;
             this.maxBytes = maxBytes;
             this.isStrict = isStrict;
+            this.isCopiedInBatches = isCopiedInBatches;
         }
 
         @Override
@@ -362,6 +368,12 @@ public class MaterializedRecordCursorFactory extends AbstractRecordCursorFactory
         private boolean hasNextFromBase() {
             if (isStreaming) {
                 return baseCursor.hasNext();
+            }
+            if (isCopiedInBatches) {
+                //noinspection StatementWithEmptyBody
+                for (int i = 0; i < COPY_BATCH_ROWS && copyNext(); i++) {
+                }
+                return rows.hasNext();
             }
             return copyNext() && (isStreaming || rows.hasNext());
         }
