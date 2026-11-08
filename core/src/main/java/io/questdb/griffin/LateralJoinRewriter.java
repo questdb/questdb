@@ -566,25 +566,6 @@ class LateralJoinRewriter implements Mutable {
         return false;
     }
 
-    // True when the expression holds a bind variable or a sub-query
-    private static boolean hasBindVariableOrSubQuery(ExpressionNode node) {
-        if (node == null) {
-            return false;
-        }
-        if (node.type == ExpressionNode.BIND_VARIABLE || node.type == ExpressionNode.QUERY) {
-            return true;
-        }
-        if (node.paramCount < 3) {
-            return hasBindVariableOrSubQuery(node.lhs) || hasBindVariableOrSubQuery(node.rhs);
-        }
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            if (hasBindVariableOrSubQuery(node.args.getQuick(i))) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     // True when the expression calls the function of the name
     private static boolean hasFunction(ExpressionNode node, CharSequence name) {
         if (node == null) {
@@ -602,25 +583,6 @@ class LateralJoinRewriter implements Mutable {
             }
         }
         return false;
-    }
-
-    // True when each node of a reads the same sub-query model as the node at its place in b, which
-    // compareNodesExact() found alike. A function of three or more arguments, which compareNodesExact()
-    // compares by its arguments, has neither lhs nor rhs.
-    private static boolean hasSameQueryModels(ExpressionNode a, ExpressionNode b) {
-        if (a == null) {
-            assert b == null;
-            return true;
-        }
-        if (a.queryModel != b.queryModel) {
-            return false;
-        }
-        for (int i = 0, n = a.args.size(); i < n; i++) {
-            if (!hasSameQueryModels(a.args.getQuick(i), b.args.getQuick(i))) {
-                return false;
-            }
-        }
-        return hasSameQueryModels(a.lhs, b.lhs) && hasSameQueryModels(a.rhs, b.rhs);
     }
 
     private static boolean hasSubQuery(ExpressionNode node) {
