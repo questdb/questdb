@@ -11161,19 +11161,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int plen,
             long timestamp
     ) {
-        // Skip partitions that already have a fully-sealed posting index (resume after restart).
-        // A partition is fully indexed when the .pk key file has a valid seqlock (seq_start == seq_end)
-        // AND genCount > 0 (at least one generation was sealed). Partially-written files from a crash
-        // will have genCount == 0 or a broken seqlock, so they are safely rebuilt.
-        if (IndexType.isPosting(indexType) && isPostingIndexSealed(plen, columnName, columnNameTxn)) {
-            path.trimTo(plen);
-            LOG.info().$("skipping already-indexed partition [path=").$substr(pathRootSize, path).I$();
-            return;
-        }
         path.trimTo(plen);
         LOG.info().$("indexing [path=").$substr(pathRootSize, path).I$();
 
         // ALTER TABLE ALTER COLUMN ADD INDEX (older partitions): building a fresh index from scratch.
+        // A posting index that an uncommitted earlier attempt at this ADD INDEX left behind is rebuilt, never
+        // reused: a checkpoint copied while that attempt ran can hold the .pk's sealed entry without the .pv
+        // the entry names. The entry carries the txn this ADD INDEX commits at, above the committed one, so
+        // the recovery walk in configureWriter() drops it, with its files, before the rebuild.
         createIndexFiles(columnName, columnNameTxn, indexValueBlockSize, indexType, plen, true, true);
         // The whole DIRECTORY's shared frame, not one piece's rows - see getPartitionPhysicalRowCount.
         final long partitionSize = getPartitionFileRowCountByTimestamp(timestamp);
@@ -11641,27 +11636,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         }
         return !hasO3RowInLogicalPartition(logicalPartitionTimestamp);
-    }
-
-    /**
-     * Checks whether a partition already has a sealed posting index for the
-     * given column. The v2 .pk chain has at least one published entry
-     * (sealTxn >= 0) iff at least one seal landed for this partition; the
-     * fd-based chain walker enforces seqlock consistency internally.
-     *
-     * @param plen          path length. This is used to trim the shared path object to.
-     * @param columnName    column name
-     * @param columnNameTxn column name txn
-     * @return true if the posting index key file exists with a non-empty
-     * v2 chain (at least one published seal entry).
-     */
-    private boolean isPostingIndexSealed(int plen, CharSequence columnName, long columnNameTxn) {
-        LPSZ keyFile = io.questdb.cairo.idx.PostingIndexUtils.keyFileName(
-                path.trimTo(plen), columnName, columnNameTxn);
-        if (!ff.exists(keyFile)) {
-            return false;
-        }
-        return io.questdb.cairo.idx.PostingIndexUtils.readSealTxnFromKeyFile(ff, keyFile) >= 0;
     }
 
     private void learnWalBlockCopyRatios() {

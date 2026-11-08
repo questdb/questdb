@@ -47,6 +47,7 @@ import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import java.io.File;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class CheckpointFuzzTest extends AbstractFuzzTest {
@@ -103,6 +104,52 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
                     .noLeakCheck().noRandomAccess().expectSize().returns("count\n100\n");
             assertQuery("select count() from x where s = 'b'")
                     .noLeakCheck().noRandomAccess().expectSize().returns("count\n1\n");
+        });
+    }
+
+    @Test
+    public void testCheckpointCopyRebuildsPostingIndexAddedInFlight() throws Exception {
+        Assume.assumeFalse(Os.isWindows());
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // 3 partitions, 'a' on every even row.
+            execute("""
+                    INSERT INTO x
+                    SELECT CASE WHEN x % 2 = 0 THEN 'a' ELSE 'b' END, x, timestamp_sequence('2024-01-01', 21_600_000_000L)
+                    FROM long_sequence(12)
+                    """);
+            drainWalQueue();
+            final TableToken tableToken = engine.verifyTableName("x");
+            // The checkpoint holds the table as it was before the ADD INDEX, which the restore replays.
+            execute("ALTER TABLE x ALTER COLUMN s ADD INDEX TYPE POSTING INCLUDE (v)");
+            checkpointCreate(false, true);
+            drainWalQueue();
+
+            // Model a copy taken while the ADD INDEX ran. It linked every index file of 2024-01-02, which the
+            // ADD INDEX had finished, but only the .pk of 2024-01-01 and 2024-01-03: the seal published the
+            // .pk in place after the copy linked it, and created the .pv after the copy listed the partition.
+            linkToCheckpointCopy(tableToken, "2024-01-01", "s.pk");
+            linkToCheckpointCopy(tableToken, "2024-01-02", "s.p");
+            linkToCheckpointCopy(tableToken, "2024-01-03", "s.pk");
+
+            checkpointRecover();
+            drainWalQueue();
+            Assert.assertFalse("table suspended", engine.getTableSequencerAPI().isSuspended(tableToken));
+            assertQuery("SELECT v, ts FROM x WHERE s = 'a'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("ts")
+                    .withPlanContaining("CoveringIndex")
+                    .returns("""
+                            v\tts
+                            2\t2024-01-01T06:00:00.000000Z
+                            4\t2024-01-01T18:00:00.000000Z
+                            6\t2024-01-02T06:00:00.000000Z
+                            8\t2024-01-02T18:00:00.000000Z
+                            10\t2024-01-03T06:00:00.000000Z
+                            12\t2024-01-03T18:00:00.000000Z
+                            """);
         });
     }
 
@@ -339,6 +386,22 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
                 ff.findClose(p);
                 src.trimTo(srcLen);
                 dst.trimTo(dstLen);
+            }
+        }
+    }
+
+    private void linkToCheckpointCopy(TableToken tableToken, String partitionName, String fileNamePrefix) {
+        final File partitionDir = new File(new File(configuration.getDbRoot(), tableToken.getDirName()), partitionName);
+        final File[] files = partitionDir.listFiles((_, name) -> name.startsWith(fileNamePrefix));
+        Assert.assertNotNull(files);
+        Assert.assertTrue(files.length > 0);
+        final FilesFacade ff = configuration.getFilesFacade();
+        try (Path src = new Path(); Path dst = new Path()) {
+            for (File file : files) {
+                src.of(file.getAbsolutePath());
+                dst.of(configuration.getDbRoot()).put(TableUtils.CHECKPOINT_META_FILE_NAME)
+                        .concat(tableToken).concat(partitionName).concat(file.getName());
+                Assert.assertEquals(0, ff.hardLink(src.$(), dst.$()));
             }
         }
     }
