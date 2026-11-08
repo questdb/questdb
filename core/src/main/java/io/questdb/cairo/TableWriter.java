@@ -4143,6 +4143,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return deltaBaseSource.getKind() == PartitionFrameSource.NATIVE;
     }
 
+    /**
+     * Whether only the object store holds the partition's rows: its Delta catalog, if any, reads a
+     * remote base, and an unknown base counts as remote. Without a catalog, {@code _txn} says.
+     */
+    public boolean isPartitionBaseRemote(int partitionIndex) {
+        final PartitionDeltaWriter deltaWriter = getPartitionDeltaWriter();
+        if (!txWriter.getPartitionHasDelta(partitionIndex) || deltaWriter == null) {
+            return txWriter.isPartitionRemotelyServed(partitionIndex);
+        }
+        deltaWriter.readBaseSource(this, partitionIndex, deltaBaseSource);
+        final int kind = deltaBaseSource.getKind();
+        return kind != PartitionFrameSource.NATIVE && kind != PartitionFrameSource.PARQUET;
+    }
+
     public boolean isPartitionDeltaActive(int partitionIndex) {
         return txWriter.isPartitionDeltaActive(partitionIndex);
     }
