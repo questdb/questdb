@@ -654,7 +654,8 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                         new long[]{FUZZ_ROW_COUNT - FUZZ_KEY_COUNT + otherKey}
                 );
             }
-            case 1 -> assertRows(conn, httpClient, fetchSize, keyFilter + " LIMIT " + limit, null, key, FUZZ_KEY_COUNT, limitedCount);
+            case 1 ->
+                    assertRows(conn, httpClient, fetchSize, keyFilter + " LIMIT " + limit, null, key, FUZZ_KEY_COUNT, limitedCount);
             case 2 -> assertRows(
                     conn,
                     httpClient,
@@ -665,14 +666,17 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                     FUZZ_KEY_COUNT,
                     limitedCount
             );
-            case 3 -> assertRows(conn, httpClient, fetchSize, keyFilter + " ORDER BY ts DESC LIMIT " + limit, null, lastMatch, -FUZZ_KEY_COUNT, limitedCount);
-            case 4 -> assertRows(conn, httpClient, fetchSize, keyFilter + " ORDER BY x DESC LIMIT " + limit, null, lastMatch, -FUZZ_KEY_COUNT, limitedCount);
+            case 3 ->
+                    assertRows(conn, httpClient, fetchSize, keyFilter + " ORDER BY ts DESC LIMIT " + limit, null, lastMatch, -FUZZ_KEY_COUNT, limitedCount);
+            case 4 ->
+                    assertRows(conn, httpClient, fetchSize, keyFilter + " ORDER BY x DESC LIMIT " + limit, null, lastMatch, -FUZZ_KEY_COUNT, limitedCount);
             case 5 -> {
                 final long lo = rnd.nextInt((int) (FUZZ_ROW_COUNT - 2_000));
                 final long hi = lo + 1 + rnd.nextInt(2_000);
                 assertRows(conn, httpClient, fetchSize, "SELECT x FROM tab WHERE x > " + lo + " AND x <= " + hi, null, lo + 1, 1, hi - lo);
             }
-            case 6 -> assertRows(conn, httpClient, fetchSize, "SELECT count() FROM tab WHERE key = 'k" + key + "'", null, matchCount, 0, 1);
+            case 6 ->
+                    assertRows(conn, httpClient, fetchSize, "SELECT count() FROM tab WHERE key = 'k" + key + "'", null, matchCount, 0, 1);
             case 7 -> {
                 final long otherMatchCount = (FUZZ_ROW_COUNT - otherKey) / FUZZ_KEY_COUNT + 1;
                 assertKeyedRows(
