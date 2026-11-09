@@ -14,7 +14,7 @@ the review you just produced and posts it as an approving review. Do not
 re-review here — post the existing review.
 
 Actions performed, in order:
-1. File the review's Deferred findings as private issues.
+1. File the review's Deferred findings and crash drafts as private issues.
 2. Post the review as the PR's review body (this is the "PR comment").
 3. Approve the PR.
 4. Add the `QUEUED FOR MERGE` label.
@@ -30,11 +30,13 @@ approve — tell the user the PR does not meet the bar and suggest `reject-pr`.
 - If no review report exists in this conversation, STOP and tell the user to run
   `/skill:review-pr` first — do not approve unreviewed code.
 - Post the review verbatim; do not shorten or rewrite it. The exceptions are
-  what CLAUDE.md keeps out of public view: leave out the Deferred section and
-  each Adjacent draft about a crash or hang that hostile input triggers, and
-  tell the user you did.
+  what CLAUDE.md keeps out of public view: leave out the Deferred section, each
+  Adjacent draft about a crash or hang that hostile input triggers, and any
+  never-run line the coverage section lists for a failure the hostile-input
+  rule covers. Step 2b files the drafts privately; tell the user what you left
+  out.
 
-## Step 1: Detect the PR
+## Step 1: Detect the PR and match the reviewed revision
 
 Auto-detect the PR from the checked-out branch. An explicit PR number/URL in the
 arguments overrides detection.
@@ -45,12 +47,19 @@ PR='<explicit PR number/URL from arguments, else empty>'
 if [ -z "$PR" ]; then
   echo "No PR found for the current branch. Run 'gh pr checkout <n>' or pass a PR number."; exit 1
 fi
-gh pr view "$PR" --json number,title,author,headRefName,url,state,labels
+gh pr view "$PR" --json number,title,author,headRefName,headRefOid,url,state,labels
 echo "Approving PR #$PR"
 ```
 
-State one line to the user: which PR (`#number — title`) you are about to approve,
-then proceed.
+The review's opening line names the revision it reviewed. Approve only when the
+PR's `headRefOid` starts with that commit hash. STOP when the line names no
+revision or names uncommitted changes, or when `headRefOid` doesn't match:
+commits pushed after the review, and local commits not pushed yet, are code no
+review has covered. Tell the user both commits; they either push the reviewed
+commits or run `/skill:review-pr` again on the new head.
+
+State one line to the user: which PR (`#number — title`) at which commit you are
+about to approve, then proceed.
 
 ## Step 2: Write the review body to a file
 
@@ -59,11 +68,12 @@ inline it into a shell command — reviews contain backticks, quotes, and `$` th
 break shell quoting). The body is the full verbatim `review-pr` report, minus
 what Step 0 leaves out.
 
-## Step 2b: File the Deferred findings
+## Step 2b: File the Deferred findings and crash drafts
 
-Approving ships the PR with its Deferred findings, so file each one first, in
-`questdb/questdb-enterprise` and nowhere else, as review-pr's Deferred section
-describes:
+Approving ships the PR with its Deferred findings, and the posted review leaves
+out its crash drafts, so file each of them first, in
+`questdb/questdb-enterprise` and nowhere else, as review-pr's Deferred and
+Adjacent sections describe:
 
 ```bash
 gh repo view questdb/questdb-enterprise --json nameWithOwner || echo "NO ACCESS"
@@ -71,15 +81,21 @@ gh label list --repo questdb/questdb-enterprise --search deferred --json name -q
   || gh label create deferred --repo questdb/questdb-enterprise \
        --description "Known bug a PR shipped with after a risk rating"
 gh issue list --repo questdb/questdb-enterprise --state all --search "<key words>" --limit 5
+# A Deferred finding:
 gh issue create --repo questdb/questdb-enterprise --title "<the draft's Problem line>" \
   --label bug --label deferred --body-file /tmp/approve-pr-$PR-<ID>.md
+# A crash draft:
+gh issue create --repo questdb/questdb-enterprise --title "<the draft's Problem line>" \
+  --label crash --body-file /tmp/approve-pr-$PR-<ID>.md
 ```
 
-Write each body to its file with the `write` tool: the draft, opening with its
-Risk line. Label a missing test `deferred` alone. When an issue already covers
-a draft, record that issue instead of filing another. Without access, print the
-drafts for the user and file nothing. Never mention these issues in the review
-you post.
+Write each body to its file with the `write` tool: the draft, a Deferred one
+opening with its Risk line. Label a missing test `deferred` alone. When an issue
+already covers a draft, record that issue instead of filing another. Never file
+a security-sensitive draft (authentication or access-control bypass, data
+exposed across users, memory corruption): print it for the user instead.
+Without access, print the drafts for the user and file nothing. Never mention
+these issues in the review you post.
 
 ## Step 3: Post the approval
 
@@ -98,7 +114,8 @@ Notes:
 ## Step 4: Confirm
 
 Report back in one or two lines:
-- The Deferred issues filed or matched (links), or the drafts printed instead.
+- The Deferred and crash issues filed or matched (links), or the drafts printed
+  instead.
 - PR number + title, "approved" posted (or the fallback used).
 - Whether the `QUEUED FOR MERGE` label was added.
 - The PR URL.

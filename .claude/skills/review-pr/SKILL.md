@@ -28,9 +28,10 @@ neither is supplied, ask for one.
   `high`. Findings rated below it ship as Deferred, with a private issue.
 
 > Harness note: this skill runs inside **Claude Code**. Use `Bash` for read-only `gh`
-> and Git queries, `Read`, `Grep` and `Glob` for files, and fresh-context `reviewer`,
-> `review-prober` and `risk-assessor` agents (`.claude/agents/`) through the Agent
-> tool. Do not edit files or push. Build and run tests only in the scratch worktree of
+> and Git queries and for `rg` and `fd` searches, `Read` for files, and fresh-context
+> `reviewer`, `review-prober` and `risk-assessor` agents (`.claude/agents/`) through
+> the Agent tool. Where a build has the `Grep` and `Glob` tools, they can replace `rg`
+> and `fd`. Do not edit files or push. Build and run tests only in the scratch worktree of
 > Step 2.6, never in the user's working tree.
 
 ## Review mindset
@@ -81,7 +82,7 @@ The level controls how much of the review below actually runs. Lower levels keep
 | **2** | Full Step 2.5, with 2.5b restricted to `public`/`protected` symbols. Run Agent 1 plus at most **four** change-relevant roles from Agents 2-8 and 11-13. Run an independent falsification task for each surviving atomic candidate. |
 | **3** | Full Step 2.5 and the complete admission protocol. Select at most **six** applicable discovery roles from Agents 1-14: Agent 1 always; Agent 9 for changed symbols with out-of-diff callers; Agents 2-8 and 11 only when their domain is touched; Agents 12-14 only for changed tests or a fix claim; Agent 10 only when a distinct adversarial pass is warranted. Depth comes from producer/reachability evidence and independent falsification, not agent count. |
 
-State the chosen level, the model running the review and the version of this skill, given under its title, in one line at the start of the review so the user knows what they're getting (e.g., "Reviewing PR #1234 at level 2 with <model ID>, review-pr <version>"). Copy the model ID from your system prompt, where Claude Code writes "The exact model ID is ..." or "You are powered by the model ..."; never write it from memory: models misstate their own name and version. Without such a line, write `model unknown`. If the level was defaulted, mention that level 3 exists for full review.
+State the reviewed revision, the chosen level, the model running the review and the version of this skill, given under its title, in one line at the start of the review so the user knows what they're getting (e.g., "Reviewing PR #1234 at 1a2b3c4d5e6f, level 2, with <model ID>, review-pr <version>"). Name the revision by the first 12 characters of its commit hash: the PR's `headRefOid` from Step 1, or the range head; for a range that ends at the working tree, the hash of `HEAD` followed by `+ uncommitted changes`. `approve-pr` approves only the revision this line names. Copy the model ID from your system prompt, where Claude Code writes "The exact model ID is ..." or "You are powered by the model ..."; never write it from memory: models misstate their own name and version. Without such a line, write `model unknown`. If the level was defaulted, mention that level 3 exists for full review.
 
 ## Spawning review agents
 
@@ -120,7 +121,7 @@ Capture the PR identifier in `$PR` after stripping the level token, then fetch m
 
 ```bash
 PR='<PR number or URL from $ARGUMENTS, with any level token removed>'
-gh pr view "$PR" --json number,title,body,labels,state
+gh pr view "$PR" --json number,title,body,labels,state,headRefOid
 gh pr diff "$PR"
 gh pr view "$PR" --comments
 # Review-thread replies on the diff, which --comments leaves out:
@@ -217,7 +218,7 @@ Record the verdict per submodule in one line each, and repeat it in the Step 4 r
 
 ## Step 2.5: Map the change surface
 
-Before launching review agents, produce a structured change surface map. This step is mandatory and must use Grep and Glob — do not reason about callsites from memory. The output of this step is required input for every agent in Step 3.
+Before launching review agents, produce a structured change surface map. This step is mandatory and must use ripgrep (`rg`) and `fd` with Bash — do not reason about callsites from memory. The output of this step is required input for every agent in Step 3.
 
 
 ### 2.5a Semantic delta per changed symbol
@@ -275,7 +276,7 @@ The list groups the callsites from 2.5b by execution context: hot data paths, SQ
 
 ### 2.5e Test surface & helper inventory
 
-Run this only when the PR adds or changes test code. It is the test-code counterpart to 2.5b and feeds Agents 12-14. Use real Grep/Glob searches — do not reason about helpers from memory.
+Run this only when the PR adds or changes test code. It is the test-code counterpart to 2.5b and feeds Agents 12-14. Use real `rg`/`fd` searches with Bash — do not reason about helpers from memory.
 
 - **Existing-infrastructure inventory:** search the changed test files' package and module for base test classes, shared `@Before`/`@After`, helper methods, fixtures, and assertion utilities the new tests could reuse (`rg` for `extends Abstract.*Test`, `class .*TestUtils`, `assertMemoryLeak`, `assertQuery`, `assertSql`, shared `protected` helpers in the base class). This list is the baseline Agent 13 uses to flag reinvented boilerplate — a "you stamped boilerplate instead of reusing helper X" finding requires X to appear in this inventory.
 - **Changed shared helpers as symbols:** if the PR changes a shared test base class, helper, or fixture, run the 2.5b callsite inventory for it too — a changed test base class can silently break every subclassing test.
@@ -338,9 +339,9 @@ Then apply the result to the map:
   - **Blast radius:** one query, the table on disk, replicas and backups, or the whole process (a Rust panic aborts the JVM).
   - **Containment:** an assertion, validation or checksum downstream that would catch the mistake.
 
-  Silent wrong or lost data, corruption, a security failure, or a crash or hang on a reachable path makes a Critical gap when it meets the bar below; a loud, bounded failure makes a Moderate gap. A failure the hostile-input rule (Step 4) covers makes no gap in this PR: list its lines as no finding, and when a probe shows the failure, write an adjacent issue draft. Error and cleanup paths are the code most often never run, and a mistake there tends to hide the failure or leave state half-written, so rarity alone never makes them low exposure: disks fill and connections drop in production. One hunk can hold both grades: in a guard that rejects an oversized `RANGE`, a wrong count in the error message is cosmetic, but a guard that lets the range through can let `(int) steps + 1` wrap, so the join silently uses too few offsets.
+  Silent wrong or lost data, corruption, a security failure, or a crash or hang on a reachable path makes a Critical gap when it meets the bar below; a loud, bounded failure makes a Moderate gap. A failure the hostile-input rule (Step 4) covers makes no gap in this PR. Its lines stay off the public list of never-run lines, because they show where hostile input can take the server down: when a probe shows the failure, the adjacent issue draft names them; otherwise they stay in the private map. Error and cleanup paths are the code most often never run, and a mistake there tends to hide the failure or leave state half-written, so rarity alone never makes them low exposure: disks fill and connections drop in production. One hunk can hold both grades: in a guard that rejects an oversized `RANGE`, a wrong count in the error message is cosmetic, but a guard that lets the range through can let `(int) steps + 1` wrap, so the join silently uses too few offsets.
 - When the exposure is Critical, reach the code with a probe test in the scratch worktree before you classify it, with the expected result worked out independently. If the code already does the wrong thing, that is a functional defect, admitted on the probe's evidence, not a coverage gap. Either way, the finding carries the probe as the test to add, except on an exotic path, where a passing probe makes no finding (below).
-- Never-run lines are never private. The Coverage map section lists those that become no finding, each with its reason: low exposure, or an exotic path (below). Only a line proven unreachable and guarded by an assertion is exempt.
+- Never-run lines are never private, except the lines of a failure the hostile-input rule covers (above). The Coverage map section lists the others that become no finding, each with its reason: low exposure, or an exotic path (below). Only a line proven unreachable and guarded by an assertion is exempt.
 
 **Exotic paths need a bug, not a test.** A missing test is a gap only on the change's main path: the behavior the PR adds or fixes, reached the way its users routinely reach it, with default settings and the SQL, types, ingestion and operations they commonly use. It includes the trigger of a fixed bug and the main path's own error and cleanup paths, since disks fill and connections drop in production. Every other way to reach the changed code is exotic: a non-default setting or table type, such as a non-WAL table; a rarely used operation or its edge cases, such as ATTACH or DETACH PARTITION; a less common route into the change, such as ILP over TCP into a non-WAL table; or an unusual combination of features. Probe an exotic path when the change may behave differently there. A probe that fails is a functional finding, admitted and rated like any other. Otherwise the row is `EXOTIC`: no finding, and the report asks for no test. CLAUDE.md "Testing" asks authors for such tests while they develop; a review does not raise their absence.
 
@@ -458,7 +459,7 @@ Select this role whenever changed symbols have meaningful out-of-diff callers. I
 
 - It receives ONLY the PR diff and the names of the changed files. It does NOT receive the change surface map from Step 2.5, the implicit contract list, the cross-context exposure list, or any of the review checklists below.
 - Its sole instruction: “generate a small set of falsifiable ways this code could be wrong, and try to disprove each before returning it.” No category list, failure-mode taxonomy, or QuestDB-specific style guide.
-- It is free to use Read and ripgrep (Grep/Glob with Bash) to explore the repository however it wants.
+- It is free to read and search the repository however it wants.
 - Each surviving output follows the candidate contract: atomic proposition, changed attribution, producer, reachability, head/base observations, symptom, counterevidence, and missing evidence. No severity or fix.
 
 The point is to escape the structured frame, not to create privileged findings. A unique hypothesis is not high signal by itself, and overlap is not corroboration unless it supplies an independent evidence type.
@@ -483,7 +484,7 @@ operates under different rules:
     - Work done unconditionally that is only needed conditionally
     - Intermediate collections built and then iterated once (build + iterate = two passes; a single streaming pass may
       suffice)
-- Use Read and ripgrep (Grep/Glob with Bash) freely. Read callers to understand actual input sizes and access patterns — an O(n) scan that
+- Read and search freely. Read callers to understand actual input sizes and access patterns — an O(n) scan that
   runs once at startup is different from one that runs per row.
 - Each finding states: what the code does now (with complexity), what the optimal approach is (with complexity), and why
   it matters (call frequency, data scale, or hot-path placement).
@@ -503,7 +504,7 @@ Select this role only when the diff changes loops, algorithms, data structures, 
 
 **Agent 13 — Test-code quality & maintainability:** Review the test as code.
 - **Reflection overuse:** flag `setAccessible(true)`, `getDeclaredField`/`getDeclaredMethod`, `Field.set`, `Class.forName`, and similar when a public API, an existing test helper, or a constructor reaches the same state. Reflection in tests is a last resort; if a neater non-reflective path exists, the reflection is a finding — name the alternative.
-- **No code reuse / boilerplate stamping:** before accepting repeated setup or assertion blocks, run Grep/Glob for existing helpers, base test classes, and fixtures (e.g., `extends Abstract.*Test`, `TestUtils`, `*TestUtils`, shared `assert*`, shared `@Before`) using the 2.5e inventory. If a helper already exists that the new test reimplements inline, flag it and name the helper. Duplicated blocks across new test methods that should be a single helper or a parameterized test are findings.
+- **No code reuse / boilerplate stamping:** before accepting repeated setup or assertion blocks, run `rg`/`fd` for existing helpers, base test classes, and fixtures (e.g., `extends Abstract.*Test`, `TestUtils`, `*TestUtils`, shared `assert*`, shared `@Before`) using the 2.5e inventory. If a helper already exists that the new test reimplements inline, flag it and name the helper. Duplicated blocks across new test methods that should be a single helper or a parameterized test are findings.
 - **Javadoc bloat:** flag multi-paragraph javadoc on `@Test` methods, javadoc that merely restates the test name, and stacked/duplicated javadoc ("javadoc piled on javadoc"). Test intent belongs in a precise test name plus, at most, a one-line comment.
 - **Residue and smells:** dead code, commented-out code, copy-paste leftovers (a `testFoo` that actually tests bar), `System.out.println` debugging, `@Ignore` without a referenced ticket, magic numbers >= 5 digits without `_` separators.
 - **Which standards apply:** zero-GC and `io.questdb.std`-over-`java.util` do NOT apply to test code — do not flag `java.util` collections or allocations in tests. Member ordering, `is/has` boolean naming, and SQL style DO apply.
@@ -884,7 +885,7 @@ When the PR adds neither, add an `UNTESTED` Step 2.6 row. It is a coverage quest
 - **Resource leak tests:** Tests must use `assertMemoryLeak()` for anything that allocates native memory.
 - **Test quality:** Are tests actually asserting the right thing? Watch for tests that pass trivially, assert on wrong values, or test implementation details instead of behavior.
 - **Regression tests:** If this PR fixes a bug, is there a test that reproduces the original bug and would fail without the fix?
-- Use Grep and Glob to find existing test files for the changed classes and verify they cover the new behavior.
+- Use ripgrep (`rg`) and `fd` with Bash to find existing test files for the changed classes and verify they cover the new behavior.
 
 ### Test code quality
 - **No vacuous assertions.** Every assertion must be able to fail. Flag `assertTrue(true)`, `assertFalse(false)`, `assertEquals(x, x)`, asserting a literal against the same literal, or a `@Test` body with no assertion and no `expected=`/`assertThrows`.
@@ -1048,10 +1049,10 @@ Report each as a ready-to-file issue draft, so it can move to GitHub without re-
 - **Suggested fix:** one or two lines
 - **Severity if filed standalone:** Critical / Moderate / Minor per the rubric above
 
-Offer to file them; do not file anything without being asked. File a draft about a crash or hang that hostile input triggers only in `questdb/questdb-enterprise` with the label `crash`, and keep it out of anything public, PR comments included (CLAUDE.md). When `gh repo view questdb/questdb-enterprise` fails, as it does for OSS contributors, keep the draft in the console report and file nothing. Their count and severity sit outside the finding-proportionality budget and outside every gate in the Summary. If one is severe enough that shipping this PR without it is genuinely unsafe — because this PR moves code onto a path where the pre-existing bug now fires — then it is not adjacent: it is out-of-diff-breakage, Step 3c rates it like any other Critical finding, and you state that argument explicitly. This never applies to a failure the hostile-input rule covers.
+Offer to file them; do not file anything without being asked. File a draft about a crash or hang that hostile input triggers only in `questdb/questdb-enterprise` with the label `crash`, as `approve-pr` does when it approves the PR, and keep it out of anything public, PR comments included (CLAUDE.md). When `gh repo view questdb/questdb-enterprise` fails, as it does for OSS contributors, keep the draft in the console report and file nothing. Their count and severity sit outside the finding-proportionality budget and outside every gate in the Summary. If one is severe enough that shipping this PR without it is genuinely unsafe — because this PR moves code onto a path where the pre-existing bug now fires — then it is not adjacent: it is out-of-diff-breakage, Step 3c rates it like any other Critical finding, and you state that argument explicitly. This never applies to a failure the hostile-input rule covers.
 
 ### Coverage map
-State the test-gate result, the number of **admitted** coverage gaps, and the measured coverage: changed lines and branches covered (e.g. `118/124 L, 40/46 B`), the tests run and the revision, or that coverage was not measured and why. Render admitted gap rows with their recorded search and failure link, except a gap rated Deferred, which appears only in the Deferred section; then list the never-run lines that became no finding, each with its reason, such as low exposure or an exotic path. The list records what no test runs and asks for no test. Do not expose counts for omitted candidates or private UNTESTED rows; keep the full Step 2.6 matrix private unless the user asks to see it.
+State the test-gate result, the number of **admitted** coverage gaps, and the measured coverage: changed lines and branches covered (e.g. `118/124 L, 40/46 B`), the tests run and the revision, or that coverage was not measured and why. Render admitted gap rows with their recorded search and failure link, except a gap rated Deferred, which appears only in the Deferred section; then list the never-run lines that became no finding, each with its reason, such as low exposure or an exotic path, except the lines of a failure the hostile-input rule covers, which stay private (Step 2.6). The list records what no test runs and asks for no test. Do not expose counts for omitted candidates or private UNTESTED rows; keep the full Step 2.6 matrix private unless the user asks to see it.
 
 ### Summary
 - **Verdict**, exactly one of:
