@@ -26,12 +26,41 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.Files;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.io.File;
+import java.util.Arrays;
+
 public class AddIndexTest extends AbstractCairoTest {
+
+    @Test
+    public void testAddBitmapIndexOverParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('a', 1, '2024-01-01'), ('b', 2, '2024-01-01T12:00'),
+                    ('a', 3, '2024-01-02'), ('b', 4, '2024-01-02T12:00')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            execute("ALTER TABLE x ALTER COLUMN s ADD INDEX TYPE BITMAP");
+            assertQuery("SELECT v, ts FROM x WHERE s = 'a'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            v\tts
+                            1\t2024-01-01T00:00:00.000000Z
+                            3\t2024-01-02T00:00:00.000000Z
+                            """);
+        });
+    }
 
     @Test
     public void testAddIndexToColumnWithTop() throws Exception {
@@ -239,5 +268,201 @@ public class AddIndexTest extends AbstractCairoTest {
                 .mutateWith("alter table trades alter column sym add index")
                 .timestamp("ts")
                 .returns(expected, expected);
+    }
+
+    @Test
+    public void testFailedAddIndexKeepsColumnOfNonPartitionedTable() throws Exception {
+        assertFailedAddIndexKeepsColumn("BITMAP", "Index forward scan on: s", false);
+    }
+
+    @Test
+    public void testFailedCoveringAddIndexKeepsColumnOfNonPartitionedTable() throws Exception {
+        assertFailedAddIndexKeepsColumn("POSTING INCLUDE (v)", "CoveringIndex on: s", true);
+    }
+
+    @Test
+    public void testFailedPostingAddIndexKeepsColumnOfNonPartitionedTable() throws Exception {
+        assertFailedAddIndexKeepsColumn("POSTING", "Index forward scan on: s", false);
+    }
+
+    @Test
+    public void testFailedPostingAddIndexRemovesItsFilesFromEveryPartition() throws Exception {
+        final SymbolReadFailingFacade ff = new SymbolReadFailingFacade("2024-01-03", "s.d");
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE x (s SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('a', 1, '2024-01-01'), ('b', 2, '2024-01-01T12:00'),
+                    ('a', 3, '2024-01-02'), ('b', 4, '2024-01-02T12:00'),
+                    ('a', 5, '2024-01-03'), ('b', 6, '2024-01-03T12:00')
+                    """);
+            // The build indexes 2024-01-01 and 2024-01-02, then fails reading the active partition's column.
+            assertAddIndexFails(ff, "POSTING INCLUDE (v)");
+            for (int day = 1; day <= 3; day++) {
+                assertNoIndexFiles("2024-01-0" + day);
+            }
+            execute("ALTER TABLE x ALTER COLUMN s ADD INDEX TYPE POSTING INCLUDE (v)");
+            assertQuery("SELECT v, ts FROM x WHERE s = 'a'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("ts")
+                    .withPlanContaining("CoveringIndex on: s")
+                    .returns("""
+                            v\tts
+                            1\t2024-01-01T00:00:00.000000Z
+                            3\t2024-01-02T00:00:00.000000Z
+                            5\t2024-01-03T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testFailedTypeChangeIndexBuildKeepsColumnOfNonPartitionedTable() throws Exception {
+        // ALTER COLUMN TYPE builds the index of the converted column and rolls a failed build back as ADD INDEX does.
+        final SymbolReadFailingFacade ff = new SymbolReadFailingFacade("default", "s.d.");
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE x (s VARCHAR, v LONG)");
+            execute("INSERT INTO x VALUES ('a', 1), ('b', 2), ('a', 3)");
+            ff.isFailing = true;
+            try {
+                execute("ALTER TABLE x ALTER COLUMN s TYPE SYMBOL INDEX TYPE POSTING");
+                Assert.fail("the index build must fail");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "could not read symbol column during indexing");
+            } finally {
+                ff.isFailing = false;
+            }
+            engine.releaseAllWriters();
+            execute("INSERT INTO x VALUES ('c', 4)");
+            assertQuery("SELECT s, v FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s\tv
+                            a\t1
+                            b\t2
+                            a\t3
+                            c\t4
+                            """);
+        });
+    }
+
+    private static void assertAddIndexFails(SymbolReadFailingFacade ff, String indexClause) throws Exception {
+        ff.isFailing = true;
+        try {
+            execute("ALTER TABLE x ALTER COLUMN s ADD INDEX TYPE " + indexClause);
+            Assert.fail("the index build must fail");
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "could not read symbol column during indexing");
+        } finally {
+            ff.isFailing = false;
+        }
+    }
+
+    // The partition directory holds the indexed column's data file and no file of an index on it.
+    private static void assertNoIndexFiles(String partitionName) {
+        final File partitionDir = new File(new File(configuration.getDbRoot(), engine.verifyTableName("x").getDirName()), partitionName);
+        final String[] files = partitionDir.list((_, name) -> name.startsWith("s."));
+        Assert.assertNotNull(files);
+        Arrays.sort(files);
+        Assert.assertEquals(partitionName, "[s.d]", Arrays.toString(files));
+    }
+
+    private void assertFailedAddIndexKeepsColumn(String indexClause, String plan, boolean isCovering) throws Exception {
+        final SymbolReadFailingFacade ff = new SymbolReadFailingFacade("default", "s.d");
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE x (s SYMBOL, v LONG)");
+            execute("INSERT INTO x VALUES ('a', 1), ('b', 2), ('a', 3)");
+            assertAddIndexFails(ff, indexClause);
+            assertNoIndexFiles("default");
+            assertQuery("SELECT s, v FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s\tv
+                            a\t1
+                            b\t2
+                            a\t3
+                            """);
+            execute("INSERT INTO x VALUES ('c', 4)");
+            assertQuery("SELECT s, v FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s\tv
+                            a\t1
+                            b\t2
+                            a\t3
+                            c\t4
+                            """);
+            execute("ALTER TABLE x ALTER COLUMN s ADD INDEX TYPE " + indexClause);
+            assertQuery("SELECT v FROM x WHERE s = 'a'")
+                    .noLeakCheck()
+                    .supportsRandomAccess(!isCovering)
+                    .expectSize(isCovering)
+                    .withPlanContaining(plan)
+                    .returns("""
+                            v
+                            1
+                            3
+                            """);
+            assertQuery("SELECT v FROM x WHERE s = 'b'")
+                    .noLeakCheck()
+                    .supportsRandomAccess(!isCovering)
+                    .expectSize(isCovering)
+                    .withPlanContaining(plan)
+                    .returns("""
+                            v
+                            2
+                            """);
+        });
+    }
+
+    // Fails every read of one partition's symbol column file while armed: an I/O error in the middle of an index
+    // build.
+    private static class SymbolReadFailingFacade extends TestFilesFacadeImpl {
+        private final String fileNamePrefix;
+        private final String partitionName;
+        private volatile boolean isFailing;
+        private volatile long symbolFd = -1;
+
+        private SymbolReadFailingFacade(String partitionName, String fileNamePrefix) {
+            this.partitionName = partitionName;
+            this.fileNamePrefix = fileNamePrefix;
+        }
+
+        @Override
+        public boolean close(long fd) {
+            if (fd == symbolFd) {
+                symbolFd = -1;
+            }
+            return super.close(fd);
+        }
+
+        @Override
+        public long openRO(LPSZ name) {
+            return trackSymbolFd(name, super.openRO(name));
+        }
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            return trackSymbolFd(name, super.openRW(name, opts));
+        }
+
+        @Override
+        public long read(long fd, long buf, long len, long offset) {
+            if (isFailing && fd == symbolFd) {
+                return -1;
+            }
+            return super.read(fd, buf, len, offset);
+        }
+
+        private long trackSymbolFd(LPSZ name, long fd) {
+            if (fd > -1 && Utf8s.containsAscii(name, partitionName + Files.SEPARATOR + fileNamePrefix)) {
+                symbolFd = fd;
+            }
+            return fd;
+        }
     }
 }

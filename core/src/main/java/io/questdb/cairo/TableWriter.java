@@ -18305,36 +18305,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void removeColumnFilesInPartition(CharSequence columnName, int columnIndex, long partitionTimestamp) {
-        if (!txWriter.isPartitionReadOnlyByPartitionTimestamp(partitionTimestamp)) {
-            setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, -1);
-            int plen = path.size();
-            long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
-            byte indexType = metadata.getColumnIndexType(columnIndex);
-            removeFileOrLog(ff, dFile(path, columnName, columnNameTxn));
-            removeFileOrLog(ff, iFile(path.trimTo(plen), columnName, columnNameTxn));
-            if (IndexType.isIndexed(indexType)) {
-                if (IndexType.isPosting(indexType)) {
-                    // Enumerate every sealed .pv / .pc<N> for this column
-                    // instance across all on-disk sealTxn generations.
-                    PostingIndexUtils.removeAllSealedFiles(ff, path, plen, columnName, columnNameTxn);
-                }
-                removeFileOrLog(ff, keyFileName(indexType, path.trimTo(plen), columnName, columnNameTxn));
-                if (!IndexType.isPosting(indexType)) {
-                    // BITMAP keeps a single .v at columnNameTxn (no sealTxn axis).
-                    removeFileOrLog(ff, valueFileName(indexType, path.trimTo(plen), columnName, columnNameTxn, columnNameTxn));
-                }
-            }
-            path.trimTo(pathSize);
-        } else {
-            LOG.critical()
-                    .$("o3 ignoring removal of column in read-only partition [table=").$(tableToken)
-                    .$(", column=").$safe(columnName)
-                    .$(", timestamp=").$ts(timestampDriver, partitionTimestamp)
-                    .$();
-        }
-    }
-
     /**
      * Removes the index files of a column from the partition directory {@link #other} points to, failing when one
      * stays: a new partition version holds hard links of the old version's files, and an index rebuilt over a link
@@ -18359,21 +18329,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void removeIndexFilesInPartition(CharSequence columnName, int columnIndex, long partitionTimestamp, long partitionNameTxn) {
+    private void removeIndexFilesInPartition(CharSequence columnName, int columnIndex, byte indexType, long partitionTimestamp, long partitionNameTxn) {
         setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
         int plen = path.size();
         long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
-        byte indexType = metadata.getColumnIndexType(columnIndex);
-        if (IndexType.isIndexed(indexType)) {
-            if (IndexType.isPosting(indexType)) {
-                // Enumerate every sealed .pv / .pc<N> for this column
-                // instance across all on-disk sealTxn generations.
-                PostingIndexUtils.removeAllSealedFiles(ff, path, plen, columnName, columnNameTxn);
-            }
-            removeFileOrLog(ff, keyFileName(indexType, path.trimTo(plen), columnName, columnNameTxn));
-            if (!IndexType.isPosting(indexType)) {
-                removeFileOrLog(ff, valueFileName(indexType, path.trimTo(plen), columnName, columnNameTxn, columnNameTxn));
-            }
+        if (IndexType.isPosting(indexType)) {
+            // Enumerate every sealed .pv / .pc<N> for this column
+            // instance across all on-disk sealTxn generations.
+            PostingIndexUtils.removeAllSealedFiles(ff, path, plen, columnName, columnNameTxn);
+        }
+        removeFileOrLog(ff, keyFileName(indexType, path.trimTo(plen), columnName, columnNameTxn));
+        if (!IndexType.isPosting(indexType)) {
+            removeFileOrLog(ff, valueFileName(indexType, path.trimTo(plen), columnName, columnNameTxn, columnNameTxn));
         }
         path.trimTo(pathSize);
     }
@@ -19365,15 +19332,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         columnVersionWriter.readUnsafe();
     }
 
-    private void rollbackRemoveIndexFiles(CharSequence columnName, int columnIndex) {
+    /**
+     * Removes the files of the index a failed {@link #writeIndex} built, and never the column it indexes: ADD INDEX
+     * reads a committed column, and the _meta a column type change swapped already names the converted one.
+     *
+     * @param indexType the type of the index the build wrote; for ADD INDEX the metadata does not carry it yet
+     */
+    private void rollbackRemoveIndexFiles(CharSequence columnName, int columnIndex, byte indexType) {
         try {
-            for (int i = txWriter.getPartitionCount() - 1; i > -1L; i--) {
-                long partitionTimestamp = txWriter.getPartitionTimestampByIndex(i);
-                long partitionNameTxn = txWriter.getPartitionNameTxn(i);
-                removeIndexFilesInPartition(columnName, columnIndex, partitionTimestamp, partitionNameTxn);
-            }
-            if (!PartitionBy.isPartitioned(partitionBy)) {
-                removeColumnFilesInPartition(columnName, columnIndex, txWriter.getLastPartitionTimestamp());
+            if (PartitionBy.isPartitioned(partitionBy)) {
+                for (int i = txWriter.getPartitionCount() - 1; i > -1; i--) {
+                    removeIndexFilesInPartition(columnName, columnIndex, indexType, txWriter.getPartitionTimestampByIndex(i), txWriter.getPartitionNameTxn(i));
+                }
+            } else {
+                final long timestamp = txWriter.getLastPartitionTimestamp();
+                removeIndexFilesInPartition(columnName, columnIndex, indexType, timestamp, txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp));
             }
         } finally {
             path.trimTo(pathSize);
@@ -22053,7 +22026,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } catch (Throwable th) {
             Misc.free(indexer);
             LOG.error().$("rolling back index created so far [path=").$substr(pathRootSize, path).I$();
-            rollbackRemoveIndexFiles(columnName, columnIndex);
+            rollbackRemoveIndexFiles(columnName, columnIndex, indexType);
             throw th;
         }
     }
