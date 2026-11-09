@@ -80,10 +80,12 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     public final static short SET_PARQUET_ENCODING = SET_MAT_VIEW_REFRESH + 1; // 26
     public final static short SET_TABLE_FORMAT = SET_PARQUET_ENCODING + 1; // 27
     public final static short SET_EXPIRE = SET_TABLE_FORMAT + 1; // 28
+    // node-local, never written to the WAL, see isForceWalBypass()
+    public final static short FORCE_REINDEX = SET_EXPIRE + 1; // 29
     // Same as SET_DEDUP_ENABLE, but carries the dedup mode: extraInfo is [dedupMode, dedup key writer indexes...].
     // SET_DEDUP_ENABLE, which carries only the dedup key writer indexes, implies the UPSERT mode. The builder
     // keeps emitting SET_DEDUP_ENABLE for UPSERT so that versions predating the dedup mode can still apply it.
-    public final static short SET_DEDUP_ENABLE_WITH_MODE = SET_EXPIRE + 1; // 29
+    public final static short SET_DEDUP_ENABLE_WITH_MODE = FORCE_REINDEX + 1; // 30
     // V2 layout (this branch onwards): index type fits in low 3 bits, dedup
     // key sits at bit 3, and bit 63 is the format-version marker that
     // distinguishes v2 payloads from any pre-v2 ALTER message still queued in
@@ -229,6 +231,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             case SET_MAT_VIEW_REFRESH_LIMIT -> securityContext.authorizeAlterMatViewSetRefreshLimit(tableToken);
             case SET_MAT_VIEW_REFRESH_TIMER, SET_MAT_VIEW_REFRESH ->
                     securityContext.authorizeAlterMatViewSetRefreshType(tableToken);
+            case FORCE_REINDEX -> securityContext.authorizeTableReindex(tableToken, getAuthColumnNames());
             default -> {
                 // DO_NOTHING, RENAME_TABLE (handled by engine directly)
             }
@@ -321,7 +324,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
 
     @Override
     public boolean isForceWalBypass() {
-        return command == FORCE_DROP_PARTITION;
+        return command == FORCE_DROP_PARTITION || command == FORCE_REINDEX;
     }
 
     @Override
@@ -653,6 +656,16 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         svc.forceRemovePartitions(extraInfo);
     }
 
+    private void applyForceReindex(MetadataService svc) {
+        // extraInfo: (partition timestamp, partition name position) pairs, none for every partition
+        svc.forceReindex(
+                activeExtraStrInfo.size() > 0 ? activeExtraStrInfo.getStrA(0) : null,
+                extraInfo,
+                tableNamePosition,
+                sqlExecutionContext != null ? sqlExecutionContext.getCircuitBreaker() : null
+        );
+    }
+
     private void applyParamO3MaxLag(MetadataService svc) {
         long o3MaxLag = extraInfo.get(0);
         try {
@@ -812,6 +825,9 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                 break;
             case FORCE_DROP_PARTITION:
                 applyDropPartitionForce(svc);
+                break;
+            case FORCE_REINDEX:
+                applyForceReindex(svc);
                 break;
             case ADD_INDEX:
                 applyAddIndex(svc);

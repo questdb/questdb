@@ -244,6 +244,21 @@ public class AlterOperationBuilder implements Mutable {
         return this;
     }
 
+    /**
+     * {@code ALTER TABLE t FORCE REINDEX PARQUET [COLUMN c] [PARTITION LIST ...]}. The partitions follow through
+     * {@link #addPartitionToList}; no partition means every parquet partition.
+     */
+    public AlterOperationBuilder ofForceReindex(int tableNamePosition, TableToken tableToken, int tableId, @Nullable CharSequence columnName) {
+        this.command = FORCE_REINDEX;
+        this.tableNamePosition = tableNamePosition;
+        this.tableToken = tableToken;
+        this.tableId = tableId;
+        if (columnName != null) {
+            this.extraStrInfo.add(columnName);
+        }
+        return this;
+    }
+
     public void ofRemoveCacheSymbol(int tableNamePosition, TableToken tableToken, int tableId, CharSequence columnName) {
         assert columnName != null && !columnName.isEmpty();
         this.command = REMOVE_SYMBOL_CACHE;

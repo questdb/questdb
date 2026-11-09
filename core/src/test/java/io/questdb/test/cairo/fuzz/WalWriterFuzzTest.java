@@ -372,6 +372,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
      */
     @Test
     public void testConvertSplitAndCompositeNoSentinelWideningOverNonLeadingNulls() throws Exception {
+        replayPinnedSeedsWithoutVacuum();
         runConvertSplitAndCompositeNoSentinelWideningFuzz(generateRandom(LOG, 714743377371743956L, 2795700442123086616L));
         Assert.assertTrue(FuzzRunner.getCheckedNoSentinelWideningsOverNonLeadingNulls() > 0);
     }
@@ -383,6 +384,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
      */
     @Test
     public void testConvertSplitAndCompositeNoSentinelWideningAtSourceWidthOverNonLeadingNulls() throws Exception {
+        replayPinnedSeedsWithoutVacuum();
         runConvertSplitAndCompositeNoSentinelWideningFuzz(generateRandom(LOG, 860669443537073L, 1794047339980L));
         Assert.assertTrue(FuzzRunner.getCheckedSourceWidthWideningsOverNonLeadingNulls() > 0);
     }
@@ -506,6 +508,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         // seeds convert partitions to parquet and back, rename sym0 twice, drop other columns and change
         // their types, all on that covering index. The fuzz plants no IO failure, see
         // runTxnZeroCoveredSymbolRandomFuzz().
+        replayPinnedSeedsWithoutVacuum();
         Rnd rnd = generateRandom(LOG, 319L, 856L);
         setTestParams(rnd);
 
@@ -552,6 +555,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         // below fails the first file the purge job opens in a partition of its log, which is the first
         // save, in every run. The fuzz test drew the default symbol index type from other seeds.
         final AtomicBoolean isPurgeLogOpenFailed = new AtomicBoolean();
+        replayPinnedSeedsWithoutVacuum();
         runTxnZeroCoveredSymbolRandomFuzz(
                 generateRandom(LOG, 882492233733669L, 1792176408151L),
                 "BITMAP",
@@ -581,6 +585,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         // its files, and the check after VACUUM TABLE proves VACUUM removes them. The fuzz test drew the
         // default symbol index type from other seeds. The fuzz plants no IO failure: one that hit the purge
         // job would lose the purge log, and the check before VACUUM TABLE would skip.
+        replayPinnedSeedsWithoutVacuum();
         runTxnZeroCoveredSymbolRandomFuzz(generateRandom(LOG, 101024978098573L, 9175392298475L), "POSTING DELTA", null, 0);
         Assert.assertEquals(txnZeroRunPurgeTasksConsumed, txnZeroRunPurgeTasksLogged);
         // instance 0 of sym0 in partition 2022-02-26 (name txn 53) of the non-WAL table, whose index DROP
@@ -1131,6 +1136,39 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
+    public void testVacuumBeforeEveryTransaction() throws Exception {
+        Rnd rnd = generateRandom(LOG);
+        setTestParams(rnd);
+        setFuzzProbabilities(
+                0.01,
+                0.01,
+                0.01,
+                0.1,
+                0.05,
+                0.05,
+                0.05,
+                0.1,
+                1.0,
+                0.01,
+                0.01,
+                0.2, // partitionToParquetProb
+                0.2, // partitionToNativeProb
+                0.01,
+                0.0,
+                0.0,
+                0.0,
+                0.01,
+                0.1,
+                0.0,
+                0.1, // addCoveringIndexProb
+                0.0
+        );
+        fuzzer.setVacuumProbability(1.0);
+        fuzzer.setFuzzCounts(true, 5_000, 200, 20, 10, 100, 100, 3, 4, 0);
+        runFuzz(rnd);
+    }
+
+    @Test
     public void testWalWriteTinyO3Memory() throws Exception {
         final int o3MemorySize = 256;
         node1.setProperty(PropertyKey.DEBUG_CAIRO_O3_COLUMN_MEMORY_SIZE, o3MemorySize);
@@ -1446,6 +1484,13 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         return instances.toString();
     }
 
+    // The pinned seeds of the tests that call this predate the VACUUM that FuzzTransactionGenerator may insert before
+    // each transaction, drawing from rnd every time. With a zero probability it draws nothing, so the seeds replay the
+    // runs they pin.
+    private void replayPinnedSeedsWithoutVacuum() {
+        fuzzer.setVacuumProbability(0);
+    }
+
     private void runConvertSplitAndCompositeNoSentinelWideningFuzz(Rnd rnd) throws Exception {
         setTestParams(rnd);
 
@@ -1655,6 +1700,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     // the fuzz of testVacuumWithCoveringIndexesOnTxnZeroAndTxnNoneSymbols(), whose seed pins the covering
     // indexes that VACUUM TABLE runs over
     private void runVacuumWithCoveringIndexesOnTxnZeroAndTxnNoneSymbols() throws Exception {
+        replayPinnedSeedsWithoutVacuum();
         Rnd rnd = generateRandom(LOG, 45L, 550L);
         setTestParams(rnd);
 

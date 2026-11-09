@@ -196,6 +196,7 @@ public class FuzzRunner {
     // the still-empty table; null when the setup is off
     private IntList txnZeroCoveredIncludeIndices;
     private String txnZeroCoveringIndexTypeName;
+    private double vacuumProb = 0.001;
 
     public FuzzRunner() {
         checkNoSuspendedTablesRef = this::checkNoSuspendedTables;
@@ -674,6 +675,7 @@ public class FuzzRunner {
                 addCoveringIndexProb,
                 dropIndexProb,
                 setTableFormatProb,
+                vacuumProb,
                 backfillProb,
                 isNoSentinelTypeChangeEnabled,
                 isNoSentinelWideningChecked,
@@ -1070,6 +1072,13 @@ public class FuzzRunner {
      */
     public void setTimestampType(int timestampType) {
         this.timestampType = timestampType;
+    }
+
+    /**
+     * Inserts VACUUM before each generated transaction with this probability, independently of operation weights.
+     */
+    public void setVacuumProbability(double vacuumProb) {
+        this.vacuumProb = vacuumProb;
     }
 
     public void withDb(CairoEngine engine, SqlExecutionContext sqlExecutionContext) {

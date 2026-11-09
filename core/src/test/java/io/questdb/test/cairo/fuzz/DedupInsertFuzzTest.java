@@ -60,6 +60,9 @@ import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
+import io.questdb.test.cairo.parquet.ParquetDedupColumnTopTest;
+import io.questdb.test.cairo.parquet.ParquetDedupColumnTopTest.KeyType;
+import io.questdb.test.cairo.parquet.ParquetDedupColumnTopTest.Shape;
 import io.questdb.test.fuzz.DuplicateFuzzInsertOperation;
 import io.questdb.test.fuzz.FuzzAddColumnOperation;
 import io.questdb.test.fuzz.FuzzDropCreateTableOperation;
@@ -303,6 +306,42 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         runDedupWithRandomShiftWithColumnTop(true);
     }
 
+    @Test
+    public void testParquetColumnTopReplayFuzz() throws Exception {
+        assertMemoryLeak(() -> {
+            Rnd rnd = TestUtils.generateRandom(LOG);
+            int budget = Integer.getInteger("questdb.fuzz.parquet.dedup.replays", 8);
+            List<KeyType> types = ParquetDedupColumnTopTest.parameters();
+            List<Shape> shapes = List.of(Shape.TOP, Shape.PARTIAL, Shape.NO_TOP, Shape.TWO_SPANS);
+            for (int i = 0; i < budget; i++) {
+                KeyType type = types.get(rnd.nextInt(types.size()));
+                Shape shape = shapes.get(rnd.nextInt(shapes.size()));
+                int groups = shape == Shape.TWO_SPANS ? 4 : 2 + rnd.nextInt(3);
+                // Keep no-sentinel -> sentinel/variable conversions out: the existing range
+                // conversion bug treats interior NULL runs as a prefix, independently of dedup.
+                ParquetDedupColumnTopTest.runReplayScenario(
+                        type, 4 + rnd.nextInt(5), groups, shape, 1 + rnd.nextInt(2),
+                        rnd.nextBoolean(), rnd.nextInt(4), rnd.nextBoolean()
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testParquetColumnTopReplayGeneratorShapes() throws Exception {
+        assertMemoryLeak(() -> {
+            for (KeyType type : ParquetDedupColumnTopTest.parameters()) {
+                for (Shape shape : List.of(Shape.TOP, Shape.PARTIAL, Shape.NO_TOP, Shape.TWO_SPANS)) {
+                    for (int groups : new int[]{2, 3}) {
+                        ParquetDedupColumnTopTest.runReplayScenario(
+                                type, 4, shape == Shape.TWO_SPANS ? 4 : groups, shape, 1,
+                                true, 0, false
+                        );
+                    }
+                }
+            }
+        });
+    }
 
     @Test
     public void testRandomColumnsDedupMultipleKeyCol() throws Exception {
