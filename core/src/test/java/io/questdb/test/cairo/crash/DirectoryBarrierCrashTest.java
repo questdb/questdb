@@ -56,6 +56,8 @@ import java.io.File;
 import java.util.Arrays;
 import java.util.function.BooleanSupplier;
 
+import static io.questdb.test.cairo.crash.FsyncFailureFacade.isCalledFrom;
+
 /**
  * Explicit durability operations keep their promises with only the directory barriers they take.
  * <p>
@@ -675,15 +677,6 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
         final TableWriter.Row row = writer.newRow(ts);
         row.putLong(1, v);
         row.append();
-    }
-
-    private static boolean isCalledFrom(String methodName) {
-        for (StackTraceElement frame : Thread.currentThread().getStackTrace()) {
-            if (methodName.equals(frame.getMethodName())) {
-                return true;
-            }
-        }
-        return false;
     }
 
     /**
@@ -1770,80 +1763,12 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
         }
     }
 
-    /**
-     * Once armed, fails one {@code fsync} or {@code fsyncAndClose} called from {@code caller}, or one synchronous
-     * or asynchronous {@code msync} when {@code isMsync}, selected by {@code isAsyncMsync}. Fails the first after
-     * {@code skipCount} such calls with a genuine data-sync failure, then behaves normally.
-     */
     @FunctionalInterface
     private interface TestTable {
         /**
          * Creates table {@code x}, WAL or not, and inserts its three rows, one per day from 2024-01-01.
          */
         void create(boolean wal) throws Exception;
-    }
-
-    private static class FsyncFailureFacade extends TestFilesFacadeImpl {
-        private final String caller;
-        private final boolean isAsyncMsync;
-        private final boolean isMsync;
-        int failureCount;
-        boolean isArmed;
-        private int skipCount;
-
-        FsyncFailureFacade(String caller, int skipCount, boolean isMsync) {
-            this(caller, skipCount, isMsync, false);
-        }
-
-        FsyncFailureFacade(String caller, int skipCount, boolean isMsync, boolean isAsyncMsync) {
-            this.caller = caller;
-            this.skipCount = skipCount;
-            this.isMsync = isMsync;
-            this.isAsyncMsync = isAsyncMsync;
-        }
-
-        @Override
-        public void fsync(long fd) {
-            if (!isMsync && isFailureDue()) {
-                throw CairoException.dataSyncFailure(this, 5, "fsync", "injected fsync failure");
-            }
-            super.fsync(fd);
-        }
-
-        @Override
-        public void fsyncAndClose(long fd) {
-            if (!isMsync && isFailureDue()) {
-                // FilesFacadeImpl closes the fd before it throws. So must this fake, or the leak is its own.
-                super.close(fd);
-                throw CairoException.dataSyncFailure(this, 5, "fsyncAndClose", "injected fsync failure");
-            }
-            super.fsyncAndClose(fd);
-        }
-
-        @Override
-        public void msync(long addr, long len, boolean async) {
-            if (isMsync && async == isAsyncMsync && isFailureDue()) {
-                throw msyncFailure();
-            }
-            super.msync(addr, len, async);
-        }
-
-        CairoException msyncFailure() {
-            return CairoException.dataSyncFailure(this, 5, "msync", "injected msync failure");
-        }
-
-        private boolean isFailureDue() {
-            if (!isArmed || !isCalledFrom(caller)) {
-                return false;
-            }
-            if (skipCount > 0) {
-                skipCount--;
-                return false;
-            }
-            isArmed = false;
-            failureCount++;
-            return true;
-        }
     }
 
     /**
