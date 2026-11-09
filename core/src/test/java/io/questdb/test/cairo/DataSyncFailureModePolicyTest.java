@@ -232,13 +232,14 @@ public class DataSyncFailureModePolicyTest extends AbstractCairoTest {
     @Test
     public void testFlushFailureRuleLivesInTheEngine() throws IOException {
         // CairoEngine.isDataSyncFailureFatal is the one rule for a failed flush (D60). The raw flag is read only by
-        // the engine, the exception itself and the code that carries a failure across a task boundary or decides a
-        // stop named above. The pool preserves an already-decided CairoError; restore distinguishes flush failure
-        // from corruption for quarantine, not fatality. Every other site asks the engine for the mode decision.
+        // the engine, the exception itself and the code that carries a failure across a task boundary, including
+        // Delta's JNI boundary, which records a failure native code raised, or decides a stop named above. The pool
+        // preserves an already-decided CairoError; restore distinguishes flush failure from corruption for
+        // quarantine, not fatality. Every other site asks the engine for the mode decision.
         Assume.assumeTrue("one source scan is enough", "nosync".equals(commitMode));
         Assert.assertEquals(
                 "[AbstractMultiTenantPool.java, CairoEngine.java, CairoException.java, ConvertOperatorImpl.java, SeqTxnTracker.java, TableConverter.java, "
-                        + "TableWriter.java, WalGroupCommitFlushQueue.java]" + (hasEnterpriseSources() ? "+[BackupRestoreAgent.java, EntCairoEngine.java]" : ""),
+                        + "TableWriter.java, WalGroupCommitFlushQueue.java]" + (hasEnterpriseSources() ? "+[BackupRestoreAgent.java, DeltaTableRegistry.java, EntCairoEngine.java]" : ""),
                 filesUsing(Pattern.compile("isDataSyncFailure\\("), null)
         );
         // Every Java flush failure is created by the recording factory (D61); only the code that carries one already
