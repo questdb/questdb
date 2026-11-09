@@ -9769,6 +9769,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // drop-table purge path) cannot free the command queue underneath a publisher
         // mid-serialize and crash the JVM with a SIGSEGV. The default hook is a no-op.
         lifecycleManager.onBeforeClose();
+        // A writer that gives the table up after a failed commit must not leave that commit's _cv published, see
+        // rollbackColumnVersionOfFailedCommit(). The drop path and a half-built writer close with truncate false.
+        if (truncate && distressed) {
+            rollbackColumnVersionOfFailedCommit();
+        }
         // destroy() may have already closed everything
         boolean tx = inTransaction();
         // A graceful close of a healthy adaptive WAL writer folds the committed tail into a final epoch, so a
@@ -19458,6 +19463,38 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // truncate _meta file exactly, the file size never changes.
             // Metadata updates are written to a new file and then swapped by renaming.
             ddlMem.close(true, Vm.TRUNCATE_TO_POINTER);
+        }
+    }
+
+    /**
+     * Rolls back the _cv version that a failed commit published ahead of the _txn record naming it, as
+     * rollbackColumnVersionToTxn() does on open and on rollback(), when this writer gives the table up distressed.
+     * Readers wait for _txn to name the _cv version, see ColumnVersionReader.readSafe(MillisecondClock, long, long),
+     * and the WAL table that the failure suspends opens no other writer until RESUME WAL. This runs while the writer
+     * still owns the table, before the pool lets another writer open it, and never throws: the next writer's
+     * constructor rolls back what this cannot. It takes the column version from the live _txn record, not from
+     * txWriter's fields, which the failed commit already moved on: the record the reader view holds changes only
+     * when a commit publishes its own.
+     */
+    private void rollbackColumnVersionOfFailedCommit() {
+        try {
+            // A failed mremap unmaps _txn or _cv, and reading it then faults.
+            if (txWriter.isOpen() && columnVersionWriter.isOpen()) {
+                final long txnColumnVersion = txWriter.unsafeReadColumnVersion();
+                // A failed commit leaves _cv exactly one version ahead of _txn. The next writer's constructor
+                // refuses any wider gap.
+                if (columnVersionWriter.getVersion() - 1 == txnColumnVersion) {
+                    LOG.info().$("rolling back column version of failed commit [table=").$(tableToken)
+                            .$(", txnVersion=").$(txnColumnVersion)
+                            .$(", actualFileVersion=").$(columnVersionWriter.getVersion())
+                            .I$();
+                    columnVersionWriter.rollback();
+                }
+            }
+        } catch (Throwable th) {
+            LOG.critical().$("could not roll back column version of failed commit [table=").$(tableToken)
+                    .$(", error=").$(th)
+                    .I$();
         }
     }
 

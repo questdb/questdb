@@ -608,6 +608,14 @@ public class TxReader implements Closeable, Mutable {
     }
 
     /**
+     * Whether {@code _txn} is mapped: not before {@code ofRO()}, after {@link #close()}, or once growing the file
+     * failed in mremap, which unmaps it.
+     */
+    public boolean isOpen() {
+        return roTxMemBase != null && roTxMemBase.isOpen();
+    }
+
+    /**
      * The {@code _geometry.<generation>} file a slot-3 geometry pointer names.
      */
     public static int geometryGeneration(long geometryRef) {

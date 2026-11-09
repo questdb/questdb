@@ -1215,9 +1215,10 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         }
     }
 
-    // An entry exists only for an area this writer mapped, and the mapping never shrinks while it is open.
+    // An entry exists only for an area this writer mapped, and the mapping never shrinks while it is open. A failed
+    // mremap unmaps _txn, which leaves nothing to check the entry against.
     private boolean isPartitionTableHashExact(PartitionTableHash partitionTableHash) {
-        if (!partitionTableHash.isValid()) {
+        if (!partitionTableHash.isValid() || !txMemBase.isOpen()) {
             return true;
         }
         final long areaAddr = txMemBase.addressOf(partitionTableHash.areaOffset);

@@ -1295,6 +1295,29 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIsOpenFollowsMapping() throws Exception {
+        assertMemoryLeak(() -> {
+            final ColumnVersionReader reader = new ColumnVersionReader();
+            // nothing is mapped before ofRO()
+            Assert.assertFalse(reader.isOpen());
+            try (
+                    Path path = new Path();
+                    ColumnVersionWriter writer = createColumnVersionWriter(path)
+            ) {
+                Assert.assertTrue(writer.isOpen());
+                writer.upsert(0, 0, -1, 10);
+                writer.commit();
+                reader.ofRO(TestFilesFacadeImpl.INSTANCE, path.$());
+                Assert.assertTrue(reader.isOpen());
+                reader.close();
+                Assert.assertFalse(reader.isOpen());
+                writer.close();
+                Assert.assertFalse(writer.isOpen());
+            }
+        });
+    }
+
+    @Test
     public void testRemovePartitionColumns() throws Exception {
         assertMemoryLeak(() -> {
             try (

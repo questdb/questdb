@@ -298,6 +298,14 @@ public class ColumnVersionReader implements Closeable, Mutable {
         return isAreaWithinFile(offset, size, fileLength) && unsafeVerifyAreaChecksum(offset, size, fileLength);
     }
 
+    /**
+     * Whether {@code _cv} is mapped: not before {@link #ofRO}, after {@link #close()}, or once growing the file
+     * failed in mremap, which unmaps it.
+     */
+    public boolean isOpen() {
+        return mem != null && mem.isOpen();
+    }
+
     public ColumnVersionReader ofRO(FilesFacade ff, LPSZ fileName) {
         isInitialChecksumVerificationRequired = true;
         version = -1;
