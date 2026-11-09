@@ -26,7 +26,6 @@ package io.questdb.griffin.optimiser;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.griffin.FunctionFactoryCache;
-import io.questdb.griffin.model.WindowExpression;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
@@ -171,15 +170,6 @@ final class OrderPlanning implements OptimiserPass {
         return true;
     }
 
-    /**
-     * True when the frame of a window with no ORDER BY holds the whole partition, as every row of it is a peer of the
-     * current row.
-     */
-    private static boolean isPartitionFrame(WindowSpec spec) {
-        return spec.getRowsLo() == Long.MIN_VALUE && (spec.getRowsHi() == Long.MAX_VALUE
-                || spec.getFramingMode() == WindowExpression.FRAMING_RANGE && spec.getRowsHi() == 0);
-    }
-
     private static boolean isSingleRow(LogicalPlan plan) {
         plan = LogicalPlans.skipProjectsAndFilters(plan);
         return plan instanceof AggregatePlan aggregate && aggregate.isSingleGroup();
@@ -311,10 +301,76 @@ final class OrderPlanning implements OptimiserPass {
     }
 
     /**
+     * Drops the sorts a time series join cannot read from the top of its input, through the projections and filters
+     * that pass the input's order on; a sort the join may read stays.
+     */
+    private static LogicalPlan removeUnreadOrder(LogicalPlan plan) {
+        switch (plan) {
+            case SortPlan sort when isUnreadTemporalOrder(sort) -> {
+                return removeUnreadOrder(sort.getChild());
+            }
+            case FilterPlan filter when LogicalPlans.isOrderTransparent(filter) ->
+                    filter.replaceInput(0, removeUnreadOrder(filter.getChild()));
+            case ProjectPlan project when LogicalPlans.isOrderTransparent(project) -> {
+                project.replaceInput(0, removeUnreadOrder(project.getChild()));
+                if (project.getOutput().getTimestampIndex() < 0) {
+                    project.getOutput().setTimestampIndex(LogicalPlans.projectedColumnIndex(project,
+                            project.getChild().getOutput().getTimestampColumnId()));
+                }
+            }
+            default -> {
+            }
+        }
+        return plan;
+    }
+
+    private static SortDirection scanDirection(ScanPlan scan, int orderColumnId, SortDirection direction) {
+        return orderColumnId == scan.getOutput().getTimestampColumnId() && direction == SortDirection.DESCENDING
+                ? SortDirection.DESCENDING : SortDirection.ASCENDING;
+    }
+
+    private boolean hasGroupByWindowFunction(WindowPlan window) {
+        for (int i = 0, n = window.getFunctions().size(); i < n; i++) {
+            if (functionFactoryCache.isGroupBy(window.getFunctions().getQuick(i).getName())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * True when the input order, {@code orderColumnId} in {@code direction}, is the order of each window whose function
+     * requires its input in the order of the window, and keeps the input's own order, none or its designated timestamp
+     * ascending, for each function that reads it, see {@link LogicalPlans#isInputOrderRead}.
+     */
+    private boolean isOrderedInputServed(WindowPlan window, int orderColumnId, SortDirection direction) {
+        final boolean isOwnOrder = orderColumnId < 0
+                || orderColumnId == window.getChild().getOutput().getTimestampColumnId() && direction == SortDirection.ASCENDING;
+        for (int i = 0, n = window.getFunctions().size(); i < n; i++) {
+            final WindowSpec spec = window.getSpecs().getQuick(i);
+            if ((window.getFunctions().getQuick(i).getFunctionFlags() & BoundExpression.ORDERED_INPUT) != 0
+                    && (spec.getOrderByColumnIds().getQuick(0) != orderColumnId || spec.getOrderByDirections().getQuick(0) != direction)
+                    || !isOwnOrder && LogicalPlans.isInputOrderRead(window, i, functionFactoryCache)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * True when a parallel filter cannot hold the last rows a constant negative LIMIT selects, which the LIMIT then
+     * applies over all rows of the filter instead.
+     */
+    private boolean isPastFilterCapacity(LimitPlan limit) {
+        return limit.getLo() instanceof ConstantExpression lo && LogicalPlans.mayBeNegativeLimit(lo)
+                && LogicalPlans.limitValue(lo) < -configuration.getSqlMaxNegativeLimit();
+    }
+
+    /**
      * Drops the sorts whose order a consumer re-sorts or discards, and the sorts of a single row that keep its
      * designated timestamp; a window's own ORDER BY and a markout sort stay.
      */
-    private static LogicalPlan removeReorderedSorts(LogicalPlan root) {
+    private LogicalPlan removeReorderedSorts(LogicalPlan root) {
         return removeReorderedSorts0(root, false, false, false, null);
     }
 
@@ -325,8 +381,8 @@ final class OrderPlanning implements OptimiserPass {
      * timestamp of {@code plan}: a markout sort reads its input in that order, any other sort designates its own key;
      * {@code resortedAggregate}: the aggregate under that sort whose every grouping key it orders by, or null.
      */
-    private static LogicalPlan removeReorderedSorts0(LogicalPlan plan, boolean isReordered, boolean isSetBranchReordered, boolean isTimestampRead,
-                                                     AggregatePlan resortedAggregate) {
+    private LogicalPlan removeReorderedSorts0(LogicalPlan plan, boolean isReordered, boolean isSetBranchReordered, boolean isTimestampRead,
+                                              AggregatePlan resortedAggregate) {
         switch (plan) {
             case SortPlan sort -> {
                 final LogicalPlan source = LogicalPlans.skipProjects(sort.getChild());
@@ -362,7 +418,7 @@ final class OrderPlanning implements OptimiserPass {
                     replaceReorderedInput(filter, isReordered && LogicalPlans.isOrderTransparent(filter), isSetBranchReordered,
                             isTimestampRead, resortedAggregate);
             case WindowPlan window ->
-                    replaceReorderedInput(window, isReordered && LogicalPlans.isInputOrderIgnored(window), false,
+                    replaceReorderedInput(window, isReordered && LogicalPlans.isInputOrderIgnored(window, functionFactoryCache), false,
                             isTimestampRead || hasTimestampWindowFunction(window), resortedAggregate);
             case JoinPlan join -> {
                 if (isReordered && !isTimestampRead) {
@@ -402,32 +458,8 @@ final class OrderPlanning implements OptimiserPass {
         return plan;
     }
 
-    /**
-     * Drops the sorts a time series join cannot read from the top of its input, through the projections and filters
-     * that pass the input's order on; a sort the join may read stays.
-     */
-    private static LogicalPlan removeUnreadOrder(LogicalPlan plan) {
-        switch (plan) {
-            case SortPlan sort when isUnreadTemporalOrder(sort) -> {
-                return removeUnreadOrder(sort.getChild());
-            }
-            case FilterPlan filter when LogicalPlans.isOrderTransparent(filter) ->
-                    filter.replaceInput(0, removeUnreadOrder(filter.getChild()));
-            case ProjectPlan project when LogicalPlans.isOrderTransparent(project) -> {
-                project.replaceInput(0, removeUnreadOrder(project.getChild()));
-                if (project.getOutput().getTimestampIndex() < 0) {
-                    project.getOutput().setTimestampIndex(LogicalPlans.projectedColumnIndex(project,
-                            project.getChild().getOutput().getTimestampColumnId()));
-                }
-            }
-            default -> {
-            }
-        }
-        return plan;
-    }
-
-    private static void replaceReorderedInput(LogicalPlan plan, boolean isReordered, boolean isSetBranchReordered, boolean isTimestampRead,
-                                              AggregatePlan resortedAggregate) {
+    private void replaceReorderedInput(LogicalPlan plan, boolean isReordered, boolean isSetBranchReordered, boolean isTimestampRead,
+                                       AggregatePlan resortedAggregate) {
         final int previousTimestampId = plan.inputAt(0).getOutput().getTimestampColumnId();
         final LogicalPlan replacement = removeReorderedSorts0(plan.inputAt(0), isReordered, isSetBranchReordered, isTimestampRead, resortedAggregate);
         plan.replaceInput(0, replacement);
@@ -440,61 +472,6 @@ final class OrderPlanning implements OptimiserPass {
         } else if (plan instanceof WindowPlan) {
             plan.getOutput().setTimestampColumnId(timestampId);
         }
-    }
-
-    private static SortDirection scanDirection(ScanPlan scan, int orderColumnId, SortDirection direction) {
-        return orderColumnId == scan.getOutput().getTimestampColumnId() && direction == SortDirection.DESCENDING
-                ? SortDirection.DESCENDING : SortDirection.ASCENDING;
-    }
-
-    private boolean hasGroupByWindowFunction(WindowPlan window) {
-        for (int i = 0, n = window.getFunctions().size(); i < n; i++) {
-            if (functionFactoryCache.isGroupBy(window.getFunctions().getQuick(i).getName())) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /**
-     * True when the value of the window function depends on the order its input delivers its rows in, the input's own
-     * order: its window has no ORDER BY, and the function reads rows by their position, as {@code row_number()} and
-     * {@code lag()} do, rather than ranking them among peers, or aggregates a frame narrower than the partition.
-     */
-    private boolean isInputOrderRead(WindowPlan window, int index) {
-        final WindowSpec spec = window.getSpecs().getQuick(index);
-        final FunctionExpression function = window.getFunctions().getQuick(index);
-        return spec.getOrderByColumnIds().size() == 0
-                && (functionFactoryCache.isPureWindowFunction(function.getName()) && !function.getOverload().getFactory().isPeerRanking()
-                || !isPartitionFrame(spec));
-    }
-
-    /**
-     * True when the input order, {@code orderColumnId} in {@code direction}, is the order of each window whose function
-     * requires its input in the order of the window, and keeps the input's own order, none or its designated timestamp
-     * ascending, for each function that reads it, see {@link #isInputOrderRead}.
-     */
-    private boolean isOrderedInputServed(WindowPlan window, int orderColumnId, SortDirection direction) {
-        final boolean isOwnOrder = orderColumnId < 0
-                || orderColumnId == window.getChild().getOutput().getTimestampColumnId() && direction == SortDirection.ASCENDING;
-        for (int i = 0, n = window.getFunctions().size(); i < n; i++) {
-            final WindowSpec spec = window.getSpecs().getQuick(i);
-            if ((window.getFunctions().getQuick(i).getFunctionFlags() & BoundExpression.ORDERED_INPUT) != 0
-                    && (spec.getOrderByColumnIds().getQuick(0) != orderColumnId || spec.getOrderByDirections().getQuick(0) != direction)
-                    || !isOwnOrder && isInputOrderRead(window, i)) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    /**
-     * True when a parallel filter cannot hold the last rows a constant negative LIMIT selects, which the LIMIT then
-     * applies over all rows of the filter instead.
-     */
-    private boolean isPastFilterCapacity(LimitPlan limit) {
-        return limit.getLo() instanceof ConstantExpression lo && LogicalPlans.mayBeNegativeLimit(lo)
-                && LogicalPlans.limitValue(lo) < -configuration.getSqlMaxNegativeLimit();
     }
 
     /**

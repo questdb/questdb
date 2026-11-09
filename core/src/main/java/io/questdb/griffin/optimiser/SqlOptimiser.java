@@ -141,7 +141,7 @@ public final class SqlOptimiser implements Mutable {
                 temporaries.joinDependencies, temporaries.longs), tmpConjuncts));
         passes.add(new Decorrelation(context, planNodes, characterStore, tmpConjuncts, tmpIndexes, tmpValues,
                 tmpKeys, tmpSlaveKeys, tmpOrder, tmpPending, tmpPairs, tmpPlans, tmpSchema, tmpSteps, substitution, tmpColumnMap, takenNames, planReadIds));
-        aggregateInputOrder = new AggregateInputOrder();
+        aggregateInputOrder = new AggregateInputOrder(functionFactoryCache);
         final ProjectionMerge projectionMerge = new ProjectionMerge(context, columnIds);
         passes.add(new SumNormalisation(context, characterStore, columns, takenNames, tmpKeys, columnIds, substitution, tmpSlaveKeys, tmpIndexes, tmpValues));
         passes.add(new AggregateRewrite(context, projectionMerge, tmpProjection, tmpColumn, tmpKeys));

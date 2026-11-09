@@ -26,6 +26,7 @@ package io.questdb.griffin.plan.logical;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.SymbolKeyExtractor;
 import io.questdb.std.Chars;
@@ -583,17 +584,31 @@ public final class LogicalPlans {
     }
 
     /**
-     * True when the window's results do not depend on its input's row order: every window orders its rows itself, and
-     * none is a SUBSAMPLE keep flag, which selects among rows of equal timestamp in their input order.
+     * True when the window's results do not depend on its input's row order: no function reads it, see
+     * {@link #isInputOrderRead}, and no window is a SUBSAMPLE keep flag, which selects among rows of equal timestamp in
+     * their input order.
      */
-    public static boolean isInputOrderIgnored(WindowPlan window) {
+    public static boolean isInputOrderIgnored(WindowPlan window, FunctionFactoryCache functionFactoryCache) {
         for (int i = 0, n = window.getSpecs().size(); i < n; i++) {
-            final WindowSpec spec = window.getSpecs().getQuick(i);
-            if (spec.getOrderByColumnIds().size() == 0 || spec.isSubsampleKeepFlag()) {
+            if (window.getSpecs().getQuick(i).isSubsampleKeepFlag() || isInputOrderRead(window, i, functionFactoryCache)) {
                 return false;
             }
         }
         return true;
+    }
+
+    /**
+     * True when the value of the window function at {@code index} depends on the order its input delivers its rows in,
+     * the input's own order: its window has no ORDER BY, and the function reads rows by their position, as
+     * {@code row_number()} and {@code lag()} do, rather than ranking them among peers, or aggregates a frame narrower
+     * than the partition.
+     */
+    public static boolean isInputOrderRead(WindowPlan window, int index, FunctionFactoryCache functionFactoryCache) {
+        final WindowSpec spec = window.getSpecs().getQuick(index);
+        final FunctionExpression function = window.getFunctions().getQuick(index);
+        return spec.getOrderByColumnIds().size() == 0
+                && (functionFactoryCache.isPureWindowFunction(function.getName()) && !function.getOverload().getFactory().isPeerRanking()
+                || !spec.isPartitionFrame());
     }
 
     /**

@@ -202,6 +202,14 @@ public final class WindowSpec implements PlanFactSource {
         return false;
     }
 
+    /**
+     * True when the frame holds the whole partition of a window with no ORDER BY, where every row of the partition is a
+     * peer of the current row.
+     */
+    public boolean isPartitionFrame() {
+        return rowsLo == Long.MIN_VALUE && (rowsHi == Long.MAX_VALUE || framingMode == WindowExpression.FRAMING_RANGE && rowsHi == 0);
+    }
+
     public boolean isSubsampleKeepFlag() {
         return isSubsampleKeepFlag;
     }

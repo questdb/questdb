@@ -971,6 +971,62 @@ public class OrderPlanningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowDropsSubQueryOrderUnlessAFunctionReadsIt() throws Exception {
+        // row_number() without ORDER BY numbers the rows in the order the sub-query sorts them, so its sort stays;
+        // sum() over the whole partition reads the rows as a set, so the outer ORDER BY makes its sort useless.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE p (ts TIMESTAMP, k SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO p VALUES
+                        ('2024-01-01T00:00:00.000000Z', 'A', 3.0),
+                        ('2024-01-01T00:00:01.000000Z', 'A', 1.0),
+                        ('2024-01-01T00:00:02.000000Z', 'B', 2.0),
+                        ('2024-01-01T00:00:03.000000Z', 'A', 2.5)
+                    """);
+            assertQuery("SELECT ts, k, v, row_number() OVER (PARTITION BY k) rn FROM (SELECT * FROM p ORDER BY v) ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlan("""
+                            Encode sort
+                              keys: [ts]
+                                Window
+                                  functions: [row_number() over (partition by [k])]
+                                    Encode sort light
+                                      keys: [v]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: p
+                            """)
+                    .returns("""
+                            ts\tk\tv\trn
+                            2024-01-01T00:00:00.000000Z\tA\t3.0\t3
+                            2024-01-01T00:00:01.000000Z\tA\t1.0\t1
+                            2024-01-01T00:00:02.000000Z\tB\t2.0\t1
+                            2024-01-01T00:00:03.000000Z\tA\t2.5\t2
+                            """);
+            assertQuery("SELECT ts, k, v, sum(v) OVER (PARTITION BY k) s FROM (SELECT * FROM p ORDER BY v) ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlan("""
+                            CachedWindowLight
+                              unorderedFunctions: [sum(v) over (partition by [k])]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: p
+                            """)
+                    .returns("""
+                            ts\tk\tv\ts
+                            2024-01-01T00:00:00.000000Z\tA\t3.0\t6.5
+                            2024-01-01T00:00:01.000000Z\tA\t1.0\t6.5
+                            2024-01-01T00:00:02.000000Z\tB\t2.0\t2.0
+                            2024-01-01T00:00:03.000000Z\tA\t2.5\t6.5
+                            """);
+        });
+    }
+
+    @Test
     public void testWindowWithoutOrderedInputUnderDescendingOrderScansBackward() throws Exception {
         assertMemoryLeak(() -> {
             createWindowTable();

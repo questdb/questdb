@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.optimiser;
 
+import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.HorizonJoinPlan;
@@ -43,8 +44,13 @@ import io.questdb.std.ObjList;
  * Drops the ordering operators beneath an aggregate whose result does not depend on its input order.
  */
 final class AggregateInputOrder implements Mutable {
+    private final FunctionFactoryCache functionFactoryCache;
     private final ObjList<LogicalPlan> orderedBranchAggregates = new ObjList<>();
     private final PlanVisitor orderedBranches = this::collectOrderedBranchAggregate;
+
+    AggregateInputOrder(FunctionFactoryCache functionFactoryCache) {
+        this.functionFactoryCache = functionFactoryCache;
+    }
 
     @Override
     public void clear() {
@@ -81,7 +87,7 @@ final class AggregateInputOrder implements Mutable {
                         ? plan : removeAggregateInputOrder(sort.getChild());
             }
             case WindowPlan window -> {
-                if (!LogicalPlans.isInputOrderIgnored(window)) {
+                if (!LogicalPlans.isInputOrderIgnored(window, functionFactoryCache)) {
                     return plan;
                 }
                 final LogicalPlan input = window.getChild();
