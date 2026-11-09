@@ -207,13 +207,6 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                         task.collected(true);
                     }
                     collectSubSeq.done(cursor);
-                    if (dispatcher != null) {
-                        if (taskFrameSequence != null) {
-                            dispatcher.signalProgress(taskFrameSequence, shard);
-                        } else {
-                            dispatcher.signalRingProgress(shard);
-                        }
-                    }
                 } else if (canPark) {
                     awaitProgress(dispatcher, observedProgress, observedShardProgress, true, getBlockedShard());
                 } else {
@@ -276,11 +269,6 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         collectSubSeq.done(cursor);
         if (done) {
             suspendCollectSubSeq();
-            return;
-        }
-        final PageFrameReduceDispatcher dispatcher = messageBus.getPageFrameReduceDispatcher();
-        if (dispatcher != null) {
-            dispatcher.signalProgress(this, shard);
         }
     }
 
@@ -406,13 +394,6 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                 } else {
                     // Not our task, nothing to collect. Go for another spin.
                     collectSubSeq.done(cursor);
-                    if (dispatcher != null) {
-                        if (thatFrameSequence != null) {
-                            dispatcher.signalProgress(thatFrameSequence, shard);
-                        } else {
-                            dispatcher.signalRingProgress(shard);
-                        }
-                    }
                 }
             } else if (cursor == -1) {
                 if (dispatcher != null && !isActive()) {
@@ -571,10 +552,6 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         if (collectSubSeqToRemove != null) {
             try {
                 messageBus.getPageFrameCollectFanOut(shard).remove(collectSubSeqToRemove);
-                final PageFrameReduceDispatcher dispatcher = messageBus.getPageFrameReduceDispatcher();
-                if (dispatcher != null) {
-                    dispatcher.signalRingProgress(shard);
-                }
                 LOG.debug().$("removed [seq=").$(collectSubSeqToRemove).I$();
             } catch (Throwable th) {
                 if (cleanupFailure == null) {
@@ -937,9 +914,5 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
 
     private void suspendCollectSubSeq() {
         messageBus.getPageFrameCollectFanOut(shard).suspend(collectSubSeq);
-        final PageFrameReduceDispatcher dispatcher = messageBus.getPageFrameReduceDispatcher();
-        if (dispatcher != null) {
-            dispatcher.signalProgress(this, shard);
-        }
     }
 }
