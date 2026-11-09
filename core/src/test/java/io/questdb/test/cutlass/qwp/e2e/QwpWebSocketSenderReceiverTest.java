@@ -1022,6 +1022,35 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
     }
 
     @Test
+    public void testDecimalNullBatchAfterColumnDropDefersColumns() throws Exception {
+        assertDecimalNullBatchAfterDropDefersColumns(
+                "ws_decimal_null_readd",
+                """
+                        x\td64\td128\td256
+                        1\t\t\t
+                        2\t\t\t
+                        3\t4.56\t4.56\t4.56
+                        """,
+                "ALTER TABLE ws_decimal_null_readd DROP COLUMN d64",
+                "ALTER TABLE ws_decimal_null_readd DROP COLUMN d128",
+                "ALTER TABLE ws_decimal_null_readd DROP COLUMN d256"
+        );
+    }
+
+    @Test
+    public void testDecimalNullBatchAfterTableDropDefersColumns() throws Exception {
+        assertDecimalNullBatchAfterDropDefersColumns(
+                "ws_decimal_null_recreate",
+                """
+                        x\td64\td128\td256
+                        2\t\t\t
+                        3\t4.56\t4.56\t4.56
+                        """,
+                "DROP TABLE ws_decimal_null_recreate"
+        );
+    }
+
+    @Test
     public void testDecimalNullSkipped() throws Exception {
         runInContext((port) -> {
             try (QwpWebSocketSender sender = createSender(port)) {
@@ -1038,35 +1067,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                     .noLeakCheck()
                     .returnsOnce("count\n1\n");
         });
-    }
-
-    @Test
-    public void testDecimalScaleComesFromFirstValueWhenColumnsAreReaddedByNullBatch() throws Exception {
-        assertDecimalScaleComesFromFirstValueAfterNullBatch(
-                "ws_decimal_null_readd",
-                """
-                        x\td64\td128\td256
-                        1\t\t\t
-                        2\t\t\t
-                        3\t4.56\t4.56\t4.56
-                        """,
-                "ALTER TABLE ws_decimal_null_readd DROP COLUMN d64",
-                "ALTER TABLE ws_decimal_null_readd DROP COLUMN d128",
-                "ALTER TABLE ws_decimal_null_readd DROP COLUMN d256"
-        );
-    }
-
-    @Test
-    public void testDecimalScaleComesFromFirstValueWhenTableIsRecreatedByNullBatch() throws Exception {
-        assertDecimalScaleComesFromFirstValueAfterNullBatch(
-                "ws_decimal_null_recreate",
-                """
-                        x\td64\td128\td256
-                        2\t\t\t
-                        3\t4.56\t4.56\t4.56
-                        """,
-                "DROP TABLE ws_decimal_null_recreate"
-        );
     }
 
     @Test
@@ -4409,9 +4409,18 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
         });
     }
 
+    private static void sendDecimalRow(QwpWebSocketSender sender, String table, long x, long unscaled) {
+        sender.table(table)
+                .longColumn("x", x)
+                .decimalColumn("d64", Decimal64.fromLong(unscaled, 2))
+                .decimalColumn("d128", Decimal128.fromLong(unscaled, 2))
+                .decimalColumn("d256", Decimal256.fromLong(unscaled, 2))
+                .at(x, ChronoUnit.MICROS);
+    }
+
     // The sender keeps its decimal columns after a flush, so once the server
     // drops them, the sender's next batch carries them with only NULLs.
-    private void assertDecimalScaleComesFromFirstValueAfterNullBatch(
+    private void assertDecimalNullBatchAfterDropDefersColumns(
             String table,
             String expectedRows,
             String... dropStatements
@@ -4462,14 +4471,5 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                 QwpWebSocketSender.DEFAULT_AUTO_FLUSH_ROWS,
                 QwpWebSocketSender.DEFAULT_AUTO_FLUSH_BYTES,
                 QwpWebSocketSender.DEFAULT_AUTO_FLUSH_INTERVAL_NANOS);
-    }
-
-    private static void sendDecimalRow(QwpWebSocketSender sender, String table, long x, long unscaled) {
-        sender.table(table)
-                .longColumn("x", x)
-                .decimalColumn("d64", Decimal64.fromLong(unscaled, 2))
-                .decimalColumn("d128", Decimal128.fromLong(unscaled, 2))
-                .decimalColumn("d256", Decimal256.fromLong(unscaled, 2))
-                .at(x, ChronoUnit.MICROS);
     }
 }
