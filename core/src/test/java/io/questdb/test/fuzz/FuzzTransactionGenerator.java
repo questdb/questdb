@@ -82,7 +82,8 @@ public class FuzzTransactionGenerator {
             int metaVersion,
             double probabilityOfSetParquetEncoding,
             double probabilityOfAddCoveringIndex,
-            double probabilityOfSetTableFormat
+            double probabilityOfSetTableFormat,
+            double probabilityOfVacuum
     ) {
         return generateSet(
                 initialRowCount,
@@ -119,6 +120,7 @@ public class FuzzTransactionGenerator {
                 probabilityOfSetParquetEncoding,
                 probabilityOfAddCoveringIndex,
                 probabilityOfSetTableFormat,
+                probabilityOfVacuum,
                 0.0
         );
     }
@@ -162,6 +164,7 @@ public class FuzzTransactionGenerator {
             double probabilityOfSetParquetEncoding,
             double probabilityOfAddCoveringIndex,
             double probabilityOfSetTableFormat,
+            double probabilityOfVacuum,
             double probabilityOfBackfill
     ) {
         ObjList<FuzzTransaction> transactionList = new ObjList<>();
@@ -248,6 +251,15 @@ public class FuzzTransactionGenerator {
         long pendingCollisionTs = Long.MIN_VALUE;
 
         for (int i = 0; i < transactionCount; i++) {
+            if (probabilityOfVacuum > 0 && rnd.nextDouble() < probabilityOfVacuum) {
+                FuzzTransaction transaction = new FuzzTransaction();
+                transaction.operationList.add(new FuzzVacuumOperation());
+                transaction.structureVersion = metaVersion;
+                transaction.waitBarrierVersion = waitBarrierVersion;
+                // VACUUM changes no rows or metadata and must not add a sequencer transaction.
+                transaction.rollback = true;
+                transactionList.add(transaction);
+            }
             if (i == tableDropIteration) {
                 generateTableDropCreate(transactionList, metaVersion, waitBarrierVersion++);
                 metaVersion = 0;

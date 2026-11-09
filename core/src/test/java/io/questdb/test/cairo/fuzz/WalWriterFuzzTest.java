@@ -854,6 +854,39 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
+    public void testVacuumBeforeEveryTransaction() throws Exception {
+        Rnd rnd = generateRandom(LOG);
+        setTestParams(rnd);
+        setFuzzProbabilities(
+                0.01,
+                0.01,
+                0.01,
+                0.1,
+                0.05,
+                0.05,
+                0.05,
+                0.1,
+                1.0,
+                0.01,
+                0.01,
+                0.2, // partitionToParquetProb
+                0.2, // partitionToNativeProb
+                0.01,
+                0.0,
+                0.0,
+                0.0,
+                0.01,
+                0.1,
+                0.0,
+                0.1, // addCoveringIndexProb
+                0.0
+        );
+        fuzzer.setVacuumProbability(1.0);
+        fuzzer.setFuzzCounts(true, 5_000, 200, 20, 10, 100, 100, 3, 4, 0);
+        runFuzz(rnd);
+    }
+
+    @Test
     public void testWalWriteTinyO3Memory() throws Exception {
         final int o3MemorySize = 256;
         node1.setProperty(PropertyKey.DEBUG_CAIRO_O3_COLUMN_MEMORY_SIZE, o3MemorySize);
