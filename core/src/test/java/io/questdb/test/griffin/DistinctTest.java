@@ -497,6 +497,32 @@ public class DistinctTest extends AbstractCairoTest {
         testInnerJoinAliases2(false);
     }
 
+    @Test
+    public void testOrderByTimestampOverDistinctOfDescendingInput() throws Exception {
+        execute("CREATE TABLE t (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("INSERT INTO t VALUES ('2024-01-01T00:00', 1), ('2024-01-01T01:00', 2), ('2024-01-01T02:00', 3), ('2024-01-01T03:00', 4)");
+        final String distinct = "SELECT DISTINCT ts, s, lag(s) OVER () l FROM (SELECT ts, sum(v) s FROM t SAMPLE BY 1h ORDER BY ts DESC LIMIT 3)";
+        assertQuery("SELECT * FROM (" + distinct + ") ORDER BY ts")
+                .timestamp("ts")
+                .expectSize()
+                .returns("""
+                        ts\ts\tl
+                        2024-01-01T01:00:00.000000Z\t2\t3
+                        2024-01-01T02:00:00.000000Z\t3\t4
+                        2024-01-01T03:00:00.000000Z\t4\tnull
+                        """);
+        assertQuery("SELECT * FROM (" + distinct + ") ORDER BY ts DESC")
+                .timestampDesc("ts")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        ts\ts\tl
+                        2024-01-01T03:00:00.000000Z\t4\tnull
+                        2024-01-01T02:00:00.000000Z\t3\t4
+                        2024-01-01T01:00:00.000000Z\t2\t3
+                        """);
+    }
+
     private void testColumnPrefixes(boolean columnAliasExprEnabled) throws Exception {
         setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, String.valueOf(columnAliasExprEnabled));
         assertMemoryLeak(() -> {
