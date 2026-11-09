@@ -3379,7 +3379,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * a later in-place write, such as a squash, change the rows that readers and checkpoints of the old version see.
      * A listed partition with no parquet part fails the command.
      * <p>
-     * Cold partitions have no local data and are skipped; the command fails when every selected partition is cold.
+     * Cold partitions have no local data and are skipped. Delta partitions are skipped too: their base is frozen in
+     * the current directory version. The command fails when every selected partition is cold or Delta.
      * Partitions attached from a soft link are skipped too: a new directory version would move them off their volume.
      * As INSERT AS SELECT, it has no timeout: a cancel or a dropped connection stops it once the partition at hand
      * is committed.
@@ -3456,19 +3457,29 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         int selectedCount = 0;
         int coldCount = 0;
+        int deltaCount = 0;
         for (int i = 0; i < partitionCount; i++) {
             if (isSelected[i]) {
                 selectedCount++;
                 if (txWriter.isPartitionRemotelyServed(i)) {
                     coldCount++;
+                } else if (txWriter.isPartitionDeltaActive(i)) {
+                    deltaCount++;
                 }
             }
         }
-        if (selectedCount > 0 && coldCount == selectedCount) {
+        if (selectedCount > 0 && coldCount + deltaCount == selectedCount) {
+            final int position = partitions.size() > 0 ? (int) partitions.getQuick(1) : tableNamePosition;
+            if (deltaCount == 0) {
+                throw CairoException.nonCritical()
+                        .position(position)
+                        .put("cannot reindex cold partitions, they have no local data [table=").put(tableToken.getTableName())
+                        .put(", partitionCount=").put(coldCount).put(']');
+            }
             throw CairoException.nonCritical()
-                    .position(partitions.size() > 0 ? (int) partitions.getQuick(1) : tableNamePosition)
-                    .put("cannot reindex cold partitions, they have no local data [table=").put(tableToken.getTableName())
-                    .put(", partitionCount=").put(coldCount).put(']');
+                    .position(position)
+                    .put("cannot reindex Delta partitions [table=").put(tableToken.getTableName())
+                    .put(", partitionCount=").put(deltaCount).put(']');
         }
 
         reindexedPartitions.clear();
@@ -3481,6 +3492,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 throwIfReindexInterrupted(circuitBreaker);
                 if (txWriter.isPartitionRemotelyServed(i)) {
                     LOG.info().$("skipping cold partition in reindex [table=").$(tableToken)
+                            .$(", partition=").$ts(timestampDriver, txWriter.getPartitionTimestampByIndex(i))
+                            .I$();
+                    continue;
+                }
+                if (txWriter.isPartitionDeltaActive(i)) {
+                    LOG.info().$("skipping delta partition in reindex [table=").$(tableToken)
                             .$(", partition=").$ts(timestampDriver, txWriter.getPartitionTimestampByIndex(i))
                             .I$();
                     continue;
