@@ -3403,51 +3403,26 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
         // root would hold the base WAL until a newer row: the repair retires the timeline and its
         // marker instead. Each restart then finds no timeline, and the rebuild from the applied
         // base is refused over the day the base lost: the view stops with every row it holds.
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
-        final LiveViewCheckpointDiskFullFault fault = new LiveViewCheckpointDiskFullFault();
         final LogCapture capture = new LogCapture();
         try {
-            assertMemoryLeak(fault, () -> {
-                createDepartureView();
-                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                    driveSeedToCompletion(job, "lv");
-                    final LiveViewInstance instance = commitTwoRowsAboveTheNewestRoot(job);
-                    final long sealFailuresBefore = instance.getCheckpointSealFailures();
-                    final long resetsBefore = instance.getCheckpointTimelineResets();
-                    setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
-                    for (int second = 10; second <= 20; second += 10) {
-                        fault.arm(LiveViewCheckpointDiskFullFault.OP_ALLOCATE, LiveViewCheckpointLayout.DATA_DIR_NAME, 1);
-                        commitDeparture(job, "('2026-01-01T00:04:" + second + ".000000Z', 'b', -1.0)");
-                        fault.disarm();
-                        Assert.assertNotNull("the seal at the frontier must reach its data segment", fault.getFailedFile());
-                    }
-                    Assert.assertEquals(sealFailuresBefore + 2, instance.getCheckpointSealFailures());
-                    hooks(job).setSimulateResumeHeadSealStart(
-                            () -> fault.arm(LiveViewCheckpointDiskFullFault.OP_ALLOCATE, LiveViewCheckpointLayout.DATA_DIR_NAME, 1)
-                    );
-                    capture.start();
-                    commitDeparture(job, "('2026-01-01T00:04:00.000000Z', 'a', -1.0)");
-                    capture.drain();
-                    capture.stop();
-                    hooks(job).setSimulateResumeHeadSealStart(null);
-                    fault.disarm();
-                    Assert.assertNotNull("the closing seal must reach its data segment", fault.getFailedFile());
-                    Assert.assertEquals(sealFailuresBefore + 3, instance.getCheckpointSealFailures());
-                    Assert.assertEquals(resetsBefore + 1, instance.getCheckpointTimelineResets());
-                    Assert.assertEquals(Numbers.LONG_NULL, instance.getHeadCheckpointMaxTs());
-                    assertTimelineAndMarkerRetired(instance);
-                    capture.assertLogged("live view checkpoint seal keeps failing, keeping the timeline and backing off "
-                            + "[view=lv, consecutiveFailures=3, backoffMicros=60000000]");
-                    capture.assertLogged("live view O3 repair owes a root no seal can land before a newer row while its checkpoint "
-                            + "seal backs off, retiring the timeline [view=lv, frontier=2026-01-01T00:03:00.000000Z, "
-                            + "latestSeenTs=2026-01-01T00:04:00.000000Z]");
-                    Assert.assertEquals(0, capture.countOccurrences("live view O3 repair kept its repair marker"));
-                    Assert.assertTrue(instance.isSealOnCooldown(currentMicros + 59_000_000L));
-                    Assert.assertFalse(instance.isSealOnCooldown(currentMicros + 61_000_000L));
-                    assertNoRefreshFaults("lv");
-                }
-                assertRestartsBlocked(OWED_ROOT_DEPARTED_FRONTIER_ROWS, OWED_ROOT_HISTORY_FLOOR, "timeline is absent");
-            });
+            assertOwedRootThatADepartureStrandsAtTheThirdFailureRetiresTheTimeline(false, capture);
+            capture.assertLogged("live view O3 repair owes a root no seal can land before a newer row while its checkpoint "
+                    + "seal backs off, retiring the timeline [view=lv, frontier=2026-01-01T00:03:00.000000Z, "
+                    + "latestSeenTs=2026-01-01T00:04:00.000000Z]");
+        } finally {
+            capture.stop();
+        }
+    }
+
+    @Test
+    public void testOwedRootThatADepartureStrandsAtTheThirdFailureRetiresTheTimelineOverANanosecondBase() throws Exception {
+        // The same departure over a base whose designated timestamp has nanosecond precision: the
+        // repair weighs the owed frontier 00:03 against the newest timestamp the view has seen,
+        // 00:04, both in the view's own unit, and retires the timeline and its marker at the third
+        // failure as it does over a microsecond base.
+        final LogCapture capture = new LogCapture();
+        try {
+            assertOwedRootThatADepartureStrandsAtTheThirdFailureRetiresTheTimeline(true, capture);
         } finally {
             capture.stop();
         }
@@ -5107,6 +5082,65 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
     }
 
     /**
+     * Over the owed-root fixture, on a base whose designated timestamp has nanosecond precision
+     * when {@code isNanos}: past the duration cadence, two failed seals at the frontier 00:04, then
+     * an upsert of 00:04 out of the filter, whose resume owes a root at the new frontier 00:03 and
+     * whose closing seal fails, the third failure in a row. The seal pauses, and the repair retires
+     * the timeline and its marker. Each restart then stops the view with every row it holds.
+     * {@code capture} holds the log of the upsert's refresh.
+     */
+    private void assertOwedRootThatADepartureStrandsAtTheThirdFailureRetiresTheTimeline(
+            boolean isNanos,
+            LogCapture capture
+    ) throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        final String day = "2026-01-01";
+        final LiveViewCheckpointDiskFullFault fault = new LiveViewCheckpointDiskFullFault();
+        assertMemoryLeak(fault, () -> {
+            createDepartureView(isNanos);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                final LiveViewInstance instance = commitTwoRowsAboveTheNewestRoot(job);
+                final long sealFailuresBefore = instance.getCheckpointSealFailures();
+                final long resetsBefore = instance.getCheckpointTimelineResets();
+                setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
+                for (int second = 10; second <= 20; second += 10) {
+                    fault.arm(LiveViewCheckpointDiskFullFault.OP_ALLOCATE, LiveViewCheckpointLayout.DATA_DIR_NAME, 1);
+                    commitDeparture(job, "('" + day + "T00:04:" + second + ".000000Z', 'b', -1.0)");
+                    fault.disarm();
+                    Assert.assertNotNull("the seal at the frontier must reach its data segment", fault.getFailedFile());
+                }
+                Assert.assertEquals(sealFailuresBefore + 2, instance.getCheckpointSealFailures());
+                hooks(job).setSimulateResumeHeadSealStart(
+                        () -> fault.arm(LiveViewCheckpointDiskFullFault.OP_ALLOCATE, LiveViewCheckpointLayout.DATA_DIR_NAME, 1)
+                );
+                capture.start();
+                commitDeparture(job, "('" + day + "T00:04:00.000000Z', 'a', -1.0)");
+                capture.drain();
+                capture.stop();
+                hooks(job).setSimulateResumeHeadSealStart(null);
+                fault.disarm();
+                Assert.assertNotNull("the closing seal must reach its data segment", fault.getFailedFile());
+                Assert.assertEquals(sealFailuresBefore + 3, instance.getCheckpointSealFailures());
+                Assert.assertEquals(resetsBefore + 1, instance.getCheckpointTimelineResets());
+                Assert.assertEquals(Numbers.LONG_NULL, instance.getHeadCheckpointMaxTs());
+                assertTimelineAndMarkerRetired(instance);
+                capture.assertLogged("live view checkpoint seal keeps failing, keeping the timeline and backing off "
+                        + "[view=lv, consecutiveFailures=3, backoffMicros=60000000]");
+                Assert.assertEquals(0, capture.countOccurrences("live view O3 repair kept its repair marker"));
+                Assert.assertTrue(instance.isSealOnCooldown(currentMicros + 59_000_000L));
+                Assert.assertFalse(instance.isSealOnCooldown(currentMicros + 61_000_000L));
+                assertNoRefreshFaults("lv");
+            }
+            assertRestartsBlocked(
+                    owedRootText(OWED_ROOT_DEPARTED_FRONTIER_ROWS, day, isNanos),
+                    owedRootText(OWED_ROOT_HISTORY_FLOOR, day, isNanos),
+                    "timeline is absent"
+            );
+        });
+    }
+
+    /**
      * Asserts the repair marker reads as live: on disk, naming {@code markerBaseGeneration}, under
      * the splice's generation one past it, so a restore refuses the timeline.
      */
@@ -5595,7 +5629,14 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
     }
 
     private void createDepartureView() throws Exception {
-        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, sym)");
+        createDepartureView(false);
+    }
+
+    // The departure view, over a base whose designated timestamp has nanosecond precision when
+    // isNanos.
+    private void createDepartureView(boolean isNanos) throws Exception {
+        execute("CREATE TABLE base (ts " + (isNanos ? "TIMESTAMP_NS" : "TIMESTAMP")
+                + ", sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, sym)");
         execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " + DEPARTURE_VIEW_SQL);
     }
 
