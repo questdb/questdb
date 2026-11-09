@@ -372,7 +372,8 @@ public class ParquetColumnTopConversionTest extends AbstractCairoTest {
         return switch (sourceType) {
             case "BOOLEAN" -> "x % 3 = 0";
             case "BYTE" -> "CASE x % 5 WHEN 0 THEN 0 WHEN 1 THEN 127 WHEN 2 THEN -128 WHEN 3 THEN -1 ELSE 5 END::BYTE";
-            case "SHORT" -> "CASE x % 5 WHEN 0 THEN 0 WHEN 1 THEN 32_767 WHEN 2 THEN -32_768 WHEN 3 THEN -1 ELSE 5 END::SHORT";
+            case "SHORT" ->
+                    "CASE x % 5 WHEN 0 THEN 0 WHEN 1 THEN 32_767 WHEN 2 THEN -32_768 WHEN 3 THEN -1 ELSE 5 END::SHORT";
             case "CHAR" -> "CASE x % 3 WHEN 0 THEN 'a' WHEN 1 THEN 'Z' ELSE '7' END::CHAR";
             default -> throw new AssertionError(sourceType);
         };
