@@ -1506,6 +1506,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlParallelHashJoinTaskOutputMaxRows() {
+        return getDelegate().getSqlParallelHashJoinTaskOutputMaxRows();
+    }
+
+    @Override
+    public long getSqlParallelHashJoinTupleRingMaxSize() {
+        return getDelegate().getSqlParallelHashJoinTupleRingMaxSize();
+    }
+
+    @Override
     public long getSqlParallelWorkStealingSpinTimeout() {
         return getDelegate().getSqlParallelWorkStealingSpinTimeout();
     }
@@ -2113,6 +2123,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isSqlParallelGroupByEnabled() {
         return getDelegate().isSqlParallelGroupByEnabled();
+    }
+
+    @Override
+    public boolean isSqlParallelHashJoinEnabled() {
+        return getDelegate().isSqlParallelHashJoinEnabled();
     }
 
     @Override

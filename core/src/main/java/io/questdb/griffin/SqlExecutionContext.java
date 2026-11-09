@@ -398,6 +398,8 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     boolean isParallelGroupByEnabled();
 
+    boolean isParallelHashJoinEnabled();
+
     boolean isParallelHashJoinGroupByEnabled();
 
     boolean isParallelHorizonJoinEnabled();
@@ -610,6 +612,8 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     void setParallelFilterEnabled(boolean parallelFilterEnabled);
 
     void setParallelGroupByEnabled(boolean parallelGroupByEnabled);
+
+    void setParallelHashJoinEnabled(boolean isEnabled);
 
     void setParallelHashJoinGroupByEnabled(boolean isEnabled);
 
