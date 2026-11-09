@@ -204,24 +204,20 @@ public class PostingIndexResetTest extends AbstractCairoTest {
             // The first entry of the new chain takes lastSealTxn + 1.
             Assert.assertEquals(lastSealTxn, header.generationCounter);
         }
-        // No file of the instance is left; a file of another instance would carry its column name txn.
+        // No file of the instance is left; the scan reports the files of the instance only.
         try (Path path = partitionPath()) {
             final int plen = path.size();
             Assert.assertFalse(configuration.getFilesFacade().exists(coverInfoFileName(path, "s", -1)));
             final LongList sealedFiles = new LongList();
-            scanSealedFiles(configuration.getFilesFacade(), path, plen, "s", new SealedFileVisitor() {
+            scanSealedFiles(configuration.getFilesFacade(), path, plen, "s", -1, new SealedFileVisitor() {
                 @Override
-                public void onCoverDataFile(int includeIdx, long postingColumnNameTxn, long coveredColumnNameTxn, long sealTxn) {
-                    if (postingColumnNameTxn == coverFilePostingColumnNameTxn(-1)) {
-                        sealedFiles.add(sealTxn);
-                    }
+                public void onCoverDataFile(int includeIdx, long coveredColumnNameTxn, long sealTxn) {
+                    sealedFiles.add(sealTxn);
                 }
 
                 @Override
-                public void onValueFile(long postingColumnNameTxn, long sealTxn) {
-                    if (postingColumnNameTxn == -1) {
-                        sealedFiles.add(sealTxn);
-                    }
+                public void onValueFile(long sealTxn) {
+                    sealedFiles.add(sealTxn);
                 }
             });
             Assert.assertEquals(0, sealedFiles.size());
