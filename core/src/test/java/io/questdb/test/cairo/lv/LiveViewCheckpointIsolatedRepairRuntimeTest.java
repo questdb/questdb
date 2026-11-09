@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.lv.LiveViewCheckpointPurgeState;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairSession;
 import io.questdb.cairo.lv.LiveViewFunctionSnapshot;
 import io.questdb.cairo.lv.LiveViewInstance;
@@ -34,12 +35,18 @@ import io.questdb.cairo.lv.LiveViewWindow;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.engine.window.WindowFunction;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.HashSet;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static io.questdb.cairo.lv.LiveViewRefreshStats.ISOLATED_REPLAY_TURN_COUNT;
 import static io.questdb.cairo.lv.LiveViewRefreshStats.SEGMENT_REPAIR_COUNT;
@@ -98,6 +105,63 @@ public class LiveViewCheckpointIsolatedRepairRuntimeTest extends AbstractLiveVie
                         rebuilt
                 );
                 Assert.assertNotSame(first, rebuilt);
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
+    public void testAConvergingRepairCarriesTheSweptEntriesOutOfTheCatalogue() throws Exception {
+        // A correction two days below the head converges inside its anchor day. Its splice adds
+        // the inserted row to the position of every root above the convergence boundary, and the
+        // seals before it left a sweep's proposal pending, which the splice must carry out of the
+        // catalogue before the closing seal runs. A seal supersedes the catalogue segments of the
+        // one before it and the sweep after it unlinks those of the one before that, so the head
+        // rows take four seals.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createView(seedFourAccountsOverThreeDays());
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                for (int hour = 1; hour <= 4; hour++) {
+                    commit(row(5, hour, "acct-" + hour), job);
+                }
+                final LiveViewInstance instance = viewInstance();
+                final LiveViewCheckpointPurgeState state = engine.getLiveViewCheckpointPurgeState();
+                final LongList pending = state.getPendingRetirements(instance.getLifecycleIdentity());
+                Assert.assertNotNull("the last seal's sweep must have proposed entries", pending);
+                final Set<Long> proposed = new HashSet<>();
+                for (int i = 0, n = pending.size(); i < n; i++) {
+                    proposed.add(pending.getQuick(i));
+                }
+                Assert.assertFalse(proposed.isEmpty());
+                Assert.assertTrue(deadCatalogueEntries(instance).containsAll(proposed));
+                final long resetsBefore = instance.getCheckpointTimelineResets();
+                final long headMissRepairsBefore = countHeadMissRepairs(job);
+                final Set<Long> catalogueAfterSplice = new HashSet<>();
+                final AtomicBoolean isPendingClearedAfterSplice = new AtomicBoolean();
+                hooks(job).setSimulateHeadMissHeadSealStart(() -> {
+                    catalogueAfterSplice.addAll(catalogue(instance));
+                    isPendingClearedAfterSplice.set(state.getPendingRetirements(instance.getLifecycleIdentity()) == null);
+                });
+                final LogCapture capture = new LogCapture();
+                capture.start();
+                try {
+                    commit(row(2, 3, "acct-1"), job);
+                    capture.drain();
+                    capture.assertLogged("suffixRowDelta=1,");
+                } finally {
+                    capture.stop();
+                }
+                Assert.assertEquals(1, job.getStatsForTest().get(ISOLATED_REPLAY_TURN_COUNT));
+                Assert.assertEquals(headMissRepairsBefore + 1, countHeadMissRepairs(job));
+                Assert.assertFalse("the repair must have reached its closing seal", catalogueAfterSplice.isEmpty());
+                for (long segmentId : proposed) {
+                    Assert.assertFalse("the splice must carry the proposal, segmentId=" + segmentId, catalogueAfterSplice.contains(segmentId));
+                }
+                Assert.assertTrue(isPendingClearedAfterSplice.get());
+                Assert.assertEquals(resetsBefore, instance.getCheckpointTimelineResets());
+                assertCatalogueMatchesDisk(instance);
                 assertViewMatchesRecompute();
             }
         });

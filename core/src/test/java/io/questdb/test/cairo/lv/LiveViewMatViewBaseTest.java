@@ -441,6 +441,52 @@ public class LiveViewMatViewBaseTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testMatViewRefreshesBelowTheDepartedBucketsMoveTheHead() throws Exception {
+        // The departure of the cases above leaves the view's newest row at 00:57, with the newest
+        // timestamp the view has seen still at 00:59. Base rows the mat view's filter drops then land
+        // in the bucket at 00:58, so each incremental refresh replaces that bucket's range with no
+        // row, below the newest timestamp the view has seen: a resume from the root at 00:57 that
+        // emits nothing and splices at the refresh's commit. No clock step, so no cycle without
+        // rows comes due. The head still names each refresh's commit, and each re-stamp sweeps what
+        // the splice before it superseded.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 29);
+        assertMemoryLeak(() -> {
+            createMinuteRangeViewOverMatView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = departNewestBucketsThroughAHeadMissRebuild(job);
+                Assert.assertEquals(ts("2026-01-01T00:59:00.000000Z"), instance.getLatestSeenTs());
+                int files = -1;
+                long entries = -1;
+                for (int i = 0; i < 6; i++) {
+                    final long consumedBefore = instance.getStateReader().getLvConsumedSeqTxn();
+                    refreshMatViewAndView(job, "INSERT INTO base (ts, k, v) VALUES ('2026-01-01T00:58:1" + i + ".000000Z', 'b', -1.0)");
+                    final long consumed = instance.getStateReader().getLvConsumedSeqTxn();
+                    Assert.assertTrue("the view consumes the mat view's refresh", consumed > consumedBefore);
+                    Assert.assertEquals(consumed, instance.getHeadCheckpointBaseSeqTxn());
+                    Assert.assertEquals(ts("2026-01-01T00:57:00.000000Z"), instance.getHeadCheckpointMaxTs());
+                    Assert.assertEquals(i + 1, job.getStatsForTest().get(LiveViewRefreshStats.SPLICE_ZERO_ROW_KEEP_COUNT));
+                    if (i == 1) {
+                        files = checkpointFileCount(instance);
+                        entries = catalogueSize(instance);
+                    } else if (i > 1) {
+                        Assert.assertEquals(files, checkpointFileCount(instance));
+                        Assert.assertEquals(entries, catalogueSize(instance));
+                    }
+                }
+                assertCheckpointLadder(instance, false, DEPARTED_BUCKETS_LADDER);
+                Assert.assertEquals(0, instance.getCheckpointSealFailures());
+                assertCatalogueMatchesDisk(instance);
+            }
+            assertMinuteRangeViewMatchesRecompute();
+
+            restartCycle();
+            assertRestoredFromTimeline("lv_on_mv");
+            assertMinuteRangeViewMatchesRecompute();
+            assertViewActive();
+        });
+    }
+
+    @Test
     public void testMatViewFullRefreshInvalidatesDependentLiveView() throws Exception {
         setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
         assertMemoryLeak(() -> {

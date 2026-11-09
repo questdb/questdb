@@ -701,13 +701,6 @@ public class LiveViewCheckpointCompactionTest extends AbstractLiveViewTest {
                 .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
     }
 
-    private static boolean dataSegmentFileExists(LiveViewInstance instance, long segmentId) {
-        try (Path checkpointsDir = checkpointsDir(instance); Path path = new Path()) {
-            LiveViewCheckpointLayout.dataSegmentPath(path, checkpointsDir, segmentId);
-            return configuration.getFilesFacade().exists(path.$());
-        }
-    }
-
     // The data segment ids with a final-name file on disk, ascending. A purge unlinks
     // the file but leaves the catalogue entry, so on-disk presence is the reclaim test.
     private static LongList dataSegmentIds(LiveViewInstance instance) {

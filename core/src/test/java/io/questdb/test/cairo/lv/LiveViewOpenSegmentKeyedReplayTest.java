@@ -38,6 +38,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
 import io.questdb.cairo.lv.LiveViewCheckpointOpenSegmentCost;
+import io.questdb.cairo.lv.LiveViewCheckpointPurgeState;
 import io.questdb.cairo.lv.LiveViewCheckpointRecoveryPhase;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairMarker;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairRoute;
@@ -77,6 +78,9 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.lang.reflect.Field;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Pattern;
@@ -1321,6 +1325,48 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
             restartAndCommitForwardRows(4, 12);
             assertRestoredFromTimeline("lv");
             assertViewMatchesRecompute();
+        });
+    }
+
+    @Test
+    public void testAKeyedResumeCarriesTheSweptEntriesOutOfTheCatalogue() throws Exception {
+        // The seals of the forward drive each sweep, so a proposal is pending when the keyed
+        // resume publishes. Its splice takes the batched route, whose reference deltas the
+        // directory writer checks against the entries the same publication retires, and it must
+        // carry the proposal out of the catalogue before the closing seal runs.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            createView(seedFourAccountsOverTwoDays(), true);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                openTheDayAboveARoot(job);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                final LiveViewCheckpointPurgeState state = engine.getLiveViewCheckpointPurgeState();
+                final Set<Long> proposed = pendingRetirements(state, instance.getLifecycleIdentity());
+                Assert.assertFalse("the last seal's sweep must have proposed entries", proposed.isEmpty());
+                Assert.assertTrue(deadCatalogueEntries(instance).containsAll(proposed));
+                final long resetsBefore = instance.getCheckpointTimelineResets();
+                final Set<Long> catalogueAfterSplice = new HashSet<>();
+                final AtomicBoolean isPendingClearedAfterSplice = new AtomicBoolean();
+                hooks(job).setForceOpenSegmentKeyedReplay(true);
+                hooks(job).setSimulateResumeHeadSealStart(() -> {
+                    catalogueAfterSplice.addAll(catalogue(instance));
+                    isPendingClearedAfterSplice.set(state.getPendingRetirements(instance.getLifecycleIdentity()) == null);
+                });
+                commit(row(4, 2, 35, "acct-1"), job);
+                Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_RESUME_COUNT));
+                Assert.assertFalse("the resume must have reached its closing seal", catalogueAfterSplice.isEmpty());
+                for (long segmentId : proposed) {
+                    Assert.assertFalse("the splice must carry the proposal, segmentId=" + segmentId, catalogueAfterSplice.contains(segmentId));
+                }
+                Assert.assertTrue(isPendingClearedAfterSplice.get());
+                Assert.assertEquals(resetsBefore, instance.getCheckpointTimelineResets());
+                assertCatalogueMatchesDisk(instance);
+                assertViewMatchesRecompute();
+            }
         });
     }
 
@@ -3482,6 +3528,17 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
     private String hotRow(int hour, int second) {
         return "('2026-01-04T" + String.format("%02d", hour) + ":00:"
                 + String.format("%02d", second) + ".000000Z', 'acct-1', 1.0)";
+    }
+
+    private static Set<Long> pendingRetirements(LiveViewCheckpointPurgeState state, long lifecycleIdentity) {
+        final Set<Long> ids = new HashSet<>();
+        final LongList pending = state.getPendingRetirements(lifecycleIdentity);
+        if (pending != null) {
+            for (int i = 0, n = pending.size(); i < n; i++) {
+                ids.add(pending.getQuick(i));
+            }
+        }
+        return ids;
     }
 
     private void commit(String values, LiveViewRefreshJob job) throws Exception {

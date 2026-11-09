@@ -1396,6 +1396,81 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testTwoViewsSplicingInterleavedCarryOnlyTheirOwnSweptEntries() throws Exception {
+        // Two filtered views over one deduplicating base, refreshed by two jobs that share the
+        // engine's purge state. Both lose their newest row, then rows both filters reject land
+        // below it, so each view's resume splices at the commit, emits nothing and re-stamps its
+        // head. The first job's hook ahead of that re-stamp drives the second job, whose turn
+        // over the other view - splice, re-stamp and sweep - runs between the first view's splice
+        // and its re-stamp. A splice that carried the other view's proposal would refuse to
+        // retire an entry its own catalogue does not hold the way the sweep found it, or remove
+        // a live one, and retire its timeline.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_MAX_DURATION_MICROS, 1_000_000);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, sym)");
+            final String viewSql = "SELECT ts, sym, x, sum(x) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) s "
+                    + "FROM base WHERE x > 0";
+            execute("CREATE LIVE VIEW lv1 FLUSH EVERY 100ms START FROM BEGINNING AS " + viewSql);
+            execute("CREATE LIVE VIEW lv2 FLUSH EVERY 100ms START FROM BEGINNING AS " + viewSql);
+            try (
+                    LiveViewRefreshJob jobA = new LiveViewRefreshJob(0, engine, 1);
+                    LiveViewRefreshJob jobB = new LiveViewRefreshJob(0, engine, 1)
+            ) {
+                setCurrentMicros(1_000_000_000_000L);
+                commitAndRefresh(jobA, "('2026-01-01T00:01:00.000000Z', 'a', 1.5)");
+                commitAndRefresh(jobA, "('2026-01-01T00:02:00.000000Z', 'a', 2.5), ('2026-01-01T00:03:00.000000Z', 'a', 4.5)");
+                // The row at 00:03 leaves both filters: each view's head goes back to a root at 00:02.
+                commitAndRefresh(jobA, "('2026-01-01T00:03:00.000000Z', 'a', -4.5)");
+                final LiveViewInstance lv1 = engine.getLiveViewRegistry().getViewInstance("lv1");
+                final LiveViewInstance lv2 = engine.getLiveViewRegistry().getViewInstance("lv2");
+                Assert.assertNotNull(lv1);
+                Assert.assertNotNull(lv2);
+                final long resets1 = lv1.getCheckpointTimelineResets();
+                final long resets2 = lv2.getCheckpointTimelineResets();
+                final long[] entries = {-1, -1};
+                final int[] files = {-1, -1};
+                for (int i = 0; i < 4; i++) {
+                    hooks(jobA).setSimulateResumeHeadSealStart(() -> drainJob(jobB));
+                    final long zeroRowKeepsB = jobB.getStatsForTest().get(LiveViewRefreshStats.SPLICE_ZERO_ROW_KEEP_COUNT);
+                    commitAndRefresh(jobA, "('2026-01-01T00:02:1" + i + ".000000Z', 'b', -1.0)");
+                    Assert.assertEquals("the other job took one view's turn", zeroRowKeepsB + 1, jobB.getStatsForTest().get(LiveViewRefreshStats.SPLICE_ZERO_ROW_KEEP_COUNT));
+                    Assert.assertEquals(i + 1, jobA.getStatsForTest().get(LiveViewRefreshStats.SPLICE_ZERO_ROW_KEEP_COUNT));
+                    final long seqTxn = 4 + i;
+                    final LiveViewInstance[] views = {lv1, lv2};
+                    for (int v = 0; v < 2; v++) {
+                        final LiveViewInstance view = views[v];
+                        Assert.assertEquals(seqTxn, view.getHeadCheckpointBaseSeqTxn());
+                        Assert.assertEquals(MicrosTimestampDriver.floor("2026-01-01T00:02:00.000000Z"), view.getHeadCheckpointMaxTs());
+                        if (i == 1) {
+                            entries[v] = catalogueSize(view);
+                            files[v] = checkpointFileCount(view);
+                        } else if (i > 1) {
+                            Assert.assertEquals(entries[v], catalogueSize(view));
+                            Assert.assertEquals(files[v], checkpointFileCount(view));
+                        }
+                    }
+                }
+                Assert.assertEquals(resets1, lv1.getCheckpointTimelineResets());
+                Assert.assertEquals(resets2, lv2.getCheckpointTimelineResets());
+                assertCatalogueMatchesDisk(lv1);
+                assertCatalogueMatchesDisk(lv2);
+                for (String view : new String[]{"lv1", "lv2"}) {
+                    TestUtils.assertSqlCursors(
+                            engine,
+                            sqlExecutionContext,
+                            "(" + viewSql + ") ORDER BY ts, sym",
+                            "(" + view + ") ORDER BY ts, sym",
+                            LOG,
+                            true
+                    );
+                    assertNoRefreshFaults(view);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testTierSwapDriverClosesInitialCursorOnFailure() throws Exception {
         assertMemoryLeak(() -> assertInitialTierCursorClosed(true));
     }
@@ -1531,6 +1606,15 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         }
         Assert.assertFalse("the day must hold a row to correct", isFirst);
         execute(sql);
+    }
+
+    // One base commit refreshed 1.2s after the last, past the 1s checkpoint cadence.
+    private void commitAndRefresh(LiveViewRefreshJob job, String values) throws Exception {
+        execute("INSERT INTO base (ts, sym, x) VALUES " + values);
+        drainWalQueue();
+        setCurrentMicros(currentMicros + 1_200_000);
+        drainJob(job);
+        drainWalQueue();
     }
 
     private void assertInitialTierCursorClosed(boolean hasInjectedFailure) throws Exception {

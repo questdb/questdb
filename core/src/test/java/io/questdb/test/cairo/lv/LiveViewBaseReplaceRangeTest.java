@@ -1347,6 +1347,82 @@ public class LiveViewBaseReplaceRangeTest extends AbstractLiveViewTest {
                 drainWalQueue();
                 driveRefreshToQuiescence(job);
                 assertLiveViewValid();
+                // The resume emitted nothing over the head root, which its splice kept at the
+                // view's new frontier, so the head goes back on that root at the delete's commit.
+                Assert.assertEquals(3, instance.getHeadCheckpointBaseSeqTxn());
+                Assert.assertEquals(ts("2026-01-01T00:00:03.000000Z"), instance.getHeadCheckpointMaxTs());
+            }
+
+            assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\tx\trn\n" +
+                            "2026-01-01T00:00:01.000000Z\t1\t1\n" +
+                            "2026-01-01T00:00:02.000000Z\t2\t2\n" +
+                            "2026-01-01T00:00:03.000000Z\t3\t3\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testRepeatedPureDeletesAboveTheHeadMoveTheHead() throws Exception {
+        // The pure delete of the case above, then the same row-less REPLACE_RANGE five more times.
+        // Each finds nothing left to delete, yet its resume splices at its commit and emits nothing
+        // over the head root at the frontier: the head goes back on that root at each delete's
+        // commit, which releases the base WAL below it, and each re-stamp sweeps what the splice
+        // before it superseded.
+        configureWalPurge();
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x LONG, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base (ts, x) VALUES " +
+                        "('2026-01-01T00:00:01.000000Z', 1), " +
+                        "('2026-01-01T00:00:02.000000Z', 2), " +
+                        "('2026-01-01T00:00:03.000000Z', 3)");
+                drainWalQueue();
+                refreshCycle(job);
+                execute("INSERT INTO base (ts, x) VALUES " +
+                        "('2026-01-01T00:00:04.000000Z', 4), " +
+                        "('2026-01-01T00:00:05.000000Z', 5)");
+                drainWalQueue();
+                refreshCycle(job);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                Assert.assertEquals(ts("2026-01-01T00:00:03.000000Z"), instance.getHeadCheckpointMaxTs());
+                Assert.assertEquals(1, instance.getHeadCheckpointBaseSeqTxn());
+
+                final TableToken baseToken = engine.verifyTableName("base");
+                int files = -1;
+                long entries = -1;
+                for (int seqTxn = 3; seqTxn <= 8; seqTxn++) {
+                    try (WalWriter walWriter = engine.getWalWriter(baseToken)) {
+                        walWriter.commitWithParams(
+                                ts("2026-01-01T00:00:04.000000Z"),
+                                ts("2026-01-01T00:00:06.000000Z"),
+                                WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE
+                        );
+                    }
+                    drainWalQueue();
+                    driveRefreshToQuiescence(job);
+                    Assert.assertEquals(seqTxn, instance.getHeadCheckpointBaseSeqTxn());
+                    Assert.assertEquals(ts("2026-01-01T00:00:03.000000Z"), instance.getHeadCheckpointMaxTs());
+                    Assert.assertEquals(seqTxn - 2, job.getStatsForTest().get(LiveViewRefreshStats.SPLICE_ZERO_ROW_KEEP_COUNT));
+                    if (seqTxn == 4) {
+                        files = checkpointFileCount(instance);
+                        entries = catalogueSize(instance);
+                    } else if (seqTxn > 4) {
+                        Assert.assertEquals(files, checkpointFileCount(instance));
+                        Assert.assertEquals(entries, catalogueSize(instance));
+                    }
+                }
+                Assert.assertEquals("the purge must keep only the segments above the floor", 1, purgeBaseWalAndCountSegments());
+                assertCatalogueMatchesDisk(instance);
+                assertLiveViewValid();
             }
 
             assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts")

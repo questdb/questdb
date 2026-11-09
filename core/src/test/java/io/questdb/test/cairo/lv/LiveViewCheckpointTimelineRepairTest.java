@@ -30,6 +30,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.lv.LiveViewCheckpointContracts;
 import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
+import io.questdb.cairo.lv.LiveViewCheckpointLifecycle;
 import io.questdb.cairo.lv.LiveViewCheckpointPurgeState;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
 import io.questdb.cairo.lv.LiveViewCheckpointOutputKeyDomain;
@@ -75,6 +76,8 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.lang.reflect.Field;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -2640,6 +2643,69 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                     }
                     assertLifecycleStateUnchanged("repair", state, lifecycleIdentity, pendingIdentity);
 
+                    // A capture the generation moved past, and watermarks that would move
+                    // backwards: both refusals come before the publication carries anything. A
+                    // writer on a purge state of its own moves the generation, so the engine's
+                    // state stays as the case seeded it.
+                    try (LiveViewCheckpointTimelineStoreWriter.RepairCapture stale =
+                                 writer.beginRepair(checkpointsDir, null, null, false)) {
+                        try (
+                                LiveViewCheckpointTimelineStoreWriter mover = new LiveViewCheckpointTimelineStoreWriter(configuration);
+                                LiveViewCheckpointTimelineStoreWriter.RepairCapture moving =
+                                        mover.beginRepair(checkpointsDir, null, null, false)
+                        ) {
+                            mover.publishRepair(
+                                    moving,
+                                    definitionTxn,
+                                    normalizedBaseSeqTxn(instance),
+                                    coveredLvSeqTxn(instance),
+                                    0,
+                                    lifecycleIdentity,
+                                    true,
+                                    Long.MAX_VALUE,
+                                    0
+                            );
+                        }
+                        try {
+                            writer.publishRepair(
+                                    stale,
+                                    definitionTxn,
+                                    normalizedBaseSeqTxn(instance),
+                                    coveredLvSeqTxn(instance),
+                                    0,
+                                    lifecycleIdentity,
+                                    true,
+                                    Long.MAX_VALUE,
+                                    0
+                            );
+                            Assert.fail("expected the repair capture to be refused over a moved generation");
+                        } catch (CairoException e) {
+                            TestUtils.assertContains(e.getFlyweightMessage(), "live view checkpoint timeline moved under the repair capture");
+                        }
+                    }
+                    assertLifecycleStateUnchanged("repair over a moved generation", state, lifecycleIdentity, pendingIdentity);
+
+                    try (LiveViewCheckpointTimelineStoreWriter.RepairCapture capture =
+                                 writer.beginRepair(checkpointsDir, null, null, false)) {
+                        try {
+                            writer.publishRepair(
+                                    capture,
+                                    definitionTxn,
+                                    normalizedBaseSeqTxn(instance) - 1,
+                                    coveredLvSeqTxn(instance),
+                                    0,
+                                    lifecycleIdentity,
+                                    true,
+                                    Long.MAX_VALUE,
+                                    0
+                            );
+                            Assert.fail("expected the repair to be refused for a backward base watermark");
+                        } catch (CairoException e) {
+                            TestUtils.assertContains(e.getFlyweightMessage(), "live view checkpoint generation watermarks must not move backwards");
+                        }
+                    }
+                    assertLifecycleStateUnchanged("repair with backward watermarks", state, lifecycleIdentity, pendingIdentity);
+
                     try {
                         writer.publishTruncate(
                                 checkpointsDir,
@@ -2657,6 +2723,226 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testARepairCarriesTheSweptEntriesOutOfTheCatalogue() throws Exception {
+        assertMemoryLeak(() -> {
+            createView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = buildHistory(job);
+                final LiveViewCheckpointPurgeState state = engine.getLiveViewCheckpointPurgeState();
+                final Set<Long> proposed = assertSweptEntriesPending(instance, state);
+                final long generationBefore = publishedCheckpointGeneration(instance);
+                try (
+                        LiveViewCheckpointTimelineStoreWriter writer = new LiveViewCheckpointTimelineStoreWriter(configuration, state);
+                        Path checkpointsDir = checkpointsDir(instance)
+                ) {
+                    Assert.assertTrue(retirementQueueSegmentIds(instance).containsAll(proposed));
+                    publishEmptyRepair(writer, checkpointsDir, instance);
+                    Assert.assertEquals(generationBefore + 1, publishedCheckpointGeneration(instance));
+                    assertNoneCatalogued(instance, proposed);
+                    Assert.assertNull(state.getPendingRetirements(instance.getLifecycleIdentity()));
+                    // Their entries gone, the next sweep drops their durable work items.
+                    writer.sweep(checkpointsDir, instance.getLiveViewToken().getTableId(), 0, instance.getLifecycleIdentity(), true);
+                    final Set<Long> queued = retirementQueueSegmentIds(instance);
+                    for (long segmentId : proposed) {
+                        Assert.assertFalse("the sweep must drop the work item of a carried entry, segmentId=" + segmentId, queued.contains(segmentId));
+                    }
+                }
+                assertCatalogueMatchesDisk(instance);
+            }
+        });
+    }
+
+    @Test
+    public void testAFailedRepairKeepsTheSweptEntriesForTheNextRepair() throws Exception {
+        assertMemoryLeak(() -> {
+            createView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = buildHistory(job);
+                final long lifecycleIdentity = instance.getLifecycleIdentity();
+                final LiveViewCheckpointPurgeState state = engine.getLiveViewCheckpointPurgeState();
+                final Set<Long> proposed = assertSweptEntriesPending(instance, state);
+                final int pendingIdentity = state.getPendingRetirementIdentityForTest(lifecycleIdentity);
+                final long generationBefore = publishedCheckpointGeneration(instance);
+                try (
+                        LiveViewCheckpointTimelineStoreWriter writer = new LiveViewCheckpointTimelineStoreWriter(configuration, state);
+                        Path checkpointsDir = checkpointsDir(instance)
+                ) {
+                    writer.setTestFailureStage(LiveViewCheckpointTimelineStoreWriter.TEST_FAIL_AFTER_METADATA_PUBLISH);
+                    try {
+                        publishEmptyRepair(writer, checkpointsDir, instance);
+                        Assert.fail("the injected failure after the metadata publication must propagate");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "test failure after live view checkpoint metadata publication");
+                    }
+                    // The generation that names the entries stays authoritative, and so does the
+                    // proposal: the next publication carries them.
+                    Assert.assertEquals(generationBefore, publishedCheckpointGeneration(instance));
+                    Assert.assertTrue(catalogue(instance).containsAll(proposed));
+                    Assert.assertEquals(pendingIdentity, state.getPendingRetirementIdentityForTest(lifecycleIdentity));
+                    Assert.assertEquals(proposed, pendingRetirements(state, lifecycleIdentity));
+
+                    writer.setTestFailureStage(0);
+                    publishEmptyRepair(writer, checkpointsDir, instance);
+                    Assert.assertEquals(generationBefore + 1, publishedCheckpointGeneration(instance));
+                    assertNoneCatalogued(instance, proposed);
+                    Assert.assertNull(state.getPendingRetirements(lifecycleIdentity));
+                }
+                // The failed attempt renamed its catalogue segment into place, and no generation
+                // catalogues it, so a reconciliation reclaims it.
+                Assert.assertFalse(uncataloguedMetaSegmentIds(instance).isEmpty());
+                reconcile(instance);
+                Assert.assertEquals(Set.of(), uncataloguedMetaSegmentIds(instance));
+                assertCatalogueMatchesDisk(instance);
+            }
+        });
+    }
+
+    @Test
+    public void testARepairRefusesToRetireAReferencedEntry() throws Exception {
+        assertMemoryLeak(() -> {
+            createView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = buildHistory(job);
+                final LiveViewCheckpointPurgeState state = engine.getLiveViewCheckpointPurgeState();
+                final long referencedSegmentId = newestReferencedDataSegmentId(instance);
+                final LongList proposal = new LongList();
+                proposal.add(referencedSegmentId);
+                state.replacePendingRetirements(instance.getLifecycleIdentity(), proposal);
+                final long generationBefore = publishedCheckpointGeneration(instance);
+                try (
+                        LiveViewCheckpointTimelineStoreWriter writer = new LiveViewCheckpointTimelineStoreWriter(configuration, state);
+                        Path checkpointsDir = checkpointsDir(instance)
+                ) {
+                    try {
+                        publishEmptyRepair(writer, checkpointsDir, instance);
+                        Assert.fail("a repair must refuse to retire the entry of a referenced segment");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(
+                                e.getFlyweightMessage(),
+                                "cannot retire the entry of a referenced live view checkpoint segment [segmentId=" + referencedSegmentId + ","
+                        );
+                    }
+                }
+                Assert.assertEquals(generationBefore, publishedCheckpointGeneration(instance));
+                Assert.assertTrue(catalogue(instance).contains(referencedSegmentId));
+                assertCatalogueMatchesDisk(instance);
+            }
+        });
+    }
+
+    @Test
+    public void testARepairSkipsAProposedEntryTheCatalogueNoLongerHolds() throws Exception {
+        assertMemoryLeak(() -> {
+            createView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = buildHistory(job);
+                final long lifecycleIdentity = instance.getLifecycleIdentity();
+                final LiveViewCheckpointPurgeState state = engine.getLiveViewCheckpointPurgeState();
+                final Set<Long> proposed = assertSweptEntriesPending(instance, state);
+                final LongList carried = new LongList();
+                carried.addAll(state.getPendingRetirements(lifecycleIdentity));
+                final long generationBefore = publishedCheckpointGeneration(instance);
+                try (
+                        LiveViewCheckpointTimelineStoreWriter writer = new LiveViewCheckpointTimelineStoreWriter(configuration, state);
+                        Path checkpointsDir = checkpointsDir(instance)
+                ) {
+                    publishEmptyRepair(writer, checkpointsDir, instance);
+                    assertNoneCatalogued(instance, proposed);
+                    // Proposed once more, as a sweep that ran ahead of the carry would have: the
+                    // entries are gone, so the next repair skips them and publishes.
+                    state.replacePendingRetirements(lifecycleIdentity, carried);
+                    publishEmptyRepair(writer, checkpointsDir, instance);
+                    Assert.assertEquals(generationBefore + 2, publishedCheckpointGeneration(instance));
+                    assertNoneCatalogued(instance, proposed);
+                    Assert.assertNull(state.getPendingRetirements(lifecycleIdentity));
+                }
+                assertCatalogueMatchesDisk(instance);
+            }
+        });
+    }
+
+    private static void assertNoneCatalogued(LiveViewInstance instance, Set<Long> segmentIds) {
+        final Set<Long> catalogue = catalogue(instance);
+        for (long segmentId : segmentIds) {
+            Assert.assertFalse("a carried entry must leave the catalogue, segmentId=" + segmentId, catalogue.contains(segmentId));
+        }
+    }
+
+    /**
+     * The proposal the last seal's sweep left: entries the catalogue holds whose files the sweep
+     * unlinked.
+     */
+    private static Set<Long> assertSweptEntriesPending(LiveViewInstance instance, LiveViewCheckpointPurgeState state) {
+        final Set<Long> proposed = pendingRetirements(state, instance.getLifecycleIdentity());
+        Assert.assertFalse("the sweep after the last seal must have proposed entries", proposed.isEmpty());
+        Assert.assertTrue(deadCatalogueEntries(instance).containsAll(proposed));
+        return proposed;
+    }
+
+    // The referenced data segment with the highest id: the newest root's.
+    private static long newestReferencedDataSegmentId(LiveViewInstance instance) {
+        final long[] newest = {Numbers.LONG_NULL};
+        try (
+                Path dir = checkpointsDir(instance);
+                LiveViewCheckpointMetaStore metaStore = new LiveViewCheckpointMetaStore(configuration)
+        ) {
+            metaStore.of(dir);
+            try (
+                    LiveViewCheckpointGenerationPin pin = metaStore.pin();
+                    LiveViewCheckpointSegmentDirectoryReader directory = new LiveViewCheckpointSegmentDirectoryReader(configuration)
+            ) {
+                directory.of(dir, pin.getSegmentDirectoryRootRef());
+                directory.iterateAll(entry -> {
+                    if (entry.kind == LiveViewCheckpointSegmentDirectory.SEGMENT_KIND_DATA && entry.referenceCount > 0) {
+                        newest[0] = Math.max(newest[0], entry.segmentId);
+                    }
+                });
+            }
+        }
+        Assert.assertNotEquals(Numbers.LONG_NULL, newest[0]);
+        return newest[0];
+    }
+
+    private static Set<Long> pendingRetirements(LiveViewCheckpointPurgeState state, long lifecycleIdentity) {
+        final Set<Long> ids = new HashSet<>();
+        final LongList pending = state.getPendingRetirements(lifecycleIdentity);
+        if (pending != null) {
+            for (int i = 0, n = pending.size(); i < n; i++) {
+                ids.add(pending.getQuick(i));
+            }
+        }
+        return ids;
+    }
+
+    private static void reconcile(LiveViewInstance instance) {
+        try (Path dir = checkpointsDir(instance)) {
+            final LiveViewCheckpointLifecycle.ReconcileResult result = LiveViewCheckpointLifecycle.reconcile(
+                    configuration,
+                    dir,
+                    instance.getLiveViewToken().getTableId(),
+                    0,
+                    true
+            );
+            Assert.assertEquals(0, result.getFailedPurgeCount());
+            Assert.assertEquals(0, result.getFailedOrphanCount());
+        }
+    }
+
+    // Metadata files on disk no catalogue entry and no pending directory segment names.
+    private static Set<Long> uncataloguedMetaSegmentIds(LiveViewInstance instance) {
+        final Set<Long> uncatalogued = new HashSet<>(metaSegmentIds(instance));
+        uncatalogued.removeAll(catalogue(instance));
+        try (
+                Path dir = checkpointsDir(instance);
+                LiveViewCheckpointMetaStore metaStore = new LiveViewCheckpointMetaStore(configuration)
+        ) {
+            metaStore.of(dir);
+            uncatalogued.remove(metaStore.getSuperblock().pendingDirectorySegmentId);
+        }
+        return uncatalogued;
     }
 
     private static void assertLifecycleStateUnchanged(
@@ -4122,6 +4408,27 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
     private long nextSegmentId(LiveViewInstance instance) {
         try (LiveViewCheckpointMetaStore store = openStore(instance)) {
             return store.getSuperblock().nextSegmentId;
+        }
+    }
+
+    // A repair that froze no boundary and moved no row, published at the generation's own watermarks.
+    private void publishEmptyRepair(
+            LiveViewCheckpointTimelineStoreWriter writer,
+            Path checkpointsDir,
+            LiveViewInstance instance
+    ) {
+        try (LiveViewCheckpointTimelineStoreWriter.RepairCapture capture = writer.beginRepair(checkpointsDir, null, null, false)) {
+            writer.publishRepair(
+                    capture,
+                    instance.getLiveViewToken().getTableId(),
+                    normalizedBaseSeqTxn(instance),
+                    coveredLvSeqTxn(instance),
+                    0,
+                    instance.getLifecycleIdentity(),
+                    true,
+                    Long.MAX_VALUE,
+                    0
+            );
         }
     }
 

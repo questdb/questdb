@@ -82,6 +82,7 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.util.Arrays;
+import java.util.Set;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.Phaser;
@@ -334,6 +335,9 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // Of those, the heads a sparse departure whose rebuild emitted no row re-stamped on the root
     // at the new frontier: see departNewestRowsOverSparseRoots.
     private int restampedHeadAdvances;
+    // Late rows a batch's filters dropped below the newest timestamp a view had seen after a
+    // departure, each of whose resumes moved the head to its commit: see commitLateRowsTheFilterDrops.
+    private int lateRowlessHeadAdvances;
     // Departure episodes a batch ran. The episodes draw their stretch length and their unsealed
     // shape from it rather than from the run's random sequence, so a pinned-seed batch draws what
     // it drew before they existed.
@@ -587,6 +591,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         // Each run ends moving its newest rows out of the view: see departNewestRows, and
         // departNewestRowsOverSparseRoots for the RANGE-frame runs, which take one shape each.
         coverage.assertReachedStat(LiveViewRefreshStats.SPLICE_FRONTIER_TRUNCATE_COUNT);
+        coverage.assertReachedStat(LiveViewRefreshStats.SPLICE_ZERO_ROW_KEEP_COUNT);
         assertReachedEveryHeadMissSpliceOutcome();
         assertReachedEveryRowlessStretchOutcome();
         assertReachedAnOwedSealEpisode();
@@ -931,6 +936,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         // Each run ends moving its newest rows out of the view: see departNewestRows, and
         // departNewestRowsOverSparseRoots for the RANGE-frame runs, which take one shape each.
         coverage.assertReachedStat(LiveViewRefreshStats.SPLICE_FRONTIER_TRUNCATE_COUNT);
+        coverage.assertReachedStat(LiveViewRefreshStats.SPLICE_ZERO_ROW_KEEP_COUNT);
         assertReachedEveryHeadMissSpliceOutcome();
         assertReachedEveryRowlessStretchOutcome();
         assertReachedAnOwedSealEpisode();
@@ -1844,6 +1850,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     private void assertReachedEveryRowlessStretchOutcome() {
         Assert.assertTrue("no stretch without rows moved the head a departure left", departureHeadAdvances > 0);
         Assert.assertTrue("no stretch without rows moved the head a departure re-stamped without rows", restampedHeadAdvances > 0);
+        Assert.assertTrue("no late row the filter dropped below a departure moved the head", lateRowlessHeadAdvances > 0);
         Assert.assertTrue("no departure left its departed rows unsealed above the head", unsealedDepartures > 0);
         coverage.assertReachedStat(LiveViewRefreshStats.SEAL_ABOVE_DURABLE_FRONTIER_DECLINE_COUNT);
     }
@@ -2349,6 +2356,57 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         assertNoCheckpointRootAboveTheNewestRow(instance);
     }
 
+    /**
+     * Two or three rows the view's filter drops, one a commit, each past any duration cadence a run
+     * draws, at the first free timestamps above the root a departure left the head on and below the
+     * newest timestamp the view has seen. Each one's resume anchors on that root and emits nothing,
+     * and its splice publishes at the commit: the head must name the commit, no root may sit above
+     * the newest row the view holds, and every splice must carry out of the catalogue the entries
+     * the sweep before it proposed. The count derives from departureEpisodes and the timestamps
+     * from the head root, so the run's random sequence draws what it drew before.
+     */
+    private void commitLateRowsTheFilterDrops(
+            LiveViewRefreshJob job,
+            @Nullable LongHashSet usedTs,
+            LiveViewInstance instance,
+            long headMaxTs
+    ) throws Exception {
+        final long latestSeenTs = instance.getLatestSeenTs();
+        Set<Long> deadAfterTheFirst = null;
+        long ts = headMaxTs + 1;
+        for (int c = 0, n = 2 + departureEpisodes % 2; c < n; c++, ts++) {
+            while (usedTs != null && !usedTs.add(ts)) {
+                ts++;
+            }
+            if (ts >= latestSeenTs) {
+                break;
+            }
+            setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
+            execute("INSERT INTO base (ts, sym, i, x) VALUES (" + ts + "::timestamp, '" + SYMBOLS[0] + "', -1, 0.0)");
+            drainWalQueue();
+            driveRefreshToQuiescence(job);
+            Assert.assertEquals(
+                    "a late row the filter drops must move the head to its commit",
+                    instance.getStateReader().getLvConsumedSeqTxn(),
+                    instance.getHeadCheckpointBaseSeqTxn()
+            );
+            assertNoCheckpointRootAboveTheNewestRow(instance);
+            if (deadAfterTheFirst == null) {
+                deadAfterTheFirst = deadCatalogueEntries(instance);
+            }
+            lateRowlessHeadAdvances++;
+        }
+        if (deadAfterTheFirst != null) {
+            final Set<Long> catalogue = catalogue(instance);
+            for (long segmentId : deadAfterTheFirst) {
+                Assert.assertFalse(
+                        "a later splice must carry out the entries the first late row's sweep proposed, segmentId=" + segmentId,
+                        catalogue.contains(segmentId)
+                );
+            }
+        }
+    }
+
     // One row the view's filter drops, above afterTs and every timestamp usedTs holds, committed
     // past any duration cadence a run draws and refreshed. Returns its timestamp.
     private long commitRowTheFilterDrops(LiveViewRefreshJob job, @Nullable LongHashSet usedTs, long afterTs) throws Exception {
@@ -2365,7 +2423,9 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
 
     /**
      * Commits that put no row through the view after a departure, each past any duration cadence
-     * a run draws: one to three rows the view's filter drops, or, over a view with no filter, one
+     * a run draws: one to three rows the view's filter drops, after, when {@code isLateRowStretchDrawn}
+     * and the departure left the head below the newest timestamp the view has seen, the late rows
+     * of {@link #commitLateRowsTheFilterDrops}; or, over a view with no filter, one
      * column added to the base, which the view takes by restoring its runtime from the timeline
      * in place, or, once the departure retired the timeline, a REPLACE_RANGE above every row that
      * deletes nothing. A departure leaves the newest timestamp the view has seen above the newest
@@ -2378,7 +2438,8 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             LiveViewRefreshJob job,
             @Nullable LongHashSet usedTs,
             boolean withWhere,
-            boolean isHeadRestamped
+            boolean isHeadRestamped,
+            boolean isLateRowStretchDrawn
     ) throws Exception {
         final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
         Assert.assertNotNull(instance);
@@ -2388,6 +2449,9 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         LOG.info().$("LV fuzz rowless stretch: head=").$ts(headMaxTs).$(", latestSeen=").$ts(instance.getLatestSeenTs())
                 .$(", filtered=").$(withWhere).$();
         if (withWhere) {
+            if (isDepartureHead && isLateRowStretchDrawn) {
+                commitLateRowsTheFilterDrops(job, usedTs, instance, headMaxTs);
+            }
             long ts = Math.max(queryTimestamp("SELECT max(ts) FROM base"), instance.getLatestSeenTs());
             for (int c = 0, n = 1 + departureEpisodes % 3; c < n; c++) {
                 ts = commitRowTheFilterDrops(job, usedTs, ts);
@@ -4676,7 +4740,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                     // A crash the truncating departure drew left the image the restart below
                     // comes back from.
                     final boolean isCrashed = frontierTruncateCrash.consumeCrash();
-                    commitRowlessStretch(job, null, withWhere, isHeadRestamped);
+                    commitRowlessStretch(job, null, withWhere, isHeadRestamped, anchor == null);
                     String rowsBeforeTheSparseDrop = null;
                     long droppedDayTs = Numbers.LONG_NULL;
                     if (sparseDepartureShape != SPARSE_DEPARTURE_RETIRE) {
@@ -4753,7 +4817,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 final boolean isTimelineKept = anchor == null;
                 // A crash the departure drew left the image the restart below comes back from.
                 final boolean isCrashed = frontierTruncateCrash.consumeCrash();
-                commitRowlessStretch(job, null, withWhere, false);
+                commitRowlessStretch(job, null, withWhere, false, anchor == null);
                 long droppedDayTs = Numbers.LONG_NULL;
                 if (isTimelineKept) {
                     if (isCrashed) {
@@ -6688,7 +6752,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                     // A crash the truncating departure drew left the image the restart below
                     // comes back from.
                     final boolean isCrashed = frontierTruncateCrash.consumeCrash();
-                    commitRowlessStretch(job, usedTs, withWhere, isHeadRestamped);
+                    commitRowlessStretch(job, usedTs, withWhere, isHeadRestamped, true);
                     String rowsBeforeTheSparseDrop = null;
                     long droppedDayTs = Numbers.LONG_NULL;
                     if (sparseDepartureShape != SPARSE_DEPARTURE_RETIRE) {
@@ -6764,7 +6828,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             } else if (departNewestRows(rnd, job, baseToken, usedTs, symCount, withWhere, true, true)) {
                 // A crash the departure drew left the image the restart below comes back from.
                 final boolean isCrashed = frontierTruncateCrash.consumeCrash();
-                commitRowlessStretch(job, usedTs, withWhere, false);
+                commitRowlessStretch(job, usedTs, withWhere, false, true);
                 if (isCrashed) {
                     copyTheBaseToItsShadow(false);
                 }

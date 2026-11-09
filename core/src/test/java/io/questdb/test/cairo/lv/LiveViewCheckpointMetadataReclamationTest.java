@@ -41,7 +41,6 @@ import io.questdb.cairo.lv.LiveViewCheckpointTimelineReader;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreWriter;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
-import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
@@ -50,10 +49,7 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.io.File;
-import java.util.ArrayList;
 import java.util.HashSet;
-import java.util.List;
 import java.util.Set;
 
 /**
@@ -130,6 +126,12 @@ public class LiveViewCheckpointMetadataReclamationTest extends AbstractLiveViewT
     // Two measurement points far enough apart that unbounded growth cannot hide.
     private static final int SEALS_EARLY = 8;
     private static final int SEALS_LATE = 32;
+    // A filtered view, so a late row takes the whole-range resume from the root below it.
+    private static final String FILTERED_ROWS_VIEW_SQL = "SELECT ts, sym, x, sum(x) OVER (" +
+            "PARTITION BY sym ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW" +
+            ") AS s FROM base WHERE x > 0";
+    // Roots sealed below a stretch so the catalogue spans more than one 64-entry leaf.
+    private static final int MULTI_LEAF_ROOTS = 30;
     private static final String VIEW_SQL = "SELECT ts, sym, sum(x) OVER (" +
             "PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW" +
             ") AS s FROM base";
@@ -407,6 +409,85 @@ public class LiveViewCheckpointMetadataReclamationTest extends AbstractLiveViewT
                 restartCycle();
                 assertViewMatchesRecompute();
             }
+        });
+    }
+
+    @Test
+    public void testLateRowsBelowTheNewestRootCarryTheSweptEntriesOutOfAMultiLeafCatalogue() throws Exception {
+        // Enough roots below the stretch that the catalogue spans more than one 64-entry leaf, so
+        // a splice carries proposals out of leaves other than the one its registration rewrites.
+        assertMemoryLeak(() -> {
+            viewSql = FILTERED_ROWS_VIEW_SQL;
+            createView(FILTERED_ROWS_VIEW_SQL);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                for (int second = 1; second <= MULTI_LEAF_ROOTS; second++) {
+                    filteredRowsCommit(job, "('" + timestamp(second) + "', 'a', 1)");
+                }
+                final LiveViewInstance instance = sealRootsAtTheFirstThreeMinutes(job);
+                Assert.assertTrue("the catalogue must span more than one leaf", catalogue(instance).size() > 64);
+                final CatalogueShape shape = new CatalogueShape();
+                assertLateRowsBelowTheNewestRootKeepTheCatalogueBounded(job, instance, 0, 8, shape);
+                assertCatalogueMatchesDisk(instance);
+            }
+            assertFilteredRowsViewRestoresFromTheTimeline();
+        });
+    }
+
+    @Test
+    public void testLateRowsBelowTheNewestRootCarryTheSweptEntriesOutOfTheCatalogue() throws Exception {
+        // Accepted late rows below a newest root that sits at the view's newest row: each resume
+        // re-versions that root and re-emits up to it, so its closing seal only re-stamps the head
+        // and sweeps. Every publication of the stretch is a splice, so only a splice can carry the
+        // entries each sweep proposes out of the catalogue.
+        assertMemoryLeak(() -> {
+            viewSql = FILTERED_ROWS_VIEW_SQL;
+            createView(FILTERED_ROWS_VIEW_SQL);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = sealRootsAtTheFirstThreeMinutes(job);
+                final CatalogueShape shape = new CatalogueShape();
+                assertLateRowsBelowTheNewestRootKeepTheCatalogueBounded(job, instance, 0, 8, shape);
+                assertCatalogueMatchesDisk(instance);
+            }
+            assertFilteredRowsViewRestoresFromTheTimeline();
+        });
+    }
+
+    @Test
+    public void testLateRowsBelowTheNewestRootKeepTheCatalogueBoundedAcrossARestart() throws Exception {
+        // A restart drops the sweep's in-memory proposal: the next process starts with none, and
+        // its boot reconciliation stages nothing. The re-stamp after its first splice re-proposes
+        // every entry whose file is gone, and the splice after that carries them.
+        assertMemoryLeak(() -> {
+            viewSql = FILTERED_ROWS_VIEW_SQL;
+            createView(FILTERED_ROWS_VIEW_SQL);
+            final CatalogueShape shape = new CatalogueShape();
+            final Set<Long> deadBeforeRestart;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = sealRootsAtTheFirstThreeMinutes(job);
+                assertLateRowsBelowTheNewestRootKeepTheCatalogueBounded(job, instance, 0, 4, shape);
+                deadBeforeRestart = deadCatalogueEntries(instance);
+                Assert.assertFalse(deadBeforeRestart.isEmpty());
+            }
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                assertRestoredFromTimeline("lv");
+                final LiveViewInstance instance = viewInstance();
+                final CatalogueShape restartedShape = new CatalogueShape();
+                assertLateRowsBelowTheNewestRootKeepTheCatalogueBounded(job, instance, 4, 8, restartedShape);
+                Assert.assertEquals(shape.files, restartedShape.files);
+                Assert.assertEquals(shape.entries, restartedShape.entries);
+                Assert.assertEquals(shape.retirementBytes, restartedShape.retirementBytes);
+                final Set<Long> catalogue = catalogue(instance);
+                for (long segmentId : deadBeforeRestart) {
+                    Assert.assertFalse(
+                            "an entry dead before the restart must be gone, segmentId=" + segmentId,
+                            catalogue.contains(segmentId)
+                    );
+                }
+                assertCatalogueMatchesDisk(instance);
+            }
+            assertFilteredRowsViewRestoresFromTheTimeline();
         });
     }
 
@@ -790,30 +871,6 @@ public class LiveViewCheckpointMetadataReclamationTest extends AbstractLiveViewT
                 .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
     }
 
-    // The metadata segment ids with a final-name file on disk. A purge unlinks the
-    // file but leaves the catalogue entry, so on-disk presence is the reclaim test.
-    private static Set<Long> metaSegmentIds(LiveViewInstance instance) {
-        final Set<Long> ids = new HashSet<>();
-        try (Path checkpointsDir = checkpointsDir(instance); Path metaDir = new Path()) {
-            LiveViewCheckpointLayout.metaDirPath(metaDir, checkpointsDir);
-            final String[] names = new File(metaDir.toString()).list();
-            if (names != null) {
-                for (String name : names) {
-                    if (name.endsWith(LiveViewCheckpointLayout.TMP_SUFFIX)
-                            || !Chars.startsWith(name, LiveViewCheckpointLayout.META_SEGMENT_PREFIX)) {
-                        continue;
-                    }
-                    try {
-                        ids.add(Long.parseLong(name.substring(LiveViewCheckpointLayout.META_SEGMENT_PREFIX.length())));
-                    } catch (NumberFormatException ignore) {
-                        // A name that is not m.<number> is not a segment we track.
-                    }
-                }
-            }
-        }
-        return ids;
-    }
-
     private static String timestamp(int secondOfDay) {
         return String.format(
                 "2026-01-01T%02d:%02d:%02d.000000Z",
@@ -821,56 +878,6 @@ public class LiveViewCheckpointMetadataReclamationTest extends AbstractLiveViewT
                 (secondOfDay % 3600) / 60,
                 secondOfDay % 60
         );
-    }
-
-    /**
-     * Every catalogued segment the selected generation still references must have
-     * its file, whichever directory its kind puts it in. This is the assertion a
-     * reference count that retired one page too early fails.
-     */
-    private void assertCatalogueMatchesDisk(LiveViewInstance instance) {
-        final Set<Long> metaFiles = metaSegmentIds(instance);
-        try (
-                Path dir = checkpointsDir(instance);
-                LiveViewCheckpointMetaStore metaStore = new LiveViewCheckpointMetaStore(configuration)
-        ) {
-            metaStore.of(dir);
-            Assert.assertTrue("the generation must be readable", metaStore.isValid());
-            try (
-                    LiveViewCheckpointGenerationPin pin = metaStore.pin();
-                    LiveViewCheckpointSegmentDirectoryReader directory =
-                            new LiveViewCheckpointSegmentDirectoryReader(configuration)
-            ) {
-                directory.of(dir, pin.getSegmentDirectoryRootRef());
-                final List<String> missing = new ArrayList<>();
-                directory.iterateAll(entry -> {
-                    if (entry.referenceCount <= 0) {
-                        return;
-                    }
-                    final boolean exists = entry.isMetadata()
-                            ? metaFiles.contains(entry.segmentId)
-                            : dataSegmentFileExists(instance, entry.segmentId);
-                    if (!exists) {
-                        missing.add((entry.isMetadata() ? "m." : "d.") + entry.segmentId);
-                    }
-                });
-                Assert.assertEquals(
-                        "the selected generation references unlinked segments " + missing,
-                        0,
-                        missing.size()
-                );
-                // The root the superblock names is the one page nothing may have
-                // reclaimed; a pending directory segment is not catalogued at all,
-                // so the check above cannot speak for it.
-                final long pending = metaStore.getSuperblock().pendingDirectorySegmentId;
-                if (pending != Numbers.LONG_NULL) {
-                    Assert.assertTrue(
-                            "the unregistered directory segment must survive, segmentId=" + pending,
-                            metaFiles.contains(pending)
-                    );
-                }
-            }
-        }
     }
 
     /**
@@ -950,26 +957,6 @@ public class LiveViewCheckpointMetadataReclamationTest extends AbstractLiveViewT
         return ids;
     }
 
-    // The catalogued segment ids of the selected generation, whatever their kind.
-    private Set<Long> catalogue(LiveViewInstance instance) {
-        final Set<Long> ids = new HashSet<>();
-        try (
-                Path dir = checkpointsDir(instance);
-                LiveViewCheckpointMetaStore metaStore = new LiveViewCheckpointMetaStore(configuration)
-        ) {
-            metaStore.of(dir);
-            try (
-                    LiveViewCheckpointGenerationPin pin = metaStore.pin();
-                    LiveViewCheckpointSegmentDirectoryReader directory =
-                            new LiveViewCheckpointSegmentDirectoryReader(configuration)
-            ) {
-                directory.of(dir, pin.getSegmentDirectoryRootRef());
-                directory.iterateAll(entry -> ids.add(entry.segmentId));
-            }
-        }
-        return ids;
-    }
-
     // One row for one key, plus a refresh turn. The key rotates so the boundary
     // metadata keeps moving rather than settling into a single reused shape.
     private void commit(LiveViewRefreshJob job, int seal) throws Exception {
@@ -1019,49 +1006,66 @@ public class LiveViewCheckpointMetadataReclamationTest extends AbstractLiveViewT
         createView(VIEW_SQL);
     }
 
+    /**
+     * Late rows of b the filter accepts, at 00:02:10 + {@code from} seconds up to the second
+     * before 00:02:10 + {@code to}, each one below the newest root at 00:03 and none above it.
+     * Each resume anchors on the root at 00:02, re-versions the one at 00:03 and re-stamps the
+     * head there, so the generation moves by one publication per commit and the timeline keeps
+     * the roots it had. From the second commit on, every splice carries out what the sweep after
+     * the commit before it proposed, so the files, the catalogue and the retirement queue stay as
+     * that commit left them; {@code shape} records them.
+     */
+    private void assertLateRowsBelowTheNewestRootKeepTheCatalogueBounded(
+            LiveViewRefreshJob job,
+            LiveViewInstance instance,
+            int from,
+            int to,
+            CatalogueShape shape
+    ) throws Exception {
+        final int roots = timelineKeys(instance).size();
+        Set<Long> deadBefore = null;
+        for (int i = from; i < to; i++) {
+            final long generationBefore = publishedCheckpointGeneration(instance);
+            final long replayedBefore = instance.getO3ResumeReplayRows();
+            filteredRowsCommit(job, "('2026-01-01T00:02:" + (10 + i) + ".000000Z', 'b', 1)");
+            Assert.assertTrue("the late row must take a resume", instance.getO3ResumeReplayRows() > replayedBefore);
+            Assert.assertEquals("one publication per commit", generationBefore + 1, publishedCheckpointGeneration(instance));
+            Assert.assertEquals("a re-stamp appends no root", roots, timelineKeys(instance).size());
+            Assert.assertEquals(ts("2026-01-01T00:03:00.000000Z"), instance.getHeadCheckpointMaxTs());
+            final Set<Long> catalogue = catalogue(instance);
+            if (deadBefore != null) {
+                for (long segmentId : deadBefore) {
+                    Assert.assertFalse(
+                            "an entry the last sweep proposed must leave the catalogue with the next splice, segmentId=" + segmentId,
+                            catalogue.contains(segmentId)
+                    );
+                }
+            }
+            if (i == from + 1) {
+                shape.files = checkpointFileCount(instance);
+                shape.entries = catalogue.size();
+                shape.retirementBytes = retirementQueueBytes(instance);
+            } else if (i > from + 1) {
+                Assert.assertEquals(shape.files, checkpointFileCount(instance));
+                Assert.assertEquals(shape.entries, catalogue.size());
+                Assert.assertEquals(shape.retirementBytes, retirementQueueBytes(instance));
+            }
+            deadBefore = deadCatalogueEntries(instance);
+        }
+    }
+
+    private void assertFilteredRowsViewRestoresFromTheTimeline() throws Exception {
+        restartCycle();
+        try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+            driveRefreshToQuiescence(job);
+        }
+        assertRestoredFromTimeline("lv");
+        assertViewMatchesRecompute();
+    }
+
     private void createView(String sql) throws Exception {
         execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
         execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " + sql);
-    }
-
-    private boolean dataSegmentFileExists(LiveViewInstance instance, long segmentId) {
-        try (Path checkpointsDir = checkpointsDir(instance); Path path = new Path()) {
-            LiveViewCheckpointLayout.dataSegmentPath(path, checkpointsDir, segmentId);
-            return configuration.getFilesFacade().exists(path.$());
-        }
-    }
-
-    /**
-     * Catalogued segments with no file on disk. Every one is dead weight: a sweep
-     * has already unlinked what the entry names, so nothing can ever read it and
-     * no count decides anything about it.
-     */
-    private Set<Long> deadCatalogueEntries(LiveViewInstance instance) {
-        final Set<Long> metaFiles = metaSegmentIds(instance);
-        final Set<Long> dead = new HashSet<>();
-        try (
-                Path dir = checkpointsDir(instance);
-                LiveViewCheckpointMetaStore metaStore = new LiveViewCheckpointMetaStore(configuration)
-        ) {
-            metaStore.of(dir);
-            Assert.assertTrue("the generation must be readable", metaStore.isValid());
-            try (
-                    LiveViewCheckpointGenerationPin pin = metaStore.pin();
-                    LiveViewCheckpointSegmentDirectoryReader directory =
-                            new LiveViewCheckpointSegmentDirectoryReader(configuration)
-            ) {
-                directory.of(dir, pin.getSegmentDirectoryRootRef());
-                directory.iterateAll(entry -> {
-                    final boolean exists = entry.isMetadata()
-                            ? metaFiles.contains(entry.segmentId)
-                            : dataSegmentFileExists(instance, entry.segmentId);
-                    if (!exists) {
-                        dead.add(entry.segmentId);
-                    }
-                });
-            }
-        }
-        return dead;
     }
 
     /**
@@ -1238,9 +1242,30 @@ public class LiveViewCheckpointMetadataReclamationTest extends AbstractLiveViewT
         drainWalQueue();
     }
 
+    private void filteredRowsCommit(LiveViewRefreshJob job, String values) throws Exception {
+        setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+        execute("INSERT INTO base (ts, sym, x) VALUES " + values);
+        drainWalQueue();
+        drainJob(job);
+        drainWalQueue();
+    }
+
     private void restartCycle() {
         engine.getLiveViewRegistry().clear();
         engine.buildViewGraphs();
+    }
+
+    /**
+     * Roots at 00:01, 00:02 and 00:03 of a, each commit sealing its own.
+     */
+    private LiveViewInstance sealRootsAtTheFirstThreeMinutes(LiveViewRefreshJob job) throws Exception {
+        filteredRowsCommit(job, "('2026-01-01T00:01:00.000000Z', 'a', 1)");
+        filteredRowsCommit(job, "('2026-01-01T00:02:00.000000Z', 'a', 2)");
+        filteredRowsCommit(job, "('2026-01-01T00:03:00.000000Z', 'a', 3)");
+        driveRefreshToQuiescence(job);
+        final LiveViewInstance instance = viewInstance();
+        Assert.assertEquals(ts("2026-01-01T00:03:00.000000Z"), instance.getHeadCheckpointMaxTs());
+        return instance;
     }
 
     /**
@@ -1311,46 +1336,16 @@ public class LiveViewCheckpointMetadataReclamationTest extends AbstractLiveViewT
         return uncatalogued;
     }
 
-    /**
-     * Catalogued segments no root of the selected generation references any more,
-     * whose file is nevertheless still on disk. Each one is collectable garbage
-     * waiting for a sweep - modulo the handful the fallback slot or a reader pin
-     * still protects, which is what keeps the bound above zero rather than at it.
-     */
-    private int uncollectedSegmentCount(LiveViewInstance instance) {
-        final Set<Long> metaFiles = metaSegmentIds(instance);
-        final int[] count = {0};
-        try (
-                Path dir = checkpointsDir(instance);
-                LiveViewCheckpointMetaStore metaStore = new LiveViewCheckpointMetaStore(configuration)
-        ) {
-            metaStore.of(dir);
-            Assert.assertTrue("the generation must be readable", metaStore.isValid());
-            try (
-                    LiveViewCheckpointGenerationPin pin = metaStore.pin();
-                    LiveViewCheckpointSegmentDirectoryReader directory =
-                            new LiveViewCheckpointSegmentDirectoryReader(configuration)
-            ) {
-                directory.of(dir, pin.getSegmentDirectoryRootRef());
-                directory.iterateAll(entry -> {
-                    if (entry.referenceCount != 0) {
-                        return;
-                    }
-                    final boolean exists = entry.isMetadata()
-                            ? metaFiles.contains(entry.segmentId)
-                            : dataSegmentFileExists(instance, entry.segmentId);
-                    if (exists) {
-                        count[0]++;
-                    }
-                });
-            }
-        }
-        return count[0];
-    }
-
     private LiveViewInstance viewInstance() {
         final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
         Assert.assertNotNull("live view 'lv' must be registered", instance);
         return instance;
+    }
+
+    // What a stretch of late commits leaves in the checkpoint directory once it is bounded.
+    private static final class CatalogueShape {
+        long entries = -1;
+        int files = -1;
+        long retirementBytes = -1;
     }
 }

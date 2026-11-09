@@ -263,8 +263,8 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
     @TestOnly
     private long lastBoundaryPartitionPuts;
     // Catalogue entries a reconciliation's sweep left naming an unlinked file,
-    // per checkpoint directory, waiting for the next seal of that view to carry
-    // them out of the tree. A view whose seal is skipped keeps its proposal.
+    // per checkpoint directory, waiting for the next seal or repair of that view
+    // to carry them out of the tree. A view whose seal is skipped keeps its proposal.
     private final LiveViewCheckpointPurgeState purgeState;
     private final boolean isPurgeStateOwner;
     private final LiveViewCheckpointRingSeal ringSeal;
@@ -1080,6 +1080,10 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
      * A repair that crossed no logical boundary and moved no row still publishes:
      * the new generation watermark is what declares the whole reused timeline
      * valid against the repair's pinned base snapshot.
+     * <p>
+     * The publication also carries out the catalogue entries a purge sweep left pending,
+     * as a seal does, so a view whose publications are all splices keeps its catalogue
+     * bounded. A publication that fails keeps them for the next one.
      *
      * @param capture              boundaries frozen by the replay, ascending by key
      * @param definitionTxn        live-view definition identity
@@ -1169,6 +1173,12 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     copyInto(superblock.segmentDirectoryRootRef, shells.oldDirectoryRoot);
             directoryWriter.begin(oldDirectoryRoot);
             registerPendingDirectorySegment(directoryWriter, superblock);
+            // The entries the last sweep left naming an unlinked file leave the catalogue with this
+            // generation, as they do with a seal's or a watermark's. A view whose late commits only
+            // splice - a resume that re-stamps the head on the root its splice kept at the frontier,
+            // with or without rows - appends no root and publishes no watermark, so without this the
+            // catalogue would keep every entry its sweeps proposed.
+            retireCatalogueEntries(directoryWriter, purgeState.getPendingRetirements(lifecycleIdentity));
 
             // The data segment reaches its final name before any metadata can
             // reference it, exactly as the cadence seal orders it. An empty
@@ -1452,6 +1462,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             copy(newDirectoryRoot, superblock.segmentDirectoryRootRef);
             metaStore.publish();
             purgeState.finishPublication(lifecycleIdentity, hasPriorOrphanRisk);
+            purgeState.clearPendingRetirements(lifecycleIdentity);
 
             return shells.repairResult.of(
                     generation,
@@ -1794,8 +1805,8 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
     /**
      * Unlinks every catalogued segment the current generation no longer reaches
      * and every final-name file no generation ever catalogued, and stages the
-     * catalogue entries the pass leaves naming nothing for the next seal of this
-     * directory to remove.
+     * catalogue entries the pass leaves naming nothing for the next seal or repair
+     * of this directory to remove.
      * <p>
      * The second half is what a publication that renamed its segments into place
      * and then failed leaves behind. Nothing but the catalogue can name those
@@ -2643,7 +2654,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
      * Carries away the catalogue entries a reconciliation's purge sweep left
      * naming an unlinked file. The sweep proves an entry dead - zero references,
      * past both generation gates, file gone - but publishes no generation of its
-     * own, so this seal is what removes the entries; without it the catalogue
+     * own, so this seal or repair is what removes the entries; without it the catalogue
      * holds one per segment ever written and its own tree grows with the view's
      * age rather than with what the view currently holds.
      */

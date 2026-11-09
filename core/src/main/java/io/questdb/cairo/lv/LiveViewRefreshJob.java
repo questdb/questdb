@@ -1127,7 +1127,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * {@code cairo.live.view.checkpoint.purge.interval} cadence is reached. The
      * sweep unlinks every segment no generation reaches any more, every
      * final-name file no generation ever catalogued, and stages the catalogue
-     * entries it leaves naming nothing, which the next seal removes.
+     * entries it leaves naming nothing, which the next seal or repair removes.
      * <p>
      * Without the cadence a sweep runs only where {@link LiveViewCheckpointLifecycle#reconcile}
      * does - once per worker per directory - so everything a seal, a repair, a
@@ -9102,16 +9102,18 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // on the first-checkpoint path: an O3 resume must advance the boundary or
                 // the next replay re-scans from the stale maxTs.
                 //
-                // A zero-row replay seals nothing unless it truncated its splice at the
+                // A zero-row replay seals nothing here unless it truncated its splice at the
                 // frontier: the truncating commit above left the LV table holding exactly
                 // the rows the anchor covered, and the restore left the window state at
-                // that same moment, so the next in-order seal re-opens the history from
-                // there. There is also nothing to seal (replayMaxTs is LONG_NULL). A splice
-                // truncated at the frontier owes the frontier its root even then: the state
-                // the runtime holds is the state at the frontier, and no root of the truncated
-                // generation sits there unless the truncate kept one, which the seal then
-                // only re-stamps. A view the departure emptied has no frontier, so the seal
-                // declines it, and the truncate retired the timeline, having kept nothing.
+                // that same moment. Without a splice, the next in-order seal re-opens the
+                // history from there; a splice that kept its newest root at the frontier
+                // re-stamps the head on that root past this gate. There is also nothing to
+                // seal (replayMaxTs is LONG_NULL). A splice truncated at the frontier owes
+                // the frontier its root even then: the state the runtime holds is the state
+                // at the frontier, and no root of the truncated generation sits there unless
+                // the truncate kept one, which the seal then only re-stamps. A view the
+                // departure emptied has no frontier, so the seal declines it, and the
+                // truncate retired the timeline, having kept nothing.
                 //
                 // Take the seal's own answer. maybeWriteHeadCheckpoint swallows every Throwable and
                 // also declines a boundary that does not clear the head, so assuming success here
@@ -9163,6 +9165,27 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                 ? !isFrontierRootKept
                                 : timelineSplice == null || replayMaxTs > timelineSplice.getHeadRootMaxTimestamp()
                 );
+                openSegmentRepairPhases.headSealNanos += System.nanoTime() - headSealStart;
+            } else if (timelineSplice != null) {
+                // A zero-row replay whose splice kept no root above its anchor: the replacement
+                // left the table holding exactly the rows the anchor covers, so the anchor - the
+                // splice's newest root - sits at the frontier and counts every row the view holds.
+                // The splice moved the generation's base coordinate to this commit, and the replay
+                // read every base row above the anchor through it and put none through the window,
+                // so the anchor's state is the state at this commit. Re-stamp the head on that root
+                // there, as a head-miss repair that emits nothing over a root at its frontier does:
+                // the head is what WalPurgeJob holds the base WAL back to, and its re-stamp is the
+                // seal that runs the sweep. A later in-order seal that would do both may never come:
+                // a stretch of late rows the filter rejects takes this resume every time. The
+                // answer goes unread: the marker resolution below keeps the timeline over the root
+                // at the frontier either way, and a re-stamp that declined leaves the head where it
+                // was, holding more base WAL, never less.
+                assert !isKeyed && durableMaxTsAfterRepair == timelineSplice.getHeadRootMaxTimestamp()
+                        : "only a whole-range resume emits no row, and its splice keeps its newest root at the frontier";
+                stats.inc(LiveViewRefreshStats.SPLICE_ZERO_ROW_KEEP_COUNT);
+                hooks.beforeResumeHeadSeal();
+                final long headSealStart = System.nanoTime();
+                maybeWriteHeadCheckpoint(instance, windowFactory, committedSeqTxn, durableMaxTsAfterRepair, 0L, true, false);
                 openSegmentRepairPhases.headSealNanos += System.nanoTime() - headSealStart;
             }
             if (prefixMarkerLive) {
@@ -12066,8 +12089,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * <p>
      * Only a repair that published a timeline range splice passes
      * {@code false}, and only when the splice's newest root already sits at the
-     * frontier the seal is about to stamp, or when the repair truncated the splice at
-     * its frontier and the truncate left its newest root there: that generation is
+     * frontier the seal is about to stamp - whether the replay emitted rows up to it
+     * or none at all - or when the repair truncated the splice at its frontier and
+     * the truncate left its newest root there: that generation is
      * published, the runtime stands exactly where the repair found it, and appending
      * would claim a boundary duplicating the head root. A splice whose frontier ran
      * past its newest root passes {@code true} instead - see the call site for

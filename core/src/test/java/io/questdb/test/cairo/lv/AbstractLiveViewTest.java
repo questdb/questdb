@@ -39,6 +39,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
 import io.questdb.cairo.lv.LiveViewCheckpointRecoveryPhase;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairRoute;
 import io.questdb.cairo.lv.LiveViewCheckpointRowPositionDeltaReader;
+import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectoryReader;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineReader;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreWriter;
 import io.questdb.cairo.lv.LiveViewCompiledPlan;
@@ -58,6 +59,7 @@ import io.questdb.griffin.engine.lv.LiveViewRecordCursorFactory;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
+import io.questdb.std.Chars;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -74,7 +76,15 @@ import org.junit.Assert;
 import org.junit.Before;
 
 import java.io.File;
+import java.io.IOException;
 import java.lang.reflect.Field;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.file.Files;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -686,6 +696,173 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
     }
 
     /**
+     * Every catalogued segment the selected generation still references must have its file,
+     * whichever directory its kind puts it in. This is the assertion a reference count that
+     * retired one page too early fails.
+     */
+    protected static void assertCatalogueMatchesDisk(LiveViewInstance instance) {
+        final Set<Long> metaFiles = metaSegmentIds(instance);
+        try (
+                Path dir = checkpointsDir(instance);
+                LiveViewCheckpointMetaStore metaStore = new LiveViewCheckpointMetaStore(configuration)
+        ) {
+            metaStore.of(dir);
+            Assert.assertTrue("the generation must be readable", metaStore.isValid());
+            try (
+                    LiveViewCheckpointGenerationPin pin = metaStore.pin();
+                    LiveViewCheckpointSegmentDirectoryReader directory =
+                            new LiveViewCheckpointSegmentDirectoryReader(configuration)
+            ) {
+                directory.of(dir, pin.getSegmentDirectoryRootRef());
+                final List<String> missing = new ArrayList<>();
+                directory.iterateAll(entry -> {
+                    if (entry.referenceCount <= 0) {
+                        return;
+                    }
+                    final boolean exists = entry.isMetadata()
+                            ? metaFiles.contains(entry.segmentId)
+                            : dataSegmentFileExists(instance, entry.segmentId);
+                    if (!exists) {
+                        missing.add((entry.isMetadata() ? "m." : "d.") + entry.segmentId);
+                    }
+                });
+                Assert.assertEquals(
+                        "the selected generation references unlinked segments " + missing,
+                        0,
+                        missing.size()
+                );
+                // The root the superblock names is the one page nothing may have
+                // reclaimed; a pending directory segment is not catalogued at all,
+                // so the check above cannot speak for it.
+                final long pending = metaStore.getSuperblock().pendingDirectorySegmentId;
+                if (pending != Numbers.LONG_NULL) {
+                    Assert.assertTrue(
+                            "the unregistered directory segment must survive, segmentId=" + pending,
+                            metaFiles.contains(pending)
+                    );
+                }
+            }
+        }
+    }
+
+    /**
+     * The catalogued segment ids of the selected generation, whatever their kind.
+     */
+    protected static Set<Long> catalogue(LiveViewInstance instance) {
+        final Set<Long> ids = new HashSet<>();
+        try (
+                Path dir = checkpointsDir(instance);
+                LiveViewCheckpointMetaStore metaStore = new LiveViewCheckpointMetaStore(configuration)
+        ) {
+            metaStore.of(dir);
+            try (
+                    LiveViewCheckpointGenerationPin pin = metaStore.pin();
+                    LiveViewCheckpointSegmentDirectoryReader directory =
+                            new LiveViewCheckpointSegmentDirectoryReader(configuration)
+            ) {
+                directory.of(dir, pin.getSegmentDirectoryRootRef());
+                directory.iterateAll(entry -> ids.add(entry.segmentId));
+            }
+        }
+        return ids;
+    }
+
+    /**
+     * The number of entries the selected generation's segment catalogue holds.
+     */
+    protected static long catalogueSize(LiveViewInstance instance) {
+        try (
+                Path dir = checkpointsDir(instance);
+                LiveViewCheckpointMetaStore metaStore = new LiveViewCheckpointMetaStore(configuration)
+        ) {
+            metaStore.of(dir);
+            try (
+                    LiveViewCheckpointGenerationPin pin = metaStore.pin();
+                    LiveViewCheckpointSegmentDirectoryReader directory = new LiveViewCheckpointSegmentDirectoryReader(configuration)
+            ) {
+                directory.of(dir, pin.getSegmentDirectoryRootRef());
+                return directory.size();
+            }
+        }
+    }
+
+    /**
+     * The files under the view's checkpoint directory, counted through every subdirectory.
+     */
+    protected static int checkpointFileCount(LiveViewInstance instance) {
+        return countFiles(new File(
+                new File(configuration.getDbRoot(), instance.getLiveViewToken().getDirName()),
+                LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME
+        ));
+    }
+
+    protected static boolean dataSegmentFileExists(LiveViewInstance instance, long segmentId) {
+        try (Path checkpointsDir = checkpointsDir(instance); Path path = new Path()) {
+            LiveViewCheckpointLayout.dataSegmentPath(path, checkpointsDir, segmentId);
+            return configuration.getFilesFacade().exists(path.$());
+        }
+    }
+
+    /**
+     * Catalogued segments with no file on disk. Every one is dead weight: a sweep
+     * has already unlinked what the entry names, so nothing can ever read it and
+     * no count decides anything about it.
+     */
+    protected static Set<Long> deadCatalogueEntries(LiveViewInstance instance) {
+        final Set<Long> metaFiles = metaSegmentIds(instance);
+        final Set<Long> dead = new HashSet<>();
+        try (
+                Path dir = checkpointsDir(instance);
+                LiveViewCheckpointMetaStore metaStore = new LiveViewCheckpointMetaStore(configuration)
+        ) {
+            metaStore.of(dir);
+            Assert.assertTrue("the generation must be readable", metaStore.isValid());
+            try (
+                    LiveViewCheckpointGenerationPin pin = metaStore.pin();
+                    LiveViewCheckpointSegmentDirectoryReader directory =
+                            new LiveViewCheckpointSegmentDirectoryReader(configuration)
+            ) {
+                directory.of(dir, pin.getSegmentDirectoryRootRef());
+                directory.iterateAll(entry -> {
+                    final boolean exists = entry.isMetadata()
+                            ? metaFiles.contains(entry.segmentId)
+                            : dataSegmentFileExists(instance, entry.segmentId);
+                    if (!exists) {
+                        dead.add(entry.segmentId);
+                    }
+                });
+            }
+        }
+        return dead;
+    }
+
+    /**
+     * The metadata segment ids with a final-name file on disk. A purge unlinks the
+     * file but leaves the catalogue entry, so on-disk presence is the reclaim test.
+     */
+    protected static Set<Long> metaSegmentIds(LiveViewInstance instance) {
+        final Set<Long> ids = new HashSet<>();
+        try (Path checkpointsDir = checkpointsDir(instance); Path metaDir = new Path()) {
+            LiveViewCheckpointLayout.metaDirPath(metaDir, checkpointsDir);
+            final String[] names = new File(metaDir.toString()).list();
+            if (names != null) {
+                for (String name : names) {
+                    if (name.endsWith(LiveViewCheckpointLayout.TMP_SUFFIX)
+                            || !Chars.startsWith(name, LiveViewCheckpointLayout.META_SEGMENT_PREFIX)) {
+                        continue;
+                    }
+                    try {
+                        ids.add(Long.parseLong(name.substring(LiveViewCheckpointLayout.META_SEGMENT_PREFIX.length())));
+                    } catch (NumberFormatException ignore) {
+                        // A name that is not m.<number> is not a segment we track.
+                    }
+                }
+            }
+        }
+        return ids;
+    }
+
+    /**
      * The generation the superblock of {@code instance}'s checkpoint timeline names.
      */
     protected static long publishedCheckpointGeneration(LiveViewInstance instance) {
@@ -698,6 +875,69 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
             store.of(checkpointsDir);
             return store.getSuperblock().generation;
         }
+    }
+
+    /**
+     * The length of the view's durable retirement queue, {@code _retirements}, or -1 when the
+     * view has none.
+     */
+    protected static long retirementQueueBytes(LiveViewInstance instance) {
+        final File retirements = retirementQueueFile(instance);
+        return retirements.exists() ? retirements.length() : -1;
+    }
+
+    /**
+     * The segment ids of the work items the view's durable retirement queue holds: after a
+     * 32-byte header, whose int at offset 12 counts the items, one 32-byte item each, whose first
+     * long is the segment id.
+     */
+    protected static Set<Long> retirementQueueSegmentIds(LiveViewInstance instance) throws IOException {
+        final Set<Long> ids = new HashSet<>();
+        final File retirements = retirementQueueFile(instance);
+        if (retirements.exists()) {
+            final ByteBuffer queue = ByteBuffer.wrap(Files.readAllBytes(retirements.toPath())).order(ByteOrder.LITTLE_ENDIAN);
+            for (int i = 0, n = queue.getInt(12); i < n; i++) {
+                ids.add(queue.getLong(32 + i * 32));
+            }
+        }
+        return ids;
+    }
+
+    /**
+     * Catalogued segments no root of the selected generation references any more,
+     * whose file is nevertheless still on disk. Each one is collectable garbage
+     * waiting for a sweep - modulo the handful the fallback slot or a reader pin
+     * still protects, which is what keeps the bound above zero rather than at it.
+     */
+    protected static int uncollectedSegmentCount(LiveViewInstance instance) {
+        final Set<Long> metaFiles = metaSegmentIds(instance);
+        final int[] count = {0};
+        try (
+                Path dir = checkpointsDir(instance);
+                LiveViewCheckpointMetaStore metaStore = new LiveViewCheckpointMetaStore(configuration)
+        ) {
+            metaStore.of(dir);
+            Assert.assertTrue("the generation must be readable", metaStore.isValid());
+            try (
+                    LiveViewCheckpointGenerationPin pin = metaStore.pin();
+                    LiveViewCheckpointSegmentDirectoryReader directory =
+                            new LiveViewCheckpointSegmentDirectoryReader(configuration)
+            ) {
+                directory.of(dir, pin.getSegmentDirectoryRootRef());
+                directory.iterateAll(entry -> {
+                    if (entry.referenceCount != 0) {
+                        return;
+                    }
+                    final boolean exists = entry.isMetadata()
+                            ? metaFiles.contains(entry.segmentId)
+                            : dataSegmentFileExists(instance, entry.segmentId);
+                    if (exists) {
+                        count[0]++;
+                    }
+                });
+            }
+        }
+        return count[0];
     }
 
     /**
@@ -767,6 +1007,29 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
                 LiveViewCheckpointRecoveryPhase.routeName(expected),
                 LiveViewCheckpointRecoveryPhase.routeName(instance.getCheckpointRestoreRoute())
         );
+    }
+
+    private static Path checkpointsDir(LiveViewInstance instance) {
+        return new Path().of(configuration.getDbRoot())
+                .concat(instance.getLiveViewToken())
+                .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
+    }
+
+    private static File retirementQueueFile(LiveViewInstance instance) {
+        return new File(
+                new File(new File(configuration.getDbRoot(), instance.getLiveViewToken().getDirName()), LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME),
+                LiveViewCheckpointLayout.RETIREMENT_QUEUE_FILE_NAME
+        );
+    }
+
+    private static int countFiles(File dir) {
+        final File[] files = dir.listFiles();
+        Assert.assertNotNull(files);
+        int count = 0;
+        for (File file : files) {
+            count += file.isDirectory() ? countFiles(file) : 1;
+        }
+        return count;
     }
 
     // A keyed WINDOW JOIN from `left` onto the base, sorted on every output column so the
