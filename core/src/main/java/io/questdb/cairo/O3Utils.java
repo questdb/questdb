@@ -75,6 +75,17 @@ public class O3Utils {
         }
     }
 
+    // For cleanup that runs on behalf of an O3 commit that already failed. A release that throws, a double close
+    // or a failed munmap, is logged instead of propagated: the rest of the cleanup and the count-down that follows
+    // still run, and the error that failed the commit stays the one that propagates.
+    static void closeQuietly(FilesFacade ff, long fd) {
+        try {
+            close(ff, fd);
+        } catch (Throwable th) {
+            LOG.error().$("could not close [fd=").$(fd).$(", e=").$(th).I$();
+        }
+    }
+
     static void copyFromTimestampIndex(
             long src,
             long srcLo,
@@ -91,7 +102,20 @@ public class O3Utils {
     }
 
     static void unmapAndClose(FilesFacade ff, long dstFixFd, long dstFixAddr, long dstFixSize) {
-        unmap(ff, dstFixAddr, dstFixSize);
-        close(ff, dstFixFd);
+        try {
+            unmap(ff, dstFixAddr, dstFixSize);
+        } finally {
+            close(ff, dstFixFd);
+        }
+    }
+
+    // The failed-commit counterpart of unmapAndClose(), see closeQuietly().
+    static void unmapAndCloseQuietly(FilesFacade ff, long fd, long addr, long size) {
+        try {
+            unmap(ff, addr, size);
+        } catch (Throwable th) {
+            LOG.error().$("could not unmap [addr=").$(addr).$(", size=").$(size).$(", e=").$(th).I$();
+        }
+        closeQuietly(ff, fd);
     }
 }

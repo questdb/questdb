@@ -3,6 +3,11 @@ name: Build questdb.io on release
 on:
   release:
     types: [published]
+  # The release workflow (github-binaries-release.yml) publishes the draft
+  # release with the Actions token, and GitHub does not start workflows from
+  # events caused by that token. The release workflow therefore dispatches this
+  # one explicitly after the assets are published.
+  workflow_dispatch:
 
 jobs:
   trigger-netlify-build:

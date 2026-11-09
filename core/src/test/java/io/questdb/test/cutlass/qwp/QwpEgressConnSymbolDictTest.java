@@ -24,7 +24,11 @@
 
 package io.questdb.test.cutlass.qwp;
 
+import io.questdb.cairo.ColumnType;
+import io.questdb.cutlass.qwp.codec.QwpEgressColumnDef;
 import io.questdb.cutlass.qwp.codec.QwpEgressConnSymbolDict;
+import io.questdb.cutlass.qwp.codec.QwpResultBatchBuffer;
+import io.questdb.std.ObjList;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -130,6 +134,40 @@ public class QwpEgressConnSymbolDictTest {
                         "returned id must sit within the current batch's delta window [start, size)",
                         fooIdAgain >= queryBBatchDeltaStart);
                 Assert.assertTrue(fooIdAgain < dict.size());
+            }
+        });
+    }
+
+    /**
+     * A dict reset between queries ({@code applyCacheReset}) clears the
+     * connection dict while the batch buffer still points its delta start past
+     * the previous query's last shipped entry. An error before the next
+     * {@code beginBatch} rolls the batch back, and that rollback must stay
+     * within the cleared dict instead of throwing.
+     */
+    @Test
+    public void testRollbackAfterDictResetStaysInRange() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            ObjList<QwpEgressColumnDef> cols = new ObjList<>();
+            QwpEgressColumnDef def = new QwpEgressColumnDef();
+            def.of("s", ColumnType.SYMBOL);
+            cols.add(def);
+            try (QwpResultBatchBuffer batch = new QwpResultBatchBuffer();
+                 QwpEgressConnSymbolDict dict = new QwpEgressConnSymbolDict()) {
+                batch.beginBatch(cols, null, dict);
+                dict.addEntry("foo");
+                dict.addEntry("bar");
+                // A frame ships both entries, so the delta start moves to 2.
+                batch.advanceStartRow(0);
+
+                // applyCacheReset before the next query.
+                dict.clear();
+                batch.clearConnKeyMaps();
+
+                // The next query fails before its first beginBatch.
+                batch.rollbackCurrentBatch();
+                Assert.assertEquals(0, dict.size());
+                Assert.assertEquals(0, dict.addEntry("baz"));
             }
         });
     }

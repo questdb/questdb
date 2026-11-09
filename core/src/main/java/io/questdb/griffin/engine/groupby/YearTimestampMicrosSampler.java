@@ -32,6 +32,8 @@ import org.jetbrains.annotations.NotNull;
 
 public class YearTimestampMicrosSampler implements TimestampSampler {
     private final int stepYears;
+    // grid anchor: buckets start every stepYears years from this year; defaults to 1970, as in Micros.floorYYYY()
+    private int anchorYear = Micros.EPOCH_YEAR_0;
     // Time of day of the bucket starts. A negative value comes from setOffset() and places each bucket start that
     // long before the start of its calendar year, on the last day of the previous year.
     private long dayMod;
@@ -73,18 +75,23 @@ public class YearTimestampMicrosSampler implements TimestampSampler {
 
     @Override
     public long round(long value) {
-        // a negative offset moves each bucket start into the previous year, so the bucket of a value
-        // follows the calendar year of the value shifted by the offset
-        int y = Micros.getYear(value - Math.min(dayMod, 0));
-        y = Micros.EPOCH_YEAR_0 + ((y - Micros.EPOCH_YEAR_0) / stepYears) * stepYears;
-        int month = startMonth > 0 ? startMonth : 1;
-        int day = startDay > 0 ? startDay : 1;
-        return Micros.toMicros(y, CommonUtils.isLeapYear(y), month, day) + dayMod;
+        // Returns the last bucket start at or before the value. A negative offset moves bucket starts into the
+        // previous year, so use the year of the value shifted by the offset; max() keeps the value as is when the
+        // shift overflows near Long.MAX_VALUE. The candidate bucket in that year starts after the value when the
+        // value lies earlier in its year than the grid's month, day and time. In that case, the bucket one stride
+        // back is the answer: setStart() keeps the time of day under a day, and setOffset() uses offsets far
+        // shorter than a year.
+        final int y = Micros.getYear(dayMod < 0 ? Math.max(value, value - dayMod) : value);
+        final int bucketYear = stepYears == 1 ? y : anchorYear + Math.floorDiv(y - anchorYear, stepYears) * stepYears;
+        final long bucketStart = bucketStart(bucketYear);
+        // compare via subtraction, which stays correct when bucketStart overflows near Long.MAX_VALUE
+        return value - bucketStart < 0 ? bucketStart(bucketYear - stepYears) : bucketStart;
     }
 
     @Override
     public void setOffset(long timestamp) {
         // the offset applies to the calendar grid, which starts on the first day of the year
+        this.anchorYear = Micros.EPOCH_YEAR_0;
         this.startMonth = 0;
         this.startDay = 0;
         this.dayMod = timestamp;
@@ -94,6 +101,7 @@ public class YearTimestampMicrosSampler implements TimestampSampler {
     public void setStart(long timestamp) {
         final int y = Micros.getYear(timestamp);
         final boolean leap = CommonUtils.isLeapYear(y);
+        this.anchorYear = y;
         this.startMonth = Micros.getMonthOfYear(timestamp, y, leap);
         this.startDay = Micros.getDayOfMonth(timestamp, y, startMonth, leap);
         long dayMod = timestamp % Micros.DAY_MICROS;
@@ -119,5 +127,11 @@ public class YearTimestampMicrosSampler implements TimestampSampler {
         int day = startDay > 0 ? startDay : 1;
         day = Math.min(CommonUtils.getDaysPerMonth(month, leap), day);
         return Micros.toMicros(y + numYears, month, day) + dayMod;
+    }
+
+    // Returns the bucket start in the given year. A start day past the end of the month is clamped to its
+    // last day, as in addYears().
+    private long bucketStart(int year) {
+        return Micros.toMicros(year, CommonUtils.isLeapYear(year), startMonth > 0 ? startMonth : 1, startDay > 0 ? startDay : 1) + dayMod;
     }
 }

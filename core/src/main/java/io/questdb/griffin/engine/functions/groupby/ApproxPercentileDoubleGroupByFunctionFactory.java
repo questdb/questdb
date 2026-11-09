@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
@@ -49,6 +50,14 @@ public class ApproxPercentileDoubleGroupByFunctionFactory implements FunctionFac
     public static void checkPercentile(@NotNull Function percentileFunc, int percentilePos) throws SqlException {
         if (!percentileFunc.isConstant() && !percentileFunc.isRuntimeConstant()) {
             throw SqlException.$(percentilePos, "percentile must be a constant or runtime constant");
+        }
+    }
+
+    public static void checkPercentileArray(@NotNull Function percentileFunc, int percentilePos) throws SqlException {
+        checkPercentile(percentileFunc, percentilePos);
+        // a bind variable may carry weak dimensionality; SqlUtil.getPercentileCount() checks it at runtime
+        if (ColumnType.decodeWeakArrayDimensionality(percentileFunc.getType()) > 1) {
+            throw SqlException.$(percentilePos, "array is not one-dimensional");
         }
     }
 

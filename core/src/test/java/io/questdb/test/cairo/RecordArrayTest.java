@@ -24,6 +24,8 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.EntityColumnFilter;
@@ -35,22 +37,28 @@ import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.std.BinarySequence;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
+import io.questdb.std.Long256;
 import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
+import io.questdb.test.griffin.engine.TestBinarySequence;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -270,6 +278,373 @@ public class RecordArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSkipAndRefillVarSize() throws Exception {
+        // The var-size counterpart of testSkipAndRefill. A skipped var-size column must take
+        // its own slot in the record header, or each var-size column after it reads the slot
+        // of the one before. A skipped slot reads NULL until it is refilled, which is what an
+        // array window function's pass 2 does through putArray().
+        TestUtils.assertMemoryLeak(() -> {
+            final int arrayType = ColumnType.encodeArrayType(ColumnType.DOUBLE, 1);
+            GenericRecordMetadata metadata = new GenericRecordMetadata();
+            metadata.add(new TableColumnMetadata("a", ColumnType.VARCHAR));
+            metadata.add(new TableColumnMetadata("w", arrayType));
+            metadata.add(new TableColumnMetadata("b", ColumnType.STRING));
+            metadata.add(new TableColumnMetadata("v", ColumnType.VARCHAR));
+            metadata.add(new TableColumnMetadata("c", ColumnType.VARCHAR));
+            metadata.add(new TableColumnMetadata("d", ColumnType.BINARY));
+
+            ListColumnFilter filter = new ListColumnFilter();
+            filter.add(1);
+            filter.add(-2);
+            filter.add(3);
+            filter.add(-4);
+            filter.add(5);
+            filter.add(6);
+
+            // values of columns a, b and c, at record indexes 0, 2 and 4, and of column d
+            final String[] values = new String[3];
+            final TestBinarySequence[] bin = new TestBinarySequence[1];
+            final Record rec = new Record() {
+                @Override
+                public BinarySequence getBin(int col) {
+                    return bin[0];
+                }
+
+                @Override
+                public CharSequence getStrA(int col) {
+                    return values[col / 2];
+                }
+
+                @Override
+                public Utf8Sequence getVarcharA(int col) {
+                    final String value = values[col / 2];
+                    return value != null ? new Utf8String(value) : null;
+                }
+            };
+
+            for (int copierType : new int[]{RecordSinkFactory.SINK_TYPE_SINGLE_METHOD, RecordSinkFactory.SINK_TYPE_LOOPING}) {
+                RecordSink sink = RecordSinkFactory.getInstance(copierConfiguration(copierType), asm, metadata, filter);
+                try (
+                        RecordArray chain = new RecordArray(metadata, sink, SIZE_4M, Integer.MAX_VALUE);
+                        DirectArray array = new DirectArray(configuration)
+                ) {
+                    values[0] = "a0";
+                    values[1] = "b0";
+                    values[2] = "c0";
+                    bin[0] = null;
+                    final long row0 = chain.put(rec);
+                    values[0] = "a1";
+                    values[1] = null;
+                    values[2] = "c1";
+                    bin[0] = new TestBinarySequence().of(new byte[]{1, 2, 3});
+                    final long row1 = chain.put(rec);
+
+                    array.setType(arrayType);
+                    array.setDimLen(0, 1);
+                    array.applyShape();
+                    array.putDouble(0, 1.5);
+                    chain.putArray(row0, 1, array);
+                    array.putDouble(0, 2.5);
+                    chain.putArray(row1, 1, array);
+
+                    AbstractCairoTest.sink.clear();
+                    chain.toTop();
+                    final Record r = chain.getRecord();
+                    while (chain.hasNext()) {
+                        TestUtils.println(r, metadata, AbstractCairoTest.sink);
+                    }
+                    TestUtils.assertEquals(
+                            """
+                                    a0\t[1.5]\tb0\t\tc0\t
+                                    a1\t[2.5]\t\t\tc1\t00000000 01 02 03
+                                    """,
+                            AbstractCairoTest.sink
+                    );
+
+                    AbstractCairoTest.sink.clear();
+                    chain.toBottom();
+                    while (chain.hasPrev()) {
+                        TestUtils.println(r, metadata, AbstractCairoTest.sink);
+                    }
+                    TestUtils.assertEquals(
+                            """
+                                    a1\t[2.5]\t\t\tc1\t00000000 01 02 03
+                                    a0\t[1.5]\tb0\t\tc0\t
+                                    """,
+                            AbstractCairoTest.sink
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSkipVarSizeAcrossChunkBoundaries() throws Exception {
+        // The chunked sink splits the copy across methods, while the chain's var-size slot
+        // cursor runs on through all of them. Sliding a skipped array column across the first
+        // chunk boundary makes it the last column of one method and then the first of the
+        // next; the var-size columns around it keep their own slots either way.
+        TestUtils.assertMemoryLeak(() -> {
+            final int arrayType = ColumnType.encodeArrayType(ColumnType.DOUBLE, 1);
+            final CairoConfiguration chunked = copierConfiguration(RecordSinkFactory.SINK_TYPE_CHUNKED);
+            final Record rec = new Record() {
+                @Override
+                public int getInt(int col) {
+                    return col;
+                }
+
+                @Override
+                public Utf8Sequence getVarcharA(int col) {
+                    return new Utf8String("v" + col);
+                }
+            };
+            for (int paddingCount = 400; paddingCount <= 450; paddingCount++) {
+                // a VARCHAR, the INT padding, the skipped array, a VARCHAR, 100 INTs, a VARCHAR
+                final GenericRecordMetadata metadata = new GenericRecordMetadata();
+                final ListColumnFilter filter = new ListColumnFilter();
+                addColumn(metadata, filter, ColumnType.VARCHAR, false);
+                for (int i = 0; i < paddingCount; i++) {
+                    addColumn(metadata, filter, ColumnType.INT, false);
+                }
+                final int skipped = addColumn(metadata, filter, arrayType, true);
+                addColumn(metadata, filter, ColumnType.VARCHAR, false);
+                for (int i = 0; i < 100; i++) {
+                    addColumn(metadata, filter, ColumnType.INT, false);
+                }
+                addColumn(metadata, filter, ColumnType.VARCHAR, false);
+
+                final RecordSink sink = RecordSinkFactory.getInstance(chunked, asm, metadata, filter);
+                final String sinkClass = sink.getClass().getName();
+                Assert.assertTrue(sinkClass, sinkClass.startsWith("io.questdb.cairo.chunkedsink/"));
+                try (
+                        RecordArray chain = new RecordArray(metadata, sink, SIZE_4M, Integer.MAX_VALUE);
+                        DirectArray array = new DirectArray(configuration)
+                ) {
+                    final long row = chain.put(rec);
+                    array.setType(arrayType);
+                    array.setDimLen(0, 1);
+                    array.applyShape();
+                    array.putDouble(0, paddingCount);
+                    chain.putArray(row, skipped, array);
+
+                    final Record r = chain.getRecord();
+                    chain.toTop();
+                    Assert.assertTrue(chain.hasNext());
+                    for (int col = 0, n = metadata.getColumnCount(); col < n; col++) {
+                        if (col == skipped) {
+                            Assert.assertEquals(paddingCount, r.getArray(col, arrayType).getDouble(0), 0.0);
+                        } else if (metadata.getColumnType(col) == ColumnType.VARCHAR) {
+                            TestUtils.assertEquals("v" + col, r.getVarcharA(col));
+                        } else {
+                            Assert.assertEquals(col, r.getInt(col));
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSkipVarSizeBesideFixedSizeSkips() throws Exception {
+        // A fixed-size skip steps over bytes of the fixed-size area and a var-size skip over
+        // a slot of the var-size header; neither may disturb the other. Skips of every fixed
+        // width sit between var-size skips and copied columns, and once refilled the way the
+        // window passes refill them, every column reads back its own value.
+        TestUtils.assertMemoryLeak(() -> {
+            final int arrayType = ColumnType.encodeArrayType(ColumnType.DOUBLE, 1);
+            final GenericRecordMetadata metadata = new GenericRecordMetadata();
+            final ListColumnFilter filter = new ListColumnFilter();
+            addColumn(metadata, filter, ColumnType.VARCHAR, false);
+            addColumn(metadata, filter, ColumnType.BOOLEAN, true);
+            addColumn(metadata, filter, arrayType, true);
+            addColumn(metadata, filter, ColumnType.SHORT, true);
+            addColumn(metadata, filter, ColumnType.INT, false);
+            addColumn(metadata, filter, ColumnType.VARCHAR, true);
+            addColumn(metadata, filter, ColumnType.LONG, true);
+            addColumn(metadata, filter, ColumnType.STRING, false);
+            addColumn(metadata, filter, ColumnType.UUID, true);
+            addColumn(metadata, filter, arrayType, true);
+            addColumn(metadata, filter, ColumnType.LONG256, true);
+            addColumn(metadata, filter, ColumnType.DOUBLE, false);
+            addColumn(metadata, filter, ColumnType.VARCHAR, false);
+
+            final int[] row = new int[1];
+            final Record rec = new Record() {
+                @Override
+                public double getDouble(int col) {
+                    return row[0] + 0.5;
+                }
+
+                @Override
+                public int getInt(int col) {
+                    return row[0] * 10;
+                }
+
+                @Override
+                public CharSequence getStrA(int col) {
+                    return "s" + row[0];
+                }
+
+                @Override
+                public Utf8Sequence getVarcharA(int col) {
+                    return new Utf8String("v" + col + '_' + row[0]);
+                }
+            };
+
+            for (int copierType : new int[]{RecordSinkFactory.SINK_TYPE_SINGLE_METHOD, RecordSinkFactory.SINK_TYPE_LOOPING}) {
+                final RecordSink sink = RecordSinkFactory.getInstance(copierConfiguration(copierType), asm, metadata, filter);
+                try (
+                        RecordArray chain = new RecordArray(metadata, sink, SIZE_4M, Integer.MAX_VALUE);
+                        DirectArray array = new DirectArray(configuration)
+                ) {
+                    final long[] offsets = new long[3];
+                    for (int i = 0; i < offsets.length; i++) {
+                        row[0] = i;
+                        offsets[i] = chain.put(rec);
+                    }
+
+                    array.setType(arrayType);
+                    for (int i = 0; i < offsets.length; i++) {
+                        final long offset = offsets[i];
+                        Unsafe.putByte(chain.getAddress(offset, 1), (byte) (i % 2));
+                        Unsafe.putShort(chain.getAddress(offset, 3), (short) (i + 3));
+                        Unsafe.putLong(chain.getAddress(offset, 6), i + 6L);
+                        final long uuid = chain.getAddress(offset, 8);
+                        Unsafe.putLong(uuid, i + 80L);
+                        Unsafe.putLong(uuid + Long.BYTES, i + 81L);
+                        final long long256 = chain.getAddress(offset, 10);
+                        for (int k = 0; k < 4; k++) {
+                            Unsafe.putLong(long256 + (long) k * Long.BYTES, i * 100L + k);
+                        }
+                        array.setDimLen(0, i + 1);
+                        array.applyShape();
+                        for (int k = 0; k <= i; k++) {
+                            array.putDouble(k, i + k * 0.25);
+                        }
+                        chain.putArray(offset, 2, array);
+                        array.putDouble(0, -i - 1.0);
+                        chain.putArray(offset, 9, array);
+                    }
+
+                    final Record r = chain.getRecord();
+                    chain.toTop();
+                    for (int i = 0; i < offsets.length; i++) {
+                        Assert.assertTrue(chain.hasNext());
+                        TestUtils.assertEquals("v0_" + i, r.getVarcharA(0));
+                        Assert.assertEquals(i % 2 == 1, r.getBool(1));
+                        final ArrayView first = r.getArray(2, arrayType);
+                        Assert.assertEquals(i + 1, first.getDimLen(0));
+                        for (int k = 0; k <= i; k++) {
+                            Assert.assertEquals(i + k * 0.25, first.getDouble(k), 0.0);
+                        }
+                        Assert.assertEquals(i + 3, r.getShort(3));
+                        Assert.assertEquals(i * 10, r.getInt(4));
+                        Assert.assertNull(r.getVarcharA(5));
+                        Assert.assertEquals(i + 6L, r.getLong(6));
+                        TestUtils.assertEquals("s" + i, r.getStrA(7));
+                        Assert.assertEquals(i + 80L, r.getLong128Lo(8));
+                        Assert.assertEquals(i + 81L, r.getLong128Hi(8));
+                        final ArrayView second = r.getArray(9, arrayType);
+                        Assert.assertEquals(i + 1, second.getDimLen(0));
+                        Assert.assertEquals(-i - 1.0, second.getDouble(0), 0.0);
+                        for (int k = 1; k <= i; k++) {
+                            Assert.assertEquals(i + k * 0.25, second.getDouble(k), 0.0);
+                        }
+                        final Long256 long256 = r.getLong256A(10);
+                        Assert.assertEquals(i * 100L, long256.getLong0());
+                        Assert.assertEquals(i * 100L + 1, long256.getLong1());
+                        Assert.assertEquals(i * 100L + 2, long256.getLong2());
+                        Assert.assertEquals(i * 100L + 3, long256.getLong3());
+                        Assert.assertEquals(i + 0.5, r.getDouble(11), 0.0);
+                        TestUtils.assertEquals("v12_" + i, r.getVarcharA(12));
+                    }
+                    Assert.assertFalse(chain.hasNext());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSkipVarSizeRefillAfterGrowthAndClear() throws Exception {
+        // Pass 2 writes the array outputs once every row is in place, so the chain's memory
+        // grows, and moves, between a row's copy and its refill. A 4 KiB page makes it grow
+        // repeatedly over 10,000 rows, and clear() then empties the chain for a second round.
+        TestUtils.assertMemoryLeak(() -> {
+            final int arrayType = ColumnType.encodeArrayType(ColumnType.DOUBLE, 1);
+            final GenericRecordMetadata metadata = new GenericRecordMetadata();
+            final ListColumnFilter filter = new ListColumnFilter();
+            addColumn(metadata, filter, ColumnType.VARCHAR, false);
+            addColumn(metadata, filter, arrayType, true);
+            addColumn(metadata, filter, ColumnType.STRING, false);
+            addColumn(metadata, filter, ColumnType.VARCHAR, true);
+            addColumn(metadata, filter, ColumnType.VARCHAR, false);
+
+            final int rowCount = 10_000;
+            final int[] value = new int[1];
+            final Record rec = new Record() {
+                @Override
+                public CharSequence getStrA(int col) {
+                    return value[0] % 7 == 0 ? null : "b" + value[0];
+                }
+
+                @Override
+                public Utf8Sequence getVarcharA(int col) {
+                    return new Utf8String((col == 0 ? "a" : "c") + value[0]);
+                }
+            };
+
+            for (int copierType : new int[]{RecordSinkFactory.SINK_TYPE_SINGLE_METHOD, RecordSinkFactory.SINK_TYPE_LOOPING}) {
+                final RecordSink sink = RecordSinkFactory.getInstance(copierConfiguration(copierType), asm, metadata, filter);
+                try (
+                        RecordArray chain = new RecordArray(metadata, sink, 4096, Integer.MAX_VALUE);
+                        DirectArray array = new DirectArray(configuration)
+                ) {
+                    final LongList offsets = new LongList(rowCount);
+                    for (int round = 0; round < 2; round++) {
+                        chain.clear();
+                        offsets.clear();
+                        for (int i = 0; i < rowCount; i++) {
+                            value[0] = round * rowCount + i;
+                            offsets.add(chain.put(rec));
+                        }
+                        array.setType(arrayType);
+                        for (int i = 0; i < rowCount; i++) {
+                            final int length = i % 5 + 1;
+                            array.setDimLen(0, length);
+                            array.applyShape();
+                            for (int k = 0; k < length; k++) {
+                                array.putDouble(k, round * rowCount + i + k);
+                            }
+                            chain.putArray(offsets.getQuick(i), 1, array);
+                        }
+
+                        final Record r = chain.getRecord();
+                        chain.toTop();
+                        for (int i = 0; i < rowCount; i++) {
+                            Assert.assertTrue(chain.hasNext());
+                            final int expected = round * rowCount + i;
+                            TestUtils.assertEquals("a" + expected, r.getVarcharA(0));
+                            final ArrayView refilled = r.getArray(1, arrayType);
+                            Assert.assertEquals(i % 5 + 1, refilled.getDimLen(0));
+                            for (int k = 0; k < i % 5 + 1; k++) {
+                                Assert.assertEquals(expected + k, refilled.getDouble(k), 0.0);
+                            }
+                            if (expected % 7 == 0) {
+                                Assert.assertNull(r.getStrA(2));
+                            } else {
+                                TestUtils.assertEquals("b" + expected, r.getStrA(2));
+                            }
+                            Assert.assertNull(r.getVarcharA(3));
+                            TestUtils.assertEquals("c" + expected, r.getVarcharA(4));
+                        }
+                        Assert.assertFalse(chain.hasNext());
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testWriteAndRead() throws Exception {
         assertMemoryLeak(
                 () -> {
@@ -287,6 +662,22 @@ public class RecordArrayTest extends AbstractCairoTest {
                     }
                 }
         );
+    }
+
+    private static int addColumn(GenericRecordMetadata metadata, ListColumnFilter filter, int type, boolean isSkipped) {
+        final int index = metadata.getColumnCount();
+        metadata.add(new TableColumnMetadata("c" + index, type));
+        filter.add(isSkipped ? -index - 1 : index + 1);
+        return index;
+    }
+
+    private static CairoConfiguration copierConfiguration(int copierType) {
+        return new CairoConfigurationWrapper(configuration) {
+            @Override
+            public int getCopierType() {
+                return copierType;
+            }
+        };
     }
 
     private static void populateChain(RecordArray chain, TableReader reader) {
