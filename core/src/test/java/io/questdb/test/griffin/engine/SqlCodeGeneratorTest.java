@@ -26,8 +26,10 @@ package io.questdb.test.griffin.engine;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.TableReader;
@@ -53,13 +55,16 @@ import io.questdb.griffin.model.IQueryModel;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.BindVarTuple;
+import io.questdb.test.tools.BindVariableTestSetter;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -404,8 +409,20 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 // the repeated $1 merges before '$1' clashes with it
                 assertQuery("SELECT s, v FROM t WHERE s IN ($1, $1, '$1')").noLeakCheck().assertBinds(cases);
                 final ObjList<BindVarTuple> nullCases = new ObjList<>();
-                nullCases.add(BindVarTuple.ok("B", literalAndBind + "\t7\n", binds -> binds.setStr(0, "B")));
-                nullCases.add(BindVarTuple.ok("$1", literalOnly + "\t7\n", binds -> binds.setStr(0, "$1")));
+                nullCases.add(BindVarTuple.ok("B", """
+                        s\tv
+                        $1\t1
+                        B\t2
+                        $1\t5
+                        B\t6
+                        \t7
+                        """, binds -> binds.setStr(0, "B")));
+                nullCases.add(BindVarTuple.ok("$1", """
+                        s\tv
+                        $1\t1
+                        $1\t5
+                        \t7
+                        """, binds -> binds.setStr(0, "$1")));
                 assertQuery("SELECT s, v FROM t WHERE s IN (NULL, nullif('a', 'a'), '$1', $1)")
                         .noLeakCheck()
                         .assertBinds(nullCases);
@@ -531,6 +548,121 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                             x
                             10
                             """);
+        });
+    }
+
+    @Test
+    public void testBindVariableTypesOnIndexedSymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tn (s SYMBOL, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO tn VALUES
+                        ('1', 1, '2026-01-01T00:00:00.000000Z'),
+                        ('2', 2, '2026-01-01T00:00:01.000000Z'),
+                        ('3', 3, '2026-01-01T00:00:02.000000Z'),
+                        (NULL, 4, '2026-01-01T00:00:03.000000Z'),
+                        ('1', 5, '2026-01-01T00:00:04.000000Z')
+                    """);
+            execute("CREATE TABLE ti AS (SELECT * FROM tn), INDEX(s) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+
+            // the unindexed table filters every row, so it gives the reference result or error
+            final ObjList<BindVariableTestSetter> binds = new ObjList<>();
+            binds.add(b -> b.setStr(0, "1"));
+            binds.add(b -> b.setStr(0, null));
+            binds.add(b -> b.setVarchar(0, new Utf8String("1")));
+            binds.add(b -> b.setChar(0, '1'));
+            binds.add(b -> b.setBoolean(0, true));
+            binds.add(b -> b.setByte(0, (byte) 1));
+            binds.add(b -> b.setShort(0, (short) 1));
+            binds.add(b -> b.setInt(0, 1));
+            binds.add(b -> b.setInt(0, Numbers.INT_NULL));
+            binds.add(b -> b.setLong(0, 1));
+            binds.add(b -> b.setFloat(0, 1));
+            binds.add(b -> b.setDouble(0, 1));
+            binds.add(b -> b.setDate(0, 1));
+            binds.add(b -> b.setTimestamp(0, 1));
+            binds.add(b -> b.setIPv4(0, 1));
+            binds.add(b -> b.setUuid(0, 1, 0));
+            binds.add(b -> b.setLong256(0, 1, 0, 0, 0));
+            final ObjList<String> predicates = new ObjList<>(
+                    "s = $1",
+                    "$1 = s",
+                    "s != $1",
+                    "s IN ($1)",
+                    "s IN ($1, '2')",
+                    "s NOT IN ($1)",
+                    "s NOT IN ($1, '2')",
+                    "s NOT IN ($1, concat('2', ''))",
+                    "s NOT IN ('2') AND s = $1",
+                    "s = $1 AND s NOT IN ('2')",
+                    "s IN ('1', '2') AND s != $1",
+                    "s != $1 AND s IN ('1', '2')",
+                    "s NOT IN ('2') AND s != $1",
+                    "s != $1 AND s NOT IN ('2')",
+                    "s NOT IN ('2') AND s IN ($1)",
+                    "s IN ($1) AND s NOT IN ('2')",
+                    "s NOT IN ('2') AND s IN ($1, '1')",
+                    "s IN ($1, '1') AND s NOT IN ('2')",
+                    "s IN ('1', '2') AND s IN ($1)",
+                    "s IN ($1) AND s IN ('1', '2')",
+                    "s IN ('1', '2') AND s IN ($1, '3')",
+                    "s IN ($1, '3') AND s IN ('1', '2')",
+                    "s IN ('1', '2') AND s NOT IN ($1)",
+                    "s NOT IN ($1) AND s IN ('1', '2')"
+            );
+            for (int i = 0, n = binds.size(); i < n; i++) {
+                for (int j = 0, m = predicates.size(); j < m; j++) {
+                    final String predicate = predicates.getQuick(j);
+                    bindVariableService.clear();
+                    binds.getQuick(i).assignBindVariables(bindVariableService);
+                    final String expected = printSqlOrError("SELECT s, v FROM tn WHERE " + predicate);
+                    bindVariableService.clear();
+                    binds.getQuick(i).assignBindVariables(bindVariableService);
+                    final String message = "bind #" + i + " " + ColumnType.nameOf(bindVariableService.getFunction(0).getType()) + ", " + predicate;
+                    TestUtils.assertEquals(message, expected, printSqlOrError("SELECT s, v FROM ti WHERE " + predicate));
+                }
+            }
+
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "1");
+            assertQuery("SELECT s, v FROM ti WHERE s = $1").noLeakCheck().assertsPlanContaining("Index forward scan on: s");
+            bindVariableService.clear();
+            bindVariableService.setInt(0, 1);
+            assertQuery("SELECT s, v FROM ti WHERE s = $1").noLeakCheck().assertsPlanNotContaining("Index forward scan on: s");
+            for (String table : new String[]{"tn", "ti"}) {
+                assertExceptionNoLeakCheck("SELECT s, v FROM " + table + " WHERE s = $0", 30, "invalid bind variable index [value=0]");
+                assertExceptionNoLeakCheck("SELECT s, v FROM " + table + " WHERE s = $99999999999", 30, "invalid bind variable index [value=$99999999999]");
+            }
+
+            final String rowsOf1 = """
+                    s\tv
+                    1\t1
+                    1\t5
+                    """;
+            final ObjList<BindVarTuple> intCases = new ObjList<>();
+            intCases.add(BindVarTuple.ok("1", rowsOf1, b -> b.setInt(0, 1)));
+            assertQuery("SELECT s, v FROM ti WHERE s = $1").noLeakCheck().assertBinds(intCases);
+            final ObjList<BindVarTuple> namedCases = new ObjList<>();
+            namedCases.add(BindVarTuple.ok(":b = 1", rowsOf1, b -> b.setInt("b", 1)));
+            assertQuery("SELECT s, v FROM ti WHERE s = :b").noLeakCheck().assertBinds(namedCases);
+
+            final ObjList<BindVarTuple> latestCases = new ObjList<>();
+            latestCases.add(BindVarTuple.ok("1", """
+                    s\tv
+                    1\t5
+                    """, b -> b.setInt(0, 1)));
+            for (String table : new String[]{"tn", "ti"}) {
+                assertQuery("SELECT s, v FROM (" + table + " WHERE s = $1 LATEST ON ts PARTITION BY s) ORDER BY v")
+                        .expectSize()
+                        .noLeakCheck()
+                        .assertBinds(latestCases);
+                bindVariableService.clear();
+                bindVariableService.setInt(0, 1);
+                assertExceptionNoLeakCheck("SELECT s, v FROM " + table + " WHERE s IN ($1, '2') LATEST ON ts PARTITION BY s", 32, "STRING constant expected");
+                bindVariableService.clear();
+                bindVariableService.setDouble(0, 1);
+                assertExceptionNoLeakCheck("SELECT s, v FROM " + table + " WHERE s = $1 LATEST ON ts PARTITION BY s", 28, "no matching operator `=` with the argument types: SYMBOL = DOUBLE");
+            }
         });
     }
 
@@ -6236,6 +6368,37 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNotBetweenOnSymbolFails() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tn (s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO tn VALUES
+                        ('A', '2026-01-01T00:00:00.000000Z'),
+                        ('B', '2026-01-01T00:00:01.000000Z'),
+                        ('C', '2026-01-01T00:00:02.000000Z'),
+                        ('D', '2026-01-01T00:00:03.000000Z')
+                    """);
+            execute("CREATE TABLE ti AS (SELECT * FROM tn), INDEX(s) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            final String message = "there is no matching operator `between` with the argument type: SYMBOL";
+            for (String table : new String[]{"tn", "ti"}) {
+                assertExceptionNoLeakCheck("SELECT s FROM " + table + " WHERE s NOT BETWEEN 'A' AND 'C'", 29, message);
+                assertExceptionNoLeakCheck("SELECT s FROM " + table + " WHERE s NOT BETWEEN 'A' AND 'C' AND s = 'B'", 29, message);
+                assertExceptionNoLeakCheck("SELECT s FROM " + table + " WHERE s NOT BETWEEN 'A' AND 'C' LATEST ON ts PARTITION BY s", 29, message);
+            }
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "A");
+            bindVariableService.setStr(1, "C");
+            TestUtils.assertEquals(
+                    printSqlOrError("SELECT s FROM tn WHERE s NOT BETWEEN $1 AND $2"),
+                    printSqlOrError("SELECT s FROM ti WHERE s NOT BETWEEN $1 AND $2")
+            );
+            // more distinct values than cairo.sql.max.symbol.not.equals.count
+            execute("INSERT INTO ti SELECT 'k' || x, '2026-01-02'::TIMESTAMP FROM long_sequence(100)");
+            assertExceptionNoLeakCheck("SELECT s FROM ti WHERE s NOT BETWEEN 'A' AND 'C'", 29, message);
+        });
+    }
+
+    @Test
     public void testOrderBy() throws Exception {
         final String expected = """
                 a\tb\tk
@@ -10022,6 +10185,15 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             System.err.printf("// %2d = %s\n", i, ColumnType.nameOf(i));
         }
         System.err.println("    };");
+    }
+
+    private static String printSqlOrError(CharSequence sql) {
+        try {
+            printSql(sql);
+            return sink.toString();
+        } catch (SqlException | CairoException | ImplicitCastException e) {
+            return "[" + e.getPosition() + "] " + e.getFlyweightMessage();
+        }
     }
 
     private static void setStrBinds(BindVariableService binds, String... values) throws SqlException {

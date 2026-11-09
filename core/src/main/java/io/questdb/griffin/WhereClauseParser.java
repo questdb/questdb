@@ -563,6 +563,18 @@ public final class WhereClauseParser implements Mutable {
                 || (colCount == keyCount && colReader.getSymbolCapacity() > keyReader.getSymbolCapacity());
     }
 
+    private static boolean isBindVariableOfNonKeyType(ExpressionNode node, SqlExecutionContext executionContext) {
+        if (node.type != ExpressionNode.BIND_VARIABLE) {
+            return false;
+        }
+        final Function bind = SqlUtil.getBindVariableFunction(executionContext.getBindVariableService(), node.token);
+        if (bind == null) {
+            return false;
+        }
+        final int type = bind.getType();
+        return !ColumnType.isSymbolOrStringOrVarchar(type) && !ColumnType.isChar(type);
+    }
+
     private static boolean isTypeMismatch(int typeA, int typeB) {
         return (typeA == ExpressionNode.BIND_VARIABLE) != (typeB == ExpressionNode.BIND_VARIABLE);
     }
@@ -1051,7 +1063,7 @@ public final class WhereClauseParser implements Mutable {
                         if (isColumnPreferredOrIndexedAndKeyColumnAllowed(columnName, m, isKeyColumnSuppressed)) {
                             CharSequence value = isNullKeyword(b.token) ? null : unquote(b.token);
                             if (Chars.equalsIgnoreCaseNc(columnName, model.keyColumn)) {
-                                if (!isCorrectType(b.type)) {
+                                if (!isCorrectType(b.type) || isBindVariableOfNonKeyType(b, executionContext)) {
                                     node.intrinsicValue = IntrinsicModel.FALSE;
                                     return false;
                                 }
@@ -1105,7 +1117,7 @@ public final class WhereClauseParser implements Mutable {
                                 addValue(node, b, value);
                                 return true;
                             } else if (model.keyColumn == null || isMoreSelective(model, m, reader, index)) {
-                                if (!isCorrectType(b.type)) {
+                                if (!isCorrectType(b.type) || isBindVariableOfNonKeyType(b, executionContext)) {
                                     b.intrinsicValue = IntrinsicModel.FALSE;
                                     return false;
                                 }
@@ -1530,7 +1542,8 @@ public final class WhereClauseParser implements Mutable {
             if (i == 1) {
                 if (node.rhs == null ||
                         (node.rhs.type != ExpressionNode.CONSTANT && node.rhs.type != ExpressionNode.BIND_VARIABLE && node.rhs.type != ExpressionNode.FUNCTION) ||
-                        (!newColumn && node.rhs.type == ExpressionNode.BIND_VARIABLE && tempKeyValues.size() > 0)) {
+                        (!newColumn && node.rhs.type == ExpressionNode.BIND_VARIABLE && tempKeyValues.size() > 0) ||
+                        isBindVariableOfNonKeyType(node.rhs, executionContext)) {
                     return false;
                 }
 
@@ -1557,11 +1570,12 @@ public final class WhereClauseParser implements Mutable {
             } else {
                 for (i--; i > -1; i--) {
                     ExpressionNode c = node.args.getQuick(i);
-                    // Reject if the value is not a constant/bind variable/function.
+                    // Reject if the value is not a constant/bind variable/function, or is a bind variable of a non-key type.
                     // Also reject bind variables when merging with existing keys (!newColumn && tempKeyValues.size() > 0),
                     // since we can't merge bind variables with already collected key values.
                     if ((c.type != ExpressionNode.CONSTANT && c.type != ExpressionNode.BIND_VARIABLE && c.type != ExpressionNode.FUNCTION) ||
-                            (!newColumn && c.type == ExpressionNode.BIND_VARIABLE && tempKeyValues.size() > 0)) {
+                            (!newColumn && c.type == ExpressionNode.BIND_VARIABLE && tempKeyValues.size() > 0) ||
+                            isBindVariableOfNonKeyType(c, executionContext)) {
                         return false;
                     }
 
@@ -1887,9 +1901,7 @@ public final class WhereClauseParser implements Mutable {
             RecordMetadata m,
             FunctionParser functionParser,
             RecordMetadata metadata,
-            SqlExecutionContext executionContext,
-            boolean isKeyColumnSuppressed,
-            TableReader reader
+            SqlExecutionContext executionContext
     ) throws SqlException {
 
         ExpressionNode node = notNode.rhs;
@@ -1905,10 +1917,7 @@ public final class WhereClauseParser implements Mutable {
         boolean ok = analyzeBetween0(timestampDriver, model, col, node, true, functionParser, metadata, executionContext);
         if (ok) {
             notNode.intrinsicValue = IntrinsicModel.TRUE;
-        } else {
-            analyzeNotListOfValues(model, column, m, node, notNode, isKeyColumnSuppressed, reader, functionParser, executionContext);
         }
-
         return ok;
     }
 
@@ -1983,7 +1992,7 @@ public final class WhereClauseParser implements Mutable {
                         if (isColumnPreferredOrIndexedAndKeyColumnAllowed(columnName, m, isKeyColumnSuppressed)) {
                             CharSequence value = isNullKeyword(b.token) ? null : unquote(b.token);
                             if (Chars.equalsIgnoreCaseNc(columnName, model.keyColumn)) {
-                                if (!isCorrectType(b.type)) {
+                                if (!isCorrectType(b.type) || isBindVariableOfNonKeyType(b, executionContext)) {
                                     node.intrinsicValue = IntrinsicModel.FALSE;
                                     return false;
                                 }
@@ -2033,7 +2042,7 @@ public final class WhereClauseParser implements Mutable {
                                     addExcludedValue(node, b, value);
                                 }
                             } else if (model.keyColumn == null || isMoreSelective(model, m, reader, index)) {
-                                if (!isCorrectType(b.type)) {
+                                if (!isCorrectType(b.type) || isBindVariableOfNonKeyType(b, executionContext)) {
                                     node.intrinsicValue = IntrinsicModel.FALSE;
                                     return false;
                                 }
@@ -2140,7 +2149,8 @@ public final class WhereClauseParser implements Mutable {
                 if (node.rhs == null ||
                         (node.rhs.type != ExpressionNode.CONSTANT &&
                                 node.rhs.type != ExpressionNode.FUNCTION &&
-                                node.rhs.type != ExpressionNode.BIND_VARIABLE)) {
+                                node.rhs.type != ExpressionNode.BIND_VARIABLE) ||
+                        isBindVariableOfNonKeyType(node.rhs, executionContext)) {
                     return;
                 }
                 CharSequence value;
@@ -2166,7 +2176,8 @@ public final class WhereClauseParser implements Mutable {
             } else {
                 for (i--; i > -1; i--) {
                     ExpressionNode c = node.args.getQuick(i);
-                    if (c.type != ExpressionNode.CONSTANT && c.type != ExpressionNode.FUNCTION && c.type != ExpressionNode.BIND_VARIABLE) {
+                    if ((c.type != ExpressionNode.CONSTANT && c.type != ExpressionNode.FUNCTION && c.type != ExpressionNode.BIND_VARIABLE) ||
+                            isBindVariableOfNonKeyType(c, executionContext)) {
                         return;
                     }
 
@@ -3710,9 +3721,7 @@ public final class WhereClauseParser implements Mutable {
                             m,
                             functionParser,
                             metadata,
-                            executionContext,
-                            isKeyColumnSuppressed,
-                            reader
+                            executionContext
                     )
             ));
             case INTRINSIC_OP_BETWEEN ->
