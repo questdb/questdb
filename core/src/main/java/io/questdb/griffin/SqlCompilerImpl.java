@@ -7275,11 +7275,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     /**
      * Rejects, before WAL submission, CONVERT PARTITION or DETACH PARTITION of a delta-active
-     * partition, and DETACH PARTITION of a read-only one, soft links included. TableWriter
-     * refuses the delta-active ones too, and WAL apply would skip the whole ALTER. Read-only can
-     * be local, as a soft link's is, so the writer detaches it. A delta-active base already in
-     * the target format stays the usual no-op. Checks the partitions that {@code filter}
-     * selects, or else the one at {@code listedTimestamp}.
+     * partition, DETACH PARTITION of a read-only one, soft links included, and CONVERT PARTITION
+     * TO NATIVE of a read-only parquet one. TableWriter refuses the delta-active ones too, and WAL
+     * apply would skip the whole ALTER. Read-only can be local, as a soft link's is, so the writer
+     * detaches it. The writer refuses a read-only conversion, which would suspend WAL apply. A
+     * partition already in the target format stays the usual no-op. Checks the partitions that
+     * {@code filter} selects, or else the one at {@code listedTimestamp}.
      */
     private void rejectPartitionChange(
             TableReader reader,
@@ -7291,15 +7292,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     ) throws SqlException {
         final TxReader txFile = reader.getTxFile();
         final boolean isDetach = action == PartitionAction.DETACH;
-        if (!isDetach && !txFile.hasAnyDeltaActive()) {
+        final boolean toParquet = action == PartitionAction.CONVERT_TO_PARQUET;
+        if (toParquet && !txFile.hasAnyDeltaActive()) {
             return;
         }
-        final boolean toParquet = action == PartitionAction.CONVERT_TO_PARQUET;
         for (int i = 0, n = txFile.getPartitionCount(); i < n; i++) {
             final boolean isDeltaActive = txFile.isPartitionDeltaActive(i);
             final boolean isRefused = isDetach
                     ? isDeltaActive || txFile.isPartitionReadOnly(i)
-                    : isDeltaActive && txFile.isPartitionParquet(i) != toParquet;
+                    : txFile.isPartitionParquet(i) != toParquet && (isDeltaActive || (!toParquet && txFile.isPartitionReadOnly(i)));
             if (!isRefused) {
                 continue;
             }
@@ -7322,7 +7323,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 : "cannot detach partition, partition is read-only [table=";
                         case PartitionAction.CONVERT_TO_PARQUET ->
                                 "cannot convert partition to parquet, partition is delta-active [table=";
-                        default -> "cannot convert parquet partition to native, partition is delta-active [table=";
+                        default -> isDeltaActive
+                                ? "cannot convert parquet partition to native, partition is delta-active [table="
+                                : txFile.isPartitionRemote(i)
+                                ? "cannot convert parquet partition to native, partition is in cold storage and read-only;"
+                                + " query it in place, or copy its rows into another table [table="
+                                : "cannot convert parquet partition to native, partition is read-only [table=";
                     })
                     .put(tableToken.getTableName())
                     .put(", partition=").put(formatPartitionName(reader, logicalTimestamp))
