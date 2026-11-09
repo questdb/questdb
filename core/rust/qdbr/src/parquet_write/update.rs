@@ -8696,7 +8696,7 @@ mod tests {
             ],
         };
         updater.set_target_schema(&target)?;
-        updater.replace_row_group(&target, 0)?;
+        updater.replace_row_group(&target, 0, 0)?;
         let out_len = updater.end(None)?;
 
         let mut out_bytes = Vec::new();
@@ -8741,7 +8741,7 @@ mod tests {
             SeqTxn::UNSET,
         )?;
         updater2.set_target_schema(&target)?;
-        updater2.insert_row_group(&target, 0)?;
+        updater2.insert_row_group(&target, 0, 0)?;
         let out2_len = updater2.end(None)?;
         let mut out2_bytes = Vec::new();
         out2.reopen()?.read_to_end(&mut out2_bytes)?;
