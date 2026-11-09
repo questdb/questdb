@@ -26,13 +26,13 @@ package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.DirectString;
+import org.jetbrains.annotations.Nullable;
 
 /**
- * The key-to-value view a cast-to-symbol function hands out from {@code newSymbolTable()}, so a
- * worker thread can resolve keys the function has already assigned without touching the function.
- * It copies the values at construction and never mutates them again, which is what makes it safe
- * to read from another thread.
+ * The key-to-value view a cast-to-symbol function hands out from {@code newSymbolTable()}.
  * <p>
  * It is deliberately not a {@link io.questdb.cairo.sql.Function}. Every cast-to-symbol function
  * used to answer {@code newSymbolTable()} with a clone of itself, and that clone held - and on
@@ -41,25 +41,59 @@ import io.questdb.std.ObjList;
  * resource-owning argument such as {@code json_extract}, every later read of the column came back
  * NULL. Handing out something that owns nothing removes that hazard rather than documenting it.
  * <p>
- * The view is a snapshot. A key the function assigns after the hand-out is not in it, which is the
- * same limit the clone carried.
+ * The keys the function has assigned by the hand-out are copied to the heap, so the view answers
+ * for them even after the function has released its native dictionary - when its cursor closes,
+ * or after the function itself is closed - and from any thread. A key the function assigns after
+ * the hand-out resolves through its live dictionary instead, into this view's own A/B flyweights,
+ * the same way the view of {@link CastStrToSymbolFunctionFactory.Func} does. That serves a
+ * consumer such as lag(), which takes the view before the scan mints any key. Like that view, it is
+ * for serial reads only, and once the dictionary is released it answers null for such a key rather
+ * than reading freed memory.
  */
 public final class CastToSymbolTable implements SymbolTable {
+    @Nullable
+    private final CastToSymbolDictionary dictionary;
     private final ObjList<CharSequence> symbols = new ObjList<>();
+    @Nullable
+    private final DirectString viewA;
+    @Nullable
+    private final DirectString viewB;
 
     public CastToSymbolTable(ObjList<? extends CharSequence> symbols) {
         for (int i = 0, n = symbols.size(); i < n; i++) {
             this.symbols.add(symbols.getQuick(i));
         }
+        this.dictionary = null;
+        this.viewA = null;
+        this.viewB = null;
+    }
+
+    CastToSymbolTable(CastToSymbolDictionary dictionary) {
+        this.dictionary = dictionary;
+        this.viewA = new DirectString();
+        this.viewB = new DirectString();
+        symbols.add(null);
+        for (int key = 0, n = dictionary.size(); key < n; key++) {
+            symbols.add(Chars.toString(dictionary.valueOf(key, viewA)));
+        }
+        viewA.clear();
     }
 
     @Override
     public CharSequence valueBOf(int key) {
-        return valueOf(key);
+        final int index = TableUtils.toIndexKey(key);
+        if (index < symbols.size()) {
+            return symbols.getQuick(index);
+        }
+        return dictionary != null ? dictionary.valueOf(key, viewB) : null;
     }
 
     @Override
     public CharSequence valueOf(int symbolKey) {
-        return symbols.getQuick(TableUtils.toIndexKey(symbolKey));
+        final int index = TableUtils.toIndexKey(symbolKey);
+        if (index < symbols.size()) {
+            return symbols.getQuick(index);
+        }
+        return dictionary != null ? dictionary.valueOf(symbolKey, viewA) : null;
     }
 }

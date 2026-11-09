@@ -676,6 +676,11 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 Misc.free(slaveAllocator);
                 slaveTimestamps.resetPtr();
                 slaveRowIds.resetPtr();
+                Function.cursorClosed(groupByFunctions);
+                // _close() nulls the filter before it frees this cursor
+                if (joinFilter != null) {
+                    joinFilter.cursorClosed();
+                }
             }
         }
 
@@ -984,6 +989,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 slaveCursor = Misc.free(slaveCursor);
                 timestamps.resetPtr();
                 columnSink.resetPtr();
+                Function.cursorClosed(groupByFunctions);
             }
         }
 

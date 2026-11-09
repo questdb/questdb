@@ -131,7 +131,7 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
 
     /**
      * Releases everything the state holds, in the order the resources depend on each other. The
-     * HTTP exporter closes the task's Rust writer and drops a materialized temporary table while
+     * materializer's functions release their tracker-charged state first. The HTTP exporter closes the task's Rust writer and drops a materialized temporary table while
      * the task identity is still intact, the task itself goes before the cursor unregisters its
      * tracker, and the execution owner ends last. A closing state frees the pooled task,
      * materializer and column data instead of clearing them and never caches its factory back.
@@ -141,7 +141,15 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         fileName.clear();
         rnd = null;
         record = null;
+        // The materializer's functions charge their per-query state to the query's memory tracker.
+        // Release that state before anything below closes a cursor, which unregisters the query and
+        // recycles the tracker.
         Throwable cleanupFailure = null;
+        try {
+            materializer.releaseFunctions();
+        } catch (Throwable th) {
+            cleanupFailure = th;
+        }
         if (serialParquetExporter != null) {
             try {
                 serialParquetExporter.clearExportResources();

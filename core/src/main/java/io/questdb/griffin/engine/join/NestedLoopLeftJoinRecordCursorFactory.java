@@ -112,8 +112,9 @@ public class NestedLoopLeftJoinRecordCursorFactory extends AbstractJoinRecordCur
         final Function filter = this.filter;
         this.filter = null;
         Throwable failure = closeJoinOwnersBestEffort();
-        failure = Misc.freeBestEffort(failure, filter);
+        // the cursor notifies the filter on close, so it closes before the filter
         failure = Misc.freeBestEffort(failure, cursor);
+        failure = Misc.freeBestEffort(failure, filter);
         CairoException.rethrowCleanupFailure(failure);
     }
 
@@ -130,6 +131,12 @@ public class NestedLoopLeftJoinRecordCursorFactory extends AbstractJoinRecordCur
             this.record = new OuterJoinRecord(columnSplit, nullRecord);
             this.filter = filter;
             this.isMatch = false;
+        }
+
+        @Override
+        public void close() {
+            super.close();
+            filter.cursorClosed();
         }
 
         @Override

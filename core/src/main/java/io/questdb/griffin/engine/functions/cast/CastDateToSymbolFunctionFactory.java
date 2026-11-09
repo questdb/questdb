@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTable;
@@ -37,13 +36,12 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
-import io.questdb.std.Chars;
 import io.questdb.std.IntList;
-import io.questdb.std.LongIntHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
+import io.questdb.std.str.DirectString;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 
@@ -73,14 +71,22 @@ public class CastDateToSymbolFunctionFactory implements FunctionFactory {
 
     private static class Func extends SymbolFunction implements UnaryFunction {
         private final Function arg;
+        private final CastToSymbolDictionary dictionary = new CastToSymbolDictionary(true);
         private final StringSink sink = new StringSink();
-        private int next = 1;
-        private LongIntHashMap symbolTableShortcut = newSymbolTableShortcut();
-        private ObjList<String> symbols = new ObjList<>();
+        private final DirectString symbolA = new DirectString();
+        private final DirectString symbolB = new DirectString();
 
         public Func(Function arg) {
             this.arg = arg;
-            symbols.add(null);
+        }
+
+        @Override
+        public void close() {
+            try {
+                releaseDictionary();
+            } finally {
+                arg.close();
+            }
         }
 
         @Override
@@ -88,6 +94,8 @@ public class CastDateToSymbolFunctionFactory implements FunctionFactory {
             try {
                 arg.cursorClosed();
             } finally {
+                // A cached factory can outlive its cursor. Free the query-accounted
+                // dictionary before the query's MemoryTracker is returned to its pool.
                 releaseDictionary();
             }
         }
@@ -103,48 +111,30 @@ public class CastDateToSymbolFunctionFactory implements FunctionFactory {
             if (value == Numbers.LONG_NULL) {
                 return SymbolTable.VALUE_IS_NULL;
             }
-
-            final int keyIndex = symbolTableShortcut.keyIndex(value);
-            if (keyIndex < 0) {
-                return symbolTableShortcut.valueAt(keyIndex) - 1;
+            final int key = dictionary.keyOf(value);
+            if (key > -1) {
+                return key;
             }
-
-            symbolTableShortcut.putAt(keyIndex, value, next);
             sink.clear();
             sink.put(value);
-            symbols.add(Chars.toString(sink));
-            return next++ - 1;
+            return dictionary.put(value, sink);
         }
 
         @Override
         public CharSequence getSymbol(Record rec) {
-            final long value = arg.getDate(rec);
-            if (value == Numbers.LONG_NULL) {
-                return null;
-            }
-
-            final int keyIndex = symbolTableShortcut.keyIndex(value);
-            if (keyIndex < 0) {
-                return symbols.getQuick(symbolTableShortcut.valueAt(keyIndex));
-            }
-
-            symbolTableShortcut.putAt(keyIndex, value, next++);
-            sink.clear();
-            sink.put(value);
-            final String str = Chars.toString(sink);
-            symbols.add(str);
-            return str;
+            return valueOf(getInt(rec));
         }
 
         @Override
         public CharSequence getSymbolB(Record rec) {
-            return getSymbol(rec);
+            return valueBOf(getInt(rec));
         }
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            arg.init(symbolTableSource, executionContext);
             releaseDictionary();
+            arg.init(symbolTableSource, executionContext);
+            dictionary.setMemoryTracker(executionContext.getMemoryTracker());
         }
 
         @Override
@@ -159,14 +149,14 @@ public class CastDateToSymbolFunctionFactory implements FunctionFactory {
 
         @Override
         public @Nullable SymbolTable newSymbolTable() {
-            return new CastToSymbolTable(symbols);
+            return new CastToSymbolTable(dictionary);
         }
 
         @Override
         public boolean supportsKeyValueAccess() {
             // getInt() mints a key with one probe on the decoded scalar, never by hashing the row's
-            // text, and valueOf() resolves it by indexing symbols. A key consumer such as QWP egress
-            // should therefore encode each distinct value once instead of re-encoding it per row.
+            // text, and valueOf() resolves it with one descriptor read. A key consumer such as QWP
+            // egress should therefore encode each distinct value once instead of re-encoding it per row.
             return true;
         }
 
@@ -177,32 +167,18 @@ public class CastDateToSymbolFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence valueBOf(int key) {
-            return valueOf(key);
+            return dictionary.valueOf(key, symbolB);
         }
 
         @Override
         public CharSequence valueOf(int symbolKey) {
-            return symbols.getQuick(TableUtils.toIndexKey(symbolKey));
+            return dictionary.valueOf(symbolKey, symbolA);
         }
 
-        // The sentinel is Numbers.LONG_NULL rather than the default -1 so that -1
-        // (a perfectly legal DATE input -- 1ms before the epoch) can be stored as
-        // a key without colliding with the "empty slot" marker. LONG_NULL itself
-        // never reaches this map because it is filtered upstream in getInt()/getSymbol().
-        private static LongIntHashMap newSymbolTableShortcut() {
-            return new LongIntHashMap(16, 0.5, Numbers.LONG_NULL);
-        }
-
-        // A cached factory outlives its cursor. Replacing the collections, rather than clearing
-        // them, also gives back the capacity they grew to. newSymbolTable() hands out a copy, so
-        // nothing else holds on to them.
         private void releaseDictionary() {
-            if (next > 1) {
-                symbolTableShortcut = newSymbolTableShortcut();
-                symbols = new ObjList<>();
-                symbols.add(null);
-                next = 1;
-            }
+            dictionary.clear();
+            symbolA.clear();
+            symbolB.clear();
         }
     }
 }

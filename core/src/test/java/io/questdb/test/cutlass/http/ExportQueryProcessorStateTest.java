@@ -28,17 +28,25 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.sql.ColumnMapping;
+import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cutlass.http.processors.ExportQueryProcessorState;
 import io.questdb.cutlass.parquet.CopyExportRequestTask;
+import io.questdb.cutlass.parquet.HTTPSerialParquetExporter;
+import io.questdb.cutlass.parquet.HybridColumnMaterializer;
 import io.questdb.cutlass.parquet.ParquetExportMode;
 import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.griffin.QueryRegistry;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.QueryProgress;
+import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
 import io.questdb.metrics.QueryTrace;
 import io.questdb.mp.ConcurrentQueue;
 import io.questdb.std.DirectIntList;
@@ -46,7 +54,9 @@ import io.questdb.std.DirectLongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.MemoryTrackerWorkload;
+import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -106,6 +116,23 @@ public class ExportQueryProcessorStateTest extends AbstractCairoTest {
             } finally {
                 registry.setListener(null);
                 state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testClearReleasesMaterializerFunctionsBeforeUnregisteringQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE export_cast AS (SELECT ('k' || (x % 300))::varchar v, x l FROM long_sequence(1000))");
+            try (RecordCursorFactory factory = select("SELECT v::symbol s, l FROM export_cast")) {
+                Assert.assertTrue(factory instanceof QueryProgress);
+                Assert.assertEquals(
+                        ParquetExportMode.PAGE_FRAME_BACKED,
+                        ParquetExportMode.determineExportMode(factory, false, sqlExecutionContext)
+                );
+                for (MaterializerReleasePath releasePath : MaterializerReleasePath.values()) {
+                    assertReleasesMaterializerFunctionsBeforeUnregister(factory, releasePath);
+                }
             }
         });
     }
@@ -248,10 +275,80 @@ public class ExportQueryProcessorStateTest extends AbstractCairoTest {
         });
     }
 
+    // A PAGE_FRAME_BACKED export initializes the projection's functions against the query's memory
+    // tracker, and a cast to symbol charges its native dictionary to that tracker. Closing the
+    // page-frame cursor unregisters the query and returns the tracker to the pool, so the
+    // dictionary must be gone by then.
+    private static void assertReleasesMaterializerFunctionsBeforeUnregister(
+            RecordCursorFactory factory,
+            MaterializerReleasePath releasePath
+    ) throws Exception {
+        final VirtualRecordCursorFactory virtualFactory = (VirtualRecordCursorFactory) ParquetExportMode.unwrapFactory(factory);
+        final long nativeBaseline = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS);
+        final ExportQueryProcessorState state = new ExportQueryProcessorState(null, null);
+        try {
+            final PageFrameCursor pageFrameCursor = ((QueryProgress) factory).getPageFrameCursorFrom(
+                    virtualFactory.getBaseFactory(),
+                    sqlExecutionContext,
+                    PartitionFrameCursorFactory.ORDER_ASC
+            );
+            final UnregisterProbePageFrameCursor probe = new UnregisterProbePageFrameCursor(
+                    pageFrameCursor,
+                    sqlExecutionContext.getMemoryTracker()
+            );
+            final HybridColumnMaterializer materializer = getPrivateField(state, "materializer");
+            final DirectLongList columnData = getPrivateField(state, "materializerColumnData");
+            final HTTPSerialParquetExporter exporter = new HTTPSerialParquetExporter(
+                    engine,
+                    (SqlExecutionContextImpl) sqlExecutionContext
+            );
+            setPrivateField(state, "serialParquetExporter", exporter);
+            if (releasePath == MaterializerReleasePath.STATE_CLEAR_STATE_OWNED) {
+                setPrivateField(state, "pageFrameCursor", probe);
+            } else {
+                exporter.setupPageFrameBackedExport(probe, materializer, columnData);
+            }
+
+            materializer.setUpPageFrameBacked(virtualFactory, pageFrameCursor, sqlExecutionContext);
+            PageFrame frame;
+            while ((frame = pageFrameCursor.next()) != null) {
+                materializer.buildColumnDataFromPageFrame(pageFrameCursor, frame, columnData);
+            }
+            Assert.assertTrue(
+                    "the export must hold the cast-to-symbol dictionary in native memory",
+                    Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS) > nativeBaseline
+            );
+            Assert.assertTrue("the dictionary must be charged to the query's tracker", probe.tracker.getUsed() > 0);
+
+            if (releasePath == MaterializerReleasePath.EXPORTER_CLEAR) {
+                exporter.clearExportResources();
+            } else {
+                state.clear();
+            }
+            Assert.assertTrue("the release must close the page-frame cursor", probe.isClosed);
+            Assert.assertEquals(
+                    "the dictionary must be released before the query unregisters and recycles its tracker",
+                    0,
+                    probe.trackerUsedAtClose
+            );
+            Assert.assertEquals(nativeBaseline, probe.nativeFuncMemAtClose);
+            Assert.assertEquals(nativeBaseline, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS));
+        } finally {
+            state.close();
+        }
+    }
+
     private static void drain(ConcurrentQueue<QueryTrace> queue) {
         final QueryTrace trace = new QueryTrace();
         while (queue.tryDequeue(trace)) {
         }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static <T> T getPrivateField(Object target, String fieldName) throws Exception {
+        final Field field = target.getClass().getDeclaredField(fieldName);
+        field.setAccessible(true);
+        return (T) field.get(target);
     }
 
     private static void recordTrackerOwnerState(
@@ -278,6 +375,15 @@ public class ExportQueryProcessorStateTest extends AbstractCairoTest {
         final Field field = target.getClass().getDeclaredField(fieldName);
         field.setAccessible(true);
         field.set(target, value);
+    }
+
+    // Where an HTTP parquet export releases its materializer: the exporter clears its resources at
+    // the end of process(), or the state clears with the page-frame cursor handed to the exporter
+    // or still its own (the export failed before it started).
+    private enum MaterializerReleasePath {
+        EXPORTER_CLEAR,
+        STATE_CLEAR_EXPORTER_OWNED,
+        STATE_CLEAR_STATE_OWNED
     }
 
     private static final class ThrowingCopyExportContext extends CopyExportContext {
@@ -379,6 +485,81 @@ public class ExportQueryProcessorStateTest extends AbstractCairoTest {
         protected void _close() {
             closeCount++;
             throw failure;
+        }
+    }
+
+    // Records the query's native function memory at the moment the page-frame cursor closes, which
+    // is when the query unregisters and its memory tracker goes back to the pool.
+    private static final class UnregisterProbePageFrameCursor implements PageFrameCursor {
+        private final PageFrameCursor delegate;
+        private final MemoryTracker tracker;
+        private boolean isClosed;
+        private long nativeFuncMemAtClose = -1;
+        private long trackerUsedAtClose = -1;
+
+        private UnregisterProbePageFrameCursor(PageFrameCursor delegate, MemoryTracker tracker) {
+            this.delegate = delegate;
+            this.tracker = tracker;
+        }
+
+        @Override
+        public void calculateSize(RecordCursor.Counter counter) {
+            delegate.calculateSize(counter);
+        }
+
+        @Override
+        public void close() {
+            if (!isClosed) {
+                isClosed = true;
+                trackerUsedAtClose = tracker.getUsed();
+                nativeFuncMemAtClose = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_FUNC_RSS);
+            }
+            delegate.close();
+        }
+
+        @Override
+        public ColumnMapping getColumnMapping() {
+            return delegate.getColumnMapping();
+        }
+
+        @Override
+        public long getRemainingRowsInInterval() {
+            return delegate.getRemainingRowsInInterval();
+        }
+
+        @Override
+        public StaticSymbolTable getSymbolTable(int columnIndex) {
+            return delegate.getSymbolTable(columnIndex);
+        }
+
+        @Override
+        public boolean isExternal() {
+            return delegate.isExternal();
+        }
+
+        @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return delegate.newSymbolTable(columnIndex);
+        }
+
+        @Override
+        public @Nullable PageFrame next(long skipTarget) {
+            return delegate.next(skipTarget);
+        }
+
+        @Override
+        public long size() {
+            return delegate.size();
+        }
+
+        @Override
+        public boolean supportsSizeCalculation() {
+            return delegate.supportsSizeCalculation();
+        }
+
+        @Override
+        public void toTop() {
+            delegate.toTop();
         }
     }
 }

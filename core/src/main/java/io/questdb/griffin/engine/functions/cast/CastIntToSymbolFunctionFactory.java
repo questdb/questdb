@@ -67,14 +67,5 @@ public class CastIntToSymbolFunctionFactory implements FunctionFactory {
             }
             return getInt0(value);
         }
-
-        @Override
-        public CharSequence getSymbol(Record rec) {
-            final int value = arg.getInt(rec);
-            if (value == Numbers.INT_NULL) {
-                return null;
-            }
-            return getSymbol0(value);
-        }
     }
 }

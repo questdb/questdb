@@ -42,7 +42,6 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
-import io.questdb.griffin.engine.functions.cast.CastToSymbolTable;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
@@ -75,16 +74,12 @@ class LeadLagSymbolFunctionFactoryHelper {
         // Hold copies of values resolved through a table-less argument; see valueBOf()/valueOf().
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
-        // True when the argument hands out a CastToSymbolTable. The casts behind that table resolve
-        // keys to immutable Strings, so valueOf()/valueBOf() return them without copying.
-        private boolean isCastBacked;
         private NullIncludingSymbolTable staticSymbolTable;
         // Resolves keys through a symbol table this function owns rather than through the
         // argument. A non-cached dictionary keeps a single A/B pair of buffers per table, so
         // resolving through the argument's table would let the source column, or any other
         // function reading the same dictionary, overwrite this column's value. Stays null when
-        // the argument has no table to hand out (such as rnd_symbol(count, lo, hi, nullRate)) or
-        // hands out a CastToSymbolTable, a snapshot taken before the scan mints any keys.
+        // the argument has no table to hand out (such as rnd_symbol(count, lo, hi, nullRate)).
         private SymbolTable symbolTable;
         protected final SymbolFunction arg;
         protected final Function defaultValue;
@@ -153,10 +148,6 @@ class LeadLagSymbolFunctionFactoryHelper {
             }
             symbolTable = Misc.freeIfCloseable(symbolTable);
             symbolTable = arg.newSymbolTable();
-            isCastBacked = symbolTable instanceof CastToSymbolTable;
-            if (isCastBacked) {
-                symbolTable = null;
-            }
         }
 
         @Override
@@ -207,15 +198,13 @@ class LeadLagSymbolFunctionFactoryHelper {
         // rnd_symbol(count, lo, hi, nullRate), every lag()/lead() over the same source resolves
         // keys into the source's single A/B buffer pair. In l1 = trim(l2), trim() resolves l2
         // through the A buffer and overwrites the text l1 already returned, so copy into buffers
-        // we own. A cast-backed argument resolves keys to immutable Strings, which alias nothing,
-        // so return those as they are.
+        // we own.
         @Override
         public CharSequence valueBOf(int key) {
             if (symbolTable != null) {
                 return symbolTable.valueBOf(key);
             }
-            final CharSequence value = arg.valueBOf(key);
-            return isCastBacked ? value : copyOf(value, sinkB);
+            return copyOf(arg.valueBOf(key), sinkB);
         }
 
         @Override
@@ -223,8 +212,7 @@ class LeadLagSymbolFunctionFactoryHelper {
             if (symbolTable != null) {
                 return symbolTable.valueOf(key);
             }
-            final CharSequence value = arg.valueOf(key);
-            return isCastBacked ? value : copyOf(value, sinkA);
+            return copyOf(arg.valueOf(key), sinkA);
         }
 
         protected void toPlanArgs(PlanSink sink) {

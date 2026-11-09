@@ -66,7 +66,7 @@ public class UnnestRecordCursorFactory extends AbstractRecordCursorFactory {
         if (hasOrdinality) {
             sources.add(new OrdinalityUnnestSource());
         }
-        this.cursor = new UnnestRecordCursor(columnSplit, sources);
+        this.cursor = new UnnestRecordCursor(columnSplit, functions, sources);
     }
 
     @Override
@@ -143,6 +143,8 @@ public class UnnestRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     private static class UnnestRecordCursor implements NoRandomAccessRecordCursor {
+        // owned by the factory, which frees them after this cursor
+        private final ObjList<Function> functions;
         private final UnnestRecord record;
         private final ObjList<UnnestSource> sources;
         private int arrayIndex;
@@ -153,8 +155,10 @@ public class UnnestRecordCursorFactory extends AbstractRecordCursorFactory {
 
         public UnnestRecordCursor(
                 int columnSplit,
+                ObjList<Function> functions,
                 ObjList<UnnestSource> sources
         ) {
+            this.functions = functions;
             this.sources = sources;
             this.record = new UnnestRecord(columnSplit, sources);
         }
@@ -169,6 +173,7 @@ public class UnnestRecordCursorFactory extends AbstractRecordCursorFactory {
         @Override
         public void close() {
             baseCursor = Misc.free(baseCursor);
+            Function.cursorClosed(functions);
         }
 
         @Override

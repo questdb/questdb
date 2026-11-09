@@ -46,6 +46,7 @@ class FilteredRecordCursor implements RecordCursor {
     @Override
     public void close() {
         Misc.free(base);
+        filter.cursorClosed();
     }
 
     @Override

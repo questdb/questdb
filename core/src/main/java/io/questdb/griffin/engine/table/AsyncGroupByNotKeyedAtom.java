@@ -77,6 +77,7 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, PerWorkerLockOwne
     private final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
     private final PerWorkerLocks perWorkerLocks;
     private final ObjList<SimpleMapValue> perWorkerMapValues;
+    private boolean areFunctionsInitialized;
     // Per-query native memory tracker captured from SqlExecutionContext on init.
     // Null when no per-query limit applies. Workers and operator code feed it to
     // tracker-aware Unsafe overloads to charge allocations to the active workload.
@@ -170,26 +171,47 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, PerWorkerLockOwne
 
     @Override
     public void clear() {
-        ownerFunctionUpdater.updateEmpty(ownerMapValue);
-        ownerMapValue.setNew(true);
-        for (int i = 0, n = perWorkerMapValues.size(); i < n; i++) {
-            SimpleMapValue value = perWorkerMapValues.getQuick(i);
-            ownerFunctionUpdater.updateEmpty(value);
-            value.setNew(true);
-        }
-        if (perWorkerGroupByFunctions != null) {
-            for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
-                PerWorkerFunctionList.clear(perWorkerGroupByFunctions.getQuick(i));
+        try {
+            ownerFunctionUpdater.updateEmpty(ownerMapValue);
+            ownerMapValue.setNew(true);
+            for (int i = 0, n = perWorkerMapValues.size(); i < n; i++) {
+                SimpleMapValue value = perWorkerMapValues.getQuick(i);
+                ownerFunctionUpdater.updateEmpty(value);
+                value.setNew(true);
+            }
+            if (perWorkerGroupByFunctions != null) {
+                for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
+                    PerWorkerFunctionList.clear(perWorkerGroupByFunctions.getQuick(i));
+                }
+            }
+            Misc.clear(ownerAllocator);
+            Misc.clearObjList(perWorkerAllocators);
+            memoryTracker = null;
+        } finally {
+            // the context notifies the filters, and a failing step above must not skip that either
+            try {
+                filterCtx.clear();
+            } finally {
+                // The frame sequence clears the atom after awaiting its workers, so no clone is in use.
+                if (areFunctionsInitialized) {
+                    areFunctionsInitialized = false;
+                    Function.cursorClosed(ownerGroupByFunctions);
+                    if (perWorkerGroupByFunctions != null) {
+                        for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
+                            final ObjList<GroupByFunction> functions = perWorkerGroupByFunctions.getQuick(i);
+                            if (functions != null) {
+                                PerWorkerFunctionList.cursorClosed(functions);
+                            }
+                        }
+                    }
+                }
             }
         }
-        Misc.clear(ownerAllocator);
-        Misc.clearObjList(perWorkerAllocators);
-        filterCtx.clear();
-        memoryTracker = null;
     }
 
     @Override
     public void close() {
+        areFunctionsInitialized = false;
         // clear() already freed the data chunks under the bound tracker (the index is on the
         // global counter), so close() has nothing tracked to free. Nulling is defensive: any
         // stray free hits the global counter and cannot underflow an already-recycled block.
@@ -284,6 +306,7 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, PerWorkerLockOwne
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         memoryTracker = executionContext.getMemoryTracker();
+        areFunctionsInitialized = true;
         filterCtx.initFilters(symbolTableSource, executionContext);
 
         // The owner group by functions initialize here, once per query execution; the cursor does

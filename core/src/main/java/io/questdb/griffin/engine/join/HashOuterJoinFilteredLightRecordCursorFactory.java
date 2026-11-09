@@ -256,6 +256,13 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
         CairoException.rethrowCleanupFailure(failure);
     }
 
+    // _close() nulls the filter before it closes the cursor, and frees the filter itself
+    private void filterCursorClosed() {
+        if (filter != null) {
+            filter.cursorClosed();
+        }
+    }
+
     private class HashFullOuterJoinLightRecordCursor extends AbstractHashOuterJoinLightRecordCursor {
         private final Map matchIdsMap;
         private final FullOuterJoinRecord record;
@@ -288,6 +295,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
             }
             super.close();
             mapCursor = Misc.free(mapCursor);
+            filterCursorClosed();
         }
 
         @Override
@@ -483,6 +491,12 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
         }
 
         @Override
+        public void close() {
+            super.close();
+            filterCursorClosed();
+        }
+
+        @Override
         public Record getRecord() {
             return record;
         }
@@ -576,6 +590,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
             }
             super.close();
             mapCursor = Misc.free(mapCursor);
+            filterCursorClosed();
         }
 
         @Override

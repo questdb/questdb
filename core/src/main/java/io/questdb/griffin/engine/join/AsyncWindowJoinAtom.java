@@ -136,6 +136,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, PerWorkerLockOwner, Re
     private final boolean vectorized;
     private final long windowHi;
     private final long windowLo;
+    private boolean areFiltersInitialized;
     // Per-query native memory tracker captured from SqlExecutionContext on init.
     // Null when no per-query limit applies. Workers and operator code feed it to
     // tracker-aware Unsafe overloads to charge allocations to the active workload.
@@ -387,6 +388,15 @@ public class AsyncWindowJoinAtom implements StatefulAtom, PerWorkerLockOwner, Re
         cleanupFailure = Misc.clearBestEffort(cleanupFailure, ownerSelectivityStats);
         cleanupFailure = Misc.clearObjListBestEffort(cleanupFailure, perWorkerSelectivityStats);
 
+        // The frame sequence clears the atom after awaiting its workers, so no clone is in use.
+        if (areFiltersInitialized) {
+            areFiltersInitialized = false;
+            cleanupFailure = cursorClosedBestEffort(cleanupFailure, ownerMasterFilter);
+            cleanupFailure = cursorClosedBestEffort(cleanupFailure, perWorkerMasterFilters);
+            cleanupFailure = cursorClosedBestEffort(cleanupFailure, ownerJoinFilter);
+            cleanupFailure = cursorClosedBestEffort(cleanupFailure, perWorkerJoinFilters);
+        }
+
         // Let the subclass release its keyed state.
         try {
             clearKeyedState();
@@ -412,6 +422,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, PerWorkerLockOwner, Re
      */
     @Override
     public final void close() {
+        areFiltersInitialized = false;
         Throwable cleanupFailure = null;
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerJoinFilter);
         cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerJoinFilters);
@@ -658,6 +669,8 @@ public class AsyncWindowJoinAtom implements StatefulAtom, PerWorkerLockOwner, Re
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         memoryTracker = executionContext.getMemoryTracker();
+        // initTimeFrameCursors() initializes the join filters later in the same execution
+        areFiltersInitialized = true;
         if (ownerMasterFilter != null) {
             ownerMasterFilter.init(symbolTableSource, executionContext);
         }
@@ -922,5 +935,25 @@ public class AsyncWindowJoinAtom implements StatefulAtom, PerWorkerLockOwner, Re
             }
         }
         return -1;
+    }
+
+    private static Throwable cursorClosedBestEffort(Throwable cleanupFailure, @Nullable Function function) {
+        if (function != null) {
+            try {
+                function.cursorClosed();
+            } catch (Throwable th) {
+                cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
+            }
+        }
+        return cleanupFailure;
+    }
+
+    private static Throwable cursorClosedBestEffort(Throwable cleanupFailure, @Nullable ObjList<Function> functions) {
+        if (functions != null) {
+            for (int i = 0, n = functions.size(); i < n; i++) {
+                cleanupFailure = cursorClosedBestEffort(cleanupFailure, functions.getQuick(i));
+            }
+        }
+        return cleanupFailure;
     }
 }

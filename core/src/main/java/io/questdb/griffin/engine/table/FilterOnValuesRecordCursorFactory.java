@@ -211,9 +211,10 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
         } catch (Throwable th) {
             failure = th;
         }
+        // the cursor notifies the filter when it closes, so it goes before the filter
+        failure = Misc.freeBestEffort(failure, cursor);
         failure = Misc.freeBestEffort(failure, filter);
         failure = Misc.freeBestEffort(failure, rowCursorFactory);
-        failure = Misc.freeBestEffort(failure, cursor);
         failure = Misc.freeObjListBestEffort(failure, cursorFactories);
         CairoException.rethrowCleanupFailure(failure);
     }

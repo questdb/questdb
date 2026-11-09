@@ -420,6 +420,11 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                 Misc.clearObjList(groupByFunctions);
                 masterCursor = Misc.free(masterCursor);
                 slaveCursor = Misc.free(slaveCursor);
+                Function.cursorClosed(groupByFunctions);
+                // _close() nulls the filter before it frees this cursor
+                if (joinFilter != null) {
+                    joinFilter.cursorClosed();
+                }
             }
         }
 

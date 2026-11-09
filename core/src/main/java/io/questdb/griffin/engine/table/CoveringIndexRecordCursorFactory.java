@@ -464,6 +464,13 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             }
             return singleKeyCursor;
         } catch (Throwable th) {
+            // a failed open leaves the cursor unclosed, so the filter it may have half-initialized
+            // is notified now, while the filter is still alive
+            try {
+                (multiKeyCursor != null ? multiKeyCursor : singleKeyCursor).releaseLatestByFilter();
+            } catch (Throwable releaseFailure) {
+                th.addSuppressed(releaseFailure);
+            }
             Misc.free(frameCursor);
             throw th;
         }
@@ -761,6 +768,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             // before freeing frameCursor).
             this.currentRowCursor = Misc.free(currentRowCursor);
             frameCursor = Misc.free(frameCursor);
+            releaseLatestByFilter();
         }
 
         @Override
@@ -910,6 +918,16 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     symTablesCache[col] = tableReader.getSymbolMapReader(columnIndexes.getQuick(col));
                 }
                 coveringRecord.setIncludeSymbolTables(symTablesCache);
+            }
+        }
+
+        // The factory hands the filter to the cursor again on every execution, and its close()
+        // frees the filter before the cursors, so the cursor must not keep the filter past this.
+        void releaseLatestByFilter() {
+            final Function latestByFilter = this.latestByFilter;
+            if (latestByFilter != null) {
+                this.latestByFilter = null;
+                latestByFilter.cursorClosed();
             }
         }
 

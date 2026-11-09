@@ -272,7 +272,7 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
         computedIsSymbolToString.clear();
         computedOutputTypes.clear();
         computedSourceTypes.clear();
-        functions = null;
+        releaseFunctions();
         functionRecord = null;
         adjustedMetadata.clear();
         computedCount = 0;
@@ -292,6 +292,23 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
 
     public IntList getBaseColumnMap() {
         return baseColumnMap;
+    }
+
+    /**
+     * Notifies the functions bound by {@link #setUpPageFrameBacked} that the export cursor closed and
+     * unbinds them. The functions belong to the export's factory, which outlives the export, so this
+     * is what releases their per-query state. Exporters call it before they close the page-frame
+     * cursor, because closing that cursor unregisters the query and recycles the memory tracker the
+     * functions charged their state to. Safe to call repeatedly.
+     */
+    public void releaseFunctions() {
+        final ObjList<Function> functions = this.functions;
+        if (functions != null) {
+            this.functions = null;
+            functionRecord = null;
+            computedFunctions.clear();
+            Function.cursorClosed(functions);
+        }
     }
 
     /**

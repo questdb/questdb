@@ -76,6 +76,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
     protected long nextSampleLocalEpoch;
     protected long sampleLocalEpoch;
     protected long topTzOffset;
+    private boolean areRecordFunctionsInitialized;
     private boolean areTimestampsInitialized;
     private boolean isNotKeyedLoopInitialized;
     // true when code generation converted to UTC a bound that this cursor reads and that is a runtime constant, such
@@ -159,6 +160,12 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         baseCursor = Misc.free(baseCursor);
         Misc.free(allocator);
         Misc.clearObjList(groupByFunctions);
+        // the factory closes this cursor again after it frees the record functions, which must
+        // then stay untouched
+        if (areRecordFunctionsInitialized) {
+            areRecordFunctionsInitialized = false;
+            Function.cursorClosed(recordFunctions);
+        }
         circuitBreaker = null;
     }
 
@@ -173,6 +180,8 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
     }
 
     public void of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
+        // the factory initialized the record functions just before it opened this cursor
+        areRecordFunctionsInitialized = true;
         this.baseCursor = baseCursor;
         baseRecord = baseCursor.getRecord();
         prevDst = Long.MIN_VALUE;

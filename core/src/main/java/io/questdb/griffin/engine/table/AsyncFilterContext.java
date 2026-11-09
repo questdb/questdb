@@ -70,6 +70,7 @@ public class AsyncFilterContext implements Closeable {
     private final ObjList<Function> perWorkerFilters;
     private final ObjList<PageFrameMemoryPool> perWorkerMemoryPools;
     private final ObjList<SelectivityStats> perWorkerSelectivityStats;
+    private boolean areFiltersInitialized;
 
     AsyncFilterContext(
             CairoConfiguration configuration,
@@ -157,26 +158,46 @@ public class AsyncFilterContext implements Closeable {
     }
 
     public void clear() {
-        Misc.free(ownerMemoryPool);
-        Misc.freeObjListAndKeepObjects(perWorkerMemoryPools);
-        ownerSelectivityStats.clear();
-        Misc.clearObjList(perWorkerSelectivityStats);
-        // Shrink the row-id and column-address lists back to initial capacity,
-        // mirroring the per-task reset in PageFrameReduceTask.clear(). Under a JIT
-        // filter the row-id lists grow to a full page frame (up to
-        // cairo.sql.page.frame.max.rows longs = 8 MB each) and only ever grow, so an
-        // idle or cached factory would otherwise pin peak-sized NATIVE_OFFLOAD buffers
-        // until eviction.
-        resetCapacity(ownerFilteredRows);
-        resetCapacity(ownerDataAddresses);
-        resetCapacity(ownerAuxAddresses);
-        resetCapacity(perWorkerFilteredRows);
-        resetCapacity(perWorkerDataAddresses);
-        resetCapacity(perWorkerAuxAddresses);
+        try {
+            Misc.free(ownerMemoryPool);
+            Misc.freeObjListAndKeepObjects(perWorkerMemoryPools);
+            ownerSelectivityStats.clear();
+            Misc.clearObjList(perWorkerSelectivityStats);
+            // Shrink the row-id and column-address lists back to initial capacity,
+            // mirroring the per-task reset in PageFrameReduceTask.clear(). Under a JIT
+            // filter the row-id lists grow to a full page frame (up to
+            // cairo.sql.page.frame.max.rows longs = 8 MB each) and only ever grow, so an
+            // idle or cached factory would otherwise pin peak-sized NATIVE_OFFLOAD buffers
+            // until eviction.
+            resetCapacity(ownerFilteredRows);
+            resetCapacity(ownerDataAddresses);
+            resetCapacity(ownerAuxAddresses);
+            resetCapacity(perWorkerFilteredRows);
+            resetCapacity(perWorkerDataAddresses);
+            resetCapacity(perWorkerAuxAddresses);
+        } finally {
+            // The owning atom clears the context after the frame sequence awaited its workers,
+            // so no per-worker filter is in use.
+            if (areFiltersInitialized) {
+                areFiltersInitialized = false;
+                if (ownerFilter != null) {
+                    ownerFilter.cursorClosed();
+                }
+                if (perWorkerFilters != null) {
+                    for (int i = 0, n = perWorkerFilters.size(); i < n; i++) {
+                        final Function workerFilter = perWorkerFilters.getQuick(i);
+                        if (workerFilter != ownerFilter) {
+                            workerFilter.cursorClosed();
+                        }
+                    }
+                }
+            }
+        }
     }
 
     @Override
     public void close() {
+        areFiltersInitialized = false;
         Throwable cleanupFailure = null;
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, compiledFilter);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, bindVarMemory);
@@ -270,6 +291,7 @@ public class AsyncFilterContext implements Closeable {
     }
 
     public void initFilters(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+        areFiltersInitialized = true;
         if (ownerFilter != null) {
             ownerFilter.init(symbolTableSource, executionContext);
         }

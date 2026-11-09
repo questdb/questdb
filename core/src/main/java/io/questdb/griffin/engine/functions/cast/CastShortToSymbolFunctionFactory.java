@@ -61,10 +61,5 @@ public class CastShortToSymbolFunctionFactory implements FunctionFactory {
         public int getInt(Record rec) {
             return getInt0(arg.getShort(rec));
         }
-
-        @Override
-        public CharSequence getSymbol(Record rec) {
-            return getSymbol0(arg.getShort(rec));
-        }
     }
 }
