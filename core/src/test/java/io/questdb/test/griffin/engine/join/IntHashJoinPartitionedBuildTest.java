@@ -27,8 +27,10 @@ package io.questdb.test.griffin.engine.join;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.griffin.engine.join.FrozenHashJoinBuild;
 import io.questdb.griffin.engine.join.IntHashJoinBuild;
 import io.questdb.griffin.engine.table.HashJoinBuildFrames;
@@ -51,12 +53,16 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.LongPredicate;
+
+import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
+import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 
 /**
  * The parallel build of {@link IntHashJoinBuild}: frame tasks that sort each frame's rows into
@@ -287,6 +293,67 @@ public class IntHashJoinPartitionedBuildTest extends AbstractCairoTest {
                         Assert.assertEquals(serialProbeClass, probe.getClass());
                     }
                     build.close();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testChainsKeepScanOrderAsLongChainForwardAndBackward() throws Exception {
+        assertMemoryLeak(() -> {
+            for (String sql : FrameBuilds.SCAN_ORDER_TABLES) {
+                execute(sql);
+            }
+            sqlExecutionContext.changePageFrameSizes(FrameBuilds.SCAN_ORDER_FRAME_ROWS, FrameBuilds.SCAN_ORDER_FRAME_ROWS);
+            try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(Long.MAX_VALUE);
+                 RecordCursorFactory probeFactory = select("p");
+                 RecordCursor probeCursor = probeFactory.getCursor(sqlExecutionContext)) {
+                final StaticSymbolTable probeDictionary = (StaticSymbolTable) probeCursor.getSymbolTable(0);
+                // A forward scan, and a backward one, which hands its frames over from the last and
+                // meets each frame's rows from the last: every frame task places its frame's rows, or
+                // the rows the filter keeps, in the scan's order, straight in the heap or in a chunk.
+                for (String sql : new String[]{"t", "t ORDER BY ts DESC"}) {
+                    // The serial hash join's cursor reads the scan through a factory of its own: a
+                    // factory serves one open scan at a time.
+                    try (RecordCursorFactory factory = select(sql);
+                         RecordCursorFactory serialFactory = select(sql);
+                         HashJoinBuildFrames frames = new HashJoinBuildFrames(configuration, ints(1), factory.getMetadata());
+                         IntHashJoinBuild build = new IntHashJoinBuild(true, 2, 16)) {
+                        final int order = FrameBuilds.scanOrder(factory);
+                        Assert.assertEquals(sql.endsWith("DESC") ? ORDER_DESC : ORDER_ASC, order);
+                        frames.open(factory, order, sqlExecutionContext);
+                        frames.loadFrames();
+                        Assert.assertTrue(frames.getFrameCount() > 20);
+                        Assert.assertTrue(frames.hasParquetFrames());
+                        final StaticSymbolTable buildDictionary = (StaticSymbolTable) frames.getSymbolTableSource().getSymbolTable(2);
+                        final LongPredicate everyValue = v -> true;
+                        final LongPredicate twoRowsInThree = v -> v % 3 != 1;
+                        // Unfiltered frames place their rows in the heap; every filtered build sorts them into chunks.
+                        for (LongPredicate keepValue : new LongPredicate[]{null, everyValue, twoRowsInThree}) {
+                            final Map<Integer, List<Long>> intChains = FrameBuilds.longChains(serialFactory,
+                                    record -> record.getInt(0), 1, keepValue, sqlExecutionContext);
+                            final Map<String, List<Long>> symbolChains = FrameBuilds.longChains(serialFactory,
+                                    record -> Objects.toString(record.getSymA(2), null), 1, keepValue, sqlExecutionContext);
+                            final LongPredicate keep = keepValue != null ? FrameBuilds.keepByValue(configuration, frames, 1, keepValue) : null;
+                            for (long rowsPerPartition : new long[]{1, 7, 1_000_000}) {
+                                final String label = sql + ", filtered: " + (keepValue != null) + ", rows per partition: " + rowsPerPartition;
+                                FrozenHashJoinBuild.IntKeyed frozen = FrameBuilds.buildIntPartitioned(configuration, build, frames, 0,
+                                        rowsPerPartition, -1, keep, order, tracker, NOOP);
+                                Assert.assertEquals(label, keep == null, build.hasFrameRegions());
+                                Assert.assertEquals(label, rowsPerPartition == 1_000_000, build.getPartitionCount() == 1);
+                                FrameBuilds.assertIntChains(frozen, intChains, -1, 9);
+                                assertSegmentsCoverTheHeap(build, frozen, frames, true);
+                                build.close();
+
+                                // A SYMBOL key keeps the build's own symbol keys, which the probe translates into.
+                                frozen = FrameBuilds.buildIntPartitioned(configuration, build, frames, 2,
+                                        rowsPerPartition, -1, keep, order, tracker, NOOP);
+                                FrameBuilds.assertTranslatedSymbolChains(frozen, symbolChains, probeDictionary, buildDictionary, tracker);
+                                build.close();
+                                Assert.assertEquals(label, 0, tracker.getUsed());
+                            }
+                        }
+                    }
                 }
             }
         });

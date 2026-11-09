@@ -32,6 +32,7 @@ import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
@@ -69,6 +70,9 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.LongPredicate;
+
+import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
+import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 
 /**
  * The parallel build of {@link MapHashJoinBuild}: frame tasks that stage each frame's keys and sort
@@ -310,6 +314,64 @@ public class MapHashJoinPartitionedBuildTest extends AbstractCairoTest {
                             Assert.assertEquals(serialProbeClass, probe.getClass());
                         }
                         build.close();
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testChainsKeepScanOrderAsLongChainForwardAndBackward() throws Exception {
+        assertMemoryLeak(() -> {
+            // Ten daily partitions of 500 rows, the first two of them Parquet, the others in frames
+            // of 250 rows, so that every key repeats within frames, across frames, and across
+            // partitions and formats.
+            createKeyTable(5_000, 172_800_000L);
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET WHERE ts < '2020-01-03'");
+            sqlExecutionContext.changePageFrameSizes(100, 300);
+            final LongPredicate everyValue = v -> true;
+            final LongPredicate twoRowsInThree = v -> v % 3 != 1;
+            for (KeyLayout layout : KeyLayout.values()) {
+                // A forward scan, and a backward one, which hands its frames over from the last and
+                // meets each frame's rows from the last: every frame task stages and places its
+                // frame's rows, or the rows the filter keeps, in the scan's order, straight in the
+                // heap or in a chunk. The serial hash join's cursor reads the scan through a factory
+                // of its own: a factory serves one open scan at a time.
+                for (String sql : new String[]{"t", "t ORDER BY ts DESC"}) {
+                    try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(Long.MAX_VALUE);
+                         RecordCursorFactory factory = select(sql);
+                         RecordCursorFactory serialFactory = select(sql);
+                         HashJoinBuildFrames frames = new HashJoinBuildFrames(configuration, ints(PAYLOAD_COLUMN), factory.getMetadata());
+                         MapHashJoinBuild build = layout.newBuild(true)) {
+                        final int order = FrameBuilds.scanOrder(factory);
+                        Assert.assertEquals(sql.endsWith("DESC") ? ORDER_DESC : ORDER_ASC, order);
+                        frames.open(factory, order, sqlExecutionContext);
+                        frames.loadFrames();
+                        Assert.assertTrue("frames: " + frames.getFrameCount(), frames.getFrameCount() > 16);
+                        Assert.assertTrue(frames.hasParquetFrames());
+                        final RecordSink sink = layout.newSink(factory.getMetadata());
+                        // Unfiltered frames place their rows in the heap when the key fits; every other
+                        // build sorts them into chunks.
+                        for (LongPredicate keepValue : new LongPredicate[]{null, everyValue, twoRowsInThree}) {
+                            final Map<String, List<Long>> expected = FrameBuilds.longChains(serialFactory, layout::keyOf,
+                                    PAYLOAD_COLUMN, keepValue, sqlExecutionContext);
+                            final LongPredicate keep = keepValue != null
+                                    ? FrameBuilds.keepByValue(configuration, frames, PAYLOAD_COLUMN, keepValue)
+                                    : null;
+                            for (long rowsPerPartition : new long[]{1, 7, 1_000_000}) {
+                                final String label = layout + ", " + sql + ", filtered: " + (keepValue != null)
+                                        + ", rows per partition: " + rowsPerPartition;
+                                final FrozenHashJoinBuild.RecordKeyed frozen = FrameBuilds.buildMapPartitioned(configuration, build,
+                                        frames, sink, rowsPerPartition, -1, keep, order, tracker, NOOP);
+                                Assert.assertEquals(label, keep == null && layout.isPlacedInHeap(), build.hasFrameRegions());
+                                Assert.assertEquals(label, rowsPerPartition == 1_000_000, build.getPartitionCount() == 1);
+                                FrameBuilds.assertRecordChains(configuration, frozen, layout.newSink(factory.getMetadata()), frames,
+                                        layout::keyOf, expected);
+                                assertSegmentsCoverTheHeap(build, frozen, frames, true);
+                                build.close();
+                                Assert.assertEquals(label, 0, tracker.getUsed());
+                            }
+                        }
                     }
                 }
             }
@@ -1196,7 +1258,7 @@ public class MapHashJoinPartitionedBuildTest extends AbstractCairoTest {
             return isPlacedInHeap;
         }
 
-        String keyOf(PageFrameMemoryRecord record) {
+        String keyOf(Record record) {
             final StringBuilder key = new StringBuilder();
             for (int column : columns) {
                 switch (column) {

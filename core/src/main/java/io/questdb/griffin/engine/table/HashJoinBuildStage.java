@@ -64,6 +64,8 @@ import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
+import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
+
 /**
  * One hash join build: the build input's page frames, its filters, the INT or staged-key build,
  * the SYMBOL key translation, the payload copy and the per-slot probes of the frozen build. The
@@ -73,7 +75,8 @@ import org.jetbrains.annotations.TestOnly;
  * the probes, the probe key sink and the SYMBOL key translation views.
  * <p>
  * {@link #init(SymbolTableSource, SqlExecutionContext)} runs when the operator's cursor opens and
- * reads no row: it opens the build scan and initializes the build filters against it.
+ * reads no row: it opens the build scan and initializes the build filters against it. The fused
+ * GROUP BY builds in {@code ORDER_ASC}: its scan and every frame's rows run from the first row.
  * <p>
  * {@link #build(SqlExecutionCircuitBreaker, PageFrameRoundDispatcher)} runs once per execution,
  * when the cursor is first asked for a result: it walks the build scan's page frames, filters each
@@ -455,7 +458,7 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
         memoryTracker = executionContext.getMemoryTracker();
         this.probeSymbols = probeSymbols;
         // The open scan serves the build input's symbol tables; build() walks its frames.
-        buildFrames.open(buildFactory, executionContext);
+        buildFrames.open(buildFactory, ORDER_ASC, executionContext);
         checkTableRowCounts(probeSymbols, executionContext);
         final SymbolTableSource buildSymbols = buildFrames.getSymbolTableSource();
         isBuildFiltersInitialized = true;
@@ -715,14 +718,14 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
                     final DirectLongList rows = stage.buildFilterContext.getFilteredRows(slotId);
                     stage.filterBuildFrame(slotId, frameMemory, record, rowCount, rows);
                     if (stage.isKeyStaged) {
-                        stage.mapBuild.partitionFrame(frameIndex, record, slot.buildKeySink, slot.buildKeyStager, rows);
+                        stage.mapBuild.partitionFrame(frameIndex, record, slot.buildKeySink, slot.buildKeyStager, rows, ORDER_ASC);
                     } else {
-                        stage.intBuild.partitionFrame(frameIndex, record, stage.buildKeyColumn, rows);
+                        stage.intBuild.partitionFrame(frameIndex, record, stage.buildKeyColumn, rows, ORDER_ASC);
                     }
                 } else if (stage.isKeyStaged) {
-                    stage.mapBuild.partitionFrame(frameIndex, record, slot.buildKeySink, slot.buildKeyStager, rowCount);
+                    stage.mapBuild.partitionFrame(frameIndex, record, slot.buildKeySink, slot.buildKeyStager, rowCount, ORDER_ASC);
                 } else {
-                    stage.intBuild.partitionFrame(frameIndex, record, stage.buildKeyColumn, rowCount);
+                    stage.intBuild.partitionFrame(frameIndex, record, stage.buildKeyColumn, rowCount, ORDER_ASC);
                 }
             } finally {
                 pool.releaseParquetBuffers();
@@ -830,14 +833,14 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
                     filterBuildFrame(-1, frameMemory, buildRecord, rowCount, rows);
                     // A SYMBOL key keeps the build's own symbol keys; the probe translates into them.
                     if (isKeyStaged) {
-                        mapBuild.appendFrame(buildRecord, owner.buildKeySink, rows);
+                        mapBuild.appendFrame(buildRecord, owner.buildKeySink, rows, ORDER_ASC);
                     } else {
-                        intBuild.appendFrame(buildRecord, buildKeyColumn, rows);
+                        intBuild.appendFrame(buildRecord, buildKeyColumn, rows, ORDER_ASC);
                     }
                 } else if (isKeyStaged) {
-                    mapBuild.appendFrame(buildRecord, owner.buildKeySink, rowCount);
+                    mapBuild.appendFrame(buildRecord, owner.buildKeySink, rowCount, ORDER_ASC);
                 } else {
-                    intBuild.appendFrame(buildRecord, buildKeyColumn, rowCount);
+                    intBuild.appendFrame(buildRecord, buildKeyColumn, rowCount, ORDER_ASC);
                 }
                 // The address cache gives the frame format that the payload readers go by.
                 if (buildFrames.getAddressCache().getFrameFormat(frameIndex) != PartitionFormat.NATIVE) {

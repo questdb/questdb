@@ -53,6 +53,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.CountingSqlExecutionCircuitBreaker;
 import io.questdb.test.tools.LimitedMemoryTracker;
@@ -63,12 +64,17 @@ import org.junit.Test;
 import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.LongPredicate;
+
+import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
+import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 
 public class MapHashJoinBuildTest extends AbstractCairoTest {
     private static final SqlExecutionCircuitBreaker NOOP = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
@@ -403,6 +409,142 @@ public class MapHashJoinBuildTest extends AbstractCairoTest {
                 } finally {
                     Misc.free(probe);
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testFrameAppendChecksCancellationFromEitherEndAndReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            // One frame of 150_000 rows, which a frame append checks the breaker in after its 65_536th
+            // and its 131_072nd row, from whichever end of the frame, or of its row list, it starts.
+            execute("CREATE TABLE t (l LONG, v LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO t SELECT x % 1_000, x, x::TIMESTAMP FROM long_sequence(150_000)");
+            final java.util.function.Function<Record, String> keyOf = record -> String.valueOf(record.getLong(0));
+            final ListColumnFilter keyFilter = new ListColumnFilter();
+            keyFilter.add(1);
+            for (String sql : new String[]{"t", "t ORDER BY ts DESC"}) {
+                try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(Long.MAX_VALUE);
+                     RecordCursorFactory factory = select(sql);
+                     RecordCursorFactory serialFactory = select(sql);
+                     HashJoinBuildFrames frames = new HashJoinBuildFrames(configuration, indexes(1), factory.getMetadata());
+                     MapHashJoinBuild build = new MapHashJoinBuild(configuration, new SingleColumnType(ColumnType.LONG), true, 4, 1024, 16)) {
+                    final int order = FrameBuilds.scanOrder(factory);
+                    Assert.assertEquals(sql.endsWith("DESC") ? ORDER_DESC : ORDER_ASC, order);
+                    frames.open(factory, order, sqlExecutionContext);
+                    frames.loadFrames();
+                    Assert.assertEquals(1, frames.getFrameCount());
+                    final BytecodeAssembler asm = new BytecodeAssembler();
+                    final RecordSink buildSink = RecordSinkFactory.getInstance(configuration, asm, factory.getMetadata(), keyFilter, null);
+                    final RecordSink probeSink = RecordSinkFactory.getInstance(configuration, asm, factory.getMetadata(), keyFilter, null);
+                    final Map<String, List<Long>> expected = FrameBuilds.longChains(serialFactory, keyOf, 1, null, sqlExecutionContext);
+                    // Every row, and a row list of every row.
+                    for (LongPredicate keep : new LongPredicate[]{null, rowId -> true}) {
+                        final String label = sql + ", filtered: " + (keep != null);
+                        final AppendCheckBreaker counting = new AppendCheckBreaker(-1);
+                        FrameBuilds.buildMapSerial(configuration, build, frames, buildSink, keep, order, tracker, counting);
+                        Assert.assertEquals(label, 2, counting.appendChecks);
+                        build.close();
+                        Assert.assertEquals(label, 0, tracker.getUsed());
+                        for (int trip = 1; trip <= 2; trip++) {
+                            final AppendCheckBreaker cancelling = new AppendCheckBreaker(trip);
+                            final CairoException error = Assert.assertThrows(CairoException.class, () -> FrameBuilds.buildMapSerial(
+                                    configuration, build, frames, buildSink, keep, order, tracker, cancelling));
+                            Assert.assertTrue(label, error.isCancellation());
+                            Assert.assertEquals(label, trip, cancelling.appendChecks);
+                            Assert.assertEquals(label + ": cancellation releases every allocation", 0, tracker.getUsed());
+                            Assert.assertEquals(label, 0, build.getSizeInBytes());
+                        }
+                        // The build is still usable.
+                        final FrozenHashJoinBuild.RecordKeyed frozen = FrameBuilds.buildMapSerial(configuration, build, frames,
+                                buildSink, keep, order, tracker, NOOP);
+                        FrameBuilds.assertRecordChains(configuration, frozen, probeSink, frames, keyOf, expected);
+                        build.close();
+                        Assert.assertEquals(label, 0, tracker.getUsed());
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testFrameBuildsChainKeysAsLongChainInScanOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            // Six daily partitions of 100 rows, the first two of them Parquet, in frames of 20 rows.
+            // Every key of either layout repeats within frames, across frames, and across partitions
+            // and formats; l holds zero and NULL, s NULL and the empty string.
+            execute("CREATE TABLE t (l LONG, i INT, s VARCHAR, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t
+                    SELECT CASE WHEN x % 13 = 0 THEN NULL ELSE x % 5 - 2 END,
+                           CASE WHEN x % 11 = 0 THEN NULL ELSE (x % 3)::INT END,
+                           CASE WHEN x % 17 = 0 THEN NULL WHEN x % 19 = 0 THEN '' ELSE 'k' || (x % 4) END,
+                           x, timestamp_sequence('2020-01-01', 864_000_000L)
+                    FROM long_sequence(600)
+                    """);
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET WHERE ts < '2020-01-03'");
+            sqlExecutionContext.changePageFrameSizes(20, 20);
+            try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(Long.MAX_VALUE)) {
+                // l alone stages into an Unordered8Map; i and s into an OrderedMap of var-size keys.
+                final int[][] keyColumns = {{0}, {1, 2}};
+                final ColumnTypes[] keyTypes = {
+                        new ArrayColumnTypes().add(ColumnType.LONG),
+                        new ArrayColumnTypes().add(ColumnType.INT).add(ColumnType.VARCHAR)
+                };
+                for (int layout = 0; layout < keyColumns.length; layout++) {
+                    final int[] columns = keyColumns[layout];
+                    final java.util.function.Function<Record, String> keyOf = record -> {
+                        final StringBuilder key = new StringBuilder();
+                        for (int column : columns) {
+                            switch (column) {
+                                case 0 -> key.append(record.getLong(0));
+                                case 1 -> key.append(record.getInt(1));
+                                default -> {
+                                    final Utf8Sequence value = record.getVarcharA(2);
+                                    key.append(value == null ? "<null>" : "'" + value + "'");
+                                }
+                            }
+                            key.append('|');
+                        }
+                        return key.toString();
+                    };
+                    // A forward scan, and a backward one, which hands its frames over from the last and
+                    // meets each frame's rows from the last: the owner appends each frame's rows, or the
+                    // rows the filter keeps, in the scan's order. The serial hash join's cursor reads
+                    // the scan through a factory of its own: a factory serves one open scan at a time.
+                    for (String sql : new String[]{"t", "t ORDER BY ts DESC"}) {
+                        try (RecordCursorFactory factory = select(sql);
+                             RecordCursorFactory serialFactory = select(sql);
+                             HashJoinBuildFrames frames = new HashJoinBuildFrames(configuration, indexes(3), factory.getMetadata());
+                             MapHashJoinBuild build = new MapHashJoinBuild(configuration, keyTypes[layout], true, 4, 1024, 16)) {
+                            final int order = FrameBuilds.scanOrder(factory);
+                            Assert.assertEquals(sql.endsWith("DESC") ? ORDER_DESC : ORDER_ASC, order);
+                            frames.open(factory, order, sqlExecutionContext);
+                            frames.loadFrames();
+                            Assert.assertTrue(frames.getFrameCount() > 20);
+                            Assert.assertTrue(frames.hasParquetFrames());
+                            final ListColumnFilter keyFilter = new ListColumnFilter();
+                            for (int column : columns) {
+                                keyFilter.add(column + 1);
+                            }
+                            final BytecodeAssembler asm = new BytecodeAssembler();
+                            final RecordSink buildSink = RecordSinkFactory.getInstance(configuration, asm, factory.getMetadata(), keyFilter, null);
+                            final RecordSink probeSink = RecordSinkFactory.getInstance(configuration, asm, factory.getMetadata(), keyFilter, null);
+                            for (LongPredicate keepValue : new LongPredicate[]{null, v -> v % 3 != 1}) {
+                                final Map<String, List<Long>> expected = FrameBuilds.longChains(serialFactory, keyOf, 3, keepValue,
+                                        sqlExecutionContext);
+                                final LongPredicate keep = keepValue != null ? FrameBuilds.keepByValue(configuration, frames, 3, keepValue) : null;
+                                final FrozenHashJoinBuild.RecordKeyed frozen = FrameBuilds.buildMapSerial(configuration, build, frames,
+                                        buildSink, keep, order, tracker, NOOP);
+                                FrameBuilds.assertRecordChains(configuration, frozen, probeSink, frames, keyOf, expected);
+                                build.close();
+                                Assert.assertEquals(sql, 0, tracker.getUsed());
+                            }
+                        }
+                    }
+                }
+            } finally {
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
             }
         });
     }
@@ -821,6 +963,34 @@ public class MapHashJoinBuildTest extends AbstractCairoTest {
     /**
      * Stages a single LONG key column, as a generated sink over one LONG column would.
      */
+    /**
+     * Counts the checks that a frame append makes per run of rows, and cancels on the given one,
+     * counting from one; -1 never cancels. The row heap's own checks as it grows do not count.
+     */
+    private static class AppendCheckBreaker extends CountingSqlExecutionCircuitBreaker {
+        private final int tripAt;
+        private final StackWalker walker = StackWalker.getInstance();
+        private int appendChecks;
+
+        private AppendCheckBreaker(int tripAt) {
+            super(NOOP);
+            this.tripAt = tripAt;
+        }
+
+        @Override
+        public void statefulThrowExceptionIfTrippedTimeThrottled() {
+            super.statefulThrowExceptionIfTrippedTimeThrottled();
+            final String site = walker.walk(frames -> frames
+                    .filter(frame -> frame.getClassName().startsWith("io.questdb.griffin.engine.join."))
+                    .findFirst()
+                    .map(StackWalker.StackFrame::getMethodName)
+                    .orElse(""));
+            if (site.equals("appendFrame") && ++appendChecks == tripAt) {
+                throw CairoException.queryCancelled(1);
+            }
+        }
+    }
+
     private static class LongKeySink implements RecordSink {
         @Override
         public void copy(Record r, RecordSinkSPI w) {

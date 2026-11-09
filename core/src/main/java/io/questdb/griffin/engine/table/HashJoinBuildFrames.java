@@ -67,8 +67,10 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
+import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 
 /**
  * The page frames of a fused hash join's build input for one execution, and the payload source
@@ -446,31 +448,47 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, Mutable
     }
 
     /**
-     * Opens the build scan's page frame cursor for an execution and walks its frames:
-     * {@link #open} and {@link #loadFrames()} in one call. On failure the caller's cleanup path
-     * calls {@link #clear()}.
+     * Opens the build scan's page frame cursor in {@code ORDER_ASC} for an execution and walks its
+     * frames: {@link #open(RecordCursorFactory, SqlExecutionContext)} and {@link #loadFrames()} in
+     * one call. On failure the caller's cleanup path calls {@link #clear()}.
      */
+    @TestOnly
     public void of(RecordCursorFactory buildFactory, SqlExecutionContext executionContext) throws SqlException {
         open(buildFactory, executionContext);
         loadFrames();
     }
 
     /**
-     * Opens the build scan's page frame cursor for an execution and reads no frame of it. The
-     * cursor serves the build input's symbol tables from here on; {@link #loadFrames()} walks its
-     * frames. On failure the caller's cleanup path calls {@link #clear()}.
+     * {@link #open(RecordCursorFactory, int, SqlExecutionContext)} in {@code ORDER_ASC}.
      */
+    @TestOnly
     public void open(RecordCursorFactory buildFactory, SqlExecutionContext executionContext) throws SqlException {
+        open(buildFactory, ORDER_ASC, executionContext);
+    }
+
+    /**
+     * Opens the build scan's page frame cursor for an execution, in the build input's order, and
+     * reads no frame of it. The cursor serves the build input's symbol tables from here on;
+     * {@link #loadFrames()} walks its frames, in the cursor's order: an {@code ORDER_DESC} scan hands
+     * over its last frame first. A build that has to chain each key's rows as the serial hash join
+     * chains them for the input's cursor opens the frames in the order of the input's scan and walks
+     * each frame's rows in it too; see {@code IntHashJoinBuild.appendFrame()}. On failure the
+     * caller's cleanup path calls {@link #clear()}.
+     *
+     * @param order {@code ORDER_ASC} or {@code ORDER_DESC}
+     */
+    public void open(RecordCursorFactory buildFactory, int order, SqlExecutionContext executionContext) throws SqlException {
+        assert order == ORDER_ASC || order == ORDER_DESC;
         // The tracker of the execution as it stood before the cursor opened: opening a query's
         // outermost factory registers the query, which may bind a tracker of its own.
         final MemoryTracker memoryTracker = executionContext.getMemoryTracker();
-        open0(buildFactory.getPageFrameCursor(executionContext, ORDER_ASC), buildFactory.getMetadata(), memoryTracker);
+        open0(buildFactory.getPageFrameCursor(executionContext, order), buildFactory.getMetadata(), memoryTracker);
     }
 
     /**
      * Adopts the build scan's page frame cursor, which the caller opened, for an execution and reads
-     * no frame of it, as {@link #open(RecordCursorFactory, SqlExecutionContext)} does with the cursor
-     * it opens. The frames own the cursor from here on, whether this returns or throws:
+     * no frame of it, as {@link #open(RecordCursorFactory, int, SqlExecutionContext)} does with the
+     * cursor it opens. The frames own the cursor from here on, whether this returns or throws:
      * {@link #clear()} closes it, which the caller's cleanup path calls on failure. A caller that has
      * to read a cursor before it knows which role the cursor takes, such as a hash join that decides
      * which input to build from by the inputs' sizes, opens the cursor itself and hands it over.

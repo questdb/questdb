@@ -65,6 +65,9 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.List;
+import java.util.Map;
+
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 
@@ -397,6 +400,75 @@ public class HashJoinBuildFramesTest extends AbstractCairoTest {
                 Assert.assertEquals(600, byBackwardCursor.getRowCount());
                 Assert.assertTrue(byBackwardCursor.hasParquetFrames());
                 TestUtils.assertEquals(printFrames(byFactory, false, false), printFrames(byBackwardCursor, true, false));
+            } finally {
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
+            }
+        });
+    }
+
+    @Test
+    public void testOpenInScanOrderBuildsChainsAsLongChain() throws Exception {
+        assertMemoryLeak(() -> {
+            for (String sql : FrameBuilds.SCAN_ORDER_TABLES) {
+                execute(sql);
+            }
+            sqlExecutionContext.changePageFrameSizes(FrameBuilds.SCAN_ORDER_FRAME_ROWS, FrameBuilds.SCAN_ORDER_FRAME_ROWS);
+            // A factory per open scan: a query's factory serves one open scan at a time.
+            try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(Long.MAX_VALUE);
+                 RecordCursorFactory forward = select("t");
+                 RecordCursorFactory backward = select("t ORDER BY ts DESC");
+                 RecordCursorFactory serialBackward = select("t ORDER BY ts DESC");
+                 HashJoinBuildFrames forwardFrames = new HashJoinBuildFrames(configuration, ints(1, 2), forward.getMetadata());
+                 HashJoinBuildFrames frames = new HashJoinBuildFrames(configuration, ints(1, 2), backward.getMetadata());
+                 IntHashJoinBuild build = new IntHashJoinBuild(true, 2, 16)) {
+                Assert.assertEquals(ORDER_DESC, FrameBuilds.scanOrder(backward));
+                // The serial hash join's chains over the backward scan list each key's rows from its
+                // first in the table to its last.
+                final Map<Integer, List<Long>> expected = FrameBuilds.longChains(serialBackward, record -> record.getInt(0), 1,
+                        null, sqlExecutionContext);
+                Assert.assertEquals(7, expected.size());
+                for (List<Long> chain : expected.values()) {
+                    for (int i = 1, n = chain.size(); i < n; i++) {
+                        Assert.assertTrue(chain.get(i - 1) < chain.get(i));
+                    }
+                }
+
+                forwardFrames.open(forward, ORDER_ASC, sqlExecutionContext);
+                forwardFrames.loadFrames();
+                frames.open(backward, ORDER_DESC, sqlExecutionContext);
+                // The open scan serves the build input's symbol tables before it walks a frame.
+                Assert.assertNotNull(frames.getSymbolTableSource().getSymbolTable(2));
+                frames.loadFrames();
+                Assert.assertEquals(600, frames.getRowCount());
+                Assert.assertTrue(frames.hasParquetFrames());
+                Assert.assertTrue("frames: " + frames.getFrameCount(), frames.getFrameCount() > 20);
+                // The backward scan hands the frames of the forward one over, the last first.
+                TestUtils.assertEquals(printFrames(forwardFrames, true, false), printFrames(frames, false, false));
+
+                // The owner's build, which meets each frame's rows from the last, then reads the
+                // payload through the frames and through a copy of it.
+                FrozenHashJoinBuild.IntKeyed frozen = FrameBuilds.buildIntSerial(configuration, build, frames, 0, null, ORDER_DESC,
+                        tracker, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+                FrameBuilds.assertIntChains(frozen, expected, -1, 9);
+                assertSymbolPayloads(frozen);
+                frames.copyPayload(frozen, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+                FrameBuilds.assertIntChains(frozen, expected, -1, 9);
+                assertSymbolPayloads(frozen);
+                build.close();
+                // The copy holds the rows of that build, so the next build takes frames without one.
+                frames.clear();
+                frames.open(backward, ORDER_DESC, sqlExecutionContext);
+                frames.loadFrames();
+
+                // A parallel build, whose frame tasks place their frames' rows in the heap from the last.
+                frozen = FrameBuilds.buildIntPartitioned(configuration, build, frames, 0, 7, -1, null, ORDER_DESC,
+                        tracker, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+                Assert.assertTrue("partitions: " + build.getPartitionCount(), build.getPartitionCount() > 1);
+                Assert.assertTrue(build.hasFrameRegions());
+                FrameBuilds.assertIntChains(frozen, expected, -1, 9);
+                assertSymbolPayloads(frozen);
+                build.close();
+                Assert.assertEquals(0, tracker.getUsed());
             } finally {
                 sqlExecutionContext.restoreToDefaultPageFrameSizes();
             }
@@ -772,6 +844,24 @@ public class HashJoinBuildFramesTest extends AbstractCairoTest {
         final long parquetRows = 2_000;
         Assert.assertTrue("decoded " + decodedBytes, decodedBytes >= parquetRows * Double.BYTES);
         Assert.assertTrue("decoded " + decodedBytes, decodedBytes < parquetRows * (Double.BYTES + Integer.BYTES));
+    }
+
+    // Every match of every key of SCAN_ORDER_TABLES' t resolves its SYMBOL payload, the second
+    // payload column, to the text that t's row of that v holds.
+    private static void assertSymbolPayloads(FrozenHashJoinBuild.IntKeyed frozen) {
+        long matchCount = 0;
+        try (FrozenHashJoinBuild.IntProbe probe = frozen.newProbe()) {
+            for (int key = -1; key < 6; key++) {
+                probe.find(key < 0 ? Numbers.INT_NULL : key);
+                while (probe.hasNext()) {
+                    probe.next();
+                    final long v = probe.getRecord().getLong(0);
+                    TestUtils.assertEquals(v % 17 == 0 ? null : "s" + (v % 5), probe.getRecord().getSymA(1));
+                    matchCount++;
+                }
+            }
+        }
+        Assert.assertEquals(600, matchCount);
     }
 
     private static IntList ints(int... values) {
