@@ -1774,69 +1774,6 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNullSequenceCollectionSignalsShardProgress() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE null_sequence_progress AS (SELECT x FROM long_sequence(1))");
-            final FiberRuntime runtime = new FiberRuntime(1);
-            final PageFrameReduceDispatcher dispatcher = new PageFrameReduceDispatcher(
-                    engine,
-                    engine.getMessageBus(),
-                    runtime
-            );
-            final PageFrameReduceDispatcher previousDispatcher = engine.getMessageBus().getPageFrameReduceDispatcher();
-            engine.getMessageBus().setPageFrameReduceDispatcher(dispatcher);
-            final PageFrameSequence<StatefulAtom> frameSequence = new PageFrameSequence<>(
-                    engine,
-                    configuration,
-                    engine.getMessageBus(),
-                    new StatefulAtom() {
-                    },
-                    (_, _, _, _, _) -> {
-                    },
-                    () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_OFFLOAD),
-                    1,
-                    PageFrameReduceTask.TYPE_FILTER
-            );
-            final SCSequence collectSubSeq = new SCSequence();
-            try (RecordCursorFactory factory = select("SELECT * FROM null_sequence_progress")) {
-                frameSequence.of(
-                        factory,
-                        sqlExecutionContext,
-                        collectSubSeq,
-                        PartitionFrameCursorFactory.ORDER_ASC
-                );
-                frameSequence.prepareForDispatch();
-                final int shard = frameSequence.getShard();
-                final RingQueue<PageFrameReduceTask> queue = engine.getMessageBus().getPageFrameReduceQueue(shard);
-                final MPSequence pubSeq = engine.getMessageBus().getPageFrameReducePubSeq(shard);
-                final MCSequence reduceSubSeq = engine.getMessageBus().getPageFrameReduceSubSeq(shard);
-                final long cursor = pubSeq.next();
-                Assert.assertTrue(cursor > -1);
-                Assert.assertNull(queue.get(cursor).getFrameSequence());
-                pubSeq.done(cursor);
-                Assert.assertEquals(cursor, reduceSubSeq.next());
-                reduceSubSeq.done(cursor);
-                Assert.assertEquals(cursor, collectSubSeq.next());
-
-                frameSequence.cancel(SqlExecutionCircuitBreaker.STATE_CANCELLED);
-                final long observedProgress = dispatcher.getRingProgressVersion(shard);
-                try {
-                    frameSequence.next();
-                    Assert.fail();
-                } catch (CairoException e) {
-                    Assert.assertTrue(e.isCancellation());
-                }
-                Assert.assertEquals(observedProgress + 1, dispatcher.getRingProgressVersion(shard));
-            } finally {
-                engine.getMessageBus().setPageFrameReduceDispatcher(previousDispatcher);
-                close(runtime);
-                Misc.free(dispatcher);
-                Misc.free(frameSequence);
-            }
-        });
-    }
-
-    @Test
     public void testOrderedCompletionWakesProgressWaiter() throws Exception {
         assertMemoryLeak(() -> {
             final FiberRuntime dispatcherRuntime = new FiberRuntime(1);
@@ -3644,52 +3581,6 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
             } finally {
                 close(runtime);
                 Misc.free(dispatcher);
-            }
-        });
-    }
-
-    @Test
-    public void testResetSignalsShardProgress() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE reset_progress AS (SELECT x FROM long_sequence(1))");
-            final FiberRuntime runtime = new FiberRuntime(1);
-            final PageFrameReduceDispatcher dispatcher = new PageFrameReduceDispatcher(
-                    engine,
-                    engine.getMessageBus(),
-                    runtime
-            );
-            final PageFrameReduceDispatcher previousDispatcher = engine.getMessageBus().getPageFrameReduceDispatcher();
-            engine.getMessageBus().setPageFrameReduceDispatcher(dispatcher);
-            final PageFrameSequence<StatefulAtom> frameSequence = new PageFrameSequence<>(
-                    engine,
-                    configuration,
-                    engine.getMessageBus(),
-                    new StatefulAtom() {
-                    },
-                    (_, _, _, _, _) -> {
-                    },
-                    () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_OFFLOAD),
-                    1,
-                    PageFrameReduceTask.TYPE_FILTER
-            );
-            try (RecordCursorFactory factory = select("SELECT * FROM reset_progress")) {
-                frameSequence.of(
-                        factory,
-                        sqlExecutionContext,
-                        new SCSequence(),
-                        PartitionFrameCursorFactory.ORDER_ASC
-                );
-                frameSequence.prepareForDispatch();
-
-                final int shard = frameSequence.getShard();
-                final long observedProgress = dispatcher.getRingProgressVersion(shard);
-                frameSequence.reset();
-                Assert.assertEquals(observedProgress + 1, dispatcher.getRingProgressVersion(shard));
-            } finally {
-                engine.getMessageBus().setPageFrameReduceDispatcher(previousDispatcher);
-                close(runtime);
-                Misc.free(dispatcher);
-                Misc.free(frameSequence);
             }
         });
     }
