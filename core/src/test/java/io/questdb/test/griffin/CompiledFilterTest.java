@@ -1826,6 +1826,8 @@ public class CompiledFilterTest extends AbstractCairoTest {
                                 .noLeakCheck().failsWith("Invalid date");
                         assertQuery("SELECT k FROM x WHERE " + column + " IN (" + literal + ", '2020-01-03')")
                                 .noLeakCheck().failsWith("Invalid date");
+                        // a single text item is an interval
+                        assertQuery("SELECT k FROM x WHERE " + column + " IN " + literal).noLeakCheck().failsWith("Invalid date");
                     }
                     for (int i = 0; i < 2; i++) {
                         bindVariableService.clear();
