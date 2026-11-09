@@ -1,0 +1,542 @@
+/*+*****************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.test.cairo.idx;
+
+import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnVersionReader;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.idx.PostingIndexBuildValidator;
+import io.questdb.cairo.idx.PostingIndexChainEntry;
+import io.questdb.cairo.idx.PostingIndexChainHeader;
+import io.questdb.cairo.idx.PostingIndexWriter;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCMARW;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
+import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
+import org.junit.Assert;
+import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
+
+import static io.questdb.cairo.idx.PostingIndexUtils.*;
+
+public class PostingIndexBuildValidatorTest extends AbstractCairoTest {
+    @Test
+    public void testBitmapAddIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO x VALUES ('a', '2024-01-01'), (NULL, '2024-01-01T01:00'), ('a', '2024-01-02')");
+            execute("ALTER TABLE x ALTER COLUMN s ADD INDEX TYPE BITMAP");
+            assertQuery("SELECT ts FROM x WHERE s = 'a'").noLeakCheck().timestamp("ts")
+                    .returns("ts\n2024-01-01T00:00:00.000000Z\n2024-01-02T00:00:00.000000Z\n");
+            assertQuery("SELECT ts FROM x WHERE s IS NULL").noLeakCheck().timestamp("ts")
+                    .returns("ts\n2024-01-01T01:00:00.000000Z\n");
+        });
+    }
+
+    @Test
+    public void testCompleteCoveringIndex() throws Exception {
+        withIndex("INCLUDE (v, w)", (reader, path) -> assertComplete(reader, path, true));
+    }
+
+    @Test
+    public void testCompleteCoveringIndexWithColumnVersions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s STRING, v INT, w VARCHAR)");
+            execute("INSERT INTO x VALUES ('a', 1, 'one'), (NULL, 2, NULL), ('b', NULL, '🐘'), ('a', 4, '')");
+            execute("ALTER TABLE x ALTER COLUMN s TYPE SYMBOL");
+            execute("ALTER TABLE x ALTER COLUMN v TYPE LONG");
+            execute("ALTER TABLE x ALTER COLUMN s ADD INDEX TYPE POSTING INCLUDE (v, w)");
+            engine.releaseAllWriters();
+            try (TableReader reader = getReader("x"); Path path = new Path(); ColumnVersionReader staleVersions = new ColumnVersionReader()) {
+                path.of(configuration.getDbRoot()).concat(reader.getTableToken()).concat("default");
+                final int columnIndex = reader.getMetadata().getColumnIndex("s");
+                final long columnNameTxn = reader.getColumnVersionReader().getColumnNameTxn(0, reader.getMetadata().getWriterIndex(columnIndex));
+                Assert.assertTrue(columnNameTxn > -1);
+                assertComplete(reader, path, true);
+                Assert.assertFalse(PostingIndexBuildValidator.isComplete(configuration.getFilesFacade(), path, "s", columnNameTxn,
+                        reader.getTxn(), 4, reader.getMetadata().getColumnMetadata(columnIndex).getCoveringColumnIndices(), staleVersions, 0));
+            }
+        });
+    }
+
+    @Test
+    public void testCompleteCoveringIndexWithNullsAndColumnTops() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s SYMBOL)");
+            execute("INSERT INTO x VALUES ('a'), (NULL)");
+            execute("ALTER TABLE x ADD COLUMN v LONG, w VARCHAR");
+            execute("INSERT INTO x VALUES ('b', NULL, '🐘'), ('a', 4, '')");
+            execute("ALTER TABLE x ALTER COLUMN s ADD INDEX TYPE POSTING INCLUDE (v, w)");
+            engine.releaseAllWriters();
+            try (TableReader reader = getReader("x"); Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(reader.getTableToken()).concat("default");
+                assertComplete(reader, path, true);
+            }
+            assertQuery("SELECT v, w FROM x WHERE s = 'a'").noLeakCheck().noRandomAccess().expectSize()
+                    .withPlanContaining("CoveringIndex").returns("v\tw\nnull\t\n4\t\n");
+        });
+    }
+
+    @Test
+    public void testCompletePlainIndex() throws Exception {
+        withIndex("", (reader, path) -> assertComplete(reader, path, true));
+    }
+
+    @Test
+    public void testCompletePlainIndexDelta() throws Exception {
+        withIndex("DELTA", (reader, path) -> assertComplete(reader, path, true));
+    }
+
+    @Test
+    public void testCompletePlainIndexEf() throws Exception {
+        withIndex("EF", (reader, path) -> assertComplete(reader, path, true));
+    }
+
+    @Test
+    public void testCompleteSingleNullRowAndEmptyIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s SYMBOL, v LONG, w VARCHAR)");
+            execute("INSERT INTO x VALUES (NULL, NULL, NULL)");
+            execute("ALTER TABLE x ALTER COLUMN s ADD INDEX TYPE POSTING INCLUDE (v, w)");
+            engine.releaseAllWriters();
+            try (TableReader reader = getReader("x"); Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(reader.getTableToken()).concat("default");
+                Assert.assertTrue(isComplete(configuration.getFilesFacade(), reader, path, reader.getTxn(), 1));
+            }
+            execute("TRUNCATE TABLE x");
+            engine.releaseAllWriters();
+            try (TableReader reader = getReader("x"); Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(reader.getTableToken()).concat("default");
+                Assert.assertFalse(isComplete(configuration.getFilesFacade(), reader, path, reader.getTxn(), 0));
+            }
+        });
+    }
+
+    @Test
+    public void testCoverInfoMismatch() throws Exception {
+        withIndex("INCLUDE (v, w)", (reader, path) -> {
+            final int plen = path.size();
+            try (MemoryCMARW mem = Vm.getCMARWInstance()) {
+                mem.smallFile(configuration.getFilesFacade(), coverInfoFileName(path, "s", -1), MemoryTag.MMAP_DEFAULT);
+                mem.jumpTo(mem.size());
+                path.trimTo(plen);
+                mem.putInt(0, 0);
+                assertComplete(reader, path, false);
+                mem.putInt(0, COVER_INFO_MAGIC);
+                mem.putInt(4, 1);
+                assertComplete(reader, path, false);
+                mem.putInt(4, 2);
+                mem.putInt(8, 2);
+                assertComplete(reader, path, false);
+                mem.putInt(8, 1);
+                assertComplete(reader, path, true);
+            }
+        });
+    }
+
+    @Test
+    public void testCoverInfoOpenFailure() throws Exception {
+        withIndex("INCLUDE (v, w)", (reader, path) -> {
+            final FilesFacade ff = new TestFilesFacadeImpl() {
+                @Override
+                public long openRO(LPSZ name) {
+                    return Utf8s.endsWithAscii(name, ".pci") ? -1 : super.openRO(name);
+                }
+            };
+            Assert.assertFalse(isComplete(ff, reader, path, reader.getTxn(), 4));
+            assertComplete(reader, path, true);
+        });
+    }
+
+    @Test
+    public void testDifferentCoveringDefinition() throws Exception {
+        withIndex("INCLUDE (v, w)", (reader, path) -> {
+            IntList covers = new IntList();
+            covers.add(2);
+            covers.add(1);
+            Assert.assertFalse(PostingIndexBuildValidator.isComplete(configuration.getFilesFacade(), path, "s", -1,
+                    reader.getTxn(), 4, covers, reader.getColumnVersionReader(), 0));
+            covers.clear();
+            Assert.assertFalse(PostingIndexBuildValidator.isComplete(configuration.getFilesFacade(), path, "s", -1,
+                    reader.getTxn(), 4, covers, reader.getColumnVersionReader(), 0));
+        });
+    }
+
+    @Test
+    public void testIncompleteFileSet() throws Exception {
+        withIndex("INCLUDE (v, w)", (reader, path) -> {
+            final FilesFacade ff = configuration.getFilesFacade();
+            final int plen = path.size();
+            final PostingIndexChainEntry.Snapshot head = readHead(path);
+            try (Path file = new Path(); Path backup = new Path()) {
+                for (int kind = 0; kind < 4; kind++) {
+                    file.of(path);
+                    long requiredSize = switch (kind) {
+                        case 0 -> {
+                            keyFileName(file, "s", -1);
+                            yield KEY_FILE_RESERVED;
+                        }
+                        case 1 -> {
+                            valueFileName(file, "s", -1, head.sealTxn);
+                            yield head.valueMemSize;
+                        }
+                        case 2 -> {
+                            coverInfoFileName(file, "s", -1);
+                            yield 16;
+                        }
+                        default -> {
+                            coverDataFileName(file, "s", 1, -1, -1, head.sealTxn);
+                            yield head.coverFileEndOffsets.getQuick(1);
+                        }
+                    };
+                    backup.of(file).put(".backup");
+                    Assert.assertEquals(0, ff.rename(file.$(), backup.$()));
+                    assertComplete(reader, path, false);
+                    Assert.assertEquals(0, ff.copy(backup.$(), file.$()));
+                    final long fd = ff.openRW(file.$(), 0);
+                    Assert.assertTrue(fd >= 0);
+                    try {
+                        Assert.assertTrue(ff.truncate(fd, requiredSize - 1));
+                        assertComplete(reader, path, false);
+                        Assert.assertTrue(ff.truncate(fd, 0));
+                        assertComplete(reader, path, false);
+                    } finally {
+                        ff.close(fd);
+                    }
+                    Assert.assertTrue(ff.removeQuiet(file.$()));
+                    Assert.assertEquals(0, ff.rename(backup.$(), file.$()));
+                    assertComplete(reader, path, true);
+                    Assert.assertEquals(plen, path.size());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testInvalidEntryMetadata() throws Exception {
+        withIndex("INCLUDE (v, w)", (reader, path) -> withKey(path, (mem, header, head) -> {
+            assertRejectedLong(reader, path, mem, head.offset + V2_ENTRY_OFFSET_LEN, head.len - 1);
+            assertRejectedInt(reader, path, mem, head.offset + V2_ENTRY_OFFSET_GEN_COUNT, 0);
+            assertRejectedInt(reader, path, mem, head.offset + V2_ENTRY_OFFSET_GEN_COUNT, 2);
+            assertRejectedInt(reader, path, mem, head.offset + V2_ENTRY_OFFSET_COVERING_FORMAT, 2);
+            assertRejectedInt(reader, path, mem, head.offset + V2_ENTRY_OFFSET_COVERING_FORMAT,
+                    PostingIndexChainEntry.packCoveringFormat(COVERING_FORMAT_DEALIASED, 1));
+            assertRejectedLong(reader, path, mem, head.offset + V2_ENTRY_OFFSET_SEAL_TXN, -1);
+            assertRejectedLong(reader, path, mem, head.offset + V2_ENTRY_OFFSET_VALUE_MEM_SIZE, 0);
+            assertRejectedInt(reader, path, mem, head.offset + V2_ENTRY_OFFSET_KEY_COUNT, 0);
+            assertRejectedLong(reader, path, mem, head.genDirOffset + GEN_DIR_OFFSET_FILE_OFFSET, 1);
+            assertRejectedLong(reader, path, mem, head.genDirOffset + GEN_DIR_OFFSET_SIZE, head.valueMemSize - 1);
+            assertComplete(reader, path, true);
+        }));
+    }
+
+    @Test
+    public void testInvalidHeaderMetadata() throws Exception {
+        withIndex("INCLUDE (v, w)", (reader, path) -> withKey(path, (mem, header, head) -> {
+            final long page = header.pageOffset;
+            assertRejectedLong(reader, path, mem, page + V2_HEADER_OFFSET_FORMAT_VERSION, 0);
+            assertRejectedLong(reader, path, mem, page + V2_HEADER_OFFSET_REGION_BASE, KEY_FILE_RESERVED - 1);
+            assertRejectedLong(reader, path, mem, page + V2_HEADER_OFFSET_HEAD_ENTRY_OFFSET, V2_NO_HEAD);
+            assertRejectedLong(reader, path, mem, page + V2_HEADER_OFFSET_REGION_LIMIT, mem.size() + 1);
+            assertRejectedLong(reader, path, mem, page + V2_HEADER_OFFSET_REGION_LIMIT, Long.MIN_VALUE);
+            assertRejectedLong(reader, path, mem, page + V2_HEADER_OFFSET_REGION_LIMIT, head.offset + head.len - 1);
+            assertRejectedLong(reader, path, mem, page + V2_HEADER_OFFSET_HEAD_ENTRY_OFFSET, Long.MAX_VALUE);
+            assertComplete(reader, path, true);
+            mem.putLong(PAGE_A_OFFSET + V2_HEADER_OFFSET_SEQUENCE_START, 1);
+            mem.putLong(PAGE_B_OFFSET + V2_HEADER_OFFSET_SEQUENCE_START, 1);
+            assertComplete(reader, path, false);
+        }));
+    }
+
+    @Test
+    public void testKeyMapFailure() throws Exception {
+        withIndex("", (reader, path) -> {
+            final FilesFacade ff = new TestFilesFacadeImpl() {
+                @Override
+                public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                    return -1;
+                }
+            };
+            Assert.assertFalse(isComplete(ff, reader, path, reader.getTxn(), 4));
+            assertComplete(reader, path, true);
+        });
+    }
+
+    @Test
+    public void testKeyOpenFailure() throws Exception {
+        withIndex("", (reader, path) -> {
+            final FilesFacade ff = new TestFilesFacadeImpl() {
+                @Override
+                public long openRO(LPSZ name) {
+                    return -1;
+                }
+            };
+            Assert.assertFalse(isComplete(ff, reader, path, reader.getTxn(), 4));
+            assertComplete(reader, path, true);
+        });
+    }
+
+    @Test
+    public void testLegacyCoveringEntry() throws Exception {
+        withIndex("INCLUDE (v, w)", (reader, path) -> withKey(path, (mem, header, head) -> {
+            // Rewrite just the layout as a legacy writer would: gen-dir first, cover footer last.
+            final long legacyGen = head.offset + V2_ENTRY_HEADER_SIZE;
+            mem.putLong(legacyGen + GEN_DIR_OFFSET_FILE_OFFSET, 0);
+            mem.putLong(legacyGen + GEN_DIR_OFFSET_SIZE, head.valueMemSize);
+            mem.putInt(legacyGen + GEN_DIR_OFFSET_KEY_COUNT, head.keyCount);
+            mem.putInt(legacyGen + GEN_DIR_OFFSET_MIN_KEY, 0);
+            mem.putInt(legacyGen + GEN_DIR_OFFSET_MAX_KEY, head.keyCount - 1);
+            mem.putLong(legacyGen + GEN_DIR_OFFSET_TXN_AT_SEAL, head.txnAtSeal);
+            mem.putLong(legacyGen + GEN_DIR_OFFSET_MAX_VALUE, head.maxValue);
+            PostingIndexChainEntry.writeHeader(mem, head.offset, head.sealTxn, head.txnAtSeal,
+                    head.valueMemSize, head.maxValue, head.keyCount, 1, head.blockCapacity,
+                    COVERING_FORMAT_LEGACY, head.prevEntryOffset, head.coverFileEndOffsets);
+            mem.putLong(header.pageOffset + V2_HEADER_OFFSET_FORMAT_VERSION, V2_FORMAT_VERSION);
+            assertComplete(reader, path, true);
+        }));
+    }
+
+    @Test
+    public void testOnlyHeaderMaxValueReachedEnd() throws Exception {
+        // index() calls setMaxValue before seal() flushes the final pending rows. A crash in between
+        // leaves the entry header advertising all rows, but its last published gen still covers a prefix.
+        withIndex("", (reader, path) -> {
+            try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                writer.of(path, "s", -1, true);
+                writer.setNextTxnAtSeal(reader.getTxn());
+                writer.add(1, 0);
+                writer.add(0, 1);
+                writer.seal();
+                writer.setMaxValue(3);
+            }
+            assertComplete(reader, path, false);
+        });
+    }
+
+    @Test
+    public void testPartialRows() throws Exception {
+        withIndex("", (reader, path) -> {
+            Assert.assertFalse(isComplete(configuration.getFilesFacade(), reader, path, reader.getTxn(), 5));
+            Assert.assertFalse(isComplete(configuration.getFilesFacade(), reader, path, reader.getTxn(), 3));
+            Assert.assertFalse(isComplete(configuration.getFilesFacade(), reader, path, reader.getTxn(), 0));
+        });
+    }
+
+    @Test
+    public void testRetryReusesCompletePartitionAfterMetadataFailure() throws Exception {
+        setProperty(PropertyKey.CAIRO_MAX_SWAP_FILE_COUNT, 1);
+        setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256);
+        final AtomicBoolean isFailing = new AtomicBoolean();
+        final AtomicBoolean isCounting = new AtomicBoolean();
+        final AtomicLong symbolFd = new AtomicLong(-1);
+        final AtomicLong symbolBytesRead = new AtomicLong();
+        final StringSink failedFile = new StringSink();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean close(long fd) {
+                symbolFd.compareAndSet(fd, -1);
+                return super.close(fd);
+            }
+
+            @Override
+            public long openRO(LPSZ name) {
+                final long fd = super.openRO(name);
+                if (isCounting.get() && Utf8s.containsAscii(name, "2024-01-01") && Utf8s.endsWithAscii(name, "s.d")) {
+                    symbolFd.set(fd);
+                }
+                return fd;
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (isFailing.get() && Utf8s.containsAscii(name, "_meta.swp")) {
+                    failedFile.clear();
+                    failedFile.put(name);
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+
+            @Override
+            public long read(long fd, long buf, long size, long offset) {
+                final long count = super.read(fd, buf, size, offset);
+                if (fd == symbolFd.get()) {
+                    symbolBytesRead.addAndGet(count);
+                }
+                return count;
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE x (s SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO x SELECT CASE WHEN x % 2 = 0 THEN 'a'::STRING ELSE NULL END, x, "
+                    + "timestamp_sequence('2024-01-01', 8_640_000L) FROM long_sequence(20_000)");
+            assertQuery("SELECT s IS NULL AS is_null, s = '' AS is_empty FROM x WHERE v = 1")
+                    .noLeakCheck().returns("is_null\tis_empty\ntrue\tfalse\n");
+            engine.releaseAllWriters();
+            final String sql = "ALTER TABLE x ALTER COLUMN s ADD INDEX TYPE POSTING INCLUDE (v)";
+            isFailing.set(true);
+            try {
+                execute(sql);
+                Assert.fail("metadata publication must fail");
+            } catch (CairoException e) {
+                Assert.assertEquals("Cannot open indexed file. Max number of attempts reached [1]. Last file tried: "
+                        + failedFile, e.getFlyweightMessage().toString());
+            } finally {
+                isFailing.set(false);
+            }
+            engine.releaseAllWriters();
+            isCounting.set(true);
+            execute(sql);
+            isCounting.set(false);
+            Assert.assertEquals("retry must not scan the completed historical partition", 0, symbolBytesRead.get());
+            assertQuery("SELECT count(), sum(v) FROM x WHERE s = 'a'")
+                    .noLeakCheck().noRandomAccess().expectSize().withPlanContaining("CoveringIndex")
+                    .returns("count\tsum\n10000\t100010000\n");
+            assertQuery("SELECT count(), sum(v) FROM x WHERE s IS NULL")
+                    .noLeakCheck().noRandomAccess().expectSize()
+                    .returns("count\tsum\n10000\t100000000\n");
+        });
+    }
+
+    @Test
+    public void testSparseGenerationIsNotFinishedBuild() throws Exception {
+        withIndex("", (reader, path) -> {
+            try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                writer.of(path, "s", -1, true);
+                writer.setNextTxnAtSeal(reader.getTxn());
+                writer.add(1, 0);
+                writer.add(0, 1);
+                writer.add(2, 2);
+                writer.add(1, 3);
+                writer.commit();
+            }
+            assertComplete(reader, path, false);
+        });
+    }
+
+    @Test
+    public void testUnpublishedCoverExtent() throws Exception {
+        withIndex("INCLUDE (v, w)", (reader, path) -> withKey(path, (mem, header, head) -> {
+            PostingIndexChainEntry.writeCoverEndOffset(mem, head.offset, 1, 1, 0, head.coveringFormat);
+            assertComplete(reader, path, false);
+        }));
+    }
+
+    @Test
+    public void testWrongTransaction() throws Exception {
+        withIndex("INCLUDE (v, w)", (reader, path) -> {
+            Assert.assertFalse(isComplete(configuration.getFilesFacade(), reader, path, reader.getTxn() - 1, 4));
+            Assert.assertFalse(isComplete(configuration.getFilesFacade(), reader, path, reader.getTxn() + 1, 4));
+        });
+    }
+
+    private static void assertComplete(TableReader reader, Path path, boolean isExpectedComplete) {
+        final String before = path.toString();
+        Assert.assertEquals(isExpectedComplete, isComplete(configuration.getFilesFacade(), reader, path, reader.getTxn(), 4));
+        Assert.assertEquals(before, path.toString());
+    }
+
+    private static void assertRejectedInt(TableReader reader, Path path, MemoryCMARW mem, long offset, int value) {
+        final int saved = mem.getInt(offset);
+        mem.putInt(offset, value);
+        try {
+            assertComplete(reader, path, false);
+        } finally {
+            mem.putInt(offset, saved);
+        }
+    }
+
+    private static void assertRejectedLong(TableReader reader, Path path, MemoryCMARW mem, long offset, long value) {
+        final long saved = mem.getLong(offset);
+        mem.putLong(offset, value);
+        try {
+            assertComplete(reader, path, false);
+        } finally {
+            mem.putLong(offset, saved);
+        }
+    }
+
+    private static boolean isComplete(FilesFacade ff, TableReader reader, Path path, long txn, long rowCount) {
+        final int columnIndex = reader.getMetadata().getColumnIndex("s");
+        final long columnNameTxn = reader.getColumnVersionReader().getColumnNameTxn(0, reader.getMetadata().getWriterIndex(columnIndex));
+        return PostingIndexBuildValidator.isComplete(ff, path, "s", columnNameTxn, txn, rowCount,
+                reader.getMetadata().getColumnMetadata(columnIndex).getCoveringColumnIndices(), reader.getColumnVersionReader(), 0);
+    }
+
+    private static PostingIndexChainEntry.Snapshot readHead(Path path) throws Exception {
+        final PostingIndexChainEntry.Snapshot result = new PostingIndexChainEntry.Snapshot();
+        withKey(path, (mem, header, head) -> PostingIndexChainEntry.read(mem, head.offset, head.coverCount, result));
+        return result;
+    }
+
+    private static void withKey(Path path, KeyAction action) throws Exception {
+        final int plen = path.size();
+        try (MemoryCMARW mem = Vm.getCMARWInstance()) {
+            mem.smallFile(configuration.getFilesFacade(), keyFileName(path, "s", -1), MemoryTag.MMAP_DEFAULT);
+            mem.jumpTo(mem.size());
+            path.trimTo(plen);
+            final PostingIndexChainHeader.Snapshot header = new PostingIndexChainHeader.Snapshot();
+            Assert.assertTrue(PostingIndexChainHeader.readUnderSeqlock(mem, header));
+            final PostingIndexChainEntry.Snapshot head = new PostingIndexChainEntry.Snapshot();
+            PostingIndexChainEntry.read(mem, header.headEntryOffset, head);
+            action.run(mem, header, head);
+        } finally {
+            path.trimTo(plen);
+        }
+    }
+
+    private void withIndex(String indexClause, IndexAction action) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s SYMBOL, v LONG, w VARCHAR)");
+            execute("INSERT INTO x VALUES ('a', 1, 'one'), (NULL, 2, NULL), ('b', NULL, '🐘'), ('a', 4, '')");
+            execute("ALTER TABLE x ALTER COLUMN s ADD INDEX TYPE POSTING " + indexClause);
+            engine.releaseAllWriters();
+            try (TableReader reader = getReader("x"); Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(reader.getTableToken()).concat("default");
+                action.run(reader, path);
+            }
+        });
+    }
+
+    @FunctionalInterface
+    private interface IndexAction {
+        void run(TableReader reader, Path path) throws Exception;
+    }
+
+    @FunctionalInterface
+    private interface KeyAction {
+        void run(MemoryCMARW mem, PostingIndexChainHeader.Snapshot header, PostingIndexChainEntry.Snapshot head) throws Exception;
+    }
+}

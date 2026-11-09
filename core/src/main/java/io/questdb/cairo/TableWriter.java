@@ -38,6 +38,7 @@ import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.idx.IndexWriter;
+import io.questdb.cairo.idx.PostingIndexBuildValidator;
 import io.questdb.cairo.idx.PostingIndexChainWriter;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.idx.PostingIndexWriter;
@@ -11162,16 +11163,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long timestamp
     ) {
         path.trimTo(plen);
-        LOG.info().$("indexing [path=").$substr(pathRootSize, path).I$();
-
-        // ALTER TABLE ALTER COLUMN ADD INDEX (older partitions): building a fresh index from scratch.
-        // A posting index that an uncommitted earlier attempt at this ADD INDEX left behind is rebuilt, never
-        // reused: a checkpoint copied while that attempt ran can hold the .pk's sealed entry without the .pv
-        // the entry names. The entry carries the txn this ADD INDEX commits at, above the committed one, so
-        // the recovery walk in configureWriter() drops it, with its files, before the rebuild.
-        createIndexFiles(columnName, columnNameTxn, indexValueBlockSize, indexType, plen, true, true);
         // The whole DIRECTORY's shared frame, not one piece's rows - see getPartitionPhysicalRowCount.
         final long partitionSize = getPartitionFileRowCountByTimestamp(timestamp);
+        if (IndexType.isPosting(indexType) && PostingIndexBuildValidator.isComplete(
+                ff, path, columnName, columnNameTxn, txWriter.getTxn() + 1, partitionSize,
+                metadata.getCoveringColumnIndices(columnIndex), columnVersionWriter, timestamp
+        )) {
+            LOG.info().$("skipping already-indexed partition [path=").$substr(pathRootSize, path).I$();
+            return;
+        }
+        LOG.info().$("indexing [path=").$substr(pathRootSize, path).I$();
+
+        // An interrupted ADD INDEX can leave a complete .pk without its .pv/covering files in a checkpoint.
+        // Unless the probe proved the whole build reusable, configureWriter() recovers the uncommitted chain
+        // before rebuilding. Its entries carry the upcoming txn, above the last committed one.
+        createIndexFiles(columnName, columnNameTxn, indexValueBlockSize, indexType, plen, true, true);
         final long columnTop = columnVersionWriter.getColumnTop(timestamp, columnIndex);
 
         if (columnTop > -1 && partitionSize > columnTop) {

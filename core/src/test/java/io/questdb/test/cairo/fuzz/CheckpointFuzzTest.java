@@ -27,8 +27,10 @@ package io.questdb.test.cairo.fuzz;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.O3PartitionJob;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -108,6 +110,62 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
+    public void testCheckpointCopyRebuildsIncompletePostingFilesAddedInFlight() throws Exception {
+        Assume.assumeFalse(Os.isWindows());
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x SELECT CASE WHEN x % 2 = 0 THEN 'a'::STRING ELSE NULL END, x, "
+                    + "timestamp_sequence('2024-01-01', 21_600_000_000L) FROM long_sequence(20)");
+            drainWalQueue();
+            final TableToken tableToken = engine.verifyTableName("x");
+            execute("ALTER TABLE x ALTER COLUMN s ADD INDEX TYPE POSTING INCLUDE (v)");
+            checkpointCreate(false, true);
+            drainWalQueue();
+            engine.releaseAllWriters();
+            for (int day = 1; day <= 5; day++) {
+                linkToCheckpointCopy(tableToken, "2024-01-0" + day, "s.p");
+            }
+            final long sealTxn = readPostingSealTxn(tableToken, "2024-01-04");
+            final FilesFacade ff = configuration.getFilesFacade();
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).put(TableUtils.CHECKPOINT_META_FILE_NAME).concat(tableToken);
+                final int tableLen = path.size();
+                Assert.assertTrue(ff.removeQuiet(PostingIndexUtils.coverInfoFileName(
+                        path.concat("2024-01-01"), "s", -1)));
+                for (int day = 2; day <= 3; day++) {
+                    path.trimTo(tableLen).concat("2024-01-0" + day);
+                    if (day == 2) {
+                        PostingIndexUtils.coverDataFileName(path, "s", 0, -1, -1, sealTxn);
+                    } else {
+                        PostingIndexUtils.valueFileName(path, "s", -1, sealTxn);
+                    }
+                    final long fd = ff.openRW(path.$(), configuration.getWriterFileOpenOpts());
+                    Assert.assertTrue(fd >= 0);
+                    try {
+                        Assert.assertTrue(ff.truncate(fd, 1));
+                    } finally {
+                        ff.close(fd);
+                    }
+                }
+            }
+            checkpointRecover();
+            drainWalQueue();
+            Assert.assertFalse("table suspended", engine.getTableSequencerAPI().isSuspended(tableToken));
+            for (int day = 1; day <= 3; day++) {
+                Assert.assertTrue("rebuild incomplete partition " + day,
+                        readPostingSealTxn(tableToken, "2024-01-0" + day) > sealTxn);
+            }
+            Assert.assertEquals("reuse the intact partition", sealTxn, readPostingSealTxn(tableToken, "2024-01-04"));
+            assertQuery("SELECT v FROM x WHERE s = 'a'")
+                    .noLeakCheck().noRandomAccess().expectSize().withPlanContaining("CoveringIndex")
+                    .returns("v\n2\n4\n6\n8\n10\n12\n14\n16\n18\n20\n");
+            assertQuery("SELECT v FROM x WHERE s IS NULL")
+                    .noLeakCheck().noRandomAccess().expectSize()
+                    .returns("v\n1\n3\n5\n7\n9\n11\n13\n15\n17\n19\n");
+        });
+    }
+
+    @Test
     public void testCheckpointCopyRebuildsPostingIndexAddedInFlight() throws Exception {
         Assume.assumeFalse(Os.isWindows());
         assertMemoryLeak(() -> {
@@ -131,10 +189,15 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
             linkToCheckpointCopy(tableToken, "2024-01-01", "s.pk");
             linkToCheckpointCopy(tableToken, "2024-01-02", "s.p");
             linkToCheckpointCopy(tableToken, "2024-01-03", "s.pk");
+            final long completeSealTxn = readPostingSealTxn(tableToken, "2024-01-02");
 
             checkpointRecover();
             drainWalQueue();
             Assert.assertFalse("table suspended", engine.getTableSequencerAPI().isSuspended(tableToken));
+            Assert.assertEquals("reuse the complete partition without rewriting its index",
+                    completeSealTxn, readPostingSealTxn(tableToken, "2024-01-02"));
+            Assert.assertTrue("rebuild the incomplete historical partition",
+                    readPostingSealTxn(tableToken, "2024-01-01") > completeSealTxn);
             assertQuery("SELECT v, ts FROM x WHERE s = 'a'")
                     .noLeakCheck()
                     .noRandomAccess()
@@ -146,6 +209,50 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
                             2\t2024-01-01T06:00:00.000000Z
                             4\t2024-01-01T18:00:00.000000Z
                             6\t2024-01-02T06:00:00.000000Z
+                            8\t2024-01-02T18:00:00.000000Z
+                            10\t2024-01-03T06:00:00.000000Z
+                            12\t2024-01-03T18:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testCheckpointCopyReusesPostingIndexOnCompositePartition() throws Exception {
+        Assume.assumeFalse(Os.isWindows());
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 1);
+        setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1G");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts)");
+            execute("INSERT INTO x SELECT CASE WHEN x % 2 = 0 THEN 'a' ELSE 'b' END, x, "
+                    + "timestamp_sequence('2024-01-01', 21_600_000_000L) FROM long_sequence(12)");
+            drainWalQueue();
+            execute("INSERT INTO x VALUES ('a', 99, '2024-01-02T06:00')");
+            drainWalQueue();
+            try (TableReader reader = getReader("x")) {
+                Assert.assertTrue(reader.getTxFile().isPartitionComposite(1));
+                Assert.assertTrue("index covers physical rows, including dead rows",
+                        reader.getPartitionPhysicalRowCount(1) > reader.getPartitionRowCountFromMetadata(1));
+            }
+            final TableToken tableToken = engine.verifyTableName("x");
+            execute("ALTER TABLE x ALTER COLUMN s ADD INDEX TYPE POSTING INCLUDE (v)");
+            checkpointCreate(false, true);
+            drainWalQueue();
+            linkToCheckpointCopy(tableToken, "2024-01-02", "s.p");
+            final long sealTxn = readPostingSealTxn(tableToken, "2024-01-02");
+            checkpointRecover();
+            drainWalQueue();
+            Assert.assertFalse("table suspended", engine.getTableSequencerAPI().isSuspended(tableToken));
+            Assert.assertEquals("reuse the index over the full physical extent", sealTxn,
+                    readPostingSealTxn(tableToken, "2024-01-02"));
+            assertQuery("SELECT v, ts FROM x WHERE s = 'a'")
+                    .noLeakCheck().noRandomAccess().expectSize().timestamp("ts").withPlanContaining("CoveringIndex")
+                    .returns("""
+                            v\tts
+                            2\t2024-01-01T06:00:00.000000Z
+                            4\t2024-01-01T18:00:00.000000Z
+                            99\t2024-01-02T06:00:00.000000Z
                             8\t2024-01-02T18:00:00.000000Z
                             10\t2024-01-03T06:00:00.000000Z
                             12\t2024-01-03T18:00:00.000000Z
@@ -403,6 +510,15 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
                         .concat(tableToken).concat(partitionName).concat(file.getName());
                 Assert.assertEquals(0, ff.hardLink(src.$(), dst.$()));
             }
+        }
+    }
+
+    private long readPostingSealTxn(TableToken tableToken, String partitionName) {
+        try (Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(tableToken).concat(partitionName).concat("s.pk");
+            final long sealTxn = PostingIndexUtils.readSealTxnFromKeyFile(configuration.getFilesFacade(), path.$());
+            Assert.assertTrue(sealTxn >= 0);
+            return sealTxn;
         }
     }
 
