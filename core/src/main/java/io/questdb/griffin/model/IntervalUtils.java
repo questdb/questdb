@@ -2766,20 +2766,17 @@ public final class IntervalUtils {
                 }
                 sink.clear(afterPrefixLen);
 
-                // Incremental merge: once the current merge range holds the threshold, merge it to
-                // bound memory. This prevents unbounded growth from large ranges like [1..1000000].
-                // The merge joins only the intervals of the current range (see PendingDayFilter):
-                // those of the date list element, or of the time list value, whose time zone, expanding
-                // day filter or tick calendar is still to come. Joining them with the earlier, finished
-                // intervals would shift the start of this range and leave its intervals partly
-                // unconverted. Without a pending date-precise day filter the merge counts the whole
-                // range, and an expanding day filter runs on the merged blocks afterwards. With one,
-                // it counts the growth of the range since its last union, which keeps the merges at
-                // one per threshold leaves.
-                final int mergeThreshold = configuration.getSqlIntervalIncrementalMergeThreshold();
-                if (pendingDayFilter.isPending()
-                        ? (out.size() - pendingDayFilter.mergedLim) / 2 >= mergeThreshold
-                        : (out.size() - pendingDayFilter.mergeBase) / 2 >= mergeThreshold) {
+                // Incremental merge: once the current merge range grew by the threshold since its
+                // last union, merge it to bound memory. This prevents unbounded growth from large
+                // ranges like [1..1000000]. The merge joins only the intervals of the current range
+                // (see PendingDayFilter): those of the date list element, or of the time list value,
+                // whose time zone, expanding day filter or tick calendar is still to come. Joining
+                // them with the earlier, finished intervals would shift the start of this range and
+                // leave its intervals partly unconverted. Counting the growth, not the size of the
+                // range, keeps the merges at one per threshold leaves also when a union leaves the
+                // threshold or more separate intervals in the range. An expanding day filter runs on
+                // the merged blocks afterwards.
+                if ((out.size() - pendingDayFilter.mergedLim) / 2 >= configuration.getSqlIntervalIncrementalMergeThreshold()) {
                     mergeIncrementally(timestampDriver, configuration, out, pendingDayFilter, errorPos);
                 }
             }
@@ -2803,6 +2800,18 @@ public final class IntervalUtils {
 
         if (valueCount == 0) {
             throw SqlException.$(errorPos, "Empty bracket expansion");
+        }
+
+        // The outermost bracket of an expansion merges its range once more after its last leaf
+        // when the range holds the threshold or more intervals, so the range ends merged and
+        // counted against the cap before a later time zone, expanding day filter, tick calendar or
+        // covering element shrinks it. The leaves under a pending date-precise day filter are
+        // left to the caller, which filters them after the expansion.
+        if (depth == 0
+                && !pendingDayFilter.isPending()
+                && out.size() > pendingDayFilter.mergedLim
+                && (out.size() - pendingDayFilter.mergeBase) / 2 >= configuration.getSqlIntervalIncrementalMergeThreshold()) {
+            mergeIncrementally(timestampDriver, configuration, out, pendingDayFilter, errorPos);
         }
 
         // Restore sink to entry state
@@ -4804,7 +4813,10 @@ public final class IntervalUtils {
     // of a date variable range - unions the range once it grew by the merge threshold since its last
     // union, mergedLim, and checks the count of the range against the cap. Only a union of the range
     // moves mergedLim, and a nested range saves and restores the enclosing one, so each range holds
-    // fewer than cap + threshold intervals after each iteration of its loops.
+    // fewer than cap + threshold intervals after each iteration of its loops. The outermost numeric
+    // bracket of an expansion also unions the range after its last leaf when the range holds the
+    // threshold or more intervals and no date-precise filter is pending, so the cap counts them
+    // before a time zone, expanding day filter, tick calendar or covering element shrinks them.
     //
     // With date precision applyDayFilter keeps or drops each interval by its start day, so a merge,
     // which joins adjacent days into one block, first filters the leaves added since the last filter,

@@ -417,11 +417,21 @@ public class TickExprTest {
 
     @Test
     public void testBracketExpansionMergeCountWithoutDayFilter() throws SqlException {
-        // Without a day filter the incremental merge keeps its cadence: it reads the cap once per
-        // merge, once in the -ea assert of parseTickExpr and once in the final check. The tests
+        // Without a day filter the incremental merge unions the range once it grew by the merge
+        // threshold (256) since its last union, and the outermost bracket unions it once more after
+        // its last leaf when the range holds at least 256 intervals then. It reads the cap once per
+        // union, once in the -ea assert of parseTickExpr and once in the final check. The tests
         // always run with -ea.
-        Assert.assertEquals(78, countMaxIntervalsGetterCalls("[2004..2024]-[01..12]-[01..28]"));
-        Assert.assertEquals(960, countMaxIntervalsGetterCalls("[2004..2024]-[01..12]-[01,08,15,22]T09:00;1h"));
+        Assert.assertEquals(256, configuration.getSqlIntervalIncrementalMergeThreshold());
+        // 21 years x 12 months x 28 days = 7,056 leaves: 27 unions by the threshold, and one after
+        // the last leaf, where the 144 leaves since the last union and the 232 blocks of days that
+        // it left make 376 intervals
+        Assert.assertEquals(30, countMaxIntervalsGetterCalls("[2004..2024]-[01..12]-[01..28]"));
+        // 21 x 12 x 4 = 1,008 one-hour leaves that never touch: 3 unions by the threshold and one
+        // after the last leaf, over all 1,008
+        Assert.assertEquals(6, countMaxIntervalsGetterCalls("[2004..2024]-[01..12]-[01,08,15,22]T09:00;1h"));
+        // 16 days x 8 hours = 128 leaves, below the threshold: no incremental union
+        Assert.assertEquals(2, countMaxIntervalsGetterCalls("2024-01-[01..16]T[00..07]:00"));
     }
 
     @Test
@@ -460,6 +470,35 @@ public class TickExprTest {
         assertBracketInterval(
                 "[{lo=2018-01-10T00:00:00.000000Z, hi=2018-01-10T23:59:59.999999Z}]",
                 "2018-01-10"
+        );
+    }
+
+    @Test
+    public void testBracketExpansionOutOfOrderValuesWithinMaxIntervals() throws SqlException {
+        // The cap counts the intervals of an expansion after merging. At a merge threshold of 2 and
+        // a cap of 4, the even minutes 00 to 08 stay 5 intervals apart, above the cap, and the odd
+        // minutes after them join all nine minutes into one interval. The unions wait until the
+        // range grew by 2 leaves since the last one: after the minutes 02, 06, 01 and 05, which
+        // leave at most 4 intervals, and once more after the last leaf.
+        final CairoConfiguration mergeThreshold2Cap4Configuration = new DefaultCairoConfiguration(".") {
+            @Override
+            public int getSqlIntervalIncrementalMergeThreshold() {
+                return 2;
+            }
+
+            @Override
+            public int getSqlIntervalMaxIntervalsAfterMerge() {
+                return 4;
+            }
+        };
+        final LongList expected = new LongList();
+        addLocalBlock(expected, LocalDateTime.of(2024, 1, 1, 9, 0), ZoneOffset.UTC, 9 * Micros.MINUTE_MICROS);
+        assertTickExprIntervals(mergeThreshold2Cap4Configuration, expected, "2024-01-01T09:[00,02,04,06,08,01,03,05,07]");
+        // control: the even minutes alone exceed the cap
+        assertTickExprErrorAtMonday(
+                mergeThreshold2Cap4Configuration,
+                "2024-01-01T09:[00,02,04,06,08]",
+                "Bracket expansion produces too many intervals (max 4)"
         );
     }
 
@@ -1610,6 +1649,32 @@ public class TickExprTest {
     @Test
     public void testCompiledTickExprYesterdayWithOffset() throws SqlException {
         assertCompiledTickExpr("$yesterday + 3h");
+    }
+
+    @Test
+    public void testCompiledZonedStaticElementMergeCadence() throws SqlException {
+        // compileStaticElement expands the static element on its own: 8 hours x 60 minutes x 10
+        // seconds x 100 = 480,000 leaves of 10 ms, which form 480 ten-second blocks, more than the
+        // merge threshold (256). Its unions wait until the range grew by the threshold since the
+        // last one: 1,875 of them, the last at the last leaf, each of which reads the cap once. A
+        // union after every leaf, once the range holds 256 blocks, would read the cap about 256,000
+        // times.
+        Assert.assertEquals(256, configuration.getSqlIntervalIncrementalMergeThreshold());
+        final String expression = "[$today,2024-01-01T[09..16]:[00..59]:[00..09].[0..9][0..9]]@America/New_York";
+        final MaxIntervalsCountingConfiguration countingConfiguration = new MaxIntervalsCountingConfiguration();
+        IntervalUtils.compileTickExpr(timestampType.getDriver(), countingConfiguration, expression, 0, expression.length(), 0).close();
+        Assert.assertEquals(1_875, countingConfiguration.getterCallCount);
+        // The blocks from 09:00 to 16:59 at New York, which keeps -05:00 in January, and the New York
+        // day of $today, the Monday 2024-01-08. The compiled expression keeps an IR entry per block
+        // and one for $today, and counts as many intervals.
+        final LongList expected = new LongList();
+        for (int hour = 9; hour < 17; hour++) {
+            for (int minute = 0; minute < 60; minute++) {
+                addLocalBlock(expected, LocalDateTime.of(2024, 1, 1, hour, minute), ZoneOffset.ofHours(-5), 10 * Micros.SECOND_MICROS);
+            }
+        }
+        addLocalDays(expected, LocalDate.of(2024, 1, 8), LocalDate.of(2024, 1, 9), ZoneId.of("America/New_York"));
+        assertCompiledTickExprIntervals(expression, 481, 481, expected);
     }
 
     // ==================== DateVariableExpr unit tests ====================
@@ -5177,6 +5242,65 @@ public class TickExprTest {
     }
 
     @Test
+    public void testElementOverMaxIntervalsAtLastLeafFails() throws SqlException {
+        // The unions of a merge range wait until it grew by the merge threshold (256) since the last
+        // one, and the outermost bracket of an expansion unions its range once more after its last
+        // leaf, so the cap (1,024) counts all intervals of the range before a later element, a time
+        // zone or a tick calendar shrinks them. 16 days x 8 hours x 8 minutes are 1,024 seconds that
+        // never touch, at the cap, and 25 days x 41 minutes are 1,025, one leaf after the last union
+        // by the threshold.
+        Assert.assertEquals(256, configuration.getSqlIntervalIncrementalMergeThreshold());
+        Assert.assertEquals(1_024, configuration.getSqlIntervalMaxIntervalsAfterMerge());
+        final String overCapError = "Bracket expansion produces too many intervals (max 1024)";
+        final LongList january = new LongList();
+        addLocalDays(january, LocalDate.of(2024, 1, 1), LocalDate.of(2024, 2, 1), ZoneOffset.UTC);
+        final LongList januaryAtPlus5 = new LongList();
+        addLocalDays(januaryAtPlus5, LocalDate.of(2024, 1, 1), LocalDate.of(2024, 2, 1), ZoneOffset.ofHours(5));
+        // A zone-less element adds its intervals to the merge range of the list, which the later
+        // month covers only after the element ended.
+        assertTickExprIntervals(configuration, january, "[2024-01-[01..16]T[00..07]:[00..07]:00,2024-01]");
+        assertTickExprErrorAtMonday("[2024-01-[01..25]T09:[00..40]:00,2024-01]", overCapError);
+        // parseTickExpr unwinds the list, and the next parse on this thread succeeds
+        Assert.assertEquals(0, out.size());
+        assertTickExprIntervals(configuration, january, "[2024-01-[01..16]T[00..07]:[00..07]:00,2024-01]");
+        // A zoned element keeps a merge range of its own, which the earlier month cannot cover
+        // before the zone ran.
+        assertTickExprIntervals(configuration, januaryAtPlus5, "[2024-01@+05:00,2024-01-[01..16]T[00..07]:[00..07]:00@+05:00]");
+        assertTickExprErrorAtMonday("[2024-01@+05:00,2024-01-[01..25]T09:[00..40]:00@+05:00]", overCapError);
+        Assert.assertEquals(0, out.size());
+        assertTickExprIntervals(configuration, januaryAtPlus5, "[2024-01@+05:00,2024-01-[01..16]T[00..07]:[00..07]:00@+05:00]");
+
+        // At the largest merge threshold below the cap, the union by the threshold at the 1,023rd
+        // leaf leaves 1 or 2 leaves for the union after the last leaf.
+        final CairoConfiguration mergeThreshold1023Configuration = new DefaultCairoConfiguration(".") {
+            @Override
+            public int getSqlIntervalIncrementalMergeThreshold() {
+                return 1_023;
+            }
+        };
+        assertTickExprErrorAtMonday(mergeThreshold1023Configuration, "2024-01-[01..25]T09:[00..40]:00", overCapError);
+        assertTickExprErrorAtMonday(mergeThreshold1023Configuration, "[2024-01-[01..25]T09:[00..40]:00,2024-01]", overCapError);
+        assertTickExprIntervals(mergeThreshold1023Configuration, january, "[2024-01-[01..16]T[00..07]:[00..07]:00,2024-01]");
+
+        // compileStaticElement expands a static element on its own and checks no count after the
+        // expansion, so the union after the last leaf checks it. $today is the Monday 2024-01-08.
+        final LongList seconds = new LongList();
+        addLocalDays(seconds, LocalDate.of(2024, 1, 8), LocalDate.of(2024, 1, 9), ZoneOffset.UTC);
+        for (int day = 1; day <= 16; day++) {
+            for (int hour = 0; hour < 8; hour++) {
+                for (int minute = 0; minute < 8; minute++) {
+                    addLocalBlock(seconds, LocalDateTime.of(2024, 2, day, hour, minute), ZoneOffset.UTC, Micros.SECOND_MICROS);
+                }
+            }
+        }
+        assertCompiledTickExprIntervals("[$today,2024-02-[01..16]T[00..07]:[00..07]:00]", 1_025, 1_025, seconds);
+        assertCompileTickExprError("[$today,2024-02-[01..25]T09:[00..40]:00]", overCapError);
+        // compileImpreciseDateWithTime expands the months before it adds the time to each day: 180
+        // years x 6 months are 1,080 months that never touch
+        assertCompileTickExprError("[$today,[1900..2079]-[01,03,05,07,09,11]]T09:30", overCapError);
+    }
+
+    @Test
     public void testExpandingDayFilterMatchesUnmergedOracle() throws SqlException {
         // For these inputs an expanding day filter (year, month or week precision) gives the same
         // days whether it runs on merged blocks or on each leaf.
@@ -6879,6 +7003,86 @@ public class TickExprTest {
         assertBracketIntervalError("   ", "Invalid date");
     }
 
+    @Test
+    public void testZonedElementBehindCoverMatchesUnmergedOracle() throws SqlException {
+        // The zoned elements and the zoned day below hold 5 hours x 60 minutes x 10 seconds x 10 =
+        // 30,000 slots of 10 ms that never touch, in a merge range of their own, behind an element
+        // that covers them. Their unions by the merge threshold and after the last leaf must give
+        // the intervals of a single union at the end of the parse.
+        final String suffix = ":[00..59]:[00..09].[0..9]0";
+        final String[] intervals = {
+                "[2024-01-01,2024-01-01T[09..13]" + suffix + "]@America/New_York",
+                "[2024-01-01,2024-01-01T[13,12,11,10,09]" + suffix + "]@America/New_York",
+                "[2024-01-01,2024-01-01T[09..13]" + suffix + "@America/New_York]",
+                "[2024-01-08T09,2024-01-08T10,2024-01-08T11,2024-01-08T12,2024-01-08T13,$today..$today]T[09..13]" + suffix + "@America/New_York",
+        };
+        for (int mergeThreshold : new int[]{256, 4}) {
+            assertMatchesUnmergedOracle(mergeThreshold, intervals);
+        }
+        // The oracle runs the same parser, so java.time pins the results. The slots of one element
+        // exceed the cap (1,024), which this check lifts. New York keeps -05:00 in January, and
+        // $today is the Monday 2024-01-08.
+        final CairoConfiguration uncappedConfiguration = new DefaultCairoConfiguration(".") {
+            @Override
+            public int getSqlIntervalMaxIntervalsAfterMerge() {
+                return 10_000_000;
+            }
+        };
+        final LongList newYorkDay = new LongList();
+        addLocalDays(newYorkDay, LocalDate.of(2024, 1, 1), LocalDate.of(2024, 1, 2), ZoneId.of("America/New_York"));
+        final LongList utcDay = new LongList();
+        addLocalDays(utcDay, LocalDate.of(2024, 1, 1), LocalDate.of(2024, 1, 2), ZoneOffset.UTC);
+        final LongList mondayHours = new LongList();
+        addLocalBlock(mondayHours, LocalDateTime.of(2024, 1, 8, 9, 0), ZoneOffset.ofHours(-5), 5 * Micros.HOUR_MICROS);
+        assertTickExprIntervals(uncappedConfiguration, newYorkDay, intervals[0]);
+        assertTickExprIntervals(uncappedConfiguration, newYorkDay, intervals[1]);
+        assertTickExprIntervals(uncappedConfiguration, utcDay, intervals[2]);
+        assertTickExprIntervals(uncappedConfiguration, mondayHours, intervals[3]);
+    }
+
+    @Test
+    public void testZonedElementBehindCoverMergeCadence() throws SqlException {
+        // A date list element or a day of a date variable range with a time zone, and a time list
+        // value with bracketed suffixes and a time zone, merge their leaves in a merge range of their
+        // own, since the zone converts only their intervals, so an earlier element that covers them
+        // cannot shrink that range. The second element below holds 8 hours x 60 minutes x 10 seconds
+        // x 100 = 480,000 leaves of 10 ms, which form 480 ten-second blocks, more than the merge
+        // threshold (256). Its unions wait until the range grew by the threshold since the last
+        // one: 1,875 of them, the last at the last leaf. Then the list, or the loop over the days of
+        // the range, unions its intervals into the covering element, and the -ea assert of
+        // parseTickExpr reads the cap. A union after every leaf, once the range holds 256 blocks,
+        // would read the cap about 256,000 times.
+        Assert.assertEquals(256, configuration.getSqlIntervalIncrementalMergeThreshold());
+        final String suffix = ":[00..59]:[00..09].[0..9][0..9]";
+        final LongList newYorkDay = new LongList();
+        addLocalDays(newYorkDay, LocalDate.of(2024, 1, 1), LocalDate.of(2024, 1, 2), ZoneId.of("America/New_York"));
+        final LongList utcDay = new LongList();
+        addLocalDays(utcDay, LocalDate.of(2024, 1, 1), LocalDate.of(2024, 1, 2), ZoneOffset.UTC);
+        // 09:00 to 16:59 at New York, which keeps -05:00 in January, on the Monday 2024-01-08
+        final LongList mondayHours = new LongList();
+        addLocalBlock(mondayHours, LocalDateTime.of(2024, 1, 8, 9, 0), ZoneOffset.ofHours(-5), 8 * Micros.HOUR_MICROS);
+        assertCapReadCount(newYorkDay, 1_877, "[2024-01-01,2024-01-01T[09..16]" + suffix + "]@America/New_York");
+        // the leaves of each hour sort before the blocks of the later hours
+        assertCapReadCount(newYorkDay, 1_877, "[2024-01-01,2024-01-01T[16,15,14,13,12,11,10,09]" + suffix + "]@America/New_York");
+        // the zone of the second element only, whose New York hours lie in the UTC day
+        assertCapReadCount(utcDay, 1_877, "[2024-01-01,2024-01-01T[09..16]" + suffix + "@America/New_York]");
+        // a day of a date variable range, $today is 2024-01-08, behind the eight hours that cover it
+        assertCapReadCount(
+                mondayHours,
+                1_877,
+                "[2024-01-08T09,2024-01-08T10,2024-01-08T11,2024-01-08T12,2024-01-08T13,2024-01-08T14,2024-01-08T15,2024-01-08T16,$today..$today]T[09..16]"
+                        + suffix + "@America/New_York"
+        );
+        // Under a date-precise day filter, which keeps the Monday 2024-01-01, the 7 hours of 420,000
+        // leaves take 1,640 unions by the threshold, and no union follows the 160 leaves after the
+        // last one: the element filters them after the expansion.
+        assertCapReadCount(newYorkDay, 1_642, "[2024-01-01,2024-01-01T[09..15]" + suffix + "#mon]@America/New_York");
+        // A zoned time list value of 60 seconds x 10 = 600 slots of 10 ms that never touch: unions
+        // at the leaves 256 and 512 and after the last leaf, then the time list unions the value
+        // into the covering day, and the -ea assert reads the cap.
+        assertCapReadCount(utcDay, 5, "[2024-01-01,2024-01-01T[09:00@+05:00]:[00..59].[0..9]0]");
+    }
+
     // Appends a random date variable when isDateVariable is set, and otherwise a random date
     // variable, or a 2024 day, bracket range, unsorted bracket, month or, when
     // isZeroDurationDayAllowed is set, a day with a zero duration. The months include those in
@@ -7052,6 +7256,14 @@ public class TickExprTest {
                         : expected,
                 intervalToString(timestampDriver, out)
         );
+    }
+
+    // Expects the number of reads of the cap, one per incremental union, one per check of the
+    // final interval count and one in the -ea assert of parseTickExpr, and then the intervals and
+    // the peak list size of assertTimeListGrowthBounded
+    private void assertCapReadCount(LongList expected, int expectedCapReadCount, String interval) throws SqlException {
+        Assert.assertEquals(interval, expectedCapReadCount, countMaxIntervalsGetterCalls(interval));
+        assertTimeListGrowthBounded(expected, 0, interval);
     }
 
     private void assertCompileTickExprError(String expression, String expectedError) {

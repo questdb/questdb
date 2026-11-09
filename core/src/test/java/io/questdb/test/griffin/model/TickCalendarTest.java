@@ -223,6 +223,27 @@ public class TickCalendarTest {
     }
 
     @Test
+    public void testDateListElementOverMaxIntervalsAtLastLeafWithCalendar() throws SqlException {
+        // The second element's own calendar gives it a merge range of its own, whose unions wait
+        // until it grew by the merge threshold (256) since the last one. The outermost bracket of
+        // the element unions the range once more after its last leaf, so the element counts its
+        // intervals against the cap (1,024) before its calendar runs: 25 days x 41 minutes are
+        // 1,025 seconds that never touch, one leaf after the last union by the threshold, although
+        // the first element covers them and the calendar keeps only those of the trading days.
+        assertTickIntervalErrorWithNow(
+                "[2025-01,2025-01-[01..25]T15:[00..40]:00#XNYS]",
+                "Bracket expansion produces too many intervals (max 1024)",
+                Micros.toMicros(2025, 1, 2, 12, 0)
+        );
+        // control: 16 days x 8 hours x 8 minutes are 1,024 seconds, at the cap, and the month covers
+        // those that the calendar keeps
+        assertTickInterval(
+                "[{lo=2025-01-01T00:00:00.000000Z, hi=2025-01-31T23:59:59.999999Z}]",
+                "[2025-01,2025-01-[01..16]T[15..22]:[00..07]:00#XNYS]"
+        );
+    }
+
+    @Test
     public void testDateListGlobalFilterWithDuration() throws SqlException {
         // Date list with global exchange filter and duration
         // [2025-01-24,2025-01-27]#XNYS;1h - Fri and Mon
