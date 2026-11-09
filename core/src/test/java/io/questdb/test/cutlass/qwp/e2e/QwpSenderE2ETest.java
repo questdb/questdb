@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.qwp.e2e;
 
+import io.questdb.PropertyKey;
 import io.questdb.client.LineSenderServerException;
 import io.questdb.client.Sender;
 import io.questdb.client.SenderError;
@@ -103,6 +104,12 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
         // turn this test into a wire-throughput stress test in disguise.
         sendChunk = Integer.MAX_VALUE;
         recvChunk = Integer.MAX_VALUE;
+        // For the same reason, pin NOSYNC: under the suite's ADAPTIVE mode every
+        // WAL commit flushes its column and event files before sequencing. On
+        // Windows that is a FlushFileBuffers per file per commit, which slows
+        // this ingest 25-35x (~10 s -> 340-400 s) and can stall the server long
+        // enough to trip the client's 30 s backpressure and 300 s close drain.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         runInContext((port) -> {
             try (QwpWebSocketSender sender = connectWs(port)) {
                 for (int i = 0; i < 25_000_000; i++) {
@@ -2755,10 +2762,12 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     public void testDeferredFramesNotAckedUntilCommit() throws Exception {
         runInContext((port) -> {
             try (QwpWebSocketSender sender = connectWs(port)) {
-                // 20 deferred frames -- well past the server's ACK_BATCH_SIZE
-                // of 8. Before the deferred-ack fix, cumulative OK acks flowed
-                // mid-group and the store-and-forward client trimmed slots
-                // whose rows the server could still roll back.
+                // 20 deferred frames, flushed one at a time. Before the deferred-ack
+                // fix, cumulative OK acks flowed mid-group and the store-and-forward
+                // client trimmed slots whose rows the server could still roll back.
+                // The ack batch threshold is not what exposes that: each flush lands
+                // in its own receive pass, and the server flushes any pending ack
+                // when a pass drains, so one frame advancing the watermark is enough.
                 sender.setDeferCommit(true);
                 for (int i = 0; i < 20; i++) {
                     sender.table("defer_no_ack")
@@ -2802,7 +2811,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
         runInContext((port) -> {
             try (QwpWebSocketSender sender = connectWs(port)) {
                 // 3 deferred frames + 1 commit frame = 4 sequences, BELOW the
-                // server's ACK_BATCH_SIZE of 8. The ack for the group-closing
+                // server's ACK_BATCH_SIZE. The ack for the group-closing
                 // commit must flush eagerly (hasPendingAck) instead of waiting
                 // for the batch cadence -- otherwise the client's transaction
                 // confirmation would stall behind unrelated future traffic.
@@ -3187,6 +3196,16 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                     .noLeakCheck()
                     .returnsOnce("count\n1\n");
         });
+    }
+
+    @Test
+    public void testDuplicateDesignatedTimestampRejectedWhenNamedColumnIsFirst() throws Exception {
+        assertDuplicateDesignatedTimestampRejected("test_qwp_duplicate_ts_named_first", false);
+    }
+
+    @Test
+    public void testDuplicateDesignatedTimestampRejectedWhenUnnamedColumnIsFirst() throws Exception {
+        assertDuplicateDesignatedTimestampRejected("test_qwp_duplicate_ts_unnamed_first", true);
     }
 
     /**
@@ -5051,6 +5070,52 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                 .noLeakCheck()
                 .expectSize()
                 .returns("v\n2\n");
+    }
+
+    private void assertDuplicateDesignatedTimestampRejected(String table, boolean isUnnamedColumnFirst) throws Exception {
+        runInContext(port -> {
+            execute("CREATE TABLE " + table + " (v LONG, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            long timestampNanos = 1_645_747_200_000_000_000L;
+
+            assertCoercionError(
+                    port,
+                    table,
+                    (sender, tableName) -> {
+                        if (isUnnamedColumnFirst) {
+                            sender.table(tableName)
+                                    .longColumn("v", 1L)
+                                    .at(timestampNanos, ChronoUnit.NANOS);
+                        }
+                        sender.table(tableName)
+                                .longColumn("v", 2L)
+                                .timestampColumn("ts", timestampNanos + 1, ChronoUnit.NANOS)
+                                .at(timestampNanos + 1, ChronoUnit.NANOS);
+                    },
+                    "multiple QWP columns resolve to the same table column",
+                    "column=ts"
+            );
+
+            drainWalQueue();
+            assertQuery("SELECT count() FROM " + table)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n0\n");
+
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                sender.table(table)
+                        .longColumn("v", 3L)
+                        .timestampColumn("ts", timestampNanos + 2, ChronoUnit.NANOS)
+                        .atNow();
+                sender.flush();
+            }
+            drainWalQueue();
+            assertQuery("SELECT v, ts FROM " + table)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("v\tts\n3\t2022-02-25T00:00:00.000000002Z\n");
+        });
     }
 
     private static void assertThrowsContains(Runnable action, String expectedMsgPart) {

@@ -56,7 +56,7 @@ public class WeightedStdDevReliabilityGroupByFunctionFactory implements Function
         return new WeightedStdDevReliabilityGroupByFunction(args.getQuick(0), args.getQuick(1));
     }
 
-    private static class WeightedStdDevReliabilityGroupByFunction extends AbstractWeightedStdDevGroupByFunction {
+    static class WeightedStdDevReliabilityGroupByFunction extends AbstractWeightedStdDevGroupByFunction {
 
         public WeightedStdDevReliabilityGroupByFunction(@NotNull Function sampleArg, @NotNull Function weightArg) {
             super(sampleArg, weightArg);

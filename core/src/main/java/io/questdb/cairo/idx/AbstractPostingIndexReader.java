@@ -1184,9 +1184,18 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     private void mapValueMem(Path basePath, CharSequence columnName, long columnNameTxn) {
         int pLen = basePath.size();
         try {
+            LPSZ pvName = PostingIndexUtils.valueFileName(basePath, columnName, columnNameTxn, valueFileTxn);
+            if (valueMemSize > 0) {
+                long pvActual = ff.length(pvName);
+                if (valueMemSize > pvActual) {
+                    throw CairoException.critical(0)
+                            .put("posting index value file too short [expected=").put(valueMemSize)
+                            .put(", actual=").put(pvActual).put(", path=").put(pvName).put(']');
+                }
+            }
             valueMem.of(
                     ff,
-                    PostingIndexUtils.valueFileName(basePath, columnName, columnNameTxn, valueFileTxn),
+                    pvName,
                     valueMemSize,
                     valueMemSize,
                     MemoryTag.MMAP_INDEX_READER
@@ -2142,7 +2151,11 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                     valueFileTxn
             );
             if (!ff.exists(pcFile)) {
-                return;
+                // The writer published bytes for this slot, so the file must exist: a miss would read as NULLs.
+                // No ENOENT errno: callers treat that as a transient or dropped-file condition, and this is neither.
+                throw CairoException.critical(0)
+                        .put("covering index data is missing, rebuild the index or use the no_covering hint [file=")
+                        .put(pcFile).put(']');
             }
             // Use the chain-published end offset rather than ff.length(fd):
             // the file may be page-pre-allocated past valid data, and the

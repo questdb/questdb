@@ -32,6 +32,8 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.pool.WriterPool;
+import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlCompiler;
@@ -48,9 +50,11 @@ import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8StringSink;
+import io.questdb.tasks.TableWriterTask;
 import io.questdb.tasks.WalTxnNotificationTask;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.griffin.AbstractMultiNodeTest;
+import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -60,6 +64,7 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static io.questdb.cairo.TableUtils.WAL_2_TABLE_WRITE_REASON;
 import static org.junit.Assert.*;
 
 public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
@@ -889,6 +894,10 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
     @Test
     public void testWalTxnAutoRepublishing() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_WAL_SEQUENCER_CHECK_INTERVAL, 1);
+        // The floor between full rescans is about how often the job may walk every table off disk, which
+        // is not what this test measures - it drives runSerially() by hand against a clock it advances
+        // 200ms at a time, and the shipped 500ms floor would swallow two calls in three.
+        node1.setProperty(PropertyKey.CAIRO_WAL_SEQUENCER_CHECK_MIN_INTERVAL, 0);
         assertMemoryLeak(() -> {
             final String tableName = testName.getMethodName();
             final String tableCopyName = tableName + "_copy";
@@ -917,6 +926,19 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                 Assert.assertEquals(currentRepublishCounter + i + 1, engine.getUnpublishedWalTxnCount());
             }
         });
+    }
+
+    @Test
+    public void testWalTxnNotLostWhenWriterHeldByCommandPublisher() throws Exception {
+        // A publisher that finds the writer back in the pool ticks the queue under the pool's own reason.
+        assertWalTxnNotLostWhenWriterHeld(WriterPool.OWNERSHIP_REASON_ASYNC_COMMAND);
+    }
+
+    @Test
+    public void testWalTxnNotLostWhenWriterHeldByPartitionSwap() throws Exception {
+        // A composite partition swap holds the table writer, the way PartitionCompactionScanJob
+        // does through getWriterOrPublishCommand().
+        assertWalTxnNotLostWhenWriterHeld(TableWriterTask.getCommandName(TableWriterTask.CMD_COMPOSITE_PARTITION_SWAP));
     }
 
     @Test
@@ -987,6 +1009,43 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                 start += rowCount * tsIncrement - Micros.HOUR_MICROS / 2 + 3;
                 addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, start, rnd, walWriter, true);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
+            }
+        });
+    }
+
+    private void assertWalTxnNotLostWhenWriterHeld(String lockReason) throws Exception {
+        final LogCapture capture = new LogCapture();
+        assertMemoryLeak(() -> {
+            final String tableName = testName.getMethodName();
+            TableToken tableToken = createTable(createTableModel(tableName).wal());
+
+            execute("INSERT INTO " + tableName + " (ts) VALUES ('2022-02-24T00:00:00.000000Z')");
+            drainWalQueue();
+
+            capture.start();
+            try (ApplyWal2TableJob applyJob = new ApplyWal2TableJob(engine, 0)) {
+                CheckWalTransactionsJob checkJob = new CheckWalTransactionsJob(engine);
+                // Burn the job's one free scan, so the rest of this test cannot lean on the disk rescan.
+                checkJob.runSerially();
+
+                try (TableWriter ignore = engine.getWriterUnsafe(tableToken, lockReason)) {
+                    // The table is caught up, so this commit publishes the one and only notification.
+                    execute("INSERT INTO " + tableName + " (ts) VALUES ('2022-02-25T00:00:00.000000Z')");
+                    // A queue-driven apply pops it and cannot take the writer, so it must re-queue it.
+                    Assert.assertTrue(applyJob.run());
+                }
+
+                // The holder is gone. The re-queued notification is the only thing left to wake the table.
+                //noinspection StatementWithEmptyBody
+                while (applyJob.run() || checkJob.run()) {
+                }
+                try (TableReader reader = engine.getReader(tableToken)) {
+                    Assert.assertEquals(2, reader.size());
+                }
+                capture.drain();
+                capture.assertNotLogged("unsolicited table lock");
+            } finally {
+                capture.stop();
             }
         });
     }

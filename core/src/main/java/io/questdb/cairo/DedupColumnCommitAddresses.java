@@ -165,6 +165,11 @@ public class DedupColumnCommitAddresses implements Closeable {
         Unsafe.putLong(addr + RESERVED5, reserved5);
     }
 
+    /**
+     * Returns a block of {@link #getColumnCount()} slots. This method does not zero the block: it holds whatever its
+     * last user left in it. A caller that records resources in the slots for a later release must
+     * {@link #clear(long)} the block first.
+     */
     public long allocateBlock() {
         if (columnCount == 0) {
             return -1;

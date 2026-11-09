@@ -43,6 +43,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Rows;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
 
@@ -56,18 +57,32 @@ import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.sc
  * <p>
  * Also supports forward and backward scanning to build key-to-rowId maps for keyed ASOF JOIN.
  * Watermarks are maintained internally to track scanning progress within a frame.
+ * <p>
+ * The keyed lookup switches from backward-only mode to forward scan mode by the checks of
+ * {@link #shouldSwitchToForwardScan}. A helper built with the window switch enabled also runs
+ * {@link #shouldSwitchToForwardScanOverWindow}, and in forward scan mode it restarts the forward
+ * scan at a position that {@link #isForwardScanTooLong} finds too far ahead, see the constructor.
+ * In backward-only mode, it drops the key cache at a new position as a restart does, see
+ * {@link #dropKeyCache}.
+ * <p>
  * An optional borrowed filter excludes rows before choosing the latest match. Its
  * factory or atom owns, initializes and closes it; this helper never frees it.
  */
 public class HorizonJoinTimeFrameHelper implements QuietCloseable {
     private static final int CIRCUIT_BREAKER_CHECK_INTERVAL = 64;
     private static final int LINEAR_SCAN_LIMIT = 64;
+    // Key cache slots per entry that a drop of the key cache clears at most, see dropKeyCache()
+    private static final int MAX_CLEARED_SLOTS_PER_KEY = 8;
     private static final long UNRESOLVED_ROW_ID = -1;
     // Adaptive scan thresholds (set at construction, used by findKeyedAsOfMatch)
     private final long bwdScanAbsoluteThreshold;
     private final long bwdScanMinGap;
     private final long bwdScanSwitchFactor;
     private final @Nullable Function filter;
+    // Whether the switch check also covers runs of gaps below the min gap, whether the lookup
+    // restarts a forward scan over a long gap, and whether a new position in backward-only mode
+    // may keep key cache entries, see the constructor
+    private final boolean isWindowSwitchEnabled;
     // Join key -> position with no qualifying row for the key at or below it, valid for the whole cursor.
     private final @Nullable Map keyMissMap;
     private final long lookahead;
@@ -80,8 +95,14 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
     // Bookmark position: where to start the next findAsOfRow search (optimization for sequential access)
     private int bookmarkedFrameIndex = -1;
     private long bookmarkedRowIndex = Long.MIN_VALUE;
-    // Adaptive scan state (managed by findKeyedAsOfMatch, reset by toTop)
+    // Adaptive scan state (managed by findKeyedAsOfMatch, reset by toTop).
+    // Backward scan row counter at the last drop of the key cache: the start of a position in
+    // backward-only mode, a restart of the forward scan in forward scan mode
     private long bwdScanRowsAtPositionStart;
+    // Backward scan row counter at the first position of the current window of small gaps
+    private long bwdScanRowsAtWindowStart;
+    // Distance in rows that the current window of small gaps covers
+    private long bwdScanWindowGap;
     // findAsOfRow() returns cachedAsOfRowId for targets in [cachedTargetLo, cachedNextRowTs).
     // Long.MIN_VALUE in cachedNextRowTs empties the cache; in cachedAsOfRowId it caches "no row".
     private long cachedAsOfRowId = Long.MIN_VALUE;
@@ -95,8 +116,13 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
     private long forwardWatermark = Long.MIN_VALUE;
     private boolean isFilterAlwaysFalse;
     private boolean isForwardScanMode;
+    // Highest bound in keyMissMap. A scan above it cannot benefit from a miss lookup.
+    private long keyMissWatermark = Long.MIN_VALUE;
     private long prevAsOfRowId = Long.MIN_VALUE;
     private Record record;
+    // ASOF position of the last drop of the key cache since toTop() that may have kept entries, or
+    // Long.MIN_VALUE: key cache entries at or below it may predate the drop, see dropKeyCache()
+    private long restartRowId = Long.MIN_VALUE;
     private TimeFrame timeFrame;
     private TimeFrameCursor timeFrameCursor;
     private int timestampIndex;
@@ -111,8 +137,62 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
             @Nullable Function filter,
             @Nullable ColumnTypes asOfJoinKeyTypes
     ) {
+        this(
+                configuration,
+                lookahead,
+                slaveTsScale,
+                bwdScanAbsoluteThreshold,
+                bwdScanMinGap,
+                bwdScanSwitchFactor,
+                filter,
+                asOfJoinKeyTypes,
+                false
+        );
+    }
+
+    /**
+     * @param isWindowSwitchEnabled whether the switch to forward scan mode also checks runs of
+     *                              gaps below the min gap, see {@link #shouldSwitchToForwardScanOverWindow}.
+     *                              Without a filter, forward scan mode is sticky until
+     *                              {@link #toTop()}, and a short burst of closely spaced positions
+     *                              can pass the window check. A sparse stretch after the burst, or
+     *                              the distance to the next offset of a batch of horizon
+     *                              timestamps, would then cost a forward scan of every row in
+     *                              between where backward scans read a few. A helper with the
+     *                              window switch therefore also bounds its forward scans: in
+     *                              forward scan mode, the lookup drops the key cache and restarts
+     *                              the forward scan at a position that {@link #isForwardScanTooLong}
+     *                              finds too far ahead. A toTop() before every batch does not bound
+     *                              them, since one batch already spans all offsets. Only
+     *                              {@link HorizonJoinMatcher} enables it. The aggregating HORIZON
+     *                              JOIN factories keep a helper's epoch for a whole page frame or
+     *                              query and leave it disabled: after a switch, they scan every gap
+     *                              forward unless the right-hand table has a filter. With a filter,
+     *                              the lookup of any helper, with or without the window switch,
+     *                              returns to backward-only mode at a position ahead when a lower
+     *                              bound of the rows in between exceeds both the min gap and the
+     *                              rows that backward scans read since the last clear or drop of
+     *                              the key cache, see {@link #findKeyedAsOfMatch}.
+     *                              In backward-only mode, a helper with the window switch drops
+     *                              the key cache at a new position as a restart does, so that a
+     *                              cache that one deep lookup grew does not cost a clear of its
+     *                              whole capacity at every later position, see {@link #dropKeyCache}.
+     */
+    public HorizonJoinTimeFrameHelper(
+            CairoConfiguration configuration,
+            long lookahead,
+            long slaveTsScale,
+            long bwdScanAbsoluteThreshold,
+            long bwdScanMinGap,
+            long bwdScanSwitchFactor,
+            @Nullable Function filter,
+            @Nullable ColumnTypes asOfJoinKeyTypes,
+            boolean isWindowSwitchEnabled
+    ) {
         this.filter = filter;
-        this.keyMissMap = filter != null && asOfJoinKeyTypes != null
+        // Projection batches reset scan watermarks, but a key miss remains valid for the slave
+        // cursor. Keep its bound so later batches scan only rows above it, as filtered joins do.
+        this.keyMissMap = (filter != null || isWindowSwitchEnabled) && asOfJoinKeyTypes != null
                 ? MapFactory.createUnorderedMap(configuration, asOfJoinKeyTypes, new SingleColumnType(ColumnType.LONG), false, false)
                 : null;
         this.lookahead = lookahead;
@@ -120,6 +200,7 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
         this.bwdScanAbsoluteThreshold = bwdScanAbsoluteThreshold;
         this.bwdScanMinGap = bwdScanMinGap;
         this.bwdScanSwitchFactor = bwdScanSwitchFactor;
+        this.isWindowSwitchEnabled = isWindowSwitchEnabled;
     }
 
     /**
@@ -152,7 +233,8 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
      * Backward scan from current backward watermark toward smaller rowIds, looking for a matching key.
      * <p>
      * Adds all keys encountered to the map (only if not already present, since we want
-     * the latest/highest rowId for each key). Stops when the target key is found.
+     * the latest/highest rowId for each key, or if the map holds an older row for the key, which
+     * only an entry that a drop of the key cache kept can be). Stops when the target key is found.
      * <p>
      * This is used for the "dense ASOF" algorithm: when a key is not in the cache,
      * we scan backward from the current position to find earlier occurrences.
@@ -192,8 +274,11 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
             MapKey targetKey = keyToRowIdMap.withKey();
             targetKey.put(masterRecord, masterAsOfJoinMapSink);
             MapValue targetValue = targetKey.findValue();
-            if (targetValue != null && targetValue.getLong(0) != UNRESOLVED_ROW_ID) {
-                return targetValue.getLong(0);
+            if (targetValue != null) {
+                final long targetRowId = targetValue.getLong(0);
+                if (isKeyCacheEntryValid(targetRowId)) {
+                    return targetRowId;
+                }
             }
 
             if (backwardWatermark == 0) {
@@ -209,11 +294,15 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
             effectiveStart = startRowId;
         }
 
-        final MapValue missValue = findKeyMiss(masterRecord, masterAsOfJoinMapSink);
-        final long missRowId = missValue != null ? missValue.getLong(0) : Long.MIN_VALUE;
+        MapValue missValue = null;
+        long missRowId = keyMissWatermark;
         if (effectiveStart <= missRowId) {
-            recordKeyMiss(missValue, masterRecord, masterAsOfJoinMapSink, startRowId);
-            return Long.MIN_VALUE;
+            missValue = findKeyMiss(masterRecord, masterAsOfJoinMapSink);
+            missRowId = missValue != null ? missValue.getLong(0) : Long.MIN_VALUE;
+            if (effectiveStart <= missRowId) {
+                recordKeyMiss(missValue, masterRecord, masterAsOfJoinMapSink, startRowId);
+                return Long.MIN_VALUE;
+            }
         }
 
         int frameIndex = Rows.toPartitionIndex(effectiveStart);
@@ -240,7 +329,15 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
             }
             final long currentRowId = Rows.toRowID(frameIndex, rowIndex);
             if (currentRowId <= missRowId) {
-                break;
+                // Defer copying and hashing the key until a miss bound can stop the scan.
+                // Successful scans above every known bound need no miss-map lookup.
+                if (missValue == null) {
+                    missValue = findKeyMiss(masterRecord, masterAsOfJoinMapSink);
+                    missRowId = missValue != null ? missValue.getLong(0) : Long.MIN_VALUE;
+                }
+                if (currentRowId <= missRowId) {
+                    break;
+                }
             }
             backwardScanRows++;
 
@@ -252,7 +349,8 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
             // Position record at current row
             timeFrameCursor.recordAtRowIndex(record, rowIndex);
 
-            // Add key to map only if not already present (we want latest/highest rowId)
+            // Add key to map only if not already present (we want latest/highest rowId), or over
+            // an older row that a drop of the key cache kept
             final MapKey slaveKey = keyToRowIdMap.withKey();
             slaveKey.put(record, slaveAsOfJoinMapSink);
             slaveKey.commit();
@@ -260,15 +358,20 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
             final MapValue value = slaveKey.createValue(slaveHash);
             final boolean isKeyResolved;
             if (filter == null) {
-                if (value.isNew()) {
+                if (value.isNew() || value.getLong(0) < currentRowId) {
                     value.putLong(0, currentRowId);
                 }
                 isKeyResolved = true;
-            } else if (!value.isNew() && value.getLong(0) != UNRESOLVED_ROW_ID) {
+            } else if (!value.isNew() && value.getLong(0) >= currentRowId) {
+                // The entry holds a qualifying row at or above the current one. An unresolved
+                // entry, or an older row that a drop of the key cache kept, falls through to the
+                // filter.
                 isKeyResolved = true;
             } else {
                 isKeyResolved = filter.getBool(record);
-                value.putLong(0, isKeyResolved ? currentRowId : UNRESOLVED_ROW_ID);
+                if (isKeyResolved || value.isNew()) {
+                    value.putLong(0, isKeyResolved ? currentRowId : UNRESOLVED_ROW_ID);
+                }
             }
 
             if (isKeyResolved) {
@@ -279,9 +382,13 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
                     final MapKey targetKey = keyToRowIdMap.withKey();
                     targetKey.put(masterRecord, masterAsOfJoinMapSink);
                     final MapValue targetValue = targetKey.findValue();
-                    if (targetValue != null && targetValue.getLong(0) != UNRESOLVED_ROW_ID) {
-                        // Found the target key in the map
-                        return targetValue.getLong(0);
+                    if (targetValue != null) {
+                        // Found the target key in the map; on a hash collision, its entry may
+                        // be unresolved or predate a drop of the key cache
+                        final long targetRowId = targetValue.getLong(0);
+                        if (isKeyCacheEntryValid(targetRowId)) {
+                            return targetRowId;
+                        }
                     }
                 }
             }
@@ -317,6 +424,7 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
     @Override
     public void close() {
         Misc.free(keyMissMap);
+        keyMissWatermark = Long.MIN_VALUE;
     }
 
     /**
@@ -588,37 +696,61 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
                 isForwardScanMode = false;
                 forwardWatermark = Long.MIN_VALUE;
                 bwdScanRowsAtPositionStart = backwardScanRows;
+                // Backward-only mode starts over, and so does the window of small gaps.
+                bwdScanWindowGap = 0;
+                bwdScanRowsAtWindowStart = backwardScanRows;
             }
             if (!isForwardScanMode) {
                 long bwdScanCost = backwardScanRows - bwdScanRowsAtPositionStart;
                 if (prevAsOfRowId != Long.MIN_VALUE) {
-                    long gap = asOfRowId - prevAsOfRowId;
+                    final long gap = asOfRowId - prevAsOfRowId;
+                    long switchGap = gap;
                     long minGap = bwdScanMinGap;
                     if (filter != null && gap > 0) {
                         // A filter repeats a deep scan at every position, so a small gap also
                         // switches at the cost the minimum gap implies.
                         minGap = 0;
-                        gap = Math.max(gap, bwdScanMinGap);
+                        switchGap = Math.max(gap, bwdScanMinGap);
                     }
                     if (shouldSwitchToForwardScan(
                             bwdScanCost,
-                            gap,
+                            switchGap,
                             minGap,
                             bwdScanSwitchFactor,
                             bwdScanAbsoluteThreshold
-                    )) {
+                    ) || (isWindowSwitchEnabled && shouldSwitchToForwardScanOverWindow(gap))) {
                         isForwardScanMode = true;
                         initForwardWatermark(prevAsOfRowId);
                     }
                 }
                 if (!isForwardScanMode) {
-                    keyToRowIdMap.clear();
+                    if (!isWindowSwitchEnabled || prevAsOfRowId == Long.MIN_VALUE) {
+                        // Without the window switch, the lookup clears the cache at every new
+                        // position. With it, this is the first lookup since toTop(), and an entry
+                        // of an earlier walk may hold a row above this position. The clear keeps
+                        // the capacity, see HorizonJoinMatcher#toTop(). restartRowId already holds
+                        // Long.MIN_VALUE here: only dropKeyCache() sets it, which neither a helper
+                        // without the window switch nor the first lookup since toTop() reaches,
+                        // and toTop() resets it.
+                        keyToRowIdMap.clear();
+                    } else {
+                        dropKeyCache(keyToRowIdMap, asOfRowId);
+                    }
                     resetBackwardWatermark();
                     bwdScanRowsAtPositionStart = backwardScanRows;
                 }
             }
             if (isForwardScanMode) {
-                forwardScanToPosition(asOfRowId, slaveAsOfJoinMapSink, keyToRowIdMap, circuitBreaker);
+                if (isWindowSwitchEnabled && isForwardScanTooLong(asOfRowId, circuitBreaker)) {
+                    // Restart the forward scan at this position: the backward scan below
+                    // rebuilds the key cache from here, as it did before the switch.
+                    dropKeyCache(keyToRowIdMap, asOfRowId);
+                    resetBackwardWatermark();
+                    bwdScanRowsAtPositionStart = backwardScanRows;
+                    initForwardWatermark(asOfRowId);
+                } else {
+                    forwardScanToPosition(asOfRowId, slaveAsOfJoinMapSink, keyToRowIdMap, circuitBreaker);
+                }
             }
             prevAsOfRowId = asOfRowId;
         }
@@ -785,11 +917,20 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
         this.forwardWatermark = rowId;
     }
 
+    /**
+     * Tells whether the keyed lookup has left backward-only mode in the current epoch.
+     */
+    @TestOnly
+    public boolean isForwardScanMode() {
+        return isForwardScanMode;
+    }
+
     public void of(TimeFrameCursor timeFrameCursor, @Nullable MemoryTracker memoryTracker) {
         if (keyMissMap != null) {
             keyMissMap.close();
             keyMissMap.setMemoryTracker(memoryTracker);
         }
+        keyMissWatermark = Long.MIN_VALUE;
         this.timeFrameCursor = timeFrameCursor;
         this.record = timeFrameCursor.getRecord();
         this.timeFrame = timeFrameCursor.getTimeFrame();
@@ -811,7 +952,9 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
 
     /**
      * Reset the backward watermark so the next backward scan starts from scratch.
-     * Called when the ASOF position changes and cached key→rowId entries are no longer valid.
+     * Called at a new ASOF position, after the lookup clears or drops the key cache. A drop may
+     * keep entries, and the lookup returns a kept entry only once the backward scans from the
+     * position reach its row, see {@link #isKeyCacheEntryValid}.
      */
     public void resetBackwardWatermark() {
         backwardWatermark = Long.MAX_VALUE;
@@ -836,6 +979,8 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
         bookmarkedFrameIndex = -1;
         bookmarkedRowIndex = Long.MIN_VALUE;
         bwdScanRowsAtPositionStart = 0;
+        bwdScanRowsAtWindowStart = 0;
+        bwdScanWindowGap = 0;
         forwardWatermark = Long.MIN_VALUE;
         backwardWatermark = Long.MAX_VALUE;
         cachedAsOfRowId = Long.MIN_VALUE;
@@ -844,6 +989,7 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
         backwardScanRows = 0;
         isForwardScanMode = false;
         prevAsOfRowId = Long.MIN_VALUE;
+        restartRowId = Long.MIN_VALUE;
     }
 
     // Scan startRowId (inclusive) to stopRowId (exclusive), crossing empty frames.
@@ -963,6 +1109,30 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
         cachedNextRowTs = nextRowTs;
     }
 
+    /**
+     * Drops the key cache at an ASOF position: for a restart of the forward scan, and in a helper
+     * with the window switch also at every new position in backward-only mode after the first one
+     * since {@link #toTop()}. A clear writes every slot of the cache, and the cache keeps the
+     * capacity it grew to: one deep backward scan or one long forward scan can leave it far larger
+     * than what the lookup puts into it between two drops, and a clear at every drop would then
+     * cost all of that capacity each time, which neither {@link #isForwardScanTooLong} nor the
+     * switch checks count. The drop therefore clears the cache only while its entries fill at
+     * least one slot in {@link #MAX_CLEARED_SLOTS_PER_KEY}, so that a clear costs at most that many
+     * slots per entry that a scan paid a row for. Otherwise it keeps the entries, and the lookup
+     * trusts one only once the scans after the drop have confirmed it, see
+     * {@link #isKeyCacheEntryValid}. A kept entry holds no row above the position, since positions
+     * do not decrease between toTop() calls.
+     *
+     * @param keyToRowIdMap the key cache
+     * @param restartRowId  the ASOF position of the drop
+     */
+    private void dropKeyCache(Map keyToRowIdMap, long restartRowId) {
+        if (keyToRowIdMap.size() * MAX_CLEARED_SLOTS_PER_KEY >= keyToRowIdMap.getKeyCapacity()) {
+            keyToRowIdMap.clear();
+        }
+        this.restartRowId = restartRowId;
+    }
+
     private long findFilteredAsOfMatch(long asOfRowId, SqlExecutionCircuitBreaker circuitBreaker) {
         // Master frames can arrive out of order. The cached interval contains no
         // later qualifying row, so it also answers lookups that move backwards.
@@ -987,6 +1157,76 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
         final MapKey key = keyMissMap.withKey();
         key.put(masterRecord, masterAsOfJoinMapSink);
         return key.findValue();
+    }
+
+    /**
+     * Tells whether the forward scan from the forward watermark to an ASOF position would read
+     * more rows than the key cache is worth. The scan only keeps the cache current: the lookup
+     * can drop the cache instead and rebuild it at the position with backward scans. The cache is
+     * worth the rows that backward scans read into it since it was last dropped, times the switch
+     * factor, by which backward scans have to outweigh a gap before the lookup switches to forward
+     * scan mode. It is worth no less than the min gap, so the lookup scans a gap of that size
+     * forward however little the cache cost.
+     * <p>
+     * Row ids of different frames lie 2^44 or more apart, so the method counts the rows of a scan
+     * that crosses frames frame by frame, until they exceed the worth of the cache.
+     *
+     * @param targetRowId    the ASOF position that the forward scan would stop at
+     * @param circuitBreaker polled on every frame that the count crosses
+     * @return true if the lookup should restart the forward scan at the position
+     */
+    private boolean isForwardScanTooLong(long targetRowId, SqlExecutionCircuitBreaker circuitBreaker) {
+        if (targetRowId - forwardWatermark <= bwdScanMinGap) {
+            return false;
+        }
+        long maxRows;
+        try {
+            maxRows = Math.max(
+                    bwdScanMinGap,
+                    Math.multiplyExact(backwardScanRows - bwdScanRowsAtPositionStart, bwdScanSwitchFactor)
+            );
+        } catch (ArithmeticException ignore) {
+            // overflow: no forward scan reads that many rows
+            return false;
+        }
+        int frameIndex = Rows.toPartitionIndex(forwardWatermark);
+        final int targetFrameIndex = Rows.toPartitionIndex(targetRowId);
+        if (frameIndex == targetFrameIndex) {
+            return targetRowId - forwardWatermark > maxRows;
+        }
+        // The watermark's frame holds the watermark row, so it is not empty.
+        timeFrameCursor.jumpTo(frameIndex);
+        timeFrameCursor.open();
+        long rows = timeFrame.getRowHi() - 1 - Rows.toLocalRowID(forwardWatermark);
+        while (rows <= maxRows && ++frameIndex <= targetFrameIndex) {
+            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+            timeFrameCursor.jumpTo(frameIndex);
+            if (timeFrameCursor.open() > 0) {
+                rows += (frameIndex < targetFrameIndex ? timeFrame.getRowHi() : Rows.toLocalRowID(targetRowId) + 1) - timeFrame.getRowLo();
+            }
+        }
+        return rows > maxRows;
+    }
+
+    /**
+     * Tells whether a key cache entry holds the latest row of its key at or before the current
+     * ASOF position. Every entry does until a drop of the key cache keeps entries, see
+     * {@link #dropKeyCache}. After such a drop, the forward scan writes rows above the drop
+     * position, and a backward scan writes the first row of each key it reads, overwriting an older
+     * one, so the entries that the scans wrote since the drop hold the latest row. An entry that the
+     * drop kept holds a row at or below the forward watermark or the ASOF position of the time, and
+     * a later row of its key may lie in the rows between that row and the drop position, which no
+     * scan read. Once the backward scans pass the entry's own row, they have read all those rows:
+     * an entry still unchanged is the latest row.
+     * <p>
+     * With a filter, an entry may also hold {@link #UNRESOLVED_ROW_ID}: a backward scan read rows
+     * of the key, and none of them passed the filter. Such an entry holds no row to return.
+     *
+     * @param rowId the row id that the entry holds
+     * @return true if the lookup can return the entry's row
+     */
+    private boolean isKeyCacheEntryValid(long rowId) {
+        return rowId != UNRESOLVED_ROW_ID && (rowId > restartRowId || rowId >= backwardWatermark);
     }
 
     /**
@@ -1058,6 +1298,7 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
         } else if (missValue.getLong(0) < rowId) {
             missValue.putLong(0, rowId);
         }
+        keyMissWatermark = Math.max(keyMissWatermark, rowId);
     }
 
     private long rowGapLowerBound(long fromRowId, long toRowId) {
@@ -1067,5 +1308,43 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
         }
         timeFrameCursor.jumpTo(toFrameIndex);
         return timeFrameCursor.open() > 0 ? Rows.toLocalRowID(toRowId) - timeFrame.getRowLo() : 0;
+    }
+
+    /**
+     * Applies the relative switch check to a run of ASOF positions that sit at most the min gap
+     * apart. No single gap of such a run passes the min gap test of
+     * {@link #shouldSwitchToForwardScan}, so backward-only mode would re-scan for the key at every
+     * position however long the run is. The gaps and the backward scan cost at the positions they
+     * connect accumulate into a window instead. Once the window covers more than the min gap, the
+     * check compares the window's cost with the rows a forward scan would have read over the same
+     * distance, and the next window starts. Runs only when the window switch is enabled, see the
+     * constructor.
+     *
+     * @param gap distance in rows from the previous ASOF position to the current one
+     * @return true if forward scan mode should be activated
+     */
+    private boolean shouldSwitchToForwardScanOverWindow(long gap) {
+        boolean isSwitch = false;
+        boolean isWindowOpen = gap > 0 && gap <= bwdScanMinGap;
+        if (isWindowOpen) {
+            bwdScanWindowGap += gap;
+            if (bwdScanWindowGap > bwdScanMinGap) {
+                isSwitch = shouldSwitchToForwardScan(
+                        backwardScanRows - bwdScanRowsAtWindowStart,
+                        bwdScanWindowGap,
+                        bwdScanMinGap,
+                        bwdScanSwitchFactor,
+                        Long.MAX_VALUE
+                );
+                isWindowOpen = false;
+            }
+        }
+        if (!isWindowOpen) {
+            // The window is spent, or the gap is above the min gap and had its own check; a
+            // cross-frame gap is far above it. Either way, a new window starts at the current position.
+            bwdScanWindowGap = 0;
+            bwdScanRowsAtWindowStart = backwardScanRows;
+        }
+        return isSwitch;
     }
 }

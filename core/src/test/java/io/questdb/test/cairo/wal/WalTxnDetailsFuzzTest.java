@@ -222,8 +222,9 @@ public class WalTxnDetailsFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testLastCommitToTimestampIncremental() {
-        // Force 1 by 1 commit application
+        // Force 1 by 1 commit application: the lag-derived block size, not the adaptive one
         setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_BLOCK_SIZE, 0);
         setProperty(PropertyKey.CAIRO_WAL_SQUASH_UNCOMMITTED_ROWS_MULTIPLIER, 1);
         setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 0);
 

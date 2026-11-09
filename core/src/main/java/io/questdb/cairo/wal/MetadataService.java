@@ -119,6 +119,13 @@ public interface MetadataService {
      */
     void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize, byte indexType, @Nullable ObjList<CharSequence> coveringColumnNames);
 
+    /**
+     * Called after a change no WAL replay can redo, such as an attach. A table writer takes a durable epoch on
+     * an adaptive table; nothing else needs to act.
+     */
+    default void advanceDurableEpochAfter(CharSequence operation) {
+    }
+
     AttachDetachStatus attachPartition(long partitionTimestamp);
 
     void changeCacheFlag(int columnIndex, boolean isCacheOn);
@@ -160,6 +167,10 @@ public interface MetadataService {
     boolean enableDeduplicationWithUpsertKeys(LongList columnsIndexes);
 
     void forceRemovePartitions(LongList partitionTimestamps);
+
+    long getExpiryCleanupIntervalMicros();
+
+    String getExpiryPredicate();
 
     int getMetaMaxUncommittedRows();
 
@@ -234,6 +245,14 @@ public interface MetadataService {
      * Sets incremental refresh timer values for materialized view.
      */
     void setMatViewRefreshTimer(long startUs, int interval, char unit);
+
+    /**
+     * Sets (or clears) the row-expiry policy of this table. {@code predicate} is the raw SQL
+     * text of the EXPIRE ROWS WHEN predicate, or {@code null} to drop the policy.
+     * {@code cleanupIntervalMicros} is the physical-cleanup cadence in microseconds (ignored
+     * when {@code predicate} is null).
+     */
+    void setMetaExpiry(String predicate, long cleanupIntervalMicros);
 
     void setMetaMaxUncommittedRows(int maxUncommittedRows);
 

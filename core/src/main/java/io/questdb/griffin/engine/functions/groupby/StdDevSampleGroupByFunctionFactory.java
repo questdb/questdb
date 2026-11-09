@@ -56,7 +56,7 @@ public class StdDevSampleGroupByFunctionFactory implements FunctionFactory {
         return new StdDevSampleGroupByFunction(args.getQuick(0));
     }
 
-    private static class StdDevSampleGroupByFunction extends AbstractStdDevGroupByFunction {
+    static class StdDevSampleGroupByFunction extends AbstractStdDevGroupByFunction {
 
         public StdDevSampleGroupByFunction(@NotNull Function arg) {
             super(arg);
