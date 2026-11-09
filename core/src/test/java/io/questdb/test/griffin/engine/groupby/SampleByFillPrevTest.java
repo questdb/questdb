@@ -106,36 +106,41 @@ public class SampleByFillPrevTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000007Z\t2
                             """);
             // 1500n puts the buckets at 0, 1500, 3000, 4500, 6000, 7500 and 9000 nanoseconds, or 0, 1, 3, 4, 6, 7 and 9
-            // whole microseconds. They hold the microseconds 0-1, 2, 3-4, 5, 6-7, 8 and 9. The fill steps through every
-            // microsecond.
-            assertQuery("SELECT ts, count() c FROM fu SAMPLE BY 1500n FILL(NULL)")
+            // whole microseconds. They hold the microseconds 0-1, 2, 3-4, 5, 6-7, 8 and 9.
+            assertQuery("SELECT ts, count() c FROM fu SAMPLE BY 1500n")
                     .noLeakCheck()
                     .timestamp("ts")
-                    .noRandomAccess()
+                    .expectSize()
                     .returns("""
                             ts\tc
                             1970-01-01T00:00:00.000000Z\t2
                             1970-01-01T00:00:00.000001Z\t1
-                            1970-01-01T00:00:00.000002Z\tnull
                             1970-01-01T00:00:00.000003Z\t2
                             1970-01-01T00:00:00.000004Z\t1
-                            1970-01-01T00:00:00.000005Z\tnull
                             1970-01-01T00:00:00.000006Z\t2
                             1970-01-01T00:00:00.000007Z\t1
-                            1970-01-01T00:00:00.000008Z\tnull
                             1970-01-01T00:00:00.000009Z\t1
                             """);
-            // FILL(LINEAR) runs on the sampler's grid alone.
-            assertSqlCursors("SELECT ts, avg(v) a FROM fu SAMPLE BY 2U FILL(LINEAR)", "SELECT ts, avg(v) a FROM fu SAMPLE BY 2500n FILL(LINEAR)");
-            final String message = "FILL does not support this stride on a microsecond timestamp, use a whole number of microseconds";
-            for (String stride : new String[]{"2001n", "2500n", "3500n", "7999n"}) {
-                for (String fill : new String[]{"NULL", "PREV", "0"}) {
-                    final String keyless = "SELECT ts, count() c FROM fu SAMPLE BY " + stride + " FILL(" + fill + ")";
+            for (String mode : new String[]{" FILL(NULL)", " FILL(PREV)", " FILL(0)", " FILL(LINEAR)", " ALIGN TO FIRST OBSERVATION"}) {
+                assertSqlCursors("SELECT ts, avg(v) a FROM fu SAMPLE BY 1U" + mode, "SELECT ts, avg(v) a FROM fu SAMPLE BY 1000n" + mode);
+                assertSqlCursors("SELECT ts, k, avg(v) a FROM fu SAMPLE BY 2U" + mode, "SELECT ts, k, avg(v) a FROM fu SAMPLE BY 2000n" + mode);
+            }
+            final String message = "SAMPLE BY does not support this stride on a microsecond timestamp, use a whole number of microseconds";
+            for (String stride : new String[]{"1001n", "1500n", "1999n", "2001n", "2500n", "7999n"}) {
+                for (String mode : new String[]{" FILL(NULL)", " FILL(PREV)", " FILL(0)", " FILL(LINEAR)", " ALIGN TO FIRST OBSERVATION", " FILL(NULL) ALIGN TO FIRST OBSERVATION"}) {
+                    final String keyless = "SELECT ts, count() c FROM fu SAMPLE BY " + stride + mode;
                     assertExceptionNoLeakCheck(keyless, keyless.indexOf(stride), message);
-                    final String keyed = "SELECT ts, k, count() c FROM fu SAMPLE BY " + stride + " FILL(" + fill + ")";
+                    final String keyed = "SELECT ts, k, count() c FROM fu SAMPLE BY " + stride + mode;
                     assertExceptionNoLeakCheck(keyed, keyed.indexOf(stride), message);
                 }
             }
+            assertSqlCursors("SELECT ts, avg(v) a FROM fu SAMPLE BY 2U FILL(LINEAR)", "SELECT ts, avg(v) a FROM fu SAMPLE BY (1999 + 1) n FILL(LINEAR)");
+            execute("CREATE TABLE fn AS (SELECT (x * 1500)::TIMESTAMP_NS ts, x v FROM long_sequence(10)) TIMESTAMP(ts) PARTITION BY DAY");
+            for (String mode : new String[]{" FILL(NULL)", " FILL(LINEAR)", " ALIGN TO FIRST OBSERVATION"}) {
+                assertSqlCursors("SELECT ts, avg(v) a FROM fn SAMPLE BY 1500n", "SELECT ts, avg(v) a FROM fn SAMPLE BY 1500n" + mode);
+            }
+            final String expressionStride = "SELECT ts, count() c FROM fu SAMPLE BY (1499 + 1) n FILL(LINEAR)";
+            assertExceptionNoLeakCheck(expressionStride, expressionStride.indexOf("+"), message);
             // The table still works after the errors.
             assertQuery("SELECT count() c FROM fu")
                     .noLeakCheck()
