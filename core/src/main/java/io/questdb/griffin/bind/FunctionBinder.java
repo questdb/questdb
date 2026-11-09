@@ -128,8 +128,10 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
     private final LongList foldedReferences = new LongList();
     private final ExpressionVisitor foldedReferenceRecorder = expression -> {
         switch (expression) {
-            case ColumnExpression column -> foldedReferences.add(foldedReference(column.getColumnId(), column.getPosition()));
-            case OuterColumnExpression outer -> foldedReferences.add(foldedReference(outer.getColumnId(), outer.getPosition()));
+            case ColumnExpression column ->
+                    foldedReferences.add(foldedReference(column.getColumnId(), column.getPosition()));
+            case OuterColumnExpression outer ->
+                    foldedReferences.add(foldedReference(outer.getColumnId(), outer.getPosition()));
             default -> {
             }
         }
@@ -712,6 +714,12 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
                 | (context.isTimestampOrderRead() ? BoundExpression.ORDERED_INPUT : 0);
     }
 
+    private void addUnconstructed(BoundExpression expression) {
+        if (unconstructedIndex.putIfAbsent(expression, expression)) {
+            unconstructed.add(expression);
+        }
+    }
+
     private void beginArguments(int count) {
         arguments.clear();
         argumentLeafMarks.clear();
@@ -721,12 +729,6 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
             argumentLeafMarks.add(expressionLeafMarks.getQuick(index));
             expressionStack.remove(index);
             expressionLeafMarks.removeIndex(index);
-        }
-    }
-
-    private void addUnconstructed(BoundExpression expression) {
-        if (unconstructedIndex.putIfAbsent(expression, expression)) {
-            unconstructed.add(expression);
         }
     }
 

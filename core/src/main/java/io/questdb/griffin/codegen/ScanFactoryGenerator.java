@@ -515,7 +515,8 @@ final class ScanFactoryGenerator {
         final int placementLo = frame.placementMark();
         frame.placeScan(scan, table);
         return switch (accessPath) {
-            case EMPTY -> frame.emptied(placementLo, frame.placementMark(), new EmptyTableRecordCursorFactory(metadata));
+            case EMPTY ->
+                    frame.emptied(placementLo, frame.placementMark(), new EmptyTableRecordCursorFactory(metadata));
             case PAGE_FRAMES -> generatePageFrameScan(frame, scan, executionContext, scanIntervals, metadata, table,
                     indexes, shifts, stolenFilter, placementLo);
             case SORTED_SYMBOL_INDEX -> {
