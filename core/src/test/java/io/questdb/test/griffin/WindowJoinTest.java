@@ -48,6 +48,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.QueryAssertion;
 import io.questdb.test.TestTimestampType;
 import io.questdb.test.mp.TestWorkerPool;
+import io.questdb.test.tools.BindVarTuple;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
@@ -60,9 +61,21 @@ import org.junit.runners.Parameterized;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.TreeSet;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @RunWith(Parameterized.class)
 public class WindowJoinTest extends AbstractCairoTest {
+    // The WINDOW JOIN whose rows SPLICE JOIN and the single-threaded HORIZON JOIN read by row id. It averages the
+    // prices of each trade's symbol over the minute up to the trade, and its projection reorders the master
+    // columns, so the WINDOW JOIN designates projection slot 2.
+    private static final String ROW_ID_JOIN_WINDOW_JOIN = "SELECT t.sym, avg(p.price) ap, t.ts FROM trades t " +
+            "WINDOW JOIN prices p ON (t.sym = p.sym) RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW EXCLUDE PREVAILING";
+    // ROW_ID_JOIN_WINDOW_JOIN restricted to the trades of symbol A, so that a keyed SPLICE JOIN reads one key on
+    // that side.
+    private static final String SORTED_SYMBOL_A_WINDOW_JOIN = "(" + ROW_ID_JOIN_WINDOW_JOIN + " WHERE t.sym = 'A' ORDER BY t.ts)";
+    // ROW_ID_JOIN_WINDOW_JOIN sorted by the master's designated timestamp. Its rows already arrive in that order.
+    private static final String SORTED_WINDOW_JOIN = "(" + ROW_ID_JOIN_WINDOW_JOIN + " ORDER BY t.ts)";
     private final TestTimestampType leftTableTimestampType;
     private final TestTimestampType rightTableTimestampType;
     private final StringSink sink = new StringSink();
@@ -901,8 +914,9 @@ public class WindowJoinTest extends AbstractCairoTest {
         // runs serially even when parallel HORIZON JOIN is enabled.
         assertMemoryLeak(() -> {
             createEmptyWindowCountTables();
-            // The per-row false filter cannot serve as the oracle: HORIZON JOIN rejects a regular
-            // WINDOW JOIN master, so the expected rows come from the ASOF prices at offset 0.
+            // The per-row false filter cannot serve as the oracle: HORIZON JOIN reads a regular WINDOW JOIN
+            // master only through the sort of an ORDER BY on its timestamp, which this TIMESTAMP(ts) form lacks,
+            // so the expected rows come from the ASOF prices at offset 0.
             final String[] conditions = {
                     "t.sym = p.sym AND t.ts2 IN '2024-01-06#workday'",
                     "t.sym = p.sym AND 1 = 0"
@@ -3007,6 +3021,132 @@ public class WindowJoinTest extends AbstractCairoTest {
                         "right-hand side of HORIZON JOIN can only be a table with an optional filter"
                 );
             }
+        });
+    }
+
+    @Test
+    public void testConstantFalseWindowJoinOverPageFrameMasterSortedByTimestamp() throws Exception {
+        // A WINDOW JOIN whose ON clause folds to false splices NULL aggregates onto its master and passes the
+        // master's page frames on, so over a covering-index scan its rows arrive with page frames but without
+        // random access. ORDER BY on its timestamp keeps the sort for SPLICE JOIN and the single-threaded
+        // HORIZON JOIN unless a parallel filter above it, or the parallel HORIZON JOIN, reads those page frames
+        // instead. A VIRTUAL projection, a LIMIT or a set operation offers no page frames, so a filter above
+        // one runs serially and the sort stays. The sort is decided before the WHERE above it compiles, so a
+        // WHERE that folds to a constant or a runtime constant counts as a reader of the page frames too.
+        assertMemoryLeak(() -> {
+            createSpliceOverWindowJoinTables();
+            final String range = " RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW EXCLUDE PREVAILING";
+            final String constantFalseOverCoveringIndex = "SELECT t.sym, avg(p.price) ap, t.ts FROM (SELECT ts, sym, price FROM ci WHERE sym = 'A') t " +
+                    "WINDOW JOIN prices p ON (t.sym = p.sym AND 1 = 0)" + range + " ORDER BY t.ts";
+            final String zCi = "(" + constantFalseOverCoveringIndex + ")";
+            execute("CREATE TABLE z_ref AS (" + constantFalseOverCoveringIndex + ") TIMESTAMP(ts) PARTITION BY DAY");
+            final String nullAggregateRows = spliceOfSymbolARows("null", "null", "null", false);
+
+            // No reader of the page frames sits above the ORDER BY.
+            final String[] sortedOperands = {
+                    zCi,
+                    // count() reports 0 for the empty window, so this splice offers no page frames
+                    "(SELECT t.sym, count() c, avg(p.price) ap, t.ts FROM (SELECT ts, sym, price FROM ci WHERE sym = 'A') t " +
+                            "WINDOW JOIN prices p ON (t.sym = p.sym AND 1 = 0)" + range + " ORDER BY t.ts)",
+                    // a VIRTUAL projection hides the page frames from the filter above it
+                    "(SELECT * FROM (SELECT sym, ap * 2 ap, ts FROM " + zCi + ") WHERE rnd_double() < 2)",
+                    // so does a LIMIT, also one with an upper bound alone
+                    "(SELECT * FROM (SELECT * FROM " + zCi + " LIMIT 10) WHERE rnd_double() < 2)",
+                    "(SELECT * FROM (SELECT * FROM " + zCi + " LIMIT ,10) WHERE rnd_double() < 2)"
+            };
+            for (String operand : sortedOperands) {
+                assertQuery(spliceOverOperand(operand))
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlanContaining("Splice Join", "Encode sort\n", "keys: [ts]", "CoveringIndex")
+                        .returns(nullAggregateRows);
+            }
+            assertSqlCursors(spliceOverOperand("z_ref"), spliceOverOperand(zCi));
+
+            // The regular WINDOW JOIN over the same master offers no page frames.
+            assertQuery(spliceOverOperand("(SELECT t.sym, avg(p.price) ap, t.ts FROM (SELECT ts, sym, price FROM ci WHERE sym = 'A') t " +
+                    "WINDOW JOIN prices p ON (t.sym = p.sym)" + range + " ORDER BY t.ts)"))
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Splice Join", "Encode sort\n", "keys: [ts]", "CoveringIndex")
+                    .returns(spliceOfSymbolARows("2.0", "3.0", "3.0", false));
+
+            // A set operation hides the page frames from the filter above it, and so does a LIMIT of the ORDER BY
+            // model itself. Both leave the trades of 09:00:00 and 09:00:10.
+            final String twoTradeRows = spliceOfSymbolARows("null", "null", "null", true);
+            final String laterTradeExcluded = "(SELECT sym, ap, ts FROM z_ref WHERE ts = '2024-01-02T09:00:00.000000Z')";
+            assertQuery(spliceOverOperand("(SELECT * FROM (" + zCi + " EXCEPT " + laterTradeExcluded + ") WHERE rnd_double() < 2)"))
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Except", "Encode sort\n", "keys: [ts]")
+                    .returns(twoTradeRows);
+            assertSqlCursors(
+                    spliceOverOperand("(SELECT * FROM ((SELECT sym, ap, ts FROM z_ref) EXCEPT " + laterTradeExcluded + ") WHERE rnd_double() < 2)"),
+                    spliceOverOperand("(SELECT * FROM (" + zCi + " EXCEPT " + laterTradeExcluded + ") WHERE rnd_double() < 2)")
+            );
+            assertQuery(spliceOverOperand("(SELECT * FROM (" + constantFalseOverCoveringIndex + " LIMIT 2) WHERE rnd_double() < 2)"))
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Limit", "Encode sort\n", "keys: [ts]")
+                    .returns(twoTradeRows);
+
+            // Over a no-row-id master the splice reports neither random access nor its master's row ids.
+            final String constantFalseOverNoRowIdMaster = "SELECT t.sym, avg(p.price) ap, t.ts FROM '*!*trades' t " +
+                    "WINDOW JOIN prices p ON (t.sym = p.sym AND 1 = 0)" + range + " ORDER BY t.ts";
+            execute("CREATE TABLE z_no_row_id_ref AS (" + constantFalseOverNoRowIdMaster + ") TIMESTAMP(ts) PARTITION BY DAY");
+            final String noRowIdSplice = "SELECT * FROM (" + constantFalseOverNoRowIdMaster + ") w SPLICE JOIN quotes q";
+            assertQuery(noRowIdSplice)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Splice Join", "Encode sort\n", "keys: [ts]")
+                    .returns(queryResult("SELECT * FROM z_no_row_id_ref w SPLICE JOIN quotes q"));
+
+            // A parallel filter above the ORDER BY reads the page frames and supplies the random access itself.
+            final String filteredOperand = "(SELECT * FROM " + zCi + " WHERE rnd_double() < 2)";
+            assertQuery(spliceOverOperand(filteredOperand))
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Async Filter", "CoveringIndex")
+                    .withPlanNotContaining("keys: [ts]")
+                    .returns(nullAggregateRows);
+            // With parallel filters off the filter runs serially over the sort.
+            sqlExecutionContext.setParallelFilterEnabled(false);
+            assertQuery(spliceOverOperand(filteredOperand))
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Filter filter: rnd_double()<2", "Encode sort\n", "keys: [ts]")
+                    .withPlanNotContaining("Async Filter")
+                    .returns(nullAggregateRows);
+            sqlExecutionContext.setParallelFilterEnabled(true);
+
+            // The parallel HORIZON JOIN reads the page frames of its master, the single-threaded one reads the sort.
+            final String oneSecond = oneSecondOffset();
+            final String horizonRows = "offset\tsym\tc\tsap\tab\n" +
+                    "0\tA\t3\tnull\t102.0\n" +
+                    oneSecond + "\tA\t3\tnull\t103.0\n";
+            sqlExecutionContext.setParallelHorizonJoinEnabled(true);
+            assertQuery(horizonOverMaster(zCi))
+                    .noLeakCheck()
+                    .sizeMayVary()
+                    .withPlanContaining("Async Horizon Join", "CoveringIndex")
+                    .withPlanNotContaining("keys: [ts]")
+                    .returns(horizonRows);
+            sqlExecutionContext.setParallelHorizonJoinEnabled(false);
+            assertQuery(horizonOverMaster(zCi))
+                    .noLeakCheck()
+                    .sizeMayVary()
+                    .withPlanContaining("Horizon Join", "Encode sort\n", "keys: [ts]")
+                    .withPlanNotContaining("Async Horizon Join")
+                    .returns(horizonRows);
+            // approx_percentile() has no parallel form, so with parallel HORIZON JOIN off the join reads the sort.
+            final String percentile = "SELECT h.offset, w.sym, count() c, sum(w.ap) sap, approx_percentile(q.bid, 0.5) pq FROM %s w " +
+                    "HORIZON JOIN quotes q ON (w.sym = q.sym) LIST (0s, 1s) AS h ORDER BY 1, 2";
+            assertQuery(percentile.formatted(zCi))
+                    .noLeakCheck()
+                    .sizeMayVary()
+                    .withPlanContaining("Horizon Join", "Encode sort\n", "keys: [ts]")
+                    .withPlanNotContaining("Async Horizon Join")
+                    .returns(queryResult(percentile.formatted("z_ref")));
         });
     }
 
@@ -5573,6 +5713,273 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonAndSpliceJoinOverWindowJoinSortedByTimestampDataShapes() throws Exception {
+        // The kept sort over more rows than a page frame holds, over partitions from the epoch to 2200, trades of
+        // five symbols at equal timestamps, trades without a symbol and windows without a price, whose average is
+        // NULL. The expected rows come from the same joins over the sorted WINDOW JOIN materialised into a table.
+        // Designated timestamps before 1970 are rejected on insert, so the epoch is the earliest one.
+        for (boolean isWal : new boolean[]{false, true}) {
+            for (boolean isParquet : new boolean[]{false, true}) {
+                assertMemoryLeak(() -> assertRowIdJoinDataShapes(isWal, isParquet));
+            }
+        }
+    }
+
+    @Test
+    public void testHorizonAndSpliceJoinOverWindowJoinSortedByTimestampSortLimits() throws Exception {
+        // The kept sort applies the sort memory limits. A TIMESTAMP key takes 8 bytes and the row id 8 more, so
+        // sorting the five trades takes 80 bytes of keys.
+        assertMemoryLeak(() -> {
+            createSpliceOverWindowJoinTables();
+            execute("CREATE TABLE w_ref AS (" + ROW_ID_JOIN_WINDOW_JOIN + " ORDER BY t.ts) TIMESTAMP(ts) PARTITION BY DAY");
+            // At offset 0 the trades see the quotes 200, 202, 100, 102 and 104, at 1s each quote is one higher. The
+            // LIMIT keeps the ORDER BY of the sub-query under the aggregations, which do not need its order.
+            final String horizon = "SELECT avg(q.bid) ab, sum(w.ap) sap FROM %s w HORIZON JOIN quotes q ON (w.sym = q.sym) LIST (0s, 1s) AS h";
+            final String sortedWindowJoin = "(" + ROW_ID_JOIN_WINDOW_JOIN + " ORDER BY t.ts LIMIT 1_000_000)";
+            final String horizonRows = "ab\tsap\n142.1\t40.0\n";
+            final String splice = "SELECT count() c, count(ts) t, sum(ap) sap, sum(bid) sb FROM (SELECT * FROM %s w SPLICE JOIN quotes q)";
+            final String spliceRows = queryResult(splice.formatted("w_ref"));
+            for (long keyLimit : new long[]{1, 79}) {
+                setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES, keyLimit);
+                final String keyLimitError = "limit of " + keyLimit + " memory exceeded in EncodedSort (raise cairo.sql.sort.key.max.bytes)";
+                assertExceptionNoLeakCheck(horizon.formatted(sortedWindowJoin), -1, keyLimitError);
+                assertExceptionNoLeakCheck(splice.formatted(sortedWindowJoin), -1, keyLimitError);
+            }
+            setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES, 80);
+            assertQuery(horizon.formatted(sortedWindowJoin)).noLeakCheck().noRandomAccess().expectSize().returns(horizonRows);
+            assertQuery(splice.formatted(sortedWindowJoin)).noLeakCheck().noRandomAccess().expectSize().returns(spliceRows);
+            setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES, (String) null);
+
+            // One page of sorted records holds the five trades, but not 2_000.
+            setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 1024);
+            setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_BYTES, 1024);
+            assertQuery(horizon.formatted(sortedWindowJoin)).noLeakCheck().noRandomAccess().expectSize().returns(horizonRows);
+            assertQuery(splice.formatted(sortedWindowJoin)).noLeakCheck().noRandomAccess().expectSize().returns(spliceRows);
+            execute("INSERT INTO trades SELECT ('2024-01-03T00:00:00.000000Z'::TIMESTAMP + x * 1_000_000)::TIMESTAMP, ('s' || (x % 3))::SYMBOL, x::DOUBLE " +
+                    "FROM long_sequence(1_995)");
+            drainWalQueue();
+            final String valueLimitError = "Maximum number of pages (1) breached in VirtualMemory (raise cairo.sql.sort.value.max.bytes)";
+            assertExceptionNoLeakCheck(horizon.formatted(sortedWindowJoin), -1, valueLimitError);
+            assertExceptionNoLeakCheck(splice.formatted(sortedWindowJoin), -1, valueLimitError);
+
+            // With the default limits the same queries return the rows of the materialised WINDOW JOIN.
+            setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, (String) null);
+            setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_BYTES, (String) null);
+            execute("DROP TABLE w_ref");
+            execute("CREATE TABLE w_ref AS (" + ROW_ID_JOIN_WINDOW_JOIN + " ORDER BY t.ts) TIMESTAMP(ts) PARTITION BY DAY");
+            assertQuery(horizon.formatted(sortedWindowJoin))
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(queryResult(horizon.formatted("w_ref")));
+            assertQuery(splice.formatted(sortedWindowJoin))
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(queryResult(splice.formatted("w_ref")));
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOverWindowJoinSortedByTimestamp() throws Exception {
+        // The single-threaded HORIZON JOIN reads its left-hand side by row id. A WINDOW JOIN offers neither random
+        // access nor page frames, so ORDER BY on the master's designated timestamp keeps its sort for the HORIZON
+        // JOIN, although the rows already arrive in that order, and the join runs single-threaded whether parallel
+        // HORIZON JOIN is on or off.
+        assertMemoryLeak(() -> {
+            createHorizonOverWindowJoinTables();
+            execute("CREATE TABLE w_ref AS (" + ROW_ID_JOIN_WINDOW_JOIN + " ORDER BY t.ts) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE VIEW wv AS (" + ROW_ID_JOIN_WINDOW_JOIN + " ORDER BY t.ts)");
+            drainWalAndViewQueues();
+            final String oneSecond = oneSecondOffset();
+            // Trades of A average 2.0, 3.0 and 3.0, trades of B 6.0 and 6.0. At offset 0 the trades of A see the
+            // quotes 100, 102 and 104 and those of B 200 and 202; at 1s each quote is one higher.
+            final String expected = "offset\tsym\tc\tsap\tab\n" +
+                    "0\tA\t3\t8.0\t102.0\n" +
+                    "0\tB\t2\t12.0\t201.0\n" +
+                    oneSecond + "\tA\t3\t8.0\t103.0\n" +
+                    oneSecond + "\tB\t2\t12.0\t202.0\n";
+            final String symbolAExpected = "offset\tsym\tc\tsap\tab\n" +
+                    "0\tA\t3\t8.0\t102.0\n" +
+                    oneSecond + "\tA\t3\t8.0\t103.0\n";
+            final String reference = horizonOverMaster("w_ref");
+            final String[] queries = {
+                    horizonOverMaster(SORTED_WINDOW_JOIN),
+                    // the projection in table order
+                    horizonOverMaster("(SELECT t.ts, t.sym, avg(p.price) ap FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) " +
+                            "RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW EXCLUDE PREVAILING ORDER BY t.ts)"),
+                    "WITH w AS " + SORTED_WINDOW_JOIN + " SELECT h.offset, w.sym, count() c, sum(w.ap) sap, avg(q.bid) ab " +
+                            "FROM w HORIZON JOIN quotes q ON (w.sym = q.sym) LIST (0s, 1s) AS h ORDER BY 1, 2",
+                    horizonOverMaster("wv")
+            };
+            // The symbol index scan of ti gives a single-threaded WINDOW JOIN.
+            final String indexScanQuery = horizonOverMaster("(SELECT t.sym, avg(p.price) ap, t.ts FROM ti t WINDOW JOIN prices p ON (t.sym = p.sym) " +
+                    "RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW EXCLUDE PREVAILING WHERE t.sym = 'A' ORDER BY t.ts)");
+            for (int mode = 0; mode < 4; mode++) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled((mode & 1) != 0);
+                sqlExecutionContext.setParallelWindowJoinEnabled((mode & 2) != 0);
+                for (String query : queries) {
+                    assertQuery(query)
+                            .noLeakCheck()
+                            .sizeMayVary()
+                            .withPlanContaining("Horizon Join", "Encode sort\n", "keys: [ts]")
+                            .withPlanNotContaining("Async Horizon Join", "Async JIT Horizon Join")
+                            .returns(expected);
+                    assertSqlCursors(reference, query);
+                }
+                assertQuery(indexScanQuery)
+                        .noLeakCheck()
+                        .sizeMayVary()
+                        .withPlanContaining("Horizon Join", "Encode sort\n", "keys: [ts]")
+                        .withPlanNotContaining("Async Horizon Join", "Async JIT Horizon Join")
+                        .returns(symbolAExpected);
+                assertSqlCursors(horizonOverMaster("(SELECT * FROM w_ref WHERE sym = 'A')"), indexScanQuery);
+            }
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOverWindowJoinSortedByTimestampWithLimit() throws Exception {
+        // LIMIT applies above the kept sort, so the HORIZON JOIN reads the first or the last trades in
+        // timestamp order, also when one compiled query runs again with another bound.
+        assertMemoryLeak(() -> {
+            createHorizonOverWindowJoinTables();
+            execute("CREATE TABLE w_ref AS (" + ROW_ID_JOIN_WINDOW_JOIN + " ORDER BY t.ts) TIMESTAMP(ts) PARTITION BY DAY");
+            // The first three trades, the two of 09:00:00 among them, average 2.0, 6.0 and 3.0 and see the quotes
+            // 100, 200 and 102 at offset 0 and one more at 1s. The last two average 3.0 and 6.0 and see 104 and 202.
+            final String firstThree = "ab\tsap\n134.5\t22.0\n";
+            final String lastTwo = "ab\tsap\n153.5\t18.0\n";
+            final String horizon = "SELECT avg(q.bid) ab, sum(w.ap) sap FROM (%s) w HORIZON JOIN quotes q ON (w.sym = q.sym) LIST (0s, 1s) AS h";
+            for (boolean isParallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                sqlExecutionContext.setParallelWindowJoinEnabled(isParallel);
+                for (String limit : new String[]{"3", "-2"}) {
+                    final String query = horizon.formatted(ROW_ID_JOIN_WINDOW_JOIN + " ORDER BY t.ts LIMIT " + limit);
+                    assertQuery(query)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .withPlanContaining("Horizon Join", "Limit", "Encode sort\n", "keys: [ts]")
+                            .withPlanNotContaining("Async Horizon Join", "Async JIT Horizon Join")
+                            .returns("3".equals(limit) ? firstThree : lastTwo);
+                    assertSqlCursors(horizon.formatted("SELECT * FROM w_ref LIMIT " + limit), query);
+                }
+                final ObjList<BindVarTuple> cases = new ObjList<>();
+                cases.add(BindVarTuple.ok("first three trades", firstThree, bindVariables -> bindVariables.setLong("lim", 3)));
+                cases.add(BindVarTuple.ok("last two trades", lastTwo, bindVariables -> bindVariables.setLong("lim", -2)));
+                cases.add(BindVarTuple.ok("first three trades again", firstThree, bindVariables -> bindVariables.setLong("lim", 3)));
+                assertQuery(horizon.formatted(ROW_ID_JOIN_WINDOW_JOIN + " ORDER BY t.ts LIMIT :lim"))
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .assertBinds(cases);
+            }
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOverWindowJoinSortedByTimestampWithoutEncodedSort() throws Exception {
+        // With the encoded sort off, ORDER BY keeps the sort that copies whole records.
+        setProperty(PropertyKey.CAIRO_SQL_ORDER_BY_SORT_ENABLED, "false");
+        assertMemoryLeak(() -> {
+            createSpliceOverWindowJoinTables();
+            final String oneSecond = oneSecondOffset();
+            // Trades of A average 2.0, 3.0 and 3.0 and see the quotes 100, 102 and 104 at offset 0, trades of B
+            // average 6.0 and 6.0 and see 200 and 202; at 1s each quote is one higher.
+            assertQuery(horizonOverMaster(SORTED_WINDOW_JOIN))
+                    .noLeakCheck()
+                    .sizeMayVary()
+                    .withPlanContaining("Horizon Join", "Sort\n", "keys: [ts]")
+                    .withPlanNotContaining("Encode sort", "Async Horizon Join")
+                    .returns("offset\tsym\tc\tsap\tab\n" +
+                            "0\tA\t3\t8.0\t102.0\n" +
+                            "0\tB\t2\t12.0\t201.0\n" +
+                            oneSecond + "\tA\t3\t8.0\t103.0\n" +
+                            oneSecond + "\tB\t2\t12.0\t202.0\n");
+            // A UNION ALL of two timestamp-ordered branches merges them in timestamp order.
+            execute("CREATE TABLE w_ref AS (" + ROW_ID_JOIN_WINDOW_JOIN + " ORDER BY t.ts) TIMESTAMP(ts) PARTITION BY DAY");
+            final String symbolB = "(SELECT sym, ap, ts FROM w_ref WHERE sym = 'B')";
+            execute("CREATE TABLE u_ref AS (SELECT * FROM ((SELECT sym, ap, ts FROM w_ref) UNION ALL " + symbolB + ") ORDER BY ts) TIMESTAMP(ts) PARTITION BY DAY");
+            assertQuery("SELECT * FROM (SELECT * FROM (" + SORTED_WINDOW_JOIN + " UNION ALL " + symbolB + ") ORDER BY ts) w SPLICE JOIN quotes q")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Sort\n", "keys: [ts]", "UnionSymbolCast", "Union All Merge")
+                    .withPlanNotContaining("Encode sort")
+                    .returns(queryResult("SELECT * FROM u_ref w SPLICE JOIN quotes q"));
+        });
+    }
+
+    @Test
+    public void testHorizonJoinProjectionCarriesColumnTypesThroughSort() throws Exception {
+        // The kept sort copies every column of the WINDOW JOIN into its record chain, so each column type reaches
+        // the HORIZON JOIN projection and the SPLICE JOIN through it, with NULL, empty, multi-byte and extreme
+        // values and a column added after the first rows.
+        assertMemoryLeak(() -> {
+            createSpliceOverWindowJoinTables();
+            executeWithRewriteTimestamp("""
+                    CREATE TABLE typed_trades (
+                        ts #TIMESTAMP, sym SYMBOL, price DOUBLE, b BOOLEAN, bt BYTE, sh SHORT, ch CHAR, i INT, l LONG,
+                        f FLOAT, d DOUBLE, dt DATE, ts2 TIMESTAMP, st STRING, vc VARCHAR, u UUID, ip IPv4, l256 LONG256,
+                        g GEOHASH(5c), d8 DECIMAL(2,1), d16 DECIMAL(4,2), d32 DECIMAL(9,3), d64 DECIMAL(18,4),
+                        d128 DECIMAL(38,5), d256 DECIMAL(76,6), arr DOUBLE[], arr2 DOUBLE[][], bin BINARY
+                    ) TIMESTAMP(ts) PARTITION BY DAY""", leftTableTimestampType.getTypeName());
+            // The trade price picks each row's values: 1.0 gives NULLs, 2.0 the extremes, the rest ordinary values.
+            execute("INSERT INTO typed_trades SELECT ts, sym, price, " +
+                    "price > 2.5, " +
+                    "(price - 3)::BYTE, " +
+                    "CASE WHEN price = 2.0 THEN (-32768)::SHORT ELSE (price * 1000)::SHORT END, " +
+                    "CASE WHEN price = 1.0 THEN 'a' WHEN price = 2.0 THEN '\u8000' ELSE '\u00e9' END, " +
+                    "CASE WHEN price = 1.0 THEN NULL WHEN price = 2.0 THEN -2147483647 ELSE (price * 10)::INT END, " +
+                    "CASE WHEN price = 1.0 THEN NULL WHEN price = 2.0 THEN 9223372036854775807L ELSE (price * 10)::LONG END, " +
+                    "CASE WHEN price = 1.0 THEN NULL ELSE (price / 3)::FLOAT END, " +
+                    "CASE WHEN price = 1.0 THEN NULL WHEN price = 2.0 THEN -0.0 WHEN price = 3.0 THEN 1.0 / 0.0 ELSE price / 7 END, " +
+                    "CASE WHEN price = 1.0 THEN NULL ELSE '1969-07-20T20:17:40.000Z'::DATE END, " +
+                    "CASE WHEN price = 1.0 THEN NULL WHEN price = 2.0 THEN '1960-01-01T00:00:00.000001Z'::TIMESTAMP ELSE ts::TIMESTAMP END, " +
+                    "CASE WHEN price = 1.0 THEN NULL WHEN price = 2.0 THEN '' ELSE 'ascii ' || price END, " +
+                    "CASE WHEN price = 1.0 THEN NULL WHEN price = 2.0 THEN '' WHEN price = 3.0 THEN '\uD83D\uDE00 four bytes' " +
+                    "ELSE '\u00e4\u00f6\u00fc ' || price END::VARCHAR, " +
+                    "CASE WHEN price = 1.0 THEN NULL ELSE rnd_uuid4() END, " +
+                    "CASE WHEN price = 1.0 THEN NULL WHEN price = 2.0 THEN '255.255.255.255' ELSE '10.0.0.' || price::INT END::IPv4, " +
+                    "CASE WHEN price = 1.0 THEN NULL ELSE rnd_long256() END, " +
+                    "CASE WHEN price = 1.0 THEN NULL ELSE 'sp05' || price::INT END::GEOHASH(5c), " +
+                    decimalOfRow(2, 1, "-0.") + ", " +
+                    decimalOfRow(4, 2, "-1.0") + ", " +
+                    decimalOfRow(9, 3, "-12.00") + ", " +
+                    decimalOfRow(18, 4, "-123.000") + ", " +
+                    decimalOfRow(38, 5, "-1234.0000") + ", " +
+                    decimalOfRow(76, 6, "-12345.00000") + ", " +
+                    "CASE WHEN price = 1.0 THEN NULL ELSE ARRAY[price, -price] END, " +
+                    "CASE WHEN price = 1.0 THEN NULL ELSE ARRAY[[price, 1.0], [-0.0, price / 3]] END, " +
+                    "rnd_bin(1, 16, 2) " +
+                    "FROM trades");
+            // a column added after the rows exist reads NULL for them
+            execute("ALTER TABLE typed_trades ADD COLUMN late VARCHAR");
+            execute("INSERT INTO typed_trades (ts, sym, price, late) VALUES ('2024-01-02T09:00:05.000000Z', 'A', 6.0, 'late')");
+            drainWalQueue();
+            final String typedWindowJoin = "SELECT t.*, avg(p.price) ap FROM typed_trades t WINDOW JOIN prices p ON (t.sym = p.sym) " +
+                    "RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW EXCLUDE PREVAILING ORDER BY t.ts";
+            execute("CREATE TABLE typed_ref AS (" + typedWindowJoin + ") TIMESTAMP(ts) PARTITION BY DAY");
+            final String projection = "SELECT h.offset, w.*, q.bid FROM %s w HORIZON JOIN quotes q ON (w.sym = q.sym) LIST (0s, 1s) AS h";
+            for (boolean isParallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                assertQuery(projection.formatted("(" + typedWindowJoin + ")"))
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .timestamp("ts")
+                        .sizeMayVary()
+                        .withPlanContaining("Horizon Join Projection", "Encode sort\n", "keys: [ts]")
+                        .withPlanNotContaining("Async Horizon Join Projection", "Async JIT Horizon Join Projection")
+                        .returns(queryResult(projection.formatted("typed_ref")));
+            }
+            assertQuery("SELECT * FROM (" + typedWindowJoin + ") w SPLICE JOIN quotes q")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Splice Join", "Encode sort\n", "keys: [ts]")
+                    .returns(queryResult("SELECT * FROM typed_ref w SPLICE JOIN quotes q"));
+        });
+    }
+
+    @Test
     public void testJoinFilterMiddleRowMatchesAtBoundary() throws Exception {
         // Tests join filter with multiple rows where only a middle row matches.
 
@@ -6280,6 +6687,74 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "            Frame forward scan on: prices\n")
                     .timestamp("ts")
                     .returns(sink);
+        });
+    }
+
+    @Test
+    public void testMultiHorizonJoinOverWindowJoinSortedByTimestamp() throws Exception {
+        // The multi-slave and the projection forms of the single-threaded HORIZON JOIN read their left-hand side by
+        // row id too.
+        assertMemoryLeak(() -> {
+            createHorizonOverWindowJoinTables();
+            execute("CREATE TABLE w_ref AS (" + ROW_ID_JOIN_WINDOW_JOIN + " ORDER BY t.ts) TIMESTAMP(ts) PARTITION BY DAY");
+            final String leftType = leftTableTimestampType.getTypeName();
+            final String oneSecond = oneSecondOffset();
+            final String multi = "SELECT h.offset, w.sym, count() c, sum(w.ap) sap, avg(q.bid) ab, avg(q2.bid) ab2 FROM %s w " +
+                    "HORIZON JOIN quotes q ON (w.sym = q.sym) HORIZON JOIN quotes q2 ON (w.sym = q2.sym) LIST (0s, 1s) AS h ORDER BY 1, 2";
+            // without a left-hand aggregate
+            final String multiCount = "SELECT h.offset, w.sym, count() c, avg(q.bid) ab, avg(q2.bid) ab2 FROM %s w " +
+                    "HORIZON JOIN quotes q ON (w.sym = q.sym) HORIZON JOIN quotes q2 ON (w.sym = q2.sym) LIST (0s, 1s) AS h ORDER BY 1, 2";
+            final String projection = "SELECT h.offset, w.sym, w.ap, w.ts, q.bid FROM %s w " +
+                    "HORIZON JOIN quotes q ON (w.sym = q.sym) LIST (0s, 1s) AS h ORDER BY w.ts, h.offset, w.sym";
+            final String d1 = replaceTimestampSuffix("2024-01-01T09:00:00.000000Z", leftType);
+            final String d1Later = replaceTimestampSuffix("2024-01-01T09:00:10.000000Z", leftType);
+            final String d2 = replaceTimestampSuffix("2024-01-02T09:00:00.000000Z", leftType);
+            final String d2Later = replaceTimestampSuffix("2024-01-02T09:00:05.000000Z", leftType);
+            for (boolean isParallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                assertQuery(multi.formatted(SORTED_WINDOW_JOIN))
+                        .noLeakCheck()
+                        .sizeMayVary()
+                        .withPlanContaining("Multi Horizon Join", "Encode sort\n", "keys: [ts]")
+                        .withPlanNotContaining("Async Multi Horizon Join")
+                        .returns("offset\tsym\tc\tsap\tab\tab2\n" +
+                                "0\tA\t3\t8.0\t102.0\t102.0\n" +
+                                "0\tB\t2\t12.0\t201.0\t201.0\n" +
+                                oneSecond + "\tA\t3\t8.0\t103.0\t103.0\n" +
+                                oneSecond + "\tB\t2\t12.0\t202.0\t202.0\n");
+                assertSqlCursors(multi.formatted("w_ref"), multi.formatted(SORTED_WINDOW_JOIN));
+                assertQuery(multiCount.formatted(SORTED_WINDOW_JOIN))
+                        .noLeakCheck()
+                        .sizeMayVary()
+                        .withPlanContaining("Multi Horizon Join", "Encode sort\n", "keys: [ts]")
+                        .withPlanNotContaining("Async Multi Horizon Join")
+                        .returns("offset\tsym\tc\tab\tab2\n" +
+                                "0\tA\t3\t102.0\t102.0\n" +
+                                "0\tB\t2\t201.0\t201.0\n" +
+                                oneSecond + "\tA\t3\t103.0\t103.0\n" +
+                                oneSecond + "\tB\t2\t202.0\t202.0\n");
+                // One row per trade and offset, each with the quote of the trade's symbol that prevails at the
+                // trade's timestamp plus the offset.
+                assertQuery(projection.formatted(SORTED_WINDOW_JOIN))
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .sizeMayVary()
+                        .withPlanContaining("Horizon Join Projection", "keys: [ts]")
+                        .withPlanNotContaining("Async Horizon Join Projection", "Async JIT Horizon Join Projection")
+                        .returns("offset\tsym\tap\tts\tbid\n" +
+                                "0\tA\t2.0\t" + d1 + "\t100.0\n" +
+                                "0\tB\t6.0\t" + d1 + "\t200.0\n" +
+                                oneSecond + "\tA\t2.0\t" + d1 + "\t101.0\n" +
+                                oneSecond + "\tB\t6.0\t" + d1 + "\t201.0\n" +
+                                "0\tA\t3.0\t" + d1Later + "\t102.0\n" +
+                                oneSecond + "\tA\t3.0\t" + d1Later + "\t103.0\n" +
+                                "0\tA\t3.0\t" + d2 + "\t104.0\n" +
+                                oneSecond + "\tA\t3.0\t" + d2 + "\t105.0\n" +
+                                "0\tB\t6.0\t" + d2Later + "\t202.0\n" +
+                                oneSecond + "\tB\t6.0\t" + d2Later + "\t203.0\n");
+                assertSqlCursors(projection.formatted("w_ref"), projection.formatted(SORTED_WINDOW_JOIN));
+                Assert.assertEquals(1, countTimestampSorts(projection.formatted(SORTED_WINDOW_JOIN)));
+            }
         });
     }
 
@@ -7061,6 +7536,223 @@ public class WindowJoinTest extends AbstractCairoTest {
                                     """, leftType));
                 }
             }
+        });
+    }
+
+    @Test
+    public void testSetOperationOverWindowJoinSortedByTimestamp() throws Exception {
+        // EXCEPT and INTERSECT keep the random access, the designated timestamp and the order of their first branch,
+        // so a SPLICE JOIN or single-threaded HORIZON JOIN over them reads the sort of that branch. A UNION ALL of
+        // two timestamp-ordered branches merges them in order without random access, so ORDER BY over it keeps its
+        // sort for those joins too.
+        assertMemoryLeak(() -> {
+            createSpliceOverWindowJoinTables();
+            execute("CREATE TABLE w_ref AS (" + ROW_ID_JOIN_WINDOW_JOIN + " ORDER BY t.ts) TIMESTAMP(ts) PARTITION BY DAY");
+            final String referenceBranch = "(SELECT sym, ap, ts FROM w_ref)";
+            final String symbolA = "(SELECT sym, ap, ts FROM w_ref WHERE sym = 'A')";
+            final String symbolB = "(SELECT sym, ap, ts FROM w_ref WHERE sym = 'B')";
+            final String oneSecond = oneSecondOffset();
+            // Every operation below leaves the three trades of A, which average 2.0, 3.0 and 3.0.
+            final String symbolAHorizonRows = "offset\tsym\tc\tsap\tab\n" +
+                    "0\tA\t3\t8.0\t102.0\n" +
+                    oneSecond + "\tA\t3\t8.0\t103.0\n";
+            final String[][] operations = {
+                    {"EXCEPT", symbolB, "Except\n"},
+                    {"EXCEPT ALL", symbolB, "Except All\n"},
+                    {"INTERSECT", symbolA, "Intersect\n"},
+                    {"INTERSECT ALL", symbolA, "Intersect All\n"}
+            };
+            for (String[] operation : operations) {
+                final String operand = "(" + SORTED_WINDOW_JOIN + ' ' + operation[0] + ' ' + operation[1] + ')';
+                final String reference = "(" + referenceBranch + ' ' + operation[0] + ' ' + operation[1] + ')';
+                assertQuery("SELECT * FROM " + operand + " w SPLICE JOIN quotes q")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlanContaining("Splice Join", operation[2], "Encode sort\n", "keys: [ts]")
+                        .returns(queryResult("SELECT * FROM " + reference + " w SPLICE JOIN quotes q"));
+                for (boolean isParallel : new boolean[]{false, true}) {
+                    sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                    assertQuery(horizonOverMaster(operand))
+                            .noLeakCheck()
+                            .sizeMayVary()
+                            .withPlanContaining("Horizon Join", operation[2], "Encode sort\n", "keys: [ts]")
+                            .withPlanNotContaining("Async Horizon Join")
+                            .returns(symbolAHorizonRows);
+                    assertSqlCursors(horizonOverMaster(reference), horizonOverMaster(operand));
+                }
+                // ORDER BY above the set operation sorts its rows
+                final String sortedAbove = "(SELECT * FROM ((" + ROW_ID_JOIN_WINDOW_JOIN + ") " + operation[0] + ' ' + operation[1] + ") ORDER BY ts)";
+                assertQuery("SELECT * FROM " + sortedAbove + " w SPLICE JOIN quotes q")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlanContaining("Splice Join", operation[2], "Encode sort\n", "keys: [ts]")
+                        .returns(queryResult("SELECT * FROM " + reference + " w SPLICE JOIN quotes q"));
+            }
+
+            // ORDER BY over a merged UNION ALL
+            final String union = "(SELECT * FROM (" + SORTED_WINDOW_JOIN + " UNION ALL " + symbolB + ") ORDER BY ts)";
+            final String tableUnion = "(SELECT * FROM (" + referenceBranch + " UNION ALL " + symbolB + ") ORDER BY ts)";
+            execute("CREATE TABLE u_ref AS " + tableUnion + " TIMESTAMP(ts) PARTITION BY DAY");
+            final String unionSpliceRows = queryResult("SELECT * FROM u_ref w SPLICE JOIN quotes q");
+            assertQuery("SELECT * FROM " + union + " w SPLICE JOIN quotes q")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Splice Join", "Encode sort\n", "keys: [ts]", "UnionSymbolCast", "Union All Merge")
+                    .returns(unionSpliceRows);
+            // the same over two table branches
+            assertQuery("SELECT * FROM " + tableUnion + " w SPLICE JOIN quotes q")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Splice Join", "Encode sort\n", "keys: [ts]", "Union All Merge")
+                    .returns(unionSpliceRows);
+            // The trades of B count twice.
+            sqlExecutionContext.setParallelHorizonJoinEnabled(false);
+            assertQuery(horizonOverMaster(union))
+                    .noLeakCheck()
+                    .sizeMayVary()
+                    .withPlanContaining("Horizon Join", "Encode sort\n", "keys: [ts]")
+                    .returns("offset\tsym\tc\tsap\tab\n" +
+                            "0\tA\t3\t8.0\t102.0\n" +
+                            "0\tB\t4\t24.0\t201.0\n" +
+                            oneSecond + "\tA\t3\t8.0\t103.0\n" +
+                            oneSecond + "\tB\t4\t24.0\t202.0\n");
+            // EXCEPT over the sorted union removes the trade of B at 08:00:05 and the duplicate of the other one.
+            final String laterTradeOfB = "(SELECT sym, ap, ts FROM w_ref WHERE ts = '2024-01-01T08:00:05.000000Z')";
+            final String exceptOverUnion = "(" + union + " EXCEPT " + laterTradeOfB + ")";
+            execute("CREATE TABLE e_ref AS (SELECT * FROM (" + tableUnion + " EXCEPT " + laterTradeOfB + ") ORDER BY ts) TIMESTAMP(ts) PARTITION BY DAY");
+            for (String operand : new String[]{exceptOverUnion, "(" + tableUnion + " EXCEPT " + laterTradeOfB + ")"}) {
+                assertQuery("SELECT * FROM " + operand + " w SPLICE JOIN quotes q")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlanContaining("Splice Join", "Except\n", "Encode sort\n", "keys: [ts]", "Union All Merge")
+                        .returns(queryResult("SELECT * FROM e_ref w SPLICE JOIN quotes q"));
+            }
+            assertQuery(horizonOverMaster(exceptOverUnion))
+                    .noLeakCheck()
+                    .sizeMayVary()
+                    .withPlanContaining("Horizon Join", "Except\n", "Encode sort\n", "keys: [ts]")
+                    .returns("offset\tsym\tc\tsap\tab\n" +
+                            "0\tA\t3\t8.0\t102.0\n" +
+                            "0\tB\t1\t6.0\t200.0\n" +
+                            oneSecond + "\tA\t3\t8.0\t103.0\n" +
+                            oneSecond + "\tB\t1\t6.0\t201.0\n");
+            // UNION drops the designated timestamp, so ORDER BY over it sorts in any case.
+            assertQuery("SELECT * FROM (SELECT * FROM (" + SORTED_WINDOW_JOIN + " UNION " + symbolB + ") ORDER BY ts) w SPLICE JOIN quotes q")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Splice Join", "keys: [ts]", "Union\n")
+                    .returns(queryResult("SELECT * FROM w_ref w SPLICE JOIN quotes q"));
+        });
+    }
+
+    @Test
+    public void testSpliceJoinOverWindowJoinSortedByTimestamp() throws Exception {
+        // SPLICE JOIN reads both sides by row id, so ORDER BY on the designated timestamp of a WINDOW JOIN keeps its
+        // sort on either side, although the rows already arrive in that order.
+        assertMemoryLeak(() -> {
+            createSpliceOverWindowJoinTables();
+            execute("CREATE TABLE w_ref AS (" + ROW_ID_JOIN_WINDOW_JOIN + " ORDER BY t.ts) TIMESTAMP(ts) PARTITION BY DAY");
+            // Without ON, SPLICE JOIN pairs each row with the row of the other side that prevails at its timestamp.
+            final String[][] queries = {
+                    {"SELECT * FROM " + SORTED_WINDOW_JOIN + " w SPLICE JOIN quotes q", "SELECT * FROM w_ref w SPLICE JOIN quotes q"},
+                    {"SELECT * FROM quotes q SPLICE JOIN " + SORTED_WINDOW_JOIN + " w", "SELECT * FROM quotes q SPLICE JOIN w_ref w"},
+                    {"SELECT * FROM " + SORTED_WINDOW_JOIN + " w SPLICE JOIN " + SORTED_WINDOW_JOIN + " w2", "SELECT * FROM w_ref w SPLICE JOIN w_ref w2"}
+            };
+            for (String[] query : queries) {
+                assertQuery(query[0])
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlanContaining("Splice Join")
+                        .returns(queryResult(query[1]));
+            }
+            Assert.assertEquals(1, countTimestampSorts(queries[0][0]));
+            Assert.assertEquals(1, countTimestampSorts(queries[1][0]));
+            Assert.assertEquals(2, countTimestampSorts(queries[2][0]));
+
+            // The symbol index scan of ti gives a single-threaded WINDOW JOIN.
+            final String indexScanWindowJoin = "(SELECT t.sym, avg(p.price) ap, t.ts FROM ti t WINDOW JOIN prices p ON (t.sym = p.sym) " +
+                    "RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW EXCLUDE PREVAILING WHERE t.sym = 'A' ORDER BY t.ts)";
+            for (String operand : new String[]{SORTED_SYMBOL_A_WINDOW_JOIN, indexScanWindowJoin}) {
+                assertQuery(spliceOverOperand(operand))
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlanContaining("Splice Join", "Encode sort\n", "keys: [ts]")
+                        .returns(spliceOfSymbolARows("2.0", "3.0", "3.0", false));
+            }
+            // the index scan WINDOW JOIN on the right-hand side
+            final String rightHandSide = "SELECT q.sym, q.bid, q.ts, w.sym wsym, w.ap, w.ts wts FROM (SELECT * FROM quotes WHERE sym = 'A') q " +
+                    "SPLICE JOIN %s w ON (q.sym = w.sym)";
+            assertQuery(rightHandSide.formatted(indexScanWindowJoin))
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Splice Join", "Encode sort\n", "keys: [ts]")
+                    .returns(queryResult(rightHandSide.formatted("(SELECT * FROM w_ref WHERE sym = 'A')")));
+        });
+    }
+
+    @Test
+    public void testSpliceJoinOverWindowJoinSortedByTimestampWithLateralJoin() throws Exception {
+        // A LATERAL JOIN correlated with both sides of a keyed SPLICE JOIN repeats the SPLICE JOIN to collect the
+        // outer rows, over a shared reference to the sub-query, so the sub-query is generated twice. Each
+        // generation keeps the sort of a sorted WINDOW JOIN. A parallel filter above a sorted constant-false
+        // WINDOW JOIN over a covering index reads its page frames in both generations, although the first one
+        // consumed the filter of the shared sub-query.
+        assertMemoryLeak(() -> {
+            createSpliceOverWindowJoinTables();
+            execute("CREATE TABLE w_ref AS (" + ROW_ID_JOIN_WINDOW_JOIN + " ORDER BY t.ts) TIMESTAMP(ts) PARTITION BY DAY");
+            final String leftType = leftTableTimestampType.getTypeName();
+            final String d1 = replaceTimestampSuffix("2024-01-01T09:00:00.000000Z", leftType);
+            final String d1Later = replaceTimestampSuffix("2024-01-01T09:00:10.000000Z", leftType);
+            final String d2 = replaceTimestampSuffix("2024-01-02T09:00:00.000000Z", leftType);
+            final String bothSides = "SELECT w.sym, w.ts, q.bid, l.c FROM %s w SPLICE JOIN quotes q ON (w.sym = q.sym) " +
+                    "JOIN LATERAL (SELECT count() c FROM quotes x WHERE x.sym = w.sym AND x.bid >= q.bid) l ON true";
+            // Each quote of A counts the quotes of A from its own bid up; the quotes of B pair with no trade.
+            final String bothSidesRows = "sym\tts\tbid\tc\n" +
+                    "\t\t200.0\t0\n" +
+                    "\t\t201.0\t0\n" +
+                    "\t\t202.0\t0\n" +
+                    "\t\t203.0\t0\n" +
+                    "A\t" + d1 + "\t100.0\t6\n" +
+                    "A\t" + d1 + "\t101.0\t5\n" +
+                    "A\t" + d1Later + "\t102.0\t4\n" +
+                    "A\t" + d1Later + "\t103.0\t3\n" +
+                    "A\t" + d2 + "\t104.0\t2\n" +
+                    "A\t" + d2 + "\t105.0\t1\n";
+            assertQuery(bothSides.formatted(SORTED_SYMBOL_A_WINDOW_JOIN))
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Splice Join", "Encode sort\n", "keys: [ts]")
+                    .returns(bothSidesRows);
+            assertSqlCursors(bothSides.formatted("(SELECT * FROM w_ref WHERE sym = 'A')"), bothSides.formatted(SORTED_SYMBOL_A_WINDOW_JOIN));
+            // correlated with the left-hand side only
+            final String leftSide = "SELECT w.sym, w.ts, q.bid, l.c FROM %s w SPLICE JOIN quotes q ON (w.sym = q.sym) " +
+                    "JOIN LATERAL (SELECT count() c FROM quotes x WHERE x.sym = w.sym) l ON true";
+            assertQuery(leftSide.formatted(SORTED_SYMBOL_A_WINDOW_JOIN))
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Splice Join", "Encode sort\n", "keys: [ts]")
+                    .returns("sym\tts\tbid\tc\n" +
+                            "\t\t200.0\t0\n" +
+                            "\t\t201.0\t0\n" +
+                            "\t\t202.0\t0\n" +
+                            "\t\t203.0\t0\n" +
+                            "A\t" + d1 + "\t100.0\t6\n" +
+                            "A\t" + d1 + "\t101.0\t6\n" +
+                            "A\t" + d1Later + "\t102.0\t6\n" +
+                            "A\t" + d1Later + "\t103.0\t6\n" +
+                            "A\t" + d2 + "\t104.0\t6\n" +
+                            "A\t" + d2 + "\t105.0\t6\n");
+            assertSqlCursors(leftSide.formatted("(SELECT * FROM w_ref WHERE sym = 'A')"), leftSide.formatted(SORTED_SYMBOL_A_WINDOW_JOIN));
+
+            final String constantFalseOverCoveringIndex = "(SELECT * FROM (SELECT t.sym, avg(p.price) ap, t.ts FROM (SELECT ts, sym, price FROM ci WHERE sym = 'A') t " +
+                    "WINDOW JOIN prices p ON (t.sym = p.sym AND 1 = 0) RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW EXCLUDE PREVAILING ORDER BY t.ts) " +
+                    "WHERE rnd_double() < 2)";
+            assertQuery(bothSides.formatted(constantFalseOverCoveringIndex))
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Splice Join", "Async Filter", "CoveringIndex")
+                    .withPlanNotContaining("keys: [ts]")
+                    .returns(bothSidesRows);
         });
     }
 
@@ -9573,6 +10265,251 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowJoinSortedByTimestampKeepsElisionOutsideRowIdReaders() throws Exception {
+        // ORDER BY on the designated timestamp skips its sort over WINDOW JOIN rows that already arrive in that
+        // order, except where SPLICE JOIN or the single-threaded HORIZON JOIN reads them by row id. Plain queries
+        // and the other consumers keep skipping it. The shapes those two joins reject keep failing as before:
+        // a model that builds its own cursor stands between the ORDER BY and the join, a UNION offers no random
+        // access, or no ORDER BY on the timestamp is there to keep.
+        assertMemoryLeak(() -> {
+            createSpliceOverWindowJoinTables();
+            execute("CREATE TABLE w_ref AS (" + ROW_ID_JOIN_WINDOW_JOIN + " ORDER BY t.ts) TIMESTAMP(ts) PARTITION BY DAY");
+            final String leftType = leftTableTimestampType.getTypeName();
+            final String oneMinute = ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000";
+            final String symbolB = "(SELECT sym, ap, ts FROM w_ref WHERE sym = 'B')";
+            final String b1 = "B\t6.0\t" + replaceTimestampSuffix("2024-01-01T08:00:00.000000Z", leftType) + '\n';
+            final String b2 = "B\t6.0\t" + replaceTimestampSuffix("2024-01-01T08:00:05.000000Z", leftType) + '\n';
+            final String a1 = "A\t2.0\t" + replaceTimestampSuffix("2024-01-01T09:00:00.000000Z", leftType) + '\n';
+            final String a2 = "A\t3.0\t" + replaceTimestampSuffix("2024-01-01T09:00:10.000000Z", leftType) + '\n';
+            final String a3 = "A\t3.0\t" + replaceTimestampSuffix("2024-01-02T09:00:00.000000Z", leftType) + '\n';
+            sqlExecutionContext.setParallelWindowJoinEnabled(true);
+            assertQuery(ROW_ID_JOIN_WINDOW_JOIN + " ORDER BY t.ts")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .sizeMayVary()
+                    .withPlan("Async Window Fast Join workers: 1\n" +
+                            "  vectorized: true\n" +
+                            "  symbol: sym=sym\n" +
+                            "  window lo: " + oneMinute + " preceding (exclude prevailing)\n" +
+                            "  window hi: current row\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: trades\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: prices\n")
+                    .returns("sym\tap\tts\n" + b1 + b2 + a1 + a2 + a3);
+            // a UNION ALL of timestamp-ordered branches merges them in order
+            assertQuery("SELECT * FROM (" + SORTED_WINDOW_JOIN + " UNION ALL " + symbolB + ") ORDER BY ts")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .sizeMayVary()
+                    .withPlanContaining("UnionSymbolCast", "Union All Merge", "Async Window Fast Join")
+                    .withPlanNotContaining("sort", "Sort")
+                    .returns("sym\tap\tts\n" + b1 + b1 + b2 + b2 + a1 + a2 + a3);
+
+            // ASOF JOIN and WINDOW JOIN read their left-hand side in order and SAMPLE BY reads its input in order.
+            final String asOf = "SELECT w.sym, w.ap, w.ts, q.bid FROM %s w ASOF JOIN quotes q ON (w.sym = q.sym)";
+            assertQuery(asOf.formatted(SORTED_WINDOW_JOIN))
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .sizeMayVary()
+                    .withPlanContaining("AsOf Join")
+                    .withPlanNotContaining("sort", "Sort")
+                    .returns("sym\tap\tts\tbid\n" +
+                            b1.replace("\n", "\t200.0\n") +
+                            b2.replace("\n", "\t202.0\n") +
+                            a1.replace("\n", "\t100.0\n") +
+                            a2.replace("\n", "\t102.0\n") +
+                            a3.replace("\n", "\t104.0\n"));
+            assertSqlCursors(asOf.formatted("w_ref"), asOf.formatted(SORTED_WINDOW_JOIN));
+            final String windowJoin = "SELECT w.sym, w.ap, w.ts, sum(q.bid) sb FROM %s w WINDOW JOIN quotes q ON (w.sym = q.sym) " +
+                    "RANGE BETWEEN 1 SECOND PRECEDING AND CURRENT ROW EXCLUDE PREVAILING";
+            assertQuery(windowJoin.formatted(SORTED_WINDOW_JOIN))
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .sizeMayVary()
+                    .withPlanNotContaining("sort", "Sort")
+                    .returns("sym\tap\tts\tsb\n" +
+                            b1.replace("\n", "\t200.0\n") +
+                            b2.replace("\n", "\t202.0\n") +
+                            a1.replace("\n", "\t100.0\n") +
+                            a2.replace("\n", "\t102.0\n") +
+                            a3.replace("\n", "\t104.0\n"));
+            assertSqlCursors(windowJoin.formatted("w_ref"), windowJoin.formatted(SORTED_WINDOW_JOIN));
+            final String sampleBy = "SELECT ts, sum(ap) s, count() c FROM %s SAMPLE BY 1d";
+            assertQuery(sampleBy.formatted(SORTED_WINDOW_JOIN))
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .sizeMayVary()
+                    .withPlanNotContaining("sort", "Sort")
+                    .returns("ts\ts\tc\n" +
+                            replaceTimestampSuffix("2024-01-01T00:00:00.000000Z", leftType) + "\t17.0\t4\n" +
+                            replaceTimestampSuffix("2024-01-02T00:00:00.000000Z", leftType) + "\t3.0\t1\n");
+            // a hash join reads its sides in any order, so only the outer ORDER BY sorts
+            final String hashJoin = "SELECT w.sym, w.ap, w.ts, q.bid FROM %s w JOIN quotes q ON (w.sym = q.sym) ORDER BY w.ts, q.bid";
+            assertQuery(hashJoin.formatted(SORTED_WINDOW_JOIN))
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .sizeMayVary()
+                    .withPlanContaining("Hash Join", "keys: [ts, bid]")
+                    .withPlanNotContaining("keys: [ts]\n")
+                    .returns(queryResult(hashJoin.formatted("w_ref")));
+
+            // A sorted table scan has random access already.
+            assertQuery("SELECT * FROM (SELECT * FROM trades ORDER BY ts) t SPLICE JOIN quotes q")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanNotContaining("sort", "Sort")
+                    .returns(queryResult("SELECT * FROM trades t SPLICE JOIN quotes q"));
+            // A constant-false filter leaves no rows to sort.
+            assertQuery("SELECT * FROM (SELECT * FROM " + SORTED_WINDOW_JOIN + " WHERE 1 = 0) w SPLICE JOIN quotes q")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Empty table")
+                    .withPlanNotContaining("keys: [ts]")
+                    .returns(queryResult("SELECT * FROM (SELECT * FROM w_ref WHERE 1 = 0) w SPLICE JOIN quotes q"));
+            assertQuery(horizonOverMaster("(SELECT * FROM " + SORTED_WINDOW_JOIN + " WHERE 1 = 0)"))
+                    .noLeakCheck()
+                    .sizeMayVary()
+                    .withPlanContaining("Empty table")
+                    .withPlanNotContaining("keys: [ts]")
+                    .returns("offset\tsym\tc\tsap\tab\n");
+            // A window function that orders against the scan caches its rows and offers random access.
+            final String descendingWindow = "SELECT * FROM (SELECT sym, ap, ts, sum(ap) OVER (PARTITION BY sym ORDER BY ts DESC) s FROM %s) w SPLICE JOIN quotes q";
+            assertQuery(descendingWindow.formatted(SORTED_WINDOW_JOIN))
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("CachedWindow")
+                    .withPlanNotContaining("Encode sort")
+                    .returns(queryResult(descendingWindow.formatted("w_ref")));
+
+            final String horizonRejection = "left-hand side of HORIZON JOIN can only be a table with an optional filter";
+            final String spliceRejection = "left side of splice join doesn't support random access";
+            final String noTimestamp = "left side of time series join has no timestamp";
+            final String descending = "left side of time series join doesn't have ASC timestamp order";
+            final String latest = "(SELECT * FROM " + SORTED_WINDOW_JOIN + " LATEST ON ts PARTITION BY sym)";
+            final String laterTradesOfB = "(SELECT sym, ap, dateadd('s', 1, ts) ts FROM w_ref WHERE sym = 'B')";
+            final String sortedUnion = "(SELECT * FROM (" + SORTED_WINDOW_JOIN + " UNION ALL " + symbolB + ") ORDER BY ts)";
+            final String[][] failures = {
+                    // SAMPLE BY and GROUP BY build their own cursors
+                    {"SELECT h.offset, count() c, avg(q.bid) ab FROM (SELECT ts, sym, avg(ap) ap FROM " + SORTED_WINDOW_JOIN + " SAMPLE BY 1d) w " +
+                            "HORIZON JOIN quotes q ON (w.sym = q.sym) LIST (0s, 1s) AS h ORDER BY 1", "HORIZON", horizonRejection},
+                    {"SELECT h.offset, count() c, avg(q.bid) ab FROM (SELECT sym, avg(ap) ap, max(ts) ts FROM " + SORTED_WINDOW_JOIN + ") w " +
+                            "HORIZON JOIN quotes q ON (w.sym = q.sym) LIST (0s, 1s) AS h ORDER BY 1", "HORIZON", noTimestamp},
+                    // over random access LATEST ON emits rows in key order, so no sort goes below it
+                    {horizonOverMaster("(SELECT sym, ap, ts FROM " + SORTED_WINDOW_JOIN + " LATEST ON ts PARTITION BY sym)"), "HORIZON", horizonRejection},
+                    {"SELECT * FROM " + latest + " w SPLICE JOIN quotes q", "SPLICE", spliceRejection},
+                    {horizonOverMaster("(" + latest + " TIMESTAMP(ts))"), "HORIZON", horizonRejection},
+                    {"SELECT * FROM (" + latest + " TIMESTAMP(ts)) w SPLICE JOIN quotes q", "SPLICE", spliceRejection},
+                    // window functions that order with the scan stream their rows
+                    {"SELECT * FROM (SELECT sym, ap, ts, sum(ap) OVER (PARTITION BY sym ORDER BY ts) s FROM " + SORTED_WINDOW_JOIN + ") w " +
+                            "SPLICE JOIN quotes q", "SPLICE", spliceRejection},
+                    {"SELECT * FROM (SELECT sym, ap, ts, first_value(ap) OVER (PARTITION BY sym ORDER BY ts " +
+                            "ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) s FROM " + SORTED_WINDOW_JOIN + ") w " +
+                            "SPLICE JOIN quotes q", "SPLICE", spliceRejection},
+                    // UNION and UNION ALL offer no random access
+                    {"SELECT * FROM (" + SORTED_WINDOW_JOIN + " UNION ALL " + symbolB + ") w SPLICE JOIN quotes q", "SPLICE", noTimestamp},
+                    {"SELECT * FROM (" + sortedUnion + " UNION ALL " + laterTradesOfB + ") w SPLICE JOIN quotes q", "SPLICE", spliceRejection},
+                    {horizonOverMaster("(" + sortedUnion + " UNION ALL " + laterTradesOfB + ")"), "HORIZON", noTimestamp},
+                    {"SELECT * FROM ((" + SORTED_WINDOW_JOIN + " EXCEPT " + symbolB + ") UNION ALL " + laterTradesOfB + ") w SPLICE JOIN quotes q", "SPLICE", noTimestamp},
+                    {"SELECT * FROM (" + SORTED_WINDOW_JOIN + " UNION " + symbolB + ") w SPLICE JOIN quotes q", "SPLICE", noTimestamp},
+                    // a join offers no random access
+                    {"SELECT * FROM (SELECT * FROM " + SORTED_WINDOW_JOIN + " a ASOF JOIN quotes b ON (a.sym = b.sym)) w SPLICE JOIN quotes q", "SPLICE", spliceRejection},
+                    // a SPLICE JOIN after another join reads that join, which offers no random access
+                    {"SELECT * FROM " + SORTED_WINDOW_JOIN + " w JOIN prices p ON (w.sym = p.sym) SPLICE JOIN quotes q", "SPLICE", spliceRejection},
+                    // no ORDER BY on the timestamp of the sub-query
+                    {"SELECT * FROM (" + ROW_ID_JOIN_WINDOW_JOIN + ") w SPLICE JOIN quotes q ORDER BY w.ts", "SPLICE", spliceRejection},
+                    {"SELECT * FROM (" + ROW_ID_JOIN_WINDOW_JOIN + ") w SPLICE JOIN quotes q", "SPLICE", spliceRejection},
+                    {"SELECT * FROM ((" + ROW_ID_JOIN_WINDOW_JOIN + ") TIMESTAMP(ts)) w SPLICE JOIN quotes q", "SPLICE", spliceRejection},
+                    {horizonOverMaster("((" + ROW_ID_JOIN_WINDOW_JOIN + ") TIMESTAMP(ts))"), "HORIZON", horizonRejection},
+                    // a descending order
+                    {"SELECT * FROM (" + ROW_ID_JOIN_WINDOW_JOIN + " ORDER BY t.ts DESC) w SPLICE JOIN quotes q", "SPLICE", descending},
+                    {horizonOverMaster("(" + ROW_ID_JOIN_WINDOW_JOIN + " ORDER BY t.ts DESC)"), "HORIZON", descending},
+                    {"SELECT * FROM (SELECT * FROM '*!*ti' ORDER BY ts DESC) w SPLICE JOIN quotes q", "SPLICE", descending},
+                    // the right-hand side of HORIZON JOIN
+                    {"SELECT h.offset, count() c, avg(w.ap) aap FROM quotes q HORIZON JOIN " + SORTED_WINDOW_JOIN + " w ON (q.sym = w.sym) " +
+                            "LIST (0s, 1s) AS h ORDER BY 1", "HORIZON", "right-hand side of HORIZON JOIN can only be a table with an optional filter"},
+                    // a right-hand side of HORIZON JOIN that nests a SPLICE JOIN
+                    {"SELECT h.offset, count() c, avg(q.bid) ab FROM trades t HORIZON JOIN (SELECT * FROM (SELECT ts, sym, bid FROM quotes " +
+                            "WHERE bid > 0 ORDER BY ts) a SPLICE JOIN quotes b ON (a.sym = b.sym)) q ON (t.sym = q.sym) LIST (0s) AS h ORDER BY 1",
+                            "(SELECT", "TIMESTAMP column is required but not provided"}
+            };
+            for (boolean isParallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                for (String[] failure : failures) {
+                    final String query = failure[0];
+                    final int position = "(SELECT".equals(failure[1]) ? query.indexOf(failure[1]) + 1 : query.indexOf(failure[1] + " JOIN");
+                    assertExceptionNoLeakCheck(query, position, failure[2]);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testWindowJoinSortedByTimestampReachesJoinThroughProjection() throws Exception {
+        // Projections, filters and another ORDER BY between the HORIZON JOIN and the sorted WINDOW JOIN keep the
+        // order and pass the missing random access on, so ORDER BY keeps a single sort below them. A filter above
+        // the sort runs serially, since the sort offers no page frames.
+        assertMemoryLeak(() -> {
+            createHorizonOverWindowJoinTables();
+            execute("CREATE TABLE w_ref AS (" + ROW_ID_JOIN_WINDOW_JOIN + " ORDER BY t.ts) TIMESTAMP(ts) PARTITION BY DAY");
+            final String oneSecond = oneSecondOffset();
+            // Trades of A average 2.0, 3.0 and 3.0 and see the quotes 100, 102 and 104 at offset 0, trades of B
+            // average 6.0 and 6.0 and see 200 and 202; at 1s each quote is one higher.
+            final String allTrades = "offset\tsym\tc\tsap\tab\n" +
+                    "0\tA\t3\t8.0\t102.0\n" +
+                    "0\tB\t2\t12.0\t201.0\n" +
+                    oneSecond + "\tA\t3\t8.0\t103.0\n" +
+                    oneSecond + "\tB\t2\t12.0\t202.0\n";
+            final String[][] masters = {
+                    {"(SELECT sym, ap * 2 ap, ts FROM %1$s)", "offset\tsym\tc\tsap\tab\n" +
+                            "0\tA\t3\t16.0\t102.0\n" +
+                            "0\tB\t2\t24.0\t201.0\n" +
+                            oneSecond + "\tA\t3\t16.0\t103.0\n" +
+                            oneSecond + "\tB\t2\t24.0\t202.0\n"},
+                    // the trade of A at 09:00:00 averages 2.0
+                    {"(SELECT * FROM %1$s WHERE ap > 2.5)", "offset\tsym\tc\tsap\tab\n" +
+                            "0\tA\t2\t6.0\t103.0\n" +
+                            "0\tB\t2\t12.0\t201.0\n" +
+                            oneSecond + "\tA\t2\t6.0\t104.0\n" +
+                            oneSecond + "\tB\t2\t12.0\t202.0\n"},
+                    {"(SELECT * FROM %1$s ORDER BY ts)", allTrades},
+                    // the trades of B average the maximum, 6.0
+                    {"(SELECT sym, ap, ts FROM %1$s WHERE ap < (SELECT max(ap) FROM %1$s))", "offset\tsym\tc\tsap\tab\n" +
+                            "0\tA\t3\t8.0\t102.0\n" +
+                            oneSecond + "\tA\t3\t8.0\t103.0\n"},
+                    {"(SELECT * FROM %1$s WHERE rnd_double() < 2)", allTrades},
+                    {"(SELECT * FROM %1$s WHERE now() > '2000-01-01')", allTrades}
+            };
+            for (String[] master : masters) {
+                final String query = horizonOverMaster(master[0].formatted(SORTED_WINDOW_JOIN));
+                assertQuery(query)
+                        .noLeakCheck()
+                        .sizeMayVary()
+                        .withPlanContaining("Horizon Join", "Encode sort\n", "keys: [ts]")
+                        .withPlanNotContaining("Async Horizon Join", "Async Filter", "Async JIT Filter")
+                        .returns(master[1]);
+                assertSqlCursors(horizonOverMaster(master[0].formatted("w_ref")), query);
+                Assert.assertEquals(query, 1, countTimestampSorts(query));
+            }
+            final String renamed = "SELECT h.offset, w.s, count() c, sum(w.ap) sap, avg(q.bid) ab FROM (SELECT sym s, ap, ts FROM %s) w " +
+                    "HORIZON JOIN quotes q ON (w.s = q.sym) LIST (0s, 1s) AS h ORDER BY 1, 2";
+            assertQuery(renamed.formatted(SORTED_WINDOW_JOIN))
+                    .noLeakCheck()
+                    .sizeMayVary()
+                    .withPlanContaining("Horizon Join", "Encode sort\n", "keys: [ts]")
+                    .returns(allTrades.replace("offset\tsym", "offset\ts"));
+            assertSqlCursors(renamed.formatted("w_ref"), renamed.formatted(SORTED_WINDOW_JOIN));
+        });
+    }
+
+    @Test
     public void testWindowJoinStaticWindowOverflow() throws Exception {
         // A static FOLLOWING bound large enough to push masterTs + windowHi past Long.MAX_VALUE. The
         // designated timestamp is never negative, so this is the only direction the frame arithmetic
@@ -11288,6 +12225,37 @@ public class WindowJoinTest extends AbstractCairoTest {
         Assert.assertTrue("expected at least one non-null aggregate in the oracle for: " + context, hasAggregate);
     }
 
+    // Counts the full sorts by the designated timestamp alone in the plan of the query.
+    private static int countTimestampSorts(String query) throws SqlException {
+        final StringSink plan = new StringSink();
+        printSql("EXPLAIN " + query, plan);
+        final Matcher matcher = Pattern.compile("Encode sort\\n\\s*keys: \\[ts]\\n").matcher(plan);
+        int count = 0;
+        while (matcher.find()) {
+            count++;
+        }
+        return count;
+    }
+
+    // A DECIMAL(precision, scale) column value for the typed_trades rows: NULL for the trade of price 1.0, the
+    // largest value of the type for the trade of 2.0, and a negative value that ends in the price otherwise.
+    private static String decimalOfRow(int precision, int scale, String negativePrefix) {
+        final String largest = "9".repeat(precision - scale) + '.' + "9".repeat(scale);
+        return "CASE WHEN price = 1.0 THEN NULL WHEN price = 2.0 THEN '" + largest + "' ELSE '" + negativePrefix +
+                "' || price::INT END::DECIMAL(" + precision + ',' + scale + ')';
+    }
+
+    // A keyed HORIZON JOIN of the quotes over the given left-hand side, which carries sym, ap and ts.
+    private static String horizonOverMaster(String master) {
+        return "SELECT h.offset, w.sym, count() c, sum(w.ap) sap, avg(q.bid) ab FROM " + master +
+                " w HORIZON JOIN quotes q ON (w.sym = q.sym) LIST (0s, 1s) AS h ORDER BY 1, 2";
+    }
+
+    // A SPLICE JOIN on sym of the quotes against the given left-hand side, which carries sym, ap and ts.
+    private static String spliceOverOperand(String operand) {
+        return "SELECT w.sym, w.ap, w.ts, q.sym qsym, q.bid, q.ts qts FROM " + operand + " w SPLICE JOIN quotes q ON (w.sym = q.sym)";
+    }
+
     /**
      * Pins that the parallel knob actually routed the query to the async window-join factory - and that
      * the serial arm did not. Without this, a future gate change could silently degenerate a
@@ -11303,6 +12271,85 @@ public class WindowJoinTest extends AbstractCairoTest {
         } else {
             assertQuery(query).noLeakCheck().assertsPlanNotContaining("Async Window ");
         }
+    }
+
+    private void assertRowIdJoinDataShapes(boolean isWal, boolean isParquet) throws Exception {
+        final String leftType = leftTableTimestampType.getTypeName();
+        final String rightType = rightTableTimestampType.getTypeName();
+        final String wal = isWal ? " WAL" : " BYPASS WAL";
+        executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY" + wal, leftType);
+        executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY" + wal, rightType);
+        executeWithRewriteTimestamp("CREATE TABLE quotes (ts #TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts) PARTITION BY DAY" + wal, rightType);
+        // Trades in groups of five at one timestamp, one of each symbol s0..s4, the trade of s0 of every tenth
+        // group without a symbol, plus a trade at the epoch and one in 2200.
+        execute("INSERT INTO trades SELECT ('2024-01-01T00:00:00.000000Z'::TIMESTAMP + (x / 5) * 997_000_000)::TIMESTAMP, " +
+                "CASE WHEN x % 50 = 0 THEN NULL ELSE 's' || (x % 5) END::SYMBOL, x::DOUBLE FROM long_sequence(2_000)");
+        execute("INSERT INTO trades VALUES ('1970-01-01T00:00:00.000000Z', 's1', -1.0), ('2200-01-01T00:00:00.000000Z', 's2', -2.0)");
+        // A price of each of seven symbols every 217s, so a trade's one-minute window holds one price of its
+        // symbol or none.
+        execute("INSERT INTO prices SELECT ('2024-01-01T00:00:00.000000Z'::TIMESTAMP + x * 31_000_000)::TIMESTAMP, " +
+                "('s' || (x % 7))::SYMBOL, x::DOUBLE FROM long_sequence(13_000)");
+        execute("INSERT INTO prices VALUES ('1970-01-01T00:00:00.000000Z', 's1', 7.0), ('2199-12-31T23:59:30.000000Z', 's2', 8.0)");
+        execute("INSERT INTO quotes SELECT ('2024-01-01T00:00:00.000000Z'::TIMESTAMP + x * 47_000_000)::TIMESTAMP, " +
+                "('s' || (x % 5))::SYMBOL, x::DOUBLE FROM long_sequence(8_500)");
+        execute("INSERT INTO quotes VALUES ('1970-01-01T00:00:00.000000Z', 's1', -7.0), ('2200-01-01T00:00:01.000000Z', 's2', -8.0)");
+        drainWalQueue();
+        if (isParquet) {
+            execute("ALTER TABLE trades CONVERT PARTITION TO PARQUET WHERE ts >= '2024-01-01' AND ts < '2200-01-01'");
+            execute("ALTER TABLE prices CONVERT PARTITION TO PARQUET WHERE ts >= '2024-01-01' AND ts < '2199-12-31'");
+            drainWalQueue();
+        }
+        final String createReference = "CREATE TABLE w_ref AS (" + ROW_ID_JOIN_WINDOW_JOIN + " ORDER BY t.ts) TIMESTAMP(ts) PARTITION BY DAY";
+        execute(createReference);
+        final String horizon = horizonOverMaster(SORTED_WINDOW_JOIN);
+        final String horizonReference = horizonOverMaster("w_ref");
+        // A keyed SPLICE JOIN reads the trades of one symbol, whose timestamps are distinct.
+        final String splice = spliceOverOperand("(" + ROW_ID_JOIN_WINDOW_JOIN + " WHERE t.sym = 's1' ORDER BY t.ts)");
+        final String spliceReference = spliceOverOperand("(SELECT * FROM w_ref WHERE sym = 's1')");
+        assertQuery(splice)
+                .noLeakCheck()
+                .noRandomAccess()
+                .withPlanContaining("Splice Join", "Encode sort\n", "keys: [ts]")
+                .returns(queryResult(spliceReference));
+        try (RecordCursorFactory factory = select(horizon)) {
+            assertFactory(factory).withContext(sqlExecutionContext).sizeMayVary().returns(queryResult(horizonReference));
+            // The next cursor of the same factory reads the trades inserted after it was compiled.
+            execute("INSERT INTO trades SELECT ('2024-01-06T00:00:00.000000Z'::TIMESTAMP + x * 13_000_000)::TIMESTAMP, " +
+                    "('s' || (x % 5))::SYMBOL, x::DOUBLE FROM long_sequence(100)");
+            drainWalQueue();
+            execute("DROP TABLE w_ref");
+            execute(createReference);
+            assertFactory(factory).withContext(sqlExecutionContext).sizeMayVary().returns(queryResult(horizonReference));
+        }
+        execute("ALTER TABLE trades ADD COLUMN extra INT");
+        drainWalQueue();
+        try (RecordCursorFactory factory = select(horizon)) {
+            assertFactory(factory).withContext(sqlExecutionContext).sizeMayVary().returns(queryResult(horizonReference));
+            execute("TRUNCATE TABLE trades");
+            drainWalQueue();
+            assertFactory(factory).withContext(sqlExecutionContext).sizeMayVary().returns("offset\tsym\tc\tsap\tab\n");
+        }
+        // Without trades every quote pairs with no trade.
+        execute("DROP TABLE w_ref");
+        execute(createReference);
+        assertQuery(splice.replace(" WHERE t.sym = 's1'", ""))
+                .noLeakCheck()
+                .noRandomAccess()
+                .withPlanContaining("Splice Join", "Encode sort\n", "keys: [ts]")
+                .returns(queryResult(spliceOverOperand("w_ref")));
+        // a single trade
+        execute("INSERT INTO trades (ts, sym, price) VALUES ('2024-01-02T00:00:20.000000Z', 's1', 1.0)");
+        drainWalQueue();
+        execute("DROP TABLE w_ref");
+        execute(createReference);
+        assertQuery(horizon)
+                .noLeakCheck()
+                .sizeMayVary()
+                .returns(queryResult(horizonReference));
+        execute("DROP TABLE w_ref");
+        execute("DROP TABLE trades");
+        execute("DROP TABLE prices");
+        execute("DROP TABLE quotes");
     }
 
     /**
@@ -11408,6 +12455,36 @@ public class WindowJoinTest extends AbstractCairoTest {
                   ('b', 3.0, '2024-01-08T10:00:00.000000Z', '2024-01-01T09:01:30.000000Z')""");
     }
 
+    // Trades of symbols A and B, two of them at 09:00:00, the prices their WINDOW JOIN averages to 2.0, 6.0, 3.0,
+    // 3.0 and 6.0 in trade order, and quotes of each trade's symbol 0s and 1s after the trade.
+    private void createHorizonOverWindowJoinTables() throws SqlException {
+        createRowIdJoinTables(
+                """
+                        ('2024-01-01T09:00:00.000000Z', 'A', 1.0),
+                        ('2024-01-01T09:00:00.000000Z', 'B', 2.0),
+                        ('2024-01-01T09:00:10.000000Z', 'A', 3.0),
+                        ('2024-01-02T09:00:00.000000Z', 'A', 5.0),
+                        ('2024-01-02T09:00:05.000000Z', 'B', 4.0)""",
+                """
+                        ('2024-01-01T08:59:30.000000Z', 'A', 2.0),
+                        ('2024-01-01T08:59:50.000000Z', 'B', 6.0),
+                        ('2024-01-01T09:00:05.000000Z', 'A', 4.0),
+                        ('2024-01-02T08:59:30.000000Z', 'A', 3.0),
+                        ('2024-01-02T09:00:01.000000Z', 'B', 6.0)""",
+                """
+                        ('2024-01-01T09:00:00.000000Z', 'A', 100.0),
+                        ('2024-01-01T09:00:00.000000Z', 'B', 200.0),
+                        ('2024-01-01T09:00:01.000000Z', 'A', 101.0),
+                        ('2024-01-01T09:00:01.000000Z', 'B', 201.0),
+                        ('2024-01-01T09:00:10.000000Z', 'A', 102.0),
+                        ('2024-01-01T09:00:11.000000Z', 'A', 103.0),
+                        ('2024-01-02T09:00:00.000000Z', 'A', 104.0),
+                        ('2024-01-02T09:00:01.000000Z', 'A', 105.0),
+                        ('2024-01-02T09:00:05.000000Z', 'B', 202.0),
+                        ('2024-01-02T09:00:06.000000Z', 'B', 203.0)"""
+        );
+    }
+
     private void createNonNullEmptyValueTable() throws SqlException {
         // Same symbols, timestamps and pts2 as cz_prices, with LONG, IPV4 and coordinate columns for
         // the aggregates whose empty window reports a non-NULL value.
@@ -11421,6 +12498,70 @@ public class WindowJoinTest extends AbstractCairoTest {
                   ('a', 1, '10.0.0.1', 10.0, 20.0, '2024-01-08T10:00:00.000000Z', '2024-01-01T08:59:30.000000Z'),
                   ('a', 2, '10.0.0.2', 11.0, 21.0, '2024-01-08T10:00:00.000000Z', '2024-01-01T09:00:30.000000Z'),
                   ('b', 3, '10.0.0.3', 12.0, 22.0, '2024-01-08T10:00:00.000000Z', '2024-01-01T09:01:30.000000Z')""");
+    }
+
+    // Creates trades with the given rows, ti and ci as copies of trades with a symbol index and a covering
+    // index, prices and quotes. The trades take the left-hand timestamp type, prices and quotes the right-hand one.
+    private void createRowIdJoinTables(String tradeRows, String priceRows, String quoteRows) throws SqlException {
+        final String leftType = leftTableTimestampType.getTypeName();
+        final String rightType = rightTableTimestampType.getTypeName();
+        executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY", leftType);
+        executeWithRewriteTimestamp("CREATE TABLE ti (ts #TIMESTAMP, sym SYMBOL INDEX, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY", leftType);
+        executeWithRewriteTimestamp(
+                "CREATE TABLE ci (ts #TIMESTAMP, sym SYMBOL INDEX TYPE POSTING EF INCLUDE (price), price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY",
+                leftType
+        );
+        executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY", rightType);
+        executeWithRewriteTimestamp("CREATE TABLE quotes (ts #TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts) PARTITION BY DAY", rightType);
+        execute("INSERT INTO trades VALUES " + tradeRows);
+        execute("INSERT INTO ti VALUES " + tradeRows);
+        execute("INSERT INTO ci VALUES " + tradeRows);
+        execute("INSERT INTO prices VALUES " + priceRows);
+        execute("INSERT INTO quotes VALUES " + quoteRows);
+        if (leftConvertParquet) {
+            execute("ALTER TABLE trades CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+        }
+        if (rightConvertParquet) {
+            execute("ALTER TABLE prices CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+            execute("ALTER TABLE quotes CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+        }
+        drainWalQueue();
+    }
+
+    // Trades of symbol B before those of symbol A, at distinct timestamps, the prices their WINDOW JOIN averages to
+    // 6.0, 6.0, 2.0, 3.0 and 3.0 in trade order, and quotes of each trade's symbol 0s and 1s after the trade. A
+    // keyed SPLICE JOIN of these rows reads one key on its trade side: SPLICE JOIN pairs a quote that falls
+    // between a trade of its symbol and a trade of another symbol with an earlier trade of its symbol.
+    private void createSpliceOverWindowJoinTables() throws SqlException {
+        createRowIdJoinTables(
+                """
+                        ('2024-01-01T08:00:00.000000Z', 'B', 2.0),
+                        ('2024-01-01T08:00:05.000000Z', 'B', 4.0),
+                        ('2024-01-01T09:00:00.000000Z', 'A', 1.0),
+                        ('2024-01-01T09:00:10.000000Z', 'A', 3.0),
+                        ('2024-01-02T09:00:00.000000Z', 'A', 5.0)""",
+                """
+                        ('2024-01-01T07:59:50.000000Z', 'B', 6.0),
+                        ('2024-01-01T08:59:30.000000Z', 'A', 2.0),
+                        ('2024-01-01T09:00:05.000000Z', 'A', 4.0),
+                        ('2024-01-02T08:59:30.000000Z', 'A', 3.0)""",
+                """
+                        ('2024-01-01T08:00:00.000000Z', 'B', 200.0),
+                        ('2024-01-01T08:00:01.000000Z', 'B', 201.0),
+                        ('2024-01-01T08:00:05.000000Z', 'B', 202.0),
+                        ('2024-01-01T08:00:06.000000Z', 'B', 203.0),
+                        ('2024-01-01T09:00:00.000000Z', 'A', 100.0),
+                        ('2024-01-01T09:00:01.000000Z', 'A', 101.0),
+                        ('2024-01-01T09:00:10.000000Z', 'A', 102.0),
+                        ('2024-01-01T09:00:11.000000Z', 'A', 103.0),
+                        ('2024-01-02T09:00:00.000000Z', 'A', 104.0),
+                        ('2024-01-02T09:00:01.000000Z', 'A', 105.0)"""
+        );
+    }
+
+    // One second in the unit of the master's timestamp, the unit HORIZON JOIN reports its offsets in.
+    private String oneSecondOffset() {
+        return ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "1000000" : "1000000000";
     }
 
     // A parallel join lays out a right-side partition that the pooled reader has not opened from table
@@ -11517,5 +12658,37 @@ public class WindowJoinTest extends AbstractCairoTest {
             execute("ALTER TABLE prices CONVERT PARTITION TO PARQUET WHERE ts >= 0");
         }
         drainWalQueue();
+    }
+
+    private String queryResult(String query) throws SqlException {
+        final StringSink result = new StringSink();
+        printSql(query, result);
+        return result.toString();
+    }
+
+    // The rows a SPLICE JOIN on sym returns for the trades of symbol A and the quotes of
+    // createSpliceOverWindowJoinTables(): each quote with the trade of its symbol that prevails at the quote, and
+    // the quotes of B, which no trade of B precedes, with a NULL trade. Without the last trade, its two quotes take
+    // the trade of 09:00:10.
+    private String spliceOfSymbolARows(String ap0, String ap1, String ap2, boolean isLastTradeMissing) {
+        final String leftType = leftTableTimestampType.getTypeName();
+        final String rightType = rightTableTimestampType.getTypeName();
+        final String trade0 = "A\t" + ap0 + '\t' + replaceTimestampSuffix("2024-01-01T09:00:00.000000Z", leftType);
+        final String trade1 = "A\t" + ap1 + '\t' + replaceTimestampSuffix("2024-01-01T09:00:10.000000Z", leftType);
+        final String trade2 = isLastTradeMissing
+                ? trade1
+                : "A\t" + ap2 + '\t' + replaceTimestampSuffix("2024-01-02T09:00:00.000000Z", leftType);
+        final String noTrade = "\tnull\t";
+        return "sym\tap\tts\tqsym\tbid\tqts\n" +
+                noTrade + "\tB\t200.0\t" + replaceTimestampSuffix("2024-01-01T08:00:00.000000Z", rightType) + '\n' +
+                noTrade + "\tB\t201.0\t" + replaceTimestampSuffix("2024-01-01T08:00:01.000000Z", rightType) + '\n' +
+                noTrade + "\tB\t202.0\t" + replaceTimestampSuffix("2024-01-01T08:00:05.000000Z", rightType) + '\n' +
+                noTrade + "\tB\t203.0\t" + replaceTimestampSuffix("2024-01-01T08:00:06.000000Z", rightType) + '\n' +
+                trade0 + "\tA\t100.0\t" + replaceTimestampSuffix("2024-01-01T09:00:00.000000Z", rightType) + '\n' +
+                trade0 + "\tA\t101.0\t" + replaceTimestampSuffix("2024-01-01T09:00:01.000000Z", rightType) + '\n' +
+                trade1 + "\tA\t102.0\t" + replaceTimestampSuffix("2024-01-01T09:00:10.000000Z", rightType) + '\n' +
+                trade1 + "\tA\t103.0\t" + replaceTimestampSuffix("2024-01-01T09:00:11.000000Z", rightType) + '\n' +
+                trade2 + "\tA\t104.0\t" + replaceTimestampSuffix("2024-01-02T09:00:00.000000Z", rightType) + '\n' +
+                trade2 + "\tA\t105.0\t" + replaceTimestampSuffix("2024-01-02T09:00:01.000000Z", rightType) + '\n';
     }
 }
