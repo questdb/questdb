@@ -6643,7 +6643,7 @@ public class MatViewTest extends AbstractCairoTest {
                     "view_sql, view_status, " + txnColumns() + ", refresh_period_hi, timer_time_zone, timer_start, " +
                     "timer_interval, timer_interval_unit, period_length, period_length_unit, period_delay, period_delay_unit " +
                     "from materialized_views";
-            // no base row lies before 00:00, but the view is refreshed up to the end of the last complete period
+            // no base row lies before 00:00, but the refresh still records the end of the last complete period
             assertQuery(matViewsSql)
                     .noRandomAccess()
                     .noLeakCheck()

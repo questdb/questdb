@@ -1126,7 +1126,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     if (periodLo == Numbers.LONG_NULL) {
                         periodLo = baseTableReader.getMinTimestamp();
                     }
-                    if (periodLo < periodHi) {
+                    // [periodLo, periodHi] includes both ends, so it holds a row even when the base table's first
+                    // row lies on periodHi itself.
+                    if (periodLo <= periodHi) {
                         if (refreshIntervals != null) {
                             unionIntervals(refreshIntervals, periodLo, periodHi);
                             minTs = refreshIntervals.getQuick(0);

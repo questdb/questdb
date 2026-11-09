@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.mv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
@@ -65,6 +66,18 @@ public class MatViewPeriodRefreshTest extends AbstractCairoTest {
 
     public MatViewPeriodRefreshTest(TestTimestampType timestampType) {
         this.timestampType = timestampType;
+    }
+
+    // Commits rows with the value v at the given timestamps to the table "base", replacing its rows in [lo, hi).
+    public static void replaceRange(CairoEngine engine, TimestampDriver driver, String lo, String hi, int v, String... timestamps) {
+        try (WalWriter walWriter = engine.getWalWriter(engine.verifyTableName("base"))) {
+            for (String timestamp : timestamps) {
+                final TableWriter.Row row = walWriter.newRow(driver.parseFloorLiteral(timestamp));
+                row.putInt(0, v);
+                row.append();
+            }
+            walWriter.commitWithParams(driver.parseFloorLiteral(lo), driver.parseFloorLiteral(hi), WAL_DEDUP_MODE_REPLACE_RANGE);
+        }
     }
 
     @Parameterized.Parameters(name = "{0}")
@@ -153,7 +166,7 @@ public class MatViewPeriodRefreshTest extends AbstractCairoTest {
             final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
             drain(timerJob);
 
-            // Neither view has rows to refresh, but both are refreshed up to the end of the last complete period.
+            // Neither view has rows to refresh, but both refreshes record the end of the last complete period.
             assertPeriodHi("empty_mv", "2022-01-02T05:00:00.000000Z");
             assertPeriodHi("late_mv", "2022-01-02T05:00:00.000000Z");
             assertView("empty_mv", "min_v\tmax_v\tts\n");
@@ -204,7 +217,8 @@ public class MatViewPeriodRefreshTest extends AbstractCairoTest {
             execute("create materialized view mv refresh manual period (length 7h) as " + viewSql("base", "4h"));
             drainWalAndMatViewQueues();
 
-            replace("2022-01-02T00:13", "2022-01-02T17:00", 1, "2022-01-02T07:34", "2022-01-02T09:38");
+            final TimestampDriver driver = timestampType.getDriver();
+            replaceRange(engine, driver, "2022-01-02T00:13", "2022-01-02T17:00", 1, "2022-01-02T07:34", "2022-01-02T09:38");
             refreshIncremental();
             final String withRowsOfFirstReplace = """
                     min_v\tmax_v\tts
@@ -212,7 +226,7 @@ public class MatViewPeriodRefreshTest extends AbstractCairoTest {
                     """;
             assertView("mv", withRowsOfFirstReplace);
 
-            replace("2022-01-02T05:24", "2022-01-02T22:12", 2, "2022-01-02T12:45");
+            replaceRange(engine, driver, "2022-01-02T05:24", "2022-01-02T22:12", 2, "2022-01-02T12:45");
             refreshIncremental();
             assertView("mv", withRowsOfFirstReplace);
 
@@ -245,7 +259,8 @@ public class MatViewPeriodRefreshTest extends AbstractCairoTest {
             final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
             drain(timerJob);
 
-            replace("2022-01-01T19:00", "2022-01-02T06:00", 1, "2022-01-01T23:30");
+            final TimestampDriver driver = timestampType.getDriver();
+            replaceRange(engine, driver, "2022-01-01T19:00", "2022-01-02T06:00", 1, "2022-01-01T23:30");
             drain(timerJob);
             final String withRowOfFirstReplace = """
                     min_v\tmax_v\tts
@@ -253,7 +268,7 @@ public class MatViewPeriodRefreshTest extends AbstractCairoTest {
                     """;
             assertView("mv", withRowOfFirstReplace);
 
-            replace("2022-01-01T23:15", "2022-01-02T12:00", 2, "2022-01-02T10:00");
+            replaceRange(engine, driver, "2022-01-01T23:15", "2022-01-02T12:00", 2, "2022-01-02T10:00");
             drain(timerJob);
             assertView("mv", withRowOfFirstReplace);
 
@@ -330,19 +345,6 @@ public class MatViewPeriodRefreshTest extends AbstractCairoTest {
         execute("create table " + tableName + " (v int, ts " + timestampType.getTypeName() + ") timestamp(ts) partition by DAY WAL");
     }
 
-    // Commits rows with the value v at the given timestamps, replacing the rows in [lo, hi) of the base table.
-    private void replace(String lo, String hi, int v, String... timestamps) {
-        final TimestampDriver driver = timestampType.getDriver();
-        try (WalWriter walWriter = engine.getWalWriter(engine.verifyTableName("base"))) {
-            for (String timestamp : timestamps) {
-                final TableWriter.Row row = walWriter.newRow(driver.parseFloorLiteral(timestamp));
-                row.putInt(0, v);
-                row.append();
-            }
-            walWriter.commitWithParams(driver.parseFloorLiteral(lo), driver.parseFloorLiteral(hi), WAL_DEDUP_MODE_REPLACE_RANGE);
-        }
-    }
-
     // At 10:30, creates the view "mv" over the table "base", empty or with a row at baseRowTs, then alters its period
     // so that the last complete period ends earlier than the recorded end. A row written afterwards between the two
     // ends must reach the view once its period completes, at rowPeriodHi.
@@ -400,7 +402,8 @@ public class MatViewPeriodRefreshTest extends AbstractCairoTest {
 
             // A range replace that starts in the complete period writes rows in the incomplete one. The refresh stops
             // at 05:00, but the bucket that it recomputes, [04:00, 08:00), takes in the 07:34 row.
-            replace("2022-01-02T00:13", "2022-01-02T17:00", 1, "2022-01-02T07:34", "2022-01-02T09:38");
+            final TimestampDriver driver = timestampType.getDriver();
+            replaceRange(engine, driver, "2022-01-02T00:13", "2022-01-02T17:00", 1, "2022-01-02T07:34", "2022-01-02T09:38");
             drain(timerJob);
             final String withRowsOfFirstReplace = """
                     min_v\tmax_v\tts
@@ -411,7 +414,7 @@ public class MatViewPeriodRefreshTest extends AbstractCairoTest {
 
             // A second range replace deletes those rows. It lies in the incomplete period, so the view keeps the
             // bucket until that period completes.
-            replace("2022-01-02T05:24", "2022-01-02T22:12", 2, "2022-01-02T12:45");
+            replaceRange(engine, driver, "2022-01-02T05:24", "2022-01-02T22:12", 2, "2022-01-02T12:45");
             drain(timerJob);
             assertView("mv", withRowsOfFirstReplace);
 
