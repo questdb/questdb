@@ -419,10 +419,8 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                     }
                 } else {
                     final int previousDispatchStartFrameIndex = dispatchStartFrameIndex;
-                    // A finished frame is not necessarily collectable: an earlier frame may be with a
-                    // reducer that needs this Fiber's CPU grant to finish it, so without a new frame
-                    // to collect this Fiber has to park rather than spin.
-                    if (dispatch(dispatchLimit, countOnly) && (!canPark || dispatchStartFrameIndex != previousDispatchStartFrameIndex)) {
+                    if (dispatch(dispatchLimit, countOnly)
+                            && (!canPark || dispatchStartFrameIndex != previousDispatchStartFrameIndex)) {
                         continue;
                     }
                     if (dispatcher != null && !isActive()) {
