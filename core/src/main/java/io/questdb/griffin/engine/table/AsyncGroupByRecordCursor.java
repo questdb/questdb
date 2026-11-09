@@ -278,7 +278,8 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                     ownerLoop.observeProgress();
                     long cursor = pubSeq.next();
                     if (cursor < 0) {
-                        if (workStealingStrategy.shouldSteal(processedCount)) {
+                        processedCount = -postAggregationDoneLatch.getCount();
+                        if (processedCount == queuedCount || workStealingStrategy.shouldSteal(processedCount)) {
                             ownerLoop.checkBeforeHelping();
                             final Map shard = atom.getDestShards().getQuick(shardIndex);
                             final DirectLongLongSortedList ownerList = atom.getLongTopKList(-1, destList.getOrder(), destList.getCapacity());
@@ -291,7 +292,6 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                         if (!ownerLoop.awaitProgress()) {
                             Os.pause();
                         }
-                        processedCount = -postAggregationDoneLatch.getCount();
                     } else {
                         queue.get(cursor).of(
                                 postAggregationCircuitBreaker,

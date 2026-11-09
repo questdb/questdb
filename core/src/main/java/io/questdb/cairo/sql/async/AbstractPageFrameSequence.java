@@ -114,18 +114,17 @@ abstract class AbstractPageFrameSequence {
     protected final void awaitProgress(
             PageFrameReduceDispatcher dispatcher,
             long observedSequenceProgress,
-            long observedGlobalProgress,
             boolean isDraining
     ) {
-        awaitProgress(dispatcher, observedSequenceProgress, observedGlobalProgress, isDraining, -1);
+        awaitProgress(dispatcher, observedSequenceProgress, 0, isDraining, -1);
     }
 
     protected final void awaitProgress(
             PageFrameReduceDispatcher dispatcher,
             long observedSequenceProgress,
-            long observedGlobalProgress,
+            long observedRingProgress,
             boolean isDraining,
-            int blockedShard
+            int ring
     ) {
         final boolean isInterruptible = !isDraining && !isUninterruptible();
         final SqlExecutionCircuitBreaker circuitBreaker = isInterruptible ? getCircuitBreaker() : null;
@@ -158,14 +157,14 @@ abstract class AbstractPageFrameSequence {
             isProgressWaitTerminated = dispatcher.isProgressWaitTerminated(
                     this,
                     observedSequenceProgress,
-                    observedGlobalProgress,
+                    observedRingProgress,
                     cancellationSignal,
                     cancellationSignalGeneration,
                     supplementalCancellationSignal,
                     supplementalCancellationSignalGeneration,
                     circuitBreaker,
                     isDraining,
-                    blockedShard
+                    ring
             );
         } catch (CairoException e) {
             if (isInterruptionSuperseded(e)) {
@@ -266,6 +265,6 @@ abstract class AbstractPageFrameSequence {
 
     void signalProgress() {
         progressVersion.incrementAndGet();
-        progressWaitQueue.fire();
+        progressWaitQueue.fireAll();
     }
 }

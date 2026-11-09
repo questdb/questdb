@@ -642,13 +642,14 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                         }
 
                         while (true) {
+                            ownerLoop.observeProgress();
                             if (aggregateError.hasError()) {
                                 break dispatch;
                             }
-                            ownerLoop.observeProgress();
                             long cursor = pubSeq.next();
                             if (cursor < 0) {
-                                if (workStealingStrategy.shouldSteal(mergedCount)) {
+                                mergedCount = -doneLatch.getCount();
+                                if (mergedCount == queuedCount || workStealingStrategy.shouldSteal(mergedCount)) {
                                     ownerLoop.checkBeforeHelping();
                                     VectorAggregateEntry.aggregateUnsafe(
                                             workerId,
@@ -672,7 +673,6 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                                 if (!ownerLoop.awaitProgress()) {
                                     Os.pause();
                                 }
-                                mergedCount = -doneLatch.getCount();
                             } else {
                                 final VectorAggregateEntry entry = entryPool.next();
                                 entry.of(
