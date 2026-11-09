@@ -614,7 +614,7 @@ public final class HashJoinGroupByCandidate {
      * function call. An implicit operand conversion has no node in the expression, so it passes: in
      * {@code b.vc = 5}, FunctionParser converts the VARCHAR to INT on each row.
      */
-    private static boolean isCheapShaped(ExpressionNode node) {
+    static boolean isCheapShaped(ExpressionNode node) {
         if (node == null || node.type != ExpressionNode.OPERATION) {
             return false;
         }

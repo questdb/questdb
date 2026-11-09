@@ -50,6 +50,7 @@ import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.HashJoinGroupByCandidate;
 import io.questdb.griffin.HashJoinGroupByKeys;
 import io.questdb.griffin.HashJoinGroupByMetadata;
+import io.questdb.griffin.HashJoinKeyLayout;
 import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -493,6 +494,63 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testKeyLayoutRejectsInconsistentMappings() throws Exception {
+        assertMemoryLeak(() -> {
+            createKeyTables();
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory probeFactory = select("SELECT i, l FROM ka");
+                 RecordCursorFactory buildFactory = select("SELECT i, l FROM kb")) {
+                HashJoinGroupByCandidate candidate = candidate(compiler, "SELECT count(*) FROM ka LEFT JOIN kb ON ka.l=kb.l");
+                Assert.assertNotNull(candidate);
+                HashJoinGroupByKeys keys = candidate.getKeys();
+                RecordMetadata probe = probeFactory.getMetadata();
+                RecordMetadata build = buildFactory.getMetadata();
+                // The key l is base column 1. Each input in turn gets a mapping of the wrong size,
+                // one without the key column, and one that names the key column at the INT column.
+                assertKeyLayoutFails(keys, probe, ints(0), build, ints(0, 1), "hash join input mapping size mismatch");
+                assertKeyLayoutFails(keys, probe, ints(0, 1), build, ints(0, 1, 2), "hash join input mapping size mismatch");
+                assertKeyLayoutFails(keys, probe, ints(0, 2), build, ints(0, 1), "missing hash join input column: 1");
+                assertKeyLayoutFails(keys, probe, ints(0, 1), build, ints(0, 2), "missing hash join input column: 1");
+                assertKeyLayoutFails(keys, probe, ints(1, 0), build, ints(0, 1), "hash join input key type mismatch");
+                assertKeyLayoutFails(keys, probe, ints(0, 1), build, ints(1, 0), "hash join input key type mismatch");
+                // The consistent mappings compile, and the key columns follow them.
+                HashJoinKeyLayout layout = new HashJoinKeyLayout(configuration, new BytecodeAssembler(), keys,
+                        "ka", probe, ints(0, 1), "kb", build, ints(0, 1));
+                Assert.assertEquals("ka.l=kb.l", layout.getCondition());
+                Assert.assertEquals("[1]", layout.getProbeKeyColumns().toString());
+                Assert.assertEquals("[1]", layout.getBuildKeyColumns().toString());
+                Assert.assertTrue(layout.isKeyStaged());
+            }
+        });
+    }
+
+    @Test
+    public void testKeyLayoutStaticSymbolTables() throws Exception {
+        assertMemoryLeak(() -> {
+            createKeyTables();
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                // A lone SYMBOL pair takes the INT layout; next to a LONG pair it is staged. Either
+                // way both inputs need a static symbol table on the SYMBOL key column.
+                for (String on : new String[]{"ka.sym=kb.sym", "ka.l=kb.l AND ka.sym=kb.sym"}) {
+                    HashJoinGroupByCandidate candidate = candidate(compiler, "SELECT count(*) FROM ka LEFT JOIN kb ON " + on);
+                    Assert.assertNotNull(on, candidate);
+                    for (int i = 0; i < 4; i++) {
+                        final boolean isProbeStatic = (i & 1) == 0;
+                        final boolean isBuildStatic = (i & 2) == 0;
+                        HashJoinKeyLayout layout = new HashJoinKeyLayout(configuration, new BytecodeAssembler(), candidate.getKeys(),
+                                "ka", symbolKeyMetadata(isProbeStatic), ints(1, 16),
+                                "kb", symbolKeyMetadata(isBuildStatic), ints(1, 16));
+                        final String message = on + ", probe static: " + isProbeStatic + ", build static: " + isBuildStatic;
+                        Assert.assertEquals(message, isProbeStatic && isBuildStatic, layout.hasStaticSymbolTables());
+                        Assert.assertEquals(message, "[1]", layout.getSymbolKeyProbeColumns().toString());
+                        Assert.assertEquals(message, "[1]", layout.getSymbolKeyBuildColumns().toString());
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testKeySinkLayout() throws Exception {
         assertMemoryLeak(() -> {
             createKeyTables();
@@ -879,6 +937,25 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
         }
     }
 
+    private void assertKeyLayoutFails(
+            HashJoinGroupByKeys keys,
+            RecordMetadata probeMetadata,
+            IntList probeColumns,
+            RecordMetadata buildMetadata,
+            IntList buildColumns,
+            String message
+    ) {
+        try {
+            HashJoinKeyLayout layout = new HashJoinKeyLayout(configuration, new BytecodeAssembler(), keys,
+                    "ka", probeMetadata, probeColumns, "kb", buildMetadata, buildColumns);
+            Assert.fail("expected: " + message + ", probe: " + probeColumns + ", build: " + buildColumns
+                    + ", got the condition " + layout.getCondition());
+        } catch (SqlException e) {
+            TestUtils.assertEquals(message, e.getFlyweightMessage());
+            Assert.assertEquals(0, e.getPosition());
+        }
+    }
+
     private void assertKeys(String on, String expected, boolean isIntKeyed) throws Exception {
         String sql = "SELECT count(*) FROM ka LEFT JOIN kb ON " + on;
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
@@ -1131,6 +1208,14 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
             list.add(columns[i]);
         }
         return list;
+    }
+
+    // Columns l LONG and sym SYMBOL, the input of a SYMBOL key with or without a static symbol table.
+    private static GenericRecordMetadata symbolKeyMetadata(boolean isSymbolTableStatic) {
+        GenericRecordMetadata metadata = new GenericRecordMetadata();
+        metadata.add(new TableColumnMetadata("l", ColumnType.LONG));
+        metadata.add(new TableColumnMetadata("sym", ColumnType.SYMBOL, IndexType.NONE, 0, isSymbolTableStatic, null));
+        return metadata;
     }
 
     private void createKeyTables() throws Exception {

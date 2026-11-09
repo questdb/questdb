@@ -65,7 +65,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * Completion is tracked via an {@link SOUnboundedCountDownLatch}.
  * Designed for factories that don't need ordered results (GROUP BY, top-K).
  */
-public class UnorderedPageFrameSequence<T extends StatefulAtom> extends AbstractPageFrameSequence implements Closeable {
+public class UnorderedPageFrameSequence<T extends StatefulAtom> extends AbstractPageFrameSequence implements Closeable, PageFrameRoundDispatcher {
     private static final AtomicLong ID_SEQ = new AtomicLong();
     private static final Log LOG = LogFactory.getLog(UnorderedPageFrameSequence.class);
     private static final long MAX_TAIL_SPIN_NANOS = 16_000L;
@@ -211,6 +211,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
      * task of the round is still queued or running, so the caller may release what the round's
      * tasks used.
      */
+    @Override
     public void dispatchRoundAndAwait(UnorderedPageFrameReducer roundReducer, LongList taskRowCounts) {
         assert this.roundReducer == null && (queuedCount == 0 || doneLatch.done(queuedCount));
         this.roundReducer = roundReducer;

@@ -1852,6 +1852,42 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return null;
     }
 
+    /**
+     * Peels pure projections above a filter, so that the frame boundary check sees the filter. A
+     * hash join that reads its inputs' page frames reads those of the factory this returns.
+     */
+    private static RecordCursorFactory frameInput(RecordCursorFactory factory) {
+        RecordCursorFactory input = factory;
+        while (!input.supportsPageFrameCursor() && input instanceof SelectedRecordCursorFactory selected) {
+            input = selected.getBaseFactory();
+        }
+        return input;
+    }
+
+    /**
+     * Maps {@code columns}, which holds a value per column of {@code factory}, onto the columns of
+     * the factory {@link #frameInput(RecordCursorFactory)} returns: each column of that factory
+     * takes the value of the {@code factory} column that reads it, the last one when several do,
+     * and a column that no {@code factory} column reads takes -1. The fused GROUP BY maps its
+     * inputs' base-table indexes this way.
+     */
+    private static IntList frameInputColumns(RecordCursorFactory factory, IntList columns) {
+        RecordCursorFactory input = factory;
+        IntList result = columns;
+        while (!input.supportsPageFrameCursor() && input instanceof SelectedRecordCursorFactory selected) {
+            RecordCursorFactory base = selected.getBaseFactory();
+            IntList baseColumns = new IntList(base.getMetadata().getColumnCount());
+            baseColumns.setAll(base.getMetadata().getColumnCount(), -1);
+            IntList crossIndex = selected.getColumnCrossIndex();
+            for (int i = 0; i < crossIndex.size(); i++) {
+                baseColumns.setQuick(crossIndex.getQuick(i), result.getQuick(i));
+            }
+            result = baseColumns;
+            input = base;
+        }
+        return result;
+    }
+
     private static int getOrderByDirectionOrDefault(IQueryModel model, int index) {
         final IntList direction = model.getOrderByDirectionAdvice();
         return index >= direction.size() ? IQueryModel.ORDER_DIRECTION_ASCENDING : direction.getQuick(index);
@@ -5888,8 +5924,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             probe = generateQuery(candidate.getProbeModel(), executionContext, false);
             // Peel pure projections above a filter before checking its frame boundary.
             // Remap model-output -> base-table indexes into the eventual frame coordinates.
-            final IntList probeColumns = hashJoinGroupByFrameColumns(probe, candidate, false);
-            final RecordCursorFactory probeInput = hashJoinGroupByFrameInput(probe);
+            final IntList probeColumns = frameInputColumns(probe, candidate.getInputColumns(probe.getMetadata(), false));
+            final RecordCursorFactory probeInput = frameInput(probe);
             if (!HashJoinGroupByCandidate.isSupportedFramedInput(probeInput)) {
                 return null;
             }
@@ -5898,8 +5934,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
             // The build walks page frames too: it keeps row ids, and probes read payload columns at
             // those rows of the same frames.
-            final IntList buildColumns = hashJoinGroupByFrameColumns(build, candidate, true);
-            final RecordCursorFactory buildInput = hashJoinGroupByFrameInput(build);
+            final IntList buildColumns = frameInputColumns(build, candidate.getInputColumns(build.getMetadata(), true));
+            final RecordCursorFactory buildInput = frameInput(build);
             if (!HashJoinGroupByCandidate.isSupportedFramedInput(buildInput)) {
                 return null;
             }
@@ -6020,39 +6056,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             failure = Misc.freeBestEffort(failure, build);
             CairoException.rethrowCleanupFailure(failure);
         }
-    }
-
-    /**
-     * The fused hash join reads an input's page frames: this maps the input's compiled columns onto
-     * the columns of the factory {@link #hashJoinGroupByFrameInput(RecordCursorFactory)} returns.
-     * Model output indexes become base-table indexes, and pure projections above a filter peel off.
-     */
-    private static IntList hashJoinGroupByFrameColumns(RecordCursorFactory factory, HashJoinGroupByCandidate candidate, boolean isBuildInput) {
-        RecordCursorFactory input = factory;
-        IntList columns = candidate.getInputColumns(factory.getMetadata(), isBuildInput);
-        while (!input.supportsPageFrameCursor() && input instanceof SelectedRecordCursorFactory selected) {
-            RecordCursorFactory base = selected.getBaseFactory();
-            IntList baseColumns = new IntList(base.getMetadata().getColumnCount());
-            baseColumns.setAll(base.getMetadata().getColumnCount(), -1);
-            IntList crossIndex = selected.getColumnCrossIndex();
-            for (int i = 0; i < crossIndex.size(); i++) {
-                baseColumns.setQuick(crossIndex.getQuick(i), columns.getQuick(i));
-            }
-            columns = baseColumns;
-            input = base;
-        }
-        return columns;
-    }
-
-    /**
-     * Peels pure projections above a filter, so that the frame boundary check sees the filter.
-     */
-    private static RecordCursorFactory hashJoinGroupByFrameInput(RecordCursorFactory factory) {
-        RecordCursorFactory input = factory;
-        while (!input.supportsPageFrameCursor() && input instanceof SelectedRecordCursorFactory selected) {
-            input = selected.getBaseFactory();
-        }
-        return input;
     }
 
     /**

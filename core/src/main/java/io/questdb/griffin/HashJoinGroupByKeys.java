@@ -31,14 +31,14 @@ import io.questdb.std.IntList;
 /**
  * The reconciled equality keys of one fused hash join, in the order the key sinks stage them.
  * {@link HashJoinGroupByCandidate} fills this from the analysed base tables, so the column
- * indexes address those tables until {@link HashJoinGroupByMetadata} compiles them against the
+ * indexes address those tables until {@link HashJoinKeyLayout} compiles them against the
  * actual inputs. The class holds plain values and borrows nothing, so a cursor factory may keep it.
  * <p>
  * {@link #add(int, int, int, int)} applies the reconciliation rule that
  * {@code SqlCodeGenerator.processJoinContext()} and the horizon join share, so a pair this class
  * rejects is the pair the ordinary plan rejects with "join column type mismatch". The sink flags
  * are indexed by key position rather than by column, which keeps the two sides apart and lets
- * {@link HashJoinGroupByMetadata} turn them into the per-column bit sets that
+ * {@link HashJoinKeyLayout} turn them into the per-column bit sets that
  * {@code RecordSinkFactory} takes.
  * <p>
  * A lone INT pair and a lone SYMBOL pair keep the narrow INT layout ({@link #isIntKeyed()}).
