@@ -85,6 +85,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     // The invalidation reason of a view whose base table name now resolves to another table than the one its refresh
     // position and cached intervals belong to.
     public static final String BASE_TABLE_CHANGED_REASON = "base table changed";
+    // How a refresh ends when its SQL fails to compile, fails at runtime or keeps losing its compiled plan to schema
+    // changes: an incremental, period or FULL refresh invalidates the view, while a user's REFRESH ... RANGE leaves it
+    // valid and records the error for materialized_views().last_refresh_error. A missing, replaced or non-WAL base
+    // invalidates the view whatever the mode, since the view cannot work then.
+    private static final int FAILURE_MODE_INVALIDATE = 0;
+    private static final int FAILURE_MODE_USER_RANGE = 1;
     private static final int PREFLIGHT_CONFLICT = -1;
     private static final int PREFLIGHT_DEFERRED = 0;
     private static final int PREFLIGHT_READY = 1;
@@ -1714,7 +1720,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                             viewState,
                             walWriter,
                             refreshTask,
-                            true
+                            true,
+                            FAILURE_MODE_INVALIDATE
                     );
                     if (preflight != PREFLIGHT_READY) {
                         if (preflight == PREFLIGHT_DEFERRED) {
@@ -1758,7 +1765,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                             refreshContext,
                             refreshTriggerTimestamp,
                             refreshTask,
-                            false
+                            false,
+                            FAILURE_MODE_INVALIDATE
                     );
                     if (refreshContext.requestDeferred) {
                         refreshFailState(
@@ -1915,7 +1923,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             MatViewState viewState,
             WalWriter walWriter,
             MatViewRefreshTask refreshTask,
-            boolean forceFreshFactory
+            boolean forceFreshFactory,
+            int failureMode
     ) throws SqlException {
         final TableToken viewToken = viewDefinition.getMatViewToken();
         final long initialExpiryPolicyVersion = engine.getMetadataCache().getExpiryPolicyVersion();
@@ -2017,7 +2026,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             if (e.isTableBusy()) {
                 // Reader pool exhaustion while compiling the view SQL is transient. The caller treats it
                 // like the same error from insertAsSelect: incremental, dependent and period refreshes
-                // schedule a retry, while a full or manual range refresh invalidates the view.
+                // schedule a retry, a full refresh invalidates the view, and a user's range refresh ends
+                // with its error and leaves the view valid.
                 if (refreshStartStamped) {
                     viewState.setLastRefreshStartTimestampUs(previousRefreshStartTimestamp);
                 }
@@ -2032,7 +2042,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 return PREFLIGHT_DEFERRED;
             }
             if (e.isMaterializationExpiryConflict()) {
-                refreshFailState(viewDefinition, viewState, walWriter, e.getFlyweightMessage());
+                failRefresh(failureMode, viewDefinition, viewState, walWriter, previousRefreshStartTimestamp, e.getFlyweightMessage());
                 return PREFLIGHT_CONFLICT;
             }
             LOG.error().$("could not compile materialized view [view=").$(viewToken)
@@ -2040,7 +2050,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     .$(", errorPos=").$(e.getPosition())
                     .$(", error=").$safe(e.getFlyweightMessage())
                     .I$();
-            refreshFailState(viewDefinition, viewState, walWriter, e);
+            failRefresh(failureMode, viewDefinition, viewState, walWriter, previousRefreshStartTimestamp, e);
             return PREFLIGHT_CONFLICT;
         } finally {
             if (!returned) {
@@ -2225,6 +2235,38 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         return false;
     }
 
+    // Ends a refresh that failed as its failure mode says, see FAILURE_MODE_INVALIDATE. prevRefreshStartTimestamp is
+    // the view's refresh start time before the refresh began, which a failed user RANGE restores.
+    private void failRefresh(
+            int failureMode,
+            @NotNull MatViewDefinition viewDefinition,
+            @NotNull MatViewState viewState,
+            @Nullable WalWriter walWriter,
+            long prevRefreshStartTimestamp,
+            @NotNull Throwable th
+    ) {
+        if (failureMode == FAILURE_MODE_USER_RANGE) {
+            rangeRefreshFailState(viewState, prevRefreshStartTimestamp, th);
+        } else {
+            refreshFailState(viewDefinition, viewState, walWriter, th);
+        }
+    }
+
+    private void failRefresh(
+            int failureMode,
+            @NotNull MatViewDefinition viewDefinition,
+            @NotNull MatViewState viewState,
+            @Nullable WalWriter walWriter,
+            long prevRefreshStartTimestamp,
+            @NotNull CharSequence errorMessage
+    ) {
+        if (failureMode == FAILURE_MODE_USER_RANGE) {
+            rangeRefreshFailState(viewState, prevRefreshStartTimestamp, errorMessage);
+        } else {
+            refreshFailState(viewDefinition, viewState, walWriter, errorMessage);
+        }
+    }
+
     private boolean incrementalRefresh(MatViewRefreshTask refreshTask) {
         final TableToken baseTableToken = refreshTask.baseTableToken;
         final TableToken viewToken = refreshTask.matViewToken;
@@ -2243,7 +2285,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             @NotNull RefreshContext refreshContext,
             long refreshTriggerTimestamp,
             MatViewRefreshTask refreshTask,
-            boolean isStoppingOnPendingInvalidation
+            boolean isStoppingOnPendingInvalidation,
+            int failureMode
     ) throws SqlException {
         assert viewState.isLocked();
 
@@ -2261,6 +2304,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
         // If we don't have intervals to query, we may still need to bump base table txn or last period hi.
         if (intervalIterator == null) {
+            refreshSucceeded(viewState, failureMode);
             return refreshNoIntervals(viewState, walWriter, refreshContext, prevRefreshStartTimestamp, refreshTriggerTimestamp);
         }
 
@@ -2337,7 +2381,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                     .$(", attempt=").$(i)
                                     .$(", error=").$safe(e.getFlyweightMessage())
                                     .I$();
-                            refreshFailState(viewDefinition, viewState, walWriter, e);
+                            failRefresh(failureMode, viewDefinition, viewState, walWriter, prevRefreshStartTimestamp, e);
                             return false;
                         }
                     }
@@ -2549,6 +2593,22 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     factory = Misc.free(factory);
                     walWriter.rollback();
                     if (i == maxRetries) {
+                        if (failureMode == FAILURE_MODE_USER_RANGE) {
+                            // A user RANGE is not retried: it ends with its error, and the user reruns it.
+                            LOG.info().$("base table is under heavy DDL changes, range refresh failed [view=").$(viewTableToken)
+                                    .$(", totalAttempts=").$(maxRetries)
+                                    .$(", msg=").$safe(e.getFlyweightMessage())
+                                    .I$();
+                            failRefresh(
+                                    failureMode,
+                                    viewDefinition,
+                                    viewState,
+                                    walWriter,
+                                    prevRefreshStartTimestamp,
+                                    "base table is under heavy DDL changes during range refresh"
+                            );
+                            return false;
+                        }
                         LOG.info().$("base table is under heavy DDL changes, will retry refresh later [view=").$(viewTableToken)
                                 .$(", totalAttempts=").$(maxRetries)
                                 .$(", msg=").$safe(e.getFlyweightMessage())
@@ -2589,9 +2649,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             if (isRetriableRefreshError(th)) {
                 // Transient: a table reader pool exhausted, or an out-of-memory error that survived
                 // the in-call interval step reduction. The interval loop already rolled the WAL writer
-                // back before rethrowing, so propagate to the caller: incremental and range refresh
-                // schedule a deferred retry (up to the configured limit) instead of invalidating,
-                // while full refresh invalidates as before (it truncates the view up front).
+                // back before rethrowing, so propagate to the caller: incremental and period refresh
+                // schedule a deferred retry (up to the configured limit) instead of invalidating, a
+                // user's range refresh ends with its error and leaves the view valid, while full refresh
+                // invalidates as before (it truncates the view up front).
                 if (th instanceof SqlException e) {
                     // While compiling the view SQL, the optimiser wraps reader pool exhaustion in a
                     // checked SqlException with isTableBusy() set. Other retriable errors are unchecked.
@@ -2626,10 +2687,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             }
             log.I$();
 
-            refreshFailState(viewDefinition, viewState, walWriter, th);
+            failRefresh(failureMode, viewDefinition, viewState, walWriter, prevRefreshStartTimestamp, th);
             return false;
         }
 
+        refreshSucceeded(viewState, failureMode);
         if (!hasIntervals) {
             Misc.free(factory);
             return refreshNoIntervals(viewState, walWriter, refreshContext, prevRefreshStartTimestamp, refreshTriggerTimestamp);
@@ -3232,10 +3294,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         // A period-timer-driven refresh leaves rangeFrom unset (the timer only knows the period's hi
         // boundary). A transient error on this path can be deferred and re-driven safely, because the
         // re-drive runs an incremental refresh that recomputes and re-includes every complete period.
+        // Any other error invalidates the view, as for an incremental refresh.
         // A user-initiated REFRESH ... RANGE FROM .. TO .. sets rangeFrom and targets an arbitrary
-        // window the incremental re-drive would NOT cover, so it keeps the legacy invalidate-on-error
-        // behaviour rather than silently dropping the requested range.
+        // window the incremental re-drive would NOT cover. Its errors, transient ones included, end the
+        // RANGE and leave the view valid with the error in materialized_views().last_refresh_error, and
+        // the user reruns the RANGE. Only a missing, replaced or non-WAL base invalidates the view.
         final boolean periodRefresh = rangeFrom == Numbers.LONG_NULL;
+        final int failureMode = periodRefresh ? FAILURE_MODE_INVALIDATE : FAILURE_MODE_USER_RANGE;
 
         final MatViewState viewState = stateStore.getViewState(viewToken);
         if (viewState == null || viewState.hasPendingInvalidationReason() || viewState.isInvalid() || viewState.isDropped()) {
@@ -3285,6 +3350,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             return false;
         }
 
+        final long prevRefreshStartTimestamp = viewState.getLastRefreshStartTimestampUs();
         try (WalWriter walWriter = engine.getWalWriter(viewToken)) {
             runHoldingLockSeamForTesting();
 
@@ -3323,7 +3389,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 engine.detachReader(baseTableReader);
                 refreshSqlExecutionContext.of(baseTableReader, viewToken, viewDefinition.isPassthrough());
                 try {
-                    if (preflightMaterialization(viewDefinition, viewState, walWriter, refreshTask, false) != PREFLIGHT_READY) {
+                    if (preflightMaterialization(viewDefinition, viewState, walWriter, refreshTask, false, failureMode) != PREFLIGHT_READY) {
                         return false;
                     }
                     final RefreshContext refreshContext = findRefreshIntervals(
@@ -3335,7 +3401,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                             rangeFrom,
                             rangeTo
                     );
-                    insertAsSelect(viewDefinition, viewState, walWriter, refreshContext, refreshTriggerTimestamp, refreshTask, true);
+                    insertAsSelect(viewDefinition, viewState, walWriter, refreshContext, refreshTriggerTimestamp, refreshTask, true, failureMode);
                     // Refresh completed without a retriable failure; clear any accumulated retry
                     // backoff and counter so a future transient error starts from a fresh budget.
                     viewState.resetRefreshRetry();
@@ -3364,7 +3430,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         .$(", baseTable=").$(baseTableToken)
                         .$(", ex=").$(th)
                         .I$();
-                refreshFailState(viewDefinition, viewState, walWriter, th);
+                failRefresh(failureMode, viewDefinition, viewState, walWriter, prevRefreshStartTimestamp, th);
                 return false;
             }
         } catch (Throwable th) {
@@ -3390,7 +3456,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     .$("could not perform range refresh, unexpected error [view=").$(viewToken)
                     .$(", ex=").$(th)
                     .I$();
-            refreshFailState(viewDefinition, viewState, null, th);
+            // A user RANGE that could not get the view's WAL writer leaves the view valid. One whose missing,
+            // replaced or non-WAL base invalidated the view in memory before the WAL write of the invalidation
+            // failed leaves it invalid in memory, with that reason.
+            failRefresh(failureMode, viewDefinition, viewState, null, prevRefreshStartTimestamp, th);
             return false;
         } finally {
             // Same tradeoff as fullRefresh's finally: a deferral landing mid-hold is finalized here even if
@@ -3594,6 +3663,31 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         // left as they were.
     }
 
+    // A user REFRESH ... RANGE that fails leaves the view valid, with its rows and refresh position: RANGE never moves
+    // the position, and the batches it committed are complete replace ranges, so buckets it did not reach keep their
+    // old rows. It writes no view state, so the view keeps the refresh start time it had before the RANGE, and the
+    // error goes to the log and to materialized_views().last_refresh_error.
+    private void rangeRefreshFailState(MatViewState viewState, long prevRefreshStartTimestamp, @NotNull Throwable th) {
+        // Do not turn a fatal flush failure into a recorded range error either.
+        engine.handleDataSyncFailure(th);
+        errorMsgSink.clear();
+        if (th instanceof Sinkable) {
+            ((Sinkable) th).toSink(errorMsgSink);
+        } else {
+            errorMsgSink.put(th.getMessage());
+        }
+        rangeRefreshFailState(viewState, prevRefreshStartTimestamp, errorMsgSink);
+    }
+
+    private void rangeRefreshFailState(MatViewState viewState, long prevRefreshStartTimestamp, @NotNull CharSequence errorMessage) {
+        viewState.setLastRefreshStartTimestampUs(prevRefreshStartTimestamp);
+        viewState.rangeRefreshFail(errorMessage);
+        LOG.info().$("materialized view range refresh failed, the view stays valid [view=")
+                .$(viewState.getViewDefinition().getMatViewToken())
+                .$(", error=").$safe(errorMessage)
+                .I$();
+    }
+
     private void refreshFailState(
             @NotNull MatViewDefinition viewDefinition,
             @NotNull MatViewState viewState,
@@ -3762,7 +3856,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             engine.detachReader(baseTableReader);
             refreshSqlExecutionContext.of(baseTableReader, viewDefinition.getMatViewToken(), viewDefinition.isPassthrough());
             try {
-                if (preflightMaterialization(viewDefinition, viewState, walWriter, refreshTask, false) != PREFLIGHT_READY) {
+                if (preflightMaterialization(viewDefinition, viewState, walWriter, refreshTask, false, FAILURE_MODE_INVALIDATE) != PREFLIGHT_READY) {
                     return toBaseTxn << 1;
                 }
                 if (viewDefinition.getPeriodLength() == 0 && fromBaseTxn > -1 && fromBaseTxn == toBaseTxn
@@ -3774,7 +3868,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     return toBaseTxn << 1;
                 }
                 final RefreshContext refreshContext = findRefreshIntervals(baseTableReader, viewDefinition, viewState, walWriter, fromBaseTxn);
-                final boolean refreshed = insertAsSelect(viewDefinition, viewState, walWriter, refreshContext, refreshTriggerTimestamp, refreshTask, true);
+                final boolean refreshed = insertAsSelect(viewDefinition, viewState, walWriter, refreshContext, refreshTriggerTimestamp, refreshTask, true, FAILURE_MODE_INVALIDATE);
                 // Reached only when the refresh completed without a retriable failure; clear any
                 // accumulated retry backoff and counter so a future transient error starts fresh.
                 viewState.resetRefreshRetry();
@@ -3824,6 +3918,14 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         // file, the view would report the "refreshing" status forever. Restore the start timestamp.
         viewState.setLastRefreshStartTimestampUs(prevRefreshStartTimestamp);
         return false;
+    }
+
+    // insertAsSelect() ran the refresh to its end. A user RANGE that succeeds clears the error of the one that failed
+    // before it.
+    private static void refreshSucceeded(MatViewState viewState, int failureMode) {
+        if (failureMode == FAILURE_MODE_USER_RANGE) {
+            viewState.rangeRefreshSucceeded();
+        }
     }
 
     private void refreshSuccessNoRows(

@@ -208,6 +208,11 @@ public class MatViewState implements QuietCloseable {
     // Stands for last successful incremental refresh base table reader txn.
     // Increases monotonically as long as mat view stays valid.
     private volatile long lastRefreshBaseTxn = -1;
+    // The error of the last user REFRESH ... RANGE that failed, or null: a failed user RANGE leaves the view valid,
+    // and materialized_views() reports its error as last_refresh_error until the next user RANGE succeeds. The
+    // refresh job writes it under this.latch and the catalogue reads it, so it is one volatile reference to an
+    // immutable string. Kept in memory only.
+    private volatile String lastRefreshError;
     private volatile long lastRefreshFinishTimestampUs = Numbers.LONG_NULL;
     // Snapped REPLACE_RANGE.lo (the bucket floor) that the most recent
     // REFRESH LIMIT-bounded refresh tick computed and committed to. The
@@ -784,6 +789,15 @@ public class MatViewState implements QuietCloseable {
         return lastRefreshBaseTxn;
     }
 
+    /**
+     * Returns the error of the last user {@code REFRESH ... RANGE} that failed, or null when the last one
+     * succeeded or none failed in this process. A failed user RANGE leaves the view valid instead of invalidating
+     * it, so this is where its error shows.
+     */
+    public @Nullable String getLastRefreshError() {
+        return lastRefreshError;
+    }
+
     public long getLastRefreshFinishTimestampUs() {
         return lastRefreshFinishTimestampUs;
     }
@@ -1300,6 +1314,23 @@ public class MatViewState implements QuietCloseable {
         }
         avgScanSampleNanos = foldEma(avgScanSampleNanos, sampleNanos);
         avgScanRangeTsUnits = foldEma(avgScanRangeTsUnits, rangeTsUnits);
+    }
+
+    /**
+     * Records a user {@code REFRESH ... RANGE} that failed. The view stays valid, with its rows, refresh position and
+     * refresh timestamps, since RANGE never moves the refresh position and commits only complete replace ranges;
+     * the error shows in {@link #getLastRefreshError()} until the next user RANGE succeeds.
+     */
+    public void rangeRefreshFail(CharSequence errorMessage) {
+        assert latch.get();
+        this.lastRefreshError = Chars.toString(errorMessage);
+        telemetryFacade.store(MAT_VIEW_REFRESH_FAIL, viewDefinition.getMatViewToken(), Numbers.LONG_NULL, errorMessage, 0);
+    }
+
+    // A user REFRESH ... RANGE that succeeded clears the error of the one that failed before it.
+    public void rangeRefreshSucceeded() {
+        assert latch.get();
+        this.lastRefreshError = null;
     }
 
     public void refreshFail(long refreshTimestamp, CharSequence errorMessage) {

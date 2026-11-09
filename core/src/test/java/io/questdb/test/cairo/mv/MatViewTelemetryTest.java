@@ -161,6 +161,51 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMatViewRangeRefreshFails() throws Exception {
+        // A user REFRESH ... RANGE that fails records a refresh failure event with its error, and no invalidation
+        // event, since it leaves the view valid.
+        final String error = "[17]: Invalid column: price";
+        assertMemoryLeak(() -> {
+            try (final TelemetryJob telemetryJob = new TelemetryJob(engine)) {
+                createBaseTable("2024-10-24T17:00:00.000000Z");
+                createMatView("2024-10-24T17:00:15.000000Z", telemetryJob);
+
+                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine, 0)) {
+                    execute(
+                            "2024-10-24T17:00:25.000000Z",
+                            refreshJob,
+                            telemetryJob,
+                            "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                                    ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                                    ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                                    ",('gbpusd', 1.321, '2024-09-10T13:02')"
+                    );
+                    // The base drops the column the view reads, which leaves the view valid, and the RANGE fails to
+                    // compile the view's SQL.
+                    execute("2024-10-24T17:00:33.000000Z", refreshJob, telemetryJob, "alter table base_price drop column price");
+                    execute(
+                            "2024-10-24T17:00:41.000000Z",
+                            refreshJob,
+                            telemetryJob,
+                            "refresh materialized view price_1h range from '2024-09-10' to '2024-09-11'"
+                    );
+                }
+
+                assertQuery("select view_status, invalidation_reason, last_refresh_error from materialized_views()")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("view_status\tinvalidation_reason\tlast_refresh_error\nvalid\t\t" + error + "\n");
+                // 202 is the invalidation event and 203 the refresh failure event
+                assertQuery("sys.telemetry_mat_view where event in (202, 203)")
+                        .noLeakCheck()
+                        .timestamp("created")
+                        .returns("created\tevent\tview_table_id\tbase_table_txn\tinvalidation_reason\tlatency\n"
+                                + "2024-10-24T17:00:41.000000Z\t203\t6\tnull\t" + error + "\t0.0\n");
+            }
+        });
+    }
+
+    @Test
     public void testMatViewRefreshFails() throws Exception {
         assertMemoryLeak(() -> {
             try (final TelemetryJob telemetryJob = new TelemetryJob(engine)) {
