@@ -205,6 +205,10 @@ public class ParquetTimestampFinder implements TimestampFinder, Mutable, QuietCl
     }
 
     public ParquetTimestampFinder of(TableReader reader, int partitionIndex, int timestampIndex, long rowCount) {
+        // A freed _pm address can come back for another partition, so prepare()'s address check can't tell them apart.
+        if (partitionIndex != this.partitionIndex || reader != this.reader) {
+            blockRowHi = 0;
+        }
         this.partitionIndex = partitionIndex;
         this.reader = reader;
         this.rowCount = rowCount;

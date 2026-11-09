@@ -629,8 +629,8 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                         mem.putInt(TableUtils.META_OFFSET_VERSION, reader.getTxFile().hasDeltaState()
                                                 ? ColumnType.DELTA_STORAGE_VERSION
                                                 : reader.getTxFile().hasCompositePartitions()
-                                                ? ColumnType.MAX_STORAGE_VERSION
-                                                : ColumnType.VERSION);
+                                                  ? ColumnType.MAX_STORAGE_VERSION
+                                                  : ColumnType.VERSION);
                                         mem.close(false);
                                         // Copy _txn file.
                                         path.trimTo(rootLen).concat(TXN_FILE_NAME);

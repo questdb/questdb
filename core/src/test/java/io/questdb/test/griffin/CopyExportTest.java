@@ -937,6 +937,41 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyParquetIntervalScanOverParquetAndNativePartitions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t SELECT timestamp_sequence('2024-01-01', 60_000_000L), x FROM long_sequence(5760)");
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01', '2024-01-03'");
+            // A fresh reader has no partition open, so the row group flush during the native day
+            // unmaps day 1's _pm before day 3 maps its own _pm, of equal size, at that address.
+            engine.releaseAllReaders();
+            CopyExportRunnable stmt = () -> runAndFetchCopyExportID(
+                    "COPY (SELECT * FROM t WHERE ts BETWEEN '2024-01-01T06:00' AND '2024-01-03T18:00') "
+                            + "TO 'interval_scan' WITH FORMAT PARQUET ROW_GROUP_SIZE 1000",
+                    sqlExecutionContext
+            );
+            CopyExportRunnable test = () -> assertEventually(() -> {
+                assertQuery("SELECT status FROM \"sys.copy_export_log\" LIMIT -1")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("status\nfinished\n");
+                assertQuery("SELECT timestamp_floor('d', ts) d, count() c, min(ts) mn, max(ts) mx FROM read_parquet('"
+                        + exportRoot + File.separator + "interval_scan.parquet') GROUP BY d ORDER BY d")
+                        .noLeakCheck()
+                        .timestamp("d")
+                        .expectSize()
+                        .returns("""
+                                d\tc\tmn\tmx
+                                2024-01-01T00:00:00.000000Z\t1080\t2024-01-01T06:00:00.000000Z\t2024-01-01T23:59:00.000000Z
+                                2024-01-02T00:00:00.000000Z\t1440\t2024-01-02T00:00:00.000000Z\t2024-01-02T23:59:00.000000Z
+                                2024-01-03T00:00:00.000000Z\t1081\t2024-01-03T00:00:00.000000Z\t2024-01-03T18:00:00.000000Z
+                                """);
+            });
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
     public void testCopyParquetLargeTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table large_table (id int, value string)");
