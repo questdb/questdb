@@ -155,9 +155,10 @@ public class MatViewPeriodRefreshTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             // The 7h periods end at 05:00 and 12:00 on 2022-01-02, so at 10:00 the last complete period ends at 05:00.
             currentMicros = parseFloorPartialTimestamp("2022-01-02T10:00:00.000000Z");
-            // The view refreshes for the first time at creation, while its base table is empty.
+            // The views refresh for the first time at creation, while their base table is empty.
             createBaseTable("empty_base");
             execute("create materialized view empty_mv refresh immediate period (length 7h) as " + viewSql("empty_base", "4h"));
+            execute("create materialized view manual_mv refresh manual period (length 7h) as " + viewSql("empty_base", "4h"));
             // The deferred view refreshes for the first time after the first base commit, which writes a row in the
             // incomplete period.
             createBaseTable("late_base");
@@ -166,25 +167,25 @@ public class MatViewPeriodRefreshTest extends AbstractCairoTest {
             final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
             drain(timerJob);
 
-            // Neither view has rows to refresh, but both refreshes record the end of the last complete period.
+            // No view has rows to refresh, but every refresh records the end of the last complete period. A view over
+            // the empty base table has no rows to write, so its first refresh commits only the refresh state.
             assertPeriodHi("empty_mv", "2022-01-02T05:00:00.000000Z");
+            assertPeriodHi("manual_mv", "2022-01-02T05:00:00.000000Z");
             assertPeriodHi("late_mv", "2022-01-02T05:00:00.000000Z");
             assertView("empty_mv", "min_v\tmax_v\tts\n");
+            assertView("manual_mv", "min_v\tmax_v\tts\n");
             assertView("late_mv", "min_v\tmax_v\tts\n");
+            assertWalTxnCount("empty_mv", 1);
+            assertWalTxnCount("manual_mv", 1);
 
             // Another refresh within the same period leaves the recorded end as it is and commits nothing.
-            final String walTxnsSql = "select sequencerTxn from wal_transactions('empty_mv')";
-            printSql(walTxnsSql);
-            final String walTxnsBefore = sink.toString();
             execute("refresh materialized view empty_mv incremental");
             drain(timerJob);
             assertPeriodHi("empty_mv", "2022-01-02T05:00:00.000000Z");
-            assertQuery(walTxnsSql)
-                    .noRandomAccess()
-                    .noLeakCheck()
-                    .returns(walTxnsBefore);
+            assertWalTxnCount("empty_mv", 1);
 
-            // The refresh of the period that completes at 12:00 starts at the recorded end.
+            // The refresh of the period that completes at 12:00 starts at the recorded end. The period timer runs it
+            // as a range refresh, which commits twice: it replaces the period's range, then stores the new period end.
             currentMicros = parseFloorPartialTimestamp("2022-01-02T12:00:00.000000Z");
             drain(timerJob);
             assertPeriodHi("empty_mv", "2022-01-02T12:00:00.000000Z");
@@ -197,6 +198,17 @@ public class MatViewPeriodRefreshTest extends AbstractCairoTest {
                             1\t1\t2022-01-02T08:00:00.000000Z
                             """
             );
+            assertWalTxnCount("empty_mv", 3);
+
+            // The manual view has no period timer, so the period waits for its next incremental refresh. That refresh
+            // commits once: the replaced range and the new period end go into the same transaction.
+            assertPeriodHi("manual_mv", "2022-01-02T05:00:00.000000Z");
+            assertWalTxnCount("manual_mv", 1);
+            execute("refresh materialized view manual_mv incremental");
+            drain(timerJob);
+            assertPeriodHi("manual_mv", "2022-01-02T12:00:00.000000Z");
+            assertView("manual_mv", "min_v\tmax_v\tts\n");
+            assertWalTxnCount("manual_mv", 2);
         });
     }
 
@@ -339,6 +351,14 @@ public class MatViewPeriodRefreshTest extends AbstractCairoTest {
                 .expectSize()
                 .noLeakCheck()
                 .returns(ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? expected : expected.replaceAll(".000000Z", ".000000000Z"));
+    }
+
+    private void assertWalTxnCount(String tableName, int expectedCount) throws Exception {
+        assertQuery("select count() from wal_transactions('" + tableName + "')")
+                .noLeakCheck()
+                .expectSize()
+                .noRandomAccess()
+                .returns("count\n" + expectedCount + "\n");
     }
 
     private void createBaseTable(String tableName) throws SqlException {
