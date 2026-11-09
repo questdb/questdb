@@ -67,13 +67,13 @@ public class LtTimestampFunctionFactory implements FunctionFactory {
         final int rightType = ColumnType.getTimestampType(right.getType());
         final int timestampType = ColumnType.getHigherPrecisionTimestampType(leftType, rightType);
         assert ColumnType.isTimestamp(timestampType);
-        // A constant or runtime-constant side turns into bounds in the type of the other side's values, so that
-        // no value converts to another precision.
+        // A constant or runtime-constant side turns into a threshold in the type of the other side's values, so
+        // that no value converts to another precision.
         if (isBound(right)) {
-            return new BoundFunc(left, right, left, right, getDriver(leftType, timestampType), false);
+            return new RightBoundFunc(left, right, getDriver(leftType, timestampType));
         }
         if (isBound(left)) {
-            return new BoundFunc(left, right, right, left, getDriver(rightType, timestampType), true);
+            return new LeftBoundFunc(left, right, getDriver(rightType, timestampType));
         }
         if (leftType == rightType) {
             return new Func(left, right);
@@ -94,42 +94,25 @@ public class LtTimestampFunctionFactory implements FunctionFactory {
         return func.isConstant() || func.isRuntimeConstant();
     }
 
-    // column < bound, or column > bound when the bound is on the left, and their negations >= and <=. The
-    // non-NULL values in [lo, hi] satisfy it: lo and hi come from the bound once for a constant and on each
-    // execution for a runtime constant.
-    private static class BoundFunc extends NegatableBooleanFunction implements BinaryFunction {
-        private final Function bound;
-        private final Function column;
-        private final TimestampDriver driver;
-        private final boolean isBoundOnLeft;
+    // A comparison of values with a constant or runtime-constant bound c. It compares each value with one value
+    // of the values' own type, the threshold, as Numbers.lessThan() does, so a NULL bound keeps its meaning. The
+    // threshold comes from c once for a constant and on each execution for a runtime constant.
+    private abstract static class BoundFunc extends NegatableBooleanFunction implements BinaryFunction {
+        protected final Function bound;
+        protected final Function column;
+        protected final TimestampDriver driver;
         private final Function leftFunc;
         private final Function rightFunc;
-        private long hi;
-        private long lo;
+        // negated, or the opposite when the threshold stands for a bound past the range of the type
+        protected boolean isNegated;
+        protected long threshold;
 
-        public BoundFunc(
-                Function leftFunc,
-                Function rightFunc,
-                Function column,
-                Function bound,
-                TimestampDriver driver,
-                boolean isBoundOnLeft
-        ) {
+        protected BoundFunc(Function leftFunc, Function rightFunc, Function column, Function bound, TimestampDriver driver) {
             this.leftFunc = leftFunc;
             this.rightFunc = rightFunc;
             this.column = column;
             this.bound = bound;
             this.driver = driver;
-            this.isBoundOnLeft = isBoundOnLeft;
-            if (bound.isConstant()) {
-                setRange();
-            }
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            final long value = column.getTimestamp(rec);
-            return lo <= value & value <= hi;
         }
 
         @Override
@@ -146,7 +129,7 @@ public class LtTimestampFunctionFactory implements FunctionFactory {
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             BinaryFunction.super.init(symbolTableSource, executionContext);
             if (!bound.isConstant()) {
-                setRange();
+                setThreshold();
             }
         }
 
@@ -154,7 +137,7 @@ public class LtTimestampFunctionFactory implements FunctionFactory {
         public void setNegated() {
             super.setNegated();
             if (bound.isConstant()) {
-                setRange();
+                setThreshold();
             }
         }
 
@@ -169,30 +152,69 @@ public class LtTimestampFunctionFactory implements FunctionFactory {
             sink.val(rightFunc);
         }
 
-        private void setRange() {
-            // column < c and column > c are strict, their negations column >= c and column <= c are not
-            final boolean isStrict = !negated;
+        protected abstract void setThreshold();
+    }
+
+    // c < value, value > c: holds exactly when the last value at or before c is less than the value, and so does its
+    // negation c >= value
+    private static class LeftBoundFunc extends BoundFunc {
+
+        public LeftBoundFunc(Function leftFunc, Function rightFunc, TimestampDriver driver) {
+            super(leftFunc, rightFunc, rightFunc, leftFunc, driver);
+            if (bound.isConstant()) {
+                setThreshold();
+            }
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return Numbers.lessThan(threshold, column.getTimestamp(rec), isNegated);
+        }
+
+        @Override
+        protected void setThreshold() {
+            isNegated = negated;
             if (TimestampBounds.isNull(bound)) {
-                // as Numbers.lessThan(): NULL >= NULL and NULL <= NULL hold, NULL < NULL does not
-                if (isStrict) {
-                    lo = TimestampBounds.EMPTY_LO;
-                    hi = TimestampBounds.EMPTY_HI;
-                } else {
-                    lo = hi = Numbers.LONG_NULL;
-                }
+                threshold = Numbers.LONG_NULL;
                 return;
             }
-            if (isBoundOnLeft == negated) {
-                // column < c or column <= c
-                lo = Long.MIN_VALUE + 1;
-                hi = TimestampBounds.upper(driver, bound, isStrict);
-            } else {
-                lo = TimestampBounds.lower(driver, bound, isStrict);
-                hi = Long.MAX_VALUE;
+            threshold = TimestampBounds.upper(driver, bound, false);
+            if (threshold == Numbers.LONG_NULL) {
+                // c lies before the range: c < value holds for every non-NULL value, as MAX >= value does
+                threshold = Long.MAX_VALUE;
+                isNegated = !negated;
             }
-            if (lo == Numbers.LONG_NULL || hi == Numbers.LONG_NULL) {
-                lo = TimestampBounds.EMPTY_LO;
-                hi = TimestampBounds.EMPTY_HI;
+        }
+    }
+
+    // value < c: holds exactly when the value is less than the first value at or after c, and so does its negation
+    // value >= c
+    private static class RightBoundFunc extends BoundFunc {
+
+        public RightBoundFunc(Function leftFunc, Function rightFunc, TimestampDriver driver) {
+            super(leftFunc, rightFunc, leftFunc, rightFunc, driver);
+            if (bound.isConstant()) {
+                setThreshold();
+            }
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return Numbers.lessThan(column.getTimestamp(rec), threshold, isNegated);
+        }
+
+        @Override
+        protected void setThreshold() {
+            isNegated = negated;
+            if (TimestampBounds.isNull(bound)) {
+                threshold = Numbers.LONG_NULL;
+                return;
+            }
+            threshold = TimestampBounds.lower(driver, bound, false);
+            if (threshold == Numbers.LONG_NULL) {
+                // c lies after the range: value < c holds for every non-NULL value, as value >= MIN + 1 does
+                threshold = Long.MIN_VALUE + 1;
+                isNegated = !negated;
             }
         }
     }

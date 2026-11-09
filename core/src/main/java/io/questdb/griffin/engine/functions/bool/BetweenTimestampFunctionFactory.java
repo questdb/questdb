@@ -236,7 +236,10 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             final long value = arg.getTimestamp(rec);
-            return lo <= value & value <= hi;
+            if (value == Numbers.LONG_NULL) {
+                return false;
+            }
+            return lo <= value && value <= hi;
         }
 
         @Override
