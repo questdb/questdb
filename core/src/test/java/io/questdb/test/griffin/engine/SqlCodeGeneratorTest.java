@@ -32,6 +32,7 @@ import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -220,6 +221,33 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testBindVariableInListIndexedLookup() throws Exception {
         testBindVariableInLookupList(true);
+    }
+
+    @Test
+    public void testBindVariableInListIndexedLookupRepeatedValues() throws Exception {
+        // IN tests membership, so a key bound more than once still selects its rows once
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL INDEX, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('A', '2026-01-01T00:00:00.000000Z'),
+                        ('B', '2026-01-01T00:00:01.000000Z'),
+                        ('C', '2026-01-01T00:00:02.000000Z'),
+                        ('D', '2026-01-01T00:00:03.000000Z'),
+                        ('E', '2026-01-01T00:00:04.000000Z')
+                    """);
+            final String allRows = "s\nA\nB\nC\nD\nE\n";
+            final ObjList<BindVarTuple> cases = new ObjList<>();
+            cases.add(BindVarTuple.ok("A,B,C,D,E,E,E,E", allRows, binds -> setStrBinds(binds, "A", "B", "C", "D", "E", "E", "E", "E")));
+            cases.add(BindVarTuple.ok("A,B,C,D,E,X,X,X", allRows, binds -> setStrBinds(binds, "A", "B", "C", "D", "E", "X", "X", "X")));
+            cases.add(BindVarTuple.ok("A,B,C,D,E,E,E,E again", allRows, binds -> setStrBinds(binds, "A", "B", "C", "D", "E", "E", "E", "E")));
+            cases.add(BindVarTuple.ok("E,E,E,E,E,E,E,E", "s\nE\n", binds -> setStrBinds(binds, "E", "E", "E", "E", "E", "E", "E", "E")));
+            cases.add(BindVarTuple.ok("A,A,A,B,B,B,C,C", "s\nA\nB\nC\n", binds -> setStrBinds(binds, "A", "A", "A", "B", "B", "B", "C", "C")));
+            cases.add(BindVarTuple.ok("C,A,C,A,C,A,C,A", "s\nA\nC\n", binds -> setStrBinds(binds, "C", "A", "C", "A", "C", "A", "C", "A")));
+            assertQuery("SELECT s FROM t WHERE s IN ($1,$2,$3,$4,$5,$6,$7,$8)")
+                    .noLeakCheck()
+                    .assertBinds(cases);
+        });
     }
 
     @Test
@@ -9786,6 +9814,12 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             System.err.printf("// %2d = %s\n", i, ColumnType.nameOf(i));
         }
         System.err.println("    };");
+    }
+
+    private static void setStrBinds(BindVariableService binds, String... values) throws SqlException {
+        for (int i = 0; i < values.length; i++) {
+            binds.setStr(i, values[i]);
+        }
     }
 
     private void createGeoHashTable(int chars) throws SqlException {
