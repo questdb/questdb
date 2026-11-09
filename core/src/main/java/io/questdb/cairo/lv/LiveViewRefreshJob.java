@@ -684,7 +684,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      */
     @TestOnly
     public boolean truncateOrRetireTimelineOnO3ForTest(LiveViewInstance instance, long floorTs) {
-        return truncateOrRetireTimelineOnO3(instance, floorTs, truncatedHead);
+        return truncateOrRetireTimelineOnO3(instance, floorTs, false, truncatedHead);
     }
 
     /**
@@ -4206,7 +4206,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * about to correct. The other two routes owe the timeline a durable change, and
      * make it only at their replacement commit, once their replay can no longer
      * park, unwind or crash with nothing committed: a localized repair truncates
-     * through {@link #truncateOrRetireTimelineOnO3(LiveViewInstance, long)}, and an
+     * through {@link #truncateOrRetireTimelineOnO3}, and an
      * unlocalized rebuild retires through {@link #retireCheckpointTimeline}. Every
      * other caller passes {@code true} - see {@link #retireCheckpointTimeline} - bar
      * the upgrade rebuild of a view carried over from an older checkpoint format,
@@ -4264,7 +4264,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * unlocalized rebuild retires, and a localized repair holding no capture - the view
      * has no valid generation to splice into, the interval crosses more roots than
      * {@code cairo.live.view.checkpoint.repair.max.chained.boundaries} allows - reaches
-     * {@link #truncateOrRetireTimelineOnO3(LiveViewInstance, long)}, which keeps the
+     * {@link #truncateOrRetireTimelineOnO3}, which keeps the
      * roots below {@code R} - correct, because the replay rewrites nothing under them -
      * and retires only when no prefix survives.
      * This also catches a splice that failed after its replacement committed: the
@@ -4342,13 +4342,22 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * first-checkpoint path. When a prefix survives below the floor it writes the
      * durable {@link LiveViewCheckpointRepairMarker} and truncates the on-disk
      * timeline to that prefix; the caller clears the marker once the post-replay
-     * seal re-anchors the head. The callers run it immediately before the repair's
-     * replacement commit, so the marker covers only a crash from the truncate's
+     * seal re-anchors the head. A repair holding no capture runs it immediately before
+     * its replacement commit, so the marker covers only a crash from the truncate's
      * publication until the post-replay seal: it forces that restart to rebuild from the
      * applied base rather than trust the truncated head. A crash earlier in the repair
      * leaves the untouched timeline, which a restart restores from, and so does one
      * between the marker and the truncate: the marker records the generation and the
      * view seqTxn it found, and a restart that finds neither moved reads it as stale.
+     * <p>
+     * A repair whose published splice kept roots above the view's new frontier runs it
+     * after its replacement commit, to truncate those roots away. The generation it
+     * finds is the splice's, which no longer describes the output on disk, so its marker
+     * records no seqTxn: a crash between the marker and the truncate's publication reads
+     * the marker as live and rebuilds from the applied base, as a crash on either side of
+     * it does. A seqTxn read after the commit would read as unmoved there, and send the
+     * restart to restore that generation.
+     * <p>
      * When no prefix survives (or there is no valid timeline) it retires outright,
      * exactly as before.
      * <p>
@@ -4362,13 +4371,22 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * is what holds every restore off in the meantime, which is why a caller whose seal
      * fails must retire the prefix rather than clear the marker over it.
      *
-     * @param head receives the generation the truncate published and the boundary it
-     *             left as that generation's head, or {@link Numbers#LONG_NULL} in each
-     *             when the timeline was retired instead
+     * @param isReplacementCommitted true when the repair's replacement commit has
+     *                               already landed, which makes the marker record no
+     *                               seqTxn
+     * @param head                   receives the generation the truncate published and
+     *                               the boundary it left as that generation's head, or
+     *                               {@link Numbers#LONG_NULL} in each when the timeline
+     *                               was retired instead
      * @return true when the prefix was preserved and a marker is now live; false
      * when the timeline was retired
      */
-    private boolean truncateOrRetireTimelineOnO3(LiveViewInstance instance, long floorTs, TruncatedHead head) {
+    private boolean truncateOrRetireTimelineOnO3(
+            LiveViewInstance instance,
+            long floorTs,
+            boolean isReplacementCommitted,
+            TruncatedHead head
+    ) {
         instance.setHeadCheckpoint(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, 0L, Numbers.LONG_NULL);
         head.clear();
         try {
@@ -4390,7 +4408,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 definitionTxn = superblock.definitionTxn;
                 historyEpoch = superblock.historyEpoch;
             }
-            final long lvSeqTxn = engine.getTableSequencerAPI().lastTxn(instance.getLiveViewToken());
+            final long lvSeqTxn = isReplacementCommitted
+                    ? Numbers.LONG_NULL
+                    : engine.getTableSequencerAPI().lastTxn(instance.getLiveViewToken());
             if (checkpointTimelineStoreWriter == null) {
                 checkpointTimelineStoreWriter = new LiveViewCheckpointTimelineStoreWriter(
                         engine.getConfiguration(),
@@ -8767,7 +8787,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         // freeze incrementally: the stamp the restore took moves to that
                         // generation, keeping the keys the replay touched.
                         final long timelineStart = System.nanoTime();
-                        prefixMarkerLive = truncateOrRetireTimelineOnO3(instance, plan.getOutputLowTs(), truncatedHead);
+                        prefixMarkerLive = truncateOrRetireTimelineOnO3(instance, plan.getOutputLowTs(), false, truncatedHead);
                         openSegmentRepairPhases.timelinePublicationNanos += System.nanoTime() - timelineStart;
                         if (!isKeyed) {
                             adoptTruncatedHeadCheckpointBaseline(instance, windowFactory, truncatedHead, anchorMaxTs, anchorCheckpointId);
@@ -9053,9 +9073,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // generation keeps the splice's base coordinate. The seal below then puts the
                 // frontier's own root on top of what survived. The truncate first writes a
                 // repair marker of its own over the splice's generation, in place of the
-                // splice's, and the resolution below applies the truncate's rule to it. It runs
-                // past the consumed seqTxn advance, with the seal, so a state write that fails
-                // there skips the two together.
+                // splice's, and the resolution below applies the truncate's rule to it. The
+                // marker records no seqTxn, because the replacement has committed: a crash
+                // before the truncate publishes leaves the splice's generation, whose roots
+                // above the frontier no restore may stand on, under a marker that reads as
+                // live. It runs past the consumed seqTxn advance, with the seal, so a state
+                // write that fails there skips the two together.
                 //
                 // No dirty set the runtime holds may seed the seal: the splice's chain reset
                 // them at the boundaries it froze, the newest of which this drops, and the
@@ -9068,7 +9091,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         .$(", spliceHeadRootMaxTs=").$ts(timelineSplice.getHeadRootMaxTimestamp())
                         .$(", rowsEmitted=").$(appendedRows).I$();
                 final long truncateStart = System.nanoTime();
-                prefixMarkerLive = truncateOrRetireTimelineOnO3(instance, durableMaxTsAfterRepair + 1, truncatedHead);
+                prefixMarkerLive = truncateOrRetireTimelineOnO3(instance, durableMaxTsAfterRepair + 1, true, truncatedHead);
                 openSegmentRepairPhases.timelinePublicationNanos += System.nanoTime() - truncateStart;
                 isFrontierRootKept = prefixMarkerLive && truncatedHead.maxTs == durableMaxTsAfterRepair;
             }
@@ -10375,7 +10398,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                     // The truncate writes its durable marker first and drops the
                                     // roots at or above R. It retires the timeline instead when no
                                     // prefix survives, which takes the marker with it.
-                                    prefixMarkerLive = truncateOrRetireTimelineOnO3(instance, emitLowTs, truncatedHead);
+                                    prefixMarkerLive = truncateOrRetireTimelineOnO3(instance, emitLowTs, false, truncatedHead);
                                 }
                                 if (isSparse) {
                                     stats.inc(SPARSE_PUBLICATION_COUNT);
@@ -10871,17 +10894,20 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             // generation keeps the splice's base coordinate. The truncate writes a
                             // repair marker of its own over the splice's generation, in place of
                             // the splice's, and the resolution below applies the truncate's rule
-                            // to it. It runs past the consumed seqTxn advance, with the seal, so a
-                            // state write that fails there skips the two together. It also moves
-                            // the generation past any the runtime's seal baseline names, so the
-                            // seal images every key.
+                            // to it. The marker records no seqTxn, because the replacement has
+                            // committed: a crash before the truncate publishes leaves the splice's
+                            // generation, whose roots above the frontier no restore may stand on,
+                            // under a marker that reads as live. It runs past the consumed seqTxn
+                            // advance, with the seal, so a state write that fails there skips the
+                            // two together. It also moves the generation past any the runtime's
+                            // seal baseline names, so the seal images every key.
                             stats.inc(HEAD_MISS_SPLICE_FRONTIER_TRUNCATE_COUNT);
                             LOG.info().$("live view O3 head miss output ended below its spliced roots, truncating at the frontier [view=")
                                     .$(viewName)
                                     .$(", frontier=").$ts(durableMaxTsAfterRepair)
                                     .$(", spliceHeadRootMaxTs=").$ts(headRootMaxTs)
                                     .$(", rowsEmitted=").$(appendedRows).I$();
-                            prefixMarkerLive = truncateOrRetireTimelineOnO3(instance, durableMaxTsAfterRepair + 1, truncatedHead);
+                            prefixMarkerLive = truncateOrRetireTimelineOnO3(instance, durableMaxTsAfterRepair + 1, true, truncatedHead);
                             isFrontierRootKept = prefixMarkerLive && truncatedHead.maxTs == durableMaxTsAfterRepair;
                         }
                     }
@@ -13877,7 +13903,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * drop the tail of the view's txnlog and keep the table that applied it. A stale marker is
      * cleared here and reads as absent; a torn marker, an unreadable superblock, or a marker
      * that recorded no seqTxn under its own generation reads as live, because none of them can
-     * show that nothing moved.
+     * show that nothing moved. The frontier truncate of a published splice records none on
+     * purpose: it runs after its repair's replacement commit, over the splice's generation,
+     * which no longer describes the output on disk (see
+     * {@link #truncateOrRetireTimelineOnO3}).
      *
      * @param durableLvSeqTxn the seqTxn the view's table has applied
      */

@@ -66,7 +66,9 @@ import org.jetbrains.annotations.NotNull;
  *   seqTxn is part of the proof because, under NOSYNC and ASYNC commit modes, an OS
  *   crash can drop the sequencer's record of a replacement the table kept.
  *   {@link Numbers#LONG_NULL} means not recorded, and the generation rule decides
- *   alone.</li>
+ *   alone. A marker written after the replacement commit, which the frontier truncate
+ *   that follows a published splice writes, records {@code LONG_NULL}: no seqTxn read
+ *   then can prove the repair moved nothing.</li>
  * </ul>
  * A torn or unreadable marker (reachable only when the marker write itself crashed,
  * before any truncate) reads as {@link Numbers#LONG_NULL} and forces the conservative
@@ -86,9 +88,12 @@ import org.jetbrains.annotations.NotNull;
  * staged record decides - complete or torn depending on when the crash hit. The
  * staged write maps an existing {@code .tmp} without truncating it, so a crash before
  * it changes any byte of a complete leftover record leaves that older CRC-valid
- * record to decide. An older record decides soundly because the marker write
- * precedes the interrupted repair's truncate and commit, so that repair moved nothing
- * durable. Rewriting is atomic on POSIX; on Windows it briefly unlinks the previous
+ * record to decide. An older record decides soundly. A marker written ahead of its
+ * repair's truncate and commit was interrupted before that repair moved anything
+ * durable. The frontier truncate that follows a published splice writes its marker
+ * after the commit, over the splice's own record, which names the generation before
+ * the splice: under the splice's generation it reads as live, as the truncate's own
+ * record does. Rewriting is atomic on POSIX; on Windows it briefly unlinks the previous
  * record first, so a crash in that window leaves only the complete staged record (see
  * {@link LiveViewCheckpointLayout#publishOverwrite}). {@link #exists} counts a staged
  * record as a marker and the reads fall back to it when no final name exists.
@@ -207,13 +212,16 @@ public final class LiveViewCheckpointRepairMarker {
 
     /**
      * Durably writes the marker, staged through {@code _repairing.tmp} and
-     * renamed into place. Must be ordered before the repair's truncate
-     * publication and its replacement commit.
+     * renamed into place. Must be ordered before the truncate or splice
+     * publication it guards, and before the repair's replacement commit when
+     * that has not landed yet.
      *
      * @param baseGeneration the timeline generation the repair started from
      * @param floorTimestamp the truncate floor {@code R} (diagnostic)
-     * @param lvSeqTxn       the last seqTxn the live view's own WAL has committed;
-     *                       the repair's replacement must be the next commit
+     * @param lvSeqTxn       the last seqTxn the live view's own WAL has committed,
+     *                       when the repair's replacement must be the next commit,
+     *                       or {@link Numbers#LONG_NULL} when the replacement has
+     *                       already committed
      */
     public static void write(
             @NotNull CairoConfiguration configuration,
