@@ -36,6 +36,8 @@ import io.questdb.cairo.SymbolValueCountCollector;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.lv.LiveViewSymbolCache;
 import io.questdb.cairo.lv.LiveViewSymbolTable;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.Vm;
@@ -773,6 +775,8 @@ public class SymbolMapTest extends AbstractCairoTest {
                     CharSequence a = reader.valueOf(1);
                     Assert.assertEquals(42, Chars.hashCode(a));
                     Assert.assertEquals(42, Chars.hashCode(reader.valueBOf(1)));
+                    // So do the views of other users of the reader.
+                    Assert.assertEquals(42, Chars.hashCode(reader.newSymbolTableView().valueOf(1)));
                     // A lookup that finds no value leaves the earlier binding and its key alone.
                     Assert.assertNull(reader.valueOf(values.size()));
                     Assert.assertEquals(42, Chars.hashCode(a));
@@ -796,7 +800,7 @@ public class SymbolMapTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSymbolTableViewsKeepHashesOfKeysSharingSlot() throws Exception {
+    public void testSymbolTableViewsKeepFirstKeyOfHashSlot() throws Exception {
         assertMemoryLeak(() -> {
             try (Path path = new Path().of(configuration.getDbRoot())) {
                 // keys 1 and 1,025 share a slot of the 1,024-slot hash array
@@ -805,17 +809,100 @@ public class SymbolMapTest extends AbstractCairoTest {
                         SymbolMapCachePool pool = new SymbolMapCachePool(new NativeMemoryBudget(1024 * 1024));
                         SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, 1_026, pool, 0)
                 ) {
-                    reader.putValueHash(1, 42);
+                    Assert.assertEquals("v1".hashCode(), Chars.hashCode(reader.valueOf(1)));
+                    Assert.assertEquals("v1025".hashCode(), Chars.hashCode(reader.valueBOf(1_025)));
+                    Assert.assertTrue(reader.hasValueHash(1));
                     Assert.assertFalse(reader.hasValueHash(1_025));
-                    Assert.assertEquals("v1025".hashCode(), Chars.hashCode(reader.valueOf(1_025)));
-                    Assert.assertTrue(reader.hasValueHash(1_025));
 
-                    // key 1,025 took the slot, so key 1 hashes its chars again
-                    Assert.assertFalse(reader.hasValueHash(1));
-                    Assert.assertEquals("v1".hashCode(), Chars.hashCode(reader.valueBOf(1)));
+                    // key 1 keeps the slot for every view of the reader
+                    StaticSymbolTable view = reader.newSymbolTableView();
+                    Assert.assertEquals("v1025".hashCode(), Chars.hashCode(view.valueOf(1_025)));
+                    Assert.assertEquals("v1".hashCode(), Chars.hashCode(view.valueBOf(1)));
                     Assert.assertTrue(reader.hasValueHash(1));
                     Assert.assertFalse(reader.hasValueHash(1_025));
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testSymbolTableViewsShareValueHashesAcrossThreads() throws Exception {
+        assertMemoryLeak(() -> {
+            final int count = 3_000;
+            final int threadCount = 4;
+            final int[] expected = new int[count];
+            for (int key = 0; key < count; key++) {
+                expected[key] = ("v" + key).hashCode();
+            }
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                createMap(path, "x", "v", count, -1, 0);
+                try (
+                        SymbolMapCachePool pool = new SymbolMapCachePool(new NativeMemoryBudget(1024 * 1024));
+                        SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, count, pool, 0)
+                ) {
+                    final CyclicBarrier startBarrier = new CyclicBarrier(threadCount);
+                    final AtomicInteger errors = new AtomicInteger();
+                    final ObjList<Thread> threads = new ObjList<>();
+                    for (int t = 0; t < threadCount; t++) {
+                        // each thread hashes every key twice through a view of its own, from another first key
+                        final StaticSymbolTable view = reader.newSymbolTableView();
+                        final int firstKey = t * count / threadCount;
+                        final Thread thread = new Thread(() -> {
+                            try {
+                                startBarrier.await();
+                                for (int i = 0; i < 2 * count; i++) {
+                                    final int key = (firstKey + i) % count;
+                                    if (Chars.hashCode(view.valueOf(key)) != expected[key]) {
+                                        errors.incrementAndGet();
+                                    }
+                                }
+                            } catch (Throwable e) {
+                                LOG.error().$("hashing thread failed: ").$(e).$();
+                                errors.incrementAndGet();
+                            }
+                        });
+                        threads.add(thread);
+                        thread.start();
+                    }
+                    for (int t = 0; t < threadCount; t++) {
+                        threads.getQuick(t).join();
+                    }
+                    Assert.assertEquals(0, errors.get());
+
+                    // the views filled the reader's slots, each with one of the keys that share it
+                    for (int slot = 0; slot < 1_024; slot++) {
+                        int holderCount = 0;
+                        for (int key = slot; key < count; key += 1_024) {
+                            if (reader.hasValueHash(key)) {
+                                holderCount++;
+                            }
+                        }
+                        Assert.assertEquals("slot " + slot, 1, holderCount);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRepeatedQueryAllocatesNoValueHashes() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (a SYMBOL CACHE, b SYMBOL CACHE)");
+            execute("INSERT INTO x SELECT 'k' || (x % 100), 'k' || (x % 10) FROM long_sequence(1_000)");
+            // last(b) reads b through a view of its own on every run, and IN hashes those values
+            // to look them up in a; every group's last b is one of k0-k9, which 100 rows hold in a
+            try (
+                    RecordCursorFactory factory = select("SELECT count() FROM x WHERE a IN (SELECT last(b) FROM x GROUP BY a)");
+                    TestUtils.ThreadMetricsScope<ThreadMXBean> scope = TestUtils.threadAllocationScope()
+            ) {
+                // the first round fills the pools the query reuses
+                assertCount(factory, 100, 100);
+                final ThreadMXBean threadMXBean = scope.getBean();
+                final long threadId = Thread.currentThread().threadId();
+                final long before = threadMXBean.getThreadAllocatedBytes(threadId);
+                assertCount(factory, 1_000, 100);
+                final long allocated = threadMXBean.getThreadAllocatedBytes(threadId) - before;
+                Assert.assertTrue("1,000 executions allocated " + allocated + " bytes", allocated < 4_000_000);
             }
         });
     }
@@ -3088,6 +3175,15 @@ public class SymbolMapTest extends AbstractCairoTest {
             final int values = 10_000;
             Assert.assertTrue(taggedBytesForWriter("cached", true, values) > taggedBytesForWriter("plain", false, values));
         });
+    }
+
+    private static void assertCount(RecordCursorFactory factory, int executions, long expected) throws Exception {
+        for (int i = 0; i < executions; i++) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                Assert.assertTrue(cursor.hasNext());
+                Assert.assertEquals(expected, cursor.getRecord().getLong(0));
+            }
+        }
     }
 
     private static void assertKeys(StaticSymbolKeys keys, int... expected) {

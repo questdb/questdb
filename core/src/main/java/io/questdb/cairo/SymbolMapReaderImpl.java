@@ -49,6 +49,8 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.VarHandle;
 import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -57,6 +59,7 @@ import static io.questdb.cairo.TableUtils.offsetFileName;
 
 public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     private static final Log LOG = LogFactory.getLog(SymbolMapReaderImpl.class);
+    private static final VarHandle VALUE_HASH = MethodHandles.arrayElementVarHandle(long[].class);
     private static final int VALUE_HASHES_SIZE = 1024;
     private final AtomicReference<SymbolMapCachePool> cachePool = new AtomicReference<>();
     private final MemoryCMR charMem = Vm.getCMRInstance();
@@ -78,6 +81,11 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     private int symbolCount;
     private long symbolTableGeneration;
     private long truncateVersion;
+    // Hashes of cached values, one (key + 1) << 32 | hash entry per slot, which every view of this reader
+    // shares across queries. of() clears them on a generation change, while no query uses the reader. A slot
+    // keeps the first key that fills it, so workers write each slot once rather than rewrite cache lines that
+    // other workers read.
+    private long[] valueHashes;
 
     public SymbolMapReaderImpl() {
     }
@@ -157,7 +165,8 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
 
     @TestOnly
     public boolean hasValueHash(int key) {
-        return ownView.hasValueHash(key);
+        final long[] hashes = valueHashes;
+        return hashes != null && (int) (hashes[key & (VALUE_HASHES_SIZE - 1)] >>> 32) == key + 1;
     }
 
     @Override
@@ -294,6 +303,9 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
                 this.cachePool.set(cachePool);
             }
             symbolTableGeneration = symbolTableGeneration == Long.MAX_VALUE ? 0 : symbolTableGeneration + 1;
+            if (valueHashes != null) {
+                Arrays.fill(valueHashes, 0);
+            }
             LOG.debug().$("open [columnName=").$(path.trimTo(plen).concat(columnName).$())
                     .$(", fd=").$(offsetMem.getFd())
                     .$(", capacity=").$(symbolCapacity)
@@ -308,7 +320,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
 
     @TestOnly
     public void putValueHash(int key, int hash) {
-        ownView.getValueHashes()[key & (VALUE_HASHES_SIZE - 1)] = valueHashEntry(key, hash);
+        getValueHashes()[key & (VALUE_HASHES_SIZE - 1)] = valueHashEntry(key, hash);
     }
 
     @Override
@@ -393,6 +405,15 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         cacheEntry = pool.acquire(path, columnNameSink, columnNameTxn, truncateVersion);
     }
 
+    private long[] getValueHashes() {
+        long[] hashes = valueHashes;
+        if (hashes == null) {
+            // Threads that race here each keep their own array for the call; the last assignment stays.
+            valueHashes = hashes = new long[VALUE_HASHES_SIZE];
+        }
+        return hashes;
+    }
+
     private void logCacheStopped(SymbolMapCachePool.Entry entry) {
         final NativeMemoryBudget budget = entry.getBudget();
         final SymbolMapSegments segments = entry.getSegments();
@@ -414,8 +435,6 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         private final DirectString csviewInternal = new DirectString();
         private final DirectString csviewOnce = new DirectString();
         private RowCursor rowCursor;
-        private long[] valueHashes;
-        private long valueHashesGeneration;
 
         @Override
         public boolean containsNullValue() {
@@ -510,25 +529,10 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             return value;
         }
 
-        private long[] getValueHashes() {
-            if (valueHashes == null) {
-                valueHashes = new long[VALUE_HASHES_SIZE];
-                valueHashesGeneration = symbolTableGeneration;
-            } else if (valueHashesGeneration != symbolTableGeneration) {
-                Arrays.fill(valueHashes, 0);
-                valueHashesGeneration = symbolTableGeneration;
-            }
-            return valueHashes;
-        }
-
-        private boolean hasValueHash(int key) {
-            return valueHashes != null && valueHashesGeneration == symbolTableGeneration
-                    && (int) (valueHashes[key & (VALUE_HASHES_SIZE - 1)] >>> 32) == key + 1;
-        }
-
         /**
          * The A and B value flyweights. On a cached column the view sets the key on every bind, so the
-         * key names the bound value, and hashCode() reuses the hash that valueHashes holds for that key.
+         * key names the bound value, and hashCode() reuses the hash that the reader's valueHashes holds
+         * for that key.
          */
         private final class CachedHashView extends DirectString {
             private int key = -1;
@@ -541,12 +545,15 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
                 }
                 final long[] hashes = getValueHashes();
                 final int slot = k & (VALUE_HASHES_SIZE - 1);
-                final long entry = hashes[slot];
+                // Opaque access keeps each 64-bit entry whole when threads share the array.
+                final long entry = (long) VALUE_HASH.getOpaque(hashes, slot);
                 if ((int) (entry >>> 32) == k + 1) {
                     return (int) entry;
                 }
                 final int h = super.hashCode();
-                hashes[slot] = valueHashEntry(k, h);
+                if (entry == 0) {
+                    VALUE_HASH.setOpaque(hashes, slot, valueHashEntry(k, h));
+                }
                 return h;
             }
 

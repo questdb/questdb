@@ -163,6 +163,11 @@ public class SymbolCacheBenchmark {
     }
 
     @Benchmark
+    public long countDistinctUnionAll(UnionAll state) throws SqlException {
+        return readCount(state.countDistinct);
+    }
+
+    @Benchmark
     public long filterRandomKeysWorkers(RandomKeys state, Workers workers) throws SqlException {
         return readCount(state.filterWorkers, workers.context);
     }
@@ -628,6 +633,22 @@ public class SymbolCacheBenchmark {
         @TearDown(Level.Trial)
         public void tearDown() {
             notEqualAll = Misc.free(notEqualAll);
+        }
+    }
+
+    // UNION ALL leaves s without a static symbol table, so count_distinct hashes every row's value.
+    @State(Scope.Benchmark)
+    public static class UnionAll {
+        private RecordCursorFactory countDistinct;
+
+        @Setup(Level.Trial)
+        public void setUp(SymbolCacheBenchmark benchmark) throws SqlException {
+            countDistinct = benchmark.engine.select("SELECT count_distinct(s) FROM (SELECT s FROM low UNION ALL SELECT s FROM few)", benchmark.context);
+        }
+
+        @TearDown(Level.Trial)
+        public void tearDown() {
+            countDistinct = Misc.free(countDistinct);
         }
     }
 
