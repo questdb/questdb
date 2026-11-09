@@ -295,7 +295,10 @@ final class ScanFactoryGenerator {
             case STATIC ->
                     new RuntimeIntervalModel(ColumnType.getTimestampDriver(scan.getNativeTimestampType()), table.getPartitionedBy(),
                             new LongList(scan.getStaticIntervals()), new ObjList<>());
-            case RUNTIME -> scanIntervals.build(table.getPartitionedBy());
+            case RUNTIME -> {
+                assert scanIntervals != null : "runtime intervals planned without their extraction";
+                yield scanIntervals.build(table.getPartitionedBy());
+            }
         };
     }
 
@@ -675,7 +678,7 @@ final class ScanFactoryGenerator {
      * the sequencer metadata the statement validates against, which the table's reader may not have caught up with;
      * the columns of any other scan carry its table's metadata.
      */
-    private RecordCursorFactory generateUpdateStub(ScanPlan scan, SqlExecutionContext executionContext) throws SqlException {
+    private RecordCursorFactory generateUpdateStub(ScanPlan scan, SqlExecutionContext executionContext) {
         final OutputSchema output = scan.getOutput();
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         if (!scan.isUpdate()) {
@@ -842,6 +845,7 @@ final class ScanFactoryGenerator {
             }
             final PlanTable table = planTables.of(scan);
             frame.placeScan(scan, table);
+            //noinspection resource
             factory = generatePostingDistinctScan(aggregate, scan, predicate == null ? null : frame.intervals, table);
         } catch (Throwable th) {
             Misc.clear(frame.intervals, th);

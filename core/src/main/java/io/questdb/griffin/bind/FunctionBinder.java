@@ -953,8 +953,8 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
                 if (isOperandTyped(args, 1, operandType) && isOperandTyped(args, 2, operandType)) {
                     return null;
                 }
-                final long lo = temporalConstantValue(args, 1, loType, driver);
-                final long hi = temporalConstantValue(args, 2, hiType, driver);
+                final long lo = temporalConstantValue(args, 1, loType);
+                final long hi = temporalConstantValue(args, 2, hiType);
                 if (lo == Numbers.LONG_NULL || hi == Numbers.LONG_NULL) {
                     return null;
                 }
@@ -990,7 +990,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         }
         validateTemporalConstant(args, index, driver);
         try {
-            final long value = temporalConstantValue(args, index, type, driver);
+            final long value = temporalConstantValue(args, index, type);
             if (value == Numbers.LONG_NULL) {
                 return null;
             }
@@ -1051,7 +1051,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
             }
             validateTemporalConstant(args, i, driver);
             try {
-                final long value = temporalConstantValue(args, i, type, driver);
+                final long value = temporalConstantValue(args, i, type);
                 if (value == Numbers.LONG_NULL || driver.isExactFrom(value, type)) {
                     replaceTemporalConstant(args, i, driver.ceilFrom(value, type), operandType, true);
                     isMatchable = true;
@@ -1219,15 +1219,14 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         }
         scope.currentPreparation.isRebuildRequired = true;
         final CursorExpression cursor = nextCursor().of(subquery, node.position);
-        final Function function = new CursorFunction(subquery.getOutputMetadata());
         if ((node.queryModel == scope.timestampFromSubquery || node.queryModel == scope.timestampToSubquery)
                 && isTimestampConvertible(subquery.getRoot().getOutput(), scope.timestampSubqueryType)) {
             push(nextCursor().ofTimestamp(cursor, scope.timestampSubqueryType,
                     BoundExpression.RUNTIME_CONSTANT | cursor.getFunctionFlags() & BoundExpression.STABLE_WITHIN_EXECUTION), leafMark());
-            return new ScalarSubQueryTimestampFunction(function, node.position, scope.timestampSubqueryType);
+            return new ScalarSubQueryTimestampFunction(new CursorFunction(subquery.getOutputMetadata()), node.position, scope.timestampSubqueryType);
         }
         push(cursor, leafMark());
-        return function;
+        return new CursorFunction(subquery.getOutputMetadata());
     }
 
     /**
@@ -1299,6 +1298,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
             throw th;
         }
         if (staticType != ColumnType.UNDEFINED) {
+            assert args != null : "a call without arguments has no static type";
             prepareUnconstructedArguments(args);
             Misc.freeObjList(args);
             args.clear();
@@ -1309,6 +1309,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
             }
             addUnconstructed(pushCall(name, role, isSetOperation, ctx.planNodes.functions.next().of(overload, arguments, argumentPositions,
                     staticType, flags, position)));
+            //noinspection resource
             return ctx.planNodes.staticTypes.next().of(staticType, (flags & BoundExpression.NO_PARALLELISM) == 0);
         }
         materializeCanonicalTimestamps(args);
@@ -1491,11 +1492,6 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
     private boolean isOperandTyped(ObjList<Function> args, int index, int operandType) {
         return args.getQuick(index).getType() == operandType
                 && (operandType != ColumnType.DATE || literalText(arguments.getQuick(index)) == null);
-    }
-
-    private boolean isStringLiteral(ObjList<Function> args, int index) {
-        return args.getQuick(index).isConstant() && arguments.getQuick(index) instanceof ConstantExpression constant
-                && IntervalExtractor.isStringLiteral(constant);
     }
 
     private boolean isWindowArgument(ExpressionNode node) {
@@ -1692,7 +1688,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
     }
 
     private void replaceExactTemporalConstant(ObjList<Function> args, int index, int type, int operandType, TimestampDriver driver) throws NumericException {
-        final long value = temporalConstantValue(args, index, type, driver);
+        final long value = temporalConstantValue(args, index, type);
         if (value != Numbers.LONG_NULL && driver.isExactFrom(value, type)) {
             replaceTemporalConstant(args, index, driver.ceilFrom(value, type), operandType, true);
         }
@@ -1767,6 +1763,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         }
         final Function cast = resolver.resolveCastOrOverload(name, position, args, positions, literal, literalPosition, sqlExecutionContext);
         if (cast != null) {
+            assert args != null : "a CAST resolves with its arguments";
             return cast == args.getQuick(0) ? returnCastArgument(cast, args, position) : captureConstant(cast, position, null);
         }
         final FunctionFactoryDescriptor overload = resolver.getSelectedOverload();
@@ -1888,9 +1885,9 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
 
     /**
      * The value of a comparison constant at {@code type}, its {@link #temporalConstantType} or
-     * {@link #textConstantType}; {@code driver} is the temporal operand's.
+     * {@link #textConstantType}.
      */
-    private long temporalConstantValue(ObjList<Function> args, int index, int type, TimestampDriver driver) throws NumericException {
+    private long temporalConstantValue(ObjList<Function> args, int index, int type) throws NumericException {
         final Function constant = args.getQuick(index);
         final CharSequence text = literalText(arguments.getQuick(index));
         if (text != null) {
@@ -2061,6 +2058,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         }
         final ExpressionNode subsample = node.windowExpression.getPendingSubsample();
         final SampleByBinder.SubsampleMethod method = SampleByBinder.SubsampleMethod.of(subsample.token);
+        assert method != null : "pending SUBSAMPLE argument of an unknown method";
         final int pendingIndex = SampleByBinder.pendingSubsampleArgument(subsample, method);
         switch (method) {
             case UNIFORM -> {
@@ -2140,7 +2138,8 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         final TimestampDriver driver = ColumnType.getTimestampDriver(args.getQuick(0).getType());
         if (count == 2 && ColumnType.isVarcharOrString(args.getQuick(1).getType())) {
             final BoundExpression argument = arguments.getQuick(1);
-            final CharSequence text = isStringLiteral(args, 1) ? literalText(argument) : null;
+            final CharSequence text = args.getQuick(1).isConstant() && argument instanceof ConstantExpression constant
+                    && IntervalExtractor.isStringLiteral(constant) ? literalText(argument) : null;
             if (text != null && !InTimestampTimestampFunctionFactory.containsDateVariable(text)) {
                 final CharSequence seq = intervalSpelling(argument, text);
                 parsedIntervals.clear();

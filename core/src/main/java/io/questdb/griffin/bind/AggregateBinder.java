@@ -342,7 +342,7 @@ final class AggregateBinder implements Mutable {
      * Adds the SAMPLE BY bucket as the next grouping key, under the name of the select expression at
      * {@code timestampIndex}, or of the timestamp when -1.
      */
-    private void addSampleByBucket(QueryModel model, QueryModel source, GroupingPlan aggregate, BoundExpression bucket, int timestampIndex) throws SqlException {
+    private void addSampleByBucket(QueryModel model, QueryModel source, GroupingPlan aggregate, BoundExpression bucket, int timestampIndex) {
         final BindScope scope = ctx.scope();
         final OutputSchema input = aggregate.getChild().getOutput();
         final ExpressionNode timestamp = timestampIndex < 0 ? sampleByBinder.sampleByTimestamp(input, source.getSampleBy().position)
@@ -1115,15 +1115,6 @@ final class AggregateBinder implements Mutable {
         return false;
     }
 
-    private boolean hasAggregateOrder(QueryModel source) {
-        for (int i = 0, n = source.getOrderBy().size(); i < n; i++) {
-            if (ctx.isAggregate(source.getOrderBy().getQuick(i))) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     private boolean hasCursorColumn(ExpressionNode expression) {
         final ObjList<ExpressionNode> cursorNodes = ctx.scope().cursorNodes;
         for (int i = 0, n = cursorNodes.size(); i < n; i++) {
@@ -1157,17 +1148,21 @@ final class AggregateBinder implements Mutable {
         return false;
     }
 
-    private boolean isAggregateOrderAvailable(
+    /**
+     * True when the expression reads a value the aggregate does not produce: outside an aggregate, a column that is
+     * neither a grouping key, a select alias nor computed by the aggregate's projection.
+     */
+    private boolean hasUngroupedReference(
             ExpressionNode expression, QueryModel model, QueryModel source, GroupingPlan aggregate, boolean hasSelectAliases
     ) throws SqlException {
         if (expression == null || ctx.isAggregate(expression) || ctx.scope().aggregateProjectionExpressions.get(expression) != null) {
-            return true;
+            return false;
         }
         if (hasSelectAliases && expression.type == ExpressionNode.LITERAL
                 && getColumnIndexQuiet(aggregate.getChild().getOutput(), expression.token) < 0) {
             for (int i = 0, n = model.getColumns().size(); i < n; i++) {
                 if (Chars.equalsIgnoreCase(model.getColumns().getQuick(i).getName(), expression.token)) {
-                    return true;
+                    return false;
                 }
             }
         }
@@ -1175,22 +1170,23 @@ final class AggregateBinder implements Mutable {
             final OutputSchema referenceScope = ctx.scope().referenceScope;
             final int index = FunctionBinder.findColumn(expression, referenceScope, sourceAlias(source));
             if (index >= 0 && LogicalPlans.groupingColumnIndex(aggregate, referenceScope.getColumnId(index)) >= 0) {
-                return true;
-            }
-        }
-        if (findGroupingExpression(expression, source, aggregate) >= 0) {
-            return true;
-        }
-        if (expression.type == ExpressionNode.LITERAL) {
-            return false;
-        }
-        for (int i = 0, n = expression.operandCount(); i < n; i++) {
-            if (!isAggregateOrderAvailable(expression.operandAt(i), model, source, aggregate, hasSelectAliases)) {
                 return false;
             }
         }
-        return true;
+        if (findGroupingExpression(expression, source, aggregate) >= 0) {
+            return false;
+        }
+        if (expression.type == ExpressionNode.LITERAL) {
+            return true;
+        }
+        for (int i = 0, n = expression.operandCount(); i < n; i++) {
+            if (hasUngroupedReference(expression.operandAt(i), model, source, aggregate, hasSelectAliases)) {
+                return true;
+            }
+        }
+        return false;
     }
+
 
     private boolean isConstantGroupingExpression(ExpressionNode expression) {
         if (expression == null) {
@@ -1266,6 +1262,18 @@ final class AggregateBinder implements Mutable {
         for (int i = 0, n = model.getColumns().size(); i < n; i++) {
             final ExpressionNode column = model.getColumns().getQuick(i).getAst();
             if (column.isWildcard() || column.type == ExpressionNode.LITERAL && FunctionBinder.findColumn(column, input, sourceAlias(source)) == index) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * True when no ORDER BY expression the block binds itself is an aggregate.
+     */
+    private boolean isOrderWithoutAggregate(QueryModel source) {
+        for (int i = 0, n = source.getOrderBy().size(); i < n; i++) {
+            if (ctx.isAggregate(source.getOrderBy().getQuick(i))) {
                 return false;
             }
         }
@@ -1688,7 +1696,7 @@ final class AggregateBinder implements Mutable {
         final ObjList<IntList> groupingSets = groupingBlock.getGroupingSets();
         // DISTINCT stays over grouping sets: a set's row repeats another's when a key that the first set groups by is NULL.
         final boolean isDistinctRetained = model.isDistinct()
-                && (groupingSets != null || !(isGroupingSelect(model) && (!isOrderBound || !hasAggregateOrder(source))));
+                && (groupingSets != null || !(isGroupingSelect(model) && (!isOrderBound || isOrderWithoutAggregate(source))));
         scope.aggregateSelectExpressions.clear();
         for (int i = 0, n = model.getColumns().size(); i < n; i++) {
             final ExpressionNode expression = selectExpressions == null
@@ -1774,7 +1782,7 @@ final class AggregateBinder implements Mutable {
                         || isHorizonJoin && order.type == ExpressionNode.LITERAL && FunctionBinder.findColumn(order, input.getOutput(), null) >= 0)
                         && (!isHorizonJoin && !hasSelectAliases && !ctx.hasAggregate(order) && findGroupingExpression(order, source, aggregate) < 0
                         && !hasVirtualSelection
-                        || !isAggregateOrderAvailable(order, model, source, aggregate, hasSelectAliases))) {
+                        || hasUngroupedReference(order, model, source, aggregate, hasSelectAliases))) {
                     if (order.type == ExpressionNode.LITERAL && !isReadBySelectExpression(order, input.getOutput())) {
                         throw orderNotSelected(order);
                     }
@@ -2042,7 +2050,7 @@ final class AggregateBinder implements Mutable {
      * aggregate, and no ORDER BY the block binds itself is an aggregate.
      */
     boolean isDistinctRewritten(QueryModel model, QueryModel source) {
-        return isGroupingSelect(model) && (ctx.isSetOperationBranch || !hasAggregateOrder(source));
+        return isGroupingSelect(model) && (ctx.isSetOperationBranch || isOrderWithoutAggregate(source));
     }
 
     /**
@@ -2054,17 +2062,21 @@ final class AggregateBinder implements Mutable {
         final boolean isGroupingSelected = isDistinctGroupingSelected(model, source, input);
         for (int i = 0, n = source.getOrderBy().size(); i < n; i++) {
             final ExpressionNode order = source.getOrderBy().getQuick(i);
-            if (order.type != ExpressionNode.LITERAL || !isSelectAlias(order, model)) {
-                validateDistinctOrder(order, model, source, input, isGroupingSelected);
+            if (order.type == ExpressionNode.LITERAL && isSelectAlias(order, model)) {
+                continue;
             }
+            validateDistinctOrder(order, model, source, input, isGroupingSelected);
         }
     }
 
     void validateHorizonProjectionOrder(QueryModel model, QueryModel source, OutputSchema input) throws SqlException {
         for (int i = 0, n = source.getOrderBy().size(); i < n; i++) {
             final ExpressionNode order = source.getOrderBy().getQuick(i);
+            if (order.type != ExpressionNode.LITERAL || isSelectAlias(order, model)) {
+                continue;
+            }
             // HORIZON rejects an unselected bare column, but permits a computed hidden sort key.
-            if (order.type == ExpressionNode.LITERAL && !isSelectAlias(order, model) && isOmittedSourceColumn(order, model, source, input)) {
+            if (isOmittedSourceColumn(order, model, source, input)) {
                 throw orderNotSelected(order);
             }
         }

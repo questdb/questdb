@@ -364,7 +364,7 @@ final class JoinFactoryGenerator {
             Plannable joinCondition,
             long toleranceInterval,
             @Nullable Function keyCheck
-    ) throws SqlException {
+    ) {
         final JoinKeyLayout joinKeys = frame.joinKeys;
         final ListColumnFilter listColumnFilterA = joinKeys.slaveColumns;
         final ListColumnFilter listColumnFilterB = joinKeys.masterColumns;
@@ -1271,7 +1271,7 @@ final class JoinFactoryGenerator {
             Plannable condition,
             long toleranceInterval,
             @Nullable Function keyCheck
-    ) throws SqlException {
+    ) {
         final JoinKeyLayout joinKeys = frame.joinKeys;
         final ListColumnFilter listColumnFilterA = joinKeys.slaveColumns;
         JoinRecordMetadata joinMetadata = null;
@@ -1302,6 +1302,7 @@ final class JoinFactoryGenerator {
                     joinKeys.prepareSinks(configuration, asm, masterMetadata, slaveMetadata);
                     final Record slaveNull = NullRecordFactory.getInstance(slaveMetadata);
                     final Function filter = stolenFilter.adopt().takeFilter();
+                    assert filter != null : "a stolen filter holds its filter";
                     isTransferred = true;
                     return new FilteredAsOfJoinFastRecordCursorFactory(
                             configuration,
@@ -1493,6 +1494,7 @@ final class JoinFactoryGenerator {
             if (stolenFilter != null) {
                 final Record slaveNull = NullRecordFactory.getInstance(slaveMetadata);
                 final Function filter = stolenFilter.adopt().takeFilter();
+                assert filter != null : "a stolen filter holds its filter";
                 isTransferred = true;
                 return new FilteredAsOfJoinNoKeyFastRecordCursorFactory(
                         configuration,
@@ -1553,7 +1555,7 @@ final class JoinFactoryGenerator {
             Plannable condition,
             long toleranceInterval,
             @Nullable Function keyCheck
-    ) throws SqlException {
+    ) {
         JoinRecordMetadata joinMetadata = null;
         boolean isTransferred = false;
         try {
@@ -1645,7 +1647,7 @@ final class JoinFactoryGenerator {
             RecordMetadata slaveMetadata,
             CharSequence slaveAlias,
             Plannable condition
-    ) throws SqlException {
+    ) {
         assert master.recordCursorSupportsRandomAccess() && slave.recordCursorSupportsRandomAccess() : "splice join input lacks random access";
         JoinRecordMetadata joinMetadata = null;
         boolean isTransferred = false;
@@ -2070,7 +2072,7 @@ final class JoinFactoryGenerator {
                 }
                 final WindowJoinStep.NullExtension nullExtension = step.getNullExtension();
                 if (ParanoiaState.PLAN_PARANOIA_MODE
-                        && (nullExtension != WindowJoinStep.NullExtension.NONE) != (joinFilter.isConstant() && !joinFilter.getBool(null))) {
+                        && (nullExtension == WindowJoinStep.NullExtension.NONE) == (joinFilter.isConstant() && !joinFilter.getBool(null))) {
                     throw new AssertionError("window join step filter differs from its instantiated function");
                 }
                 if (nullExtension != WindowJoinStep.NullExtension.NONE) {

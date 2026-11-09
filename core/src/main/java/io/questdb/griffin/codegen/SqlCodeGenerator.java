@@ -405,14 +405,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final BoundExpression residual = plan instanceof FilterPlan filter ? filter.getPredicate() : null;
         final int placementLo = frame.placementMark();
         final RecordCursorFactory base;
-        if (plan instanceof FilterPlan filter && residual != null && PlanToFactoryRules.fusedScan(filter) instanceof ScanPlan scan) {
-            return scanGenerator.generateFiltered(frame, scan, residual, null, executionContext);
-        } else if (plan instanceof LimitPlan limit && limit.getApplication() == LimitPlan.Application.MASTER_SUFFIX) {
-            return generateMasterSuffixLimit(frame, limit, executionContext);
-        } else if (plan instanceof LimitPlan limit && input instanceof DistinctPlan distinct) {
-            base = aggregateGenerator.generateDistinct(frame, distinct, limit, executionContext);
-        } else {
-            base = generate(frame, input, executionContext);
+        switch (plan) {
+            case FilterPlan filter when residual != null && PlanToFactoryRules.fusedScan(filter) instanceof ScanPlan scan -> {
+                return scanGenerator.generateFiltered(frame, scan, residual, null, executionContext);
+            }
+            case LimitPlan limit when limit.getApplication() == LimitPlan.Application.MASTER_SUFFIX -> {
+                return generateMasterSuffixLimit(frame, limit, executionContext);
+            }
+            case LimitPlan limit when input instanceof DistinctPlan distinct ->
+                    base = aggregateGenerator.generateDistinct(frame, distinct, limit, executionContext);
+            default -> base = generate(frame, input, executionContext);
         }
         if (plan instanceof FilterPlan filter) {
             final boolean isFused;

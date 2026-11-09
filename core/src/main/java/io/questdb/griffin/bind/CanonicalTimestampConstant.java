@@ -51,11 +51,6 @@ final class CanonicalTimestampConstant extends TimestampFunction implements Cons
     }
 
     @Override
-    public boolean isNullConstant() {
-        return false;
-    }
-
-    @Override
     public void toPlan(PlanSink sink) {
         sink.valISODate(timestampDriver, value);
     }
