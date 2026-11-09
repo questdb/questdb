@@ -2298,6 +2298,15 @@ public final class TableUtils {
         throw CairoException.critical(ff.errno()).put("could not open read-write [file=").put(path).put(']');
     }
 
+    /**
+     * Opens a file that is meant to be created, never reused: any file already at the path is removed first, see
+     * {@link #removeExistingOrFail}.
+     */
+    public static long openRWFresh(FilesFacade ff, LPSZ path, Log log, int opts) {
+        removeExistingOrFail(ff, path);
+        return openRW(ff, path, log, opts);
+    }
+
     public static void openSmallFile(FilesFacade ff, Path path, int rootLen, MemoryMR metaMem, CharSequence fileName, int memoryTag) {
         path.concat(fileName);
         try {
@@ -2666,7 +2675,7 @@ public final class TableUtils {
 
                 // Open _pm file for the Rust encoder to write simultaneously.
                 other.trimTo(dstDirLen).concat(PARQUET_METADATA_FILE_NAME).$();
-                parquetMetaFd = TableUtils.openRW(ff, other.$(), LOG, configuration.getWriterFileOpenOpts());
+                parquetMetaFd = TableUtils.openRWFresh(ff, other.$(), LOG, configuration.getWriterFileOpenOpts());
 
                 bloomFilterIndexes.clear();
                 if (useMetadataBloomFilters) {
@@ -2880,6 +2889,18 @@ public final class TableUtils {
         columnNameIndexMap.remove(columnName);
         final TableColumnMetadata deletedMeta = columnMetadata.getQuick(columnIndex);
         deletedMeta.markDeleted();
+    }
+
+    /**
+     * Removes the file at the path, if there is one, before a writer creates it anew. A new partition directory
+     * version can hold hard links to the files of the live version, such as one a failed reindex could not remove.
+     * Opening such a link for write, or truncating it, would change the committed data that version and its readers
+     * still use; unlinking it first gives the writer a file of its own.
+     */
+    public static void removeExistingOrFail(FilesFacade ff, LPSZ path) {
+        if (!ff.removeQuiet(path) && ff.exists(path)) {
+            throw CairoException.critical(ff.errno()).put("could not remove existing file [path=").put(path).put(']');
+        }
     }
 
     public static void renameColumnInMetadata(
