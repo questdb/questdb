@@ -1257,6 +1257,10 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     private void replayStoredRows(Rnd rnd, String tableName, String twinTableName, boolean isParquetReplayExpected) throws SqlException {
         for (String t : new String[]{tableName, twinTableName}) {
             execute("alter table " + t + " dedup upsert keys(ts)", sqlExecutionContext);
+            // The writer may compact a composite partition or squash split ones after any commit, the replay's
+            // too, and that moves name txns and the column version in _txn even for partitions the commit never
+            // wrote to. SQUASH PARTITIONS does both up front, so _txn moves only if the replay rewrites a partition.
+            execute("alter table " + t + " squash partitions", sqlExecutionContext);
         }
         drainWalQueue();
         final TableToken tableToken = engine.verifyTableName(tableName);
