@@ -1959,6 +1959,109 @@ public class CompiledFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampLiteralFinerThanColumnOtherShapes() throws Exception {
+        // More shapes of a comparison between a TIMESTAMP column and a value finer than it, each compared exactly:
+        // constant casts on the designated timestamp, IN items of each type, per-row IN items, sub-query and
+        // per-row BETWEEN bounds, and values past either end of TIMESTAMP_NS.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (k SYMBOL, m TIMESTAMP, v TIMESTAMP_NS, s STRING, d DATE, n LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY YEAR");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('old', '1000-01-01T00:00:00.000000Z', '2020-01-01T00:00:00.000000500Z', '2020-01-01T00:00:00.000000123Z', '1000-01-01T00:00:00.000Z', -30610224000000000, '2019-12-31T00:00:00.000000Z'),
+                    ('lo', '2020-01-01T00:00:00.000000Z', '2020-01-01T00:00:00.000000500Z', '2020-01-01T00:00:00.000000000Z', '2020-01-01T00:00:00.000Z', 1577836800000000, '2020-01-01T00:00:00.000000Z'),
+                    ('hi', '2020-01-01T00:00:00.000001Z', '2020-01-01T00:00:00.000000500Z', '9999-12-31', NULL, 1577836800000001, '2020-01-01T00:00:00.000001Z'),
+                    ('nul', NULL, '2020-01-01T00:00:00.000000500Z', NULL, NULL, NULL, '2020-01-02T00:00:00.000000Z')
+                    """);
+            final String l = "'2020-01-01T00:00:00.000000123Z'";
+            final String ns = l + "::TIMESTAMP_NS";
+            for (int mode = 0; mode < 4; mode++) {
+                sqlExecutionContext.setParallelFilterEnabled((mode & 1) != 0);
+                sqlExecutionContext.setJitMode((mode & 2) != 0 ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+
+                // constant casts on the designated timestamp
+                assertBound("ts = " + ns, "");
+                assertBound("ts != " + ns, "old\nlo\nhi\nnul\n");
+                assertBound("ts > " + ns, "hi\nnul\n");
+                assertBound("ts >= " + ns, "hi\nnul\n");
+                assertBound("ts < " + ns, "old\nlo\n");
+                assertBound("ts <= " + ns, "old\nlo\n");
+                assertBound("ts IN (" + ns + ", '2020-01-01T00:00:00.000001Z')", "hi\n");
+                assertBound("(ts IN (" + l + ", '2020-01-01T00:00:00.000001Z') OR ts = '2020-01-02')", "hi\nnul\n");
+                assertBound("ts BETWEEN " + l + " AND now()", "hi\nnul\n");
+                assertBound("ts BETWEEN now() AND " + l, "hi\nnul\n");
+                assertBound("ts > 1577836800000000", "hi\nnul\n");
+                assertBound("dateadd('s', 1, ts) >= '2020-01-01T00:00:01.000000123Z'", "hi\nnul\n");
+                assertBound("dateadd('s', 1, ts) < '2020-01-01T00:00:01.000000123Z'", "old\nlo\n");
+                assertBound("ts > 1577836800000000::LONG", "hi\nnul\n");
+                assertBound("ts > " + l + "::STRING", "hi\nnul\n");
+                assertBound("ts BETWEEN " + l + " AND " + l, "");
+                assertBound("ts NOT BETWEEN " + l + " AND " + l, "old\nlo\nhi\nnul\n");
+
+                // NULL bounds: NULL >= NULL and NULL <= NULL hold, NULL < NULL does not
+                assertBound("m < NULL", "");
+                assertBound("m >= NULL", "nul\n");
+                assertBound("NULL < m", "");
+                assertBound("m <= NULL", "nul\n");
+                assertBound("m BETWEEN NULL AND '2020-01-02'", "");
+
+                // a TIMESTAMP value before the start of TIMESTAMP_NS against a TIMESTAMP_NS column
+                assertBound("m < v", "old\nlo\n");
+                assertBound("v > m", "old\nlo\n");
+                assertBound("m = v", "");
+                // a TIMESTAMP_NS bound of a TIMESTAMP column, per row
+                assertBound("m BETWEEN v AND '2020-01-02'", "hi\n");
+                assertBound("m BETWEEN '2020-01-02' AND v", "hi\n");
+                assertBound("m BETWEEN v AND (SELECT '2020-01-02')", "hi\n");
+                assertBound("m BETWEEN (SELECT " + l + ") AND v", "");
+
+                // IN items of each type
+                assertBound("m IN (NULL, " + l + ")", "nul\n");
+                assertBound("m IN (NULL::TIMESTAMP, " + l + ")", "nul\n");
+                assertBound("m IN (" + ns + ", '2020-01-01T00:00:00.000001Z'::TIMESTAMP)", "hi\n");
+                assertBound("m IN (" + l + "::VARCHAR, '2020-01-01T00:00:00.000001Z'::VARCHAR)", "hi\n");
+                assertQuery("SELECT k FROM x WHERE m IN ('2020-01-01T00:00:00Z\u00e9'::VARCHAR, " + l + ")")
+                        .noLeakCheck().failsWith("Invalid date");
+                // per-row IN items: text finer than the column, text past the end of TIMESTAMP_NS, a NULL text,
+                // a DATE, a LONG and a TIMESTAMP_NS; NULL equals NULL
+                assertBound("m IN (s, '1970-01-02')", "lo\nnul\n");
+                assertBound("m IN (s::VARCHAR, '1970-01-02')", "lo\nnul\n");
+                assertBound("v IN (s, '1970-01-02')", "");
+                assertBound("m IN (d, '1970-01-02')", "old\nlo\nnul\n");
+                assertBound("m IN (n, '1970-01-02')", "old\nlo\nhi\nnul\n");
+                assertBound("m IN (v, '2020-01-01T00:00:00.000001Z')", "hi\n");
+                assertBound("m NOT IN (s, '1970-01-02')", "old\nhi\n");
+                assertQuery("SELECT k FROM x WHERE m IN (k::STRING, '1970-01-02')").noLeakCheck()
+                        .failsWith("Invalid timestamp: ");
+                assertQuery("SELECT k FROM x WHERE m IN ((k || '\u00e9')::VARCHAR, '1970-01-02')").noLeakCheck()
+                        .failsWith("Invalid timestamp: ");
+
+                // scalar sub-queries: VARCHAR text, an empty result, which is NULL
+                assertBound("m = (SELECT " + l + "::VARCHAR)", "");
+                assertBound("m = (SELECT '2020-01-01T00:00:00.000001Z'::VARCHAR)", "hi\n");
+                assertBound("m = (SELECT " + l + " FROM x WHERE 1 = 2)", "nul\n");
+                assertBound("m < (SELECT " + l + "::VARCHAR)", "old\nlo\n");
+                assertBound("m < (SELECT '9999-12-31'::TIMESTAMP)", "old\nlo\nhi\n");
+                assertBound("m = (SELECT " + l + "::VARCHAR FROM x WHERE 1 = 2)", "nul\n");
+                assertBound("m > (SELECT NULL::TIMESTAMP)", "");
+                assertBound("m < (SELECT NULL::TIMESTAMP)", "");
+                // a sub-query value past the range of the column's type fails, as before
+                assertQuery("SELECT k FROM x WHERE v < (SELECT '1000-01-01'::TIMESTAMP)").noLeakCheck()
+                        .failsWith("inconvertible value");
+            }
+
+            // bind variables: digits that the ISO parser rejects convert as the bind variable's own value,
+            // nanoseconds for text; a DATE in an IN list
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "1577836800000000123");
+            assertBound("m < $1", "old\nlo\n");
+            assertBound("m BETWEEN $1 AND '2020-01-02'", "hi\n");
+            bindVariableService.clear();
+            bindVariableService.setDate(0, 1_577_836_800_000L);
+            assertBound("m IN ($1, '2020-01-01T00:00:00.000001Z')", "lo\nhi\n");
+        });
+    }
+
+    @Test
     public void testTimestampMicrosTextBoundInLastNanosMicro() throws Exception {
         // Text from 2262-04-11T23:47:16.854775808Z to ...999Z lies past the end of TIMESTAMP_NS but inside
         // the micro 2262-04-11T23:47:16.854775Z. Compared with micros values, it lies between that micro and
