@@ -201,10 +201,10 @@ import java.util.concurrent.atomic.AtomicReferenceArray;
  * failure.
  */
 public class QueryFuzzTest extends AbstractCairoTest {
-    // Per-constant chance, in percent, of substituting a bindable literal
-    // with a bind variable inside the bind variant.
     private static final int CONCURRENT_PAGE_FRAME_ROWS = 100;
     private static final long CONCURRENT_STALL_NANOS = 60_000_000_000L;
+    // Per-constant chance, in percent, of substituting a bindable literal
+    // with a bind variable inside the bind variant.
     private static final int CONSTANT_BIND_PROBABILITY_PCT = 50;
     // Share of the fused on/off axis's completed comparisons (the pivot compiled and ran) that a
     // working planner runs on the fused hash join GROUP BY, as runFuzz's guard models it. The share
@@ -270,8 +270,8 @@ public class QueryFuzzTest extends AbstractCairoTest {
     // QUERY_POOL_NAME + '_' + workerId, which the FILE fault's query-execution
     // scope matches to admit reduce workers alongside the test thread.
     private static final String QUERY_POOL_NAME = "fuzzQuery";
-    // Per-query chance, in percent, of running with parallel SQL execution disabled.
     private static final boolean[] SERIAL_FLAGS = new boolean[7];
+    // Per-query chance, in percent, of running with parallel SQL execution disabled.
     private static final int SERIAL_PROBABILITY_PCT = 5;
 
     @Test
@@ -959,11 +959,6 @@ public class QueryFuzzTest extends AbstractCairoTest {
         return tail;
     }
 
-    /**
-     * Says whether a working planner, one that runs FUSED_SHARE_BASELINE of the completed
-     * comparisons on the fused plan, would run {@code selected} or fewer of {@code completed} on it
-     * with a chance below FUSED_SHARE_FALSE_ALARM.
-     */
     private static GeneratedQuery generateConcurrentQuery(Rnd rnd, ObjList<FuzzTable> tables, BindContext bindContext, FuzzConfig config) {
         return QueryGenerator.generate(
                 rnd,
@@ -979,6 +974,11 @@ public class QueryFuzzTest extends AbstractCairoTest {
         );
     }
 
+    /**
+     * Says whether a working planner, one that runs FUSED_SHARE_BASELINE of the completed
+     * comparisons on the fused plan, would run {@code selected} or fewer of {@code completed} on it
+     * with a chance below FUSED_SHARE_FALSE_ALARM.
+     */
     private static boolean isFusedShareImplausible(int selected, int completed) {
         return binomialLowerTail(selected, completed, FUSED_SHARE_BASELINE) < FUSED_SHARE_FALSE_ALARM;
     }

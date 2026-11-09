@@ -49,6 +49,7 @@ import io.questdb.mp.SCSequence;
 import io.questdb.mp.continuation.CancellationBinding;
 import io.questdb.mp.continuation.FiberCancellationSignal;
 import io.questdb.mp.continuation.SuspensionScope;
+import io.questdb.std.FiberLocal;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
@@ -64,6 +65,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
     private static final AtomicLong ID_SEQ = new AtomicLong();
     private static final long LOCAL_TASK_CURSOR = Long.MAX_VALUE;
     private static final Log LOG = LogFactory.getLog(PageFrameSequence.class);
+    private static final FiberLocal<int[]> UNTRACKED_SCOPE_DEPTH = new FiberLocal<>(() -> new int[1]);
     private final MillisecondClock clock;
     private final LongList frameRowCounts = new LongList();
     private final PageFrameReduceTaskFactory localTaskFactory;
@@ -135,6 +137,14 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
      * Waits for frame sequence completion, fetches remaining pieces of the
      * frame sequence from the queues. This method is not thread safe.
      */
+    public static void enterUntrackedScope() {
+        UNTRACKED_SCOPE_DEPTH.get()[0]++;
+    }
+
+    public static void leaveUntrackedScope() {
+        UNTRACKED_SCOPE_DEPTH.get()[0]--;
+    }
+
     public void await() {
         LOG.debug()
                 .$("awaiting completion [shard=").$(shard)
@@ -478,8 +488,10 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
             // It is essential to init the atom after we prepared sequence for dispatch.
             // If atom is to fail, we will be releasing whatever we prepared.
             atom.init(frameCursor, executionContext);
-            executionContext.registerPageFrameSequence(this);
-            registeredContext = executionContext;
+            if (UNTRACKED_SCOPE_DEPTH.get()[0] == 0) {
+                executionContext.registerPageFrameSequence(this);
+                registeredContext = executionContext;
+            }
         } catch (TableReferenceOutOfDateException e) {
             frameCursor = Misc.freeIfCloseable(frameCursor);
             throw e;
@@ -620,7 +632,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         while (true) {
             final long observedProgress = canPark ? getProgressVersion() : 0;
             final long observedGlobalProgress = canPark ? dispatcher.getProgressVersion() : 0;
-            if (reduceFinishedCounter.get() == dispatchStartFrameIndex) {
+            if (reduceFinishedCounter.get() >= dispatchStartFrameIndex) {
                 break;
             }
             if (canPark) {
