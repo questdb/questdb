@@ -1122,8 +1122,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     // Incremental refresh on a period mat view works in a special way.
                     // We need to refresh whatever is in the txn intervals and all periods
                     // that became complete since the last refresh.
-                    final long lastPeriodHi = viewState.getLastPeriodHi();
-                    long periodLo = lastPeriodHi;
+                    long periodLo = viewState.getLastPeriodHi();
                     if (periodLo == Numbers.LONG_NULL) {
                         periodLo = baseTableReader.getMinTimestamp();
                     }
@@ -1133,18 +1132,25 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                             minTs = refreshIntervals.getQuick(0);
                             maxTs = refreshIntervals.getQuick(refreshIntervals.size() - 1);
                         } else {
-                            minTs = periodLo;
+                            // When updateRefreshIntervals0() cannot read the WAL transactions, minTs holds the
+                            // base table's first row. Keep it, so that the refresh also covers the rows that
+                            // those transactions wrote before lastPeriodHi.
+                            minTs = Math.min(minTs, periodLo);
                             maxTs = periodHi;
                         }
                         // Bump lastPeriodHi once we're done.
                         // lastPeriodHi is exclusive, but the local periodHi value is inclusive.
                         refreshContext.periodHi = periodHi + 1;
-                    } else if (lastPeriodHi == Numbers.LONG_NULL) {
-                        // No base table row lies in a complete period, but the view is still refreshed up to
-                        // periodHi, so record it. The refresh that runs once a period completes starts at
-                        // lastPeriodHi, or at the base table's first row when there is none. Starting at the
-                        // first row would skip a bucket that crosses periodHi when a range replace deletes the
-                        // bucket's rows in the incomplete period: that moves the first row past them.
+                    } else {
+                        // No complete period that the view has not refreshed holds a base row. Record periodHi
+                        // anyway: the refresh that runs once a period completes starts at lastPeriodHi, or at the
+                        // base table's first row when there is none.
+                        // - Starting at the first row would skip a bucket that crosses periodHi when a range
+                        //   replace deletes the bucket's rows in the incomplete period: that moves the first row
+                        //   past them.
+                        // - An ALTER that moves the period end earlier, such as a new TIME ZONE or LENGTH, or a
+                        //   clock step back leaves lastPeriodHi past periodHi. Starting there would skip the rows
+                        //   that this refresh trims between periodHi and lastPeriodHi, so rewind it.
                         refreshContext.periodHi = periodHi + 1;
                     }
                 } else {

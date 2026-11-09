@@ -24,30 +24,40 @@
 
 package io.questdb.test.cairo.mv;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.mv.MatViewTimerJob;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.Nullable;
+import org.junit.Assert;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
 import java.util.Collection;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
 
 /**
- * A period materialized view refreshes up to the end of the last complete period, but recomputes whole SAMPLE BY
- * buckets, so a bucket that crosses that end takes in rows from the incomplete period. A later change to those rows
- * waits for the refresh that runs once their period completes. These tests check that this refresh starts at the
- * end of the last refreshed period, and not at the earliest base row, which a range replace can move past the
- * bucket.
+ * A period materialized view refreshes up to the end of the last complete period and records that end, and the
+ * refresh that runs once a period completes starts there. These tests check that every base row reaches the view
+ * around that recorded end: the rows of a bucket that crosses it, which a range replace can delete before their
+ * period completes, rows that an ALTER of the period moves behind it, and rows that a refresh which cannot read
+ * the WAL transactions has to pick up before it.
  */
 @RunWith(Parameterized.class)
 public class MatViewPeriodRefreshTest extends AbstractCairoTest {
@@ -60,6 +70,61 @@ public class MatViewPeriodRefreshTest extends AbstractCairoTest {
     @Parameterized.Parameters(name = "{0}")
     public static Collection<TestTimestampType> testParams() {
         return List.of(TestTimestampType.MICRO, TestTimestampType.NANO);
+    }
+
+    @Test
+    public void testAlterLengthRefreshesRowsBeforeOldPeriodHi() throws Exception {
+        // At 10:30, the last complete 6h period ends at 06:00 and the last complete 1d period at 00:00.
+        testAlterMovesPeriodHiEarlier(
+                null,
+                "length 6h",
+                "length 1d",
+                "2022-01-02T06:00:00.000000Z",
+                "2022-01-02T03:00",
+                "2022-01-02T00:00:00.000000Z",
+                "2022-01-03T00:00:00.000000Z",
+                """
+                        min_v\tmax_v\tts
+                        1\t1\t2022-01-02T03:00:00.000000Z
+                        """
+        );
+    }
+
+    @Test
+    public void testAlterTimeZoneRefreshesRowsBeforeOldPeriodHi() throws Exception {
+        // At 10:30, the last complete day ends at 00:00 in UTC, and at 15:00 UTC the day before in Asia/Tokyo.
+        testAlterMovesPeriodHiEarlier(
+                null,
+                "length 1d",
+                "length 1d time zone 'Asia/Tokyo'",
+                "2022-01-02T00:00:00.000000Z",
+                "2022-01-01T16:00",
+                "2022-01-01T15:00:00.000000Z",
+                "2022-01-02T15:00:00.000000Z",
+                """
+                        min_v\tmax_v\tts
+                        1\t1\t2022-01-01T16:00:00.000000Z
+                        """
+        );
+    }
+
+    @Test
+    public void testAlterTimeZoneRefreshesRowsBeforeOldPeriodHiWithBaseRows() throws Exception {
+        // The base table has a row in a complete period, so the view records the period end the usual way.
+        testAlterMovesPeriodHiEarlier(
+                "2021-12-31T12:00",
+                "length 1d",
+                "length 1d time zone 'Asia/Tokyo'",
+                "2022-01-02T00:00:00.000000Z",
+                "2022-01-01T16:00",
+                "2022-01-01T15:00:00.000000Z",
+                "2022-01-02T15:00:00.000000Z",
+                """
+                        min_v\tmax_v\tts
+                        7\t7\t2021-12-31T12:00:00.000000Z
+                        1\t1\t2022-01-01T16:00:00.000000Z
+                        """
+        );
     }
 
     @Test
@@ -205,6 +270,31 @@ public class MatViewPeriodRefreshTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testWalReadFailureRefreshesRowsBeforePeriodHi() throws Exception {
+        // The base table is empty when the view records the end of the last complete period.
+        testWalReadFailure(
+                null,
+                """
+                        min_v\tmax_v\tts
+                        1\t1\t2022-01-02T05:00:00.000000Z
+                        """
+        );
+    }
+
+    @Test
+    public void testWalReadFailureRefreshesRowsBeforePeriodHiWithBaseRows() throws Exception {
+        // The base table has a row in a complete period, so the view records the period end the usual way.
+        testWalReadFailure(
+                "2022-01-02T08:30",
+                """
+                        min_v\tmax_v\tts
+                        1\t1\t2022-01-02T05:00:00.000000Z
+                        7\t7\t2022-01-02T08:00:00.000000Z
+                        """
+        );
+    }
+
     private static void drain(MatViewTimerJob timerJob) {
         drainMatViewTimerQueue(timerJob);
         drainWalAndMatViewQueues();
@@ -251,6 +341,48 @@ public class MatViewPeriodRefreshTest extends AbstractCairoTest {
             }
             walWriter.commitWithParams(driver.parseFloorLiteral(lo), driver.parseFloorLiteral(hi), WAL_DEDUP_MODE_REPLACE_RANGE);
         }
+    }
+
+    // At 10:30, creates the view "mv" over the table "base", empty or with a row at baseRowTs, then alters its period
+    // so that the last complete period ends earlier than the recorded end. A row written afterwards between the two
+    // ends must reach the view once its period completes, at rowPeriodHi.
+    private void testAlterMovesPeriodHiEarlier(
+            @Nullable String baseRowTs,
+            String createPeriod,
+            String alterPeriod,
+            String recordedPeriodHi,
+            String rowTs,
+            String rewoundPeriodHi,
+            String rowPeriodHi,
+            String expectedView
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            currentMicros = parseFloorPartialTimestamp("2022-01-02T10:30:00.000000Z");
+            createBaseTable("base");
+            if (baseRowTs != null) {
+                execute("insert into base values (7, '" + baseRowTs + "')");
+                drainWalQueue();
+            }
+            final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
+            execute(
+                    "create materialized view mv refresh immediate period (" + createPeriod + ") as " + viewSql("base", "1h")
+            );
+            drain(timerJob);
+            assertPeriodHi("mv", recordedPeriodHi);
+
+            execute("alter materialized view mv set refresh immediate period (" + alterPeriod + ")");
+            drain(timerJob);
+            // The refresh of the row trims it at the new period end, and rewinds the recorded end to that period end.
+            execute("insert into base values (1, '" + rowTs + "')");
+            drain(timerJob);
+            assertPeriodHi("mv", rewoundPeriodHi);
+
+            currentMicros = parseFloorPartialTimestamp(rowPeriodHi);
+            drain(timerJob);
+            assertPeriodHi("mv", rowPeriodHi);
+            assertView("mv", expectedView);
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, viewSql("base", "1h"), "mv", LOG);
+        });
     }
 
     // Runs the statements that create the view "mv" over the table "base", then deletes the rows of a bucket that
@@ -301,6 +433,65 @@ public class MatViewPeriodRefreshTest extends AbstractCairoTest {
             );
             assertPeriodHi("mv", "2022-01-02T19:00:00.000000Z");
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, viewSql("base", "4h"), "mv", LOG);
+        });
+    }
+
+    // At 10:30, creates the manual view "mv" over the table "base", empty or with a row at baseRowTs, then writes a row
+    // from before the recorded period end and refreshes it after two more periods complete, while reading the WAL
+    // transactions of "base" fails. The refresh falls back to the full range of the base table and must take that
+    // row in.
+    private void testWalReadFailure(@Nullable String baseRowTs, String expectedView) throws Exception {
+        final AtomicReference<String> failingWalTableDirName = new AtomicReference<>();
+        final AtomicInteger failedOpenCount = new AtomicInteger();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                return isFailingWalEventFile(name) ? -1 : super.openRO(name);
+            }
+
+            @Override
+            public long openRONoCache(LPSZ name) {
+                return isFailingWalEventFile(name) ? -1 : super.openRONoCache(name);
+            }
+
+            private boolean isFailingWalEventFile(LPSZ name) {
+                final String dirName = failingWalTableDirName.get();
+                if (dirName != null
+                        && Utf8s.containsAscii(name, Files.SEPARATOR + dirName + Files.SEPARATOR + "wal")
+                        && Utf8s.endsWithAscii(name, Files.SEPARATOR + "_event")) {
+                    failedOpenCount.incrementAndGet();
+                    return true;
+                }
+                return false;
+            }
+        };
+        // As the server does by default, the refresh falls back to the full range instead of failing.
+        setProperty(PropertyKey.DEBUG_MAT_VIEW_REFRESH_MISSING_WAL_FILES_FATAL, "false");
+        assertMemoryLeak(ff, () -> {
+            // The 1h periods end on the hour, so at 10:30 the last complete period ends at 10:00.
+            currentMicros = parseFloorPartialTimestamp("2022-01-02T10:30:00.000000Z");
+            createBaseTable("base");
+            if (baseRowTs != null) {
+                execute("insert into base values (7, '" + baseRowTs + "')");
+                drainWalQueue();
+            }
+            execute("create materialized view mv refresh manual period (length 1h) as " + viewSql("base", "1h"));
+            drainWalAndMatViewQueues();
+            assertPeriodHi("mv", "2022-01-02T10:00:00.000000Z");
+
+            execute("insert into base values (1, '2022-01-02T05:30')");
+            drainWalQueue();
+            currentMicros = parseFloorPartialTimestamp("2022-01-02T12:10:00.000000Z");
+            execute("refresh materialized view mv incremental");
+            failingWalTableDirName.set(engine.verifyTableName("base").getDirName());
+            drainMatViewQueue(engine);
+            failingWalTableDirName.set(null);
+            drainWalQueue();
+            Assert.assertTrue(failedOpenCount.get() > 0);
+
+            assertPeriodHi("mv", "2022-01-02T12:00:00.000000Z");
+            assertView("mv", expectedView);
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, viewSql("base", "1h"), "mv", LOG);
         });
     }
 }
