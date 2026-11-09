@@ -523,6 +523,19 @@ public final class IntHashJoinBuild implements Closeable {
         return partitions.getSegmentStart(frameIndex, partition);
     }
 
+    /**
+     * Times the open build's key tables grew as keys filled them, past the size that the build's
+     * key count hint gave them, each a rehash of every key the table held.
+     */
+    @TestOnly
+    public int getKeyTableGrowCount() {
+        int growCount = 0;
+        for (int i = 0, n = tables.size(); i < n; i++) {
+            growCount += tables.getQuick(i).growCount;
+        }
+        return growCount;
+    }
+
     public long getSizeInBytes() {
         long size = heap.getSizeInBytes() + partitions.getSizeInBytes() + directory.capacity;
         for (int i = 0, n = tables.size(); i < n; i++) {

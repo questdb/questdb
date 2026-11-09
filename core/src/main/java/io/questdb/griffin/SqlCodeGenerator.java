@@ -290,6 +290,8 @@ import io.questdb.griffin.engine.table.AsyncGroupByNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupingSetsRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHashJoinGroupByRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncHashJoinRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncHashJoinSpec;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinProjectionRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinRecordCursorFactory;
@@ -309,6 +311,8 @@ import io.questdb.griffin.engine.table.FilterOnSubQueryRecordCursorFactory;
 import io.questdb.griffin.engine.table.FilterOnValuesRecordCursorFactory;
 import io.questdb.griffin.engine.table.FilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.HashJoinGroupByBuildChoiceRecordCursorFactory;
+import io.questdb.griffin.engine.table.HashJoinInput;
+import io.questdb.griffin.engine.table.HashJoinStageSpec;
 import io.questdb.griffin.engine.table.HorizonJoinNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.HorizonJoinProjectionRecordCursorFactory;
 import io.questdb.griffin.engine.table.HorizonJoinRecord;
@@ -403,6 +407,7 @@ import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -1257,6 +1262,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return false;
     }
 
+    // An input mapping that names each of a factory's columns by its own index.
+    private static IntList identityColumns(int columnCount) {
+        final IntList columns = new IntList(columnCount);
+        for (int i = 0; i < columnCount; i++) {
+            columns.add(i);
+        }
+        return columns;
+    }
+
     /**
      * Whether to build a backup plan for a single covering key. A NULL key over a partition that
      * carries a column top has no posting and so no sidecar entry to decode, and only the key's
@@ -2075,6 +2089,29 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return false;
     }
 
+    /**
+     * True when the factory's record cursor reports a size of -1 in every execution: a table scan
+     * narrowed to timestamp intervals, possibly under projections, whose interval frame cursor does
+     * not count its rows up front. The serial hash join reads that size to decide whether it swaps
+     * its inputs, so a join over such an input never swaps.
+     */
+    private static boolean isIntervalTableScan(RecordCursorFactory factory) {
+        RecordCursorFactory current = factory;
+        while (current instanceof SelectedRecordCursorFactory selected) {
+            current = selected.getBaseFactory();
+        }
+        // Subclasses, such as the deferred single-symbol filter, answer size() from their own cursors.
+        return current.getClass() == PageFrameRecordCursorFactory.class && ((PageFrameRecordCursorFactory) current).isIntervalScan();
+    }
+
+    /**
+     * True for an input that a parallel hash join reads frame by frame: a page frame scan, possibly
+     * under projections, that does not read through a covering index.
+     */
+    private static boolean isParallelHashJoinInput(RecordCursorFactory factory) {
+        return factory.supportsPageFrameCursor() && HashJoinGroupByCandidate.isSupportedFramedInput(factory);
+    }
+
     private static boolean isSingleColumnFunction(ExpressionNode ast, CharSequence name) {
         return ast.type == FUNCTION && ast.paramCount == 1 && Chars.equalsIgnoreCase(ast.token, name) && ast.rhs.type == LITERAL;
     }
@@ -2095,6 +2132,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return advice.size() == 1
                 && metadataA.getColumnIndexQuiet(advice.getQuick(0).token) == timestampIndex
                 && directionMatchesScan(getOrderByDirectionOrDefault(model, 0), scanDirection);
+    }
+
+    // The join's keys as the serial hash join's EXPLAIN prints its join context, which the parallel
+    // hash join keeps as text: the context is a pooled model object that a later compile reuses.
+    private static String toConditionText(JoinContext joinContext) {
+        final StringSink sink = Misc.getThreadLocalSink();
+        for (int i = 0, n = joinContext.aNodes.size(); i < n; i++) {
+            if (i > 0) {
+                sink.putAscii(" and ");
+            }
+            sink.put(joinContext.aNodes.getQuick(i)).putAscii('=').put(joinContext.bNodes.getQuick(i));
+        }
+        return sink.toString();
     }
 
     private static long tolerance(IQueryModel slaveModel, int leftTimestamp, int rightTimestampType) throws SqlException {
@@ -8214,7 +8264,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     validateOuterJoinExpressions(slaveModel, "INNER");
                                 }
 
-                                master = createHashJoin(
+                                final RecordCursorFactory parallelHashJoin = generateParallelHashJoin(
+                                        model,
+                                        master,
+                                        masterAlias,
+                                        slaveToFree,
+                                        slaveModel,
+                                        joinMetadata,
+                                        joinType,
+                                        joinFilter,
+                                        executionContext
+                                );
+                                master = parallelHashJoin != null ? parallelHashJoin : createHashJoin(
                                         joinMetadata,
                                         master,
                                         slaveToFree,
@@ -9995,6 +10056,107 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // ownership before throwing; Misc.free is null-safe.
             Misc.free(recordCursorFactory);
             throw e;
+        }
+    }
+
+    /**
+     * Plans the hash join of the first join of a query as a parallel hash join, or returns null to
+     * keep the ordinary plan, which {@code createHashJoin()} then compiles from the same state. The
+     * join's inputs compiled already, in the ordinary order, so their bind variables carry the types
+     * that the ordinary plan infers. Both inputs must be page frame scans, possibly under
+     * projections, and the join an INNER or LEFT OUTER equi join without an ON condition beyond its
+     * keys, whose keys reconcile as the ordinary plan reconciles them. An INNER join whose ordinary
+     * plan may swap its inputs at execution, which it does when its left input is smaller, keeps the
+     * ordinary plan: it swaps unless its left input lacks random access or either input scans
+     * timestamp intervals, whose size it does not know.
+     * <p>
+     * On success the factory takes the two inputs and the join's metadata; on null and on failure
+     * the caller keeps them.
+     */
+    private RecordCursorFactory generateParallelHashJoin(
+            IQueryModel model,
+            RecordCursorFactory master,
+            CharSequence masterAlias,
+            RecordCursorFactory slave,
+            IQueryModel slaveModel,
+            JoinRecordMetadata joinMetadata,
+            int joinType,
+            @Nullable Function joinFilter,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        final int workerCount = executionContext.getSharedQueryWorkerCount();
+        if (!executionContext.isParallelHashJoinEnabled()
+                || workerCount < 1
+                || fullFatJoins
+                // UPDATE reads the rows it updates by row id, which the operator does not serve.
+                || model.isUpdate()
+                || (joinType != IQueryModel.JOIN_INNER && joinType != IQueryModel.JOIN_LEFT_OUTER)
+                || joinFilter != null
+                || !isParallelHashJoinInput(master)
+                || !isParallelHashJoinInput(slave)
+                // The serial plan for a slave without random access chains duplicates oldest first.
+                || !slave.recordCursorSupportsRandomAccess()
+                || (joinType == IQueryModel.JOIN_INNER
+                && master.recordCursorSupportsRandomAccess()
+                && !isIntervalTableScan(master)
+                && !isIntervalTableScan(slave))) {
+            return null;
+        }
+        final RecordMetadata masterMetadata = master.getMetadata();
+        final RecordMetadata slaveMetadata = slave.getMetadata();
+        // processJoinContext() left the key columns of the master in B and those of the slave in A.
+        final HashJoinGroupByKeys keys = new HashJoinGroupByKeys();
+        for (int k = 0, n = listColumnFilterA.getColumnCount(); k < n; k++) {
+            final int masterColumn = listColumnFilterB.getColumnIndexFactored(k);
+            final int slaveColumn = listColumnFilterA.getColumnIndexFactored(k);
+            if (!keys.add(masterColumn, masterMetadata.getColumnType(masterColumn), slaveColumn, slaveMetadata.getColumnType(slaveColumn))) {
+                return null;
+            }
+        }
+        // The build keeps its rows' own SYMBOL keys, so its dictionary must hold each text once.
+        if (keys.hasTranslatedSymbol() && !HashJoinGroupByCandidate.isSupportedTranslatedSymbolBuild(slave)) {
+            return null;
+        }
+        final IntList masterColumns = identityColumns(masterMetadata.getColumnCount());
+        final IntList slaveColumns = identityColumns(slaveMetadata.getColumnCount());
+        final HashJoinKeyLayout keyLayout = new HashJoinKeyLayout(configuration, asm, keys, masterAlias, masterMetadata,
+                masterColumns, slaveModel.getName(), slaveMetadata, slaveColumns);
+        // A page frame scan's SYMBOL columns are table columns, whose symbol tables are static, and
+        // read_parquet() reads a SYMBOL column as VARCHAR, so every SYMBOL key can translate.
+        assert keyLayout.hasStaticSymbolTables();
+        final String condition = toConditionText(slaveModel.getJoinContext());
+        AsyncFilterContext masterFilterContext = null;
+        AsyncFilterContext slaveFilterContext = null;
+        try {
+            // An unfiltered input's context serves the memory pools that the join reads its frames
+            // through, the owner's and one per worker.
+            masterFilterContext = new AsyncFilterContext(configuration, null, null, null, null, null, null, workerCount, 0, 0, 0);
+            slaveFilterContext = new AsyncFilterContext(configuration, null, null, null, null, null, null, workerCount, 0, 0, 0);
+            final AsyncHashJoinSpec spec = new AsyncHashJoinSpec(
+                    new HashJoinInput(master, masterColumns, masterFilterContext),
+                    new HashJoinStageSpec(
+                            new HashJoinInput(slave, slaveColumns, slaveFilterContext),
+                            keyLayout,
+                            joinType == IQueryModel.JOIN_LEFT_OUTER,
+                            condition
+                    ),
+                    joinMetadata,
+                    master.followedOrderByAdvice(),
+                    master.getScanDirection()
+            );
+            return new AsyncHashJoinRecordCursorFactory(
+                    executionContext.getCairoEngine(),
+                    configuration,
+                    executionContext.getMessageBus(),
+                    spec,
+                    reduceTaskFactory,
+                    workerCount
+            );
+        } catch (Throwable th) {
+            // The inputs and the metadata stay with the caller, which frees them.
+            Misc.free(masterFilterContext, th);
+            Misc.free(slaveFilterContext, th);
+            throw th;
         }
     }
 

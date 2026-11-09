@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
@@ -65,6 +66,7 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
+import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 
 /**
  * One hash join build: the build input's page frames, its filters, the INT or staged-key build,
@@ -99,9 +101,16 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
  * frozen build replace each key's rows with their count before any reducer runs, on the owner, or
  * for most builds of more than one partition in one more round of tasks.
  * <p>
- * The stage decides at compile time whether the key table is presized by the build's rows; see
- * {@link HashJoinGroupByMetadata#isKeyCapacityPresized()}. Every execution checks that the tables
- * have not outgrown that decision; see {@link #checkTableRowCounts}.
+ * The fused GROUP BY's stage decides at compile time whether the key table is presized by the
+ * build's rows; see {@link HashJoinGroupByMetadata#isKeyCapacityPresized()}. Every execution checks
+ * that the tables have not outgrown that decision; see {@link #checkTableRowCounts}. A parallel hash
+ * join's stage decides it in every execution instead, from the same table sizes, so its executions
+ * need no such check; see {@link #isKeyCapacityPresizedFor}.
+ * <p>
+ * A parallel hash join's stage builds in its input's scan order, so that each key's rows chain as
+ * the serial hash join chains them over the input's cursor, and keeps one more slot than the
+ * workers and the owner: the output slot, whose probe and payload reader the join's consumer
+ * positions on the matches that the workers found; see {@link #getOutputSlot()}.
  */
 public final class HashJoinBuildStage implements Mutable, QuietCloseable {
     private static final UnorderedPageFrameReducer BUILD_PARTITION = HashJoinBuildStage::buildPartition;
@@ -116,12 +125,18 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
     private final int buildKeyColumn;
     // An outer join's ON conditions on build columns alone, which drop build rows; null without them.
     private final Function buildOnFilter;
+    // The order the build scan opens and walks its frames' rows in: ORDER_ASC or ORDER_DESC.
+    private final int buildOrder;
     // The payload copy's byte bound, and its probe to build row ratios for a copy on the owner and
     // a copy on the workers; see maybeCopyPayload().
     private final long copyMaxSize;
     private final double copyMinProbeRatio;
     private final double copyParallelMinProbeRatio;
-    private final boolean isKeyCapacityPresized;
+    // The fused GROUP BY's compile-time presize decision; see isKeyCapacityPresizedPerExecution.
+    private final boolean isCompiledKeyCapacityPresized;
+    // True when every execution decides from the open scans' table sizes whether the key table is
+    // presized, as a parallel hash join does, rather than keep the compile-time decision.
+    private final boolean isKeyCapacityPresizedPerExecution;
     private final boolean isKeyStaged;
     // True when the build may run on the workers: a filter context slot and a filter of its own
     // for every worker.
@@ -132,6 +147,8 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
     private final long parallelBuildMinRows;
     // The INT layout's only probe key column, -1 when the key sinks stage the key instead.
     private final int probeKeyColumn;
+    // The slots that the build's own tasks run on: the owner's and one per worker.
+    private final int roundSlotCount;
     // The rows each task of a parallel build's round processes, by which fiber workers batch tasks.
     private final LongList roundTaskRowCounts = new LongList();
     private final long rowsPerPartition;
@@ -159,6 +176,8 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
     private boolean isBuiltInRounds;
     // True when the open cursor's build counted its key rows on the workers, in a round of tasks.
     private boolean isCountedInRounds;
+    // The open cursor's presize decision; see isKeyCapacityPresizedPerExecution.
+    private boolean isKeyCapacityPresized;
     private boolean isPayloadCopied;
     private MapHashJoinBuild mapBuild;
     // The open cursor's tracker, which init() takes for build(): the build runs after getCursor()
@@ -205,20 +224,66 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
             boolean isKeyCapacityPresized,
             int workerCount
     ) {
+        this(configuration, buildFactory, buildFilterContext, buildOnFilter, workerBuildOnFilters, keyLayout,
+                payloadBuildColumns, probeColumnCount, isKeyCapacityPresized, false, ORDER_ASC, workerCount, 0);
+    }
+
+    /**
+     * The stage of a parallel hash join: it builds in the build input's scan order, decides in every
+     * execution whether the key table is presized, see {@link #isKeyCapacityPresizedFor}, and keeps
+     * an output slot for the join's consumer, see {@link #getOutputSlot()}. Every build column is a
+     * payload column, and the join has no ON filter on build columns alone.
+     *
+     * @param buildOrder the build input's scan order, {@code ORDER_ASC} or {@code ORDER_DESC}
+     */
+    HashJoinBuildStage(
+            CairoConfiguration configuration,
+            RecordCursorFactory buildFactory,
+            AsyncFilterContext buildFilterContext,
+            HashJoinKeyLayout keyLayout,
+            IntList payloadBuildColumns,
+            int probeColumnCount,
+            int buildOrder,
+            int workerCount
+    ) {
+        this(configuration, buildFactory, buildFilterContext, null, null, keyLayout, payloadBuildColumns,
+                probeColumnCount, false, true, buildOrder, workerCount, 1);
+    }
+
+    private HashJoinBuildStage(
+            CairoConfiguration configuration,
+            RecordCursorFactory buildFactory,
+            AsyncFilterContext buildFilterContext,
+            @Nullable Function buildOnFilter,
+            @Nullable ObjList<Function> workerBuildOnFilters,
+            HashJoinKeyLayout keyLayout,
+            IntList payloadBuildColumns,
+            int probeColumnCount,
+            boolean isKeyCapacityPresized,
+            boolean isKeyCapacityPresizedPerExecution,
+            int buildOrder,
+            int workerCount,
+            int outputSlotCount
+    ) {
+        assert buildOrder == ORDER_ASC || buildOrder == ORDER_DESC;
         this.buildFactory = buildFactory;
         this.buildFilterContext = buildFilterContext;
         this.buildOnFilter = buildOnFilter;
         this.workerBuildOnFilters = workerBuildOnFilters;
         this.isKeyStaged = keyLayout.isKeyStaged();
         this.isSymbolKey = keyLayout.isSymbolKey();
-        this.isKeyCapacityPresized = isKeyCapacityPresized;
+        this.isCompiledKeyCapacityPresized = isKeyCapacityPresized;
+        this.isKeyCapacityPresizedPerExecution = isKeyCapacityPresizedPerExecution;
+        this.buildOrder = buildOrder;
+        this.roundSlotCount = workerCount + 1;
         // Each slot's probe reads the build's payload through a reader of its own, so the readers of
-        // an execution are one per worker and the owner's, and share the Parquet decode cache.
+        // an execution are one per worker, the owner's and the output slot's, and share the Parquet
+        // decode cache.
         this.buildFrames = new HashJoinBuildFrames(
                 configuration,
                 payloadBuildColumns,
                 buildFactory.getMetadata(),
-                workerCount + 1
+                roundSlotCount + outputSlotCount
         );
         this.probeKeyColumn = isKeyStaged ? -1 : keyLayout.getProbeKeyColumn();
         this.buildKeyColumn = isKeyStaged ? -1 : keyLayout.getBuildKeyColumn();
@@ -252,7 +317,7 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
             intBuild = new IntHashJoinBuild(hasPayload, 64, 64, true);
         }
         final boolean hasSymbolKey = symbolKeyProbeColumns.size() > 0;
-        for (int i = -1; i < workerCount; i++) {
+        for (int i = -1; i < workerCount + outputSlotCount; i++) {
             // Sinks hold scratch state, so each slot probes and builds through ones of its own,
             // and so does the translating record the staged key sink reads from.
             slots.add(new Slot(
@@ -265,6 +330,27 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
                     hasSymbolKey && !isKeyStaged ? new SymbolKeyTranslator.View() : null
             ));
         }
+    }
+
+    /**
+     * True when an execution of a parallel hash join presizes its key table by the build's rows: both
+     * scans read a table, and the build's table holds no more rows than the probe's, as
+     * {@link TableReader#size()} counts them at the time the scans opened. Rows bound the keys, but a
+     * build whose table outgrew the probe's often repeats its keys, so it lets its key table grow
+     * instead, and so does a build over a scan without a table, such as {@code read_parquet()}, whose
+     * size is not known before its frames load. A live view's scan counts the rows of its table. The
+     * decision only sizes the key table, so it never changes a result, and an execution whose tables
+     * changed size since the query compiled decides again from their new sizes.
+     */
+    public static boolean isKeyCapacityPresizedFor(SymbolTableSource probeScan, SymbolTableSource buildScan) {
+        if (!(probeScan instanceof TablePageFrameCursor probeCursor) || !(buildScan instanceof TablePageFrameCursor buildCursor)) {
+            return false;
+        }
+        final TableReader probeReader = probeCursor.getTableReader();
+        final TableReader buildReader = buildCursor.getTableReader();
+        // An open table scan always holds its reader.
+        assert probeReader != null && buildReader != null;
+        return buildReader.size() <= probeReader.size();
     }
 
     /**
@@ -373,6 +459,7 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
         isBuildUnique = false;
         isBuiltInRounds = false;
         isCountedInRounds = false;
+        isKeyCapacityPresized = false;
         isPayloadCopied = false;
         parquetBuildRows = 0;
         parquetFrameCount = 0;
@@ -456,6 +543,16 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
     }
 
     /**
+     * Times the open cursor's INT key tables grew past their size as they filled, each a rehash of
+     * every key the table held: none for a table presized for the build's keys. Zero for a staged
+     * key, whose map is not counted.
+     */
+    @TestOnly
+    public int getKeyTableGrowCount() {
+        return isKeyStaged ? 0 : intBuild.getKeyTableGrowCount();
+    }
+
+    /**
      * Hash partitions of the open cursor's build: one for a build on the owner.
      */
     public int getPartitionCount() {
@@ -498,27 +595,34 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
      * @param probeSymbols the open probe scan, whose dictionaries the SYMBOL key translation reads
      */
     public void init(SymbolTableSource probeSymbols, SqlExecutionContext executionContext) throws SqlException {
-        assert frozen == null && buildFrames.getSymbolTableSource() == null;
+        assert frozen == null && buildFrames.getSymbolTableSource() == null && !isKeyCapacityPresizedPerExecution;
         memoryTracker = executionContext.getMemoryTracker();
         this.probeSymbols = probeSymbols;
         // The open scan serves the build input's symbol tables; build() walks its frames.
-        buildFrames.open(buildFactory, ORDER_ASC, executionContext);
+        buildFrames.open(buildFactory, buildOrder, executionContext);
+        isKeyCapacityPresized = isCompiledKeyCapacityPresized;
         checkTableRowCounts(probeSymbols, executionContext);
-        final SymbolTableSource buildSymbols = buildFrames.getSymbolTableSource();
-        isBuildFiltersInitialized = true;
-        buildFilterContext.initFilters(buildSymbols, executionContext);
-        if (buildOnFilter != null) {
-            buildOnFilter.init(buildSymbols, executionContext);
-            if (workerBuildOnFilters != null) {
-                final boolean isCloneSymbolTables = executionContext.getCloneSymbolTables();
-                executionContext.setCloneSymbolTables(true);
-                try {
-                    Function.init(workerBuildOnFilters, buildSymbols, executionContext, buildOnFilter);
-                } finally {
-                    executionContext.setCloneSymbolTables(isCloneSymbolTables);
-                }
-            }
-        }
+        initBuildFilters(executionContext);
+    }
+
+    /**
+     * Adopts the build scan's page frame cursor, which the caller opened in the build input's scan
+     * order, decides whether this execution presizes the key table, see
+     * {@link #isKeyCapacityPresizedFor}, and initializes the build filters; it reads no row, as
+     * {@link #init(SymbolTableSource, SqlExecutionContext)} reads none. The stage owns the cursor from
+     * here on, whether this returns or throws; on failure the caller runs {@link #clear()}, which
+     * closes it with the rest of what this opened.
+     *
+     * @param probeSymbols the open probe scan, whose dictionaries the SYMBOL key translation reads
+     * @param buildCursor  the open page frame cursor of the build input
+     */
+    public void init(SymbolTableSource probeSymbols, SqlExecutionContext executionContext, PageFrameCursor buildCursor) throws SqlException {
+        assert frozen == null && buildFrames.getSymbolTableSource() == null && isKeyCapacityPresizedPerExecution;
+        memoryTracker = executionContext.getMemoryTracker();
+        this.probeSymbols = probeSymbols;
+        buildFrames.open(buildCursor, buildFactory.getMetadata(), executionContext);
+        isKeyCapacityPresized = isKeyCapacityPresizedFor(probeSymbols, buildCursor);
+        initBuildFilters(executionContext);
     }
 
     /**
@@ -551,6 +655,15 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
      */
     public boolean isCountedInRounds() {
         return isCountedInRounds;
+    }
+
+    /**
+     * True when the open cursor's build presizes its key table by the build's rows; see
+     * {@link #isKeyCapacityPresizedFor} for a stage that decides it per execution.
+     */
+    @TestOnly
+    public boolean isKeyCapacityPresized() {
+        return isKeyCapacityPresized;
     }
 
     /**
@@ -721,14 +834,14 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
                     final DirectLongList rows = stage.buildFilterContext.getFilteredRows(slotId);
                     stage.filterBuildFrame(slotId, frameMemory, record, rowCount, rows);
                     if (stage.isKeyStaged) {
-                        stage.mapBuild.partitionFrame(frameIndex, record, slot.buildKeySink, slot.buildKeyStager, rows, ORDER_ASC);
+                        stage.mapBuild.partitionFrame(frameIndex, record, slot.buildKeySink, slot.buildKeyStager, rows, stage.buildOrder);
                     } else {
-                        stage.intBuild.partitionFrame(frameIndex, record, stage.buildKeyColumn, rows, ORDER_ASC);
+                        stage.intBuild.partitionFrame(frameIndex, record, stage.buildKeyColumn, rows, stage.buildOrder);
                     }
                 } else if (stage.isKeyStaged) {
-                    stage.mapBuild.partitionFrame(frameIndex, record, slot.buildKeySink, slot.buildKeyStager, rowCount, ORDER_ASC);
+                    stage.mapBuild.partitionFrame(frameIndex, record, slot.buildKeySink, slot.buildKeyStager, rowCount, stage.buildOrder);
                 } else {
-                    stage.intBuild.partitionFrame(frameIndex, record, stage.buildKeyColumn, rowCount, ORDER_ASC);
+                    stage.intBuild.partitionFrame(frameIndex, record, stage.buildKeyColumn, rowCount, stage.buildOrder);
                 }
             } finally {
                 pool.releaseParquetBuffers();
@@ -836,14 +949,14 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
                     filterBuildFrame(-1, frameMemory, buildRecord, rowCount, rows);
                     // A SYMBOL key keeps the build's own symbol keys; the probe translates into them.
                     if (isKeyStaged) {
-                        mapBuild.appendFrame(buildRecord, owner.buildKeySink, rows, ORDER_ASC);
+                        mapBuild.appendFrame(buildRecord, owner.buildKeySink, rows, buildOrder);
                     } else {
-                        intBuild.appendFrame(buildRecord, buildKeyColumn, rows, ORDER_ASC);
+                        intBuild.appendFrame(buildRecord, buildKeyColumn, rows, buildOrder);
                     }
                 } else if (isKeyStaged) {
-                    mapBuild.appendFrame(buildRecord, owner.buildKeySink, rowCount, ORDER_ASC);
+                    mapBuild.appendFrame(buildRecord, owner.buildKeySink, rowCount, buildOrder);
                 } else {
-                    intBuild.appendFrame(buildRecord, buildKeyColumn, rowCount, ORDER_ASC);
+                    intBuild.appendFrame(buildRecord, buildKeyColumn, rowCount, buildOrder);
                 }
                 // The address cache gives the frame format that the payload readers go by.
                 if (buildFrames.getAddressCache().getFrameFormat(frameIndex) != PartitionFormat.NATIVE) {
@@ -1008,7 +1121,8 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
     /**
      * Distinct keys the key table is presized for, or -1 to let it grow. Rows bound the keys, but
      * only a build whose table is not larger than its probe's sizes by them; see
-     * {@link HashJoinGroupByMetadata#isKeyCapacityPresized()}. The INT layout's lone SYMBOL key
+     * {@link HashJoinGroupByMetadata#isKeyCapacityPresized()}, and, for a stage that decides it per
+     * execution, {@link #isKeyCapacityPresizedFor}. The INT layout's lone SYMBOL key
      * holds the build's own symbol keys, so its dictionary and the null key bound it as well.
      */
     private long getKeyCountHint(long rowCount) {
@@ -1037,6 +1151,24 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
 
     private long getSegmentStart(int frameIndex, int partition) {
         return isKeyStaged ? mapBuild.getSegmentStart(frameIndex, partition) : intBuild.getSegmentStart(frameIndex, partition);
+    }
+
+    private void initBuildFilters(SqlExecutionContext executionContext) throws SqlException {
+        final SymbolTableSource buildSymbols = buildFrames.getSymbolTableSource();
+        isBuildFiltersInitialized = true;
+        buildFilterContext.initFilters(buildSymbols, executionContext);
+        if (buildOnFilter != null) {
+            buildOnFilter.init(buildSymbols, executionContext);
+            if (workerBuildOnFilters != null) {
+                final boolean isCloneSymbolTables = executionContext.getCloneSymbolTables();
+                executionContext.setCloneSymbolTables(true);
+                try {
+                    Function.init(workerBuildOnFilters, buildSymbols, executionContext, buildOnFilter);
+                } finally {
+                    executionContext.setCloneSymbolTables(isCloneSymbolTables);
+                }
+            }
+        }
     }
 
     /**
@@ -1165,6 +1297,15 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
     }
 
     /**
+     * The slot of a parallel hash join's consumer, which positions the slot's probe and payload
+     * reader on the matches that the workers found; the stage's own tasks never run on it.
+     */
+    Slot getOutputSlot() {
+        assert slots.size() > roundSlotCount : "the stage has no output slot";
+        return slots.getQuick(roundSlotCount);
+    }
+
+    /**
      * The state of a slot: -1 for the owner, and 0 to the worker count less one for the workers.
      */
     Slot getSlot(int slotId) {
@@ -1204,7 +1345,7 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
                 // A parallel build keeps each partition's rows in one region of the heap, so a pass in
                 // heap order would walk the frames once per partition, or it keeps each frame's rows
                 // in bucket order. Each frame copies the rows it kept instead, on the workers.
-                buildFrames.beginCopy(frozen, slots.size(), circuitBreaker);
+                buildFrames.beginCopy(frozen, roundSlotCount, circuitBreaker);
                 roundTaskRowCounts.clear();
                 for (int frameIndex = 0, n = buildFrames.getFrameCount(); frameIndex < n; frameIndex++) {
                     long rows = 0;
