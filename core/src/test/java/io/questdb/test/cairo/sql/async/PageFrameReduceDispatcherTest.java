@@ -1040,6 +1040,87 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExecutionContextAwaitsInFlightFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE suspended AS (SELECT x FROM long_sequence(1))");
+            final FiberRuntime ownerRuntime = new FiberRuntime(2);
+            final FiberRuntime queryRuntime = new FiberRuntime(1);
+            final PageFrameReduceDispatcher dispatcher = new PageFrameReduceDispatcher(
+                    engine,
+                    engine.getMessageBus(),
+                    queryRuntime
+            );
+            final PageFrameReduceDispatcher previousDispatcher = engine.getMessageBus().getPageFrameReduceDispatcher();
+            engine.getMessageBus().setPageFrameReduceDispatcher(dispatcher);
+            final FiberWalWaitQueue waitQueue = new FiberWalWaitQueue();
+            final AtomicBoolean isFirstReduce = new AtomicBoolean(true);
+            final PageFrameSequence<StatefulAtom> frameSequence = new PageFrameSequence<>(
+                    engine,
+                    configuration,
+                    engine.getMessageBus(),
+                    new StatefulAtom() {
+                    },
+                    (_, _, _, _, _) -> {
+                        if (isFirstReduce.compareAndSet(true, false)) {
+                            park(waitQueue);
+                        }
+                    },
+                    () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_OFFLOAD),
+                    1,
+                    PageFrameReduceTask.TYPE_FILTER
+            );
+            final AtomicReference<Throwable> failure = new AtomicReference<>();
+            final AtomicInteger collectedCount = new AtomicInteger();
+            final AtomicInteger reducedCountOnReturn = new AtomicInteger(-1);
+            final FiberTask owner = newCollectingTask(frameSequence, collectedCount, failure);
+            final FiberTask waiter = new FiberTask() {
+                @Override
+                protected void onError(Throwable th) {
+                    failure.set(th);
+                }
+
+                @Override
+                protected boolean runStep() {
+                    sqlExecutionContext.awaitPageFrameSequences();
+                    reducedCountOnReturn.set(frameSequence.getReduceFinishedCounter().get());
+                    return true;
+                }
+            };
+            try (RecordCursorFactory factory = select("SELECT * FROM suspended")) {
+                frameSequence.of(factory, sqlExecutionContext, new SCSequence(), PartitionFrameCursorFactory.ORDER_ASC);
+                frameSequence.prepareForDispatch();
+
+                Assert.assertSame(LaunchResult.LAUNCHED, ownerRuntime.launch(owner));
+                ownerRuntime.drain(8);
+                Assert.assertEquals(1, ownerRuntime.getParkedFiberCount());
+
+                Assert.assertSame(LaunchResult.LAUNCHED, ownerRuntime.launch(waiter));
+                ownerRuntime.drain(8);
+                Assert.assertFalse(waiter.isDone());
+                Assert.assertEquals(2, ownerRuntime.getParkedFiberCount());
+
+                waitQueue.fire(1, false);
+                final long deadline = System.nanoTime() + 5_000_000_000L;
+                while ((!owner.isDone() || !waiter.isDone()) && System.nanoTime() < deadline) {
+                    ownerRuntime.drain(8);
+                }
+                Assert.assertNull(failure.get());
+                Assert.assertTrue(waiter.isDone());
+                Assert.assertTrue(owner.isDone());
+                Assert.assertEquals(1, reducedCountOnReturn.get());
+                Assert.assertEquals(1, collectedCount.get());
+            } finally {
+                waitQueue.fire(1, false);
+                engine.getMessageBus().setPageFrameReduceDispatcher(previousDispatcher);
+                close(ownerRuntime);
+                close(queryRuntime);
+                Misc.free(dispatcher);
+                Misc.free(frameSequence);
+            }
+        });
+    }
+
+    @Test
     public void testFiberTaskPoolLimitsFollowRuntimeConfiguration() throws Exception {
         assertMemoryLeak(() -> {
             final FiberRuntime runtime = new FiberRuntime(1);
