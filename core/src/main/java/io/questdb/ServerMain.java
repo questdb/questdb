@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.DataID;
 import io.questdb.cairo.FlushQueryCacheJob;
 import io.questdb.cairo.PartitionCompactionScanJob;
+import io.questdb.cairo.RowExpiryCleanupJob;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.mv.MatViewRefreshJob;
@@ -111,10 +112,15 @@ public class ServerMain implements Closeable {
 
     public ServerMain(final Bootstrap bootstrap) {
         this.bootstrap = bootstrap;
+        // OSS completes recovery inside newCairoEngine(), so install the fatal handler before construction.
+        // Enterprise overrides newCairoEngine() with partial initialization and passes the bootstrap's handler
+        // to its engine too; the post-construction setter below is the back-stop for an override that does not.
+        bootstrap.setDurabilityFailureHandler(this::onFatalDurabilityFailure);
         // bootstrap.newCairoEngine() returns a full-init engine in OSS (back-compat for tests).
         // Enterprise subclasses override newCairoEngine() to return a partial-init engine so that
         // completeInit() + load() are deferred to EngineEnvelope.start().
         engine = freeOnExit(bootstrap.newCairoEngine());
+        engine.setDurabilityFailureHandler(this::onFatalDurabilityFailure);
         try {
             final ServerConfiguration config = bootstrap.getConfiguration();
             config.init(engine, freeOnExit);
@@ -193,6 +199,20 @@ public class ServerMain implements Closeable {
             th.printStackTrace();
         } catch (Throwable ignore) {
         }
+    }
+
+    /**
+     * A failed fsync has indeterminate persistence semantics. Do not run the shutdown hook/close path: writer
+     * cleanup can retry the failed barrier and turn a false-successful retry into acknowledged data loss.
+     */
+    protected void onFatalDurabilityFailure(CairoEngine.DurabilityFailure failure) {
+        System.err.println("QuestDB fatal durability failure; hard-halting without writer cleanup [" + failure + "]");
+        hardHalt(55);
+    }
+
+    @TestOnly
+    protected void hardHalt(int exitCode) {
+        Runtime.getRuntime().halt(exitCode);
     }
 
     /**
@@ -835,6 +855,14 @@ public class ServerMain implements Closeable {
                             sharedPoolWrite.assign(walPurgeJob);
                             sharedPoolWrite.freeOnExit(walPurgeJob);
 
+                            // best-effort background row-expiry cleanup for EXPIRE ROWS mat-views (WAL-only).
+                            // Registered at boot regardless of role: the job answers to isReadOnlyMode() on
+                            // every sweep and fences every destructive commit against a role flip, so it
+                            // no-ops on a replica and starts reclaiming on a promote without a restart. Boot
+                            // role must not decide registration - a role flip starts and stops no worker
+                            // threads, so a boot-time skip would leave a promoted ex-replica never reclaiming.
+                            setupRowExpiryCleanupJob(sharedPoolWrite, engine);
+
                             // wal apply job in the shared pool when there is no dedicated pool
                             if (walApplyEnabled && !config.getWalApplyPoolConfiguration().isEnabled()) {
                                 setupWalApplyJob(sharedPoolWrite, engine, sharedPoolQuery.getWorkerCount());
@@ -1117,6 +1145,10 @@ public class ServerMain implements Closeable {
         );
         final MatViewTimerJob matViewTimerJob = new MatViewTimerJob(engine);
         mvWorkerPool.assign(matViewTimerJob);
+    }
+
+    protected void setupRowExpiryCleanupJob(WorkerPool sharedPoolWrite, CairoEngine engine) {
+        RowExpiryCleanupJob.assignToPool(sharedPoolWrite, engine);
     }
 
     protected void setupViewJobs(WorkerPool vWorkerPool, CairoEngine engine, int sharedQueryWorkerCount) {

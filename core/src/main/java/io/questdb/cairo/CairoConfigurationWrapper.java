@@ -105,6 +105,31 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getAdaptiveCommitGroupWindowUs() {
+        return getDelegate().getAdaptiveCommitGroupWindowUs();
+    }
+
+    @Override
+    public long getAdaptiveEpochIntervalMs() {
+        return getDelegate().getAdaptiveEpochIntervalMs();
+    }
+
+    @Override
+    public long getAdaptiveEpochMaxRows() {
+        return getDelegate().getAdaptiveEpochMaxRows();
+    }
+
+    @Override
+    public boolean isAdaptiveEpochFlushOnClose() {
+        return getDelegate().isAdaptiveEpochFlushOnClose();
+    }
+
+    @Override
+    public boolean isAdaptiveRecoveryRollForwardEnabled() {
+        return getDelegate().isAdaptiveRecoveryRollForwardEnabled();
+    }
+
+    @Override
     public boolean getAsyncMunmapEnabled() {
         return getDelegate().getAsyncMunmapEnabled();
     }
@@ -650,6 +675,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getMatViewRowExpiryCleanupMaxCachedPartitions() {
+        return getDelegate().getMatViewRowExpiryCleanupMaxCachedPartitions();
+    }
+
+    @Override
+    public double getMatViewRowExpiryCleanupMinExpiredFraction() {
+        return getDelegate().getMatViewRowExpiryCleanupMinExpiredFraction();
+    }
+
+    @Override
     public long getMatViewRowsPerQueryEstimate() {
         return getDelegate().getMatViewRowsPerQueryEstimate();
     }
@@ -723,6 +758,7 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     public int getO3ColumnMemorySize() {
         return getDelegate().getO3ColumnMemorySize();
     }
+
 
     @Override
     public int getO3CopyQueueCapacity() {
@@ -1410,6 +1446,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlMaxGroupingSets() {
+        return getDelegate().getSqlMaxGroupingSets();
+    }
+
+    @Override
     public int getSqlMaxNegativeLimit() {
         return getDelegate().getSqlMaxNegativeLimit();
     }
@@ -1885,8 +1926,18 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isAdaptiveEpochColumnSyncBatched() {
+        return getDelegate().isAdaptiveEpochColumnSyncBatched();
+    }
+
+    @Override
     public boolean isAllPartitionOperationsAllowed() {
         return getDelegate().isAllPartitionOperationsAllowed();
+    }
+
+    @Override
+    public boolean isWalCommitWritebackDrainEnabled() {
+        return getDelegate().isWalCommitWritebackDrainEnabled();
     }
 
     @Override
@@ -1965,6 +2016,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isMatViewRowExpiryCleanupEnabled() {
+        return getDelegate().isMatViewRowExpiryCleanupEnabled();
+    }
+
+    @Override
     public boolean isMultiKeyDedupEnabled() {
         return getDelegate().isMultiKeyDedupEnabled();
     }
@@ -2027,6 +2083,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isSqlDistinctGroupByRewriteEnabled() {
         return getDelegate().isSqlDistinctGroupByRewriteEnabled();
+    }
+
+    @Override
+    public boolean isSqlLatestOnHoistEnabled() {
+        return getDelegate().isSqlLatestOnHoistEnabled();
     }
 
     @Override

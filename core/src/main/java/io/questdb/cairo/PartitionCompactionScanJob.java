@@ -27,23 +27,26 @@ package io.questdb.cairo;
 import io.questdb.cairo.frm.Frame;
 import io.questdb.cairo.frm.FrameAlgebra;
 import io.questdb.cairo.frm.file.FrameFactory;
-import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SynchronizedJob;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FindVisitor;
 import io.questdb.std.Hash;
 import io.questdb.std.IntHashSet;
+import io.questdb.std.IntList;
 import io.questdb.std.LongHashSet;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
+import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.microtime.Micros;
@@ -61,7 +64,7 @@ import static io.questdb.tasks.TableWriterTask.getCommandName;
 /**
  * Periodically scans every WAL table for idle LOGICAL partitions - one period of the table's PARTITION BY unit, i.e.
  * the main directory plus every MOVE-TAIL split inside it - and dispatches the appropriate compaction entry point.
- * Non-WAL tables are out of scope - see {@code scanTable}.
+ * The sweep leaves non-WAL tables alone; requests still serve them.
  * <p>
  * A logical partition whose every folder has been idle for {@code cairo.partition.compaction.squash.idle.timeout} is
  * merged whole: one staging copy of all its live rows replaces its run of {@code _txn} entries with a single entry.
@@ -69,12 +72,15 @@ import static io.questdb.tasks.TableWriterTask.getCommandName;
  * and plain folders are left alone.
  * <p>
  * A swap this job hands to a busy writer's command queue takes ownership of the staging directory the build filled.
- * An in-flight record suppresses any further work on the WHOLE logical partition while the writer instance that
- * received the command remains live and the command's own target - the folder it rewrites, or for a MERGE the run
- * it replaces - still has the identity the staging directory is named after.
+ * An in-flight record suppresses any further work on the WHOLE logical partition until the writer has applied the
+ * command - landed or refused it - while the writer instance that received the command remains live and the
+ * command's own target - the folder it rewrites, or for a MERGE the run it replaces - still has the identity the
+ * staging directory is named after.
  */
 public class PartitionCompactionScanJob extends SynchronizedJob implements Closeable {
     private static final int IN_FLIGHT_EXPIRY_OFFSET = 5;
+    // A PARQUET GENERATION's in-flight target: its install landed once the folder takes parquet_generated.
+    private static final long IN_FLIGHT_PARQUET_GENERATION = -2L;
     private static final int IN_FLIGHT_LOGICAL_TIMESTAMP_OFFSET = 1;
     private static final int IN_FLIGHT_STRIDE = 7;
     private static final int IN_FLIGHT_TABLE_ID_OFFSET = 0;
@@ -87,9 +93,9 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     private static final long IN_FLIGHT_WHOLE_RUN_TARGET = Long.MIN_VALUE;
     private static final int IN_FLIGHT_WRITER_ID_OFFSET = 6;
     private static final Log LOG = LogFactory.getLog(PartitionCompactionScanJob.class);
-    // Longs per folder in the scan's own folders list - see collectFolders. One word narrower than
-    // CompositePartitionSwapCommand.LONGS_PER_FOLDER: a swap re-checks the folder's column version too, and
-    // the scan reads no _cv file to fill that word with.
+    // Longs per folder in the scan's own folders list - see collectFolders. Two words narrower than
+    // CompositePartitionSwapCommand.LONGS_PER_FOLDER: a swap re-checks the folder's column version and squash
+    // tracker too, and the scan reads neither - see describeSwapFolders.
     private static final int LONGS_PER_SCANNED_FOLDER = 4;
     // Bounds the clean-parquet memo. Kept across two generations so a full memo evicts its oldest half
     // rather than being wiped whole - see rememberCleanParquetPartition.
@@ -102,6 +108,8 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     private static final int MAX_PROBE_PER_SWEEP = 10_000;
     private final long checkInterval;
     private final Clock clock;
+    // The sweep's and the request path's own _cv snapshot, opened once per table visit - see openColumnVersions.
+    private final ColumnVersionReader columnVersionReader = new ColumnVersionReader();
     private final CairoConfiguration configuration;
     private final CairoEngine engine;
     private final FilesFacade ff;
@@ -115,11 +123,14 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     private final LongList folders = new LongList();
     private final PartitionGeometry geometry = new PartitionGeometry();
     private final long idleTimeoutMicros;
+    // The command each in-flight record waits on, at the record's own index.
+    private final ObjList<CompactionSwapCommand> inFlightCommands = new ObjList<>();
     // Sorted by (tableId, logicalPartitionTimestamp), IN_FLIGHT_STRIDE longs per record.
     private final LongList inFlightSwaps = new LongList();
     private final long ioBudget;
     private final IntHashSet liveTableIds = new IntHashSet();
     private final Path other = new Path();
+    private final DirectIntList parquetBloomFilterIndexes = new DirectIntList(8, MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
     private final ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader();
     private final Path path = new Path();
     // Scratch for the requests serveCompactionRequests() takes off the engine's queue.
@@ -145,6 +156,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     // its oldest half instead of everything.
     private LongHashSet cleanParquetPartitions = new LongHashSet();
     private boolean isBudgetExhausted;
+    private boolean isColumnVersionOpen;
     private boolean isGeometryOpen;
     private boolean isIoDispatchStarted;
     private long last = 0;
@@ -153,6 +165,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     private int maxProbesPerSweep = MAX_PROBE_PER_SWEEP;
     private int memoCapacity = MAX_MEMO_SIZE;
     private NativePartitionIndexBuilder nativeIndexBuilder;
+    private ParquetPartitionConverter parquetConverter;
     private ParquetPartitionIndexBuilder parquetIndexBuilder;
     private int probeBudget;
     private long publishedWriterId;
@@ -192,13 +205,17 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
         cleanParquetPartitions.clear();
         retiringCleanParquetPartitions.clear();
         inFlightSwaps.clear();
+        inFlightCommands.clear();
         geometry.close();
         other.close();
         nativeIndexBuilder = Misc.free(nativeIndexBuilder);
+        parquetConverter = Misc.free(parquetConverter);
         parquetIndexBuilder = Misc.free(parquetIndexBuilder);
         parquetMetaReader.clear();
+        Misc.free(parquetBloomFilterIndexes);
         path.close();
         txReader.close();
+        columnVersionReader.close();
         frameFactory.close();
     }
 
@@ -221,22 +238,31 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
      * <p>
      * A folder this job never rebuilds counts as compact: a REMOTE one, or one that is not the whole of its logical
      * partition (see {@link #isParquetRebuildTarget}). Any other is compact unless its footer carries dead row-group
-     * bytes or a schema the table has moved on from (see {@link #isParquetSchemaStale}).
+     * bytes, a schema the table has moved on from (see {@link #isParquetSchemaStale}), an index row map - an uploaded
+     * {@code _pm} always has the identity map, so local index files would not match it - or stale column tops (see
+     * {@link #hasStaleParquetColumnTops}).
      *
-     * @param parquetMeta the folder's {@code _pm}, its footer resolved against the folder's committed parquet file
-     *                    size in {@code txFile}
+     * @param columnVersions the table's column versions, of the same snapshot as {@code txFile}
+     * @param parquetMeta    the folder's {@code _pm}, its footer resolved against the folder's committed parquet file
+     *                       size in {@code txFile}
      */
     public static boolean isParquetPartitionCompact(
             TxReader txFile,
             int partitionIndex,
             TableMetadata metadata,
+            ColumnVersionReader columnVersions,
             ParquetMetaFileReader parquetMeta
     ) {
         if (!isParquetRebuildTarget(txFile, partitionIndex)) {
             return true;
         }
         final boolean hasDeadBytes = parquetMeta.getParquetFileSize() > 0 && parquetMeta.getUnusedBytes() > 0;
-        return !hasDeadBytes && !isParquetSchemaStale(metadata, parquetMeta);
+        if (hasDeadBytes || parquetMeta.hasIndexRowMap() || isParquetSchemaStale(metadata, parquetMeta)) {
+            return false;
+        }
+        final long partitionTimestamp = txFile.getPartitionTimestampByIndex(partitionIndex);
+        final long partitionRowCount = txFile.getPartitionSize(partitionIndex);
+        return !hasStaleParquetColumnTops(metadata, columnVersions, partitionTimestamp, partitionRowCount, parquetMeta);
     }
 
     @TestOnly
@@ -329,6 +355,64 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             }
         }
         return false;
+    }
+
+    /**
+     * Whether the parquet file holds a non-NULL value inside a column's {@code _cv} top, judged from the {@code _pm}
+     * null counts alone. QuestDB 9.3.4 - 10.0.1 merged O3 rows into parquet partitions and reset every column top
+     * inside the file, but not in {@code _cv}: the file then holds real values in rows that anything trusting the
+     * {@code _cv} top - the index build, the dedup merge, the conversion to native - treats as missing. Only columns
+     * the file carries are judged; a top of -1 or past the row count marks the column absent from the partition.
+     */
+    private static boolean hasStaleParquetColumnTops(
+            TableRecordMetadata metadata,
+            ColumnVersionReader columnVersions,
+            long partitionTimestamp,
+            long partitionRowCount,
+            ParquetMetaFileReader parquetMeta
+    ) {
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            if (metadata.getColumnType(i) <= 0) {
+                continue;
+            }
+            final int parquetColumnIndex = parquetMeta.getColumnIndexById(metadata.getColumnMetadata(i).getOriginalWriterIndex());
+            if (parquetColumnIndex < 0) {
+                continue;
+            }
+            long columnTop = columnVersions.getColumnTop(partitionTimestamp, metadata.getWriterIndex(i));
+            if (columnTop < 0 || columnTop > partitionRowCount) {
+                columnTop = partitionRowCount;
+            }
+            if (parquetMeta.hasNonNullValuesInsideColumnTop(parquetColumnIndex, columnTop)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Whether the swap can link the conversion's indexes from the source folder rather than this job building them off
+     * the new parquet file. That file numbers its rows in folder order and has no index row map, so the native index
+     * files describe it exactly when the run is one plain folder at the logical partition start and no indexed column
+     * has a top there: the swap zeroes every top, and a top's NULL rows are in no native index file.
+     */
+    private static boolean isIndexLinkableAtSwap(TableReader reader, int lo, int hi, long logicalPartitionTimestamp) {
+        final TxReader txFile = reader.getTxFile();
+        if (hi - lo != 1
+                || txFile.isPartitionComposite(lo)
+                || txFile.getPartitionTimestampByIndex(lo) != logicalPartitionTimestamp) {
+            return false;
+        }
+        final TableMetadata metadata = reader.getMetadata();
+        final ColumnVersionReader cvr = reader.getColumnVersionReader();
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            if (ColumnType.isSymbol(metadata.getColumnType(i))
+                    && metadata.isColumnIndexed(i)
+                    && cvr.getColumnTop(logicalPartitionTimestamp, metadata.getWriterIndex(i)) != 0) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
@@ -481,7 +565,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                         continue;
                     }
                     final long rowOffset = readerGeometry.getPieceRowOffset(partitionIndex, p);
-                    FrameAlgebra.append(targetFrame, sourceFrame, rowOffset, rowOffset + rowCount, -1L, configuration.getCommitMode());
+                    FrameAlgebra.append(targetFrame, sourceFrame, rowOffset, rowOffset + rowCount, -1L, engine.getResolvedCommitMode());
                 }
             } finally {
                 path.trimTo(tableRootLen);
@@ -490,7 +574,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             targetFrame.sync();
             // Closed first: the index build reads back the column files the copy wrote.
             targetFrame = Misc.free(targetFrame);
-            getNativeIndexBuilder().buildIndexes(other, reader.getMetadata(), cvr, columnTops, partitionTimestamp, liveRows, reader.getTxn());
+            getNativeIndexBuilder().buildIndexes(other, reader.getMetadata(), cvr, columnTops, partitionTimestamp, liveRows, reader.getTxn(), engine.getResolvedCommitMode());
             built = true;
         } finally {
             Misc.free(targetFrame);
@@ -535,8 +619,10 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                 // A build that never reached its swap.
                 ff.rmdir(other, false);
             }
+            collectStaleParquetColumnTops(reader, partitionIndex, partitionTimestamp, parquetFileSize, command.getStaleColumnTops());
             O3PartitionJob.compactParquetPartition(
                     configuration,
+                    engine.getResolvedCommitMode(),
                     ff,
                     tableToken,
                     reader.getMetadata(),
@@ -547,11 +633,12 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                     reader.getSeqTxn(),
                     command
             );
-            if (command.isFullyMaterialized()) {
+            if (command.isFullyMaterialized() || command.isIndexRowMapDropped() || command.getStaleColumnTops().size() > 0) {
                 // Every column of the new file starts at row 0 and the swap zeroes every column top, so the
                 // source's index files - built past a top, or never built for a column the source file lacked -
                 // do not describe the copy. Build them afresh off the new file, here, so the swap stays
-                // metadata-only.
+                // metadata-only. Same for index files grown over an index row map the copy drops, and for
+                // index files built past a stale top the swap zeroes.
                 getParquetIndexBuilder().buildIndexes(
                         other,
                         command.getNewParquetFileSize(),
@@ -559,7 +646,8 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                         reader.getColumnVersionReader(),
                         partitionTimestamp,
                         txFile.getPartitionSize(partitionIndex),
-                        reader.getTxn()
+                        reader.getTxn(),
+                        engine.getResolvedCommitMode()
                 );
             } else {
                 copyParquetPartitionSidecars(path, other);
@@ -599,7 +687,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
         final int timestampType = reader.getMetadata().getTimestampType();
         final int partitionBy = reader.getPartitionedBy();
         final ColumnVersionReader cvr = reader.getColumnVersionReader();
-        describeSwapFolders(folders, cvr);
+        describeSwapFolders(reader, folders);
 
         setMergeStagingPath(
                 other,
@@ -674,7 +762,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                                     continue;
                                 }
                                 final long rowOffset = readerGeometry.getPieceRowOffset(partitionIndex, p);
-                                FrameAlgebra.append(targetFrame, sourceFrame, rowOffset, rowOffset + rowCount, -1L, configuration.getCommitMode());
+                                FrameAlgebra.append(targetFrame, sourceFrame, rowOffset, rowOffset + rowCount, -1L, engine.getResolvedCommitMode());
                                 copiedRows += rowCount;
                             }
                         }
@@ -687,7 +775,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                             rewriteRanges.clear();
                             rewriteRanges.add(0L, rowCount);
                             targetFrame.reserve(copiedRows + rowCount, sourceFrame, rewriteRanges, null, null);
-                            FrameAlgebra.append(targetFrame, sourceFrame, 0, rowCount, -1L, configuration.getCommitMode());
+                            FrameAlgebra.append(targetFrame, sourceFrame, 0, rowCount, -1L, engine.getResolvedCommitMode());
                         }
                         copiedRows += rowCount;
                     }
@@ -709,7 +797,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             targetFrame.sync();
             // Closed first: the index build reads back the column files the copy wrote.
             targetFrame = Misc.free(targetFrame);
-            getNativeIndexBuilder().buildIndexes(other, reader.getMetadata(), cvr, columnTops, logicalPartitionTimestamp, liveRows, reader.getTxn());
+            getNativeIndexBuilder().buildIndexes(other, reader.getMetadata(), cvr, columnTops, logicalPartitionTimestamp, liveRows, reader.getTxn(), engine.getResolvedCommitMode());
             built = true;
         } finally {
             Misc.free(targetFrame);
@@ -722,6 +810,96 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             }
         }
 
+        return command;
+    }
+
+    private CompositePartitionSwapCommand buildParquetConversion(
+            TableToken tableToken,
+            TableReader reader,
+            int lo,
+            int hi,
+            long logicalPartitionTimestamp,
+            LongList folders,
+            long liveRows
+    ) {
+        final TxReader txFile = reader.getTxFile();
+        final int timestampType = reader.getMetadata().getTimestampType();
+        final int partitionBy = reader.getPartitionedBy();
+        final ColumnVersionReader cvr = reader.getColumnVersionReader();
+        describeSwapFolders(reader, folders);
+
+        // The MERGE staging name: the writer's startup purge and the in-flight record treat both the same way.
+        setMergeStagingPath(
+                other,
+                tableToken,
+                timestampType,
+                partitionBy,
+                logicalPartitionTimestamp,
+                folders.getQuick(1),
+                folders.size() / LONGS_PER_SCANNED_FOLDER
+        );
+
+        final boolean isIndexLinkedAtSwap = isIndexLinkableAtSwap(reader, lo, hi, logicalPartitionTimestamp);
+        final CompositePartitionSwapCommand command = new CompositePartitionSwapCommand();
+        command.ofParquetConversion(
+                tableToken,
+                tableToken.getTableId(),
+                logicalPartitionTimestamp,
+                swapFolders,
+                reader.getMetadataVersion(),
+                liveRows,
+                isIndexLinkedAtSwap
+        );
+        boolean built = false;
+        try {
+            if (ff.exists(other.$())) {
+                // A build that never reached its swap.
+                ff.rmdir(other, false);
+            }
+            TableUtils.createDirsOrFail(ff, other, configuration.getMkDirMode());
+            // The latest version among the folders it replaces (the squash rule), else the table's.
+            final PartitionGeometry readerGeometry = reader.getGeometry();
+            long seqTxn = -1;
+            for (int partitionIndex = lo; partitionIndex < hi; partitionIndex++) {
+                final long folderSeqTxn = txFile.isPartitionComposite(partitionIndex)
+                        ? readerGeometry.getSeqTxn(partitionIndex)
+                        : txFile.getNativePartitionSeqTxn(partitionIndex);
+                seqTxn = Math.max(seqTxn, folderSeqTxn);
+            }
+            if (seqTxn <= 0) {
+                seqTxn = reader.getSeqTxn();
+            }
+            final ParquetPartitionConverter converter = getParquetConverter();
+            final long parquetFileSize = converter.convert(reader, lo, hi, other, seqTxn, engine.getResolvedCommitMode(), null, Double.NaN);
+            if (converter.getRowCount() != liveRows) {
+                throw CairoException.critical(0)
+                        .put("converted logical partition holds a different row count than _txn states [table=")
+                        .put(tableToken.getTableName())
+                        .put(", convertedRows=").put(converter.getRowCount())
+                        .put(", liveRows=").put(liveRows)
+                        .put(']');
+            }
+            command.setParquetFileSize(parquetFileSize);
+            if (!isIndexLinkedAtSwap) {
+                getParquetIndexBuilder().buildIndexes(
+                        other,
+                        parquetFileSize,
+                        reader.getMetadata(),
+                        cvr,
+                        logicalPartitionTimestamp,
+                        liveRows,
+                        reader.getTxn(),
+                        engine.getResolvedCommitMode()
+                );
+            }
+            built = true;
+        } finally {
+            if (!built) {
+                if (ff.exists(other.$())) {
+                    ff.rmdir(other, false);
+                }
+            }
+        }
         return command;
     }
 
@@ -770,6 +948,59 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     }
 
     /**
+     * Collects the column tops the swap has to zero when the parquet folder at {@code path} has stale ones (see
+     * {@link #hasStaleParquetColumnTops}): the writer index of every live column the file carries whose {@code _cv}
+     * top is not 0. All of them, since the merge that left a value inside one top reset every top inside the file. A
+     * column the file does not carry keeps its top. Collects nothing for a folder whose tops are sound: a part-way
+     * top there is real, BOOLEAN, BYTE, SHORT and CHAR read NULL through it.
+     * <p>
+     * Reads the {@code _pm} of the source partition directory in {@link #path}, which is trimmed back on return.
+     */
+    private void collectStaleParquetColumnTops(
+            TableReader reader,
+            int partitionIndex,
+            long partitionTimestamp,
+            long parquetFileSize,
+            IntList staleColumnTops
+    ) {
+        staleColumnTops.clear();
+        final TableMetadata metadata = reader.getMetadata();
+        final ColumnVersionReader cvr = reader.getColumnVersionReader();
+        final long partitionRowCount = reader.getTxFile().getPartitionSize(partitionIndex);
+        final int dirLen = path.size();
+        final long addr = ParquetMetaFileReader.openAndMapRO(ff, path.concat(TableUtils.PARQUET_METADATA_FILE_NAME).$(), parquetMetaReader);
+        try {
+            if (addr == 0 || !parquetMetaReader.resolveFooter(parquetFileSize)) {
+                throw CairoException.critical(0)
+                        .put("_pm tail does not match parquet file size [path=").put(path)
+                        .put(", parquetFileSize=").put(parquetFileSize).put(']');
+            }
+            if (!hasStaleParquetColumnTops(metadata, cvr, partitionTimestamp, partitionRowCount, parquetMetaReader)) {
+                return;
+            }
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                if (metadata.getColumnType(i) > 0
+                        && parquetMetaReader.getColumnIndexById(metadata.getColumnMetadata(i).getOriginalWriterIndex()) > -1
+                        && cvr.getColumnTop(partitionTimestamp, metadata.getWriterIndex(i)) != 0) {
+                    staleColumnTops.add(metadata.getWriterIndex(i));
+                }
+            }
+        } finally {
+            path.trimTo(dirLen);
+            // Capture before clear() zeros the fields so the mapping can be released.
+            final long mappedSize = parquetMetaReader.getFileSize();
+            parquetMetaReader.clear();
+            if (addr != 0) {
+                ff.munmap(addr, mappedSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+            }
+        }
+        LOG.info().$("parquet partition has stale column tops, rebuilding indexes [table=").$(reader.getTableToken())
+                .$(", partition=").$ts(ColumnType.getTimestampDriver(metadata.getTimestampType()), partitionTimestamp)
+                .$(", columns=").$(staleColumnTops.size())
+                .I$();
+    }
+
+    /**
      * Rebuilds the requested logical partition's lone parquet folder when {@link #isParquetPartitionCompact} says it
      * is not compact, whatever its age and whatever the sweep's budgets: the sweep's own rebuild with none of its
      * timing gates. A folder this job never rebuilds, or one whose {@code _pm} footer does not resolve, is left
@@ -785,7 +1016,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             int partitionIndex,
             long logicalPartitionTimestamp
     ) {
-        if (!isParquetRebuildTarget(txReader, partitionIndex)) {
+        if (!isParquetRebuildTarget(txReader, partitionIndex) || !openColumnVersions(tableToken)) {
             return false;
         }
         path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
@@ -800,7 +1031,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
         try {
             if (addr == 0
                     || !parquetMetaReader.resolveFooter(txReader.getPartitionParquetFileSize(partitionIndex))
-                    || isParquetPartitionCompact(txReader, partitionIndex, metadata, parquetMetaReader)) {
+                    || isParquetPartitionCompact(txReader, partitionIndex, metadata, columnVersionReader, parquetMetaReader)) {
                 return false;
             }
         } finally {
@@ -825,15 +1056,18 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
      * unsafe still does. A request this cannot act on - the logical partition is already one plain folder or a
      * compact parquet one, has a swap in flight, is the active one, or holds a folder no native copy can carry - is
      * dropped, and the requester asks again on its next cycle if it still needs the fold.
+     * <p>
+     * A non-WAL table is served too, but takes REWRITE for MAKE-PLAIN, which cannot commit around an open transaction.
      *
      * @return true when a fold was dispatched, false for a request that cost no more than a {@code _txn} read (and,
      * for a lone parquet folder, a {@code _pm} footer read)
      */
-    private boolean compactRequestedPartition(TableToken tableToken, long logicalPartitionTimestamp, long nowMicros) {
-        if (!tableToken.isWal()) {
-            // See scanTable: a swap built off a reader snapshot is not safe to hand a non-WAL writer.
-            return false;
-        }
+    private boolean compactRequestedPartition(
+            TableToken tableToken,
+            long logicalPartitionTimestamp,
+            int kind,
+            long nowMicros
+    ) {
         path.of(configuration.getDbRoot()).concat(tableToken).concat(TableUtils.TXN_FILE_NAME);
         if (!ff.exists(path.$())) {
             return false;
@@ -848,6 +1082,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             }
 
             isGeometryOpen = false;
+            isColumnVersionOpen = false;
             txReader.ofRO(path.$(), timestampType, partitionBy);
             TableUtils.safeReadTxn(txReader, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
             prunePendingSwaps(tableToken, timestampType, partitionBy);
@@ -861,6 +1096,15 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                 return false;
             }
             final int hi = findLogicalPartitionRunEnd(txReader, lo, logicalPartitionTimestamp);
+            if (kind == PartitionCompactionRequestQueue.KIND_PARQUET_CONVERSION) {
+                return convertRequestedPartition(tableToken, timestampType, partitionBy, lo, hi, logicalPartitionTimestamp);
+            }
+            if (kind == PartitionCompactionRequestQueue.KIND_PARQUET_GENERATION
+                    && hi - lo == 1
+                    && !txReader.isPartitionComposite(lo)) {
+                // One plain folder: its parquet copy. Any other shape takes the fold below first.
+                return generateRequestedParquet(tableToken, timestampType, partitionBy, lo, logicalPartitionTimestamp);
+            }
             if (hi - lo == 1 && txReader.isPartitionParquet(lo)) {
                 // The cold-storage upload asks for a parquet partition it found not compact.
                 return compactRequestedParquetPartition(tableToken, metadata, timestampType, partitionBy, lo, logicalPartitionTimestamp);
@@ -897,7 +1141,8 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             // Dispatched by the folder's OWN start, which is a split's when the main folder is missing.
             final long partitionTimestamp = txReader.getPartitionTimestampByIndex(lo);
             openGeometry(tableToken, timestampType, partitionBy);
-            final boolean isMakePlain = PartitionCompactionPolicy.isMakePlainShape(txReader, geometry, lo);
+            // See the method comment: MAKE-PLAIN is not safe to hand a non-WAL writer.
+            final boolean isMakePlain = tableToken.isWal() && PartitionCompactionPolicy.isMakePlainShape(txReader, geometry, lo);
             collectFolders(txReader, geometry, lo, hi);
             final long state = logicalPartitionState(folders);
             if (isMakePlain) {
@@ -910,8 +1155,59 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     }
 
     /**
-     * One entry of the source partition directory: everything but {@code data.parquet} and {@code _pm} is an index file
-     * and is carried into the staging directory, hard-linked where the file system allows.
+     * Converts the requested logical partition into one parquet folder; true when dispatched.
+     */
+    private boolean convertRequestedPartition(
+            TableToken tableToken,
+            int timestampType,
+            int partitionBy,
+            int lo,
+            int hi,
+            long logicalPartitionTimestamp
+    ) {
+        if (hi == txReader.getPartitionCount()) {
+            return false;
+        }
+        long liveRows = 0;
+        for (int partitionIndex = lo; partitionIndex < hi; partitionIndex++) {
+            if (txReader.isPartitionParquet(partitionIndex)) {
+                return false;
+            }
+            liveRows += txReader.getPartitionSize(partitionIndex);
+        }
+        if (liveRows == 0) {
+            return false;
+        }
+        openGeometry(tableToken, timestampType, partitionBy);
+        collectFolders(txReader, geometry, lo, hi);
+        dispatchParquetConversion(tableToken, logicalPartitionTimestamp, logicalPartitionState(folders));
+        return true;
+    }
+
+    private boolean generateRequestedParquet(
+            TableToken tableToken,
+            int timestampType,
+            int partitionBy,
+            int partitionIndex,
+            long logicalPartitionTimestamp
+    ) {
+        if (partitionIndex == txReader.getPartitionCount() - 1
+                || txReader.isPartitionParquet(partitionIndex)
+                || txReader.isPartitionParquetGenerated(partitionIndex)
+                || txReader.isPartitionRemote(partitionIndex)
+                || txReader.getPartitionSize(partitionIndex) == 0
+                || txReader.getPartitionTimestampByIndex(partitionIndex) != logicalPartitionTimestamp) {
+            return false;
+        }
+        openGeometry(tableToken, timestampType, partitionBy);
+        collectFolders(txReader, geometry, partitionIndex, partitionIndex + 1);
+        dispatchParquetGeneration(tableToken, logicalPartitionTimestamp, logicalPartitionState(folders));
+        return true;
+    }
+
+    /**
+     * One entry of the source partition directory: everything but {@code data.parquet}, {@code _pm} and their staging
+     * pair is an index file and is carried into the staging directory, hard-linked where the file system allows.
      */
     private void copyParquetPartitionSidecar(long pUtf8NameZ, int type) {
         if (!Files.notDots(pUtf8NameZ)) {
@@ -920,7 +1216,9 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
         sidecarName.clear();
         Utf8s.utf8ZCopy(pUtf8NameZ, sidecarName);
         if (Utf8s.equalsAscii(TableUtils.PARQUET_PARTITION_NAME, sidecarName)
-                || Utf8s.equalsAscii(TableUtils.PARQUET_METADATA_FILE_NAME, sidecarName)) {
+                || Utf8s.equalsAscii(TableUtils.PARQUET_METADATA_FILE_NAME, sidecarName)
+                || Utf8s.equalsAscii(TableUtils.PARQUET_PARTITION_STAGING_NAME, sidecarName)
+                || Utf8s.equalsAscii(TableUtils.PARQUET_METADATA_STAGING_FILE_NAME, sidecarName)) {
             return;
         }
         path.trimTo(sidecarSrcLen).concat(pUtf8NameZ).$();
@@ -954,25 +1252,35 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     }
 
     /**
-     * Copies {@code scannedFolders} into {@link #swapFolders}, widening each record with the column version
-     * {@code cvr} reads the folder's files at - the max column name txn of the folder's own {@code _cv}
-     * records, which is the same word {@link TableReader} re-reads a partition on.
-     * <p>
-     * That word is what tells the writer an UPDATE landed on a source folder while the copy ran: an UPDATE
-     * rewrites the folder's column files under new name txns and leaves everything else the swap re-checks
-     * standing - same folders, same name txns, same generations, same row counts, same metadata version. A
-     * swap that took the copy anyway would publish the pre-UPDATE files under the post-UPDATE names, which
-     * loses the UPDATE and leaves the partition unreadable.
+     * Copies {@code scannedFolders} into {@link #swapFolders}, widening each record with two words of
+     * {@code reader}'s snapshot:
+     * <ul>
+     *     <li>the column version the folder's files are read at - the max column name txn of the folder's own
+     *     {@code _cv} records, which is the same word {@link TableReader} re-reads a partition on. It tells the
+     *     writer an UPDATE landed on a source folder while the copy ran: an UPDATE rewrites the folder's column
+     *     files under new name txns and leaves everything else the swap re-checks standing - same folders, same
+     *     name txns, same generations, same row counts, same metadata version. A swap that took the copy anyway
+     *     would publish the pre-UPDATE files under the post-UPDATE names, which loses the UPDATE and leaves the
+     *     partition unreadable.</li>
+     *     <li>the folder's squash tracker ({@link TableUtils#readPartitionSquashTracker}). It tells the writer an
+     *     O3 commit split the folder and a squash appended the split back in place: the name txn stays, and with
+     *     DEDUP UPSERT so does the row count, while the rows the copy holds are overwritten. Read while the
+     *     reader pins the folder, which keeps any squash off it, so it is the snapshot's.</li>
+     * </ul>
      */
-    private void describeSwapFolders(LongList scannedFolders, ColumnVersionReader cvr) {
+    private void describeSwapFolders(TableReader reader, LongList scannedFolders) {
+        final TxReader txFile = reader.getTxFile();
+        final ColumnVersionReader cvr = reader.getColumnVersionReader();
         swapFolders.clear();
         for (int i = 0, n = scannedFolders.size(); i < n; i += LONGS_PER_SCANNED_FOLDER) {
             final long folderTimestamp = scannedFolders.getQuick(i);
+            final long folderNameTxn = scannedFolders.getQuick(i + 1);
             swapFolders.add(folderTimestamp);
-            swapFolders.add(scannedFolders.getQuick(i + 1));
+            swapFolders.add(folderNameTxn);
             swapFolders.add(scannedFolders.getQuick(i + 2));
             swapFolders.add(scannedFolders.getQuick(i + 3));
             swapFolders.add(cvr.getMaxPartitionVersion(folderTimestamp));
+            swapFolders.add(readSquashTracker(reader, txFile.findAttachedPartitionIndexByLoTimestamp(folderTimestamp), folderTimestamp, folderNameTxn));
         }
     }
 
@@ -1201,10 +1509,140 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
         );
     }
 
+    private void dispatchParquetGeneration(TableToken tableToken, long partitionTimestamp, long expectedState) {
+        final CompositePartitionSwapCommand command = new CompositePartitionSwapCommand();
+        final TimestampDriver timestampDriver;
+        final long nameTxn;
+        try (TableReader reader = engine.getReader(tableToken)) {
+            if (readerLogicalPartitionState(reader, partitionTimestamp) != expectedState) {
+                return;
+            }
+            final TxReader txFile = reader.getTxFile();
+            final int partitionIndex = txFile.getPartitionIndex(partitionTimestamp);
+            if (partitionIndex < 0 || txFile.isPartitionParquet(partitionIndex) || txFile.isPartitionComposite(partitionIndex)) {
+                return;
+            }
+            timestampDriver = ColumnType.getTimestampDriver(reader.getMetadata().getTimestampType());
+            nameTxn = txFile.getPartitionNameTxn(partitionIndex);
+            final long rowCount = txFile.getPartitionSize(partitionIndex);
+            final long nativeSeqTxn = txFile.getNativePartitionSeqTxn(partitionIndex);
+            // A legacy partition with no recorded version takes the table's; the install stamps it on the folder.
+            final long seqTxn = nativeSeqTxn > 0 ? nativeSeqTxn : reader.getSeqTxn();
+            LOG.info().$("compaction is building a parquet copy of a native partition [table=").$(tableToken)
+                    .$(", partition=").$ts(timestampDriver, partitionTimestamp)
+                    .$(", nameTxn=").$(nameTxn)
+                    .$(", rowCount=").$(rowCount)
+                    .I$();
+
+            other.of(configuration.getDbRoot()).concat(tableToken.getDirName());
+            TableUtils.setPathForNativePartition(other, reader.getMetadata().getTimestampType(), reader.getPartitionedBy(), partitionTimestamp, nameTxn);
+            other.put(TableUtils.GENERATING_DIR_MARKER);
+            boolean built = false;
+            try {
+                if (ff.exists(other.$())) {
+                    // A build that never reached its install.
+                    ff.rmdir(other, false);
+                }
+                TableUtils.createDirsOrFail(ff, other, configuration.getMkDirMode());
+                final int tableRootLen = path.of(configuration.getDbRoot()).concat(tableToken.getDirName()).size();
+                symbolTableProvider.of(reader);
+                TableUtils.produceParquetFromNativeInto(
+                        path,
+                        other,
+                        tableRootLen,
+                        partitionTimestamp,
+                        nameTxn,
+                        tableToken.getTableName(),
+                        rowCount,
+                        reader.getMetadata(),
+                        reader.getColumnVersionReader(),
+                        symbolTableProvider,
+                        configuration,
+                        engine.getResolvedCommitMode(),
+                        null,
+                        Double.NaN,
+                        parquetBloomFilterIndexes,
+                        -1L,
+                        seqTxn
+                );
+                command.ofParquetGeneration(
+                        tableToken,
+                        tableToken.getTableId(),
+                        partitionTimestamp,
+                        nameTxn,
+                        reader.getColumnVersionReader().getMaxPartitionVersion(partitionTimestamp),
+                        reader.getMetadataVersion(),
+                        readSquashTracker(reader, partitionIndex, partitionTimestamp, nameTxn),
+                        rowCount,
+                        seqTxn
+                );
+                built = true;
+            } finally {
+                symbolTableProvider.clear();
+                if (!built && ff.exists(other.$())) {
+                    ff.rmdir(other, false);
+                }
+            }
+        }
+        publishCommand(
+                tableToken,
+                partitionTimestamp,
+                partitionTimestamp,
+                nameTxn,
+                IN_FLIGHT_PARQUET_GENERATION,
+                command,
+                "native partition PARQUET GENERATION",
+                timestampDriver
+        );
+    }
+
+    private void dispatchParquetConversion(TableToken tableToken, long logicalPartitionTimestamp, long expectedState) {
+        final CompositePartitionSwapCommand command;
+        final TimestampDriver timestampDriver;
+        final long firstNameTxn;
+        final int folderCount;
+        try (TableReader reader = engine.getReader(tableToken)) {
+            final TxReader txFile = reader.getTxFile();
+            final int lo = findLogicalPartitionRunStart(txFile, logicalPartitionTimestamp);
+            if (lo < 0) {
+                return;
+            }
+            final int hi = findLogicalPartitionRunEnd(txFile, lo, logicalPartitionTimestamp);
+            firstNameTxn = txFile.getPartitionNameTxn(lo);
+            folderCount = hi - lo;
+            collectFolders(txFile, reader.getGeometry(), lo, hi);
+            if (logicalPartitionState(folders) != expectedState) {
+                return;
+            }
+            long liveRows = 0;
+            for (int i = lo; i < hi; i++) {
+                liveRows += txFile.getPartitionSize(i);
+            }
+            timestampDriver = ColumnType.getTimestampDriver(reader.getMetadata().getTimestampType());
+            LOG.info().$("compaction is converting a logical partition to parquet [table=").$(tableToken)
+                    .$(", partition=").$ts(timestampDriver, logicalPartitionTimestamp)
+                    .$(", folders=").$(folderCount)
+                    .$(", liveRows=").$(liveRows)
+                    .I$();
+            command = buildParquetConversion(tableToken, reader, lo, hi, logicalPartitionTimestamp, folders, liveRows);
+        }
+        // Named, like a MERGE's, after the run's first name txn and its folder count - see prunePendingSwaps.
+        publishCommand(
+                tableToken,
+                logicalPartitionTimestamp,
+                IN_FLIGHT_WHOLE_RUN_TARGET,
+                firstNameTxn,
+                folderCount,
+                command,
+                "logical partition PARQUET CONVERSION",
+                timestampDriver
+        );
+    }
+
     /**
      * Resolves this table's in-flight records that have outlived
      * {@link CairoConfiguration#getPartitionCompactionSwapTimeout()}. A record that old describes a command the
-     * writer never reported on - one it refused without moving {@code _txn}, say - and it would otherwise park its
+     * writer has not applied yet - one queued on a writer that stopped ticking, say - and it would otherwise park its
      * logical partition for the life of that writer instance. Taking the writer out of the pool and ticking it
      * consumes whatever is still queued, which is what makes forgetting the records safe:
      * nothing is rebuilt on the strength of the timeout alone. A writer too busy to hand over keeps its records,
@@ -1243,7 +1681,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             // EntryUnavailableException included: the writer is busy, which is the ordinary case for a
             // command that got queued in the first place.
             LOG.debug().$("could not drain an expired compaction swap [table=").$(tableToken)
-                    .$(", error=").$(e.getFlyweightMessage())
+                    .$(", error=").$safe(e.getFlyweightMessage())
                     .I$();
         }
         if (!isDrained) {
@@ -1329,6 +1767,13 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
         return nativeIndexBuilder;
     }
 
+    private ParquetPartitionConverter getParquetConverter() {
+        if (parquetConverter == null) {
+            parquetConverter = new ParquetPartitionConverter(configuration, ff);
+        }
+        return parquetConverter;
+    }
+
     private ParquetPartitionIndexBuilder getParquetIndexBuilder() {
         if (parquetIndexBuilder == null) {
             parquetIndexBuilder = new ParquetPartitionIndexBuilder(configuration, ff);
@@ -1364,6 +1809,9 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
         final int partitionIndex = txReader.getPartitionIndex(targetTimestamp);
         if (partitionIndex < 0 || txReader.getPartitionNameTxn(partitionIndex) != targetNameTxn) {
             return false;
+        }
+        if (targetGeneration == IN_FLIGHT_PARQUET_GENERATION) {
+            return !txReader.isPartitionParquet(partitionIndex) && !txReader.isPartitionParquetGenerated(partitionIndex);
         }
         if (txReader.isPartitionComposite(partitionIndex)) {
             openGeometry(tableToken, timestampType, partitionBy);
@@ -1410,6 +1858,10 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             // Written to inside the idle window.
             return false;
         }
+        if (!openColumnVersions(tableToken)) {
+            // A commit landed since the _txn snapshot; the next sweep judges the partition. Not memoized.
+            return false;
+        }
         path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
         TableUtils.setPathForParquetPartitionMetadata(path, timestampType, partitionBy, partitionTimestamp, nameTxn);
         final long addr = ParquetMetaFileReader.openAndMapRO(ff, path.$(), parquetMetaReader);
@@ -1417,7 +1869,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             if (addr == 0 || !parquetMetaReader.resolveFooter(parquetFileSize)) {
                 return false;
             }
-            if (!isParquetPartitionCompact(txReader, partitionIndex, metadata, parquetMetaReader)) {
+            if (!isParquetPartitionCompact(txReader, partitionIndex, metadata, columnVersionReader, parquetMetaReader)) {
                 return true;
             }
             rememberCleanParquetPartition(memoKey);
@@ -1458,8 +1910,9 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
      * per logical partition is ever outstanding, so folders that each deserve their own compaction take their turns
      * one sweep after another.
      * <p>
-     * The record survives only while the exact writer instance that received the command remains live. The staging
-     * directory itself is not a liveness signal: a terminal path may leave it behind, while a live command must
+     * The record survives only while the exact writer instance that received the command remains live and has not
+     * applied it yet. A refused command does not move {@code _txn}, so only the command itself can report it. The
+     * staging directory is not a liveness signal: a terminal path may leave it behind, while a live command must
      * retain ownership even if the directory temporarily disappears.
      */
     private boolean isSwapPending(TableToken tableToken, long logicalPartitionTimestamp) {
@@ -1468,7 +1921,8 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             return false;
         }
         final int offset = recordIndex * IN_FLIGHT_STRIDE;
-        if (inFlightSwaps.getQuick(offset + IN_FLIGHT_WRITER_ID_OFFSET) == engine.getWriterId(tableToken)) {
+        if (inFlightSwaps.getQuick(offset + IN_FLIGHT_WRITER_ID_OFFSET) == engine.getWriterId(tableToken)
+                && !inFlightCommands.getQuick(recordIndex).isApplied()) {
             return true;
         }
         removePendingSwap(recordIndex);
@@ -1489,6 +1943,23 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
         if (!tracker.isSuspended() && tracker.getWriterTxn() < tracker.getSeqTxn()) {
             engine.notifyWalTxnCommitted(tableToken);
         }
+    }
+
+    /**
+     * Reads the table's {@code _cv} standalone, once per table visit, for {@link #isParquetPartitionCompact} to judge
+     * the column tops by.
+     *
+     * @return false when the read is not of {@link #txReader}'s snapshot - a commit landed in between - so the column
+     * tops cannot be judged against it
+     */
+    private boolean openColumnVersions(TableToken tableToken) {
+        if (!isColumnVersionOpen) {
+            path.of(configuration.getDbRoot()).concat(tableToken.getDirName()).concat(TableUtils.COLUMN_VERSION_FILE_NAME);
+            columnVersionReader.ofRO(ff, path.$());
+            isColumnVersionOpen = true;
+            columnVersionReader.readSafe(configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
+        }
+        return columnVersionReader.getVersion() == txReader.getColumnVersion();
     }
 
     /**
@@ -1516,9 +1987,9 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     }
 
     /**
-     * Drops this table's in-flight records whose swap is done or gone: the writer instance that took the command
-     * is no longer the table's, or the command's own target has moved on (see {@link #isInFlightTargetUnchanged})
-     * - which is what landing the swap does.
+     * Drops this table's in-flight records whose swap is done or gone: the writer applied the command, the writer
+     * instance that took it is no longer the table's, or the command's own target has moved on (see
+     * {@link #isInFlightTargetUnchanged}) - which is what landing the swap does.
      * <p>
      * A change to any OTHER folder of the logical partition does not drop the record. The staging directory is
      * named after the target alone, so while the target keeps its identity a rebuild would clear and refill the
@@ -1533,7 +2004,9 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             if (inFlightSwaps.getQuick(offset + IN_FLIGHT_TABLE_ID_OFFSET) != tableToken.getTableId()) {
                 break;
             }
-            if (liveWriterId < 0 || inFlightSwaps.getQuick(offset + IN_FLIGHT_WRITER_ID_OFFSET) != liveWriterId) {
+            if (liveWriterId < 0
+                    || inFlightSwaps.getQuick(offset + IN_FLIGHT_WRITER_ID_OFFSET) != liveWriterId
+                    || inFlightCommands.getQuick(recordIndex).isApplied()) {
                 removePendingSwap(recordIndex);
                 continue;
             }
@@ -1555,7 +2028,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             long targetTimestamp,
             long targetNameTxn,
             long targetGeneration,
-            AsyncWriterCommand command,
+            CompactionSwapCommand command,
             String what,
             TimestampDriver timestampDriver
     ) {
@@ -1574,6 +2047,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                         targetNameTxn,
                         targetGeneration,
                         publishedWriterId,
+                        command,
                         clock.getTicks()
                 );
             }
@@ -1604,6 +2078,20 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     }
 
     /**
+     * The squash tracker of the folder at {@code partitionIndex} in {@code reader}'s snapshot, which the swap
+     * compares the folder's live one against - see {@link TableUtils#readPartitionSquashTracker}.
+     */
+    private long readSquashTracker(TableReader reader, int partitionIndex, long partitionTimestamp, long partitionNameTxn) {
+        final int squashCount = reader.getTxFile().getPartitionSquashCount(partitionIndex);
+        if (squashCount != TxReader.PARTITION_SQUASH_COUNTER_MAX) {
+            return squashCount;
+        }
+        final Path partitionDir = Path.getThreadLocal(configuration.getDbRoot()).concat(reader.getTableToken().getDirName());
+        TableUtils.setPathForNativePartition(partitionDir, reader.getMetadata().getTimestampType(), reader.getPartitionedBy(), partitionTimestamp, partitionNameTxn);
+        return TableUtils.readPartitionSquashTracker(ff, partitionDir, squashCount);
+    }
+
+    /**
      * Records a clean parquet partition's fingerprint. When the active generation fills to half the memo
      * bound it is retired and the previously retired one dropped, evicting the oldest half of the memo
      * instead of wiping it whole. Swapping the two sets and clearing the reused one keeps the sweep path
@@ -1627,6 +2115,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             long targetNameTxn,
             long targetGeneration,
             long writerId,
+            CompactionSwapCommand command,
             long nowMicros
     ) {
         assert writerId > 0;
@@ -1634,7 +2123,9 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
         if (recordIndex < 0) {
             recordIndex = -recordIndex - 1;
             inFlightSwaps.insert(recordIndex * IN_FLIGHT_STRIDE, IN_FLIGHT_STRIDE);
+            inFlightCommands.insert(recordIndex, 1, null);
         }
+        inFlightCommands.setQuick(recordIndex, command);
         final int offset = recordIndex * IN_FLIGHT_STRIDE;
         inFlightSwaps.setQuick(offset + IN_FLIGHT_TABLE_ID_OFFSET, tableId);
         inFlightSwaps.setQuick(offset + IN_FLIGHT_LOGICAL_TIMESTAMP_OFFSET, logicalPartitionTimestamp);
@@ -1647,6 +2138,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
 
     private void removePendingSwap(int recordIndex) {
         inFlightSwaps.removeIndexBlock(recordIndex * IN_FLIGHT_STRIDE, IN_FLIGHT_STRIDE);
+        inFlightCommands.remove(recordIndex);
     }
 
     /**
@@ -1836,6 +2328,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             }
 
             isGeometryOpen = false;
+            isColumnVersionOpen = false;
             txReader.ofRO(path.$(), timestampType, partitionBy);
             TableUtils.safeReadTxn(txReader, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
             prunePendingSwaps(tableToken, timestampType, partitionBy);
@@ -1880,26 +2373,33 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
      * Serves requests off the engine's {@link PartitionCompactionRequestQueue}, ahead of and apart from the sweep:
      * it runs even when the sweep is disabled, and charges neither of the sweep's budgets. Requests that need no
      * fold - mostly repeats, since a requester keeps asking until it sees the fold land - are drained in one go;
-     * it stops after the first one that dispatches a fold, so a backlog of copies cannot hold the sweep off.
+     * it stops after the first one that dispatches a fold, so a backlog of copies cannot hold the sweep off. Each
+     * request is consumed only once served, so its requester can tell when to hand over more work.
      *
      * @return true when a fold was dispatched, so the worker comes back for the next request without idling
      */
     private boolean serveCompactionRequests(long nowMicros) {
         final PartitionCompactionRequestQueue queue = engine.getPartitionCompactionRequestQueue();
-        while (queue.poll(request)) {
+        long seq;
+        while ((seq = queue.take(request)) >= 0) {
             final TableToken tableToken = request.getTableToken();
             final long logicalPartitionTimestamp = request.getLogicalPartitionTimestamp();
             try {
-                if (compactRequestedPartition(tableToken, logicalPartitionTimestamp, nowMicros)) {
+                if (compactRequestedPartition(tableToken, logicalPartitionTimestamp, request.getKind(), nowMicros)) {
                     return true;
                 }
             } catch (CairoException | TableReferenceOutOfDateException e) {
                 LOG.info().$("skipping requested partition compaction [table=").$(tableToken)
                         .$(", logicalPartitionTimestamp=").$(logicalPartitionTimestamp)
-                        .$(", error=").$(e.getMessage()).I$();
+                        .$(", error=").$safe(e.getMessage()).I$();
                 return true;
             } finally {
-                txReader.clear();
+                try {
+                    txReader.clear();
+                    columnVersionReader.clear();
+                } finally {
+                    queue.release(seq);
+                }
             }
         }
         return false;
@@ -1971,9 +2471,10 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                 scanTable(tableToken, nowMicros);
             } catch (CairoException | TableReferenceOutOfDateException e) {
                 LOG.info().$("skipping table during partition compaction scan [table=").$(tableToken)
-                        .$(", error=").$(e.getMessage()).I$();
+                        .$(", error=").$safe(e.getMessage()).I$();
             } finally {
                 txReader.clear();
+                columnVersionReader.clear();
             }
         }
     }
