@@ -364,9 +364,9 @@ public class CoveringIndexFrameReleaseTest extends AbstractCairoTest {
             final String projection = "qty, name, sym, qty";
             final String sql = "SELECT " + projection + " FROM t WHERE sym IN ('A', 'C')";
             final String expected = printSqlToString("SELECT /*+ no_covering */ " + projection + " FROM t WHERE sym IN ('A', 'C')");
-            final String plan = printSqlToString("EXPLAIN " + sql);
-            TestUtils.assertContains(plan, "SelectedRecord");
-            TestUtils.assertContains(plan, "CoveringIndex on: sym");
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .assertsPlanContaining("SelectedRecord", "CoveringIndex on: sym");
             try (RecordCursorFactory factory = select(sql);
                  PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, PartitionFrameCursorFactory.ORDER_ASC);
                  FrameRows rows = new FrameRows(factory.getMetadata(), cursor)) {

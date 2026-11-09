@@ -386,7 +386,9 @@ public class CopyExportTest extends AbstractCairoTest {
                     try (RecordCursorFactory factory = select(select)) {
                         Assert.assertEquals(modes[s], ParquetExportMode.determineExportMode(factory, false, sqlExecutionContext));
                     }
-                    TestUtils.assertContains(TestUtils.printSqlToString(engine, sqlExecutionContext, "EXPLAIN " + select, new StringSink()), "CoveringIndex on: sym");
+                    assertQuery(select)
+                            .noLeakCheck()
+                            .assertsPlanContaining("CoveringIndex on: sym");
                     final String expected = TestUtils.printSqlToString(engine, sqlExecutionContext, "SELECT /*+ no_covering */ " + selects[s], new StringSink());
                     for (int rowGroupSize : new int[]{1, 3, 7, 10, 1_000}) {
                         final String fileName = "cov_mk_" + fileIdx++;
@@ -399,15 +401,11 @@ public class CopyExportTest extends AbstractCairoTest {
                                     .noLeakCheck()
                                     .expectSize()
                                     .returns("status\nfinished\n");
-                            TestUtils.assertEquals(
-                                    expected,
-                                    TestUtils.printSqlToString(
-                                            engine,
-                                            sqlExecutionContext,
-                                            "SELECT * FROM read_parquet('" + exportRoot + File.separator + fileName + ".parquet')",
-                                            new StringSink()
-                                    )
-                            );
+                            assertQuery("SELECT * FROM read_parquet('" + exportRoot + File.separator + fileName + ".parquet')")
+                                    .noLeakCheck()
+                                    .expectSize()
+                                    .timestamp("ts")
+                                    .returns(expected);
                         });
                         testCopyExport(statement, test);
                     }
@@ -433,7 +431,9 @@ public class CopyExportTest extends AbstractCairoTest {
                 // 60_000 rows a second apart, all in one day partition; x % 3 picks the key
                 execute("INSERT INTO tm SELECT CASE x % 3 WHEN 0 THEN 'A' WHEN 1 THEN 'B' ELSE 'C' END, x, x / 2.0, (x * 1_000_000L)::TIMESTAMP FROM long_sequence(60_000)");
                 final String select = "SELECT price, dbl FROM tm WHERE sym IN ('A', 'C')";
-                TestUtils.assertContains(TestUtils.printSqlToString(engine, sqlExecutionContext, "EXPLAIN " + select, new StringSink()), "CoveringIndex on: sym with: price, dbl");
+                assertQuery(select)
+                        .noLeakCheck()
+                        .assertsPlanContaining("CoveringIndex on: sym with: price, dbl");
                 setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 3 * frameBytes + frameBytes / 2);
 
                 // a single frame of all 40_000 matching rows outgrows the limit on its own
