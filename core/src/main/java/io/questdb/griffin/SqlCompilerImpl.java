@@ -787,6 +787,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     @TestOnly
+    public long getOrderingEdgeApplicationsForTesting() {
+        return optimiser.getOrderingEdgeApplicationsForTesting();
+    }
+
+    @TestOnly
     public int getWhereClauseParserPoolSizeForTesting() {
         return codeGenerator.getWhereClauseParserPoolSizeForTesting();
     }

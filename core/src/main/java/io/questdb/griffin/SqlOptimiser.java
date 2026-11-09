@@ -454,6 +454,9 @@ public class SqlOptimiser implements Mutable {
     // Left unlinked, the clause leaves doReorderTables unable to order the level, so optimiseJoins
     // checks the order it gets with validateNonEquiNullingJoinOrder.
     private boolean hasLinkedLoneEmittedClause;
+    // True when swapJoinOrder0 has moved join keys between join contexts in the current pass of
+    // reorderTables, see there.
+    private boolean hasMovedJoinKeys;
     // Index of the SUBSAMPLE mirror scope currently reserving names; 0 outside a wrapper walk.
     private int subsampleNameScopeDepth;
     // True when the current join level contains a non-equi RIGHT/FULL OUTER join that
@@ -486,6 +489,9 @@ public class SqlOptimiser implements Mutable {
     // True while optimise() runs on a sub-query that belongs to the SQL of a regular view inlined into the
     // query, rather than to the query's own text; see optimiseExpressionModels().
     private boolean optimisingViewText;
+    // The number of ordering edges that applyModelOnOrderingConstraints has applied over the life of the
+    // optimiser. clear() keeps it, so tests read the delta around a compile.
+    private long orderingEdgeApplications;
     private CharSequence tempColumnAlias;
     private IQueryModel tempQueryModel;
 
@@ -696,6 +702,11 @@ public class SqlOptimiser implements Mutable {
     @TestOnly
     public long getNullRejectionChecksForTesting() {
         return nullRejectionChecks;
+    }
+
+    @TestOnly
+    public long getOrderingEdgeApplicationsForTesting() {
+        return orderingEdgeApplications;
     }
 
     @TestOnly
@@ -3262,13 +3273,15 @@ public class SqlOptimiser implements Mutable {
     }
 
     private void applyModelOnOrderingConstraints(IQueryModel parent) {
-        for (int i = 2 * tempExprs.size(), n = tempIntList.size(); i < n; i += 2) {
+        final int edgeBase = 2 * tempExprs.size();
+        for (int i = edgeBase, n = tempIntList.size(); i < n; i += 2) {
             addOrderingConstraint(parent, tempIntList.getQuick(i), tempIntList.getQuick(i + 1));
         }
         // swapJoinOrder0 may have reversed some of these edges together with the keys they stand for
         for (int i = 0, n = deferredInnerKeyEdges.size(); i < n; i += 2) {
             addOrderingConstraint(parent, deferredInnerKeyEdges.getQuick(i), deferredInnerKeyEdges.getQuick(i + 1));
         }
+        orderingEdgeApplications += (tempIntList.size() - edgeBase + deferredInnerKeyEdges.size()) / 2;
     }
 
     private void assignFilters(IQueryModel parent, SqlExecutionContext sqlExecutionContext) throws SqlException {
@@ -12082,6 +12095,7 @@ public class SqlOptimiser implements Mutable {
 
         // analyse state of tree for each set of n-1 crosses
         for (int z = 0, zc = tempCrosses.size(); z < zc; z++) {
+            hasMovedJoinKeys = false;
             for (int i = 0; i < zc; i++) {
                 if (z != i) {
                     int to = tempCrosses.getQuick(i);
@@ -12092,6 +12106,15 @@ public class SqlOptimiser implements Mutable {
                 }
             }
 
+            // In this loop, only a key move in swapJoinOrder0 changes the join contexts, join types and
+            // dependencies that doReorderTables orders, and the last pass that ordered them applied every
+            // ordering edge. A pass without a key move would order the same graph at the same cost, which
+            // cannot replace the kept order, so the loop skips it. Ordering every pass would apply all
+            // ordering edges once per CROSS join, and the RIGHT/FULL joins of a level pin a quadratic
+            // number of them, see constrainRightAndFullJoinsAfterPrefix.
+            if (z > 0 && !hasMovedJoinKeys) {
+                continue;
+            }
             applyModelOnOrderingConstraints(model);
             IntList ordered = model.nextOrderedJoinModels();
             int thisCost = doReorderTables(model, ordered, false);
@@ -18299,6 +18322,7 @@ public class SqlOptimiser implements Mutable {
             }
             jc.slaveIndex = to;
             jm.setContext(moveClauses(parent, that, jc, clausesToSteal));
+            hasMovedJoinKeys = true;
             // the moved keys, and the deferred edges that reverse below, change what isJoinedAfter walks
             if (keyMoveAnswers.size() > 0) {
                 keyMoveAnswers.clear();

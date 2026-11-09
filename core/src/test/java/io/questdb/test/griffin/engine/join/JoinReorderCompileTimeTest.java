@@ -56,8 +56,35 @@ import java.util.function.ToLongFunction;
  * chain. The testTimeSeriesJoinAfterKeyMove tests count the links that runFromModelFirst adds and
  * follows, which grow with the number of keys and deferred edges: doubling the chain doubles them, so
  * the tests require a factor below 3.
+ * <p>
+ * constrainRightAndFullJoinsAfterPrefix pins the models before every RIGHT/FULL OUTER join, with join
+ * keys or without, so a chain of equi outer joins has a quadratic number of ordering edges as well.
+ * reorderTables orders the level once per CROSS join, and every pass used to apply all ordering edges
+ * and walk them in doReorderTables. Compile time grew as the cube of the table count: about 3 s for
+ * 1,280 tables with a CROSS join before every FULL join, against 0.2 s before the outer joins pinned
+ * their prefixes. A pass that moves no join key would order the graph that the pass before it ordered, so
+ * reorderTables skips it. The testCrossJoins tests count the ordering edges that applyModelOnOrderingConstraints
+ * applies, which grow as the square of the chain length when no key moves: doubling the chain multiplies
+ * the count by 4, and by 8 when every pass orders the level again, so the tests require a factor below 6.
  */
 public class JoinReorderCompileTimeTest extends AbstractCairoTest {
+
+    @Test
+    public void testCrossJoinsBeforeEquiFullJoins() throws Exception {
+        // t0 CROSS JOIN t1 FULL JOIN t2 ON t2.k = t1.k CROSS JOIN t3 FULL JOIN t4 ON t4.k = t3.k ...
+        assertOrderingEdgeApplicationsGrowAsSquare(80, 2, "FULL", (sb, a) -> sb
+                .append(" CROSS JOIN t").append(a)
+                .append(" FULL JOIN t").append(a + 1).append(" ON t").append(a + 1).append(".k = t").append(a).append(".k"));
+    }
+
+    @Test
+    public void testCrossJoinsBeforeInnerAndEquiRightJoins() throws Exception {
+        // t0 CROSS JOIN t1 JOIN t2 ON t2.k = t1.k RIGHT JOIN t3 ON t3.k = t2.k CROSS JOIN t4 ...
+        assertOrderingEdgeApplicationsGrowAsSquare(60, 3, "RIGHT", (sb, a) -> sb
+                .append(" CROSS JOIN t").append(a)
+                .append(" JOIN t").append(a + 1).append(" ON t").append(a + 1).append(".k = t").append(a).append(".k")
+                .append(" RIGHT JOIN t").append(a + 2).append(" ON t").append(a + 2).append(".k = t").append(a + 1).append(".k"));
+    }
 
     @Test
     public void testInnerJoinKeyedToCrossJoinBehindNonEquiFullJoins() throws Exception {
@@ -97,6 +124,74 @@ public class JoinReorderCompileTimeTest extends AbstractCairoTest {
         assertLinkReadsGrowLinearly(100, 100);
     }
 
+    @Test
+    public void testKeyMoveInLaterPassReordersLevel() throws Exception {
+        // The first pass of reorderTables skips the CROSS join t0 and moves t4.b = t3.b onto t3. The second
+        // pass moves t4.a = t0.a onto t0, which turns the CROSS join of t0 into a hash join. The second
+        // pass must order the level again even though the first pass ordered it: with the order of the
+        // first pass, t0 is a CROSS join.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 (a INT)");
+            execute("CREATE TABLE t1 (k INT)");
+            execute("CREATE TABLE t2 (k INT, c INT)");
+            execute("CREATE TABLE t3 (b INT)");
+            execute("CREATE TABLE t4 (a INT, b INT, c INT)");
+            execute("INSERT INTO t0 VALUES (1), (2)");
+            execute("INSERT INTO t1 VALUES (1), (2)");
+            execute("INSERT INTO t2 VALUES (1, 10), (2, 20)");
+            execute("INSERT INTO t3 VALUES (100), (200)");
+            execute("INSERT INTO t4 VALUES (1, 100, 10), (2, 200, 20), (1, 200, 20)");
+            assertQuery("""
+                    SELECT t0.a, t1.k, t2.c, t3.b, t4.a a4, t4.b b4, t4.c c4
+                    FROM t0
+                    CROSS JOIN t1
+                    JOIN t2 ON t2.k = t1.k
+                    CROSS JOIN t3
+                    JOIN t4 ON t4.a = t0.a AND t4.b = t3.b AND t4.c = t2.c
+                    ORDER BY a4, b4, c4
+                    """)
+                    .noLeakCheck()
+                    .withPlan("""
+                            Encode sort
+                              keys: [a4, b4, c4]
+                                SelectedRecord
+                                    Hash Join Light
+                                      condition: t3.b=t4.b
+                                        Hash Join Light
+                                          condition: t0.a=t4.a
+                                            Hash Join Light
+                                              condition: t4.c=t2.c
+                                                Hash Join Light
+                                                  condition: t2.k=t1.k
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: t1
+                                                    Hash
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: t2
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: t4
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: t0
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t3
+                            """)
+                    .returns("""
+                            a\tk\tc\tb\ta4\tb4\tc4
+                            1\t1\t10\t100\t1\t100\t10
+                            1\t2\t20\t200\t1\t200\t20
+                            2\t2\t20\t200\t2\t200\t20
+                            """);
+        });
+    }
+
     private static String chain(int blocks, int blockSize, BlockAppender appender) {
         final StringBuilder sb = new StringBuilder("SELECT count(*) FROM t0");
         for (int b = 0; b < blocks; b++) {
@@ -122,7 +217,17 @@ public class JoinReorderCompileTimeTest extends AbstractCairoTest {
         return sb.toString();
     }
 
-    private void assertEdgeReadsGrowAsCube(int blocks, int blockSize, String outerJoin, BlockAppender appender) throws Exception {
+    private void assertChainCountGrowsBelow(
+            int blocks,
+            int blockSize,
+            String outerJoin,
+            BlockAppender appender,
+            ToLongFunction<SqlCompilerImpl> counter,
+            String countName,
+            String reachedMethod,
+            String growth,
+            int maxFactor
+    ) throws Exception {
         assertMemoryLeak(() -> {
             for (int i = 0, n = 1 + blocks * blockSize; i < n; i++) {
                 execute("CREATE TABLE t" + i + " (k INT, j INT)");
@@ -131,14 +236,14 @@ public class JoinReorderCompileTimeTest extends AbstractCairoTest {
             final String largeSql = chain(blocks, blockSize, appender);
             Assert.assertTrue(largeSql.contains(outerJoin + " JOIN"));
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
-                final long smallReads = compileAndCountReads(compiler, smallSql, SqlCompilerImpl::getKeyMoveEdgeReadsForTesting);
-                final long largeReads = compileAndCountReads(compiler, largeSql, SqlCompilerImpl::getKeyMoveEdgeReadsForTesting);
-                Assert.assertTrue("the chain must reach isJoinedAfter, edge reads: " + smallReads, smallReads > 0);
+                final long smallCount = compileAndCountReads(compiler, smallSql, counter);
+                final long largeCount = compileAndCountReads(compiler, largeSql, counter);
+                Assert.assertTrue("the chain must reach " + reachedMethod + ", " + countName + ": " + smallCount, smallCount > 0);
                 Assert.assertTrue(
-                        "edge reads must grow as the cube of the chain length, "
-                                + (1 + blocks / 2 * blockSize) + " tables: " + smallReads + ", "
-                                + (1 + blocks * blockSize) + " tables: " + largeReads,
-                        largeReads < 12 * smallReads
+                        countName + " must grow as " + growth + " of the chain length, "
+                                + (1 + blocks / 2 * blockSize) + " tables: " + smallCount + ", "
+                                + (1 + blocks * blockSize) + " tables: " + largeCount,
+                        largeCount < maxFactor * smallCount
                 );
             }
             assertQuery(largeSql)
@@ -150,6 +255,13 @@ public class JoinReorderCompileTimeTest extends AbstractCairoTest {
                             0
                             """);
         });
+    }
+
+    private void assertEdgeReadsGrowAsCube(int blocks, int blockSize, String outerJoin, BlockAppender appender) throws Exception {
+        assertChainCountGrowsBelow(
+                blocks, blockSize, outerJoin, appender, SqlCompilerImpl::getKeyMoveEdgeReadsForTesting,
+                "edge reads", "isJoinedAfter", "the cube", 12
+        );
     }
 
     private void assertLinkReadsGrowLinearly(int chainLength, int deferredKeyCount) throws Exception {
@@ -185,6 +297,13 @@ public class JoinReorderCompileTimeTest extends AbstractCairoTest {
                             0
                             """);
         });
+    }
+
+    private void assertOrderingEdgeApplicationsGrowAsSquare(int blocks, int blockSize, String outerJoin, BlockAppender appender) throws Exception {
+        assertChainCountGrowsBelow(
+                blocks, blockSize, outerJoin, appender, SqlCompilerImpl::getOrderingEdgeApplicationsForTesting,
+                "ordering edge applications", "applyModelOnOrderingConstraints", "the square", 6
+        );
     }
 
     private long compileAndCountReads(SqlCompilerImpl compiler, String sql, ToLongFunction<SqlCompilerImpl> reads) throws Exception {
