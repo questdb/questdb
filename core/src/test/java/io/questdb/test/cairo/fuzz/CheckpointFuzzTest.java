@@ -114,8 +114,11 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
         Assume.assumeFalse(Os.isWindows());
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (s SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("INSERT INTO x SELECT CASE WHEN x % 2 = 0 THEN 'a'::STRING ELSE NULL END, x, "
-                    + "timestamp_sequence('2024-01-01', 21_600_000_000L) FROM long_sequence(20)");
+            execute("""
+                    INSERT INTO x
+                    SELECT CASE WHEN x % 2 = 0 THEN 'a'::STRING ELSE NULL END, x, timestamp_sequence('2024-01-01', 21_600_000_000L)
+                    FROM long_sequence(20)
+                    """);
             drainWalQueue();
             final TableToken tableToken = engine.verifyTableName("x");
             execute("ALTER TABLE x ALTER COLUMN s ADD INDEX TYPE POSTING INCLUDE (v)");
@@ -158,10 +161,34 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
             Assert.assertEquals("reuse the intact partition", sealTxn, readPostingSealTxn(tableToken, "2024-01-04"));
             assertQuery("SELECT v FROM x WHERE s = 'a'")
                     .noLeakCheck().noRandomAccess().expectSize().withPlanContaining("CoveringIndex")
-                    .returns("v\n2\n4\n6\n8\n10\n12\n14\n16\n18\n20\n");
+                    .returns("""
+                            v
+                            2
+                            4
+                            6
+                            8
+                            10
+                            12
+                            14
+                            16
+                            18
+                            20
+                            """);
             assertQuery("SELECT v FROM x WHERE s IS NULL")
                     .noLeakCheck().noRandomAccess().expectSize()
-                    .returns("v\n1\n3\n5\n7\n9\n11\n13\n15\n17\n19\n");
+                    .returns("""
+                            v
+                            1
+                            3
+                            5
+                            7
+                            9
+                            11
+                            13
+                            15
+                            17
+                            19
+                            """);
         });
     }
 
@@ -217,6 +244,48 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
+    public void testCheckpointCopyRebuildsPostingIndexAfterCommit() throws Exception {
+        Assume.assumeFalse(Os.isWindows());
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO x
+                    SELECT CASE WHEN x % 2 = 0 THEN 'a' ELSE 'b' END, x, timestamp_sequence('2024-01-01', 21_600_000_000L)
+                    FROM long_sequence(12)
+                    """);
+            final TableToken tableToken = engine.verifyTableName("x");
+            checkpointCreate(false, true);
+            // Model a copy taken while the ADD INDEX ran on this non-WAL table: it holds the sealed .pk of
+            // 2024-01-01, but not the .pv that the .pk names.
+            execute("ALTER TABLE x ALTER COLUMN s ADD INDEX TYPE POSTING INCLUDE (v)");
+            engine.releaseAllWriters();
+            linkToCheckpointCopy(tableToken, "2024-01-01", "s.pk");
+            checkpointRecover();
+
+            // The restored table is not indexed. The commit moves it to the txn the leftover entry carries, so the
+            // entry no longer looks abandoned when the ADD INDEX runs again.
+            execute("INSERT INTO x VALUES ('a', 13, '2024-01-03T23:00')");
+            execute("ALTER TABLE x ALTER COLUMN s ADD INDEX TYPE POSTING INCLUDE (v)");
+            assertQuery("SELECT v, ts FROM x WHERE s = 'a'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("ts")
+                    .withPlanContaining("CoveringIndex")
+                    .returns("""
+                            v\tts
+                            2\t2024-01-01T06:00:00.000000Z
+                            4\t2024-01-01T18:00:00.000000Z
+                            6\t2024-01-02T06:00:00.000000Z
+                            8\t2024-01-02T18:00:00.000000Z
+                            10\t2024-01-03T06:00:00.000000Z
+                            12\t2024-01-03T18:00:00.000000Z
+                            13\t2024-01-03T23:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testCheckpointCopyReusesPostingIndexOnCompositePartition() throws Exception {
         Assume.assumeFalse(Os.isWindows());
         setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
@@ -225,8 +294,11 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
         setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1G");
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (s SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts)");
-            execute("INSERT INTO x SELECT CASE WHEN x % 2 = 0 THEN 'a' ELSE 'b' END, x, "
-                    + "timestamp_sequence('2024-01-01', 21_600_000_000L) FROM long_sequence(12)");
+            execute("""
+                    INSERT INTO x
+                    SELECT CASE WHEN x % 2 = 0 THEN 'a' ELSE 'b' END, x, timestamp_sequence('2024-01-01', 21_600_000_000L)
+                    FROM long_sequence(12)
+                    """);
             drainWalQueue();
             execute("INSERT INTO x VALUES ('a', 99, '2024-01-02T06:00')");
             drainWalQueue();
@@ -515,8 +587,9 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
 
     private long readPostingSealTxn(TableToken tableToken, String partitionName) {
         try (Path path = new Path()) {
-            path.of(configuration.getDbRoot()).concat(tableToken).concat(partitionName).concat("s.pk");
-            final long sealTxn = PostingIndexUtils.readSealTxnFromKeyFile(configuration.getFilesFacade(), path.$());
+            path.of(configuration.getDbRoot()).concat(tableToken).concat(partitionName);
+            final long sealTxn = PostingIndexUtils.readSealTxnFromKeyFile(configuration.getFilesFacade(),
+                    PostingIndexUtils.keyFileName(path, "s", -1));
             Assert.assertTrue(sealTxn >= 0);
             return sealTxn;
         }

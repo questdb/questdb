@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.idx.PostingIndexBuildValidator;
 import io.questdb.cairo.idx.PostingIndexChainEntry;
 import io.questdb.cairo.idx.PostingIndexChainHeader;
@@ -53,13 +54,28 @@ import static io.questdb.cairo.idx.PostingIndexUtils.*;
 
 public class PostingIndexBuildValidatorTest extends AbstractCairoTest {
     @Test
+    public void testAddIndexDropsLeftoverEntryAtCommittedTxn() throws Exception {
+        // Merge-append WAL tables build the last partition's index through the writer that does not follow the column.
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            assertAddIndexDropsLeftoverEntry("historic", "BYPASS WAL", "2024-01-01");
+            assertAddIndexDropsLeftoverEntry("last_followed", "BYPASS WAL", "2024-01-02");
+            assertAddIndexDropsLeftoverEntry("last_merge_append", "WAL", "2024-01-02");
+        });
+    }
+
+    @Test
     public void testBitmapAddIndex() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
             execute("INSERT INTO x VALUES ('a', '2024-01-01'), (NULL, '2024-01-01T01:00'), ('a', '2024-01-02')");
             execute("ALTER TABLE x ALTER COLUMN s ADD INDEX TYPE BITMAP");
             assertQuery("SELECT ts FROM x WHERE s = 'a'").noLeakCheck().timestamp("ts")
-                    .returns("ts\n2024-01-01T00:00:00.000000Z\n2024-01-02T00:00:00.000000Z\n");
+                    .returns("""
+                            ts
+                            2024-01-01T00:00:00.000000Z
+                            2024-01-02T00:00:00.000000Z
+                            """);
             assertQuery("SELECT ts FROM x WHERE s IS NULL").noLeakCheck().timestamp("ts")
                     .returns("ts\n2024-01-01T01:00:00.000000Z\n");
         });
@@ -105,23 +121,21 @@ public class PostingIndexBuildValidatorTest extends AbstractCairoTest {
                 assertComplete(reader, path, true);
             }
             assertQuery("SELECT v, w FROM x WHERE s = 'a'").noLeakCheck().noRandomAccess().expectSize()
-                    .withPlanContaining("CoveringIndex").returns("v\tw\nnull\t\n4\t\n");
+                    .withPlanContaining("CoveringIndex")
+                    .returns("""
+                            v\tw
+                            null\t
+                            4\t
+                            """);
         });
     }
 
     @Test
     public void testCompletePlainIndex() throws Exception {
-        withIndex("", (reader, path) -> assertComplete(reader, path, true));
-    }
-
-    @Test
-    public void testCompletePlainIndexDelta() throws Exception {
-        withIndex("DELTA", (reader, path) -> assertComplete(reader, path, true));
-    }
-
-    @Test
-    public void testCompletePlainIndexEf() throws Exception {
-        withIndex("EF", (reader, path) -> assertComplete(reader, path, true));
+        final String[] encodings = {"", "DELTA", "EF"};
+        for (int i = 0; i < encodings.length; i++) {
+            withIndex("x" + i, encodings[i], (reader, path) -> assertComplete(reader, path, true));
+        }
     }
 
     @Test
@@ -148,6 +162,9 @@ public class PostingIndexBuildValidatorTest extends AbstractCairoTest {
     public void testCoverInfoMismatch() throws Exception {
         withIndex("INCLUDE (v, w)", (reader, path) -> {
             final int plen = path.size();
+            // .pci layout: magic, cover count, then one covered column index per cover
+            final long countOffset = Integer.BYTES;
+            final long firstCoverOffset = 2L * Integer.BYTES;
             try (MemoryCMARW mem = Vm.getCMARWInstance()) {
                 mem.smallFile(configuration.getFilesFacade(), coverInfoFileName(path, "s", -1), MemoryTag.MMAP_DEFAULT);
                 mem.jumpTo(mem.size());
@@ -155,12 +172,12 @@ public class PostingIndexBuildValidatorTest extends AbstractCairoTest {
                 mem.putInt(0, 0);
                 assertComplete(reader, path, false);
                 mem.putInt(0, COVER_INFO_MAGIC);
-                mem.putInt(4, 1);
+                mem.putInt(countOffset, 1);
                 assertComplete(reader, path, false);
-                mem.putInt(4, 2);
-                mem.putInt(8, 2);
+                mem.putInt(countOffset, 2);
+                mem.putInt(firstCoverOffset, 2);
                 assertComplete(reader, path, false);
-                mem.putInt(8, 1);
+                mem.putInt(firstCoverOffset, 1);
                 assertComplete(reader, path, true);
             }
         });
@@ -214,7 +231,8 @@ public class PostingIndexBuildValidatorTest extends AbstractCairoTest {
                         }
                         case 2 -> {
                             coverInfoFileName(file, "s", -1);
-                            yield 16;
+                            // magic and cover count, then the two covered column indices
+                            yield (2L + 2) * Integer.BYTES;
                         }
                         default -> {
                             coverDataFileName(file, "s", 1, -1, -1, head.sealTxn);
@@ -355,15 +373,44 @@ public class PostingIndexBuildValidatorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRetryAfterCommitRebuildsInterruptedBuild() throws Exception {
+        setProperty(PropertyKey.CAIRO_MAX_SWAP_FILE_COUNT, 1);
+        // Spill flushes grow every partition's leftover chain past the first page of its .pk. A rebuild that kept
+        // the chain would truncate it, then read the chain's head from beyond the page truncate() leaves mapped.
+        setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256);
+        final MetaSwapFailingFacade ff = new MetaSwapFailingFacade();
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE x (s SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            // three daily partitions of 10_000 rows, 'a' on even v and NULL on odd v
+            execute("""
+                    INSERT INTO x
+                    SELECT CASE WHEN x % 2 = 0 THEN 'a'::STRING ELSE NULL END, x, timestamp_sequence('2024-01-01', 8_640_000L)
+                    FROM long_sequence(30_000)
+                    """);
+            engine.releaseAllWriters();
+            final String sql = "ALTER TABLE x ALTER COLUMN s ADD INDEX TYPE POSTING INCLUDE (v)";
+            assertAddIndexFailsAtMetadataSwap(ff, sql);
+            engine.releaseAllWriters();
+            // The commit moves the table to the txn the leftover entries carry, so they no longer look abandoned.
+            execute("INSERT INTO x VALUES ('a', 30_002, '2024-01-03T23:59:59')");
+            execute(sql);
+            assertQuery("SELECT count(), sum(v) FROM x WHERE s = 'a'")
+                    .noLeakCheck().noRandomAccess().expectSize().withPlanContaining("CoveringIndex")
+                    .returns("count\tsum\n15001\t225045002\n");
+            assertQuery("SELECT count(), sum(v) FROM x WHERE s IS NULL")
+                    .noLeakCheck().noRandomAccess().expectSize()
+                    .returns("count\tsum\n15000\t225000000\n");
+        });
+    }
+
+    @Test
     public void testRetryReusesCompletePartitionAfterMetadataFailure() throws Exception {
         setProperty(PropertyKey.CAIRO_MAX_SWAP_FILE_COUNT, 1);
         setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256);
-        final AtomicBoolean isFailing = new AtomicBoolean();
         final AtomicBoolean isCounting = new AtomicBoolean();
         final AtomicLong symbolFd = new AtomicLong(-1);
         final AtomicLong symbolBytesRead = new AtomicLong();
-        final StringSink failedFile = new StringSink();
-        final FilesFacade ff = new TestFilesFacadeImpl() {
+        final MetaSwapFailingFacade ff = new MetaSwapFailingFacade() {
             @Override
             public boolean close(long fd) {
                 symbolFd.compareAndSet(fd, -1);
@@ -380,16 +427,6 @@ public class PostingIndexBuildValidatorTest extends AbstractCairoTest {
             }
 
             @Override
-            public long openRW(LPSZ name, int opts) {
-                if (isFailing.get() && Utf8s.containsAscii(name, "_meta.swp")) {
-                    failedFile.clear();
-                    failedFile.put(name);
-                    return -1;
-                }
-                return super.openRW(name, opts);
-            }
-
-            @Override
             public long read(long fd, long buf, long size, long offset) {
                 final long count = super.read(fd, buf, size, offset);
                 if (fd == symbolFd.get()) {
@@ -400,22 +437,16 @@ public class PostingIndexBuildValidatorTest extends AbstractCairoTest {
         };
         assertMemoryLeak(ff, () -> {
             execute("CREATE TABLE x (s SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
-            execute("INSERT INTO x SELECT CASE WHEN x % 2 = 0 THEN 'a'::STRING ELSE NULL END, x, "
-                    + "timestamp_sequence('2024-01-01', 8_640_000L) FROM long_sequence(20_000)");
+            execute("""
+                    INSERT INTO x
+                    SELECT CASE WHEN x % 2 = 0 THEN 'a'::STRING ELSE NULL END, x, timestamp_sequence('2024-01-01', 8_640_000L)
+                    FROM long_sequence(20_000)
+                    """);
             assertQuery("SELECT s IS NULL AS is_null, s = '' AS is_empty FROM x WHERE v = 1")
                     .noLeakCheck().returns("is_null\tis_empty\ntrue\tfalse\n");
             engine.releaseAllWriters();
             final String sql = "ALTER TABLE x ALTER COLUMN s ADD INDEX TYPE POSTING INCLUDE (v)";
-            isFailing.set(true);
-            try {
-                execute(sql);
-                Assert.fail("metadata publication must fail");
-            } catch (CairoException e) {
-                Assert.assertEquals("Cannot open indexed file. Max number of attempts reached [1]. Last file tried: "
-                        + failedFile, e.getFlyweightMessage().toString());
-            } finally {
-                isFailing.set(false);
-            }
+            assertAddIndexFailsAtMetadataSwap(ff, sql);
             engine.releaseAllWriters();
             isCounting.set(true);
             execute(sql);
@@ -460,6 +491,19 @@ public class PostingIndexBuildValidatorTest extends AbstractCairoTest {
             Assert.assertFalse(isComplete(configuration.getFilesFacade(), reader, path, reader.getTxn() - 1, 4));
             Assert.assertFalse(isComplete(configuration.getFilesFacade(), reader, path, reader.getTxn() + 1, 4));
         });
+    }
+
+    private static void assertAddIndexFailsAtMetadataSwap(MetaSwapFailingFacade ff, String sql) throws Exception {
+        ff.isFailing = true;
+        try {
+            execute(sql);
+            Assert.fail("metadata publication must fail");
+        } catch (CairoException e) {
+            Assert.assertEquals("Cannot open indexed file. Max number of attempts reached [1]. Last file tried: "
+                    + ff.failedFile, e.getFlyweightMessage().toString());
+        } finally {
+            ff.isFailing = false;
+        }
     }
 
     private static void assertComplete(TableReader reader, Path path, boolean isExpectedComplete) {
@@ -517,13 +561,65 @@ public class PostingIndexBuildValidatorTest extends AbstractCairoTest {
         }
     }
 
+    // An interrupted build left an entry in the partition's .pk, a commit has since reached the txn that tags it, and
+    // the .pv it names is gone. ADD INDEX must drop the entry rather than open it.
+    private void assertAddIndexDropsLeftoverEntry(String tableName, String walClause, String partitionName) throws Exception {
+        execute("CREATE TABLE " + tableName + " (s SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY " + walClause);
+        execute("""
+                INSERT INTO %s VALUES
+                ('a', 1, '2024-01-01'),
+                ('b', 2, '2024-01-01T12:00'),
+                ('a', 3, '2024-01-02'),
+                ('b', 4, '2024-01-02T12:00')
+                """.formatted(tableName));
+        drainWalQueue();
+        engine.releaseAllWriters();
+        final TableToken tableToken = engine.verifyTableName(tableName);
+        final long txn;
+        try (TableReader reader = getReader(tableName)) {
+            txn = reader.getTxn();
+        }
+        final FilesFacade ff = configuration.getFilesFacade();
+        try (Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(tableToken).concat(partitionName);
+            final int plen = path.size();
+            try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                writer.of(path, "s", -1, true);
+                writer.setNextTxnAtSeal(txn);
+                writer.add(1, 0);
+                writer.add(1, 1);
+                writer.setMaxValue(1);
+                writer.seal();
+            }
+            final long sealTxn = readSealTxnFromKeyFile(ff, keyFileName(path.trimTo(plen), "s", -1));
+            Assert.assertTrue(sealTxn > -1);
+            Assert.assertTrue(ff.exists(valueFileName(path.trimTo(plen), "s", -1, sealTxn)));
+            Assert.assertTrue(ff.removeQuiet(path.$()));
+        }
+        execute("ALTER TABLE " + tableName + " ALTER COLUMN s ADD INDEX TYPE POSTING");
+        drainWalQueue();
+        Assert.assertFalse("table suspended", engine.getTableSequencerAPI().isSuspended(tableToken));
+        assertQuery("SELECT v FROM " + tableName + " WHERE s = 'a'")
+                .noLeakCheck()
+                .withPlanContaining("Index forward scan on: s")
+                .returns("""
+                        v
+                        1
+                        3
+                        """);
+    }
+
     private void withIndex(String indexClause, IndexAction action) throws Exception {
+        withIndex("x", indexClause, action);
+    }
+
+    private void withIndex(String tableName, String indexClause, IndexAction action) throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (s SYMBOL, v LONG, w VARCHAR)");
-            execute("INSERT INTO x VALUES ('a', 1, 'one'), (NULL, 2, NULL), ('b', NULL, '🐘'), ('a', 4, '')");
-            execute("ALTER TABLE x ALTER COLUMN s ADD INDEX TYPE POSTING " + indexClause);
+            execute("CREATE TABLE " + tableName + " (s SYMBOL, v LONG, w VARCHAR)");
+            execute("INSERT INTO " + tableName + " VALUES ('a', 1, 'one'), (NULL, 2, NULL), ('b', NULL, '🐘'), ('a', 4, '')");
+            execute("ALTER TABLE " + tableName + " ALTER COLUMN s ADD INDEX TYPE POSTING " + indexClause);
             engine.releaseAllWriters();
-            try (TableReader reader = getReader("x"); Path path = new Path()) {
+            try (TableReader reader = getReader(tableName); Path path = new Path()) {
                 path.of(configuration.getDbRoot()).concat(reader.getTableToken()).concat("default");
                 action.run(reader, path);
             }
@@ -538,5 +634,20 @@ public class PostingIndexBuildValidatorTest extends AbstractCairoTest {
     @FunctionalInterface
     private interface KeyAction {
         void run(MemoryCMARW mem, PostingIndexChainHeader.Snapshot header, PostingIndexChainEntry.Snapshot head) throws Exception;
+    }
+
+    private static class MetaSwapFailingFacade extends TestFilesFacadeImpl {
+        private final StringSink failedFile = new StringSink();
+        private volatile boolean isFailing;
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            if (isFailing && Utf8s.containsAscii(name, "_meta.swp")) {
+                failedFile.clear();
+                failedFile.put(name);
+                return -1;
+            }
+            return super.openRW(name, opts);
+        }
     }
 }
