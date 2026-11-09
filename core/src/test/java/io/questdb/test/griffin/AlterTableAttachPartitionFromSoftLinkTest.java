@@ -135,6 +135,56 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
     }
 
     @Test
+    public void testConvertToNativeParquetPartitionAttachedFromSoftLinkIsRefused() throws Exception {
+        Assume.assumeFalse(Os.isWindows());
+        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+            final String tableName = testName.getMethodName();
+            execute("CREATE TABLE " + tableName + " (l LONG, ts " + timestampTypeName + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO " + tableName + " VALUES (1, '2022-10-17T00:00:01.000000Z'), (2, '2022-10-17T12:00:00.000000Z'), (3, '2022-10-18T00:00:01.000000Z')");
+            drainWalQueue();
+            execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET LIST '" + readOnlyPartitionName + "'");
+            drainWalQueue();
+            final TableToken tableToken = engine.verifyTableName(tableName);
+            execute("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + readOnlyPartitionName + "'");
+            drainWalQueue();
+            copyToDifferentLocationAndMakeAttachableViaSoftLink(tableToken, readOnlyPartitionName, "SNOW");
+            execute("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + readOnlyPartitionName + "'");
+            drainWalQueue();
+
+            engine.releaseAllReaders();
+            try (TableReader reader = engine.getReader(tableToken)) {
+                final TxReader txFile = reader.getTxFile();
+                Assert.assertTrue(txFile.isPartitionParquet(0));
+                Assert.assertTrue(txFile.isPartitionReadOnly(0));
+                Assert.assertFalse(txFile.isPartitionRemote(0));
+            }
+
+            for (String clause : new String[]{"LIST '" + readOnlyPartitionName + "'", "WHERE ts < '" + activePartitionName + "'"}) {
+                try {
+                    execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO NATIVE " + clause);
+                    Assert.fail("CONVERT TO NATIVE of a read-only parquet partition must be refused: " + clause);
+                } catch (SqlException e) {
+                    TestUtils.assertContains(
+                            e.getFlyweightMessage(),
+                            "cannot convert parquet partition to native, partition is read-only [table=" + tableName + ", partition=" + readOnlyPartitionName + "]"
+                    );
+                }
+            }
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+            engine.releaseAllReaders();
+            try (TableReader reader = engine.getReader(tableToken)) {
+                Assert.assertTrue(reader.getTxFile().isPartitionParquet(0));
+            }
+            assertQuery("SELECT count() FROM " + tableName)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n3\n");
+        });
+    }
+
+    @Test
     public void testDetachPartitionAttachedFromSoftLinkIsRefused() throws Exception {
         Assume.assumeFalse(Os.isWindows());
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
