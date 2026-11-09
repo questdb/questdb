@@ -25,6 +25,8 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableReader;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Files;
 import io.questdb.std.str.LPSZ;
@@ -299,7 +301,7 @@ public class AddIndexTest extends AbstractCairoTest {
             // The build indexes 2024-01-01 and 2024-01-02, then fails reading the active partition's column.
             assertAddIndexFails(ff, "POSTING INCLUDE (v)");
             for (int day = 1; day <= 3; day++) {
-                assertNoIndexFiles("2024-01-0" + day);
+                assertColumnFiles("2024-01-0" + day, "[s.d]");
             }
             execute("ALTER TABLE x ALTER COLUMN s ADD INDEX TYPE POSTING INCLUDE (v)");
             assertQuery("SELECT v, ts FROM x WHERE s = 'a'")
@@ -318,34 +320,18 @@ public class AddIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFailedTypeChangeIndexBuildKeepsColumnOfNonPartitionedTable() throws Exception {
-        // ALTER COLUMN TYPE builds the index of the converted column and rolls a failed build back as ADD INDEX does.
-        final SymbolReadFailingFacade ff = new SymbolReadFailingFacade("default", "s.d.");
-        assertMemoryLeak(ff, () -> {
-            execute("CREATE TABLE x (s VARCHAR, v LONG)");
-            execute("INSERT INTO x VALUES ('a', 1), ('b', 2), ('a', 3)");
-            ff.isFailing = true;
-            try {
-                execute("ALTER TABLE x ALTER COLUMN s TYPE SYMBOL INDEX TYPE POSTING");
-                Assert.fail("the index build must fail");
-            } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "could not read symbol column during indexing");
-            } finally {
-                ff.isFailing = false;
-            }
-            engine.releaseAllWriters();
-            execute("INSERT INTO x VALUES ('c', 4)");
-            assertQuery("SELECT s, v FROM x")
-                    .noLeakCheck()
-                    .expectSize()
-                    .returns("""
-                            s\tv
-                            a\t1
-                            b\t2
-                            a\t3
-                            c\t4
-                            """);
-        });
+    public void testFailedTypeChangeIndexBuildRemovesConvertedColumnOfNonPartitionedTable() throws Exception {
+        assertFailedTypeChangeRemovesConvertedColumn("", "default", "default");
+    }
+
+    @Test
+    public void testFailedTypeChangeIndexBuildRemovesConvertedColumnOfPartitionedTable() throws Exception {
+        // The build indexes 2024-01-01 and 2024-01-02, then fails reading the active partition's converted column.
+        assertFailedTypeChangeRemovesConvertedColumn(
+                "PARTITION BY DAY BYPASS WAL",
+                "2024-01-03",
+                "2024-01-01", "2024-01-02", "2024-01-03"
+        );
     }
 
     private static void assertAddIndexFails(SymbolReadFailingFacade ff, String indexClause) throws Exception {
@@ -360,13 +346,16 @@ public class AddIndexTest extends AbstractCairoTest {
         }
     }
 
-    // The partition directory holds the indexed column's data file and no file of an index on it.
-    private static void assertNoIndexFiles(String partitionName) {
-        final File partitionDir = new File(new File(configuration.getDbRoot(), engine.verifyTableName("x").getDirName()), partitionName);
-        final String[] files = partitionDir.list((_, name) -> name.startsWith("s."));
+    // Lists the files of column s in a partition directory of table x, or in its table directory for an empty name.
+    private static void assertColumnFiles(String partitionName, String expected) {
+        File dir = new File(configuration.getDbRoot(), engine.verifyTableName("x").getDirName());
+        if (!partitionName.isEmpty()) {
+            dir = new File(dir, partitionName);
+        }
+        final String[] files = dir.list((_, name) -> name.startsWith("s."));
         Assert.assertNotNull(files);
         Arrays.sort(files);
-        Assert.assertEquals(partitionName, "[s.d]", Arrays.toString(files));
+        Assert.assertEquals(partitionName, expected, Arrays.toString(files));
     }
 
     private void assertFailedAddIndexKeepsColumn(String indexClause, String plan, boolean isCovering) throws Exception {
@@ -375,7 +364,7 @@ public class AddIndexTest extends AbstractCairoTest {
             execute("CREATE TABLE x (s SYMBOL, v LONG)");
             execute("INSERT INTO x VALUES ('a', 1), ('b', 2), ('a', 3)");
             assertAddIndexFails(ff, indexClause);
-            assertNoIndexFiles("default");
+            assertColumnFiles("default", "[s.d]");
             assertQuery("SELECT s, v FROM x")
                     .noLeakCheck()
                     .expectSize()
@@ -415,6 +404,56 @@ public class AddIndexTest extends AbstractCairoTest {
                     .returns("""
                             v
                             2
+                            """);
+        });
+    }
+
+    // ALTER COLUMN TYPE builds the index of the column it converts s to. A failed build commits nothing, and the next
+    // writer open restores the _meta the change swapped: no version of the table names the converted column, so its
+    // files go with the index's, and s keeps its type and rows.
+    private void assertFailedTypeChangeRemovesConvertedColumn(String partitionClause, String failingPartition, String... partitions) throws Exception {
+        final SymbolReadFailingFacade ff = new SymbolReadFailingFacade(failingPartition, "s.d.");
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE x (s VARCHAR, v LONG, ts TIMESTAMP) TIMESTAMP(ts) " + partitionClause);
+            execute("INSERT INTO x VALUES ('a', 1, '2024-01-01'), ('b', 2, '2024-01-02'), ('a', 3, '2024-01-03')");
+            ff.isFailing = true;
+            try {
+                execute("ALTER TABLE x ALTER COLUMN s TYPE SYMBOL INDEX TYPE POSTING");
+                Assert.fail("the index build must fail");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "could not read symbol column during indexing");
+            } finally {
+                ff.isFailing = false;
+            }
+            // The partitions hold the files of the VARCHAR column only, and the table directory no symbol map of s.
+            for (String partition : partitions) {
+                assertColumnFiles(partition, "[s.d, s.i]");
+            }
+            assertColumnFiles("", "[]");
+
+            engine.releaseAllWriters();
+            execute("INSERT INTO x VALUES ('c', 4, '2024-01-03T12:00')");
+            try (TableReader reader = getReader("x")) {
+                Assert.assertEquals(ColumnType.VARCHAR, reader.getMetadata().getColumnType(reader.getMetadata().getColumnIndex("s")));
+            }
+            assertQuery("SELECT s, v FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s\tv
+                            a\t1
+                            b\t2
+                            a\t3
+                            c\t4
+                            """);
+            execute("ALTER TABLE x ALTER COLUMN s TYPE SYMBOL INDEX TYPE POSTING");
+            assertQuery("SELECT v FROM x WHERE s = 'a'")
+                    .noLeakCheck()
+                    .withPlanContaining("Index forward scan on: s")
+                    .returns("""
+                            v
+                            1
+                            3
                             """);
         });
     }

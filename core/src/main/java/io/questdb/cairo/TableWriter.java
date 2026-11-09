@@ -1845,7 +1845,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // it uses the primary column object as a temporary tool
             if (IndexType.isIndexed(indexType)) {
                 SymbolColumnIndexer indexer = (SymbolColumnIndexer) indexers.get(columnIndex);
-                writeIndex(columnName, indexValueBlockCapacity, indexType, columnIndex, indexer);
+                try {
+                    writeIndex(columnName, indexValueBlockCapacity, indexType, columnIndex, indexer);
+                } catch (Throwable th) {
+                    // writeIndex removed the files of the index it built. The change commits nothing now, and the
+                    // next writer open restores the _meta that addColumnToMeta swapped, so no version of the table
+                    // names the converted column either.
+                    removeConvertedColumnFiles(columnName, columnIndex, columnNameTxn);
+                    throw th;
+                }
                 // add / remove indexers
                 indexers.extendAndSet(columnIndex, indexer);
                 populateDenseIndexerList();
@@ -18311,6 +18319,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
+     * Removes the files of the SYMBOL column a failed {@link #changeColumnType} converted to: its data file in every
+     * partition and its symbol map. The change commits nothing, and the next writer open restores the _meta it swapped,
+     * so no version of the table names them. On Windows a file that a mapping still holds stays.
+     */
+    private void removeConvertedColumnFiles(CharSequence columnName, int columnIndex, long columnNameTxn) {
+        final boolean isPartitioned = PartitionBy.isPartitioned(partitionBy);
+        try {
+            for (int i = isPartitioned ? txWriter.getPartitionCount() - 1 : 0; i > -1; i--) {
+                final long partitionTimestamp = isPartitioned ? txWriter.getPartitionTimestampByIndex(i) : txWriter.getLastPartitionTimestamp();
+                final long partitionNameTxn = isPartitioned ? txWriter.getPartitionNameTxn(i) : txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp);
+                setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+                removeFileOrLog(ff, dFile(path, columnName, columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex)));
+            }
+        } finally {
+            path.trimTo(pathSize);
+        }
+        removeSymbolMapFilesQuiet(columnName, columnNameTxn);
+    }
+
+    /**
      * Removes the index files of a column from the partition directory {@link #other} points to, failing when one
      * stays: a new partition version holds hard links of the old version's files, and an index rebuilt over a link
      * would write into the old version.
@@ -19339,7 +19367,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     /**
      * Removes the files of the index a failed {@link #writeIndex} built, and never the column it indexes: ADD INDEX
-     * reads a committed column, and the _meta a column type change swapped already names the converted one.
+     * reads a committed column, and a column type change removes the column it converted itself, see
+     * {@link #removeConvertedColumnFiles}.
      *
      * @param indexType the type of the index the build wrote; for ADD INDEX the metadata does not carry it yet
      */
