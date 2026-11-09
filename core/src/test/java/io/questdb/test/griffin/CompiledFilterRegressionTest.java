@@ -8454,6 +8454,42 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampIntervalInWithEmptyIntervalSet() throws Exception {
+        // 2024-01-02 is a Tuesday, so '2024-01-02#Mon' holds no interval. Its term once compiled to
+        // no operand at all, and the OR over it read an operand that was not there, crashing the JVM.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE x AS (
+                        SELECT timestamp_sequence('2024-01-01T12:00:00', 86_400_000_000L) t, x::INT v
+                        FROM long_sequence(3)
+                    )
+                    """);
+            final String first = """
+                    t\tv
+                    2024-01-01T12:00:00.000000Z\t1
+                    """;
+            assertJitScalarAndVectorMatchJava("x WHERE t IN '2024-01-02#Mon' OR t IN '2024-01-01'", first);
+            assertJitScalarAndVectorMatchJava("x WHERE t IN '2024-01-01' OR t IN '2024-01-02#Mon'", first);
+            assertJitScalarAndVectorMatchJava(
+                    "x WHERE t IN '2024-01-02#Mon' OR v = 2",
+                    """
+                            t\tv
+                            2024-01-02T12:00:00.000000Z\t2
+                            """
+            );
+            assertJitScalarAndVectorMatchJava(
+                    "x WHERE NOT (t IN '2024-01-02#Mon') AND v > 1",
+                    """
+                            t\tv
+                            2024-01-02T12:00:00.000000Z\t2
+                            2024-01-03T12:00:00.000000Z\t3
+                            """
+            );
+            assertJitScalarAndVectorMatchJavaOnEmptyResult("x WHERE t IN '2024-01-02#Mon' AND v > 0", "t\tv\n");
+        });
+    }
+
+    @Test
     public void testTimestampNull() throws Exception {
         final String query = "x where t <> null";
         final String ddl = "create table x as " +
