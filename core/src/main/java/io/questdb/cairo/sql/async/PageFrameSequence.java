@@ -404,6 +404,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                     }
                 }
             } else if (cursor == -1) {
+                int blockedShard = -1;
                 if (dispatcher != null && !isActive()) {
                     if (getCancelReason() != SqlExecutionCircuitBreaker.STATE_OK) {
                         throw buildInterruptionException();
@@ -413,9 +414,11 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                     }
                 } else {
                     final int previousDispatchStartFrameIndex = dispatchStartFrameIndex;
-                    if (dispatch(dispatchLimit, countOnly)
-                            && (!canPark || dispatchStartFrameIndex != previousDispatchStartFrameIndex)) {
-                        continue;
+                    if (dispatch(dispatchLimit, countOnly)) {
+                        if (!canPark || dispatchStartFrameIndex != previousDispatchStartFrameIndex) {
+                            continue;
+                        }
+                        blockedShard = shard;
                     }
                     if (dispatcher != null && !isActive()) {
                         continue;
@@ -427,7 +430,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                 }
                 if (canPark) {
                     final boolean isDraining = !isActive();
-                    awaitProgress(dispatcher, observedProgress, observedGlobalProgress, isDraining);
+                    awaitProgress(dispatcher, observedProgress, observedGlobalProgress, isDraining, blockedShard);
                     continue;
                 }
                 return -1;
