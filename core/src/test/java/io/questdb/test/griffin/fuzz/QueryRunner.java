@@ -37,6 +37,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.FunctionParser;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.TextPlanSink;
@@ -1687,7 +1688,10 @@ public final class QueryRunner {
 
     private Outcome runOnce(String sql, StringSink rows, boolean usesParquet, boolean deterministic) {
         rows.clear();
-        try (RecordCursorFactory factory = engine.select(sql, executionContext)) {
+        try (
+                SqlCompiler compiler = engine.getSqlCompiler();
+                RecordCursorFactory factory = engine.select(compiler, sql, executionContext)
+        ) {
             int rowsRead;
             boolean[] fpColumnMask;
             try (RecordCursor cursor = factory.getCursor(executionContext)) {

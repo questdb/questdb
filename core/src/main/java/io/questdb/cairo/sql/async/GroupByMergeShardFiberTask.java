@@ -164,7 +164,6 @@ final class GroupByMergeShardFiberTask extends AbstractQueryParallelFiberTask {
             cursor = -1;
             subSeq = null;
             claimedSubSeq.done(claimedCursor);
-            signalQueueProgress();
         }
     }
 }
