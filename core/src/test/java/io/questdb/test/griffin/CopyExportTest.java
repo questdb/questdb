@@ -2928,12 +2928,12 @@ public class CopyExportTest extends AbstractCairoTest {
 
     @Test
     public void testCopyTableAuthorizesSelectOnAllColumns() throws Exception {
-        assertCopyAuthorizesSelectOnAllColumns("copy t to 't' with format parquet");
+        assertCopyAuthorizesSelectOnAllColumns("COPY t TO 't' WITH FORMAT PARQUET");
     }
 
     @Test
     public void testCopyTableFunctionSyntaxAuthorizesSelectOnAllColumns() throws Exception {
-        assertCopyAuthorizesSelectOnAllColumns("copy t() to 't' with format parquet");
+        assertCopyAuthorizesSelectOnAllColumns("COPY t() TO 't' WITH FORMAT PARQUET");
     }
 
     @Test
@@ -4707,8 +4707,8 @@ public class CopyExportTest extends AbstractCairoTest {
 
     private void assertCopyAuthorizesSelectOnAllColumns(String copySql) throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (ts timestamp, x int, y string) timestamp(ts) partition by day");
-            execute("insert into t values ('2023-01-01T10:00:00.000Z', 1, 'a')");
+            execute("CREATE TABLE t (ts TIMESTAMP, x INT, y STRING) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('2023-01-01T10:00:00.000Z', 1, 'a')");
             final ColumnRecordingSecurityContext securityContext = new ColumnRecordingSecurityContext();
             try (
                     SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1)
@@ -4727,7 +4727,7 @@ public class CopyExportTest extends AbstractCairoTest {
                     }
                 };
                 CopyExportRunnable test = () ->
-                        assertEventually(() -> assertQuery("select status, message from \"sys.copy_export_log\" limit -1")
+                        assertEventually(() -> assertQuery("SELECT status, message FROM \"sys.copy_export_log\" LIMIT -1")
                                 .noLeakCheck()
                                 .expectSize()
                                 .returns("""
