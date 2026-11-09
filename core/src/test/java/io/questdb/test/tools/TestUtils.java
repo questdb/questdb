@@ -154,6 +154,7 @@ import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Properties;
@@ -736,9 +737,15 @@ public final class TestUtils {
         assertEventually(assertion, 60);
     }
 
+    /**
+     * Runs {@code assertion} until it completes, for up to 30 seconds, retrying the failures
+     * of {@code exceptionTypesToCatch} and of {@link AssertionError}. It leaves the caller's
+     * set as it was.
+     */
     public static void assertEventually(EventualCode assertion, Set<Class<?>> exceptionTypesToCatch) throws Exception {
-        exceptionTypesToCatch.add(AssertionError.class);
-        assertEventually(assertion, 30, exceptionTypesToCatch);
+        final Set<Class<?>> types = new HashSet<>(exceptionTypesToCatch);
+        types.add(AssertionError.class);
+        assertEventually(assertion, 30, types);
     }
 
     /**

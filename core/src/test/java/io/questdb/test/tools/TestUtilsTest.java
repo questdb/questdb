@@ -117,13 +117,28 @@ public final class TestUtilsTest extends AbstractCairoTest {
 
     @Test
     public void testAssertEventuallyWithTypesRetriesAssertionError() throws Exception {
-        // the overload without a timeout adds AssertionError to the types the caller lists
+        // the overload without a timeout retries AssertionError on top of the types the caller
+        // lists, and leaves the caller's set as it was
+        final Set<Class<?>> types = new HashSet<>(Set.of(SqlException.class));
         final int[] attempts = {0};
+        TestUtils.assertEventually(() -> {
+            switch (++attempts[0]) {
+                case 1 -> throw new AssertionError("not yet");
+                case 2 -> throw SqlException.$(0, "not yet");
+                default -> {
+                }
+            }
+        }, types);
+        Assert.assertEquals(3, attempts[0]);
+        Assert.assertEquals(Set.of(SqlException.class), types);
+
+        // so a set the caller cannot modify works as well
+        attempts[0] = 0;
         TestUtils.assertEventually(() -> {
             if (++attempts[0] == 1) {
                 throw new AssertionError("not yet");
             }
-        }, new HashSet<>(Set.of(SqlException.class)));
+        }, Set.of(SqlException.class));
         Assert.assertEquals(2, attempts[0]);
     }
 
