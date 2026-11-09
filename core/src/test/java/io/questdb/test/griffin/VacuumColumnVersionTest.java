@@ -29,6 +29,8 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnPurgeJob;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -48,6 +50,7 @@ import org.junit.Test;
 
 import java.io.File;
 import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class VacuumColumnVersionTest extends AbstractCairoTest {
@@ -291,6 +294,20 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testVacuumKeepsBitmapIndexAfterPostingIndexDrop() throws Exception {
+        for (int fileKind = 0; fileKind < 4; fileKind++) {
+            assertVacuumPurgesOrphanedPostingFile(fileKind, "BITMAP", false, false);
+        }
+    }
+
+    @Test
+    public void testVacuumKeepsCoveringIndexAfterPostingIndexDrop() throws Exception {
+        for (int fileKind = 0; fileKind < 4; fileKind++) {
+            assertVacuumPurgesOrphanedPostingFile(fileKind, "POSTING INCLUDE (val)", false, false);
+        }
+    }
+
+    @Test
     public void testVacuumKeepsCoveringIndexOfNameTxnZero() throws Exception {
         // A column added before the first commit has name txn 0, which the cover file names cannot tell apart from
         // no name txn. VACUUM must take the index's cover files for the live version's.
@@ -301,6 +318,65 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
     public void testVacuumKeepsCoveringIndexOfRenamedIndexColumn() throws Exception {
         // RENAME moves the index column to a name txn above 0, which its posting file names carry before the seal txn.
         assertVacuumKeepsCoveringIndex("t_vac_cov_renamed", "s", "s\\.pc\\d+\\.[1-9]\\d*\\.\\d+");
+    }
+
+    @Test
+    public void testVacuumKeepsPostingFilesForOldReaderAfterIndexDrop() throws Exception {
+        Assume.assumeFalse(Os.isWindows());
+        assertMemoryLeak(() -> {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                createIndexWithNameTxnZeroTable("t_old_reader");
+                final File partition = partitionDir("t_old_reader", "2024-01-01");
+                final int postingFiles = countFiles(partition, "sym\\.(pk|pv|pci|pc[0-9]+)(\\..*)?");
+                Assert.assertTrue(postingFiles > 0);
+                try (RecordCursorFactory factory = select("SELECT val FROM t_old_reader WHERE sym = 'A'");
+                     RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+                ) {
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals(1.0, cursor.getRecord().getDouble(0), 0);
+                    execute("ALTER TABLE t_old_reader ALTER COLUMN sym DROP INDEX");
+                    runTableVacuum("t_old_reader");
+                    runPurgeJob(purgeJob);
+                    Assert.assertEquals(postingFiles, countFiles(partition, "sym\\.(pk|pv|pci|pc[0-9]+)(\\..*)?"));
+                    cursor.toTop();
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals(1.0, cursor.getRecord().getDouble(0), 0);
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals(4.0, cursor.getRecord().getDouble(0), 0);
+                    Assert.assertFalse(cursor.hasNext());
+                }
+                engine.releaseAllReaders();
+                releaseSavePointHolds("t_old_reader");
+                runPurgeJob(purgeJob);
+                Assert.assertEquals(0, countFiles(partition, "sym\\.(pk|pv|pci|pc[0-9]+)(\\..*)?"));
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+            }
+        });
+    }
+
+    @Test
+    public void testVacuumKeepsUncommittedPostingFiles() throws Exception {
+        assertMemoryLeak(() -> {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                createIndexWithNameTxnZeroTable("t_future_version");
+                final File partition = partitionDir("t_future_version", "2024-01-01");
+                for (int fileKind = 0; fileKind < 4; fileKind++) {
+                    final File file = new File(partition, postingFileName(fileKind, 100));
+                    Assert.assertTrue(configuration.getFilesFacade().touch(Path.getThreadLocal(file.getAbsolutePath()).$()));
+                }
+                runTableVacuum("t_future_version");
+                runPurgeJob(purgeJob);
+                for (int fileKind = 0; fileKind < 4; fileKind++) {
+                    Assert.assertTrue("VACUUM must leave versions newer than its snapshot",
+                            new File(partition, postingFileName(fileKind, 100)).exists());
+                }
+                assertCoveringQuery("t_future_version", "sym", """
+                        sym\tval\tts
+                        A\t1.0\t2024-01-01T00:00:00.000000Z
+                        A\t4.0\t2024-01-02T00:00:00.000000Z
+                        """);
+            }
+        });
     }
 
     @Test
@@ -373,6 +449,80 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testVacuumPurgesDroppedPostingIndexAfterForceReindex() throws Exception {
+        Assume.assumeFalse(Os.isWindows());
+        assertMemoryLeak(() -> {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                execute("""
+                        CREATE TABLE t (ts TIMESTAMP, p SYMBOL INDEX TYPE POSTING, s SYMBOL INDEX)
+                        TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                        """);
+                execute("""
+                        INSERT INTO t VALUES
+                            ('2024-01-01T00:00:00', 'A', 'live'),
+                            ('2024-01-01T01:00:00', 'B', 'live'),
+                            ('2024-01-02T00:00:00', 'A', 'live')
+                        """);
+                execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                releaseSavePointHolds("t");
+                final File oldPartitionDir = partitionDir("t", "2024-01-01");
+                final String postingFileRegex = "p\\.(pk|pv)(\\..*)?";
+                Assert.assertEquals(1, countFiles(oldPartitionDir, "p\\.pk(\\..*)?"));
+                Assert.assertTrue(countFiles(oldPartitionDir, "p\\.pv\\..*") > 0);
+                final int postingFiles = countFiles(oldPartitionDir, postingFileRegex);
+
+                // Hold the old metadata through DROP INDEX so it queues the purge instead of deleting inline.
+                try (TableReader reader = getReader("t")) {
+                    reader.openPartition(0);
+                    execute("ALTER TABLE t ALTER COLUMN p DROP INDEX");
+                    Assert.assertEquals(postingFiles, countFiles(oldPartitionDir, postingFileRegex));
+                }
+                engine.releaseAllReaders();
+
+                // Reindex before the column purge runs: it copies the dropped files into a new directory version.
+                execute("ALTER TABLE t FORCE REINDEX PARQUET");
+                releaseSavePointHolds("t");
+                Assert.assertFalse("reindex removed the original partition directory", oldPartitionDir.exists());
+                final File newPartitionDir = partitionDir("t", "2024-01-01");
+                Assert.assertNotEquals(oldPartitionDir, newPartitionDir);
+                Assert.assertEquals(postingFiles, countFiles(newPartitionDir, postingFileRegex));
+                runPurgeJob(purgeJob);
+                Assert.assertEquals("the queued purge targets the old directory", postingFiles,
+                        countFiles(newPartitionDir, postingFileRegex));
+
+                runTableVacuum("t");
+                runPurgeJob(purgeJob);
+
+                assertQuery("SELECT p, s, ts FROM t WHERE s = 'live'")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .returns("""
+                                p\ts\tts
+                                A\tlive\t2024-01-01T00:00:00.000000Z
+                                B\tlive\t2024-01-01T01:00:00.000000Z
+                                A\tlive\t2024-01-02T00:00:00.000000Z
+                                """);
+                Assert.assertEquals("VACUUM must remove the orphaned POSTING files", 0,
+                        countFiles(newPartitionDir, postingFileRegex));
+            }
+        });
+    }
+
+    @Test
+    public void testVacuumPurgesOrphanedPostingFilesAfterColumnDrop() throws Exception {
+        for (int fileKind = 0; fileKind < 4; fileKind++) {
+            assertVacuumPurgesOrphanedPostingFile(fileKind, "", true, false);
+        }
+    }
+
+    @Test
+    public void testVacuumPurgesOrphanedPostingFilesAfterIndexDrop() throws Exception {
+        for (int fileKind = 0; fileKind < 4; fileKind++) {
+            assertVacuumPurgesOrphanedPostingFile(fileKind, "", false, false);
+        }
+    }
+
+    @Test
     public void testVacuumPurgesStalePostingFilesOfNameTxnZero() throws Exception {
         // UPDATE of a covered column moves the index column off name txn 0. Posting files left behind under name txn
         // 0 are stale, and VACUUM must purge them, the cover files too, which name txn 0 like no name txn.
@@ -402,6 +552,13 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
                         """);
             }
         });
+    }
+
+    @Test
+    public void testVacuumRetriesOrphanedPostingFileRemoval() throws Exception {
+        for (int fileKind = 0; fileKind < 4; fileKind++) {
+            assertVacuumPurgesOrphanedPostingFile(fileKind, "", false, true);
+        }
     }
 
     @Test
@@ -671,6 +828,15 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
         return dirs[0];
     }
 
+    private static String postingFileName(int fileKind, long columnVersion) {
+        return switch (fileKind) {
+            case 0 -> "sym.pk." + columnVersion;
+            case 1 -> "sym.pci." + columnVersion;
+            case 2 -> "sym.pv." + columnVersion + ".100";
+            default -> "sym.pc0." + columnVersion + ".0.100";
+        };
+    }
+
     private void assertCoveringQuery(String tableName, String indexColumn, String expected) throws Exception {
         assertQuery("SELECT " + indexColumn + ", val, ts FROM " + tableName + " WHERE " + indexColumn + " = 'A'")
                 .noLeakCheck()
@@ -726,6 +892,81 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
 
                 Assert.assertEquals("live cover files kept", coverFiles, countFiles(partitionDir, coverFileRegex));
                 assertCoveringQuery(tableName, indexColumn, expected);
+            }
+        });
+    }
+
+    private void assertVacuumPurgesOrphanedPostingFile(int fileKind, String replacementIndex, boolean isColumnDropped, boolean hasRemovalFailure) throws Exception {
+        Assume.assumeFalse(Os.isWindows());
+        final String fileName = postingFileName(fileKind, 0);
+        final AtomicBoolean isRemovalBlocked = new AtomicBoolean();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean removeQuiet(LPSZ name) {
+                if (isRemovalBlocked.get() && Utf8s.endsWithAscii(name, fileName)) {
+                    return false;
+                }
+                return super.removeQuiet(name);
+            }
+        };
+        // Pooled compilers capture their FilesFacade; release them before the leak-check baseline.
+        engine.getSqlCompilerPool().releaseAll();
+        assertMemoryLeak(ff, () -> {
+            final String tableName = "t_orphan_" + fileKind + '_' + isColumnDropped + '_' + hasRemovalFailure + '_'
+                    + (replacementIndex.isEmpty() ? "none" : replacementIndex.startsWith("BITMAP") ? "bitmap" : "posting");
+            final File partition;
+            final File orphan;
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                createIndexWithNameTxnZeroTable(tableName);
+                execute("ALTER TABLE " + tableName + " ALTER COLUMN sym DROP INDEX");
+                if (isColumnDropped) {
+                    execute("ALTER TABLE " + tableName + " DROP COLUMN sym");
+                } else if (!replacementIndex.isEmpty()) {
+                    execute("ALTER TABLE " + tableName + " ALTER COLUMN sym ADD INDEX TYPE " + replacementIndex);
+                }
+                releaseSavePointHolds(tableName);
+                runPurgeJob(purgeJob);
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+                partition = partitionDir(tableName, "2024-01-01");
+                orphan = new File(partition, fileName);
+                // A partial purge can leave any one file behind, without its key or data file.
+                Assert.assertFalse(orphan.exists());
+                Assert.assertTrue(ff.touch(Path.getThreadLocal(orphan.getAbsolutePath()).$()));
+                isRemovalBlocked.set(hasRemovalFailure);
+
+                runTableVacuum(tableName);
+                if (hasRemovalFailure) {
+                    Assert.assertTrue("the failed removal must leave the file for a retry", orphan.exists());
+                    runPurgeJob(purgeJob);
+                    Assert.assertEquals(1, purgeJob.getOutstandingPurgeTasks());
+                } else {
+                    Assert.assertFalse("VACUUM must remove " + fileName, orphan.exists());
+                }
+            }
+            if (hasRemovalFailure) {
+                isRemovalBlocked.set(false);
+                // Reopen the purge job: it must recover the pending task without relying on current index metadata.
+                try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                    runPurgeJob(purgeJob);
+                    Assert.assertFalse("the retried purge must remove " + fileName, orphan.exists());
+                    Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+                }
+            }
+            if (replacementIndex.startsWith("POSTING")) {
+                assertCoveringQuery(tableName, "sym", """
+                        sym\tval\tts
+                        A\t1.0\t2024-01-01T00:00:00.000000Z
+                        A\t4.0\t2024-01-02T00:00:00.000000Z
+                        """);
+            } else if (!isColumnDropped) {
+                assertQuery("SELECT val FROM " + tableName + " WHERE sym = 'A' ORDER BY val")
+                        .noLeakCheck()
+                        .returns("val\n1.0\n4.0\n");
+            } else {
+                assertQuery("SELECT val FROM " + tableName)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("val\n1.0\n2.0\n4.0\n");
             }
         });
     }
