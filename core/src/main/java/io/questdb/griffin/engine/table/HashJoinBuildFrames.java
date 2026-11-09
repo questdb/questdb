@@ -461,10 +461,25 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, Mutable
      * frames. On failure the caller's cleanup path calls {@link #clear()}.
      */
     public void open(RecordCursorFactory buildFactory, SqlExecutionContext executionContext) throws SqlException {
-        assert frameCursor == null;
-        memoryTracker = executionContext.getMemoryTracker();
-        frameCursor = buildFactory.getPageFrameCursor(executionContext, ORDER_ASC);
-        addressCache.of(buildFactory.getMetadata(), frameCursor.getColumnMapping(), frameCursor.isExternal());
+        // The tracker of the execution as it stood before the cursor opened: opening a query's
+        // outermost factory registers the query, which may bind a tracker of its own.
+        final MemoryTracker memoryTracker = executionContext.getMemoryTracker();
+        open0(buildFactory.getPageFrameCursor(executionContext, ORDER_ASC), buildFactory.getMetadata(), memoryTracker);
+    }
+
+    /**
+     * Adopts the build scan's page frame cursor, which the caller opened, for an execution and reads
+     * no frame of it, as {@link #open(RecordCursorFactory, SqlExecutionContext)} does with the cursor
+     * it opens. The frames own the cursor from here on, whether this returns or throws:
+     * {@link #clear()} closes it, which the caller's cleanup path calls on failure. A caller that has
+     * to read a cursor before it knows which role the cursor takes, such as a hash join that decides
+     * which input to build from by the inputs' sizes, opens the cursor itself and hands it over.
+     *
+     * @param frameCursor   the open page frame cursor of the build scan, which the frames adopt
+     * @param buildMetadata the metadata of the factory that opened the cursor
+     */
+    public void open(PageFrameCursor frameCursor, RecordMetadata buildMetadata, SqlExecutionContext executionContext) {
+        open0(frameCursor, buildMetadata, executionContext.getMemoryTracker());
     }
 
     /**
@@ -535,6 +550,14 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, Mutable
                         throw new AssertionError("uncopyable hash join payload type: " + ColumnType.nameOf(payloadTypes[col]));
             }
         }
+    }
+
+    // Adopts the open cursor, and the tracker that the execution's copy is charged to.
+    private void open0(PageFrameCursor frameCursor, RecordMetadata buildMetadata, @Nullable MemoryTracker memoryTracker) {
+        assert this.frameCursor == null : "clear() the frames before opening them again";
+        this.frameCursor = frameCursor;
+        this.memoryTracker = memoryTracker;
+        addressCache.of(buildMetadata, frameCursor.getColumnMapping(), frameCursor.isExternal());
     }
 
     private static final class BuildRecord extends PageFrameMemoryRecord {

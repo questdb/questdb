@@ -68,7 +68,22 @@ final class FrameBuilds {
             int keyColumn,
             SqlExecutionContext context
     ) throws SqlException {
-        frames.of(factory, context);
+        frames.open(factory, context);
+        return buildIntOverOpenFrames(configuration, build, frames, keyColumn, context);
+    }
+
+    /**
+     * Builds as {@link #buildInt} does, from frames whose cursor the caller opened: this walks
+     * their frames, then builds from them.
+     */
+    static FrozenHashJoinBuild.IntKeyed buildIntOverOpenFrames(
+            CairoConfiguration configuration,
+            IntHashJoinBuild build,
+            HashJoinBuildFrames frames,
+            int keyColumn,
+            SqlExecutionContext context
+    ) {
+        frames.loadFrames();
         build.open(context.getMemoryTracker(), context.getCircuitBreaker());
         try (PageFrameMemoryPool pool = new PageFrameMemoryPool(configuration);
              PageFrameMemoryRecord record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER)) {

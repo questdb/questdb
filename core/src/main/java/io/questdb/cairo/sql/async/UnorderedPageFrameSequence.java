@@ -64,6 +64,9 @@ import java.util.concurrent.atomic.AtomicLong;
  * Workers release queue slots immediately after reading frame index and sequence reference.
  * Completion is tracked via an {@link SOUnboundedCountDownLatch}.
  * Designed for factories that don't need ordered results (GROUP BY, top-K).
+ * <p>
+ * A sequence bound by {@link #ofRounds(SqlExecutionContext)} instead of {@link #of} has no frames:
+ * it runs rounds of tasks of its own reducers alone, see {@link #dispatchRoundAndAwait}.
  */
 public class UnorderedPageFrameSequence<T extends StatefulAtom> extends AbstractPageFrameSequence implements Closeable, PageFrameRoundDispatcher {
     private static final AtomicLong ID_SEQ = new AtomicLong();
@@ -90,6 +93,8 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
     private long id;
     private boolean isClosing;
     private boolean isReadyToDispatch;
+    // Set by ofRounds() until reset(): the sequence has no frames and runs rounds alone.
+    private boolean isRoundsOnly;
     private boolean isUninterruptible;
     private PageFrameMemoryRecord localRecord;
     // Set while a round of tasks other than the frames runs; see dispatchRoundAndAwait().
@@ -197,6 +202,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
      * @throws CairoException if a worker encountered an error
      */
     public void dispatchAndAwait() {
+        assert !isRoundsOnly : "a sequence bound by ofRounds() has no frames to dispatch";
         dispatchAndAwait(frameCount);
     }
 
@@ -450,6 +456,9 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
         return startTime;
     }
 
+    /**
+     * The frames' symbol tables, or null for a sequence bound by {@link #ofRounds}, which has no frames.
+     */
     public SymbolTableSource getSymbolTableSource() {
         return frameCursor;
     }
@@ -479,6 +488,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
             SqlExecutionContext executionContext,
             int order
     ) throws SqlException {
+        assert !isRoundsOnly : "a sequence bound by ofRounds() binds to frames only after reset()";
         sqlExecutionContext = executionContext;
         memoryTracker = executionContext.getMemoryTracker();
         startTime = clock.getTicks();
@@ -512,7 +522,36 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
         return this;
     }
 
+    /**
+     * Binds the sequence to an execution for rounds of tasks alone, as {@link #of} binds it, apart
+     * from the frames: it opens no page frame cursor, so the sequence has no frames and no symbol
+     * table source, and its reducers receive a record without one. It does not initialize the atom
+     * either, which has no frames to bind to. From here until {@link #reset()}, the sequence only
+     * runs rounds through {@link #dispatchRoundAndAwait}; an assertion guards its frame operations.
+     * A parallel hash join binds the sequence that builds its stages this way, since its frames
+     * belong to the build inputs rather than to the sequence.
+     */
+    public UnorderedPageFrameSequence<T> ofRounds(SqlExecutionContext executionContext) {
+        assert frameCursor == null && frameCount == 0 : "a sequence bound to frames runs rounds only after reset()";
+        sqlExecutionContext = executionContext;
+        memoryTracker = executionContext.getMemoryTracker();
+        startTime = clock.getTicks();
+        isUninterruptible = executionContext.isUninterruptible();
+        if (localRecord == null) {
+            localRecord = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
+        }
+        id = ID_SEQ.incrementAndGet();
+        resetCancellation();
+        doneLatch.reset();
+        reduceStartedCounter.set(0);
+        workStealingStrategy.of(reduceStartedCounter);
+        errorState.clear();
+        isRoundsOnly = true;
+        return this;
+    }
+
     public void prepareForDispatch() {
+        assert !isRoundsOnly : "a sequence bound by ofRounds() has no frames to dispatch";
         if (!isReadyToDispatch) {
             buildAddressCache();
             isReadyToDispatch = true;
@@ -528,6 +567,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
         roundReducer = null;
         roundTaskRowCounts = null;
         isReadyToDispatch = false;
+        isRoundsOnly = false;
         // Drop the borrowed tracker reference; the provider owns the native block.
         memoryTracker = null;
         frameRowCounts.clear();

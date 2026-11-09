@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerWrapper;
 import io.questdb.cairo.sql.StatefulAtom;
@@ -438,54 +439,49 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         }
     }
 
+    /**
+     * Opens the base factory's page frame cursor in the given order and binds the sequence to it,
+     * see {@link #of(PageFrameCursor, RecordMetadata, SqlExecutionContext, SCSequence)}.
+     */
     public PageFrameSequence<T> of(
             RecordCursorFactory base,
             SqlExecutionContext executionContext,
             SCSequence collectSubSeq,
             int order
     ) throws SqlException {
-        sqlExecutionContext = executionContext;
-        memoryTracker = executionContext.getMemoryTracker();
-        startTime = clock.getTicks();
-        uninterruptible = executionContext.isUninterruptible();
+        // The execution's tracker and start as they stood before the cursor opened: opening a
+        // query's outermost factory registers the query, which may bind a tracker of its own.
+        final MemoryTracker memoryTracker = executionContext.getMemoryTracker();
+        final long startTime = clock.getTicks();
+        return of0(
+                base.getPageFrameCursor(executionContext, order),
+                base.getMetadata(),
+                executionContext,
+                collectSubSeq,
+                memoryTracker,
+                startTime
+        );
+    }
 
-        if (localRecord == null) {
-            localRecord = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
-        }
-
-        final Rnd rnd = executionContext.getAsyncRandom();
-        try {
-            assert frameCursor == null;
-            frameCursor = base.getPageFrameCursor(executionContext, order);
-
-            // pass one to cache page addresses
-            // this has to be separate pass to ensure there no cache reads
-            // while cache might be resizing
-            frameAddressCache.of(base.getMetadata(), frameCursor.getColumnMapping(), frameCursor.isExternal());
-
-            this.collectSubSeq = collectSubSeq;
-            id = ID_SEQ.incrementAndGet();
-            done = false;
-            resetCancellation();
-            reduceFinishedCounter.set(0);
-            reduceStartedCounter.set(0);
-            workStealingStrategy.of(reduceStartedCounter);
-            shard = rnd.nextInt(messageBus.getPageFrameReduceShardCount());
-            reduceQueue = messageBus.getPageFrameReduceQueue(shard);
-
-            // It is essential to init the atom after we prepared sequence for dispatch.
-            // If atom is to fail, we will be releasing whatever we prepared.
-            atom.init(frameCursor, executionContext);
-        } catch (TableReferenceOutOfDateException e) {
-            frameCursor = Misc.freeIfCloseable(frameCursor);
-            throw e;
-        } catch (Throwable th) {
-            // Log the OG exception as the below frame cursor close call may throw.
-            LOG.error().$("could not initialize page frame sequence [error=").$(th).I$();
-            frameCursor = Misc.free(frameCursor);
-            throw th;
-        }
-        return this;
+    /**
+     * Binds the sequence to an execution over a page frame cursor that the caller opened, in the
+     * scan order its frames are to be dispatched and collected in, and initializes the atom. The
+     * sequence owns the cursor from here on, whether this returns or throws: {@link #reset()}
+     * closes it, and so does a failure here. A caller that has to read a cursor before it knows
+     * which role the cursor takes, such as a hash join that decides which input to build from by
+     * the inputs' sizes, opens the cursor itself and hands it over.
+     *
+     * @param frameCursor   the open page frame cursor, which the sequence adopts
+     * @param metadata      the metadata of the factory that opened the cursor
+     * @param collectSubSeq the subscriber sequence the owner collects the reduced frames through
+     */
+    public PageFrameSequence<T> of(
+            PageFrameCursor frameCursor,
+            RecordMetadata metadata,
+            SqlExecutionContext executionContext,
+            SCSequence collectSubSeq
+    ) throws SqlException {
+        return of0(frameCursor, metadata, executionContext, collectSubSeq, executionContext.getMemoryTracker(), clock.getTicks());
     }
 
     /**
@@ -783,6 +779,59 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                 dispatcher.releasePublication();
             }
         }
+    }
+
+    private PageFrameSequence<T> of0(
+            PageFrameCursor frameCursor,
+            RecordMetadata metadata,
+            SqlExecutionContext executionContext,
+            SCSequence collectSubSeq,
+            MemoryTracker memoryTracker,
+            long startTime
+    ) throws SqlException {
+        assert this.frameCursor == null : "reset() the sequence before binding it again";
+        this.frameCursor = frameCursor;
+        sqlExecutionContext = executionContext;
+        this.memoryTracker = memoryTracker;
+        this.startTime = startTime;
+        uninterruptible = executionContext.isUninterruptible();
+
+        final Rnd rnd = executionContext.getAsyncRandom();
+        try {
+            if (localRecord == null) {
+                localRecord = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
+            }
+
+            // pass one to cache page addresses
+            // this has to be separate pass to ensure there no cache reads
+            // while cache might be resizing
+            frameAddressCache.of(metadata, frameCursor.getColumnMapping(), frameCursor.isExternal());
+
+            this.collectSubSeq = collectSubSeq;
+            id = ID_SEQ.incrementAndGet();
+            done = false;
+            resetCancellation();
+            reduceFinishedCounter.set(0);
+            reduceStartedCounter.set(0);
+            workStealingStrategy.of(reduceStartedCounter);
+            shard = rnd.nextInt(messageBus.getPageFrameReduceShardCount());
+            reduceQueue = messageBus.getPageFrameReduceQueue(shard);
+
+            // It is essential to init the atom after we prepared sequence for dispatch.
+            // If atom is to fail, we will be releasing whatever we prepared.
+            atom.init(frameCursor, executionContext);
+        } catch (TableReferenceOutOfDateException e) {
+            this.frameCursor = null;
+            Misc.freeIfCloseable(frameCursor);
+            throw e;
+        } catch (Throwable th) {
+            // Log the OG exception as the below frame cursor close call may throw.
+            LOG.error().$("could not initialize page frame sequence [error=").$(th).I$();
+            this.frameCursor = null;
+            Misc.free(frameCursor);
+            throw th;
+        }
+        return this;
     }
 
     private void reduceLocally(boolean countOnly) {

@@ -31,6 +31,9 @@ import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PageFrameMemoryPool;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -61,6 +64,9 @@ import io.questdb.test.tools.LimitedMemoryTracker;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
+import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 
 /**
  * The build's payload source over its input's page frames: probes read payload columns at the
@@ -316,6 +322,83 @@ public class HashJoinBuildFramesTest extends AbstractCairoTest {
                 Assert.assertEquals(0, tracker.getUsed());
             } finally {
                 sqlExecutionContext.setMemoryTracker(previous);
+            }
+        });
+    }
+
+    @Test
+    public void testCursorOverloadReadsAndBuildsAsTheFactoryOverload() throws Exception {
+        assertMemoryLeak(() -> {
+            // 600 rows over six daily partitions, the first two of them Parquet, read in frames of
+            // seven rows at most, and 40 keys, so that every key's duplicates span frames,
+            // partitions and formats.
+            execute("CREATE TABLE spread (k INT, v LONG, s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO spread
+                    SELECT (x % 40)::INT, x, 's' || (x % 7), timestamp_sequence('2020-01-01', 864_000_000L)
+                    FROM long_sequence(600)
+                    """);
+            execute("ALTER TABLE spread CONVERT PARTITION TO PARQUET WHERE ts < '2020-01-03'");
+            sqlExecutionContext.changePageFrameSizes(7, 7);
+            // A factory per frames object: a query's factory serves one open page frame cursor at a time.
+            try (RecordCursorFactory factory = select("spread");
+                 RecordCursorFactory cursorFactory = select("spread");
+                 RecordCursorFactory backwardFactory = select("spread");
+                 HashJoinBuildFrames byFactory = new HashJoinBuildFrames(configuration, ints(1, 2), factory.getMetadata());
+                 HashJoinBuildFrames byCursor = new HashJoinBuildFrames(configuration, ints(1, 2), factory.getMetadata());
+                 HashJoinBuildFrames byBackwardCursor = new HashJoinBuildFrames(configuration, ints(1, 2), factory.getMetadata());
+                 IntHashJoinBuild factoryBuild = new IntHashJoinBuild(true, 2, 16);
+                 IntHashJoinBuild cursorBuild = new IntHashJoinBuild(true, 2, 16);
+                 IntHashJoinBuild partitionedBuild = new IntHashJoinBuild(true, 2, 16)) {
+                // The frames adopt the cursor they are handed: it serves the build input's symbol
+                // tables until clear() closes it, which releases its table reader.
+                final PageFrameCursor cursor = cursorFactory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC);
+                byCursor.open(cursor, cursorFactory.getMetadata(), sqlExecutionContext);
+                Assert.assertSame(cursor, byCursor.getSymbolTableSource());
+                Assert.assertEquals(1, engine.getBusyReaderCount());
+                byCursor.clear();
+                Assert.assertNull(byCursor.getSymbolTableSource());
+                Assert.assertEquals(0, engine.getBusyReaderCount());
+
+                final FrozenHashJoinBuild.IntKeyed fromFactory = FrameBuilds.buildInt(configuration, factoryBuild, byFactory, factory, 0, sqlExecutionContext);
+                byCursor.open(cursorFactory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC), cursorFactory.getMetadata(), sqlExecutionContext);
+                final FrozenHashJoinBuild.IntKeyed fromCursor = FrameBuilds.buildIntOverOpenFrames(configuration, cursorBuild, byCursor, 0, sqlExecutionContext);
+                Assert.assertTrue(byCursor.hasParquetFrames());
+                Assert.assertTrue("frames: " + byCursor.getFrameCount(), byCursor.getFrameCount() > 50);
+                Assert.assertEquals(600, byCursor.getRowCount());
+                // Both overloads walk the same frames, with the same rows.
+                final String factoryFrames = printFrames(byFactory, false, true);
+                TestUtils.assertEquals(factoryFrames, printFrames(byCursor, false, true));
+
+                // The serial builds over both, and a parallel build over the cursor's frames, chain
+                // each key's rows alike: newest first, as the serial hash join lists them.
+                final FrozenHashJoinBuild.IntKeyed partitioned = FrameBuilds.buildIntPartitioned(configuration, partitionedBuild,
+                        byCursor, 0, 64, -1, null, null, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+                Assert.assertTrue("partitions: " + partitionedBuild.getPartitionCount(), partitionedBuild.getPartitionCount() > 1);
+                for (FrozenHashJoinBuild.IntKeyed frozen : new FrozenHashJoinBuild.IntKeyed[]{fromFactory, fromCursor, partitioned}) {
+                    try (FrozenHashJoinBuild.IntProbe probe = frozen.newProbe()) {
+                        for (int key = 0; key < 40; key++) {
+                            probe.find(key);
+                            for (long v = 600 - ((600 - key) % 40); v > 0; v -= 40) {
+                                Assert.assertTrue("key " + key, probe.hasNext());
+                                probe.next();
+                                Assert.assertEquals(v, probe.getRecord().getLong(0));
+                                TestUtils.assertEquals("s" + (v % 7), probe.getRecord().getSymA(1));
+                            }
+                            Assert.assertFalse("key " + key, probe.hasNext());
+                        }
+                    }
+                }
+
+                // A cursor of a backward scan hands the frames over in its order: the same rows,
+                // the last frame first.
+                byBackwardCursor.open(backwardFactory.getPageFrameCursor(sqlExecutionContext, ORDER_DESC), backwardFactory.getMetadata(), sqlExecutionContext);
+                byBackwardCursor.loadFrames();
+                Assert.assertEquals(600, byBackwardCursor.getRowCount());
+                Assert.assertTrue(byBackwardCursor.hasParquetFrames());
+                TestUtils.assertEquals(printFrames(byFactory, false, false), printFrames(byBackwardCursor, true, false));
+            } finally {
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
             }
         });
     }
@@ -754,6 +837,32 @@ public class HashJoinBuildFramesTest extends AbstractCairoTest {
             }
         }
         sink.put('\n');
+    }
+
+    // Prints the rows of the open frames, the last frame first when reversed, each frame's rows in
+    // storage order, with a header per frame when asked.
+    private static String printFrames(HashJoinBuildFrames frames, boolean isReversed, boolean hasHeaders) {
+        final StringSink sink = new StringSink();
+        try (PageFrameMemoryPool pool = new PageFrameMemoryPool(configuration);
+             PageFrameMemoryRecord record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER)) {
+            pool.of(frames.getAddressCache());
+            record.of(frames.getSymbolTableSource());
+            final int frameCount = frames.getFrameCount();
+            for (int i = 0; i < frameCount; i++) {
+                final int frameIndex = isReversed ? frameCount - 1 - i : i;
+                final long frameRows = frames.getFrameRowCount(frameIndex);
+                if (hasHeaders) {
+                    sink.put('#').put(frameIndex).put(" rows=").put(frameRows).put('\n');
+                }
+                record.init(pool.navigateTo(frameIndex));
+                for (long row = 0; row < frameRows; row++) {
+                    record.setRowIndex(row);
+                    sink.put(record.getInt(0)).put(',').put(record.getLong(1)).put(',')
+                            .put(record.getSymA(2)).put(',').put(record.getTimestamp(3)).put('\n');
+                }
+            }
+        }
+        return sink.toString();
     }
 
     private static long probeFirst(FrozenHashJoinBuild.IntProbe probe, int key) {
