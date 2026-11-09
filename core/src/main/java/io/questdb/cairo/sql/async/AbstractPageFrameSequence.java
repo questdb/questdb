@@ -127,6 +127,16 @@ abstract class AbstractPageFrameSequence {
             long observedGlobalProgress,
             boolean isDraining
     ) {
+        awaitProgress(dispatcher, observedSequenceProgress, observedGlobalProgress, isDraining, -1);
+    }
+
+    protected final void awaitProgress(
+            PageFrameReduceDispatcher dispatcher,
+            long observedSequenceProgress,
+            long observedGlobalProgress,
+            boolean isDraining,
+            int blockedShard
+    ) {
         final boolean isInterruptible = !isDraining && !isUninterruptible();
         final SqlExecutionCircuitBreaker circuitBreaker = isInterruptible ? getCircuitBreaker() : null;
         FiberCancellationSignal cancellationSignal = isInterruptible
@@ -164,7 +174,8 @@ abstract class AbstractPageFrameSequence {
                     supplementalCancellationSignal,
                     supplementalCancellationSignalGeneration,
                     circuitBreaker,
-                    isDraining
+                    isDraining,
+                    blockedShard
             );
         } catch (CairoException e) {
             if (isInterruptionSuperseded(e)) {

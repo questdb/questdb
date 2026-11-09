@@ -75,6 +75,7 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
     private final AtomicLong publicationAdmission = new AtomicLong(PUBLICATION_OPEN);
     private final AtomicInteger quiesceState = new AtomicInteger(QUIESCE_OPEN);
     private final FiberRuntime runtime;
+    private final FiberEventWaitQueue[] shardProgressWaitQueues;
     private final FiberTaskPool<PageFrameFiberTask> taskPool;
     private final MillisecondClock timerClock;
     private final long timerIntervalMillis;
@@ -84,6 +85,10 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
     public PageFrameReduceDispatcher(CairoEngine engine, MessageBus messageBus, FiberRuntime runtime) {
         this.batchPolicy = new BatchPolicy(engine.getConfiguration().getSqlPageFrameMaxRows());
         this.messageBus = messageBus;
+        this.shardProgressWaitQueues = new FiberEventWaitQueue[messageBus.getPageFrameReduceShardCount()];
+        for (int i = 0; i < shardProgressWaitQueues.length; i++) {
+            shardProgressWaitQueues[i] = new FiberEventWaitQueue(FiberWaitCoordinator.REASON_PROGRESS);
+        }
         this.runtime = runtime;
         this.taskPool = new FiberTaskPool<>(
                 runtime.getMaxLiveFiberCount(),
@@ -187,7 +192,8 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
                 cancellationSignal != null ? cancellationSignal.getGeneration() : CancellationBinding.NO_GENERATION,
                 null,
                 CancellationBinding.NO_GENERATION,
-                false
+                false,
+                -1
         );
     }
 
@@ -209,7 +215,8 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
                 supplementalCancellationSignal != null
                         ? supplementalCancellationSignal.getGeneration()
                         : CancellationBinding.NO_GENERATION,
-                false
+                false,
+                -1
         );
     }
 
@@ -574,7 +581,8 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
             long cancellationSignalGeneration,
             @Nullable FiberCancellationSignal supplementalCancellationSignal,
             long supplementalCancellationSignalGeneration,
-            boolean isQuiescingAllowed
+            boolean isQuiescingAllowed,
+            int blockedShard
     ) {
         if (isClosed || (!isQuiescingAllowed && quiesceState.get() != QUIESCE_OPEN)) {
             return FiberWaitCoordinator.REASON_SHUTDOWN;
@@ -588,6 +596,7 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
         }
         final long token = fiber.tryBeginWaitBuild(
                 3
+                        + (blockedShard > -1 ? 1 : 0)
                         + (cancellationSignal != null ? 1 : 0)
                         + (supplementalCancellationSignal != null ? 1 : 0)
         );
@@ -622,7 +631,8 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
                 return reason;
             }
             if (!coordinator.armEvent(token, frameSequence.getProgressWaitQueue())
-                    || !coordinator.armEvent(token, progressWaitQueue)) {
+                    || !coordinator.armEvent(token, progressWaitQueue)
+                    || blockedShard > -1 && !coordinator.armEvent(token, shardProgressWaitQueues[blockedShard])) {
                 throw new IllegalStateException("page frame progress wait registration failed");
             }
             if (!coordinator.armTimer(token, timerShards, timerClock, timerIntervalMillis)) {
@@ -839,7 +849,8 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
             @Nullable FiberCancellationSignal supplementalCancellationSignal,
             long supplementalCancellationSignalGeneration,
             @Nullable SqlExecutionCircuitBreaker circuitBreaker,
-            boolean isDraining
+            boolean isDraining,
+            int blockedShard
     ) {
         final int reason = awaitProgress(
                 frameSequence,
@@ -849,7 +860,8 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
                 cancellationSignalGeneration,
                 supplementalCancellationSignal,
                 supplementalCancellationSignalGeneration,
-                isDraining
+                isDraining,
+                blockedShard
         );
         return switch (reason) {
             case FiberWaitCoordinator.REASON_CANCEL -> {
@@ -891,6 +903,9 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
     void signalProgress(AbstractPageFrameSequence frameSequence) {
         signalProgress();
         frameSequence.signalProgress();
+        if (frameSequence instanceof PageFrameSequence<?> orderedFrameSequence) {
+            shardProgressWaitQueues[orderedFrameSequence.getShard()].fireAll();
+        }
     }
 
     @TestOnly

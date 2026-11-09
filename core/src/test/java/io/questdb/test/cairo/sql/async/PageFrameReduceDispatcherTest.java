@@ -1043,6 +1043,7 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
 
     @Test
     public void testExecutionContextAwaitsInFlightFrames() throws Exception {
+        setProperty(PropertyKey.GRIFFIN_QUERY_CONTINUATION_WAKE_INTERVAL, TimeUnit.HOURS.toMillis(1));
         assertMemoryLeak(() -> {
             execute("CREATE TABLE suspended AS (SELECT x FROM long_sequence(1))");
             final FiberRuntime ownerRuntime = new FiberRuntime(2);
@@ -2488,6 +2489,7 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
 
     @Test
     public void testOrderedOwnerParksBehindSuspendedReducer() throws Exception {
+        setProperty(PropertyKey.GRIFFIN_QUERY_CONTINUATION_WAKE_INTERVAL, TimeUnit.HOURS.toMillis(1));
         assertMemoryLeak(() -> {
             execute("CREATE TABLE suspended AS (SELECT x FROM long_sequence(1))");
             execute("""
@@ -2585,6 +2587,159 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                 Assert.assertTrue(waitingOwner.isDone());
                 Assert.assertEquals(1, suspendedCollectedCount.get());
                 Assert.assertEquals(2, waitingCollectedCount.get());
+            } finally {
+                engine.getMessageBus().setPageFrameReduceDispatcher(previousDispatcher);
+                close(ownerRuntime);
+                close(queryRuntime);
+                Misc.free(dispatcher);
+                Misc.free(waitingSequence);
+                Misc.free(suspendedSequence);
+            }
+        });
+    }
+
+    @Test
+    public void testOrderedOwnerWakesWhenForeignFrameAheadFinishes() throws Exception {
+        setProperty(PropertyKey.GRIFFIN_QUERY_CONTINUATION_WAKE_INTERVAL, TimeUnit.HOURS.toMillis(1));
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE suspended AS (SELECT x FROM long_sequence(1))");
+            execute("""
+                    CREATE TABLE waiting AS (
+                        SELECT x, timestamp_sequence(0, 86_400_000_000) AS ts
+                        FROM long_sequence(2)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            drainWalQueue();
+
+            final FiberRuntime ownerRuntime = new FiberRuntime(3);
+            final FiberRuntime queryRuntime = new FiberRuntime(1);
+            final PageFrameReduceDispatcher dispatcher = new PageFrameReduceDispatcher(
+                    engine,
+                    engine.getMessageBus(),
+                    queryRuntime
+            );
+            final PageFrameReduceDispatcher previousDispatcher = engine.getMessageBus().getPageFrameReduceDispatcher();
+            engine.getMessageBus().setPageFrameReduceDispatcher(dispatcher);
+            final FiberWalWaitQueue waitQueue = new FiberWalWaitQueue();
+            final FiberWalWaitQueue consumerQueue = new FiberWalWaitQueue();
+            final AtomicBoolean isFirstReduce = new AtomicBoolean(true);
+            final PageFrameSequence<StatefulAtom> suspendedSequence = new PageFrameSequence<>(
+                    engine,
+                    configuration,
+                    engine.getMessageBus(),
+                    new StatefulAtom() {
+                    },
+                    (_, _, _, _, _) -> {
+                        if (isFirstReduce.compareAndSet(true, false)) {
+                            park(waitQueue);
+                        }
+                    },
+                    () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_OFFLOAD),
+                    1,
+                    PageFrameReduceTask.TYPE_FILTER
+            );
+            final PageFrameSequence<StatefulAtom> waitingSequence = new PageFrameSequence<>(
+                    engine,
+                    configuration,
+                    engine.getMessageBus(),
+                    new StatefulAtom() {
+                    },
+                    (_, _, _, _, _) -> {
+                    },
+                    () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_OFFLOAD),
+                    1,
+                    PageFrameReduceTask.TYPE_FILTER
+            );
+            final AtomicReference<Throwable> failure = new AtomicReference<>();
+            final AtomicInteger suspendedCollectedCount = new AtomicInteger();
+            final AtomicInteger waitingCollectedCount = new AtomicInteger();
+            final AtomicBoolean isProgressWaiterReleased = new AtomicBoolean();
+            final FiberTask suspendedOwner = new FiberTask() {
+                @Override
+                protected void onError(Throwable th) {
+                    failure.set(th);
+                }
+
+                @Override
+                protected boolean runStep() {
+                    long cursor;
+                    while ((cursor = suspendedSequence.next()) == -1) {
+                        Os.pause();
+                    }
+                    park(consumerQueue);
+                    suspendedSequence.collect(cursor, false);
+                    suspendedCollectedCount.incrementAndGet();
+                    return true;
+                }
+            };
+            final FiberTask waitingOwner = newCollectingTask(waitingSequence, waitingCollectedCount, failure);
+            final FiberTask progressWaiter = new FiberTask() {
+                @Override
+                protected void onError(Throwable th) {
+                    failure.set(th);
+                }
+
+                @Override
+                protected boolean runStep() {
+                    while (!isProgressWaiterReleased.get()) {
+                        dispatcher.awaitProgress(dispatcher.getProgressVersion(), null);
+                    }
+                    return true;
+                }
+            };
+            try (
+                    RecordCursorFactory suspendedFactory = select("SELECT * FROM suspended");
+                    RecordCursorFactory waitingFactory = select("SELECT * FROM waiting")
+            ) {
+                sqlExecutionContext.getAsyncRandom().reset(42, 42);
+                suspendedSequence.of(suspendedFactory, sqlExecutionContext, new SCSequence(), PartitionFrameCursorFactory.ORDER_ASC);
+                suspendedSequence.prepareForDispatch();
+                sqlExecutionContext.getAsyncRandom().reset(42, 42);
+                waitingSequence.of(waitingFactory, sqlExecutionContext, new SCSequence(), PartitionFrameCursorFactory.ORDER_ASC);
+                waitingSequence.prepareForDispatch();
+                Assert.assertEquals(waitingSequence.getShard(), suspendedSequence.getShard());
+                Assert.assertEquals(1, suspendedSequence.getFrameCount());
+                Assert.assertEquals(2, waitingSequence.getFrameCount());
+                try {
+                    Assert.assertSame(LaunchResult.LAUNCHED, ownerRuntime.launch(suspendedOwner));
+                    ownerRuntime.drain(8);
+                    Assert.assertEquals(1, ownerRuntime.getParkedFiberCount());
+
+                    Assert.assertSame(LaunchResult.LAUNCHED, ownerRuntime.launch(waitingOwner));
+                    ownerRuntime.drain(8);
+                    Assert.assertEquals(2, ownerRuntime.getParkedFiberCount());
+                    Assert.assertEquals(2, waitingSequence.getReduceFinishedCounter().get());
+                    Assert.assertEquals(0, waitingCollectedCount.get());
+
+                    Assert.assertSame(LaunchResult.LAUNCHED, ownerRuntime.launch(progressWaiter));
+                    ownerRuntime.drain(8);
+                    dispatcher.signalProgressForTesting(suspendedSequence);
+                    ownerRuntime.drain(8);
+                    Assert.assertEquals(3, ownerRuntime.getParkedFiberCount());
+                    Assert.assertFalse(waitingOwner.isDone());
+
+                    waitQueue.fire(1, false);
+                    int drainedCount;
+                    do {
+                        drainedCount = ownerRuntime.drain(8);
+                    } while (drainedCount > 0);
+                    Assert.assertNull(failure.get());
+                    Assert.assertEquals(0, suspendedCollectedCount.get());
+                    Assert.assertFalse(progressWaiter.isDone());
+                    Assert.assertTrue("owner behind the finished frame was not woken", waitingOwner.isDone());
+                    Assert.assertEquals(2, waitingCollectedCount.get());
+                } finally {
+                    isProgressWaiterReleased.set(true);
+                    waitQueue.fire(1, false);
+                    final long deadline = System.nanoTime() + 5_000_000_000L;
+                    while ((!suspendedOwner.isDone() || !waitingOwner.isDone() || !progressWaiter.isDone())
+                            && System.nanoTime() < deadline) {
+                        consumerQueue.fire(1, false);
+                        dispatcher.signalProgressForTesting(waitingSequence);
+                        ownerRuntime.drain(8);
+                    }
+                }
+                Assert.assertEquals(1, suspendedCollectedCount.get());
             } finally {
                 engine.getMessageBus().setPageFrameReduceDispatcher(previousDispatcher);
                 close(ownerRuntime);
