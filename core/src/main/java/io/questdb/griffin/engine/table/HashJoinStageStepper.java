@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.std.DirectLongList;
 import org.jetbrains.annotations.TestOnly;
 
 /**
@@ -104,6 +105,15 @@ abstract class HashJoinStageStepper {
      * @param isDescending true for a backward probe scan
      */
     abstract void probeRows(AsyncHashJoinAtom.Slot slot, long rowCount, boolean isDescending);
+
+    /**
+     * Probes the stage for each row of a frame that the probe filter kept, in the order the probe
+     * scan yields them: from the last kept row for a backward scan.
+     *
+     * @param rows         the kept rows' indexes in the frame, ascending
+     * @param isDescending true for a backward probe scan
+     */
+    abstract void probeRows(AsyncHashJoinAtom.Slot slot, DirectLongList rows, boolean isDescending);
 
     /**
      * Probes this stage for the slot's current probe row and appends the row's tuple to the slot's

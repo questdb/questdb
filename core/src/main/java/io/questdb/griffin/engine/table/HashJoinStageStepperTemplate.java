@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.griffin.engine.join.FrozenHashJoinBuild;
+import io.questdb.std.DirectLongList;
 
 /**
  * The bytecode that {@link HashJoinStageStepper#newInstance()} defines a hidden class from, once per
@@ -40,6 +41,17 @@ final class HashJoinStageStepperTemplate extends HashJoinStageStepper {
         final PageFrameMemoryRecord probeRecord = slot.probeRecord;
         for (long i = 0; i < rowCount; i++) {
             final long row = isDescending ? rowCount - 1 - i : i;
+            probeRecord.setRowIndex(row);
+            slot.probeRow = row;
+            step(slot, 0);
+        }
+    }
+
+    @Override
+    void probeRows(AsyncHashJoinAtom.Slot slot, DirectLongList rows, boolean isDescending) {
+        final PageFrameMemoryRecord probeRecord = slot.probeRecord;
+        for (long p = 0, n = rows.size(); p < n; p++) {
+            final long row = rows.get(isDescending ? n - 1 - p : p);
             probeRecord.setRowIndex(row);
             slot.probeRow = row;
             step(slot, 0);

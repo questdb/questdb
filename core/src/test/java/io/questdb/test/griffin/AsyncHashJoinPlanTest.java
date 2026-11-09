@@ -185,9 +185,10 @@ public class AsyncHashJoinPlanTest extends AbstractCairoTest {
     @Test
     public void testRejectedBuildInputs() throws Exception {
         createTables();
-        // A build input that exposes no page frames: a GROUP BY result, a filter, a LATEST BY.
+        // A build input that exposes no page frames: a GROUP BY result, a filter that the join cannot
+        // steal since it applies a LIMIT, a LATEST BY.
         assertOrdinaryPlan("SELECT t.k, d2.w FROM t LEFT JOIN (SELECT k, max(w) w FROM d) d2 ON t.k = d2.k", sqlExecutionContext);
-        assertOrdinaryPlan("SELECT t.k, d2.w FROM t LEFT JOIN (SELECT * FROM d WHERE w > 2) d2 ON t.k = d2.k", sqlExecutionContext);
+        assertOrdinaryPlan("SELECT t.k, d2.w FROM t LEFT JOIN (SELECT * FROM d WHERE w > 2 LIMIT 3) d2 ON t.k = d2.k", sqlExecutionContext);
         assertOrdinaryPlan("SELECT t.k, d2.w FROM t LEFT JOIN (SELECT * FROM q LATEST ON qts PARTITION BY k) d2 ON t.k = d2.k", sqlExecutionContext);
         // A build whose record cursor offers no random access: its ordinary plan chains duplicates
         // oldest first.
@@ -212,9 +213,12 @@ public class AsyncHashJoinPlanTest extends AbstractCairoTest {
         assertOrdinaryPlan("SELECT t.k, d.w FROM t LEFT JOIN d ON t.a = d.a", sqlExecutionContext);
         // A probe column that two keys read through two encodings.
         assertOrdinaryPlan("SELECT t.k, d2.w FROM t LEFT JOIN (SELECT s s1, s::STRING s2, w FROM d) d2 ON t.s = d2.s1 AND t.s = d2.s2", sqlExecutionContext);
-        // A probe input that exposes no page frames: a GROUP BY result or a filter.
-        assertOrdinaryPlan("SELECT t2.k, d.w FROM (SELECT k, max(v) v FROM t) t2 LEFT JOIN d ON t2.k = d.k", sqlExecutionContext);
-        assertOrdinaryPlan("SELECT t.k, d.w FROM t LEFT JOIN d ON t.k = d.k WHERE t.v > 2", sqlExecutionContext);
+        // A probe input that exposes no page frames: a GROUP BY result or a filter that the join
+        // cannot steal since it applies a LIMIT. The vectorized GROUP BY seeds its hash table with the
+        // table's address, so its keys come in an order that may change between two executions; the
+        // sort fixes it, so that the two executions that assertOrdinaryPlan() compares agree.
+        assertOrdinaryPlan("SELECT t2.k, d.w FROM (SELECT k, max(v) v FROM t ORDER BY k) t2 LEFT JOIN d ON t2.k = d.k", sqlExecutionContext);
+        assertOrdinaryPlan("SELECT t2.k, d.w FROM (SELECT * FROM t WHERE v > 2 LIMIT 5) t2 LEFT JOIN d ON t2.k = d.k", sqlExecutionContext);
         // The second join of a query, whose left input is a join.
         assertQuery("SELECT t.k, d.w, d2.w FROM t LEFT JOIN d ON t.k = d.k LEFT JOIN d d2 ON t.k = d2.k")
                 .assertsPlan("""

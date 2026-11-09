@@ -48,7 +48,9 @@ import org.junit.Assert;
  * and the B views of the var-size columns, since order parity is part of the operator's contract.
  */
 public final class ParallelHashJoinTestUtils {
-    private static final String OPERATOR = "Async Hash Join";
+    // The operator's EXPLAIN node, "Async Hash Join" or, with a compiled probe filter, "Async JIT
+    // Hash Join", both followed by their worker count, which the fused GROUP BY's node is not.
+    private static final String OPERATOR = "Hash Join workers:";
 
     private ParallelHashJoinTestUtils() {
     }

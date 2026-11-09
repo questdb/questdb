@@ -425,6 +425,21 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
     }
 
     /**
+     * Tells a filter of the open cursor's execution, if any, that the cursor closed, and folds what
+     * that throws into the cleanup failure so far, so that the caller goes on releasing the rest.
+     */
+    static Throwable cursorClosed(Throwable failure, @Nullable Function function) {
+        if (function != null) {
+            try {
+                function.cursorClosed();
+            } catch (Throwable th) {
+                return Misc.foldCleanupFailure(failure, th);
+            }
+        }
+        return failure;
+    }
+
+    /**
      * Releases what the open cursor's execution took: the build filters' per-execution state, the
      * slots' build views and probes, the frozen build, the translation caches and, last, the build
      * scan. Every reducer must have finished, and every reader of the frozen build's payload and of
@@ -794,17 +809,6 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
         } finally {
             host.release(slotId);
         }
-    }
-
-    private static Throwable cursorClosed(Throwable failure, Function function) {
-        if (function != null) {
-            try {
-                function.cursorClosed();
-            } catch (Throwable th) {
-                return Misc.foldCleanupFailure(failure, th);
-            }
-        }
-        return failure;
     }
 
     /**

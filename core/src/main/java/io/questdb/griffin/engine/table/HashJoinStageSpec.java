@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.HashJoinKeyLayout;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
@@ -67,9 +68,7 @@ public final class HashJoinStageSpec implements Plannable, QuietCloseable {
         this.keyLayout = keyLayout;
         this.isOuter = isOuter;
         this.condition = condition;
-        for (int i = 0, n = buildInput.getMetadata().getColumnCount(); i < n; i++) {
-            payloadColumns.add(buildInput.getColumnMap().getQuick(i));
-        }
+        payloadColumns.addAll(buildInput.getColumnMap());
     }
 
     @Override
@@ -111,6 +110,16 @@ public final class HashJoinStageSpec implements Plannable, QuietCloseable {
             sink.attr("buildPayload").val("copied when the probe is large enough");
         }
         final RecordCursorFactory buildFactory = buildInput.getFactory();
+        // The build scan's stolen filter reads the scan's columns. A compiled filter runs as JIT
+        // code, so its attribute says so; the operator's own name speaks for the probe filter only.
+        final AsyncFilterContext buildFilterContext = buildInput.getFilterContext();
+        final RecordMetadata callerMetadata = sink.getMetadata();
+        sink.setMetadata(buildFactory.getMetadata());
+        try {
+            sink.optAttr(buildInput.isFilterCompiled() ? "buildJitFilter" : "buildFilter", buildFilterContext.getFilter(-1));
+        } finally {
+            sink.setMetadata(callerMetadata);
+        }
         sink.child(buildFactory);
     }
 

@@ -106,8 +106,9 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
             columnSources.add(1);
             columnIndexes.add(c - columnSplit);
         }
+        // A LEFT join's miss reads the payload columns as typed NULLs, by their payload index.
         final ObjList<ColumnTypes> payloadTypes = new ObjList<>();
-        payloadTypes.add(stage.getBuildInput().getMetadata());
+        payloadTypes.add(stage.getBuildInput().getColumnTypes());
         this.record = new MultiHashJoinRecord(columnSources, columnIndexes, payloadTypes, null, null, null);
         record.setProbeRecord(probeRecord);
     }
@@ -207,6 +208,7 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
     @Override
     public void toTop() {
         collectCursor(false);
+        atom.toTop();
         frameSequence.toTop();
         resetFrames();
     }

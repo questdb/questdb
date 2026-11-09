@@ -212,19 +212,25 @@ public final class AsyncHashJoinRecordCursorFactory extends AbstractRecordCursor
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("Async Hash Join");
+        final HashJoinInput leftInput = spec.getLeftInput();
+        // A compiled probe filter runs as JIT code, which the operator's name reports, as the
+        // filters it stole the probe filter from do.
+        sink.type(leftInput.isFilterCompiled() ? "Async JIT Hash Join" : "Async Hash Join");
         sink.meta("workers").val(workerCount);
         sink.attr("stages").val(spec.getStageCount());
         // This plan can print inside another operator's attribute, e.g. as a scalar sub-query, while
         // that operator has set the sink's metadata or base-metadata mode for its own columns. The
-        // plan prints its children as at the plan's root, and then gives the caller back its
-        // metadata and mode for the columns that follow the sub-query.
+        // plan resolves the probe filter's columns against the probe scan, prints its children as at
+        // the plan's root, and then gives the caller back its metadata and mode for the columns that
+        // follow the sub-query.
         final RecordMetadata callerMetadata = sink.getMetadata();
         final boolean isCallerUsingBaseMetadata = sink.getUseBaseMetadata();
         sink.useBaseMetadata(false);
         try {
+            sink.setMetadata(leftInput.getMetadata());
+            sink.optAttr("filter", leftInput.getFilterContext().getFilter(-1));
             sink.setMetadata(null);
-            sink.child("Probe", spec.getLeftInput().getFactory());
+            sink.child("Probe", leftInput.getFactory());
             for (int k = 0, n = spec.getStageCount(); k < n; k++) {
                 sink.child(spec.getStage(k));
             }

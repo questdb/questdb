@@ -24,7 +24,9 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.IntList;
@@ -42,13 +44,19 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
  * <p>
  * The input owns the scan's factory and the filter context that the join reads its frames through:
  * the memory pools of the owner and of every worker, and the scan's filter with its worker copies,
- * or no filter for an unfiltered scan. Its column map names, for each column of the input as the
- * query compiled it, the column of the frames that holds it. The scan order is the order the
- * factory scans in, which the join walks the frames and their rows in, so that the rows it produces
- * and the duplicates it chains come in the order the input's own cursor yields them.
+ * or no filter for an unfiltered scan. A filtered input is a filter that the planner stole from the
+ * query's own filter over a page frame scan, with its JIT code and bind variables: the join runs it
+ * over each frame, in place of the filter's own cursor, and keeps the rows that pass it. Its column
+ * map names, for each column of the input as the query compiled it, the column of the frames that
+ * holds it, so that a projection above the filter maps onto the scan's columns. The scan order is
+ * the order the factory scans in, which the join walks the frames and their rows in, so that the
+ * rows it produces and the duplicates it chains come in the order the input's own cursor yields
+ * them.
  */
 public final class HashJoinInput implements QuietCloseable {
     private final IntList columnMap;
+    // The types of the input's columns as compiled, in the order the column map lists them.
+    private final ArrayColumnTypes columnTypes = new ArrayColumnTypes();
     private final RecordCursorFactory factory;
     private final AsyncFilterContext filterContext;
     // ORDER_ASC or ORDER_DESC.
@@ -71,6 +79,10 @@ public final class HashJoinInput implements QuietCloseable {
         this.filterContext = filterContext;
         this.ownedFilterContext = filterContext;
         this.order = factory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
+        final RecordMetadata metadata = factory.getMetadata();
+        for (int i = 0, n = columnMap.size(); i < n; i++) {
+            columnTypes.add(metadata.getColumnType(columnMap.getQuick(i)));
+        }
     }
 
     @Override
@@ -89,6 +101,17 @@ public final class HashJoinInput implements QuietCloseable {
         return columnMap;
     }
 
+    /**
+     * The types of the input's columns as the query compiled them, in the order of
+     * {@link #getColumnMap()}.
+     */
+    public ColumnTypes getColumnTypes() {
+        return columnTypes;
+    }
+
+    /**
+     * The page frame scan the join reads, which holds the columns {@link #getColumnMap()} names.
+     */
     public RecordCursorFactory getFactory() {
         return factory;
     }
@@ -97,6 +120,10 @@ public final class HashJoinInput implements QuietCloseable {
         return filterContext;
     }
 
+    /**
+     * The metadata of the page frame scan's columns, which the frames hold, rather than of the input
+     * as the query compiled it; see {@link #getColumnTypes()}.
+     */
     public RecordMetadata getMetadata() {
         return factory.getMetadata();
     }
@@ -107,6 +134,23 @@ public final class HashJoinInput implements QuietCloseable {
      */
     public int getOrder() {
         return order;
+    }
+
+    /**
+     * True when the filter context holds a filter that the planner stole from the input's own filter,
+     * so that the join keeps only the rows of each frame that pass it. A filtered input's cursor
+     * reports no size, so the serial join never swaps its inputs over it.
+     */
+    public boolean hasStolenFilter() {
+        return filterContext.getFilter(-1) != null;
+    }
+
+    /**
+     * True when the stolen filter runs as JIT code, on every frame that has no column top and no
+     * Parquet column that the record converts per row; see {@link #hasStolenFilter()}.
+     */
+    public boolean isFilterCompiled() {
+        return filterContext.getCompiledFilter() != null;
     }
 
     /**

@@ -26,7 +26,9 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
@@ -42,6 +44,7 @@ import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.griffin.engine.join.FrozenHashJoinBuild;
 import io.questdb.griffin.engine.join.HashJoinPayloadSource;
 import io.questdb.griffin.engine.join.SymbolKeyTranslator;
+import io.questdb.jit.CompiledFilter;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
@@ -65,20 +68,27 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
  * the build. The owner dispatches the probe tasks after the build returns, and the first task that
  * the frame sequence publishes is what publishes the builds and the slots' probes to the workers.
  * <p>
- * A probe task joins one frame, see {@link #probeFrame}: for each probe row, in the probe scan's
- * order, the stage's stepper looks the row's key up and appends the row and the stage's entry to the
- * frame's ring entry, which the consumer reads in frame order. {@link #clear()} requires every task
- * to have finished and the consumer to be done with the tuples and the payload readers.
+ * A probe task joins one frame, see {@link #probeFrame}: it keeps the frame's rows that the probe
+ * filter passes, if the left input has one, and for each kept row, in the probe scan's order, the
+ * stage's stepper looks the row's key up and appends the row and the stage's entry to the frame's
+ * ring entry, which the consumer reads in frame order. {@link #clear()} requires every task to have
+ * finished and the consumer to be done with the tuples and the payload readers.
  */
 public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner {
     private final boolean isProbeDescending;
+    private final boolean isProbeFiltered;
     private final PerWorkerLocks perWorkerLocks;
+    // The left input's stolen filter, with its worker copies and JIT code, which the atom borrows;
+    // a context without a filter when the left input has none.
+    private final AsyncFilterContext probeFilterContext;
     private final HashJoinTupleRing ring;
     private final ObjList<Slot> slots = new ObjList<>();
     // The stages as compiled, which the atom borrows for their join types and steppers.
     private final ObjList<HashJoinStageSpec> specs = new ObjList<>();
     private final ObjList<HashJoinBuildStage> stages = new ObjList<>();
     private final int workerCount;
+    // True from the moment init() initializes the probe filter until clear() releases it.
+    private boolean isProbeFilterInitialized;
     // The first stage's build scan, which the factory opened before the probe scan, until the stage
     // adopts it in init(); null otherwise.
     private PageFrameCursor pendingBuildCursor;
@@ -93,6 +103,8 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
         this.workerCount = workerCount;
         final int stageCount = spec.getStageCount();
         this.isProbeDescending = spec.getLeftInput().getOrder() == ORDER_DESC;
+        this.probeFilterContext = spec.getLeftInput().getFilterContext();
+        this.isProbeFiltered = spec.getLeftInput().hasStolenFilter();
         this.perWorkerLocks = new PerWorkerLocks(configuration, workerCount);
         this.ring = new HashJoinTupleRing(configuration, stageCount);
         final int probeColumnCount = spec.getLeftInput().getMetadata().getColumnCount();
@@ -132,6 +144,19 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
     public void clear() {
         Throwable failure = Misc.freeBestEffort(null, pendingBuildCursor);
         pendingBuildCursor = null;
+        if (isProbeFilterInitialized) {
+            isProbeFilterInitialized = false;
+            final Function ownerFilter = probeFilterContext.getFilter(-1);
+            failure = HashJoinBuildStage.cursorClosed(failure, ownerFilter);
+            for (int i = 0; i < workerCount; i++) {
+                final Function workerFilter = probeFilterContext.getFilter(i);
+                if (workerFilter != ownerFilter) {
+                    failure = HashJoinBuildStage.cursorClosed(failure, workerFilter);
+                }
+            }
+        }
+        // The filter context's lists shrink back to their initial capacity for the next execution.
+        failure = Misc.clearBestEffort(failure, probeFilterContext);
         failure = Misc.clearBestEffort(failure, ring);
         // The slots let go of the probes and the probe scan's symbol tables before the stages close
         // the builds, and the frame sequence closes the probe scan after the atom.
@@ -172,11 +197,12 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
     }
 
     /**
-     * Adopts the first stage's build scan and binds every slot to the probe scan, and reads no row of
-     * either: {@link #build} does the work that grows with the builds, when the cursor is first asked
-     * for a row. Everything that can throw a SqlException runs here, so that it surfaces from
-     * getCursor(). On failure the factory closes the cursor, which resets the frame sequence, whose
-     * reset runs {@link #clear()}: it releases what this took, the build scan included.
+     * Adopts the first stage's build scan, binds every slot to the probe scan and initializes the
+     * probe filter, and reads no row of either scan: {@link #build} does the work that grows with the
+     * builds, when the cursor is first asked for a row. Everything that can throw a SqlException runs
+     * here, so that it surfaces from getCursor(). On failure the factory closes the cursor, which
+     * resets the frame sequence, whose reset runs {@link #clear()}: it releases what this took, the
+     * build scan included.
      *
      * @param symbolTableSource the open probe scan
      */
@@ -189,6 +215,10 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
         for (int i = 0, n = slots.size(); i < n; i++) {
             slots.getQuick(i).probeRecord.of(symbolTableSource);
         }
+        // The workers' copies of the probe filter take symbol tables of their own, and the bind
+        // variables of a compiled filter go to its bind variable memory, for this execution's values.
+        isProbeFilterInitialized = true;
+        probeFilterContext.initFilters(symbolTableSource, executionContext);
     }
 
     /**
@@ -260,23 +290,84 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
 
     /**
      * Joins one probe frame on a slot: reads the frame through the task's memory, so that the
-     * consumer reads the probe rows where the task read them, and writes the frame's tuples into its
-     * ring entry, in the probe scan's row order. The tuples' count goes to the task.
+     * consumer reads the probe rows where the task read them, keeps the rows that the probe filter
+     * passes in the task's filtered rows, and writes the frame's tuples into its ring entry, in the
+     * probe scan's row order. The tuples' count goes to the task.
      */
     void probeFrame(int slotId, PageFrameReduceTask task) {
         final Slot slot = getSlot(slotId);
-        slot.probeRecord.init(task.populateFrameMemory());
+        final PageFrameMemory frameMemory = task.populateFrameMemory();
+        slot.probeRecord.init(frameMemory);
         final int frameIndex = task.getFrameIndex();
         final long rowCount = task.getFrameRowCount();
-        // A probe row yields at most one tuple, so the frame's rows bound its tuples.
-        final DirectLongList tuples = ring.openTuples(frameIndex, rowCount);
+        final DirectLongList rows;
+        if (isProbeFiltered) {
+            rows = task.getFilteredRows();
+            filterProbeFrame(slotId, task, frameMemory, slot.probeRecord, rows, rowCount);
+        } else {
+            rows = null;
+        }
+        // A probe row yields at most one tuple, so the frame's rows, or the rows the filter kept,
+        // bound its tuples.
+        final DirectLongList tuples = ring.openTuples(frameIndex, rows != null ? rows.size() : rowCount);
         slot.tuples = tuples;
         try {
-            specs.getQuick(0).getStepper().probeRows(slot, rowCount, isProbeDescending);
+            final HashJoinStageStepper stepper = specs.getQuick(0).getStepper();
+            if (rows != null) {
+                stepper.probeRows(slot, rows, isProbeDescending);
+            } else {
+                stepper.probeRows(slot, rowCount, isProbeDescending);
+            }
         } finally {
             slot.tuples = null;
         }
         task.setFilteredRowCount(tuples.size() / ring.getTupleStride());
+    }
+
+    /**
+     * Rewinds the owner's probe filter, as the filter that the join stole it from rewinds it when its
+     * cursor goes back to the top. The workers' copies stay as they are, as theirs do.
+     */
+    void toTop() {
+        final Function ownerFilter = probeFilterContext.getFilter(-1);
+        if (ownerFilter != null) {
+            ownerFilter.toTop();
+        }
+    }
+
+    /**
+     * Leaves in {@code rows}, ascending, the frame's rows that the probe filter passes, on the slot's
+     * own copy of the filter. The rows go to the task's list rather than the slot's, because the
+     * frame's continuation reads them again after the slot has moved on to other frames. The
+     * compiled filter writes up to a row per frame row into the list it is given, which this list
+     * holds room for, and reads raw column addresses, so column tops and Parquet type casts, which
+     * the record resolves per row, fall back to the interpreted filter.
+     */
+    private void filterProbeFrame(
+            int slotId,
+            PageFrameReduceTask task,
+            PageFrameMemory frameMemory,
+            PageFrameMemoryRecord probeRecord,
+            DirectLongList rows,
+            long rowCount
+    ) {
+        rows.clear();
+        final CompiledFilter compiledFilter = probeFilterContext.getCompiledFilter();
+        if (compiledFilter == null || frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
+            AsyncFilterUtils.applyFilter(probeFilterContext.getFilter(slotId), rows, probeRecord, rowCount);
+        } else {
+            AsyncFilterUtils.applyCompiledFilter(
+                    compiledFilter,
+                    probeFilterContext.getBindVarMemory(),
+                    probeFilterContext.getBindVarFunctions(),
+                    frameMemory,
+                    task.getFrameSequence().getPageFrameAddressCache(),
+                    probeFilterContext.getDataAddresses(slotId),
+                    probeFilterContext.getAuxAddresses(slotId),
+                    rows,
+                    rowCount
+            );
+        }
     }
 
     /**
