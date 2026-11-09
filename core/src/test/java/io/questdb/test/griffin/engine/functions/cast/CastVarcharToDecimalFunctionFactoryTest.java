@@ -191,6 +191,27 @@ public class CastVarcharToDecimalFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCastExponentAtIntLimits() throws Exception {
+        // an exponent near the int limits puts the value out of range of every width, as a constant and at
+        // runtime; a zero stays zero whatever its exponent
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v VARCHAR)");
+            execute("INSERT INTO t VALUES ('1e2147483647'), ('-1e2147483647'), ('1e-2147483648'), ('1.5e-2147483647')");
+            for (String value : new String[]{"1e2147483647", "-1e2147483647", "1e-2147483648", "1.5e-2147483647"}) {
+                for (String type : ALL_WIDTHS) {
+                    final String error = "inconvertible value: `" + value + "` [VARCHAR -> " + type + "]";
+                    assertQuery("select cast(cast('" + value + "' as varchar) as " + type + ")").fails(12, error);
+                    assertQuery("SELECT cast(v AS " + type + ") FROM t WHERE v = '" + value + "'").fails(12, error);
+                }
+            }
+            assertQuery("select cast(cast('0e2147483647' as varchar) as DECIMAL(10,2)) v")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("v\n0.00\n");
+        });
+    }
+
+    @Test
     public void testCastHighScaleLowPrecision() throws Exception {
         assertMemoryLeak(
                 () -> {

@@ -270,7 +270,8 @@ public class LineUdpParserSupport {
 
     /**
      * The value without its quotes when it came in as a quoted string, else the value as it is:
-     * a tag value or a bare symbol keeps every character, quotes included, as over TCP.
+     * a tag value keeps every character, quotes included, and a number keeps its spelling, as over
+     * TCP; so does a bare text field value, which TCP refuses.
      */
     private static CharSequence unquoted(CharSequence value, int valueType) {
         if (valueType != ColumnType.STRING && valueType != ColumnType.VARCHAR) {

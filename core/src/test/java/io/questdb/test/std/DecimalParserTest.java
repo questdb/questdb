@@ -24,6 +24,8 @@
 
 package io.questdb.test.std;
 
+import io.questdb.std.Decimal;
+import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimal64;
 import io.questdb.std.DecimalParser;
@@ -34,6 +36,37 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class DecimalParserTest {
+
+    @Test
+    public void testExponentAtIntLimits() throws NumericException {
+        // an exponent can be anything an int holds; moving the dot by it must not wrap round, so a value out
+        // of range is rejected with the digits it needs, a zero stays zero and a lossy parse truncates to zero
+        for (Decimal decimal : new Decimal[]{new Decimal64(), new Decimal128(), new Decimal256()}) {
+            // 1e2147483647 has 2147483648 integer digits, two more for the scale
+            assertNotParsed(decimal, "decimal '1e2147483647' requires precision of 2147483650 but is limited to 10", "1e2147483647", 10, 2);
+            assertNotParsed(decimal, "decimal '-1e2147483647' requires precision of 2147483650 but is limited to 10", "-1e2147483647", 10, 2);
+            assertNotParsed(decimal, "decimal '9.5e2147483647' requires precision of 2147483650 but is limited to 10", "9.5e2147483647", 10, 2);
+            assertNotParsed(decimal, "decimal '1e2147483646' requires precision of 2147483649 but is limited to 10", "1e2147483646", 10, 2);
+            assertNotParsed(decimal, "decimal '1e2147483647' exceeds maximum allowed precision of " + decimal.getMaxPrecision(), "1e2147483647", -1, -1);
+            assertNotParsed(decimal, "decimal '1e2147483646' exceeds maximum allowed precision of " + decimal.getMaxPrecision(), "1e2147483646", -1, -1);
+            // 1e-2147483648 and 1.5e-2147483647 have 2147483648 decimal places
+            assertNotParsed(decimal, "decimal '1e-2147483648' has 2147483648 decimal places but scale is limited to 2", "1e-2147483648", 10, 2);
+            assertNotParsed(decimal, "decimal '-1e-2147483648' has 2147483648 decimal places but scale is limited to 2", "-1e-2147483648", 10, 2);
+            assertNotParsed(decimal, "decimal '1.5e-2147483647' has 2147483648 decimal places but scale is limited to 2", "1.5e-2147483647", 10, 2);
+            assertNotParsed(decimal, "decimal '9e-2147483647' has 2147483647 decimal places but scale is limited to 2", "9e-2147483647", 10, 2);
+            assertNotParsed(decimal, "decimal '0e-2147483648' has 2147483648 decimal places but scale is limited to 2", "0e-2147483648", 10, 2);
+            assertNotParsed(decimal, "decimal '1e-2147483648' exceeds maximum allowed scale of " + decimal.getMaxScale(), "1e-2147483648", -1, -1);
+            assertNotParsed(decimal, "decimal '1.5e-2147483647' exceeds maximum allowed scale of " + decimal.getMaxScale(), "1.5e-2147483647", -1, -1);
+            assertNotParsed(decimal, "decimal '9e-2147483647' exceeds maximum allowed scale of " + decimal.getMaxScale(), "9e-2147483647", -1, -1);
+        }
+        assertParsed("0.00", 2, 2, "0e2147483647", 10, 2);
+        assertParsed("0.00", 2, 2, "-0e2147483647", 10, 2);
+        assertParsed("0", 1, 0, "0e2147483647", -1, -1);
+        assertParsed("0.00", 2, 2, "1e-2147483648", 10, 2, true, true);
+        assertParsed("0.00", 2, 2, "-1e-2147483648", 10, 2, true, true);
+        assertParsed("0.00", 2, 2, "1.5e-2147483647", 10, 2, true, true);
+        assertParsed("0.00", 2, 2, "0e-2147483648", 10, 2, true, true);
+    }
 
     @Test
     public void testExponentBelowOneFitsFullScale() throws NumericException {
@@ -180,6 +213,15 @@ public class DecimalParserTest {
         assertParsed(z76, 76, 76, "0", 76, 76);
         assertParsed(z76, 76, 76, "-0", 76, 76);
         assertParsed(z76, 76, 76, "000", 76, 76);
+    }
+
+    private static void assertNotParsed(Decimal decimal, String expectedMessage, String value, int precision, int scale) {
+        try {
+            DecimalParser.parse(decimal, value, 0, value.length(), precision, scale, true, false);
+            Assert.fail("expected '" + value + "' to be rejected by " + decimal.getClass().getSimpleName());
+        } catch (NumericException e) {
+            TestUtils.assertContains(e.getMessage(), expectedMessage);
+        }
     }
 
     private static void assertNotParsed(String expectedMessage, String value, int precision, int scale) {

@@ -60,7 +60,8 @@ import static io.questdb.cutlass.line.LineUtils.from;
 
 public class LineUdpParserImpl implements LineUdpParser, Closeable {
     private final static Log LOG = LogFactory.getLog(LineUdpParserImpl.class);
-    private static final FieldNameParser NOOP_FIELD_NAME = _ -> {
+    private static final String DESIGNATED_TIMESTAMP_NAME = "timestamp"; // the name a table this parser creates gives it
+    private static final FieldNameParser NOOP_FIELD_NAME = (_, _) -> {
     };
     private static final FieldValueParser NOOP_FIELD_VALUE = (_, _) -> {
     };
@@ -71,6 +72,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     private final boolean autoCreateNewTables;
     private final Clock clock;
     private final LongList columnIndexAndType = new LongList();
+    private final LongList columnLines = new LongList(); // the number of the line that last set each column of an existing table
     private final LongList columnNameType = new LongList();
     private final LongList columnValues = new LongList();
     private final CharSequenceObjHashMap<TableWriter> commitList = new CharSequenceObjHashMap<>();
@@ -93,6 +95,8 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     private int columnIndex;
     private long columnName;
     private int columnType;
+    private long currentLine = 1; // numbers the lines from 1, so that no column starts out set by the current one
+    private boolean isNewTableValueSkipped; // the line that creates a table named a column again, so its value is dropped
     private RecordMetadata metadata;
     private final FieldNameParser MY_FIELD_NAME = this::parseFieldName;
     private FieldNameParser onFieldName;
@@ -208,7 +212,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                 break;
             case EVT_FIELD_NAME:
             case EVT_TAG_NAME:
-                onFieldName.parse(token);
+                onFieldName.parse(token, cache);
                 break;
             case EVT_TAG_VALUE:
                 onTagValue.parse(token, cache);
@@ -304,6 +308,8 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         columnIndexAndType.clear();
         valueTypeByColIdx.clear();
         columnValues.clear();
+        currentLine++;
+        isNewTableValueSkipped = false;
     }
 
     private TableWriter.Row createNewRow(CharSequenceCache cache, int columnCount) {
@@ -396,7 +402,28 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         }
     }
 
-    private void parseFieldName(CachedCharSequence token) {
+    // whether the current line has set the column already; marks it set by the current line
+    private boolean isColumnSetByLine(int columnIndex) {
+        if (columnIndex < columnLines.size() && columnLines.getQuick(columnIndex) == currentLine) {
+            return true;
+        }
+        columnLines.extendAndSet(columnIndex, currentLine);
+        return false;
+    }
+
+    private boolean isNewTableColumnName(CharSequence name, CharSequenceCache cache) {
+        if (Chars.equalsIgnoreCase(name, DESIGNATED_TIMESTAMP_NAME)) {
+            return true;
+        }
+        for (int i = 0, n = columnNameType.size(); i < n; i += 2) {
+            if (Chars.equalsIgnoreCase(name, cache.get(columnNameType.getQuick(i)))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void parseFieldName(CachedCharSequence token, CharSequenceCache cache) {
         columnIndex = metadata.getColumnIndexQuiet(token);
         if (columnIndex > -1) {
             columnType = metadata.getColumnType(columnIndex);
@@ -407,10 +434,16 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         }
     }
 
-    private void parseFieldNameNewTable(CachedCharSequence token) {
+    private void parseFieldNameNewTable(CachedCharSequence token, CharSequenceCache cache) {
         if (!TableUtils.isValidColumnName(token, udpConfiguration.getMaxFileNameLength())) {
             LOG.error().$("invalid column name [columnName=").$safe(token).I$();
             switchModeToSkipLine();
+            return;
+        }
+        if (isNewTableColumnName(token, cache)) {
+            // the line names a column again, or names the designated timestamp: keep the first value, as
+            // for a table that exists
+            isNewTableValueSkipped = true;
             return;
         }
         columnNameType.add(token.getCacheAddress());
@@ -427,7 +460,8 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
 
     private void parseFieldValueNewTable(CachedCharSequence value, CharSequenceCache cache) {
         int valueType = LineUdpParserSupport.getValueType(value, defaultFloatColumnType, defaultIntegerColumnType, useLegacyStringDefault);
-        if (valueType == ColumnType.UNDEFINED || valueType == ColumnType.NULL) { // cannot create a col of type null
+        // cannot create a col of type null, but the empty value of a column named again is dropped anyway
+        if (valueType == ColumnType.UNDEFINED || (valueType == ColumnType.NULL && !isNewTableValueSkipped)) {
             switchModeToSkipLine();
         } else {
             parseValueNewTable(value, valueType);
@@ -445,6 +479,11 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     private void parseValue(CachedCharSequence value, int valueType, CharSequenceCache cache, boolean isForField) {
         assert valueType > ColumnType.UNDEFINED;
         if (columnType > ColumnType.UNDEFINED) {
+            if (columnIndex == metadata.getTimestampIndex() || isColumnSetByLine(columnIndex)) {
+                // the line names this column again, or names the designated timestamp, which the line's own
+                // timestamp sets: a row takes one value per column, the first, as with ILP over TCP
+                return;
+            }
             boolean valid;
             if (valueType != ColumnType.NULL) {
                 final int valueTypeTag = ColumnType.tagOf(valueType);
@@ -463,9 +502,9 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                             || columnTypeTag == ColumnType.BYTE;
                     case ColumnType.BYTE -> columnTypeTag == ColumnType.BYTE;
                     case ColumnType.BOOLEAN -> columnTypeTag == ColumnType.BOOLEAN;
-                    // the same conversions as ILP over TCP gives a quoted string; a geohash is
-                    // tested by its flag, since DECIMAL and multi-dimensional array types keep
-                    // their own data in the bits a geohash type uses for its precision
+                    // the same conversions as ILP over TCP gives a quoted string; a geohash column is
+                    // recognised by its type tag, since other types keep their own data in the bits a
+                    // geohash type uses
                     case ColumnType.STRING, ColumnType.VARCHAR -> columnTypeTag == ColumnType.STRING ||
                             columnTypeTag == ColumnType.VARCHAR ||
                             columnTypeTag == ColumnType.CHAR ||
@@ -473,11 +512,14 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                             columnTypeTag == ColumnType.SYMBOL ||
                             columnTypeTag == ColumnType.UUID ||
                             ColumnType.isDecimalType(columnTypeTag) ||
-                            isForField && ColumnType.isGeoHash(columnType);
+                            isForField && ColumnType.isGeoType(columnTypeTag);
+                    // a number goes into a SYMBOL column as its text, as over TCP
                     case ColumnType.DOUBLE -> columnTypeTag == ColumnType.DOUBLE
                             || columnTypeTag == ColumnType.FLOAT
+                            || columnTypeTag == ColumnType.SYMBOL
                             || ColumnType.isDecimalType(columnTypeTag);
                     case ColumnType.FLOAT -> columnTypeTag == ColumnType.FLOAT
+                            || columnTypeTag == ColumnType.SYMBOL
                             || ColumnType.isDecimalType(columnTypeTag);
                     case ColumnType.SYMBOL -> columnTypeTag == ColumnType.SYMBOL;
                     case ColumnType.LONG256 -> columnTypeTag == ColumnType.LONG256;
@@ -506,6 +548,8 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                 writer.addColumn(colNameAsChars, valueType, AllowAllSecurityContext.INSTANCE);
                 // Writer index can be different from column count, it keeps deleted columns in metadata
                 int columnIndex = writer.getColumnIndex(colNameAsChars);
+                // a new column, so the line cannot have set it; this marks it for a repeat further on
+                isColumnSetByLine(columnIndex);
                 columnIndexAndType.add(Numbers.encodeLowHighInts(columnIndex, valueType));
                 columnValues.add(value.getCacheAddress());
                 valueTypeByColIdx.add(valueType);
@@ -524,6 +568,10 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     }
 
     private void parseValueNewTable(CachedCharSequence value, int valueType) {
+        if (isNewTableValueSkipped) {
+            isNewTableValueSkipped = false;
+            return;
+        }
         columnNameType.add(valueType);
         columnValues.add(value.getCacheAddress());
         valueTypeByColIdx.add(valueType);
@@ -646,7 +694,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
 
     @FunctionalInterface
     private interface FieldNameParser {
-        void parse(CachedCharSequence name);
+        void parse(CachedCharSequence name, CharSequenceCache cache);
     }
 
     @FunctionalInterface
@@ -677,7 +725,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         @Override
         public CharSequence getColumnName(int columnIndex) {
             if (columnIndex == getTimestampIndex()) {
-                return "timestamp";
+                return DESIGNATED_TIMESTAMP_NAME;
             }
             CharSequence colName = cache.get(columnNameType.getQuick(columnIndex * 2));
             if (TableUtils.isValidColumnName(colName, configuration.getMaxFileNameLength())) {

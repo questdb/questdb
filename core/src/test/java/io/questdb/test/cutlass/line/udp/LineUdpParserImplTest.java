@@ -213,9 +213,11 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
 
     @Test
     public void testBadDouble3() throws Exception {
+        // 1.6x makes column "double" a SYMBOL; the 1.3 sent to it later is stored as its text, as over TCP
         final String expected1 = """
                 sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1
                 xyz\t1.6x\t11\tfalse\tstring0\t1970-01-01T00:25:00.000000Z\t
+                \t1.3\t11\tfalse\tstring2\t1970-01-01T00:25:00.000000Z\tabc
                 \ta\t6\tfalse\tstring3\t1970-01-01T00:25:00.000000Z\trow3
                 \txxx\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4
                 """;
@@ -595,6 +597,37 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDecimalExponentAtIntLimits() throws Exception {
+        // an exponent near the int limits puts the value out of range, a cast error like any other: the row
+        // keeps NULL there and the lines after it are written
+        assertForEachStringDefault(
+                """
+                        d\tn\ttimestamp
+                        \t1\t1970-01-01T00:00:01.000000Z
+                        \t2\t1970-01-01T00:00:02.000000Z
+                        \t3\t1970-01-01T00:00:03.000000Z
+                        \t4\t1970-01-01T00:00:04.000000Z
+                        \t5\t1970-01-01T00:00:05.000000Z
+                        \t6\t1970-01-01T00:00:06.000000Z
+                        12.34\t7\t1970-01-01T00:00:07.000000Z
+                        """,
+                """
+                        x d=1e2147483647,n=1i 1000000000
+                        x d="1e2147483647",n=2i 2000000000
+                        x d=-1e2147483647,n=3i 3000000000
+                        x d=1e-2147483648,n=4i 4000000000
+                        x d="1e-2147483648",n=5i 5000000000
+                        x d="1.5e-2147483647",n=6i 6000000000
+                        x d=12.34,n=7i 7000000000
+                        """,
+                new TableModel(configuration, "x", PartitionBy.NONE)
+                        .col("d", ColumnType.getDecimalType(10, 2))
+                        .col("n", ColumnType.INT)
+                        .timestamp()
+        );
+    }
+
+    @Test
     public void testDecimalFromNumber() throws Exception {
         TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
                 .col("d", ColumnType.getDecimalType(10, 2))
@@ -621,14 +654,9 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
 
     @Test
     public void testDecimalFromString() throws Exception {
-        TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
-                .col("d", ColumnType.getDecimalType(10, 2))
-                .col("n", ColumnType.INT)
-                .timestamp();
-        AbstractCairoTest.create(model);
         // ILP over TCP stores "12.34" in a DECIMAL column; UDP must not store NULL instead.
         // Text that is not a number is a cast error: the row keeps NULL there.
-        assertThat(
+        assertForEachStringDefault(
                 """
                         d\tn\ttimestamp
                         12.34\t1\t1970-01-01T00:00:01.000000Z
@@ -640,7 +668,10 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                         x d="abc",n=2i 2000000000
                         x d="-0.01",n=3i 3000000000
                         """,
-                "x"
+                new TableModel(configuration, "x", PartitionBy.NONE)
+                        .col("d", ColumnType.getDecimalType(10, 2))
+                        .col("n", ColumnType.INT)
+                        .timestamp()
         );
     }
 
@@ -955,6 +986,84 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRepeatedColumnInLineThatCreatesTable() throws Exception {
+        // the line that creates a table keeps the first value of a column it names twice, even an empty
+        // repeat, and ignores a column named like the designated timestamp, as for a table that exists
+        assertThat(
+                """
+                        s\tv\ttimestamp
+                        a\t1.5\t1970-01-01T00:00:01.000000Z
+                        z\t9.5\t1970-01-01T00:00:02.000000Z
+                        """,
+                """
+                        nt,s=a,S=b v=1.5,v=2.5,timestamp=5000000t,Timestamp=6i,V= 1000000000
+                        nt,s=z v=9.5 2000000000
+                        """,
+                "nt"
+        );
+        // a malformed repeat drops the line as any malformed value does, and so does an empty value for a
+        // column that is not a repeat, which cannot give the column a type; the next line creates the table
+        assertThat(
+                """
+                        s\tv\ttimestamp
+                        b\t2.5\t1970-01-01T00:00:02.000000Z
+                        """,
+                """
+                        nt2,s=a v=1.5,v=bad" 1000000000
+                        nt2,s=a v= 1500000000
+                        nt2,s=b v=2.5 2000000000
+                        """,
+                "nt2"
+        );
+    }
+
+    @Test
+    public void testRepeatedColumnKeepsFirstValue() throws Exception {
+        // a line that names a column twice keeps the first value and ignores the repeat, as ILP over TCP
+        // does, for every kind of value, for a column the line adds and for a repeat of the wrong type; a
+        // column named like the designated timestamp is ignored too, the line's own timestamp sets it
+        AbstractCairoTest.create(new TableModel(configuration, "x", PartitionBy.NONE)
+                .col("s", ColumnType.SYMBOL)
+                .col("u", ColumnType.UUID)
+                .col("d", ColumnType.getDecimalType(10, 2))
+                .col("v", ColumnType.DOUBLE)
+                .col("n", ColumnType.INT)
+                .timestamp("ts"));
+        assertThat(
+                """
+                        s\tu\td\tv\tn\tts\tc
+                        a\t\t\tnull\t1\t1970-01-01T00:00:01.000000Z\tnull
+                        a\t\t\tnull\t2\t1970-01-01T00:00:02.000000Z\tnull
+                        \t11111111-2222-3333-4444-555555555555\t\tnull\t3\t1970-01-01T00:00:03.000000Z\tnull
+                        \t\t1.25\tnull\t4\t1970-01-01T00:00:04.000000Z\tnull
+                        \t\t1.25\tnull\t5\t1970-01-01T00:00:05.000000Z\tnull
+                        \t\t\t1.5\t6\t1970-01-01T00:00:06.000000Z\tnull
+                        \t\t\tnull\t7\t1970-01-01T00:00:07.000000Z\t1.5
+                        \t\t\tnull\t8\t1970-01-01T00:00:08.000000Z\t3.5
+                        \t\t\tnull\t9\t1970-01-01T00:00:09.000000Z\tnull
+                        \t\t\tnull\t10\t1970-01-01T00:00:10.000000Z\tnull
+                        \t\t\t1.5\t11\t1970-01-01T00:00:11.000000Z\tnull
+                        z\t\t\t9.5\t12\t1970-01-01T00:00:12.000000Z\tnull
+                        """,
+                """
+                        x,s=a,s=b n=1i 1000000000
+                        x,s=a S="b",n=2i 2000000000
+                        x u="11111111-2222-3333-4444-555555555555",u="66666666-7777-8888-9999-000000000000",n=3i 3000000000
+                        x d=1.25,d=2.5,n=4i 4000000000
+                        x d="1.25",D="2.50",n=5i 5000000000
+                        x v=1.5,V=2.5,n=6i 6000000000
+                        x c=1.5,c=2.5,n=7i 7000000000
+                        x c=3.5,C=4.5,n=8i 8000000000
+                        x ts=5000000t,n=9i 9000000000
+                        x TS=5000000i,n=10i 10000000000
+                        x v=1.5,v="abc",n=11i 11000000000
+                        x,s=z v=9.5,n=12i 12000000000
+                        """,
+                "x"
+        );
+    }
+
+    @Test
     public void testReservedName() throws Exception {
         final String expected = """
                 sym\tdouble\tint\tbool\tstr\ttimestamp
@@ -994,43 +1103,87 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testStringIntoMultiDimensionalArrayColumnIsRejected() throws Exception {
-        TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
-                .col("a", ColumnType.encodeArrayType(ColumnType.DOUBLE, 2))
-                .col("n", ColumnType.INT)
-                .timestamp();
-        AbstractCairoTest.create(model);
-        // a DOUBLE[][] type keeps its dimensions in the bits a geohash type uses for its
-        // precision; a string must not pass for a geohash and leave the row with a NULL array,
-        // the line is dropped as a type mismatch instead
+    public void testStringIntoArrayColumnIsRejected() throws Exception {
+        // a string sent to an array column is a type mismatch whatever the array's dimension count: the line
+        // is dropped, it is not stored with a NULL array
         assertMemoryLeak(() -> {
-            parse("""
-                    x a="abc",n=1i 1000000000
-                    x n=2i 2000000000
-                    """, configuration, new DefaultLineUdpReceiverConfiguration());
-            refreshTablesInBaseEngine();
-            try (
-                    TableReader reader = newOffPoolReader(configuration, "x");
-                    TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
-            ) {
-                Assert.assertTrue(cursor.hasNext());
-                Assert.assertEquals(2, cursor.getRecord().getInt(1));
-                Assert.assertFalse(cursor.hasNext());
+            for (int nDims = 1; nDims <= ColumnType.ARRAY_NDIMS_LIMIT; nDims++) {
+                AbstractCairoTest.create(new TableModel(configuration, "x", PartitionBy.NONE)
+                        .col("a", ColumnType.encodeArrayType(ColumnType.DOUBLE, nDims))
+                        .col("n", ColumnType.INT)
+                        .timestamp());
+                parse("""
+                        x a="abc",n=1i 1000000000
+                        x n=2i 2000000000
+                        """, configuration, new DefaultLineUdpReceiverConfiguration());
+                refreshTablesInBaseEngine();
+                try (
+                        TableReader reader = newOffPoolReader(configuration, "x");
+                        TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+                ) {
+                    Assert.assertTrue("dimensions: " + nDims, cursor.hasNext());
+                    Assert.assertEquals("dimensions: " + nDims, 2, cursor.getRecord().getInt(1));
+                    Assert.assertFalse("dimensions: " + nDims, cursor.hasNext());
+                }
+                execute("DROP TABLE x");
             }
         });
     }
 
     @Test
+    public void testSymbolFromNumber() throws Exception {
+        // a bare number sent to a SYMBOL column is stored as its text, as over TCP, whichever float type new
+        // columns take; a bare value that only looks like a number, such as +05:30, keeps its text too, where
+        // TCP would refuse the line
+        for (short floatType : new short[]{ColumnType.DOUBLE, ColumnType.FLOAT}) {
+            AbstractCairoTest.create(new TableModel(configuration, "x", PartitionBy.NONE)
+                    .col("s", ColumnType.SYMBOL)
+                    .col("n", ColumnType.INT)
+                    .timestamp());
+            assertThat(
+                    """
+                            s\tn\ttimestamp
+                            +15551234567\t1\t1970-01-01T00:00:01.000000Z
+                            +1.5\t2\t1970-01-01T00:00:02.000000Z
+                            1.5\t3\t1970-01-01T00:00:03.000000Z
+                            -1.5\t4\t1970-01-01T00:00:04.000000Z
+                            +0530\t5\t1970-01-01T00:00:05.000000Z
+                            +05:30\t6\t1970-01-01T00:00:06.000000Z
+                            -05:30\t7\t1970-01-01T00:00:07.000000Z
+                            1e5\t8\t1970-01-01T00:00:08.000000Z
+                            NaN\t9\t1970-01-01T00:00:09.000000Z
+                            .5\t10\t1970-01-01T00:00:10.000000Z
+                            """,
+                    """
+                            x s=+15551234567,n=1i 1000000000
+                            x s=+1.5,n=2i 2000000000
+                            x s=1.5,n=3i 3000000000
+                            x s=-1.5,n=4i 4000000000
+                            x s=+0530,n=5i 5000000000
+                            x s=+05:30,n=6i 6000000000
+                            x s=-05:30,n=7i 7000000000
+                            x s=1e5,n=8i 8000000000
+                            x s=NaN,n=9i 9000000000
+                            x s=.5,n=10i 10000000000
+                            """,
+                    "x",
+                    configuration,
+                    new DefaultLineUdpReceiverConfiguration() {
+                        @Override
+                        public short getDefaultColumnTypeForFloat() {
+                            return floatType;
+                        }
+                    }
+            );
+            execute("DROP TABLE x");
+        }
+    }
+
+    @Test
     public void testSymbolFromString() throws Exception {
-        TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
-                .col("s", ColumnType.SYMBOL)
-                .col("t", ColumnType.SYMBOL)
-                .col("n", ColumnType.INT)
-                .timestamp();
-        AbstractCairoTest.create(model);
-        // a quoted field value loses its quotes; a tag value and a bare field value keep
-        // every character, as over TCP
-        assertThat(
+        // a quoted field value loses its quotes; a tag value keeps every character, as over TCP, and so
+        // does a bare field value, which TCP would refuse
+        assertForEachStringDefault(
                 """
                         s\tt\tn\ttimestamp
                         abc\t\t1\t1970-01-01T00:00:01.000000Z
@@ -1042,7 +1195,11 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                         x,t="q" s="a b",n=2i 2000000000
                         x,t=plain s=bare,n=3i 3000000000
                         """,
-                "x"
+                new TableModel(configuration, "x", PartitionBy.NONE)
+                        .col("s", ColumnType.SYMBOL)
+                        .col("t", ColumnType.SYMBOL)
+                        .col("n", ColumnType.INT)
+                        .timestamp()
         );
     }
 
@@ -1130,13 +1287,8 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
 
     @Test
     public void testUuidFromString() throws Exception {
-        TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
-                .col("u", ColumnType.UUID)
-                .col("n", ColumnType.INT)
-                .timestamp();
-        AbstractCairoTest.create(model);
         // a string into a UUID column, as over TCP; text that is not a UUID is a cast error
-        assertThat(
+        assertForEachStringDefault(
                 """
                         u\tn\ttimestamp
                         11111111-2222-3333-4444-555555555555\t1\t1970-01-01T00:00:01.000000Z
@@ -1146,7 +1298,10 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                         x u="11111111-2222-3333-4444-555555555555",n=1i 1000000000
                         x u="not a uuid",n=2i 2000000000
                         """,
-                "x"
+                new TableModel(configuration, "x", PartitionBy.NONE)
+                        .col("u", ColumnType.UUID)
+                        .col("n", ColumnType.INT)
+                        .timestamp()
         );
     }
 
@@ -1411,6 +1566,25 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
             lexer.parse(mem, mem + bytes.length);
         } finally {
             Unsafe.free(mem, bytes.length, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    private static LineUdpReceiverConfiguration udpConfiguration(boolean useLegacyString) {
+        return new DefaultLineUdpReceiverConfiguration() {
+            @Override
+            public boolean isUseLegacyStringDefault() {
+                return useLegacyString;
+            }
+        };
+    }
+
+    // a quoted string is a VARCHAR on a server and a STRING with the legacy setting, so the lines run
+    // against a fresh table once with each
+    private void assertForEachStringDefault(String expected, String lines, TableModel model) throws Exception {
+        for (boolean useLegacyString : new boolean[]{false, true}) {
+            AbstractCairoTest.create(model);
+            assertThat(expected, lines, model.getTableName(), configuration, udpConfiguration(useLegacyString));
+            execute("DROP TABLE " + model.getTableName());
         }
     }
 
