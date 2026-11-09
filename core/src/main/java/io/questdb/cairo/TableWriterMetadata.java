@@ -36,6 +36,7 @@ import org.jetbrains.annotations.NotNull;
 import static io.questdb.cairo.TableUtils.META_OFFSET_PARTITION_BY;
 
 public class TableWriterMetadata extends AbstractRecordMetadata implements TableMetadata {
+    private int dedupMode;
     private long expiryCleanupIntervalMicros;
     private String expiryPredicate;
     private int maxUncommittedRows;
@@ -63,6 +64,11 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     @Override
     public IntList getCoveringColumnIndices(int columnIndex) {
         return getColumnMetadata(columnIndex).getCoveringColumnIndices();
+    }
+
+    @Override
+    public int getDedupMode() {
+        return dedupMode;
     }
 
     @Override
@@ -189,6 +195,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         this.expiryPredicate = null;
         this.expiryCleanupIntervalMicros = 0;
         this.tableFormat = TableUtils.getTableFormat(metaMem);
+        this.dedupMode = TableUtils.getDedupMode(metaMem);
 
         long offset = TableUtils.getColumnNameOffset(columnCount);
         this.symbolMapCount = 0;
@@ -268,6 +275,10 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
                 }
             }
         }
+    }
+
+    public void setDedupMode(int dedupMode) {
+        this.dedupMode = dedupMode;
     }
 
     public void setMaxUncommittedRows(int rows) {
