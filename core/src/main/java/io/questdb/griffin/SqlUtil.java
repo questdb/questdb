@@ -191,6 +191,8 @@ public class SqlUtil {
      * columns the plan of the view's own SELECT reads are columns the view reads with every value of its variables.
      * A column the map lists already, or a table whose columns include {@code *}, takes no mark, and a table whose
      * every column the other reads scan gets {@link ViewDefinition#OTHER_READ_WILDCARD} in place of marked columns.
+     * A column the other reads scan through a view the view reads, which that view lends only to such reads, comes
+     * marked already, see {@link #collectTableColumnReads}, and keeps its mark.
      *
      * @param depMap     the dependency map of the view, with the columns the plan of its own SELECT reads
      * @param otherReads the columns the other reads scan, as {@link #collectTableColumnReads} collects them
@@ -207,17 +209,24 @@ public class SqlUtil {
             if (columns.contains("*")) {
                 continue;
             }
-            if (otherReadColumns.contains("*")) {
+            if (otherReadColumns.contains("*") || otherReadColumns.contains(ViewDefinition.OTHER_READ_WILDCARD)) {
                 columns.add(ViewDefinition.OTHER_READ_WILDCARD);
                 continue;
             }
             for (int j = 0, m = otherReadColumns.getKeyCount(); j < m; j++) {
                 final CharSequence column = otherReadColumns.getKey(j);
-                if (column != null && columns.excludes(column)) {
+                if (column == null) {
+                    continue;
+                }
+                if (column.charAt(0) == ViewDefinition.OTHER_READ_COLUMN_PREFIX) {
+                    columns.add(Chars.toString(column));
+                } else if (columns.excludes(column)) {
                     columns.add(ViewDefinition.OTHER_READ_COLUMN_PREFIX + column.toString());
                 }
             }
         }
+        // the marked columns the main plan read through a view the view reads may now sit next to OTHER_READ_WILDCARD
+        dropColumnsCoveredByWildcard(depMap);
     }
 
     public static void addSelectStar(
@@ -507,6 +516,15 @@ public class SqlUtil {
      * A table whose columns include {@code *} lists no other column: the {@code *} lends every column of
      * the table, and the names next to it would only make the view definition larger, on disk and in
      * memory, in proportion to the width of the table.
+     * <p>
+     * A scan of a view the SELECT reads reads the columns of its table through that view, and the map
+     * lends each of them to no more reads than that view does. A column that view lends only to the reads
+     * that set none of its {@code OVERRIDABLE} variables comes marked, see
+     * {@link ViewDefinition#OTHER_READ_COLUMN_PREFIX}, as does a {@code *} this adds for a wildcard of that
+     * view that view lends only to such reads. A view whose own plan reads only outputs of that view that
+     * read no column keeps the sub-query of that view whole and scans every column it selects: unmarked,
+     * those columns would let a reader that sets a variable of that view through this view read any of
+     * them, which a read of that view itself does not.
      * <p>
      * The optimiser shares a model between several places of the SELECT, as it does the left side of a
      * LATERAL join, so the number of paths to a model can double with each LATERAL join nested in the
@@ -2337,6 +2355,23 @@ public class SqlUtil {
         addTableDependency(depMap, tableName).add(Chars.toString(columnName));
     }
 
+    // Adds a column a scan reads to the columns of its table, columns. The scan of a view the SELECT reads, whose
+    // dependencies list innerColumns for the table, reads the column through that view, and the column is lent to the
+    // reads that view lends it to: one that view lends only to the reads that set none of its OVERRIDABLE variables
+    // comes marked, see isOtherReadOnly().
+    private static void addReadColumn(
+            @NotNull LowerCaseCharSequenceHashSet columns,
+            @Nullable LowerCaseCharSequenceHashSet innerColumns,
+            @NotNull CharSequence columnName,
+            @NotNull StringSink sink
+    ) {
+        if (isOtherReadOnly(innerColumns, columnName, sink)) {
+            columns.add(Chars.toString(sink));
+        } else {
+            columns.add(Chars.toString(columnName));
+        }
+    }
+
     private static LowerCaseCharSequenceHashSet addTableDependency(
             @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> depMap,
             @NotNull CharSequence tableName
@@ -2410,9 +2445,13 @@ public class SqlUtil {
             // table has by now: a column an ALTER TABLE adds while the view compiles is not in the plan built
             // before it, while another scan of the table may already list it, whether it is elsewhere in the
             // plan or under the same holder, such as the other side of a self-join.
-            assert wildcardSources.isEveryScannedColumnRead(sourceModel, wildcardSources.sources.getQuick(i), columns)
+            final IQueryModel source = wildcardSources.sources.getQuick(i);
+            assert wildcardSources.isEveryScannedColumnRead(sourceModel, source, columns)
                     : "the plan keeps a wildcard whole but does not scan every column it selects [table=" + tableToken.getTableName() + ']';
-            columns.add("*");
+            // a wildcard of a view the SELECT reads lends no more than that view does, see addReadColumn()
+            final LowerCaseCharSequenceHashSet innerColumns = innerViewColumns(source, tableToken.getTableName());
+            final boolean isOtherReadOnly = isOtherReadOnly(innerColumns, "*", wildcardSources.otherReadColumnName);
+            columns.add(isOtherReadOnly ? ViewDefinition.OTHER_READ_WILDCARD : "*");
         }
     }
 
@@ -2663,9 +2702,12 @@ public class SqlUtil {
         }
         wildcardSources.addScan(model, tableToken);
         final LowerCaseCharSequenceHashSet columns = addTableDependency(depMap, tableToken.getTableName());
+        // the scan of a view the SELECT reads lends no more than that view does, see addReadColumn()
+        final LowerCaseCharSequenceHashSet innerColumns = innerViewColumns(model, tableToken.getTableName());
+        final StringSink sink = wildcardSources.otherReadColumnName;
         final ObjList<QueryColumn> topDownColumns = model.getTopDownColumns();
         for (int i = 0, n = topDownColumns.size(); i < n; i++) {
-            columns.add(Chars.toString(topDownColumns.getQuick(i).getName()));
+            addReadColumn(columns, innerColumns, topDownColumns.getQuick(i).getName(), sink);
         }
         if (!isTimestampRequired && !SqlCodeGenerator.joinsRequiringTimestamp[model.getJoinType()]) {
             return;
@@ -2680,7 +2722,7 @@ public class SqlUtil {
             try (TableMetadata metadata = engine.getTableMetadata(tableToken)) {
                 final int timestampIndex = metadata.getTimestampIndex();
                 if (timestampIndex > -1) {
-                    columns.add(Chars.toString(metadata.getColumnName(timestampIndex)));
+                    addReadColumn(columns, innerColumns, metadata.getColumnName(timestampIndex), sink);
                 }
             }
             return;
@@ -2690,7 +2732,7 @@ public class SqlUtil {
         if (dot > -1) {
             timestampName = timestampName.subSequence(dot + 1, timestampName.length());
         }
-        columns.add(Chars.toString(unquote(timestampName)));
+        addReadColumn(columns, innerColumns, unquote(timestampName), sink);
     }
 
     // Adds "*" for the tables a parsed SELECT reads every column of, see collectTableAndColumnReferences().
@@ -2783,6 +2825,8 @@ public class SqlUtil {
 
     // Leaves only "*" in the columns of each table whose columns include it: "*" lends every column of the
     // table, and AbstractPartitionFrameCursorFactory.authorizeSelect() consults none of the names next to it.
+    // Drops the marked name of a column that the columns lend under another name as well, see
+    // isCoveredOtherReadColumn(), which authorizeSelect() consults only when the other name does not lend it.
     private static void dropColumnsCoveredByWildcard(@NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> depMap) {
         final ObjList<CharSequence> tableNames = depMap.keys();
         for (int i = 0, n = tableNames.size(); i < n; i++) {
@@ -2793,6 +2837,15 @@ public class SqlUtil {
                 final LowerCaseCharSequenceHashSet wildcard = new LowerCaseCharSequenceHashSet();
                 wildcard.add("*");
                 depMap.put(tableName, wildcard);
+            } else if (hasCoveredOtherReadColumn(columns)) {
+                final LowerCaseCharSequenceHashSet keptColumns = new LowerCaseCharSequenceHashSet();
+                for (int j = 0, m = columns.getKeyCount(); j < m; j++) {
+                    final CharSequence column = columns.getKey(j);
+                    if (column != null && !isCoveredOtherReadColumn(columns, column)) {
+                        keptColumns.add(column);
+                    }
+                }
+                depMap.put(tableName, keptColumns);
             }
         }
     }
@@ -2825,6 +2878,18 @@ public class SqlUtil {
             throw SqlException.$(tokPosition + tokLen, "expected interval qualifier in ").put(tok);
         }
         return k;
+    }
+
+    // Whether the columns of a table include the marked name of a column they lend under another name as well, see
+    // isCoveredOtherReadColumn().
+    private static boolean hasCoveredOtherReadColumn(@NotNull LowerCaseCharSequenceHashSet columns) {
+        for (int i = 0, n = columns.getKeyCount(); i < n; i++) {
+            final CharSequence column = columns.getKey(i);
+            if (column != null && isCoveredOtherReadColumn(columns, column)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     // Whether a SELECT list calls an aggregate function, which makes the SELECT group its rows by every
@@ -2891,6 +2956,19 @@ public class SqlUtil {
         return false;
     }
 
+    // The dependencies of the view a model of a view's SELECT sits in list for the table, when the model sits in a
+    // view the SELECT reads, and null when it does not, or when those dependencies do not list the table. The parser
+    // gives every model of the views it expands the name of the outermost one, see SqlParser.compileViewQuery(), so
+    // a model of a view the SELECT reads names that view, whose dependencies authorize a scan of the model when the
+    // SELECT runs as a statement of its own, see AbstractPartitionFrameCursorFactory.authorizeSelect().
+    private static @Nullable LowerCaseCharSequenceHashSet innerViewColumns(@NotNull IQueryModel model, @NotNull CharSequence tableName) {
+        final ExpressionNode viewNameExpr = model.getViewNameExpr();
+        if (viewNameExpr == null || viewNameExpr.tableFunctionView == null) {
+            return null;
+        }
+        return viewNameExpr.tableFunctionView.definition().getDependencies().get(tableName);
+    }
+
     /**
      * Tests whether {@code alias} (a freshly generated candidate, {@code quoted} when it carries the
      * compiler's protective double quotes) is free of a result-set name collision in the already
@@ -2921,11 +2999,39 @@ public class SqlUtil {
         return bareQuotedSibling == null || takenAliases.excludes(bareQuotedSibling);
     }
 
+    // Whether a name of the columns of a table is the marked name of a column, see
+    // ViewDefinition.OTHER_READ_COLUMN_PREFIX, that the columns lend under another name as well: the unmarked name of
+    // the column, which lends it to every read, or ViewDefinition.OTHER_READ_WILDCARD.
+    private static boolean isCoveredOtherReadColumn(@NotNull LowerCaseCharSequenceHashSet columns, @NotNull CharSequence column) {
+        if (column.charAt(0) != ViewDefinition.OTHER_READ_COLUMN_PREFIX || Chars.equals(column, ViewDefinition.OTHER_READ_WILDCARD)) {
+            return false;
+        }
+        return columns.contains(ViewDefinition.OTHER_READ_WILDCARD) || columns.contains(column.subSequence(1, column.length()));
+    }
+
     // Whether the qualifier of a qualified name, such as t in t.*, names the model: by its alias, or by
     // its table name when it has none, as SqlOptimiser resolves the qualifier.
     private static boolean isModelAlias(@NotNull IQueryModel model, @NotNull CharSequence qualifiedName, int dot) {
         final ExpressionNode aliasExpr = model.getAlias() != null ? model.getAlias() : model.getTableNameExpr();
         return aliasExpr != null && Chars.equalsIgnoreCase(unquote(aliasExpr.token), unquote(qualifiedName.subSequence(0, dot)));
+    }
+
+    // Whether the view whose dependencies list innerColumns for a table lends a column of it, or every column of it
+    // for "*", only to the reads that set none of its OVERRIDABLE variables: it lends the column to no other read, by
+    // its name or by "*", and lends it to those reads, by its marked name or by ViewDefinition.OTHER_READ_WILDCARD.
+    // A column the view lends to no read is not one of those: a read of it through the view takes the permission of
+    // the principal, see AbstractPartitionFrameCursorFactory.authorizeSelect(). Leaves the marked name in sink.
+    private static boolean isOtherReadOnly(
+            @Nullable LowerCaseCharSequenceHashSet innerColumns,
+            @NotNull CharSequence columnName,
+            @NotNull StringSink sink
+    ) {
+        sink.clear();
+        sink.put(ViewDefinition.OTHER_READ_COLUMN_PREFIX).put(columnName);
+        return innerColumns != null
+                && innerColumns.excludes("*")
+                && innerColumns.excludes(columnName)
+                && (innerColumns.contains(ViewDefinition.OTHER_READ_WILDCARD) || innerColumns.contains(sink));
     }
 
     // Whether a wildcard of the SELECT list selects every column of a source of its FROM clause: an
@@ -3198,6 +3304,8 @@ public class SqlUtil {
         // the holders of the sub-queries the walk of the parsed SELECT is in, outermost first
         private final ObjList<IQueryModel> holderStack = new ObjList<>();
         private final ObjList<IQueryModel> holders = new ObjList<>();
+        // a column name with ViewDefinition.OTHER_READ_COLUMN_PREFIX, to look it up in a set of dependencies
+        private final StringSink otherReadColumnName = new StringSink();
         // the models the current search of isReachable() has visited
         private final ObjHashSet<IQueryModel> reachedModels = new ObjHashSet<>();
         // the models reachable from the root of the current optimised SELECT, shared by all holder checks
@@ -3291,7 +3399,8 @@ public class SqlUtil {
         // scan of it can list a column that an ALTER TABLE added after the optimiser enumerated the source,
         // and that the plan built on the source does not read: a scan elsewhere in the plan, or one under
         // the same holder that the wildcard does not select, such as the other side of a self-join. A plan
-        // that keeps the wildcard whole passes, see collectKeptWildcardReferences(), which asserts it.
+        // that keeps the wildcard whole passes, see collectKeptWildcardReferences(), which asserts it. A column
+        // the plan reads through a view the SELECT reads may be listed under its marked name, see addReadColumn().
         private boolean isEveryScannedColumnRead(
                 IQueryModel sourceModel,
                 IQueryModel source,
@@ -3302,8 +3411,13 @@ public class SqlUtil {
             }
             final ObjList<CharSequence> columnNames = source.getWildcardColumnNames();
             for (int i = 0, n = columnNames.size(); i < n; i++) {
-                if (readColumns.excludes(columnNames.getQuick(i))) {
-                    return false;
+                final CharSequence columnName = columnNames.getQuick(i);
+                if (readColumns.excludes(columnName)) {
+                    otherReadColumnName.clear();
+                    otherReadColumnName.put(ViewDefinition.OTHER_READ_COLUMN_PREFIX).put(columnName);
+                    if (readColumns.excludes(otherReadColumnName)) {
+                        return false;
+                    }
                 }
             }
             return true;

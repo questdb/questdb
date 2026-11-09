@@ -711,6 +711,33 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
     }
 
     @Test
+    public void testOverridableVariableReadsNoColumnOnlyOtherReadsScanThroughOuterView() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // The views lend the columns their sub-queries select to a read that names only v, which keeps the
+            // sub-query whole, and not to a read that sets @c.
+            execute("CREATE VIEW v_alias AS (DECLARE OVERRIDABLE @c := 0 SELECT l.k, @c AS v FROM (SELECT u.ts, u.k, u.a, u.b FROM x u) l)");
+            execute("CREATE VIEW v_join AS (DECLARE OVERRIDABLE @c := 0 SELECT k, @c AS v FROM (SELECT x.k, a, b, c, d FROM x JOIN y ON (k)))");
+            execute("CREATE VIEW v_wildcard AS (DECLARE OVERRIDABLE @c := 0 SELECT k, @c AS v FROM (SELECT * FROM x))");
+            drainWalAndViewQueues();
+            Assert.assertEquals("{x=[?a, ?b, ?ts, k]}", dependenciesOf("v_alias"));
+            Assert.assertEquals("{x=[?a, ?b, k], y=[?c, ?d, k]}", dependenciesOf("v_join"));
+            Assert.assertEquals("{x=[?*, k]}", dependenciesOf("v_wildcard"));
+
+            // A view whose own plan names only v of such a view is such a read: it scans the columns through that view,
+            // and lends each of them to the reads that view lends it to. A reader that sets @c of that view through it
+            // reads only the columns that view lends to every read.
+            assertReads("SELECT v FROM v_alias", "{v_alias=[], x=[?a, ?b, ?ts, k]}", "SELECT v FROM v", "DECLARE @c := k SELECT * FROM v");
+            assertOverrideDenied("SELECT v FROM v_alias", "DECLARE @c := b SELECT * FROM v", "permission denied [table=x, columns=b]");
+            assertOverrideDenied("SELECT v FROM v_alias", "DECLARE @c := ts SELECT * FROM v", "permission denied [table=x, columns=ts]");
+            assertReads("SELECT v FROM v_join", "{v_join=[], x=[?a, ?b, k], y=[?c, ?d, k]}", "SELECT v FROM v");
+            assertOverrideDenied("SELECT v FROM v_join", "DECLARE @c := d SELECT * FROM v", "permission denied [table=y, columns=d]");
+            assertReads("SELECT v FROM v_wildcard", "{v_wildcard=[], x=[?*, k]}", "SELECT v FROM v");
+            assertOverrideDenied("SELECT v FROM v_wildcard", "DECLARE @c := b SELECT * FROM v", "permission denied [table=x, columns=b]");
+        });
+    }
+
+    @Test
     public void testOverridableVariableReadsNoColumnTheViewDoesNot() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
