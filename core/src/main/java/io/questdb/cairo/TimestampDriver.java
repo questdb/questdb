@@ -24,7 +24,6 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -42,7 +41,6 @@ import io.questdb.std.datetime.TimeZoneRuleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -145,29 +143,16 @@ public interface TimestampDriver {
     }
 
     /**
-     * Places the value of a constant or runtime-constant function, such as a bind variable, against the range
-     * of this type once converting it to this type has failed: text that the parser of this type rejects, or a
-     * timestamp of another precision. SQL comparisons use it to treat such a bound as before or after every value.
+     * Compares a timestamp of another precision with a value of this type exactly: nothing is rounded, and a
+     * timestamp past the range of this type is after or before every value of it. Neither argument is NULL.
      *
-     * @return -1 when the value lies before the range, 1 when after it, 0 otherwise
+     * @param timestamp         the timestamp
+     * @param fromTimestampType the timestamp type of the timestamp
+     * @param value             a value of this type
+     * @return a negative number, zero or a positive number as the timestamp is before, equal to or after the value
      */
-    default int compareToRange(Function func) {
-        switch (ColumnType.tagOf(func.getType())) {
-            case ColumnType.STRING, ColumnType.SYMBOL -> {
-                final CharSequence str = func.getStrA(null);
-                return str != null ? compareToRange(str, 0, str.length()) : 0;
-            }
-            case ColumnType.VARCHAR -> {
-                final Utf8Sequence str = func.getVarcharA(null);
-                return str != null && Utf8s.isAscii(str) ? compareToRange(str.asAsciiCharSequence(), 0, str.size()) : 0;
-            }
-            case ColumnType.TIMESTAMP -> {
-                return compareToRange(func.getTimestamp(null), func.getType());
-            }
-            default -> {
-                return 0;
-            }
-        }
+    default int compareFrom(long timestamp, int fromTimestampType, long value) {
+        return Long.compare(from(timestamp, fromTimestampType), value);
     }
 
     /**
@@ -179,6 +164,94 @@ public interface TimestampDriver {
      */
     default int compareIntervalToRange(CharSequence str, int lo, int hi) {
         return 0;
+    }
+
+    /**
+     * The largest value of this type at or before a timestamp of another precision that this type holds.
+     */
+    default long floorFrom(long timestamp, int fromTimestampType) {
+        return from(timestamp, fromTimestampType);
+    }
+
+    /**
+     * Whether {@link #floorFrom(long, int)} of the timestamp equals it, that is this type holds it exactly.
+     */
+    default boolean isExactFrom(long timestamp, int fromTimestampType) {
+        return true;
+    }
+
+    /**
+     * Whether timestamp text that {@link #parseFloor(CharSequence, int, int)} accepts has no digit finer than
+     * this type holds, so the parsed value equals the text.
+     */
+    default boolean isExactText(CharSequence str, int lo, int hi) {
+        return true;
+    }
+
+    /**
+     * The smallest value v of this type with {@code v > c} (isStrict) or {@code v >= c} for a non-NULL timestamp
+     * c of another precision. A timestamp before the range of this type gives the first value of the range.
+     *
+     * @return the value, or {@link Numbers#LONG_NULL} when no value of this type qualifies
+     */
+    default long lowerBound(long timestamp, int timestampType, boolean isStrict) {
+        final int side = compareToRange(timestamp, timestampType);
+        if (side != 0) {
+            return side < 0 ? Long.MIN_VALUE + 1 : Numbers.LONG_NULL;
+        }
+        return lowerBoundOfFloor(floorFrom(timestamp, timestampType), isExactFrom(timestamp, timestampType), isStrict);
+    }
+
+    /**
+     * {@link #lowerBound(long, int, boolean)} for timestamp text, which may lie past the range of this type.
+     *
+     * @throws NumericException when the text is not a timestamp
+     */
+    default long lowerBound(CharSequence str, int lo, int hi, boolean isStrict) throws NumericException {
+        final long floor;
+        try {
+            floor = parseFloor(str, lo, hi);
+        } catch (NumericException e) {
+            final int side = compareToRange(str, lo, hi);
+            if (side == 0) {
+                throw e;
+            }
+            return side < 0 ? Long.MIN_VALUE + 1 : Numbers.LONG_NULL;
+        }
+        return lowerBoundOfFloor(floor, isExactText(str, lo, hi), isStrict);
+    }
+
+    /**
+     * The largest value v of this type with {@code v < c} (isStrict) or {@code v <= c} for a non-NULL timestamp
+     * c of another precision. A timestamp after the range of this type gives the last value of the range.
+     *
+     * @return the value, or {@link Numbers#LONG_NULL} when no value of this type qualifies
+     */
+    default long upperBound(long timestamp, int timestampType, boolean isStrict) {
+        final int side = compareToRange(timestamp, timestampType);
+        if (side != 0) {
+            return side > 0 ? Long.MAX_VALUE : Numbers.LONG_NULL;
+        }
+        return upperBoundOfFloor(floorFrom(timestamp, timestampType), isExactFrom(timestamp, timestampType), isStrict);
+    }
+
+    /**
+     * {@link #upperBound(long, int, boolean)} for timestamp text, which may lie past the range of this type.
+     *
+     * @throws NumericException when the text is not a timestamp
+     */
+    default long upperBound(CharSequence str, int lo, int hi, boolean isStrict) throws NumericException {
+        final long floor;
+        try {
+            floor = parseFloor(str, lo, hi);
+        } catch (NumericException e) {
+            final int side = compareToRange(str, lo, hi);
+            if (side == 0) {
+                throw e;
+            }
+            return side > 0 ? Long.MAX_VALUE : Numbers.LONG_NULL;
+        }
+        return upperBoundOfFloor(floor, isExactText(str, lo, hi), isStrict);
     }
 
     long endOfDay(long start);
@@ -696,6 +769,22 @@ public interface TimestampDriver {
     long toUTC(long localTimestamp, DateLocale locale, CharSequence timezone) throws NumericException;
 
     void validateBounds(long timestamp);
+
+    // c lies at floor when isExact, otherwise between floor and the next value of this type
+    private static long lowerBoundOfFloor(long floor, boolean isExact, boolean isStrict) {
+        if (isExact && !isStrict) {
+            return floor;
+        }
+        return floor == Long.MAX_VALUE ? Numbers.LONG_NULL : floor + 1;
+    }
+
+    // c lies at floor when isExact, otherwise between floor and the next value of this type
+    private static long upperBoundOfFloor(long floor, boolean isExact, boolean isStrict) {
+        if (isExact && isStrict) {
+            return floor == Long.MIN_VALUE + 1 ? Numbers.LONG_NULL : floor - 1;
+        }
+        return floor;
+    }
 
     @FunctionalInterface
     interface PartitionAddMethod {

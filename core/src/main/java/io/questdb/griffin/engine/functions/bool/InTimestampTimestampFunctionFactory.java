@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.functions.bool;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -39,6 +38,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
+import io.questdb.griffin.engine.functions.TimestampBounds;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.model.CompiledTickExpression;
 import io.questdb.griffin.model.DateExpressionEvaluator;
@@ -140,25 +140,43 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         return new InTimestampVarFunction(new ObjList<>(args), timestampType);
     }
 
-    // Text past the range of the column type equals no value of the column, so the list leaves it out.
-    private static void addParsedOrDie(TimestampDriver driver, CharSequence seq, int position, LongList out) throws SqlException {
-        try {
-            out.add(driver.parseFloorLiteral(seq));
-        } catch (NumericException e) {
-            if (driver.compareToRange(seq, 0, seq.length()) == 0) {
-                throw SqlException.invalidDate(seq, position);
-            }
+    // The value of the column type that equals the item, LONG_NULL for a NULL item. An item that no value of the
+    // column type equals, one past the range of the type or between two of its values, is left out.
+    private static void addPoint(TimestampDriver driver, Function func, LongList out) {
+        if (TimestampBounds.isNull(func)) {
+            out.add(Numbers.LONG_NULL);
+            return;
+        }
+        final long point = TimestampBounds.point(driver, func);
+        if (point != Numbers.LONG_NULL) {
+            out.add(point);
         }
     }
 
-    private static void addParsedOrDie(TimestampDriver driver, Utf8Sequence seq, int position, LongList out) throws SqlException {
-        try {
-            out.add(driver.parseFloorLiteral(seq));
-        } catch (NumericException e) {
-            if (!Utf8s.isAscii(seq) || driver.compareToRange(seq.asAsciiCharSequence(), 0, seq.size()) == 0) {
-                throw SqlException.invalidDate(seq, position);
-            }
+    private static void addTextPoint(TimestampDriver driver, CharSequence text, LongList out) throws NumericException {
+        if (text == null) {
+            out.add(Numbers.LONG_NULL);
+            return;
         }
+        final long point = driver.lowerBound(text, 0, text.length(), false);
+        if (point != Numbers.LONG_NULL && point == driver.upperBound(text, 0, text.length(), false)) {
+            out.add(point);
+        }
+    }
+
+    private static void addTextPointOrDie(TimestampDriver driver, CharSequence seq, int position, LongList out) throws SqlException {
+        try {
+            addTextPoint(driver, seq, out);
+        } catch (NumericException e) {
+            throw SqlException.invalidDate(seq, position);
+        }
+    }
+
+    private static void addTextPointOrDie(TimestampDriver driver, Utf8Sequence seq, int position, LongList out) throws SqlException {
+        if (seq != null && !Utf8s.isAscii(seq)) {
+            throw SqlException.invalidDate(seq, position);
+        }
+        addTextPointOrDie(driver, seq != null ? seq.asAsciiCharSequence() : null, position, out);
     }
 
     private static boolean containsDateVariable(CharSequence seq) {
@@ -189,18 +207,12 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             int funcType = func.getType();
             switch (ColumnType.tagOf(funcType)) {
                 case ColumnType.DATE -> res.add(driver.fromDate(func.getDate(null)));
-                case ColumnType.TIMESTAMP -> {
-                    final long timestamp = func.getTimestamp(null);
-                    // a value past the range of the column type equals no value of the column
-                    if (driver.compareToRange(timestamp, funcType) == 0) {
-                        res.add(driver.from(timestamp, funcType));
-                    }
-                }
+                case ColumnType.TIMESTAMP -> addPoint(driver, func, res);
                 case ColumnType.LONG, ColumnType.INT -> res.add(func.getTimestamp(null));
                 case ColumnType.STRING, ColumnType.SYMBOL, ColumnType.NULL ->
-                        addParsedOrDie(driver, func.getStrA(null), argPositions.getQuick(i), res);
+                        addTextPointOrDie(driver, func.getStrA(null), argPositions.getQuick(i), res);
                 case ColumnType.VARCHAR ->
-                        addParsedOrDie(driver, func.getVarcharA(null), argPositions.getQuick(i), res);
+                        addTextPointOrDie(driver, func.getVarcharA(null), argPositions.getQuick(i), res);
                 default -> throw SqlException.inconvertibleTypes(argPositions.getQuick(i), func.getType(),
                         ColumnType.nameOf(func.getType()), timestampType,
                         ColumnType.nameOf(timestampType));
@@ -211,20 +223,19 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         return res;
     }
 
-    private static long parseFloorOrDie(TimestampDriver driver, CharSequence value) {
+    private static void addTextPointOrDie(TimestampDriver driver, CharSequence value, LongList out) {
         try {
-            return driver.parseFloorLiteral(value);
+            addTextPoint(driver, value, out);
         } catch (NumericException e) {
             throw CairoException.nonCritical().put("Invalid timestamp: ").put(value);
         }
     }
 
-    private static long parseFloorOrDie(TimestampDriver driver, Utf8Sequence value) {
-        try {
-            return driver.parseFloorLiteral(value);
-        } catch (NumericException e) {
+    private static void addTextPointOrDie(TimestampDriver driver, Utf8Sequence value, LongList out) {
+        if (value != null && !Utf8s.isAscii(value)) {
             throw CairoException.nonCritical().put("Invalid timestamp: ").put(value);
         }
+        addTextPointOrDie(driver, value != null ? value.asAsciiCharSequence() : null, out);
     }
 
     private static class EqTimestampCompiledTickExprFunction extends NegatableBooleanFunction implements UnaryFunction {
@@ -436,26 +447,15 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             timestampValues.clear();
             for (int i = 1, n = args.size(); i < n; i++) {
                 Function func = args.getQuick(i);
-                long val = Numbers.LONG_NULL;
-                int funcType = func.getType();
-                try {
-                    val = switch (ColumnType.tagOf(funcType)) {
-                        case ColumnType.DATE -> driver.fromDate(func.getDate(null));
-                        case ColumnType.TIMESTAMP -> driver.from(func.getTimestamp(null), funcType);
-                        case ColumnType.LONG, ColumnType.INT -> func.getTimestamp(null);
-                        case ColumnType.STRING, ColumnType.SYMBOL -> parseFloorOrDie(driver, func.getStrA(null));
-                        case ColumnType.VARCHAR -> parseFloorOrDie(driver, func.getVarcharA(null));
-                        default -> val;
-                    };
-                } catch (CairoException | ImplicitCastException e) {
-                    // a value past the range of the column type, such as a bind variable holding
-                    // '9999-12-31', equals no value of the column, as a constant past the range does
-                    if (driver.compareToRange(func) != 0) {
-                        continue;
-                    }
-                    throw e;
+                switch (ColumnType.tagOf(func.getType())) {
+                    case ColumnType.DATE -> timestampValues.add(driver.fromDate(func.getDate(null)));
+                    case ColumnType.TIMESTAMP -> addPoint(driver, func, timestampValues);
+                    case ColumnType.LONG, ColumnType.INT -> timestampValues.add(func.getTimestamp(null));
+                    case ColumnType.STRING, ColumnType.SYMBOL ->
+                            addTextPointOrDie(driver, func.getStrA(null), timestampValues);
+                    case ColumnType.VARCHAR -> addTextPointOrDie(driver, func.getVarcharA(null), timestampValues);
+                    default -> timestampValues.add(Numbers.LONG_NULL);
                 }
-                timestampValues.add(val);
             }
         }
 
@@ -564,21 +564,52 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
 
             for (int i = 1, n = args.size(); i < n; i++) {
                 Function func = args.getQuick(i);
-                long val = Numbers.LONG_NULL;
                 int funcType = func.getType();
-                val = switch (ColumnType.tagOf(funcType)) {
-                    case ColumnType.DATE -> driver.fromDate(func.getDate(rec));
-                    case ColumnType.TIMESTAMP -> driver.from(func.getTimestamp(rec), funcType);
-                    case ColumnType.LONG, ColumnType.INT -> func.getTimestamp(rec);
-                    case ColumnType.STRING, ColumnType.SYMBOL -> parseFloorOrDie(driver, func.getStrA(rec));
-                    case ColumnType.VARCHAR -> parseFloorOrDie(driver, func.getVarcharA(rec));
-                    default -> val;
+                final boolean isMatch = switch (ColumnType.tagOf(funcType)) {
+                    case ColumnType.DATE -> driver.fromDate(func.getDate(rec)) == ts;
+                    case ColumnType.TIMESTAMP -> isEqual(driver, func.getTimestamp(rec), funcType, ts);
+                    case ColumnType.LONG, ColumnType.INT -> func.getTimestamp(rec) == ts;
+                    case ColumnType.STRING, ColumnType.SYMBOL -> isTextEqual(driver, func.getStrA(rec), ts);
+                    case ColumnType.VARCHAR -> isTextEqual(driver, func.getVarcharA(rec), ts);
+                    default -> ts == Numbers.LONG_NULL;
                 };
-                if (val == ts) {
+                if (isMatch) {
                     return !negated;
                 }
             }
             return negated;
+        }
+
+        // an item of another precision equals the value only when the value's type holds it exactly
+        private static boolean isEqual(TimestampDriver driver, long item, int itemType, long ts) {
+            if (item == Numbers.LONG_NULL || ts == Numbers.LONG_NULL) {
+                return item == ts;
+            }
+            return driver.compareFrom(item, itemType, ts) == 0;
+        }
+
+        private static boolean isTextEqual(TimestampDriver driver, CharSequence text, long ts) {
+            if (text == null) {
+                return ts == Numbers.LONG_NULL;
+            }
+            final long floor;
+            try {
+                floor = driver.parseFloor(text, 0, text.length());
+            } catch (NumericException e) {
+                if (driver.compareToRange(text, 0, text.length()) != 0) {
+                    // past the range of the column type: equals no value of it
+                    return false;
+                }
+                throw CairoException.nonCritical().put("Invalid timestamp: ").put(text);
+            }
+            return floor == ts && driver.isExactText(text, 0, text.length());
+        }
+
+        private static boolean isTextEqual(TimestampDriver driver, Utf8Sequence text, long ts) {
+            if (text != null && !Utf8s.isAscii(text)) {
+                throw CairoException.nonCritical().put("Invalid timestamp: ").put(text);
+            }
+            return isTextEqual(driver, text != null ? text.asAsciiCharSequence() : null, ts);
         }
 
         @Override

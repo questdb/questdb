@@ -39,6 +39,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
+import io.questdb.griffin.engine.functions.TimestampBounds;
 import io.questdb.griffin.engine.functions.ScalarSubQueryUtils;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
@@ -93,36 +94,14 @@ public class LtTimestampCursorFunctionFactory implements FunctionFactory {
                 if (ColumnType.isTimestamp(metadataType)) {
                     timestampType = ColumnType.getHigherPrecisionTimestampType(arg0Type, metadataType);
                 }
-                boolean leftNeedsConvert = arg0Type != timestampType;
-                if (leftNeedsConvert) {
-                    return new LeftConvertTimestampCursorFunc(factory, arg0, args.getQuick(1), ColumnType.getTimestampDriver(timestampType), argPositions.getQuick(1), arg0Type);
-                } else {
-                    return new TimestampCursorFunc(factory, arg0, args.getQuick(1), ColumnType.getTimestampDriver(timestampType), argPositions.getQuick(1));
-                }
+                // the cursor's value turns into a bound in the left operand's type, so no value converts
+                return new TimestampCursorFunc(factory, arg0, args.getQuick(1), ColumnType.getTimestampDriver(arg0Type), argPositions.getQuick(1));
             case ColumnType.STRING:
                 return new StrCursorFunc(factory, arg0, args.getQuick(1), ColumnType.getTimestampDriver(arg0Type), argPositions.getQuick(1));
             case ColumnType.VARCHAR:
                 return new VarcharCursorFunc(factory, arg0, args.getQuick(1), ColumnType.getTimestampDriver(arg0Type), argPositions.getQuick(1));
             default:
                 throw SqlException.$(argPositions.getQuick(1), "cannot compare TIMESTAMP and ").put(ColumnType.nameOf(metadataType));
-        }
-    }
-
-    private static class LeftConvertTimestampCursorFunc extends TimestampCursorFunc {
-        private final int leftTimestampType;
-
-        public LeftConvertTimestampCursorFunc(RecordCursorFactory factory, Function leftFunc, Function rightFunc, TimestampDriver driver, int rightPos, int leftTimestampType) {
-            super(factory, leftFunc, rightFunc, driver, rightPos);
-            this.leftTimestampType = leftTimestampType;
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            return Numbers.lessThan(
-                    driver.from(leftFunc.getTimestamp(rec), leftTimestampType),
-                    epoch,
-                    negated
-            );
         }
     }
 
@@ -175,6 +154,10 @@ public class LtTimestampCursorFunctionFactory implements FunctionFactory {
                     final CharSequence value = cursor.getRecord().getStrA(0);
                     try {
                         epoch = driver.parseFloorLiteral(value);
+                        if (epoch != Numbers.LONG_NULL && !TimestampBounds.isExactText(driver, value)) {
+                            // the text lies between epoch and the next value: left < text holds when left <= epoch
+                            epoch++;
+                        }
                     } catch (NumericException e) {
                         throw SqlException.$(rightPos, "the cursor selected invalid timestamp value: ").put(value);
                     }
@@ -263,7 +246,15 @@ public class LtTimestampCursorFunctionFactory implements FunctionFactory {
             this.stateShared = false;
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
                 if (cursor.hasNext()) {
-                    epoch = driver.from(cursor.getRecord().getTimestamp(0), ColumnType.getTimestampType(factory.getMetadata().getColumnType(0)));
+                    final long value = cursor.getRecord().getTimestamp(0);
+                    final int valueType = ColumnType.getTimestampType(factory.getMetadata().getColumnType(0));
+                    if (value == Numbers.LONG_NULL || driver.compareToRange(value, valueType) != 0) {
+                        // a value past the range of the left operand's type fails to convert
+                        epoch = driver.from(value, valueType);
+                    } else {
+                        // left < c holds exactly when left < the first value at or after c, and so does its negation
+                        epoch = driver.lowerBound(value, valueType, false);
+                    }
                     ScalarSubQueryUtils.assertNoMoreRows(cursor, rightPos);
                 } else {
                     epoch = Numbers.LONG_NULL;
@@ -352,6 +343,10 @@ public class LtTimestampCursorFunctionFactory implements FunctionFactory {
                     final Utf8Sequence value = cursor.getRecord().getVarcharA(0);
                     try {
                         epoch = driver.parseFloorLiteral(value);
+                        if (epoch != Numbers.LONG_NULL && !TimestampBounds.isExactText(driver, value)) {
+                            // the text lies between epoch and the next value: left < text holds when left <= epoch
+                            epoch++;
+                        }
                     } catch (NumericException e) {
                         throw SqlException.$(rightPos, "the cursor selected invalid timestamp value: ").put(value);
                     }

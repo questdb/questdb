@@ -267,6 +267,20 @@ public class NanosTimestampDriver implements TimestampDriver {
     }
 
     @Override
+    public int compareFrom(long timestamp, int fromTimestampType, long value) {
+        if (ColumnType.isTimestampMicro(fromTimestampType)) {
+            if (timestamp > Long.MAX_VALUE / Nanos.MICRO_NANOS) {
+                return 1;
+            }
+            if (timestamp < Long.MIN_VALUE / Nanos.MICRO_NANOS) {
+                return -1;
+            }
+            return Long.compare(timestamp * Nanos.MICRO_NANOS, value);
+        }
+        return Long.compare(timestamp, value);
+    }
+
+    @Override
     public int compareToRange(long timestamp, int fromTimestampType) {
         if (ColumnType.isTimestampMicro(fromTimestampType) && timestamp != Numbers.LONG_NULL) {
             if (timestamp > Long.MAX_VALUE / Nanos.MICRO_NANOS) {

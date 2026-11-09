@@ -29,14 +29,18 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.TernaryFunction;
+import io.questdb.griffin.engine.functions.TimestampBounds;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
@@ -76,18 +80,19 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
         TimestampDriver driver = ColumnType.getTimestampDriver(argType);
 
         if (fromFn.isConstant() && toFn.isConstant()) {
-            final int fromSide = driver.compareToRange(fromFn.getTimestamp(null), fromType);
-            final int toSide = driver.compareToRange(toFn.getTimestamp(null), toType);
-            if (fromSide != 0 && fromSide == toSide) {
-                // both bounds lie past the same end of the range of the argument's type
+            final LongList range = new LongList(2);
+            if (!getRange(driver, fromFn, toFn, range)) {
                 return BooleanConstant.FALSE;
             }
-            long fromFnTimestamp = saturatingFrom(driver, fromFn.getTimestamp(null), fromType, fromSide);
-            long toFnTimestamp = saturatingFrom(driver, toFn.getTimestamp(null), toType, toSide);
-            if (fromFnTimestamp == Numbers.LONG_NULL || toFnTimestamp == Numbers.LONG_NULL) {
+            final long lo = range.getQuick(0);
+            final long hi = range.getQuick(1);
+            if (lo == Numbers.LONG_NULL || hi == Numbers.LONG_NULL || lo > hi) {
                 return BooleanConstant.FALSE;
             }
-            return new ConstFunc(arg, fromFnTimestamp, toFnTimestamp);
+            return new ConstFunc(arg, lo, hi);
+        }
+        if (isBound(fromFn) && isBound(toFn)) {
+            return new RuntimeConstFunc(arg, fromFn, toFn, driver);
         }
         boolean leftNeedConvert = fromType != argType;
         boolean rightNeedConvert = toType != argType;
@@ -103,13 +108,30 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
         }
     }
 
-    // a bound past the range of the argument's type is inclusive, so the nearest end of the range
-    // matches the same non-NULL values
-    private static long saturatingFrom(TimestampDriver driver, long timestamp, int timestampType, int side) {
-        if (side != 0) {
-            return side > 0 ? Long.MAX_VALUE : Long.MIN_VALUE + 1;
+    // BETWEEN takes its bounds in either order, and a bound grows with its constant, so the values between them
+    // start at the smaller of the two lower bounds and end at the larger of the two upper bounds. A bound with no
+    // value of the type on its side (LONG_NULL) gives way to the other bound. Returns false for a NULL bound.
+    private static boolean getRange(TimestampDriver driver, Function fromFn, Function toFn, LongList out) {
+        if (!TimestampBounds.bounds(driver, fromFn, out)) {
+            return false;
         }
-        return driver.from(timestamp, timestampType);
+        final long fromLo = out.getQuick(0);
+        final long fromHi = out.getQuick(1);
+        if (!TimestampBounds.bounds(driver, toFn, out)) {
+            return false;
+        }
+        final long toLo = out.getQuick(0);
+        final long toHi = out.getQuick(1);
+        out.clear();
+        out.add(
+                fromLo == Numbers.LONG_NULL ? toLo : toLo == Numbers.LONG_NULL ? fromLo : Math.min(fromLo, toLo),
+                fromHi == Numbers.LONG_NULL ? toHi : toHi == Numbers.LONG_NULL ? fromHi : Math.max(fromHi, toHi)
+        );
+        return true;
+    }
+
+    private static boolean isBound(Function func) {
+        return func.isConstant() || func.isRuntimeConstant();
     }
 
     private static class BothConvertFunction extends VarBetweenFunction {
@@ -123,17 +145,18 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
             if (value == Numbers.LONG_NULL) {
                 return false;
             }
-            long fromTs = driver.from(from.getTimestamp(rec), fromType);
+            long fromTs = from.getTimestamp(rec);
             if (fromTs == Numbers.LONG_NULL) {
                 return false;
             }
 
-            long toTs = driver.from(to.getTimestamp(rec), toType);
+            long toTs = to.getTimestamp(rec);
             if (toTs == Numbers.LONG_NULL) {
                 return false;
             }
 
-            return Math.min(fromTs, toTs) <= value && value <= Math.max(fromTs, toTs);
+            // the value lies at or between the bounds, in either order; nothing converts
+            return driver.compareFrom(fromTs, fromType, value) * driver.compareFrom(toTs, toType, value) <= 0;
         }
     }
 
@@ -178,7 +201,7 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
             if (value == Numbers.LONG_NULL) {
                 return false;
             }
-            long fromTs = driver.from(from.getTimestamp(rec), fromType);
+            long fromTs = from.getTimestamp(rec);
             if (fromTs == Numbers.LONG_NULL) {
                 return false;
             }
@@ -188,7 +211,67 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
                 return false;
             }
 
-            return Math.min(fromTs, toTs) <= value && value <= Math.max(fromTs, toTs);
+            // the value lies at or between the bounds, in either order; nothing converts
+            return driver.compareFrom(fromTs, fromType, value) * Long.compare(toTs, value) <= 0;
+        }
+    }
+
+    // the bounds are runtime constants, such as bind variables: the range comes from them on each execution
+    private static class RuntimeConstFunc extends BooleanFunction implements TernaryFunction {
+        private final Function arg;
+        private final TimestampDriver driver;
+        private final Function from;
+        private final LongList range = new LongList(2);
+        private final Function to;
+        private long hi;
+        private long lo;
+
+        public RuntimeConstFunc(Function arg, Function from, Function to, TimestampDriver driver) {
+            this.arg = arg;
+            this.from = from;
+            this.to = to;
+            this.driver = driver;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            final long value = arg.getTimestamp(rec);
+            return lo <= value & value <= hi;
+        }
+
+        @Override
+        public Function getCenter() {
+            return arg;
+        }
+
+        @Override
+        public Function getLeft() {
+            return from;
+        }
+
+        @Override
+        public Function getRight() {
+            return to;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            TernaryFunction.super.init(symbolTableSource, executionContext);
+            lo = TimestampBounds.EMPTY_LO;
+            hi = TimestampBounds.EMPTY_HI;
+            if (getRange(driver, from, to, range)) {
+                final long rangeLo = range.getQuick(0);
+                final long rangeHi = range.getQuick(1);
+                if (rangeLo != Numbers.LONG_NULL && rangeHi != Numbers.LONG_NULL) {
+                    lo = rangeLo;
+                    hi = rangeHi;
+                }
+            }
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(arg).val(" between ").val(from).val(" and ").val(to);
         }
     }
 
@@ -208,12 +291,13 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
                 return false;
             }
 
-            long toTs = driver.from(to.getTimestamp(rec), toType);
+            long toTs = to.getTimestamp(rec);
             if (toTs == Numbers.LONG_NULL) {
                 return false;
             }
 
-            return Math.min(fromTs, toTs) <= value && value <= Math.max(fromTs, toTs);
+            // the value lies at or between the bounds, in either order; nothing converts
+            return Long.compare(fromTs, value) * driver.compareFrom(toTs, toType, value) <= 0;
         }
     }
 

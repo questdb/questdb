@@ -38,6 +38,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.engine.functions.AbstractGeoHashFunction;
 import io.questdb.griffin.engine.functions.MonotonicTimestampFunction;
 import io.questdb.griffin.engine.functions.ScalarSubQueryTimestampFunction;
+import io.questdb.griffin.engine.functions.TimestampBounds;
 import io.questdb.griffin.engine.functions.columns.ColumnFunction;
 import io.questdb.griffin.model.AliasTranslator;
 import io.questdb.griffin.model.ExpressionNode;
@@ -170,6 +171,8 @@ public final class WhereClauseParser implements Mutable {
     // shifts; the wrap guard must fall back to Long.MAX_VALUE there. Mirrors
     // MonotonicTimestampFunction.shiftInputCeiling, which asks the same question of a function chain.
     private boolean isInsideAndOffset;
+    // set by parseFullOrPartialDate(): false when the literal it read lies between two values of the type
+    private boolean isLastBoundExact;
     private boolean noIndex;
     private CharSequence preferredKeyColumn;
     private int reentryDepth;
@@ -504,6 +507,18 @@ public final class WhereClauseParser implements Mutable {
         return token;
     }
 
+    // The value of the designated timestamp's type that equals a constant, or LONG_NULL, which no designated
+    // timestamp holds, when the constant lies between two values of the type
+    private static long getPointFromConstFunction(
+            TimestampDriver timestampDriver,
+            Function function,
+            int functionPosition,
+            boolean detectIntervals
+    ) throws SqlException {
+        final long timestamp = getTimestampFromConstFunction(timestampDriver, function, functionPosition, detectIntervals);
+        return isExactConstant(timestampDriver, function) ? timestamp : Numbers.LONG_NULL;
+    }
+
     private static long getTimestampFromConstFunction(
             TimestampDriver timestampDriver,
             Function function,
@@ -529,8 +544,25 @@ public final class WhereClauseParser implements Mutable {
                 // saturates like TimestampDriver.parseFloorSaturated()
                 return side > 0 ? Long.MAX_VALUE : Long.MIN_VALUE + 1;
             }
-            return timestampDriver.from(timestamp, timestampType);
+            return timestampDriver.floorFrom(timestamp, timestampType);
         }
+    }
+
+    // whether the designated timestamp's type holds a constant bound exactly, rather than it lying between two
+    // values of the type, as text or a timestamp finer than the type can
+    private static boolean isExactConstant(TimestampDriver timestampDriver, Function function) {
+        final CharSequence text = TimestampBounds.textOf(function);
+        if (text != null) {
+            return timestampDriver.isExactText(text, 0, text.length());
+        }
+        final int type = function.getType();
+        if (!ColumnType.isTimestamp(type)) {
+            return true;
+        }
+        final long timestamp = function.getTimestamp(null);
+        return timestamp == Numbers.LONG_NULL
+                || timestampDriver.compareToRange(timestamp, type) != 0
+                || timestampDriver.isExactFrom(timestamp, type);
     }
 
     private static boolean isFunc(ExpressionNode n) {
@@ -598,6 +630,17 @@ public final class WhereClauseParser implements Mutable {
             }
             throw SqlException.invalidDate(str, position);
         }
+    }
+
+    // The value of the designated timestamp's type that equals a literal, or LONG_NULL, which no designated
+    // timestamp holds, when the literal lies between two values of the type
+    private static long parseTokenAsPoint(TimestampDriver timestampDriver, ExpressionNode node) throws SqlException {
+        final long timestamp = parseTokenAsTimestamp(timestampDriver, node);
+        final CharSequence token = node.token;
+        if (Chars.isQuoted(token) && !timestampDriver.isExactText(token, 1, token.length() - 1)) {
+            return Numbers.LONG_NULL;
+        }
+        return timestamp;
     }
 
     private static long parseTokenAsTimestamp(TimestampDriver timestampDriver, ExpressionNode lo) throws SqlException {
@@ -918,6 +961,12 @@ public final class WhereClauseParser implements Mutable {
 
         ExpressionNode lo = between.args.getQuick(1);
         ExpressionNode hi = between.args.getQuick(0);
+        if ((isInexactLiteral(timestampDriver, lo) && hi.type != ExpressionNode.CONSTANT)
+                || (isInexactLiteral(timestampDriver, hi) && lo.type != ExpressionNode.CONSTANT)) {
+            // a literal between two values of the type pairs only with another literal in the interval model;
+            // the row filter compares it exactly
+            return false;
+        }
 
         Throwable failure = null;
         try {
@@ -1368,10 +1417,10 @@ public final class WhereClauseParser implements Mutable {
                             ExpressionNode inListItem = in.args.getQuick(i);
                             long ts;
                             if (inListItem.type == ExpressionNode.CONSTANT) {
-                                ts = parseTokenAsTimestamp(timestampDriver, inListItem);
+                                ts = parseTokenAsPoint(timestampDriver, inListItem);
                             } else {
                                 final Function func = tmpFunctions.getQuick(nonConstCountFuncIndex++);
-                                ts = getTimestampFromConstFunction(timestampDriver, func, inListItem.position, false);
+                                ts = getPointFromConstFunction(timestampDriver, func, inListItem.position, false);
                             }
                             if (!isNegated) {
                                 if (i == 0) {
@@ -1950,6 +1999,11 @@ public final class WhereClauseParser implements Mutable {
                         node.intrinsicValue = IntrinsicModel.FALSE;
                         return false;
                     }
+                    if (isInexactLiteral(timestampDriver, b)) {
+                        // no value of the type equals a literal between two of its values: the row filter
+                        // keeps every row
+                        return false;
+                    }
                     model.subtractIntervals(b.token, 1, b.token.length() - 1, b.position);
                     node.intrinsicValue = IntrinsicModel.TRUE;
                     return true;
@@ -2238,7 +2292,7 @@ public final class WhereClauseParser implements Mutable {
     ) throws SqlException {
         try {
             if (func.isConstant()) {
-                long value = getTimestampFromConstFunction(timestampDriver, func, functionPosition, true);
+                long value = getPointFromConstFunction(timestampDriver, func, functionPosition, true);
                 if (value == Numbers.LONG_NULL) {
                     // make it empty set
                     model.intersectEmpty();
@@ -2307,6 +2361,9 @@ public final class WhereClauseParser implements Mutable {
                     if (lo == Numbers.LONG_NULL) {
                         // make it empty set
                         model.intersectEmpty();
+                    } else if (!isExactConstant(timestampDriver, func)) {
+                        // the constant lies between lo and the next value of the type
+                        model.intersectIntervals(lo + 1, Long.MAX_VALUE);
                     } else if (!equalsTo && lo == Long.MAX_VALUE) {
                         // a strict bound just past the timestamp domain matches nothing;
                         // lo + 1 would wrap around to Long.MIN_VALUE and select every row
@@ -2380,6 +2437,9 @@ public final class WhereClauseParser implements Mutable {
                     long hi = getTimestampFromConstFunction(timestampDriver, func, compareWithNode.position, false);
                     if (hi == Numbers.LONG_NULL) {
                         model.intersectEmpty();
+                    } else if (!isExactConstant(timestampDriver, func)) {
+                        // the constant lies between hi and the next value of the type
+                        model.intersectIntervals(Long.MIN_VALUE, hi);
                     } else {
                         model.intersectIntervals(Long.MIN_VALUE, hi + adjustComparison(equalsTo, false));
                     }
@@ -2427,7 +2487,7 @@ public final class WhereClauseParser implements Mutable {
     ) throws SqlException {
         try {
             if (func.isConstant()) {
-                long value = getTimestampFromConstFunction(timestampDriver, func, functionPosition, true);
+                long value = getPointFromConstFunction(timestampDriver, func, functionPosition, true);
                 model.subtractIntervals(value, value);
                 node.intrinsicValue = IntrinsicModel.TRUE;
                 final Function ownedFunc = func;
@@ -3049,7 +3109,7 @@ public final class WhereClauseParser implements Mutable {
                             return false;
                         }
                     } else {
-                        long ts = parseTokenAsTimestamp(timestampDriver, inListItem);
+                        long ts = parseTokenAsPoint(timestampDriver, inListItem);
                         if (isFirst) {
                             model.intersectIntervals(ts, ts);
                         } else {
@@ -3084,7 +3144,7 @@ public final class WhereClauseParser implements Mutable {
                     return false;
                 }
             } else {
-                long ts = parseTokenAsTimestamp(timestampDriver, valueNode);
+                long ts = parseTokenAsPoint(timestampDriver, valueNode);
                 if (leftFirst) {
                     model.intersectIntervals(ts, ts);
                 } else {
@@ -3274,6 +3334,15 @@ public final class WhereClauseParser implements Mutable {
         return false;
     }
 
+    // A literal finer than the designated timestamp, such as nanosecond digits against a TIMESTAMP column, lies
+    // between two of its values
+    private boolean isInexactLiteral(TimestampDriver timestampDriver, ExpressionNode node) {
+        return node != null
+                && node.type == ExpressionNode.CONSTANT
+                && Chars.isQuoted(node.token)
+                && !timestampDriver.isExactText(node.token, 1, node.token.length() - 1);
+    }
+
     private boolean isTimestamp(ExpressionNode n) {
         return Chars.equalsIgnoreCaseNc(n.token, timestamp);
     }
@@ -3343,23 +3412,38 @@ public final class WhereClauseParser implements Mutable {
         return true;
     }
 
+    // Reads a literal bound of a range comparison: the first value of the type at (equalsTo) or after the
+    // literal for a lower bound, the last value at or before it for an upper bound. A literal that lies between
+    // two values of the type, being finer than it, sets isLastBoundExact to false. Past the range of the type,
+    // the bound is a value no designated timestamp holds.
     private long parseFullOrPartialDate(
             TimestampDriver timestampDriver,
             boolean equalsTo,
             ExpressionNode node,
             boolean isLo
     ) throws NumericException {
+        final CharSequence token = node.token;
+        final int hi = token.length() - 1;
+        isLastBoundExact = true;
         long ts;
         try {
             // Timestamp string
-            ts = timestampDriver.parseFloorSaturated(node.token, 1, node.token.length() - 1);
+            ts = isLo
+                    ? timestampDriver.lowerBound(token, 1, hi, !equalsTo)
+                    : timestampDriver.upperBound(token, 1, hi, !equalsTo);
+            isLastBoundExact = timestampDriver.isExactText(token, 1, hi);
+            if (ts == Numbers.LONG_NULL) {
+                // no value of the type lies on the bound's side of the literal
+                return isLo ? Long.MAX_VALUE : Long.MIN_VALUE;
+            }
+            return ts;
         } catch (NumericException e) {
             try {
                 // Timestamp epoch (long)
-                ts = Numbers.parseLong(node.token);
+                ts = Numbers.parseLong(token);
             } catch (NumericException e2) {
                 // Timestamp format
-                ts = timestampDriver.parseAnyFormat(node.token, 1, node.token.length() - 1);
+                ts = timestampDriver.parseAnyFormat(token, 1, hi);
             }
         }
         if (!equalsTo) {
@@ -3860,7 +3944,8 @@ public final class WhereClauseParser implements Mutable {
                 } catch (NumericException e) {
                     throw SqlException.invalidDate(boundNode.token, boundNode.position);
                 }
-                final short adj = adjustComparison(equalsTo, isLo);
+                // a literal between two values of the type is a non-strict bound already
+                final short adj = isLastBoundExact ? adjustComparison(equalsTo, isLo) : 0;
                 // a strict bound just past the type extreme (`x > MAX`, `x < MIN`) matches nothing
                 if ((adj > 0 && b == Long.MAX_VALUE) || (adj < 0 && b == Long.MIN_VALUE)) {
                     return BOUND_EMPTY;
@@ -4020,7 +4105,13 @@ public final class WhereClauseParser implements Mutable {
             ExpressionNode node
     ) throws SqlException {
         if (node.type == ExpressionNode.CONSTANT) {
-            model.setBetweenBoundary(parseTokenAsTimestamp(timestampDriver, node));
+            final long timestamp = parseTokenAsTimestamp(timestampDriver, node);
+            if (timestamp != Numbers.LONG_NULL && isInexactLiteral(timestampDriver, node)) {
+                // the literal lies between timestamp and the next value of the type
+                model.setBetweenBoundary(timestamp + 1, timestamp);
+            } else {
+                model.setBetweenBoundary(timestamp);
+            }
             return true;
         } else if (node.type == ExpressionNode.QUERY) {
             // scalar subquery bound, e.g. ts BETWEEN (select ...) AND (select ...). Only a

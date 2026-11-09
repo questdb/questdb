@@ -36,6 +36,7 @@ import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.WeekTimestampMicrosSampler;
 import io.questdb.griffin.engine.groupby.YearTimestampMicrosSampler;
 import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.std.Chars;
 import io.questdb.std.Interval;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
@@ -296,6 +297,49 @@ public class MicrosTimestampDriver implements TimestampDriver {
             return CommonUtils.nanosToMicros(timestamp);
         }
         return timestamp;
+    }
+
+    @Override
+    public int compareFrom(long timestamp, int fromTimestampType, long value) {
+        if (ColumnType.isTimestampNano(fromTimestampType)) {
+            final long micros = Math.floorDiv(timestamp, Micros.MICRO_NANOS);
+            if (micros != value) {
+                return Long.compare(micros, value);
+            }
+            return Math.floorMod(timestamp, Micros.MICRO_NANOS) == 0 ? 0 : 1;
+        }
+        return Long.compare(timestamp, value);
+    }
+
+    @Override
+    public long floorFrom(long timestamp, int fromTimestampType) {
+        // nanosToMicros() rounds toward zero, which is up in time before 1970
+        return ColumnType.isTimestampNano(fromTimestampType) ? Math.floorDiv(timestamp, Micros.MICRO_NANOS) : timestamp;
+    }
+
+    @Override
+    public boolean isExactFrom(long timestamp, int fromTimestampType) {
+        return !ColumnType.isTimestampNano(fromTimestampType) || Math.floorMod(timestamp, Micros.MICRO_NANOS) == 0;
+    }
+
+    @Override
+    public boolean isExactText(CharSequence str, int lo, int hi) {
+        // the only '.' in timestamp text starts the fraction of the seconds; the parser ignores up to
+        // three digits past the micros
+        final int dot = Chars.indexOf(str, lo, hi, '.');
+        if (dot < 0) {
+            return true;
+        }
+        for (int p = dot + 1; p < hi; p++) {
+            final char c = str.charAt(p);
+            if (Numbers.notDigit(c)) {
+                break;
+            }
+            if (c != '0' && p - dot > 6) {
+                return false;
+            }
+        }
+        return true;
     }
 
     @Override

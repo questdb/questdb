@@ -1805,10 +1805,164 @@ public class CompiledFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampInvalidTextBoundFails() throws Exception {
+        // Text that is not a timestamp fails in every comparison, as a literal or as a bind variable, on both
+        // precisions: it never counts as a bound past the range.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (k SYMBOL, v TIMESTAMP_NS, m TIMESTAMP, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES ('mid', '2020-01-03T00:00:00Z', '2020-01-03T00:00:00Z', '2020-01-03')");
+            for (int mode = 0; mode < 4; mode++) {
+                sqlExecutionContext.setParallelFilterEnabled((mode & 1) != 0);
+                sqlExecutionContext.setJitMode((mode & 2) != 0 ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+                for (String text : new String[]{"abc", "2020-13-45"}) {
+                    final String literal = "'" + text + "'";
+                    for (String column : new String[]{"v", "m", "ts"}) {
+                        assertQuery("SELECT k FROM x WHERE " + column + " > " + literal).noLeakCheck().failsWith("Invalid date");
+                        assertQuery("SELECT k FROM x WHERE " + column + " <= " + literal).noLeakCheck().failsWith("Invalid date");
+                        // the designated timestamp parses an equality with its own message
+                        assertQuery("SELECT k FROM x WHERE " + column + " = " + literal).noLeakCheck()
+                                .failsWith("ts".equals(column) ? "invalid timestamp" : "Invalid date");
+                        assertQuery("SELECT k FROM x WHERE " + column + " BETWEEN " + literal + " AND '2020-01-04'")
+                                .noLeakCheck().failsWith("Invalid date");
+                        assertQuery("SELECT k FROM x WHERE " + column + " IN (" + literal + ", '2020-01-03')")
+                                .noLeakCheck().failsWith("Invalid date");
+                    }
+                    for (int i = 0; i < 2; i++) {
+                        bindVariableService.clear();
+                        final String error;
+                        if (i == 0) {
+                            bindVariableService.setStr(0, text);
+                            error = "inconvertible value: `" + text + "` [STRING -> TIMESTAMP_NS]";
+                        } else {
+                            bindVariableService.setVarchar(0, new Utf8String(text));
+                            error = "inconvertible value: `" + text + "` [VARCHAR -> TIMESTAMP_NS]";
+                        }
+                        assertQuery("SELECT k FROM x WHERE v < $1").noLeakCheck().failsWith(error);
+                        assertQuery("SELECT k FROM x WHERE m < $1").noLeakCheck().failsWith(error);
+                        assertQuery("SELECT k FROM x WHERE v BETWEEN $1 AND '2020-01-04'").noLeakCheck().failsWith(error);
+                        assertQuery("SELECT k FROM x WHERE v IN ($1, '2020-01-03')").noLeakCheck().failsWith("Invalid timestamp: " + text);
+                    }
+                    bindVariableService.clear();
+                    bindVariableService.setVarchar(0, new Utf8String(text));
+                    assertQuery("SELECT k FROM x WHERE ts > $1").noLeakCheck()
+                            .failsWith("inconvertible value: `" + text + "` [VARCHAR -> TIMESTAMP_NS]");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testTimestampLiteralFinerThanColumnComparesExactly() throws Exception {
+        // A literal with digits finer than the column, such as nanosecond digits against a TIMESTAMP column,
+        // compares by its exact value in every mode: the JIT and the interval scan of the designated timestamp
+        // leave it to the Java filter. No column value converts to nanoseconds, so a TIMESTAMP value past the
+        // end of TIMESTAMP_NS compares without an error.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (k SYMBOL, m TIMESTAMP, v TIMESTAMP_NS, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY YEAR");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('lo', '2020-01-01T00:00:00.000000Z', '2020-01-01T00:00:00.000000500Z', '2020-01-01T00:00:00.000000Z'),
+                    ('hi', '2020-01-01T00:00:00.000001Z', '2020-01-01T00:00:00.000000500Z', '2020-01-01T00:00:00.000001Z'),
+                    ('nul', NULL, '2020-01-01T00:00:00.000000500Z', '2020-01-02T00:00:00.000000Z'),
+                    ('far', '9999-12-31T00:00:00.000000Z', '2020-01-01T00:00:00.000000500Z', '9999-12-31T00:00:00.000000Z')
+                    """);
+            // between the micros of 'lo' and 'hi'
+            final String l = "'2020-01-01T00:00:00.000000123Z'";
+            // past the end of TIMESTAMP_NS, one nanosecond after the micro of 'far'
+            final String f = "'9999-12-31T00:00:00.000000001Z'";
+            for (int mode = 0; mode < 4; mode++) {
+                final boolean isParallel = (mode & 1) != 0;
+                final boolean isJit = (mode & 2) != 0;
+                sqlExecutionContext.setParallelFilterEnabled(isParallel);
+                sqlExecutionContext.setJitMode(isJit ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+                try (RecordCursorFactory factory = select("SELECT k FROM x WHERE m < " + l)) {
+                    Assert.assertFalse(factory.usesCompiledFilter());
+                }
+                try (RecordCursorFactory factory = select("SELECT k FROM x WHERE m < '2020-01-01T00:00:00.000001Z'")) {
+                    Assert.assertEquals(isParallel && isJit, factory.usesCompiledFilter());
+                }
+
+                assertBound("m = " + l, "");
+                assertBound("m != " + l, "lo\nhi\nnul\nfar\n");
+                assertBound("m < " + l, "lo\n");
+                assertBound("m <= " + l, "lo\n");
+                assertBound("m > " + l, "hi\nfar\n");
+                assertBound("m >= " + l, "hi\nfar\n");
+                assertBound(l + " < m", "hi\nfar\n");
+                assertBound(l + " >= m", "lo\n");
+                assertBound("m BETWEEN '2019-12-31' AND " + l, "lo\n");
+                assertBound("m BETWEEN " + l + " AND '2019-12-31'", "lo\n");
+                assertBound("m BETWEEN " + l + " AND '2020-01-01T00:00:00.000001Z'", "hi\n");
+                assertBound("m BETWEEN " + l + " AND " + l, "");
+                assertBound("m IN (" + l + ", '2020-01-01T00:00:00.000001Z')", "hi\n");
+                assertBound("m NOT IN (" + l + ", '2020-01-01T00:00:00.000001Z')", "lo\nnul\nfar\n");
+                assertBound("ts = " + l, "");
+                assertBound("ts != " + l, "lo\nhi\nnul\nfar\n");
+                assertBound("ts < " + l, "lo\n");
+                assertBound("ts <= " + l, "lo\n");
+                assertBound("ts > " + l, "hi\nnul\nfar\n");
+                assertBound("ts >= " + l, "hi\nnul\nfar\n");
+                assertBound("ts BETWEEN " + l + " AND '2020-01-01T00:00:00.000001Z'", "hi\n");
+                assertBound("ts IN (" + l + ", '2020-01-01T00:00:00.000001Z')", "hi\n");
+                assertBound("(ts < " + l + " OR k = 'zz')", "lo\n");
+                assertBound("(ts >= " + l + " OR k = 'zz')", "hi\nnul\nfar\n");
+                assertBound("(ts = " + l + " OR ts = '2020-01-01T00:00:00.000001Z')", "hi\n");
+
+                assertBound("m = " + f, "");
+                assertBound("m < " + f, "lo\nhi\nfar\n");
+                assertBound("m >= " + f, "");
+                assertBound("ts < " + f, "lo\nhi\nnul\nfar\n");
+                assertBound("ts >= " + f, "");
+
+                // a column of the other precision
+                assertBound("m < v", "lo\n");
+                assertBound("m >= v", "hi\nfar\n");
+                assertBound("m = v", "");
+                assertBound("m != v", "lo\nhi\nnul\nfar\n");
+                assertBound("v < m", "hi\nfar\n");
+                assertBound("v BETWEEN m AND '2020-01-02'", "lo\n");
+            }
+
+            // scalar sub-queries, as text and as TIMESTAMP_NS
+            for (String sub : new String[]{"(SELECT " + l + ")", "(SELECT " + l + "::TIMESTAMP_NS)"}) {
+                assertBound("m < " + sub, "lo\n");
+                assertBound("m >= " + sub, "hi\nfar\n");
+                assertBound("m > " + sub, "hi\nfar\n");
+                assertBound("m <= " + sub, "lo\n");
+                assertBound("m = " + sub, "");
+                assertBound("m != " + sub, "lo\nhi\nnul\nfar\n");
+                assertBound("m BETWEEN " + sub + " AND (SELECT '2020-01-02')", "hi\n");
+                assertBound("m BETWEEN " + sub + " AND '2020-01-02'", "hi\n");
+                assertBound("ts < " + sub, "lo\n");
+                assertBound("ts >= " + sub, "hi\nnul\nfar\n");
+                assertBound("ts BETWEEN " + sub + " AND (SELECT '2020-01-02')", "hi\nnul\n");
+            }
+
+            // bind variables read once per execution
+            for (int i = 0; i < 3; i++) {
+                bindVariableService.clear();
+                switch (i) {
+                    case 0 -> bindVariableService.setStr(0, "2020-01-01T00:00:00.000000123Z");
+                    case 1 -> bindVariableService.setVarchar(0, new Utf8String("2020-01-01T00:00:00.000000123Z"));
+                    default -> bindVariableService.setTimestampNano(0, 1_577_836_800_000_000_123L);
+                }
+                assertBound("m < $1", "lo\n");
+                assertBound("m >= $1", "hi\nfar\n");
+                assertBound("m BETWEEN $1 AND '2020-01-02'", "hi\n");
+                assertBound("m IN ($1, '2020-01-01T00:00:00.000001Z')", "hi\n");
+                assertBound("ts < $1", "lo\n");
+                assertBound("ts >= $1", "hi\nnul\nfar\n");
+                assertBound("ts = $1", "");
+                assertBound("ts BETWEEN $1 AND '2020-01-02'", "hi\nnul\n");
+            }
+        });
+    }
+
+    @Test
     public void testTimestampMicrosTextBoundInLastNanosMicro() throws Exception {
         // Text from 2262-04-11T23:47:16.854775808Z to ...999Z lies past the end of TIMESTAMP_NS but inside
-        // the micro 2262-04-11T23:47:16.854775Z. Compared with micros values, the Java filter floors it to
-        // that micro, as the JIT and the interval scan of the designated timestamp do.
+        // the micro 2262-04-11T23:47:16.854775Z. Compared with micros values, it lies between that micro and
+        // the next one, in every mode and on the designated timestamp too.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (k SYMBOL, m TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
@@ -1821,15 +1975,18 @@ public class CompiledFilterTest extends AbstractCairoTest {
             for (int mode = 0; mode < 4; mode++) {
                 sqlExecutionContext.setParallelFilterEnabled((mode & 1) != 0);
                 sqlExecutionContext.setJitMode((mode & 2) != 0 ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
-                assertBound("m < " + bound, "mid\n");
+                assertBound("m < " + bound, "mid\n775\n");
                 assertBound("m <= " + bound, "mid\n775\n");
                 assertBound("m > " + bound, "776\n");
-                assertBound("m >= " + bound, "775\n776\n");
-                assertBound("m = " + bound, "775\n");
-                assertBound("m != " + bound, "mid\n776\n");
+                assertBound("m >= " + bound, "776\n");
+                assertBound("m = " + bound, "");
+                assertBound("m != " + bound, "mid\n775\n776\n");
                 assertBound("m BETWEEN '2262-01-01' AND " + bound, "775\n");
                 assertBound("ts > " + bound, "776\n");
+                assertBound("ts >= " + bound, "776\n");
+                assertBound("ts < " + bound, "mid\n775\n");
                 assertBound("ts <= " + bound, "mid\n775\n");
+                assertBound("ts = " + bound, "");
                 assertBound("(ts > " + bound + " OR k = 'zz')", "776\n");
                 assertBound("(ts <= " + bound + " OR k = 'zz')", "mid\n775\n");
             }
@@ -1919,13 +2076,30 @@ public class CompiledFilterTest extends AbstractCairoTest {
                 }
             }
 
-            // A range comparison with a text bind variable on a non-designated column reads the text per row
-            // and fails instead of clamping it.
-            bindVariableService.clear();
-            bindVariableService.setStr(0, "9999-12-31");
-            assertQuery("SELECT k FROM x WHERE v < $1")
-                    .noLeakCheck()
-                    .failsWith("inconvertible value: `9999-12-31` [STRING -> TIMESTAMP_NS]");
+            // A range comparison reads a text bind variable once per execution, so on a non-designated column
+            // too a bound past the range is before or after every value.
+            for (int mode = 0; mode < 4; mode++) {
+                sqlExecutionContext.setParallelFilterEnabled((mode & 1) != 0);
+                sqlExecutionContext.setJitMode((mode & 2) != 0 ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+                for (int i = 0; i < 2; i++) {
+                    bindVariableService.clear();
+                    if (i == 0) {
+                        bindVariableService.setStr(0, "9999-12-31");
+                        bindVariableService.setStr(1, "1000-01-01");
+                    } else {
+                        bindVariableService.setVarchar(0, new Utf8String("9999-12-31"));
+                        bindVariableService.setVarchar(1, new Utf8String("1000-01-01"));
+                    }
+                    assertBound("v < $1", "min\nmax\nmid\n");
+                    assertBound("v >= $1", "");
+                    assertBound("v > $2", "min\nmax\nmid\n");
+                    assertBound("v <= $2", "");
+                    assertBound("$1 > v", "min\nmax\nmid\n");
+                    assertBound("v BETWEEN $2 AND $1", "min\nmax\nmid\n");
+                    assertBound("v BETWEEN $1 AND $1", "");
+                    assertBound("(ts < $1 OR k = 'zz')", all);
+                }
+            }
 
             // Other runtime constants past the range fail in = and != as well, and clamp in IN and in a bound of
             // the designated timestamp.
@@ -1999,7 +2173,10 @@ public class CompiledFilterTest extends AbstractCairoTest {
                         .noLeakCheck().returns("k\nmax\n");
                 assertQuery("SELECT k FROM x WHERE d < '2262-04-11T23:47:16.854775807Z'")
                         .noLeakCheck().returns("k\nmid\none\n");
+                // a bound with nanosecond digits compares exactly: 'mid' lies 123ns before the lower bound
                 assertQuery("SELECT k FROM x WHERE d BETWEEN '2262-01-01T00:00:00.000000123Z' AND '2262-04-11T23:47:16.854775807Z'")
+                        .noLeakCheck().returns("k\nmax\n");
+                assertQuery("SELECT k FROM x WHERE d BETWEEN '2262-01-01T00:00:00.000000000Z' AND '2262-04-11T23:47:16.854775807Z'")
                         .noLeakCheck().returns("k\nmax\nmid\n");
 
                 // past the end of TIMESTAMP_NS: after every value, in every mode (the JIT used to
@@ -2132,6 +2309,36 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     assertBound("ts NOT IN ($1)", all);
                     bindVariableService.clear();
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testTimestampNsTextPastEndOutsideComparisons() throws Exception {
+        // '2262-04-11T23:47:16.854775900Z' lies past the end of TIMESTAMP_NS, inside the micro
+        // 2262-04-11T23:47:16.854775Z. A function that only reads it as a timestamp gets that micro, and a
+        // comparison compares the text exactly whatever the precision of the other operands.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (k SYMBOL, v TIMESTAMP_NS, m TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('775', '2262-04-11T23:47:16.854775000Z', '2262-04-11T23:47:16.854775Z', '2020-01-01'),
+                    ('776', '2262-04-11T23:47:16.854775807Z', '2262-04-11T23:47:16.854776Z', '2020-01-02')
+                    """);
+            final String past = "'2262-04-11T23:47:16.854775900Z'";
+            assertQuery("SELECT k, datediff('u', v, " + past + ") d FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("k\td\n775\t0\n776\t0\n");
+            for (int mode = 0; mode < 4; mode++) {
+                sqlExecutionContext.setParallelFilterEnabled((mode & 1) != 0);
+                sqlExecutionContext.setJitMode((mode & 2) != 0 ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+                assertBound("m BETWEEN '2262-01-01T00:00:00.000000001Z' AND " + past, "775\n");
+                assertBound("m BETWEEN " + past + " AND '2262-01-01T00:00:00.000000001Z'", "775\n");
+                assertBound("v < " + past, "775\n776\n");
+                assertBound("v = " + past, "");
+                assertBound("v BETWEEN '2262-01-01T00:00:00.000000001Z' AND " + past, "775\n776\n");
+                assertBound("v IN (" + past + ", '2262-04-11T23:47:16.854775000Z')", "775\n");
             }
         });
     }

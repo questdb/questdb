@@ -219,6 +219,13 @@ public class IntrinsicModel implements Mutable {
         }
     }
 
+    public void setBetweenBoundary(long lower, long upper) {
+        runtimeIntervalBuilder.setBetweenBoundary(lower, upper);
+        if (runtimeIntervalBuilder.isEmptySet()) {
+            intrinsicValue = FALSE;
+        }
+    }
+
     public void setBetweenBoundary(Function timestamp, int functionPosition) {
         runtimeIntervalBuilder.setBetweenBoundary(timestamp, functionPosition);
         if (runtimeIntervalBuilder.isEmptySet()) {

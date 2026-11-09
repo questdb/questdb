@@ -2228,7 +2228,15 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testTimestampLiteral() throws Exception {
-        serialize("atimestamp = '2023-02-11T11:12:22.116234987Z'");
+        // a literal finer than the micros column lies between two of its values: the Java filter compares it
+        try {
+            serialize("atimestamp = '2023-02-11T11:12:22.116234987Z'");
+            Assert.fail("expected JIT compilation to be declined for a literal finer than the column");
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "timestamp literal finer than the column");
+        }
+        // trailing zero digits past the micros keep the value exact
+        serialize("atimestamp = '2023-02-11T11:12:22.116234000Z'");
         assertIR("(i64 1676113942116234L)(i64 atimestamp)(=)(ret)");
         serialize("atimestamp = '2023-02-11T11:12:22.116234Z'");
         assertIR("(i64 1676113942116234L)(i64 atimestamp)(=)(ret)");

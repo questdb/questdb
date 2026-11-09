@@ -4534,13 +4534,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
         if (Chars.isQuoted(token)) {
             if (ColumnType.isTimestamp(predicateContext.columnType)) {
+                final TimestampDriver driver = ColumnType.getTimestampDriver(predicateContext.columnType);
+                if (!driver.isExactText(token, 1, token.length() - 1)) {
+                    // a literal finer than the column lies between two of its values; the Java filter compares
+                    // it exactly, while the JIT compares with one value of the column type
+                    throw SqlException.position(position).put("timestamp literal finer than the column: ").put(token);
+                }
                 try {
-                    putOperand(
-                            offset,
-                            IMM,
-                            I8_TYPE,
-                            ColumnType.getTimestampDriver(predicateContext.columnType).parseQuotedLiteral(token)
-                    );
+                    putOperand(offset, IMM, I8_TYPE, driver.parseQuotedLiteral(token));
                 } catch (NumericException e) {
                     throw SqlException.invalidDate(token, position);
                 }

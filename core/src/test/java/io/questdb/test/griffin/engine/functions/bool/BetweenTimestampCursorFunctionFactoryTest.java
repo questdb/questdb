@@ -467,22 +467,27 @@ public class BetweenTimestampCursorFunctionFactoryTest extends AbstractCairoTest
 
     @Test
     public void testUsColumnWithNanoCursorBounds() throws Exception {
-        // nanosecond cursor bounds on a microsecond column floor to microsecond precision, the
-        // exact conversion the interval intrinsic performs; both paths must return the same rows
+        // nanosecond cursor bounds on a microsecond column compare exactly: 01:00:00.000000 lies 500ns before
+        // the lower bound, 03:00:00.000000 lies 700ns before the upper one. The interval intrinsic and the
+        // row filter must return the same rows.
         assertMemoryLeak(() -> {
             createBaseTables();
             createNanoBoundsWithSubMicroOffsets();
             assertQuery("SELECT x FROM t WHERE ts2 BETWEEN (SELECT lo FROM b_ns_frac) AND (SELECT hi FROM b_ns_frac)")
                     .returns("""
                             x
-                            1
                             2
                             3
                             """);
             assertQuery("SELECT x FROM t WHERE ts BETWEEN (SELECT lo FROM b_ns_frac) AND (SELECT hi FROM b_ns_frac)")
                     .returns("""
                             x
-                            1
+                            2
+                            3
+                            """);
+            assertQuery("SELECT x FROM t WHERE ts2 BETWEEN (SELECT hi FROM b_ns_frac) AND (SELECT lo FROM b_ns_frac)")
+                    .returns("""
+                            x
                             2
                             3
                             """);

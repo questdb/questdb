@@ -141,7 +141,6 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
-import io.questdb.std.datetime.nanotime.Nanos;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -729,30 +728,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         ex.put(')');
         Misc.freeObjList(args, ex);
         return ex;
-    }
-
-    // Text past the end of the TIMESTAMP_NS range but inside its last micro floors to that micro, which
-    // TIMESTAMP_NS holds. One micro more keeps the constant past the end, so a comparison with a
-    // TIMESTAMP_NS value treats it as after every value. A comparison with micros values only keeps
-    // the floor, as the JIT and the interval scan do.
-    private static long ceilPastNanosEnd(long micros, CharSequence timestampStr) {
-        if (micros == Long.MAX_VALUE / Nanos.MICRO_NANOS) {
-            try {
-                NanosTimestampDriver.INSTANCE.parseFloorLiteral(timestampStr);
-            } catch (NumericException e) {
-                return micros + 1;
-            }
-        }
-        return micros;
-    }
-
-    private static boolean hasTimestampNanoArg(ObjList<Function> args, int skipIndex) {
-        for (int i = 0, n = args.size(); i < n; i++) {
-            if (i != skipIndex && ColumnType.isTimestampNano(args.getQuick(i).getType())) {
-                return true;
-            }
-        }
-        return false;
     }
 
     private static boolean isUntypedEmptyArrayLiteral(Function arg) {
@@ -1525,10 +1500,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     // Adaptive precision: prefer nano if the string has nanosecond precision
                     int adaptiveType = getAdaptiveTimestampType(timestampStr, sigArgType);
                     long timestamp = parseTimestamp(adaptiveType, timestampStr, position);
-                    if (ColumnType.isTimestampMicro(adaptiveType) && hasTimestampNanoArg(args, k)) {
-                        timestamp = ceilPastNanosEnd(timestamp, timestampStr);
-                    }
-                    args.set(k, TimestampConstant.newInstance(timestamp, adaptiveType));
+                    // keeps the text when the value drops digits of it, for comparisons to read exactly
+                    args.set(k, TimestampConstant.newInstance(timestamp, adaptiveType, timestampStr));
                 } else if (sigArgTypeTag == ColumnType.DATE) {
                     int position = argPositions.getQuick(k);
                     long millis = parseDate(arg.getStrA(null), position);
