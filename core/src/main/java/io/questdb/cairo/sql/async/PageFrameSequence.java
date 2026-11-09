@@ -94,6 +94,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
     private MemoryTracker memoryTracker;
     private boolean readyToDispatch;
     private RingQueue<PageFrameReduceTask> reduceQueue;
+    private SqlExecutionContext registeredContext;
     private int shard;
     private SqlExecutionContext sqlExecutionContext;
     private long startTime;
@@ -213,22 +214,16 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
 
         // It could be the case that one of the workers reduced a page frame, then marked the task as done,
         // but haven't incremented reduce counter yet. In this case, we wait for the desired counter value.
-        while (true) {
-            final long observedProgress = canPark ? getProgressVersion() : 0;
-            final long observedGlobalProgress = canPark ? dispatcher.getProgressVersion() : 0;
-            if (reduceFinishedCounter.get() == dispatchStartFrameIndex) {
-                break;
-            }
-            if (canPark) {
-                awaitProgress(dispatcher, observedProgress, observedGlobalProgress, true);
-            } else {
-                Os.pause();
-            }
-        }
+        awaitReduced(dispatcher, canPark);
 
         if (frameCount > 0) {
             suspendCollectSubSeq();
         }
+    }
+
+    public void awaitReduced() {
+        final PageFrameReduceDispatcher dispatcher = messageBus.getPageFrameReduceDispatcher();
+        awaitReduced(dispatcher, dispatcher != null && isFiberSuspendable());
     }
 
     @Override
@@ -481,6 +476,8 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
             // It is essential to init the atom after we prepared sequence for dispatch.
             // If atom is to fail, we will be releasing whatever we prepared.
             atom.init(frameCursor, executionContext);
+            executionContext.registerPageFrameSequence(this);
+            registeredContext = executionContext;
         } catch (TableReferenceOutOfDateException e) {
             frameCursor = Misc.freeIfCloseable(frameCursor);
             throw e;
@@ -507,6 +504,10 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
     public void reset() {
         // reset() must be called only if there are no tasks in progress for this page frame sequence
         assert frameCount == 0 || reduceFinishedCounter.get() == dispatchStartFrameIndex;
+        if (registeredContext != null) {
+            registeredContext.unregisterPageFrameSequence(this);
+            registeredContext = null;
+        }
 
         // prepare different frame sequence using the same object instance
         frameCount = 0;
@@ -610,6 +611,21 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
             reduceStartedCounter.set(0);
             workStealingStrategy.of(reduceStartedCounter);
             resetCancellation();
+        }
+    }
+
+    private void awaitReduced(PageFrameReduceDispatcher dispatcher, boolean canPark) {
+        while (true) {
+            final long observedProgress = canPark ? getProgressVersion() : 0;
+            final long observedGlobalProgress = canPark ? dispatcher.getProgressVersion() : 0;
+            if (reduceFinishedCounter.get() == dispatchStartFrameIndex) {
+                break;
+            }
+            if (canPark) {
+                awaitProgress(dispatcher, observedProgress, observedGlobalProgress, true);
+            } else {
+                Os.pause();
+            }
         }
     }
 

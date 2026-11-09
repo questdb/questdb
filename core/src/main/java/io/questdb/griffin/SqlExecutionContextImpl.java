@@ -40,6 +40,7 @@ import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.VirtualRecord;
+import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowContextImpl;
@@ -83,6 +84,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final ObjStack<RuntimeIntrinsicIntervalModel> intervalModelObjStack = new ObjStack<>();
     private final MicrosecondClock microClock;
     private final NanosecondClock nanoClock;
+    private final ObjList<PageFrameSequence<?>> pageFrameSequences = new ObjList<>();
     private final int sharedQueryWorkerCount;
     private final AtomicBooleanCircuitBreaker simpleCircuitBreaker;
     private final Telemetry<TelemetryTask> telemetry;
@@ -178,6 +180,13 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public boolean allowNonDeterministicFunctions() {
         return allowNonDeterministicFunction;
+    }
+
+    @Override
+    public void awaitPageFrameSequences() {
+        for (int i = 0, n = pageFrameSequences.size(); i < n; i++) {
+            pageFrameSequences.getQuick(i).awaitReduced();
+        }
     }
 
     @Override
@@ -631,6 +640,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public void registerPageFrameSequence(PageFrameSequence<?> frameSequence) {
+        pageFrameSequences.add(frameSequence);
+    }
+
+    @Override
     public void reset() {
         checkNoMountedQueryOwner();
         resetState();
@@ -864,6 +878,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
         sink.putAscii("principal=").put(securityContext.getPrincipal()).putAscii(", cache=").put(isCacheHit());
+    }
+
+    @Override
+    public void unregisterPageFrameSequence(PageFrameSequence<?> frameSequence) {
+        pageFrameSequences.remove(frameSequence);
     }
 
     public SqlExecutionContextImpl with(@NotNull SecurityContext securityContext, @Nullable BindVariableService bindVariableService, @Nullable Rnd rnd) {
