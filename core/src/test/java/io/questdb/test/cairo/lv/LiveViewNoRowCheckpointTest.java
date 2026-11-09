@@ -441,12 +441,13 @@ public class LiveViewNoRowCheckpointTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testDepartureThenThreeFailedPublicationsOpenNoHistoryAboveTheFrontier() throws Exception {
-        // Three failed publications of the stretch after a departure retire the timeline and
-        // clear the head, with the newest timestamp the view has seen still at the departed row.
-        // Past the cooldown each cycle without rows declines a first root there, above the newest
-        // row the view holds. The next matching row opens a fresh history at its own timestamp,
-        // which the restart restores from.
+    public void testDepartureThenPublicationsFailingPastThePauseOpenNoHistoryAboveTheFrontier() throws Exception {
+        // Three failed publications of the stretch after a departure pause the seal: the head stays
+        // on the root at the frontier. The fault outlasts the pause, so the first publication after
+        // it fails, which retires the timeline and clears the head, with the newest timestamp the
+        // view has seen still at the departed row. Past the cooldown each cycle without rows
+        // declines a first root there, above the newest row the view holds. The next matching row
+        // opens a fresh history at its own timestamp, which the restart restores from.
         configureCadence(CADENCE_MICROS);
         assertMemoryLeak(() -> {
             createDedupBaseView();
@@ -457,34 +458,53 @@ public class LiveViewNoRowCheckpointTest extends AbstractLiveViewTest {
                 for (int i = 6; i <= 8; i++) {
                     commitRejected(job, DrainPath.RAW_WAL, i, DEPARTURE_STEP_MICROS);
                 }
-                job.setCheckpointTimelineTestFailureStage(0);
                 Assert.assertEquals(3, instance.getCheckpointSealFailures());
-                Assert.assertEquals(resetsBefore + 1, instance.getCheckpointTimelineResets());
-                Assert.assertEquals(Numbers.LONG_NULL, instance.getHeadCheckpointMaxTs());
+                Assert.assertEquals("the third failure pauses", resetsBefore, instance.getCheckpointTimelineResets());
+                Assert.assertEquals(ts(minute(2)), instance.getHeadCheckpointMaxTs());
+                Assert.assertEquals(5, instance.getHeadCheckpointBaseSeqTxn());
                 Assert.assertTrue(instance.isSealOnCooldown(currentMicros));
+
+                setCurrentMicros(currentMicros + Micros.MINUTE_MICROS + Micros.SECOND_MICROS);
+                commitRejected(job, DrainPath.RAW_WAL, 9, DEPARTURE_STEP_MICROS);
+                job.setCheckpointTimelineTestFailureStage(0);
+                Assert.assertEquals(4, instance.getCheckpointSealFailures());
+                Assert.assertEquals("the fourth failure retires", resetsBefore + 1, instance.getCheckpointTimelineResets());
+                Assert.assertEquals(Numbers.LONG_NULL, instance.getHeadCheckpointMaxTs());
+                Assert.assertTrue(instance.isSealOnCooldown(currentMicros + 2 * Micros.MINUTE_MICROS - Micros.SECOND_MICROS));
+                Assert.assertFalse(instance.isSealOnCooldown(currentMicros + 2 * Micros.MINUTE_MICROS + Micros.SECOND_MICROS));
                 assertNoTimeline(instance);
 
                 setCurrentMicros(currentMicros + 2 * Micros.MINUTE_MICROS);
                 final long declinesBefore = sealAboveFrontierDeclines(job);
-                for (int i = 9; i <= 11; i++) {
+                for (int i = 10; i <= 12; i++) {
                     commitRejected(job, DrainPath.RAW_WAL, i, DEPARTURE_STEP_MICROS);
-                    Assert.assertEquals(i - 8, sealAboveFrontierDeclines(job) - declinesBefore);
+                    Assert.assertEquals(i - 9, sealAboveFrontierDeclines(job) - declinesBefore);
                 }
-                Assert.assertEquals(3, instance.getCheckpointSealFailures());
+                Assert.assertEquals(4, instance.getCheckpointSealFailures());
                 Assert.assertEquals(Numbers.LONG_NULL, instance.getHeadCheckpointMaxTs());
                 assertNoTimeline(instance);
 
-                commit(job, minute(10), "a", 4.0, DEPARTURE_STEP_MICROS);
-                Assert.assertEquals(ts(minute(10)), instance.getHeadCheckpointMaxTs());
-                assertCheckpointLadder(instance, false, "2026-01-01T00:10:00.000000Z -> 4\n");
+                commit(job, minute(13), "a", 4.0, DEPARTURE_STEP_MICROS);
+                Assert.assertEquals(ts(minute(13)), instance.getHeadCheckpointMaxTs());
+                assertCheckpointLadder(instance, false, "2026-01-01T00:13:00.000000Z -> 4\n");
             }
             restartCycle();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveRefreshToQuiescence(job);
             }
             assertRestoredFromTimeline("lv");
-            assertDepartedViewRows(DEPARTURE_ROWS + "2026-01-01T00:10:00.000000Z\ta\t4.0\t8.0\n");
+            assertDepartedViewRows(DEPARTURE_ROWS + "2026-01-01T00:13:00.000000Z\ta\t4.0\t8.0\n");
         });
+    }
+
+    @Test
+    public void testRowlessPublicationFaultSpanningThreeCyclesPausesOnTheAppliedBaseDrain() throws Exception {
+        assertRowlessPublicationFaultSpanningThreeCyclesPauses(DrainPath.APPLIED_BASE);
+    }
+
+    @Test
+    public void testRowlessPublicationFaultSpanningThreeCyclesPausesOnTheRawWalDrain() throws Exception {
+        assertRowlessPublicationFaultSpanningThreeCyclesPauses(DrainPath.RAW_WAL);
     }
 
     @Test
@@ -598,13 +618,29 @@ public class LiveViewNoRowCheckpointTest extends AbstractLiveViewTest {
                 Assert.assertEquals(1, instance.getCheckpointTimelineWalPurgeFloor());
                 assertTimeline(2, 1, 6);
 
-                // Three failures in a row retire the timeline, as three failed seals do, and
-                // release both of the view's floors with it.
+                // Three failures in a row pause the publication, as three failed seals do: the
+                // cadence is due again at seqTxn 10, and 10 to 12 fail. The head, both of the
+                // view's floors and the timeline stay, so a restart in the pause restores.
                 job.setCheckpointTimelineTestFailureStage(LiveViewCheckpointTimelineStoreWriter.TEST_FAIL_AFTER_METADATA_PUBLISH);
                 for (int i = 7; i <= 12; i++) {
                     commit(job, minute(i), "a", -1.0);
                 }
                 Assert.assertEquals(4, instance.getCheckpointSealFailures());
+                Assert.assertEquals(6, instance.getHeadCheckpointBaseSeqTxn());
+                Assert.assertEquals(1, instance.getCheckpointTimelineWalPurgeFloor());
+                assertTimeline(2, 1, 6);
+                Assert.assertTrue(instance.isSealOnCooldown(currentMicros));
+
+                // The pause holds the next publication off, though the cadence is due.
+                commit(job, minute(13), "a", -1.0);
+                Assert.assertEquals(4, instance.getCheckpointSealFailures());
+                Assert.assertEquals(6, instance.getHeadCheckpointBaseSeqTxn());
+
+                // The fault outlasts the pause: the first publication after it fails, which
+                // retires the timeline and releases both of the view's floors with it.
+                setCurrentMicros(currentMicros + Micros.MINUTE_MICROS + Micros.SECOND_MICROS);
+                commit(job, minute(14), "a", -1.0);
+                Assert.assertEquals(5, instance.getCheckpointSealFailures());
                 Assert.assertEquals(Numbers.LONG_NULL, instance.getHeadCheckpointBaseSeqTxn());
                 Assert.assertEquals(Numbers.LONG_NULL, instance.getCheckpointTimelineWalPurgeFloor());
                 try (Path dir = checkpointsDir(instance); Path timelinePath = new Path()) {
@@ -612,23 +648,23 @@ public class LiveViewNoRowCheckpointTest extends AbstractLiveViewTest {
                     Assert.assertFalse(configuration.getFilesFacade().exists(timelinePath.$()));
                 }
 
-                // The cooldown holds the next seal off, rows or not.
+                // The two-minute cooldown holds the next seal off, rows or not.
                 job.setCheckpointTimelineTestFailureStage(0);
-                commit(job, minute(13), "a", -1.0);
+                commit(job, minute(15), "a", -1.0);
                 Assert.assertEquals(Numbers.LONG_NULL, instance.getHeadCheckpointBaseSeqTxn());
 
                 // Past it, a cycle without rows opens a fresh history at the runtime frontier.
                 setCurrentMicros(currentMicros + 2 * Micros.MINUTE_MICROS);
-                commit(job, minute(14), "a", -1.0);
-                Assert.assertEquals(14, instance.getHeadCheckpointBaseSeqTxn());
-                Assert.assertEquals(14, instance.getCheckpointTimelineWalPurgeFloor());
+                commit(job, minute(16), "a", -1.0);
+                Assert.assertEquals(16, instance.getHeadCheckpointBaseSeqTxn());
+                Assert.assertEquals(16, instance.getCheckpointTimelineWalPurgeFloor());
                 Assert.assertEquals(ts(minute(1)), instance.getHeadCheckpointMaxTs());
-                assertTimeline(1, 1, 14);
+                assertTimeline(1, 1, 16);
             }
 
             restartCycle();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                commit(job, minute(15), "a", 3.5);
+                commit(job, minute(17), "a", 3.5);
                 assertRestoredFromTimeline("lv");
                 assertViewMatchesRecompute();
             }
@@ -1622,6 +1658,59 @@ public class LiveViewNoRowCheckpointTest extends AbstractLiveViewTest {
                 true
         );
         assertNoRefreshFaults("lv");
+    }
+
+    /**
+     * A root at 00:01 (seqTxn 1), then rows the filter rejects, each past the one-second cadence,
+     * whose publications fail three times in a row (2 to 4): that pauses the publication over
+     * the intact timeline. The pause holds a fourth (5), though the fault persists and the cadence
+     * is due. The fault clears, and the first rejected row after the pause (6) publishes, which a
+     * restart restores from.
+     */
+    private void assertRowlessPublicationFaultSpanningThreeCyclesPauses(DrainPath drainPath) throws Exception {
+        configureCadence(CADENCE_MICROS);
+        assertMemoryLeak(() -> {
+            createDedupBaseView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(START_MICROS);
+                commit(job, minute(1), "a", 1.5, DEPARTURE_STEP_MICROS);
+                final LiveViewInstance instance = instance();
+                final long resetsBefore = instance.getCheckpointTimelineResets();
+                assertTimeline(1, 1, 1);
+                job.setCheckpointTimelineTestFailureStage(LiveViewCheckpointTimelineStoreWriter.TEST_FAIL_AFTER_METADATA_PUBLISH);
+                for (int i = 2; i <= 4; i++) {
+                    commitRejected(job, drainPath, i, DEPARTURE_STEP_MICROS);
+                    Assert.assertEquals(i - 1, instance.getCheckpointSealFailures());
+                }
+                Assert.assertEquals("the third failure pauses", resetsBefore, instance.getCheckpointTimelineResets());
+                Assert.assertEquals(1, instance.getHeadCheckpointBaseSeqTxn());
+                Assert.assertEquals(1, instance.getCheckpointTimelineWalPurgeFloor());
+                Assert.assertEquals(ts(minute(1)), instance.getHeadCheckpointMaxTs());
+                assertTimeline(1, 1, 1);
+                Assert.assertTrue(instance.isSealOnCooldown(currentMicros));
+
+                commitRejected(job, drainPath, 5, DEPARTURE_STEP_MICROS);
+                Assert.assertEquals("the pause holds the publication", 3, instance.getCheckpointSealFailures());
+                Assert.assertEquals(1, instance.getHeadCheckpointBaseSeqTxn());
+                assertTimeline(1, 1, 1);
+
+                job.setCheckpointTimelineTestFailureStage(0);
+                setCurrentMicros(currentMicros + Micros.MINUTE_MICROS + Micros.SECOND_MICROS);
+                commitRejected(job, drainPath, 6, DEPARTURE_STEP_MICROS);
+                Assert.assertEquals(3, instance.getCheckpointSealFailures());
+                Assert.assertEquals(resetsBefore, instance.getCheckpointTimelineResets());
+                Assert.assertEquals("the first cycle after the pause publishes", 6, instance.getHeadCheckpointBaseSeqTxn());
+                Assert.assertEquals(ts(minute(1)), instance.getHeadCheckpointMaxTs());
+                Assert.assertFalse(instance.isSealOnCooldown(currentMicros));
+                assertTimeline(2, 1, 6);
+            }
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+            assertRestoredFromTimeline("lv");
+            assertViewMatchesRecompute();
+        });
     }
 
     private void assertTimeline(long generation, long entries, long normalizedBaseSeqTxn) throws Exception {

@@ -739,18 +739,21 @@ public class LiveViewInstance implements QuietCloseable {
     // only on the refresh-worker thread under the refresh latch; not volatile
     // because no other thread reads it.
     private long rowsSinceLastCheckpointWritten;
-    // Wall-clock (micros) the seal cadence stays suppressed until, armed once a
-    // failure streak exhausts its budget. A deterministically failing seal - a ring
-    // that outgrew the state-page reference ceiling, a wedged superblock, a full
-    // disk - re-streams the whole ring on every cadence tick and throws at the same
-    // point every time, so retrying at the cadence burns the encode for nothing.
-    // LONG_NULL when no cooldown is armed. Mutated only on the refresh-worker thread
-    // under the refresh latch; not volatile because no other thread reads it.
+    // Wall-clock (micros) the seal's writes stay held until, armed at the failure that
+    // exhausts the streak's budget and at each one after it. The first cooldown is a pause
+    // over the intact timeline, which a transient fault does not outlast; the ones after it
+    // stand over the timeline the failure after the pause retired. A deterministically
+    // failing seal - a ring that outgrew the state-page reference ceiling, a wedged
+    // superblock, a full disk - re-streams the whole ring on every cadence tick and throws
+    // at the same point every time, so retrying at the cadence burns the encode for nothing.
+    // LONG_NULL when no cooldown is armed. Mutated only on the refresh-worker thread under
+    // the refresh latch; not volatile because no other thread reads it.
     private long sealCooldownUntilUs = Numbers.LONG_NULL;
-    // Consecutive failed cadence seals, reset by the next seal that succeeds. Drives
-    // the budget that decides when to release the WAL purge floor arms, and the
-    // exponent of the cooldown backoff above. Mutated only on the refresh-worker
-    // thread under the refresh latch; not volatile because no other thread reads it.
+    // Consecutive failed seals and head checkpoint publications, reset by the next one that
+    // writes. Drives the budget that decides when to pause and when to release the WAL purge
+    // floor arms, and the exponent of the cooldown backoff above. Mutated only on the
+    // refresh-worker thread under the refresh latch; not volatile because no other thread
+    // reads it.
     private int sealFailureStreak;
     // Checkpoint seals completed since the last compaction pass, i.e. the cadence
     // cairo.live.view.checkpoint.compaction.interval is actually expressed in. Counting
@@ -1876,6 +1879,14 @@ public class LiveViewInstance implements QuietCloseable {
         return rowsSinceLastCheckpointWritten;
     }
 
+    /**
+     * @return consecutive failed seals since the last one that wrote; see
+     * {@link #sealFailureStreak}. Read on the refresh-worker thread only.
+     */
+    public int getSealFailureStreak() {
+        return sealFailureStreak;
+    }
+
     public TableReader getSeedBaseReader() {
         return seedBaseReader;
     }
@@ -2887,10 +2898,11 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
-     * Records a failed cadence seal and reports the streak it belongs to. The
-     * caller uses the streak to decide when the failure has proved itself
-     * deterministic, at which point releasing the WAL purge floor arms costs less
-     * than holding them for a recovery state that will never be written.
+     * Records a failed seal and reports the streak it belongs to. The caller uses
+     * the streak to decide when to pause the seal over the intact timeline, and when
+     * the failure has outlasted that pause, at which point releasing the WAL purge
+     * floor arms costs less than holding them for a recovery state that will never be
+     * written.
      *
      * @return consecutive failed seals including this one
      */

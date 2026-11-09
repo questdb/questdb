@@ -310,7 +310,49 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testRepeatedSealFailureRetiresTheTimelineAndReleasesTheWalFloor() throws Exception {
+    public void testPersistentSealFaultKeepsTodaysAttemptAndCooldownSchedule() throws Exception {
+        // A seal that keeps failing gets three attempts, then a cooldown before each further one:
+        // one minute after the third, doubling per failure and capped at an hour. A commit inside a
+        // cooldown attempts nothing, and the first one past it attempts once. The third failure
+        // keeps the timeline; the fourth retires it, and so does every failure after it.
+        assertMemoryLeak(() -> {
+            createView(false);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                appendAndRefresh(job, 10, 1);
+                appendAndRefresh(job, 11, 2);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                final long resetsBefore = instance.getCheckpointTimelineResets();
+                job.setCheckpointTimelineTestFailureStage(LiveViewCheckpointTimelineStoreWriter.TEST_FAIL_AFTER_DATA_PUBLISH);
+                int second = 12;
+                for (int failure = 1; failure <= 2; failure++) {
+                    appendAndRefresh(job, second++, 1);
+                    Assert.assertEquals(failure, instance.getCheckpointSealFailures());
+                    Assert.assertFalse("below the budget no cooldown holds the seal", instance.isSealOnCooldown(currentMicros));
+                }
+                final long[] backoffMinutes = {1, 2, 4, 8, 16, 32, 60, 60};
+                for (int failure = 3; failure <= 10; failure++) {
+                    appendAndRefresh(job, second++, 1);
+                    Assert.assertEquals("one attempt past the cooldown", failure, instance.getCheckpointSealFailures());
+                    Assert.assertEquals(
+                            "the third failure keeps the timeline, each one after it retires it",
+                            resetsBefore + Math.max(0, failure - 3),
+                            instance.getCheckpointTimelineResets()
+                    );
+                    final long backoffUs = backoffMinutes[failure - 3] * Micros.MINUTE_MICROS;
+                    Assert.assertTrue(instance.isSealOnCooldown(currentMicros + backoffUs - Micros.SECOND_MICROS));
+                    Assert.assertFalse(instance.isSealOnCooldown(currentMicros + backoffUs + Micros.SECOND_MICROS));
+                    final long cooldownEndUs = currentMicros + backoffUs;
+                    appendAndRefresh(job, second++, 1);
+                    Assert.assertEquals("a commit inside the cooldown attempts nothing", failure, instance.getCheckpointSealFailures());
+                    setCurrentMicros(cooldownEndUs);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRepeatedSealFailureReleasesTheWalFloorAfterThePause() throws Exception {
         assertMemoryLeak(() -> {
             createView(false);
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -341,35 +383,49 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
                 Assert.assertTrue(instance.getHeadCheckpointBaseSeqTxn() > -1);
                 Assert.assertTrue(instance.getCheckpointTimelineWalPurgeFloor() > -1);
 
-                // The third spends MAX_CONSECUTIVE_SEAL_FAILURES. Both WalPurgeJob floor
-                // arms release, so the base WAL stops being retained for a root that is
-                // never going to be written.
+                // The third spends MAX_CONSECUTIVE_SEAL_FAILURES and pauses the seal over the
+                // intact timeline: three attempts can come within a second, which proves
+                // nothing about how long the fault lasts.
                 appendAndRefresh(job, 50, 5);
                 Assert.assertEquals(3, instance.getCheckpointSealFailures());
-                Assert.assertEquals(Numbers.LONG_NULL, instance.getHeadCheckpointBaseSeqTxn());
-                Assert.assertEquals(Numbers.LONG_NULL, instance.getCheckpointTimelineWalPurgeFloor());
-                try (Path checkpointsDir = checkpointsDir(instance); Path timelinePath = new Path()) {
-                    LiveViewCheckpointLayout.timelinePath(timelinePath, checkpointsDir);
-                    Assert.assertFalse(configuration.getFilesFacade().exists(timelinePath.$()));
-                }
+                Assert.assertTrue(instance.getHeadCheckpointBaseSeqTxn() > -1);
+                Assert.assertTrue(instance.getCheckpointTimelineWalPurgeFloor() > -1);
+                assertTimelineOnDisk(instance, true);
                 assertQuery("SELECT checkpoint_seal_failures FROM live_views()")
                         .noLeakCheck().noRandomAccess()
                         .returns("checkpoint_seal_failures\n3\n");
 
-                // The cooldown suppresses the seal outright rather than re-streaming the
-                // whole ring only to throw at the same point again. A cleared head would
-                // otherwise force a seal past the cadence gate on every cycle.
+                // The pause suppresses the seal outright rather than re-streaming the whole
+                // ring only to throw at the same point again.
                 appendAndRefresh(job, 51, 6);
                 Assert.assertEquals(3, instance.getCheckpointSealFailures());
+
+                // The fault outlasts the pause: the first seal after it fails, and that failure
+                // releases both WalPurgeJob floor arms, so the base WAL stops being retained for
+                // a root that is never going to be written.
+                setCurrentMicros(currentMicros + Micros.MINUTE_MICROS + Micros.SECOND_MICROS);
+                appendAndRefresh(job, 52, 7);
+                Assert.assertEquals(4, instance.getCheckpointSealFailures());
+                Assert.assertEquals(Numbers.LONG_NULL, instance.getHeadCheckpointBaseSeqTxn());
+                Assert.assertEquals(Numbers.LONG_NULL, instance.getCheckpointTimelineWalPurgeFloor());
+                assertTimelineOnDisk(instance, false);
+                assertQuery("SELECT checkpoint_seal_failures FROM live_views()")
+                        .noLeakCheck().noRandomAccess()
+                        .returns("checkpoint_seal_failures\n4\n");
+
+                // The two-minute cooldown after it suppresses the seal too. A cleared head would
+                // otherwise force a seal past the cadence gate on every cycle.
+                appendAndRefresh(job, 53, 8);
+                Assert.assertEquals(4, instance.getCheckpointSealFailures());
 
                 // Past the cooldown, with the fault cleared, the view seals on its own and
                 // re-establishes both arms - no restart, no DROP.
                 job.setCheckpointTimelineTestFailureStage(0);
                 setCurrentMicros(currentMicros + 2 * Micros.MINUTE_MICROS);
-                appendAndRefresh(job, 52, 7);
+                appendAndRefresh(job, 54, 9);
                 Assert.assertEquals(
                         "the seal-failure count is a lifetime total, not a streak",
-                        3,
+                        4,
                         instance.getCheckpointSealFailures()
                 );
                 Assert.assertTrue(instance.getHeadCheckpointBaseSeqTxn() > -1);
@@ -1264,6 +1320,15 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
                         view_name\tview_status
                         lv\tactive
                         """);
+    }
+
+    // The view's timeline file is on disk when isPresent, and is not otherwise. Reads the file's
+    // existence alone: the superblock helpers create an empty timeline where none is.
+    private void assertTimelineOnDisk(LiveViewInstance instance, boolean isPresent) {
+        try (Path checkpointsDir = checkpointsDir(instance); Path timelinePath = new Path()) {
+            LiveViewCheckpointLayout.timelinePath(timelinePath, checkpointsDir);
+            Assert.assertEquals(isPresent, configuration.getFilesFacade().exists(timelinePath.$()));
+        }
     }
 
     private void assertViewMatchesRecompute() throws Exception {

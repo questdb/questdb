@@ -191,12 +191,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private static final int COMPACTION_MAX_LIVE_FRACTION_PERCENT = 50;
     private static final int COMPACTION_MAX_SOURCE_SEGMENTS = 8;
     private static final int COMPACTION_MIN_SOURCE_SEGMENTS = 2;
-    // Consecutive failed cadence seals that prove the fault is deterministic rather
-    // than transient. Below this the seal simply retries at its cadence, which is
-    // right for a held writer or a momentarily full disk. At it, the view releases
-    // both WAL purge floor arms: a fault that survived this many attempts will not
-    // produce the recovery state those arms are held for, and holding them retains
-    // the base WAL indefinitely while the base keeps ingesting.
+    // Consecutive failed seals that spend the attempts a fault gets before the seal backs
+    // off. Below this the seal retries whenever a trigger is due, which can be every flush:
+    // a failed seal moves neither the write time nor the row counter, so whatever trigger
+    // was due stays due, and three attempts can come within a second. The third arms the
+    // seal cooldown over the intact timeline, a pause that a held writer or a momentarily
+    // full disk outlasts. The first failure after it releases both WAL purge floor arms: a
+    // fault that survived the pause will not produce the recovery state those arms are held
+    // for, and holding them retains the base WAL indefinitely while the base keeps
+    // ingesting. A refusal against an older or foreign checkpoint format retires at the
+    // third failure, since no pause clears it.
     private static final int MAX_CONSECUTIVE_SEAL_FAILURES = 3;
     // Upper bound on refresh tasks a single Job.run() drains from the notification queue
     // before yielding. A base table under sustained ingestion re-enqueues its task as soon
@@ -230,12 +234,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // restore that kept failing on a fault a retry may get past.
     private static final String RESTORE_FAILED_CAUSE = "timeline restore failed";
     // Backoff arming the seal cooldown once MAX_CONSECUTIVE_SEAL_FAILURES is spent,
-    // doubling per further failure and capped. A deterministically failing seal
-    // re-streams the whole ring before it throws - up to gigabytes of encode for a
-    // ring at the state-page reference ceiling - so retrying at the cadence burns
-    // that work every tick forever. The cap keeps a view whose fault later clears (a
-    // ring that shrank back under the bound, a disk that freed) recovering within
-    // the hour.
+    // doubling per further failure and capped. The first cooldown is the pause the
+    // timeline survives; the ones after it stand over a retired timeline. A
+    // deterministically failing seal re-streams the whole ring before it throws - up
+    // to gigabytes of encode for a ring at the state-page reference ceiling - so
+    // retrying at the cadence burns that work every tick forever. The cap keeps a view
+    // whose fault later clears (a ring that shrank back under the bound, a disk that
+    // freed) recovering within the hour.
     private static final long SEAL_COOLDOWN_BASE_MICROS = Micros.MINUTE_MICROS;
     // Bounds the shift the backoff takes. Sixteen doublings of the base already run
     // to weeks, so the cap below always wins; the bound exists so an unbounded
@@ -4133,18 +4138,24 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Retires the checkpoint state of a view whose seal keeps failing, and arms a
-     * backoff before the next attempt.
+     * Arms a backoff before the next seal attempt of a view whose seal keeps failing, and
+     * retires its checkpoint state once the failures outlast the first backoff.
      * <p>
-     * Both {@code WalPurgeJob} floor arms this view publishes -
-     * {@code getHeadCheckpointBaseSeqTxn()} and
+     * The failure that spends {@link #MAX_CONSECUTIVE_SEAL_FAILURES} pauses: it arms the
+     * cooldown and keeps the timeline. Three attempts can come within a second, since a
+     * failed seal leaves every due trigger due, so they prove nothing about how long the
+     * fault lasts. A fault that clears within the pause keeps the timeline: a failed seal
+     * publishes nothing, so the head root and both {@code WalPurgeJob} arms stay what a
+     * restart restores from, and the first seal after the pause lands on the kept ladder.
+     * <p>
+     * The first failure after the pause retires. Both {@code WalPurgeJob} floor arms this
+     * view publishes - {@code getHeadCheckpointBaseSeqTxn()} and
      * {@code getCheckpointTimelineWalPurgeFloor()} - are held so a restart can replay
-     * the base WAL above the newest durable root. A seal that has failed
-     * {@link #MAX_CONSECUTIVE_SEAL_FAILURES} times running will not produce that root,
-     * so the arms pin the base table's WAL indefinitely while it keeps ingesting, for
-     * a recovery that is never going to happen. Releasing them costs the fast restart
-     * path only: with no timeline the view rebuilds from the applied base table, which
-     * reads no raw base WAL at all.
+     * the base WAL above the newest durable root. A seal that kept failing through the
+     * pause will not produce that root, so the arms pin the base table's WAL indefinitely
+     * while it keeps ingesting, for a recovery that is never going to happen. Releasing
+     * them costs the fast restart path only: with no timeline the view rebuilds from the
+     * applied base table, which reads no raw base WAL at all.
      * <p>
      * Retire rather than invalidate. The timeline is derived state, so losing it
      * leaves the view serving correct results; invalidation is terminal and needs DROP
@@ -4152,20 +4163,27 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * floor pinned until {@code clearCheckpointTimelineOwnership()} runs after the
      * on-disk retire, so no purge can outrun a root a restart could still restore.
      * <p>
-     * This is also where an upgrade rebuild whose own retire could not remove the older
-     * {@code _timeline} ends: every seal after it refuses against the older superblock,
-     * and the retire here clears the view's pending flag once the file is gone.
+     * A refusal against an older or foreign checkpoint format retires at the third
+     * failure, since no pause clears it. This is where an upgrade rebuild whose own retire
+     * could not remove the older {@code _timeline} ends: every seal after it refuses
+     * against the older superblock, and the retire here clears the view's pending flag
+     * once the file is gone.
      */
-    private void retireCheckpointStateAfterRepeatedSealFailure(LiveViewInstance instance, long nowUs, int streak) {
-        instance.setHeadCheckpoint(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, 0L, Numbers.LONG_NULL);
-        retireCheckpointTimeline(instance);
+    private void backOffRepeatedSealFailure(LiveViewInstance instance, long nowUs, int streak, Throwable failure) {
+        final boolean isRetiring = streak > MAX_CONSECUTIVE_SEAL_FAILURES || isCheckpointFormatBlocked(failure);
+        if (isRetiring) {
+            instance.setHeadCheckpoint(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, 0L, Numbers.LONG_NULL);
+            retireCheckpointTimeline(instance);
+        }
         // Doubling per failure past the budget, capped. The shift count is bounded
         // before it is taken: a streak on a long-lived view grows without limit and
         // would otherwise shift past 63 and wrap to a cooldown in the past.
         final int doublings = Math.min(streak - MAX_CONSECUTIVE_SEAL_FAILURES, SEAL_COOLDOWN_MAX_DOUBLINGS);
         final long backoffUs = Math.min(SEAL_COOLDOWN_BASE_MICROS << doublings, SEAL_COOLDOWN_MAX_MICROS);
         instance.setSealCooldownUntilUs(nowUs + backoffUs);
-        LOG.critical().$("live view checkpoint seal keeps failing, retiring the timeline and backing off [view=")
+        LOG.critical().$(isRetiring
+                        ? "live view checkpoint seal keeps failing, retiring the timeline and backing off [view="
+                        : "live view checkpoint seal keeps failing, keeping the timeline and backing off [view=")
                 .$(instance.getDefinition().getViewName())
                 .$(", consecutiveFailures=").$(streak)
                 .$(", backoffMicros=").$(backoffUs).I$();
@@ -4199,6 +4217,21 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         if (retireTimeline) {
             retireCheckpointTimeline(instance);
         }
+    }
+
+    /**
+     * Retires the checkpoint state of a repair whose owed root is stranded at the seal failure
+     * budget (see {@link #isOwedRootStrandedAtTheSealFailureBudget}), as the failure verdict
+     * would. The live marker already makes every restart refuse the timeline, so the retire
+     * costs only the ladder a later seal would have kept, and it releases both base WAL arms
+     * that no cycle without rows would release. The retire takes the marker with the timeline.
+     */
+    private void retireStrandedOwedRoot(LiveViewInstance instance, CharSequence viewName, long frontierTs) {
+        LOG.info().$("live view O3 repair owes a root no seal can land before a newer row while its checkpoint "
+                        + "seal backs off, retiring the timeline [view=").$(viewName)
+                .$(", frontier=").$ts(frontierTs)
+                .$(", latestSeenTs=").$ts(instance.getLatestSeenTs()).I$();
+        retireCheckpointStateOnO3(instance, true);
     }
 
     /**
@@ -9123,7 +9156,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // drops the rows a deduplicating base lost. So the marker stays live and turns
                 // that restore into the rebuild the restatement guard checks. The timeline
                 // stays: the next seal that lands puts the root at the frontier, and its
-                // generation, two past the marker's, reads the marker as stale.
+                // generation, two past the marker's, reads the marker as stale. Unless the
+                // seal failures spent their budget and no seal can land the root before a
+                // newer row: then the timeline retires, as the failures' verdict would.
                 if (isSpliceAboveFrontier) {
                     if (headSealed || isFrontierRootKept) {
                         clearCheckpointRepairMarker(instance);
@@ -9138,6 +9173,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     }
                 } else if (isSpliceRestorableAtFrontier(timelineSplice, durableMaxTsAfterRepair, headSealed)) {
                     clearCheckpointRepairMarker(instance);
+                } else if (isOwedRootStrandedAtTheSealFailureBudget(instance, durableMaxTsAfterRepair)) {
+                    retireStrandedOwedRoot(instance, viewName, durableMaxTsAfterRepair);
                 } else {
                     logRepairMarkerKept(viewName, durableMaxTsAfterRepair, timelineSplice);
                 }
@@ -10624,8 +10661,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     // A retire that leaves _timeline behind keeps the pending flag and is not
                     // retried here. The seals that follow refuse against the older superblock,
                     // and the third refusal in a row retires the timeline through
-                    // retireCheckpointStateAfterRepeatedSealFailure, which clears the flag: a
-                    // bounded fault that costs no invalidation.
+                    // backOffRepeatedSealFailure, which clears the flag: a bounded fault that
+                    // costs no invalidation.
                     retireCheckpointTimeline(instance);
                 }
                 // The view table's newest timestamp once the replacement applied, read the way a
@@ -10958,7 +10995,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         // turns that restore into the rebuild the restatement guard checks. The
                         // head stays clear, so the next cycle seals a first checkpoint at the
                         // frontier, and its generation, two past the marker's, reads the marker as
-                        // stale.
+                        // stale. Unless the seal failures spent their budget and no seal can land
+                        // the root before a newer row: then the timeline retires, as the failures'
+                        // verdict would.
                         //
                         // A truncate is not. It left the timeline headless, so a fresh head
                         // is what makes the preserved prefix restorable; without one the
@@ -10984,6 +11023,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             if (isSealable) {
                                 if (isSpliceRestorableAtFrontier(timelineSplice, durableMaxTsAfterRepair, headSealed)) {
                                     clearCheckpointRepairMarker(instance);
+                                } else if (isOwedRootStrandedAtTheSealFailureBudget(instance, durableMaxTsAfterRepair)) {
+                                    retireStrandedOwedRoot(instance, viewName, durableMaxTsAfterRepair);
                                 } else {
                                     logRepairMarkerKept(viewName, durableMaxTsAfterRepair, timelineSplice);
                                 }
@@ -11212,6 +11253,23 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             boolean isHeadSealed
     ) {
         return durableMaxTs <= timelineSplice.getHeadRootMaxTimestamp() || isHeadSealed;
+    }
+
+    /**
+     * Whether a repair's owed root that its closing seal did not land is stranded: the seal
+     * failure streak spent its budget, so the failure verdict is due no later than the end of
+     * the pause; the view still owns a timeline, so that verdict's retire has not run; and the
+     * root cannot land without a new row, since the newest timestamp the view has seen sits
+     * above the table's newest row, where the seal declines every boundary a cycle without rows
+     * offers it.
+     *
+     * @param durableMaxTs the newest timestamp the view's table holds once the repair's
+     *                     replacement applied: the frontier the root is owed at
+     */
+    private static boolean isOwedRootStrandedAtTheSealFailureBudget(LiveViewInstance instance, long durableMaxTs) {
+        return instance.getSealFailureStreak() >= MAX_CONSECUTIVE_SEAL_FAILURES
+                && instance.getCheckpointTimelineWalPurgeFloor() != Numbers.LONG_NULL
+                && instance.getLatestSeenTs() > durableMaxTs;
     }
 
     private static void logRepairMarkerKept(
@@ -12022,14 +12080,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         final long rowsCadence = engine.getConfiguration().getLiveViewCheckpointRows();
         final long durationCadence = getCheckpointDurationCadenceMicros(instance);
         final long nowUs = engine.getConfiguration().getMicrosecondClock().getTicks();
-        // A cooldown is armed only after MAX_CONSECUTIVE_SEAL_FAILURES proved the fault
-        // deterministic, so suppress the seal here whatever triggered it - force
-        // included. A forced O3 seal would fail the same way and be swallowed the same
-        // way, leaving the same cleared head it leaves now, so letting it through buys
-        // nothing and pays the whole re-stream for it. The row counter above keeps
-        // accruing, so the first cycle past the cooldown seals at once rather than
-        // waiting out a fresh cadence.
-        if (instance.isSealOnCooldown(nowUs)) {
+        // A cooldown is armed at the third failure in a row and at each one after it, so
+        // hold the seal's write here whatever triggered it - force included. A forced O3
+        // seal would fail the same way and pay the whole re-stream for it, and its caller
+        // handles a seal that did not land. The row counter above keeps accruing, so the
+        // first cycle past the cooldown seals at once rather than waiting out a fresh
+        // cadence. A re-stamp writes nothing: it puts the head back on a root the repair
+        // kept at the frontier, which the publication after the cooldown needs, so it
+        // passes.
+        if (appendTimelineRoot && instance.isSealOnCooldown(nowUs)) {
             return false;
         }
         final long lastWrittenUs = instance.getLastCheckpointWrittenUs();
@@ -12061,7 +12120,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // repair clears the head first, so firstCp is normally true anyway, but a
         // splice that keeps its timeline does not, and cadence could then skip the
         // seal and strand the head at the stale maxTs.
-        if (!(force || firstCp || restoredHeadFirstFlush || rowTrigger || durationTrigger)) {
+        //
+        // A streak that spent the failure budget has passed the cooldown gate above, so its
+        // pause is over, and the first attempt after it is due whatever the cadence says:
+        // it lands on the kept ladder or fails and retires. A head the pause kept can sit
+        // inside its cadence when forced O3 seals made the failures.
+        final boolean isRetryAfterPause = instance.getSealFailureStreak() >= MAX_CONSECUTIVE_SEAL_FAILURES;
+        if (!(force || firstCp || restoredHeadFirstFlush || rowTrigger || durationTrigger || isRetryAfterPause)) {
             return false;
         }
         // The permanent row invariant, taken where the number it protects is about
@@ -12118,9 +12183,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // cadence-gate clock read above. Surfaced via
             // live_views().checkpoint_last_write_micros.
             instance.recordCheckpointWriteMicros(engine.getConfiguration().getMicrosecondClock().getTicks() - nowUs);
-            // Clears the failure streak and any armed cooldown. A seal that got
-            // through proves whatever rejected the previous ones has passed.
-            instance.recordSealSuccess();
+            if (appendTimelineRoot) {
+                // Clears the failure streak and any armed cooldown. A seal that got
+                // through proves whatever rejected the previous ones has passed. A
+                // re-stamp wrote nothing, so it proves nothing.
+                instance.recordSealSuccess();
+            }
             sealed = true;
         } catch (LiveViewCheckpointTimelineStoreWriter.BoundaryNotAboveHeadException e) {
             // Every row this cycle emitted sat on the head boundary's own designated
@@ -12148,7 +12216,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .$(", consecutiveFailures=").$(streak)
                     .$(", error=").$(t).I$();
             if (streak >= MAX_CONSECUTIVE_SEAL_FAILURES) {
-                retireCheckpointStateAfterRepeatedSealFailure(instance, nowUs, streak);
+                backOffRepeatedSealFailure(instance, nowUs, streak, t);
             }
         }
         // Best-effort maintenance, kept off the seal's own try so a compaction fault never reads
@@ -12265,13 +12333,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * last head write, or at once for a head this process restored rather than wrote,
      * which a restart leaves with no write time. It shares the seal's failure accounting:
      * a failure leaves the head and the cadence where they were, so the next cycle retries,
-     * and a streak of failures retires the timeline as a streak of failed seals does.
+     * and a streak of failures pauses, then retires the timeline, as a streak of failed
+     * seals does. Once the pause is over the first cycle publishes whatever the cadence
+     * says, as the first seal after it does.
      * <p>
-     * The seal's capability and cooldown gates have nothing to decide here. The publication
-     * freezes no function state, so capability does not enter into it. And a head root
-     * exists only once a seal or a restore succeeded: a seal ends any cooldown, and the
-     * cooldown retires the timeline it is armed over, so a restore can only read one sealed
-     * after the cooldown ended.
+     * The seal's capability gate has nothing to decide here: the publication freezes no
+     * function state. Its cooldown gate does. The third failure in a row arms the cooldown
+     * over the head it leaves in place, and a publication inside it would fail and count
+     * as the seal would.
      *
      * @return false when the view's table holds rows above the head, which the caller seals
      * instead; true when this handled the cycle, whether or not it published
@@ -12284,8 +12353,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // Above the head's: the cycle consumed at least one commit past the last one.
         final long baseSeqTxn = instance.getLastProcessedSeqTxn();
         final long nowUs = engine.getConfiguration().getMicrosecondClock().getTicks();
+        if (instance.isSealOnCooldown(nowUs)) {
+            return true;
+        }
         final long lastWrittenUs = instance.getLastCheckpointWrittenUs();
-        if (lastWrittenUs != Numbers.LONG_NULL && nowUs - lastWrittenUs < getCheckpointDurationCadenceMicros(instance)) {
+        if (lastWrittenUs != Numbers.LONG_NULL
+                && nowUs - lastWrittenUs < getCheckpointDurationCadenceMicros(instance)
+                && instance.getSealFailureStreak() < MAX_CONSECUTIVE_SEAL_FAILURES) {
             return true;
         }
         final long headMaxTs = instance.getHeadCheckpointMaxTs();
@@ -12358,7 +12432,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .$(", consecutiveFailures=").$(streak)
                     .$(", error=").$(t).I$();
             if (streak >= MAX_CONSECUTIVE_SEAL_FAILURES) {
-                retireCheckpointStateAfterRepeatedSealFailure(instance, nowUs, streak);
+                backOffRepeatedSealFailure(instance, nowUs, streak, t);
             }
             return true;
         }
@@ -14070,6 +14144,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         } else {
             instance.recordCheckpointRuntimeRestore();
         }
+    }
+
+    private static boolean isCheckpointFormatBlocked(Throwable failure) {
+        // The writer refuses to publish over a superblock of an older or foreign format, and
+        // rethrows that refusal unwrapped, so the errno is the fault itself.
+        return failure instanceof CairoException e && e.getErrno() == CairoException.LV_CHECKPOINT_FORMAT_BLOCKED;
     }
 
     /**

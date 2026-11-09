@@ -296,6 +296,10 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // where it was, so a pinned-seed batch draws what it drew before the episode existed.
     private static final long OWED_SEAL_EPISODE_SALT0 = 0x5DEECE66DL;
     private static final long OWED_SEAL_EPISODE_SALT1 = 0x2545F4914F6CDD1DL;
+    // Salt the draw of a seal pause ahead of a sparse departure apart from the run's sequence, for
+    // the same reason.
+    private static final long SPARSE_DEPARTURE_PAUSE_SALT0 = 0x9E3779B97F4A7C15L;
+    private static final long SPARSE_DEPARTURE_PAUSE_SALT1 = 0xBF58476D1CE4E5B9L;
     // The outcomes of the head-miss rebuild's end-of-table splice departNewestRowsOverSparseRoots
     // sets up, one per shape: the splice kept roots above the new frontier and the rebuild
     // truncates there, the rebuild emits no row over a root at the frontier and keeps the
@@ -338,6 +342,16 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     private int blockedOwedSealEpisodes;
     private int restoredOwedSealEpisodes;
     private int retiredOwedSealEpisodes;
+    // Owed-seal episodes whose failures paused the seal, and of those, the ones whose clean commit
+    // came inside the pause with the marker live, and the ones whose clean commit came after it
+    // and landed, on either route and on the resume route: see failTheOwedSealOfALateRow.
+    private int pausedOwedSealEpisodes;
+    private int markerLiveInsideThePauseOwedSealEpisodes;
+    private int restoredAfterThePauseOwedSealEpisodes;
+    private int restoredAfterThePauseResumedOwedSealEpisodes;
+    // Sparse departures whose rebuild re-stamped the head on the root at the new frontier inside a
+    // pause the seal's failures armed ahead of them: see departNewestRowsOverSparseRoots.
+    private int restampsInsideThePause;
 
     @Test
     public void testFuzzAnchored() throws Exception {
@@ -900,6 +914,35 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testFuzzOwedSealEpisodeThroughThePause() throws Exception {
+        // Batches of the RANGE-frame replace-range runs whose owed-seal episodes, between them,
+        // pause the seal three ways: a clean commit after the pause lands its seal on the ladder
+        // the pause kept, on each route, a clean commit inside the pause leaves the marker live,
+        // and a fault that outlasts the pause retires the timeline at the fourth failure. Their
+        // sparse departures re-stamp the head on the root at the new frontier inside a pause the
+        // seal's failures armed ahead of them, and the stretch after it moves the head's base.
+        final long[][] seeds = {
+                {2277450534470274333L, 984054158561696L},
+                {8920866532787660373L, 984089867478109L},
+                {1611528458713692810L, 984110371927461L}
+        };
+        for (long[] seed : seeds) {
+            setCurrentMicros(-1);
+            runRangeFrameReplaceRangeFuzz(TestUtils.generateRandom(LOG, seed[0], seed[1]));
+        }
+        assertReachedAnOwedSealEpisode();
+        Assert.assertTrue("no owed-seal episode paused the seal", pausedOwedSealEpisodes > 0);
+        Assert.assertTrue("no fault outlasted the pause", retiredOwedSealEpisodes > 0);
+        Assert.assertTrue("no clean commit came inside the pause", markerLiveInsideThePauseOwedSealEpisodes > 0);
+        Assert.assertTrue("no resumed episode landed its seal after the pause", restoredAfterThePauseResumedOwedSealEpisodes > 0);
+        Assert.assertTrue(
+                "no head-miss episode landed its seal after the pause",
+                restoredAfterThePauseOwedSealEpisodes > restoredAfterThePauseResumedOwedSealEpisodes
+        );
+        Assert.assertTrue("no sparse departure re-stamped its head inside a pause", restampsInsideThePause > 0);
+    }
+
+    @Test
     public void testFuzzReplaceRangeAfterAZeroRowHeadMissSplice() throws Exception {
         // A run whose variant 9, a RANGE '17' MINUTE IN MEMORY view, deletes rows at the end of
         // the base table through a head-miss rebuild that emits no row, with no root a restart
@@ -1392,6 +1435,12 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // The owed-seal episode's own random sequence, drawn from the run's without advancing it.
     private static Rnd owedSealEpisodeRnd(Rnd rnd) {
         return new Rnd(rnd.getSeed0() ^ OWED_SEAL_EPISODE_SALT0, rnd.getSeed1() ^ OWED_SEAL_EPISODE_SALT1);
+    }
+
+    // The sequence a sparse departure draws its seal pause from, drawn from the run's without
+    // advancing it.
+    private static Rnd sparseDeparturePauseRnd(Rnd rnd) {
+        return new Rnd(rnd.getSeed0() ^ SPARSE_DEPARTURE_PAUSE_SALT0, rnd.getSeed1() ^ SPARSE_DEPARTURE_PAUSE_SALT1);
     }
 
     // Whether the variant's window has a RANGE frame, which a localized rebuild can run to the end
@@ -2058,6 +2107,16 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 .$(", departedLowTs=").$ts(departedTs[0]).$(", departedHighTs=").$ts(departedTs[3])
                 .$(", keptSealed=").$(isKeptBatchSealed).$(", departedSealed=").$(isDepartedBatchSealed)
                 .$(", rowKept=").$(isRowKept).$(", upsert=").$(isUpsert).$();
+        // Over a filtered view, a shape whose rebuild emits no row over a root at the new frontier
+        // may meet a seal its failures paused: three cycles without rows past the cadence fail
+        // their seals, which the run draws apart from its own sequence.
+        final boolean isPausedAhead = withWhere
+                && (shape == SPARSE_DEPARTURE_KEEP || isZeroRowTruncate)
+                && sparseDeparturePauseRnd(rnd).nextBoolean();
+        final long sealFailuresBeforeThePause = instance.getCheckpointSealFailures();
+        if (isPausedAhead) {
+            pauseTheSealAheadOfADeparture(job, usedTs, instance);
+        }
         final long truncatesBefore = job.getStatsForTest().get(LiveViewRefreshStats.HEAD_MISS_SPLICE_FRONTIER_TRUNCATE_COUNT);
         final long keepsBefore = job.getStatsForTest().get(LiveViewRefreshStats.HEAD_MISS_SPLICE_ZERO_ROW_KEEP_COUNT);
         final long retiresBefore = job.getStatsForTest().get(LiveViewRefreshStats.HEAD_MISS_SPLICE_ZERO_ROW_RETIRE_COUNT);
@@ -2117,10 +2176,47 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             if (!isRowKept) {
                 Assert.assertEquals("the head goes back on the root at the new frontier", frontierTs, instance.getHeadCheckpointMaxTs());
                 Assert.assertEquals("by a re-stamp, which names no root", Numbers.LONG_NULL, instance.getHeadCheckpointRootId());
+                if (isPausedAhead) {
+                    // The re-stamp writes nothing, so the pause lets it through, and it records
+                    // neither a failure nor the success that would end the streak.
+                    Assert.assertEquals(sealFailuresBeforeThePause + 3, instance.getCheckpointSealFailures());
+                    Assert.assertEquals(3, instance.getSealFailureStreak());
+                    Assert.assertTrue("the pause stands", instance.isSealOnCooldown(currentMicros));
+                    restampsInsideThePause++;
+                }
                 return true;
             }
         }
         return false;
+    }
+
+    /**
+     * Three commits whose rows the view's filter drops, each past any duration cadence a run
+     * draws, with the writer failing every publication: each cycle seals or republishes the head
+     * and fails, and the third failure in a row pauses the seal over the intact timeline, which
+     * the writer then stops failing.
+     */
+    private void pauseTheSealAheadOfADeparture(
+            LiveViewRefreshJob job,
+            @Nullable LongHashSet usedTs,
+            LiveViewInstance instance
+    ) throws Exception {
+        final long sealFailures = instance.getCheckpointSealFailures();
+        final long resets = instance.getCheckpointTimelineResets();
+        final long headMaxTs = instance.getHeadCheckpointMaxTs();
+        job.setCheckpointTimelineTestFailureStage(LiveViewCheckpointTimelineStoreWriter.TEST_FAIL_AFTER_METADATA_PUBLISH);
+        try {
+            long ts = Math.max(queryTimestamp("SELECT max(ts) FROM base"), instance.getLatestSeenTs());
+            for (int c = 1; c <= 3; c++) {
+                ts = commitRowTheFilterDrops(job, usedTs, ts);
+                Assert.assertEquals("each cycle fails its seal", sealFailures + c, instance.getCheckpointSealFailures());
+            }
+        } finally {
+            job.setCheckpointTimelineTestFailureStage(0);
+        }
+        Assert.assertEquals("the third failure pauses", resets, instance.getCheckpointTimelineResets());
+        Assert.assertEquals(headMaxTs, instance.getHeadCheckpointMaxTs());
+        Assert.assertTrue(instance.isSealOnCooldown(currentMicros));
     }
 
     /**
@@ -2228,7 +2324,12 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 .$(", headMiss=").$(headMissOwedSealEpisodes)
                 .$(", blocked=").$(blockedOwedSealEpisodes)
                 .$(", restored=").$(restoredOwedSealEpisodes)
-                .$(", retired=").$(retiredOwedSealEpisodes).I$();
+                .$(", retired=").$(retiredOwedSealEpisodes)
+                .$(", paused=").$(pausedOwedSealEpisodes)
+                .$(", markerLiveInsideThePause=").$(markerLiveInsideThePauseOwedSealEpisodes)
+                .$(", restoredAfterThePause=").$(restoredAfterThePauseOwedSealEpisodes)
+                .$(", restoredAfterThePauseResumed=").$(restoredAfterThePauseResumedOwedSealEpisodes)
+                .$(", restampsInsideThePause=").$(restampsInsideThePause).I$();
         Assert.assertTrue("no late row's repair left its marker live over a failed closing seal", owedSealEpisodes > 0);
         Assert.assertTrue(
                 "no late row's head-miss rebuild left its marker live over a failed closing seal",
@@ -2360,8 +2461,12 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
      * and B is repaired by the resume from A's root or by the head-miss rebuild, and either
      * re-versions B's root and keeps it as the splice's newest, below C. Both seal hooks set the
      * writer stage that fails a publication ahead of its superblock, so the closing seal fails. The
-     * stage stays for {@code k}, drawn in [0, 2], more commits of a row above C, then one clean
-     * commit follows, all inside the cadence. Every row goes into {@code base_shadow} too.
+     * stage stays for {@code k}, drawn in [0, 3], more commits, each of which fails a seal: on the
+     * head-miss route a row above C, whose first checkpoint fails, and on the resume route another
+     * late row between A and B, whose closing seal fails. The third failure in a row pauses the
+     * seal, and the clock passes the pause ahead of a fourth, which retires the timeline. Then one
+     * clean commit of a row above C follows, inside the cadence, and for {@code k} of two, past the
+     * pause or inside it as the episode draws. Every row goes into {@code base_shadow} too.
      * <p>
      * {@code isHeadMissShaped} picks the route, as departNewestRowsOverSparseRoots does. Without
      * it, B and the late row sit within a second above A, so a rebuild warming its state from one
@@ -2372,12 +2477,12 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
      * plan takes the head-miss rebuild.
      *
      * @param frameMinutes the width of the view's RANGE frame, in minutes
-     * @return what the restart after the episode meets: {@link #OWED_SEAL_MARKER_LIVE} on the
-     * resume route, whose head parked on B's root seals nothing inside the cadence. On the head-miss
-     * route, which cleared the head, every commit seals at once: {@link #OWED_SEAL_RESTORABLE} when
-     * the clean commit's seal landed, and {@link #OWED_SEAL_RETIRED} when the k commits made three
-     * failures in a row, which retired the timeline and armed a cooldown the clean commit's seal
-     * waits on
+     * @return what the restart after the episode meets: {@link #OWED_SEAL_RETIRED} when the k
+     * commits made four failures in a row, which retired the timeline and armed a cooldown the
+     * clean commit's seal waits on; {@link #OWED_SEAL_RESTORABLE} when the clean commit's seal
+     * landed, which on the resume route, whose head parked on B's root, only the end of the pause
+     * makes due inside the cadence, and on the head-miss route, which cleared the head, every
+     * commit outside the pause does; and {@link #OWED_SEAL_MARKER_LIVE} otherwise
      */
     private int failTheOwedSealOfALateRow(
             Rnd episodeRnd,
@@ -2389,6 +2494,8 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     ) throws Exception {
         final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
         Assert.assertNotNull(instance);
+        // Drawn ahead of everything else the episode draws, so it does not follow from k.
+        final boolean isPausePassedWhenPaused = episodeRnd.nextBoolean();
         final long floorTs = Math.max(
                 Math.max(queryTimestamp("SELECT max(ts) FROM base"), instance.getLatestSeenTs()),
                 instance.getDefinition().getViewLowerBoundTimestamp()
@@ -2443,9 +2550,13 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         values.clear();
         appendEpisodeRow(values, lateTs, episodeRnd.nextInt(symCount), 1 + episodeRnd.nextInt(1000), episodeRnd.nextDouble() * 1000.0);
         final Runnable failTheSeal = () -> job.setCheckpointTimelineTestFailureStage(LiveViewCheckpointTimelineStoreWriter.TEST_FAIL_AFTER_METADATA_PUBLISH);
-        final int k = episodeRnd.nextInt(3);
+        final int k = episodeRnd.nextInt(4);
+        // Two more failures make three in a row, which pause the seal: whether the clock then
+        // passes the pause before the clean commit. Three more make the fourth after the pause.
+        final boolean isPausePassed = k == 2 && isPausePassedWhenPaused;
         final boolean isResumed;
         long rowTs = batchC[3];
+        long lastMarkerBaseGeneration = markerBaseGeneration;
         try {
             hooks(job).setSimulateResumeHeadSealStart(failTheSeal);
             hooks(job).setSimulateHeadMissHeadSealStart(failTheSeal);
@@ -2457,7 +2568,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             }
             isResumed = job.getStatsForTest().getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_RESUME_FROM_ANCHOR) > resumesBefore;
             LOG.info().$("LV fuzz owed-seal episode [lateTs=").$ts(lateTs).$(", headMissShaped=").$(isHeadMissShaped)
-                    .$(", resumed=").$(isResumed).$(", k=").$(k).I$();
+                    .$(", resumed=").$(isResumed).$(", k=").$(k).$(", pausePassed=").$(isPausePassed).I$();
             // The restart ahead of the episode compiled the view over every column the rowless
             // stretch added to the base, so the repair meets no drift.
             Assert.assertEquals("the late row's turn does not fault", faultsBefore, instance.getRefreshFaultCount());
@@ -2479,34 +2590,90 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 headMissOwedSealEpisodes++;
             }
             for (int i = 0; i < k; i++) {
-                rowTs = commitAKeptRowToTheBaseAndItsShadow(episodeRnd, job, usedTs, symCount, rowTs);
+                if (i == 2) {
+                    // Past the pause, so the fourth failure in a row is attempted.
+                    setCurrentMicros(currentMicros + Micros.MINUTE_MICROS + Micros.SECOND_MICROS);
+                }
+                if (isResumed) {
+                    // On the resume route, whose head parked on B's root seals nothing inside the
+                    // cadence, each failure is the closing seal of another late row between A and
+                    // B, which the resume from A's root repairs over the live marker.
+                    lastMarkerBaseGeneration = publishedCheckpointGeneration(instance);
+                    final long resumes = job.getStatsForTest().getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_RESUME_FROM_ANCHOR);
+                    long nextLateTs = batchA[3] + 1 + episodeRnd.nextLong(batchB[0] - batchA[3] - 1);
+                    while (usedTs != null && !usedTs.add(nextLateTs)) {
+                        nextLateTs++;
+                    }
+                    values.clear();
+                    appendEpisodeRow(values, nextLateTs, episodeRnd.nextInt(symCount), 1 + episodeRnd.nextInt(1000), episodeRnd.nextDouble() * 1000.0);
+                    // The splice publishes, and only the closing seal fails.
+                    job.setCheckpointTimelineTestFailureStage(0);
+                    hooks(job).setSimulateResumeHeadSealStart(failTheSeal);
+                    try {
+                        commitToTheBaseAndItsShadow(values, job);
+                    } finally {
+                        hooks(job).setSimulateResumeHeadSealStart(null);
+                    }
+                    Assert.assertEquals(
+                            "the resume from A's root repairs the next late row",
+                            resumes + 1,
+                            job.getStatsForTest().getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_RESUME_FROM_ANCHOR)
+                    );
+                } else {
+                    rowTs = commitAKeptRowToTheBaseAndItsShadow(episodeRnd, job, usedTs, symCount, rowTs);
+                }
+                Assert.assertEquals("each commit fails its seal", sealFailuresBefore + 2 + i, instance.getCheckpointSealFailures());
+                if (i < 2) {
+                    Assert.assertEquals("three failures in a row retire nothing", resetsBefore, instance.getCheckpointTimelineResets());
+                }
             }
         } finally {
             job.setCheckpointTimelineTestFailureStage(0);
         }
+        if (k >= 2) {
+            pausedOwedSealEpisodes++;
+            if (isPausePassed) {
+                setCurrentMicros(currentMicros + Micros.MINUTE_MICROS + Micros.SECOND_MICROS);
+            }
+        }
         final long cleanTs = commitAKeptRowToTheBaseAndItsShadow(episodeRnd, job, usedTs, symCount, rowTs);
         Assert.assertEquals("no commit after the late row faults", faultsBefore, instance.getRefreshFaultCount());
-        if (isResumed) {
-            // The resume parked the head on B's root, and nothing inside the cadence seals.
-            Assert.assertEquals(batchB[3], instance.getHeadCheckpointMaxTs());
-            Assert.assertEquals(sealFailuresBefore + 1, instance.getCheckpointSealFailures());
-            assertRepairMarker(instance, markerBaseGeneration, false);
+        Assert.assertEquals("the clean commit fails nothing", sealFailuresBefore + 1 + k, instance.getCheckpointSealFailures());
+        if (k == 3) {
+            Assert.assertEquals("the fourth failure in a row retires the timeline", resetsBefore + 1, instance.getCheckpointTimelineResets());
+            Assert.assertEquals("and its cooldown holds the clean commit's seal", Numbers.LONG_NULL, instance.getHeadCheckpointMaxTs());
+            Assert.assertFalse(hasCheckpointTimeline(instance));
+            try (Path dir = checkpointsDirOf(instance)) {
+                Assert.assertFalse("the retire takes the marker", LiveViewCheckpointRepairMarker.exists(configuration.getFilesFacade(), dir));
+            }
+            return OWED_SEAL_RETIRED;
+        }
+        Assert.assertEquals("no retire before the pause ends", resetsBefore, instance.getCheckpointTimelineResets());
+        if (isPausePassed) {
+            // The first commit after the pause seals whatever the cadence says, on the ladder the
+            // pause kept, which reads the marker as stale.
+            Assert.assertEquals("the clean commit's seal lands", cleanTs, instance.getHeadCheckpointMaxTs());
+            assertRepairMarker(instance, lastMarkerBaseGeneration, true);
+            restoredAfterThePauseOwedSealEpisodes++;
+            if (isResumed) {
+                restoredAfterThePauseResumedOwedSealEpisodes++;
+            }
+            return OWED_SEAL_RESTORABLE;
+        }
+        if (isResumed || k == 2) {
+            // The resume parked the head on B's root, and nothing inside the cadence seals; the
+            // pause holds whatever the head-miss rebuild's cleared head would have sealed.
+            Assert.assertEquals(isResumed ? batchB[3] : Numbers.LONG_NULL, instance.getHeadCheckpointMaxTs());
+            assertRepairMarker(instance, lastMarkerBaseGeneration, false);
+            if (k == 2) {
+                markerLiveInsideThePauseOwedSealEpisodes++;
+            }
             return OWED_SEAL_MARKER_LIVE;
         }
         // The head-miss rebuild cleared the head, so every commit after the late row seals at once.
-        Assert.assertEquals(sealFailuresBefore + 1 + k, instance.getCheckpointSealFailures());
-        if (k < 2) {
-            Assert.assertEquals("the clean commit's seal lands", cleanTs, instance.getHeadCheckpointMaxTs());
-            assertRepairMarker(instance, markerBaseGeneration, true);
-            return OWED_SEAL_RESTORABLE;
-        }
-        Assert.assertEquals("the third failure in a row retires the timeline", resetsBefore + 1, instance.getCheckpointTimelineResets());
-        Assert.assertEquals("and its cooldown holds the clean commit's seal", Numbers.LONG_NULL, instance.getHeadCheckpointMaxTs());
-        Assert.assertFalse(hasCheckpointTimeline(instance));
-        try (Path dir = checkpointsDirOf(instance)) {
-            Assert.assertFalse("the retire takes the marker", LiveViewCheckpointRepairMarker.exists(configuration.getFilesFacade(), dir));
-        }
-        return OWED_SEAL_RETIRED;
+        Assert.assertEquals("the clean commit's seal lands", cleanTs, instance.getHeadCheckpointMaxTs());
+        assertRepairMarker(instance, markerBaseGeneration, true);
+        return OWED_SEAL_RESTORABLE;
     }
 
     private boolean hasCheckpointTimeline(LiveViewInstance instance) {
@@ -6131,6 +6298,22 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             }
         });
         coverage.log(LOG, "replace range");
+    }
+
+    // The RANGE-frame runs of runReplaceRangeFuzzVariants alone, each ending on the sparse
+    // departure shape it takes in turn, and each followed by its owed-seal episode.
+    private void runRangeFrameReplaceRangeFuzz(Rnd rnd) throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1 + rnd.nextInt(4));
+        final int firstSparseDepartureShape = rnd.nextInt(SPARSE_DEPARTURE_SHAPES);
+        assertMemoryLeak(() -> {
+            for (int i = 0, rangeFrameRuns = 0; i < FIXED_WIDTH_VARIANTS.length; i++) {
+                final int variant = FIXED_WIDTH_VARIANTS[i];
+                if (isRangeFrameVariant(variant)) {
+                    runReplaceRangeFuzz(rnd, variant, 40 + rnd.nextInt(40), rnd.nextBoolean(), rnd.nextBoolean(),
+                            rnd.nextBoolean(), (firstSparseDepartureShape + rangeFrameRuns++) % SPARSE_DEPARTURE_SHAPES);
+                }
+            }
+        });
     }
 
     // Differential fuzz where the base receives REPLACE_RANGE data commits

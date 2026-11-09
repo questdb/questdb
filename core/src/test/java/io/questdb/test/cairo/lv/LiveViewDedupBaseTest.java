@@ -635,9 +635,9 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
     @Test
     public void testAnUpsertMovingTheRowAtTheLargestMicrosecondTimestampOutOfTheFilterThenThreeFailedPublicationsSealNothingAboveIt() throws Exception {
         // The departure leaves the newest timestamp the view has seen one microsecond above the
-        // newest row it holds, and three failed publications clear the head over it. Each cycle
-        // without rows past the seal cooldown asks for a first root at that timestamp, and the
-        // seal declines it.
+        // newest row it holds, and publications failing past the seal's pause clear the head over
+        // it. Each cycle without rows past the seal cooldown asks for a first root at that
+        // timestamp, and the seal declines it.
         assertRowAtTheLargestTimestampLeavingTheFilterRestores(
                 "TIMESTAMP",
                 "9999-12-30T23:55:00.000000Z",
@@ -2643,9 +2643,11 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
      * the timestamp above the frontier the view has seen.
      * <p>
      * With {@link AfterLargestTimestampDeparture#FAILED_PUBLICATIONS}, three commits of rows the
-     * filter drops at the departed timestamp fail their publications, which retires the timeline
-     * and clears the head. Past the seal cooldown, each such commit asks for a first root at the
-     * departed timestamp, one step above the newest row the view holds, and the seal declines it.
+     * filter drops at the departed timestamp fail their publications, which pauses the seal over
+     * the intact timeline, and the first such commit after the pause fails too, which retires the
+     * timeline and clears the head. Past the seal cooldown, each such commit asks for a first root
+     * at the departed timestamp, one step above the newest row the view holds, and the seal
+     * declines it.
      * A row the filter keeps at that timestamp then opens a fresh history there, which each
      * restart restores from.
      *
@@ -2696,33 +2698,43 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
                     // takes it in order and the dedup keys collapse nothing.
                     job.setCheckpointTimelineTestFailureStage(LiveViewCheckpointTimelineStoreWriter.TEST_FAIL_AFTER_METADATA_PUBLISH);
                     setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
+                    final long headMaxTs = instance.getHeadCheckpointMaxTs();
                     for (int i = 0; i < 3; i++) {
                         commitDeparture(job, "('" + largestTs + "', 'r" + i + "', -1.0)");
                     }
-                    job.setCheckpointTimelineTestFailureStage(0);
                     Assert.assertEquals(3, instance.getCheckpointSealFailures());
-                    Assert.assertEquals(resetsBefore + 1, instance.getCheckpointTimelineResets());
+                    Assert.assertEquals("the third failure pauses", resetsBefore, instance.getCheckpointTimelineResets());
+                    Assert.assertEquals(headMaxTs, instance.getHeadCheckpointMaxTs());
+                    Assert.assertTrue(instance.isSealOnCooldown(currentMicros));
+
+                    // The fault outlasts the pause: the first publication after it fails, which
+                    // retires the timeline and clears the head.
+                    setCurrentMicros(currentMicros + Micros.MINUTE_MICROS + Micros.SECOND_MICROS);
+                    commitDeparture(job, "('" + largestTs + "', 'r3', -1.0)");
+                    job.setCheckpointTimelineTestFailureStage(0);
+                    Assert.assertEquals(4, instance.getCheckpointSealFailures());
+                    Assert.assertEquals("the fourth failure retires", resetsBefore + 1, instance.getCheckpointTimelineResets());
                     Assert.assertEquals(Numbers.LONG_NULL, instance.getHeadCheckpointMaxTs());
                     Assert.assertTrue(instance.isSealOnCooldown(currentMicros));
                     assertNoDepartureTimeline();
 
                     setCurrentMicros(currentMicros + 2 * Micros.MINUTE_MICROS);
                     final long declinesBefore = job.getStatsForTest().get(LiveViewRefreshStats.SEAL_ABOVE_DURABLE_FRONTIER_DECLINE_COUNT);
-                    for (int i = 3; i < 6; i++) {
+                    for (int i = 4; i < 7; i++) {
                         commitDeparture(job, "('" + largestTs + "', 'r" + i + "', -1.0)");
                         Assert.assertEquals(
                                 "one declined first root per cycle",
-                                i - 2,
+                                i - 3,
                                 job.getStatsForTest().get(LiveViewRefreshStats.SEAL_ABOVE_DURABLE_FRONTIER_DECLINE_COUNT) - declinesBefore
                         );
                     }
-                    Assert.assertEquals(3, instance.getCheckpointSealFailures());
+                    Assert.assertEquals(4, instance.getCheckpointSealFailures());
                     Assert.assertEquals(Numbers.LONG_NULL, instance.getHeadCheckpointMaxTs());
                     assertNoDepartureTimeline();
 
                     // A kept row at the departed timestamp: the newest row the view holds, so
                     // the seal at it goes through.
-                    commitDeparture(job, "('" + largestTs + "', 'r6', 2.0)");
+                    commitDeparture(job, "('" + largestTs + "', 'r7', 2.0)");
                     Assert.assertEquals(
                             "the seal at the newest row goes through",
                             3,
@@ -2751,7 +2763,7 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
                     + dayBelowTs + "\ta\t0.5\t0.5\n"
                     + minuteRows
                     + frontierTs + "\ta\t5.0\t5.0\n"
-                    + (after == AfterLargestTimestampDeparture.FAILED_PUBLICATIONS ? largestTs + "\tr6\t2.0\t2.0\n" : "");
+                    + (after == AfterLargestTimestampDeparture.FAILED_PUBLICATIONS ? largestTs + "\tr7\t2.0\t2.0\n" : "");
             assertDepartureRows(rows);
             assertNoRefreshFaults("lv");
             for (int restart = 0; restart < 2; restart++) {
@@ -3056,8 +3068,9 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
 
     // What assertRowAtTheLargestTimestampLeavingTheFilterRestores commits after the departure.
     private enum AfterLargestTimestampDeparture {
-        // Three failed publications of cycles without rows, then cycles without rows past the
-        // seal cooldown, then a kept row at the departed timestamp.
+        // Three failed publications of cycles without rows, which pause the seal, a fourth past
+        // the pause, which retires the timeline, then cycles without rows past the seal cooldown,
+        // then a kept row at the departed timestamp.
         FAILED_PUBLICATIONS,
         // One cycle without rows past the duration cadence.
         CYCLE_WITHOUT_ROWS,
