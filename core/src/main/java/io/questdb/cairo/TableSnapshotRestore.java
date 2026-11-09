@@ -94,6 +94,9 @@ public class TableSnapshotRestore implements QuietCloseable {
     private final ExecutorService executor;
     private final FilesFacade ff;
     private final ObjList<Future<?>> futures = new ObjList<>();
+    private final StringSink postingKeyColumnNameSink = new StringSink();
+    private final LongList postingKeyColumnNameTxns = new LongList();
+    private final ObjList<String> postingKeyColumnNames = new ObjList<>();
     private final int threadCount;
     private final Utf8StringSink utf8Sink = new Utf8StringSink();
     @TestOnly
@@ -109,6 +112,7 @@ public class TableSnapshotRestore implements QuietCloseable {
     private int pathTableLen;
     private TableReaderMetadata tableMetadata;
     private TxWriter txWriter;
+    private final FindVisitor collectPostingKeyFile = this::collectPostingKeyFile;
     private final FindVisitor removePartitionDirsNotAttached = this::removePartitionDirsNotAttached;
 
     public TableSnapshotRestore(CairoConfiguration configuration) {
@@ -470,12 +474,11 @@ public class TableSnapshotRestore implements QuietCloseable {
             // caller loads the next table into the same objects.
             finalizeParallelTasks();
 
-            if (!tableMetadata.isWalEnabled()) {
-                // A non-WAL table replays nothing after a restore, so its next commits can write other rows at the
-                // txns that an ADD INDEX run after the checkpoint tagged its build with. A copy can hold that build's
-                // posting files for a column the restored metadata does not index, and ADD INDEX would reuse them.
-                resetUnindexedPostingIndexes(tablePath, pathTableLen);
-            }
+            // A copy can hold the posting files of an ADD INDEX that the restored metadata does not commit: one run
+            // after the checkpoint, which no restore replays, or one the copy caught while it wrote them. The commits
+            // after the restore can write other rows at the txn and row count such a build was made for, and the seal
+            // sizes a file before it writes it, so a torn build can look complete. ADD INDEX would reuse either.
+            resetUncommittedPostingIndexes(tablePath, pathTableLen);
 
             if (tableMetadata.isWalEnabled() && txWriter.getLagRowCount() > 0) {
                 LOG.info().$("resetting WAL lag [table=").$(tablePath)
@@ -771,6 +774,41 @@ public class TableSnapshotRestore implements QuietCloseable {
         }
     }
 
+    // Collects a posting key file of the listed partition: <column>.pk, or <column>.pk.<column name txn>, see
+    // PostingIndexUtils.keyFileName. A column name holds no '.', see TableUtils.isValidColumnName.
+    private void collectPostingKeyFile(long pUtf8NameZ, int type) {
+        if (type != Files.DT_FILE && type != Files.DT_LNK && type != Files.DT_UNKNOWN) {
+            return;
+        }
+        utf8Sink.clear();
+        Utf8s.utf8ZCopy(pUtf8NameZ, utf8Sink);
+        final int nameEnd = Utf8s.indexOfAscii(utf8Sink, '.');
+        final int suffixEnd = nameEnd + 3;
+        final int size = utf8Sink.size();
+        if (nameEnd < 1 || size < suffixEnd || utf8Sink.byteAt(nameEnd + 1) != 'p' || utf8Sink.byteAt(nameEnd + 2) != 'k') {
+            return;
+        }
+        long columnNameTxn = TableUtils.COLUMN_NAME_TXN_NONE;
+        if (size > suffixEnd) {
+            if (utf8Sink.byteAt(suffixEnd) != '.') {
+                return;
+            }
+            try {
+                columnNameTxn = Numbers.parseLong(utf8Sink, suffixEnd + 1, size);
+            } catch (NumericException e) {
+                return;
+            }
+            if (columnNameTxn < 0) {
+                return;
+            }
+        }
+        postingKeyColumnNameSink.clear();
+        if (Utf8s.utf8ToUtf16(utf8Sink, 0, nameEnd, postingKeyColumnNameSink)) {
+            postingKeyColumnNames.add(postingKeyColumnNameSink.toString());
+            postingKeyColumnNameTxns.add(columnNameTxn);
+        }
+    }
+
     /**
      * Copies a file from source to destination, optionally ignoring if file doesn't exist.
      */
@@ -805,6 +843,14 @@ public class TableSnapshotRestore implements QuietCloseable {
                     .$(", dst=").$(dstPath)
                     .I$();
         }
+    }
+
+    // Whether the restored metadata commits the posting index of the column version a partition names.
+    private boolean isCommittedPostingIndex(CharSequence columnName, long columnNameTxn, long partitionTimestamp) {
+        final int columnIndex = tableMetadata.getColumnIndexQuiet(columnName);
+        return columnIndex > -1
+                && IndexType.isPosting(tableMetadata.getColumnIndexType(columnIndex))
+                && columnVersionReader.getColumnNameTxn(partitionTimestamp, tableMetadata.getWriterIndex(columnIndex)) == columnNameTxn;
     }
 
     /**
@@ -1598,10 +1644,11 @@ public class TableSnapshotRestore implements QuietCloseable {
     }
 
     /**
-     * Resets the posting index files a non-WAL table's partitions hold for a SYMBOL column the restored metadata does
-     * not index, see {@link PostingIndexUtils#resetIndex}.
+     * Resets every posting index in the restored partitions that the restored metadata does not commit, see
+     * {@link PostingIndexUtils#resetIndex}: that of a column the metadata does not index with POSTING, or does not hold,
+     * and that of a column version the restored _cv does not name for the partition.
      */
-    private void resetUnindexedPostingIndexes(Path tablePath, int pathTableLen) {
+    private void resetUncommittedPostingIndexes(Path tablePath, int pathTableLen) {
         final int partitionBy = tableMetadata.getPartitionBy();
         final boolean isPartitioned = PartitionBy.isPartitioned(partitionBy);
         final int timestampType = tableMetadata.getTimestampType();
@@ -1617,20 +1664,24 @@ public class TableSnapshotRestore implements QuietCloseable {
                         : txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp);
                 TableUtils.setPathForNativePartition(tablePath.trimTo(pathTableLen), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
                 final int partitionDirLen = tablePath.size();
-                for (int colIdx = 0, n = tableMetadata.getColumnCount(); colIdx < n; colIdx++) {
-                    if (!ColumnType.isSymbol(tableMetadata.getColumnType(colIdx)) || tableMetadata.isColumnIndexed(colIdx)) {
-                        continue;
-                    }
-                    final String columnName = tableMetadata.getColumnName(colIdx);
-                    final long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, tableMetadata.getWriterIndex(colIdx));
-                    if (PostingIndexUtils.resetIndex(ff, tablePath, partitionDirLen, columnName, columnNameTxn, memFile)) {
-                        LOG.info().$("reset posting index of unindexed column [path=").$(tablePath)
+                // Collect first: the reset removes files of the directory it would otherwise list.
+                postingKeyColumnNames.clear();
+                postingKeyColumnNameTxns.clear();
+                ff.iterateDir(tablePath.$(), collectPostingKeyFile);
+                for (int i = 0, n = postingKeyColumnNames.size(); i < n; i++) {
+                    final String columnName = postingKeyColumnNames.getQuick(i);
+                    final long columnNameTxn = postingKeyColumnNameTxns.getQuick(i);
+                    if (!isCommittedPostingIndex(columnName, columnNameTxn, partitionTimestamp)
+                            && PostingIndexUtils.resetIndex(ff, tablePath, partitionDirLen, columnName, columnNameTxn, memFile)) {
+                        LOG.info().$("reset uncommitted posting index [path=").$(tablePath)
                                 .$(", column=").$safe(columnName)
+                                .$(", columnNameTxn=").$(columnNameTxn)
                                 .I$();
                     }
                 }
             }
         } finally {
+            postingKeyColumnNames.clear();
             tablePath.trimTo(pathTableLen);
         }
     }

@@ -1723,11 +1723,10 @@ public final class PostingIndexUtils {
     }
 
     /**
-     * Resets the posting index of one column instance in a partition directory to an empty chain, for a column whose
-     * index is not committed: ADD INDEX does it before it builds the index, and checkpoint restore for a column the
-     * restored metadata does not index. Nothing reads what an earlier attempt left in the directory, and a crash or a
-     * copy can leave its chain torn, so the chain is never opened: the key file and every sealed file of the instance
-     * go. The new chain starts past every sealTxn the old one counted or left a file for, so a seal purge queued for
+     * Resets the posting index of one column instance in a partition directory to an empty chain, for an index that is
+     * not committed: ADD INDEX does it before it builds the index, and checkpoint restore for every chain the restored
+     * metadata does not commit. Nothing reads what an earlier attempt left in the directory, and a crash or a copy can
+     * leave its chain torn, so the chain is never opened: the key file and every sealed file of the instance go. The new chain starts past every sealTxn the old one counted or left a file for, so a seal purge queued for
      * one of those files cannot reach a file of the new chain.
      *
      * @return {@code false} when the directory holds no key file of the instance, so there was nothing to reset

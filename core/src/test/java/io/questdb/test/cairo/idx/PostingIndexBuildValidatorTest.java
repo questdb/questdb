@@ -506,6 +506,56 @@ public class PostingIndexBuildValidatorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRetryReusesCompositePartition() throws Exception {
+        setProperty(PropertyKey.CAIRO_MAX_SWAP_FILE_COUNT, 1);
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 1);
+        setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1G");
+        final MetaSwapFailingFacade ff = new MetaSwapFailingFacade();
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE x (s SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts)");
+            execute("""
+                    INSERT INTO x
+                    SELECT CASE WHEN x % 2 = 0 THEN 'a' ELSE 'b' END, x, timestamp_sequence('2024-01-01', 21_600_000_000L)
+                    FROM long_sequence(12)
+                    """);
+            drainWalQueue();
+            // Replaces a row of 2024-01-02, which leaves the partition composite, with a dead row in its extent.
+            execute("INSERT INTO x VALUES ('a', 99, '2024-01-02T06:00')");
+            drainWalQueue();
+            try (TableReader reader = getReader("x")) {
+                Assert.assertTrue(reader.getTxFile().isPartitionComposite(1));
+                Assert.assertTrue(reader.getPartitionPhysicalRowCount(1) > reader.getPartitionRowCountFromMetadata(1));
+            }
+            final TableToken tableToken = engine.verifyTableName("x");
+            // The build completes and the metadata swap fails: the table suspends, and the build stays on disk.
+            ff.isFailing = true;
+            execute("ALTER TABLE x ALTER COLUMN s ADD INDEX TYPE POSTING INCLUDE (v)");
+            drainWalQueue();
+            ff.isFailing = false;
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
+            final long sealTxn = readPostingSealTxn("2024-01-02");
+            Assert.assertTrue(sealTxn > -1);
+            execute("ALTER TABLE x RESUME WAL");
+            drainWalQueue();
+            Assert.assertFalse("table suspended", engine.getTableSequencerAPI().isSuspended(tableToken));
+            Assert.assertEquals("reuse the build over the full physical extent", sealTxn, readPostingSealTxn("2024-01-02"));
+            assertQuery("SELECT v, ts FROM x WHERE s = 'a'")
+                    .noLeakCheck().noRandomAccess().expectSize().timestamp("ts").withPlanContaining("CoveringIndex")
+                    .returns("""
+                            v\tts
+                            2\t2024-01-01T06:00:00.000000Z
+                            4\t2024-01-01T18:00:00.000000Z
+                            99\t2024-01-02T06:00:00.000000Z
+                            8\t2024-01-02T18:00:00.000000Z
+                            10\t2024-01-03T06:00:00.000000Z
+                            12\t2024-01-03T18:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testSparseGenerationIsNotFinishedBuild() throws Exception {
         withIndex("", (reader, path) -> {
             try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
