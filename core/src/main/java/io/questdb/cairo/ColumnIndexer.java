@@ -79,6 +79,25 @@ public interface ColumnIndexer extends QuietCloseable {
             long partitionNameTxn
     );
 
+    /**
+     * Same as {@link #configureFollowerAndWriter(Path, CharSequence, long, MemoryMA, long, long, long)}, but lets the
+     * caller opt into skipping the underlying writer's key-file existence probe when it has already established the
+     * column had no data before this reopen's writer session began - see
+     * {@link IndexWriter#of(Path, CharSequence, long, long, long, boolean)}.
+     */
+    default void configureFollowerAndWriter(
+            Path path,
+            CharSequence name,
+            long columnNameTxn,
+            MemoryMA columnMem,
+            long columnTop,
+            long partitionTimestamp,
+            long partitionNameTxn,
+            boolean allowFreshIfMissing
+    ) {
+        configureFollowerAndWriter(path, name, columnNameTxn, columnMem, columnTop, partitionTimestamp, partitionNameTxn);
+    }
+
     void configureWriter(
             Path path,
             CharSequence name,
@@ -134,6 +153,12 @@ public interface ColumnIndexer extends QuietCloseable {
     }
 
     void releaseIndexWriter();
+
+    /**
+     * Releases the writer without persisting any of its own cached state to disk - no size-truncating close, and no
+     * best-effort seal either.
+     */
+    void releaseIndexWriterNoTruncate();
 
     void resetColumnTop();
 

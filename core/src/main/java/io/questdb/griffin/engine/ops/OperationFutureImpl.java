@@ -151,7 +151,7 @@ class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImp
                             .$(",tableName=").$(tableToken)
                             .$(",instance=").$(correlationId)
                             .I$();
-                    affectedRowsCount = asyncWriterCommand.apply(writer, true);
+                    affectedRowsCount = writer.applyOutsideWal(asyncWriterCommand, true);
                     status = QUERY_COMPLETE;
                 } else {
                     LOG.info()

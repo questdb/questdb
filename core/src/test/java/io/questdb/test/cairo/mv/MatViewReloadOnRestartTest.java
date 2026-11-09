@@ -570,14 +570,28 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                     drainWalAndMatViewQueues(refreshJob, main1.getEngine());
                 }
 
-                // apply WAL and remove WAL files
+                // apply WAL and remove WAL files. Under ADAPTIVE two things keep the WAL: the purge floor is
+                // held back to the last durable epoch, and the mat-view's WAL writer keeps its active segment
+                // locked. Do what production does when a table goes idle: close the writers (the graceful-close
+                // epoch advances durableEpochSeqTxn to the committed frontier) and release the WAL and view-WAL
+                // writers, which unlocks the segment. Do not call engine.clear() here: it resets the in-memory
+                // tracker's durableEpochSeqTxn to 0, which would hold the purge floor at 0.
                 drainWalQueue(main1.getEngine());
-                main1.getEngine().clear();
+                main1.getEngine().releaseAllWriters();
+                main1.getEngine().releaseAllWalWriters();
+                main1.getEngine().releaseAllViewWalWriters();
+                TableToken token = main1.getEngine().getTableTokenIfExists("price_1h");
+                if (main1.getEngine().getConfiguration().getCommitMode() == CommitMode.ADAPTIVE) {
+                    // The purge floor is the older of the two save points, which recovery falls back to; one more
+                    // save point at the applied cut moves the older one past the WAL.
+                    try (TableWriter writer = main1.getEngine().getWriter(token, "test")) {
+                        writer.advanceDurableEpoch(main1.getEngine().getConfiguration().getMicrosecondClock().getTicks() / 1000L);
+                    }
+                }
                 try (WalPurgeJob purgeJob = new WalPurgeJob(main1.getEngine())) {
                     purgeJob.drain(0);
                 }
                 // assert that WAL files are removed
-                TableToken token = main1.getEngine().getTableTokenIfExists("price_1h");
                 try (Path path = new Path()) {
                     CairoConfiguration configuration = main1.getEngine().getConfiguration();
                     path.of(configuration.getDbRoot()).concat(token).concat(WAL_NAME_BASE).put(1);
@@ -864,6 +878,73 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                                 """,
                         "select view_name, view_status from materialized_views();"
                 );
+            }
+        });
+    }
+
+    @Test
+    public void testMatViewsReloadOnServerStartWithChangedAliasRules() throws Exception {
+        // QuestDB 8.x, and any release run with cairo.sql.column.alias.expression.enabled=false, names an
+        // unaliased avg(price) "avg". After a restart under the expression rules, the startup refresh compiles
+        // the stored query, which now names that column "avg(price)". The view keeps its columns and keeps
+        // refreshing, incrementally and in full.
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain main1 = startWithEnvVariables0(
+                    PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true",
+                    PropertyKey.LINE_TCP_ENABLED.getEnvVarName(), "false",
+                    PropertyKey.LINE_UDP_ENABLED.getEnvVarName(), "false",
+                    PropertyKey.HTTP_MIN_ENABLED.getEnvVarName(), "false",
+                    PropertyKey.HTTP_ENABLED.getEnvVarName(), "false",
+                    PropertyKey.PG_ENABLED.getEnvVarName(), "false",
+                    PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED.getEnvVarName(), "false"
+            )) {
+                executeWithRewriteTimestamp(main1);
+                execute(main1, "insert into base_price values('gbpusd', 1.5, '2024-09-10T12:01')");
+                execute(main1, "create materialized view price_1d as (select ts, sym, avg(price) from base_price sample by 1d) partition by DAY");
+                try (var refreshJob = createMatViewRefreshJob(main1.getEngine())) {
+                    drainWalAndMatViewQueues(refreshJob, main1.getEngine());
+                }
+                assertSql(main1, replaceExpectedTimestamp("ts\tsym\tavg\n2024-09-10T00:00:00.000000Z\tgbpusd\t1.5\n"), "price_1d");
+            }
+
+            try (final TestServerMain main2 = startWithEnvVariables0(
+                    PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true",
+                    PropertyKey.LINE_TCP_ENABLED.getEnvVarName(), "false",
+                    PropertyKey.LINE_UDP_ENABLED.getEnvVarName(), "false",
+                    PropertyKey.HTTP_MIN_ENABLED.getEnvVarName(), "false",
+                    PropertyKey.HTTP_ENABLED.getEnvVarName(), "false",
+                    PropertyKey.PG_ENABLED.getEnvVarName(), "false",
+                    PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED.getEnvVarName(), "true"
+            )) {
+                try (var refreshJob = createMatViewRefreshJob(main2.getEngine())) {
+                    drainWalAndMatViewQueues(refreshJob, main2.getEngine());
+                    assertSql(
+                            main2,
+                            "view_status\tinvalidation_reason\nvalid\t\n",
+                            "select view_status, invalidation_reason from materialized_views where view_name = 'price_1d'"
+                    );
+
+                    execute(main2, "insert into base_price values('gbpusd', 2.5, '2024-09-11T12:01')");
+                    drainWalAndMatViewQueues(refreshJob, main2.getEngine());
+                    assertSql(
+                            main2,
+                            replaceExpectedTimestamp("ts\tsym\tavg\n2024-09-10T00:00:00.000000Z\tgbpusd\t1.5\n2024-09-11T00:00:00.000000Z\tgbpusd\t2.5\n"),
+                            "price_1d"
+                    );
+
+                    execute(main2, "refresh materialized view price_1d full");
+                    drainWalAndMatViewQueues(refreshJob, main2.getEngine());
+                    assertSql(
+                            main2,
+                            "view_status\tinvalidation_reason\nvalid\t\n",
+                            "select view_status, invalidation_reason from materialized_views where view_name = 'price_1d'"
+                    );
+                    assertSql(
+                            main2,
+                            replaceExpectedTimestamp("ts\tsym\tavg\n2024-09-10T00:00:00.000000Z\tgbpusd\t1.5\n2024-09-11T00:00:00.000000Z\tgbpusd\t2.5\n"),
+                            "price_1d"
+                    );
+                }
             }
         });
     }

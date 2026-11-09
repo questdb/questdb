@@ -43,6 +43,11 @@ import io.questdb.std.str.Path;
 
 public abstract class AbstractBitmapIndexReader implements IndexReader {
     public static final String INDEX_CORRUPT = "cursor could not consistently read index header [corrupt?]";
+    // Seqlock read loops start from this deadline and arm the real one on their first failed
+    // attempt, so a read that is consistent at once, which is nearly every read, makes no clock
+    // call. A symbol lookup runs such a read per value, and the clock read alone cost 14-17 ns of
+    // a 30-45 ns lookup over a cached symbol table.
+    protected static final long DEADLINE_UNARMED = Long.MIN_VALUE;
     protected static final Log LOG = LogFactory.getLog(BitmapIndexBwdReader.class);
     protected final MemoryMR keyMem = Vm.getCMRInstance();
     protected final MemoryMR valueMem = Vm.getCMRInstance();
@@ -132,6 +137,10 @@ public abstract class AbstractBitmapIndexReader implements IndexReader {
             ColumnVersionReader columnVersionReader,
             long partitionTimestamp
     ) {
+        // Refreshing the file this reader has open: the writer grows .v to cover a size before it publishes it
+        // (BitmapIndexWriter.allocateValueBlockAndStore() and rollbackValues(), the two places that publish a
+        // larger size), so only a first open can meet a torn file, as in reloadConditionally().
+        final boolean isRefresh = isOpen() && columnNameTxn == this.columnTxn && partitionTxn == this.partitionTxn;
         this.columnTop = columnTop;
         this.columnTxn = columnNameTxn;
         this.partitionTxn = partitionTxn;
@@ -159,6 +168,18 @@ public abstract class AbstractBitmapIndexReader implements IndexReader {
             }
 
             readIndexMetadataAtomically();
+
+            if (valueMemSize > 0 && !isRefresh) {
+                LPSZ vName = BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName, columnNameTxn);
+                final long vActual = ff.length(vName);
+                final long vMinLength = BitmapIndexUtils.getMinValueFileLength(valueMemSize, blockValueCountMod);
+                if (vMinLength > vActual) {
+                    throw CairoException.critical(0)
+                            .put("bitmap index value file too short [valueMemSize=").put(valueMemSize)
+                            .put(", minLength=").put(vMinLength)
+                            .put(", actual=").put(vActual).put(", path=").put(vName).put(']');
+                }
+            }
 
             this.valueMem.of(
                     configuration.getFilesFacade(),
@@ -195,7 +216,7 @@ public abstract class AbstractBitmapIndexReader implements IndexReader {
 
     public void updateKeyCount() {
         int keyCount;
-        final long deadline = clock.getTicks() + spinLockTimeoutMs;
+        long deadline = DEADLINE_UNARMED;
         while (true) {
             long seq = keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);
 
@@ -209,7 +230,9 @@ public abstract class AbstractBitmapIndexReader implements IndexReader {
                 }
             }
 
-            if (clock.getTicks() > deadline) {
+            if (deadline == DEADLINE_UNARMED) {
+                deadline = clock.getTicks() + spinLockTimeoutMs;
+            } else if (clock.getTicks() > deadline) {
                 this.keyCount = 0;
                 LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutMs).$("ms]").$();
                 throw CairoException.critical(0).put(INDEX_CORRUPT);
@@ -227,7 +250,7 @@ public abstract class AbstractBitmapIndexReader implements IndexReader {
     private void readIndexMetadataAtomically() {
         // Triple check atomic read. We read the first and last sequences. If they match - there is a chance at stable
         // read. Confirm the start sequence hasn't changed after values read. If it has changed - retry the whole thing.
-        final long deadline = clock.getTicks() + spinLockTimeoutMs;
+        long deadline = DEADLINE_UNARMED;
         while (true) {
             long seq = keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);
             int keyCount;
@@ -253,7 +276,9 @@ public abstract class AbstractBitmapIndexReader implements IndexReader {
                 }
             }
 
-            if (clock.getTicks() > deadline) {
+            if (deadline == DEADLINE_UNARMED) {
+                deadline = clock.getTicks() + spinLockTimeoutMs;
+            } else if (clock.getTicks() > deadline) {
                 LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutMs).$("ms]").$();
                 throw CairoException.critical(0).put(INDEX_CORRUPT);
             }

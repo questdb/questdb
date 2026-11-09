@@ -55,6 +55,7 @@ import io.questdb.std.Mutable;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8Sink;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
@@ -92,6 +93,20 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
 
     public static Status classifyFailureStatus(SqlExecutionCircuitBreaker circuitBreaker) {
         return circuitBreaker.checkIfTrippedNoThrottle() ? Status.CANCELLED : Status.FAILED;
+    }
+
+    /**
+     * The select text that reads a whole table, for an export that materializes through a temp table. The table
+     * name has to go in quoted: a name that needs quoting, such as {@code my table}, otherwise parses as table
+     * {@code my} aliased {@code table}, which exports a DIFFERENT table when one named {@code my} exists and
+     * fails asynchronously when it does not. Nothing inside the name needs escaping - a double quote is one of
+     * the characters {@link io.questdb.cairo.TableUtils#isValidTableName} rejects, so a table name never holds
+     * one.
+     */
+    public static String selectAllText(CharSequence tableName) {
+        final StringSink sink = Misc.getThreadLocalSink();
+        sink.putAscii("SELECT * FROM \"").put(tableName).putAscii('"');
+        return sink.toString();
     }
 
     public static void validateBloomFilterColumns(@Nullable CharSequence columns, RecordMetadata meta, int position) throws SqlException {
