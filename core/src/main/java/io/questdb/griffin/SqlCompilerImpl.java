@@ -1425,7 +1425,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     /**
      * Rejects UPDATE on a WAL table that has a parquet-format partition, including partitions in cold
-     * storage. Parquet partitions are read-only; an UPDATE reaching one fails when applied, which on
+     * storage, or a Delta partition. Both are read-only for UPDATE; an UPDATE reaching one fails when applied, which on
      * a WAL table suspends the table because an acknowledged UPDATE can never be skipped. Rejecting
      * the statement at compile time keeps the table healthy and gives the user an immediate error.
      * <p>
@@ -1445,16 +1445,24 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             return;
         }
         try (TableReader reader = executionContext.getReader(tableToken)) {
-            if (!reader.hasParquetPartitions()) {
+            final TxReader txFile = reader.getTxFile();
+            if (!reader.hasParquetPartitions() && !txFile.hasDeltaState()) {
                 return;
             }
-            final TxReader txFile = reader.getTxFile();
             for (int i = 0, n = txFile.getPartitionCount(); i < n; i++) {
                 if (txFile.isPartitionParquet(i)) {
                     throw SqlException.position(position)
                             .put("cannot update table with parquet partitions [table=").put(tableToken.getTableName())
                             .put(", partition=").put(formatPartitionName(reader, txFile.getPartitionTimestampByIndex(i)))
                             .put("]; parquet partitions, including partitions in cold storage, are read-only");
+                }
+            }
+            for (int i = 0, n = txFile.getPartitionCount(); i < n; i++) {
+                if (txFile.isPartitionDeltaActive(i) || txFile.getPartitionHasDelta(i)) {
+                    throw SqlException.position(position)
+                            .put("cannot update table with delta partitions [table=").put(tableToken.getTableName())
+                            .put(", partition=").put(formatPartitionName(reader, txFile.getPartitionTimestampByIndex(i)))
+                            .put("]; delta partitions are read-only for UPDATE");
                 }
             }
         }
