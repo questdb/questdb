@@ -111,6 +111,13 @@ abstract class AbstractPageFrameSequence {
         return SuspensionScope.isFiberMode() && Fiber.isMounted();
     }
 
+    // A suspended reducer may hold the frame this owner waits for and need its carrier to resume.
+    protected static void yieldOrPause(boolean isFiberSuspendable) {
+        if (!isFiberSuspendable || !Fiber.yieldCooperatively()) {
+            Os.pause();
+        }
+    }
+
     protected final void awaitProgress(
             PageFrameReduceDispatcher dispatcher,
             long observedSequenceProgress,

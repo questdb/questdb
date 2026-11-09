@@ -50,7 +50,6 @@ import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
-import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 import io.questdb.tasks.GroupByMergeShardTask;
 import org.jetbrains.annotations.Nullable;
@@ -427,7 +426,7 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
                             break;
                         }
                         if (!ownerLoop.awaitProgress()) {
-                            Os.pause();
+                            ownerLoop.pause();
                         }
                     } else {
                         queue.get(cursor).of(
@@ -473,10 +472,10 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
                             }
                             reclaimed++;
                         } else {
-                            Os.pause();
+                            ownerLoop.pause();
                         }
                     } else if (!ownerLoop.awaitProgressWhileDraining(isOwnerTripped)) {
-                        Os.pause();
+                        ownerLoop.pause();
                     }
                     mergedCount = -postAggregationDoneLatch.getCount();
                 }

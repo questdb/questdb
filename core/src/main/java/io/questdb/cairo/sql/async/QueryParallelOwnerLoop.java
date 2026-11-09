@@ -25,6 +25,7 @@
 package io.questdb.cairo.sql.async;
 
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.mp.continuation.Fiber;
 import io.questdb.std.Os;
 import org.jetbrains.annotations.Nullable;
 
@@ -37,6 +38,7 @@ public final class QueryParallelOwnerLoop {
     private @Nullable QueryParallelFiberDispatcher dispatcher;
     private boolean hasPublication;
     private boolean isFiberOwner;
+    private boolean isFiberSuspendable;
     private boolean isOwnerParkable;
     private long lastOwnerYieldNanos;
     private long observedProgress;
@@ -103,9 +105,17 @@ public final class QueryParallelOwnerLoop {
         this.circuitBreaker = circuitBreaker;
         this.progressState = progressState;
         this.hasPublication = false;
-        this.isFiberOwner = dispatcher != null && QueryParallelFiberDispatcher.isFiberOwner();
+        this.isFiberSuspendable = QueryParallelFiberDispatcher.isFiberOwner();
+        this.isFiberOwner = dispatcher != null && isFiberSuspendable;
         this.isOwnerParkable = false;
         this.lastOwnerYieldNanos = QueryParallelFiberDispatcher.OWNER_YIELD_UNSET;
+    }
+
+    // A suspended helper may hold the task this owner waits for and need its carrier to resume.
+    public void pause() {
+        if (!isFiberSuspendable || !Fiber.yieldCooperatively()) {
+            Os.pause();
+        }
     }
 
     public void releasePublication() {

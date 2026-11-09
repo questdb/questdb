@@ -143,7 +143,8 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
         }
         // Wait for all queued frames to complete.
         final PageFrameReduceDispatcher dispatcher = messageBus.getPageFrameReduceDispatcher();
-        final boolean canPark = dispatcher != null && isFiberSuspendable();
+        final boolean isFiberSuspendable = isFiberSuspendable();
+        final boolean canPark = dispatcher != null && isFiberSuspendable;
         while (true) {
             final long observedProgress = canPark ? getProgressVersion() : 0;
             if (doneLatch.done(queuedCount)) {
@@ -154,7 +155,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
             } else if (canPark) {
                 awaitProgress(dispatcher, observedProgress, true);
             } else {
-                Os.pause();
+                yieldOrPause(isFiberSuspendable);
             }
         }
     }
@@ -252,7 +253,8 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
         // Phase 1: Dispatch all frames.
         // The try/finally ensures queuedCount is set even if reduceLocally() throws,
         // so that await() in close() properly drains in-flight tasks.
-        final boolean canPark = dispatcher != null && isFiberSuspendable();
+        final boolean isFiberSuspendable = isFiberSuspendable();
+        final boolean canPark = dispatcher != null && isFiberSuspendable;
         boolean hasPublication = dispatcher == null || dispatcher.tryAcquirePublication();
         try {
             if (!hasPublication) {
@@ -329,6 +331,8 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
                             if (workStealingStrategy.shouldSteal(localCount)) {
                                 if (stealWork()) {
                                     workStealCircuitBreaker.init(sqlExecutionContext.getCircuitBreaker());
+                                } else if (isFiberSuspendable) {
+                                    yieldOrPause(true);
                                 }
                                 continue;
                             }
@@ -369,7 +373,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
             } else if (canPark) {
                 awaitProgress(dispatcher, observedProgress, false);
             } else {
-                Os.pause();
+                yieldOrPause(isFiberSuspendable);
             }
         }
 
@@ -385,7 +389,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
             } else if (canPark) {
                 awaitProgress(dispatcher, observedProgress, true);
             } else {
-                Os.pause();
+                yieldOrPause(isFiberSuspendable);
             }
         }
 
