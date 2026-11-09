@@ -99,9 +99,25 @@ public final class MatViewSqlValidator implements Mutable {
      * @throws io.questdb.cairo.CairoException an authorization error, a cancellation or a timeout
      */
     public void validate(MatViewDefinition viewDefinition, boolean isCompiling, SqlExecutionContext executionContext) throws SqlException {
+        validate(viewDefinition, isCompiling, false, executionContext);
+    }
+
+    /**
+     * Validates the SQL of the view, as {@link #validate(MatViewDefinition, boolean, SqlExecutionContext)} does. With
+     * {@code isReadingBareNamesAsColumns} set, as for RESUME, the compile reads every bare name as a column, as
+     * CREATE does, and a bare name of a zero-argument function fails it with the parentheses the call needs.
+     *
+     * @throws io.questdb.cairo.CairoException an authorization error, a cancellation or a timeout
+     */
+    public void validate(
+            MatViewDefinition viewDefinition,
+            boolean isCompiling,
+            boolean isReadingBareNamesAsColumns,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
         clear();
         try (SqlCompiler compiler = executionContext.getCairoEngine().getSqlCompiler()) {
-            compiler.validateMatViewSql(viewDefinition, isCompiling, executionContext, this);
+            compiler.validateMatViewSql(viewDefinition, isCompiling, isReadingBareNamesAsColumns, executionContext, this);
         }
     }
 

@@ -61,6 +61,7 @@ import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.mv.MatViewColumnMapping;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewRefreshJob;
+import io.questdb.cairo.mv.MatViewResume;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateStore;
 import io.questdb.cairo.sql.BindVariableService;
@@ -1072,12 +1073,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      * Parses and compiles the SQL as the view's refresh does, see {@link #addExplicitColumnNames}: a passthrough
      * view reads every bare name as a column, an aggregating view reads a bare name that matches no column as a
      * call to the zero-argument function of that name, and the SQL may read no view with a row-expiry policy. The
-     * parse runs in view-SQL compile mode, which reports whether the SQL names its columns.
+     * parse runs in view-SQL compile mode, which reports whether the SQL names its columns. With
+     * {@code isReadingBareNamesAsColumns} set, as for RESUME, every bare name is a column, as in CREATE.
      */
     @Override
     public void validateMatViewSql(
             MatViewDefinition viewDefinition,
             boolean isCompiling,
+            boolean isReadingBareNamesAsColumns,
             SqlExecutionContext executionContext,
             MatViewSqlValidator validator
     ) throws SqlException {
@@ -1087,7 +1090,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final boolean previousViewSqlCompile = executionContext.isViewSqlCompile();
         final boolean previousViewSqlGeneratedColumnNames = executionContext.hasViewSqlGeneratedColumnNames();
         executionContext.setExpiryReadPolicy(ExpiryReadPolicy.REJECT, viewDefinition.getMatViewToken().getTableName());
-        executionContext.setAllowBareNoArgFunctionCalls(!viewDefinition.isPassthrough());
+        executionContext.setAllowBareNoArgFunctionCalls(!isReadingBareNamesAsColumns && !viewDefinition.isPassthrough());
+        // A bare name of a zero-argument function fails with the parentheses the call needs, as in CREATE.
+        optimiser.setRejectingBareNoArgCalls(isReadingBareNamesAsColumns);
         executionContext.setViewSqlCompile(true);
         // The parser reports only on a query; anything else counts as relying on generated names.
         executionContext.setViewSqlGeneratedColumnNames(true);
@@ -1123,6 +1128,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
             validator.ofError(e.getFlyweightMessage());
         } finally {
+            optimiser.setRejectingBareNoArgCalls(false);
             executionContext.setViewSqlGeneratedColumnNames(previousViewSqlGeneratedColumnNames);
             executionContext.setViewSqlCompile(previousViewSqlCompile);
             executionContext.setAllowBareNoArgFunctionCalls(previousAllowBareNoArgFunctionCalls);
@@ -4978,6 +4984,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
         assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
 
+        final int matViewNamePosition = lexer.lastTokenPosition();
         final CharSequence matViewName = unquote(tok);
         // an object the principal may not see fails exactly like a missing one, before the kind check
         final TableToken matViewToken = executionContext.getVisibleTableTokenIfExists(matViewName);
@@ -4994,12 +5001,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
         final TimestampDriver driver = matViewDefinition.getBaseTableTimestampDriver();
 
-        tok = expectToken(lexer, "'full' or 'incremental' or 'range' or 'stats'");
+        tok = expectToken(lexer, "'full' or 'incremental' or 'range' or 'resume' or 'stats'");
         final boolean fullRefresh = isFullKeyword(tok);
         // STATS is a sentinel for "reset the cost-model EMA values" -- not a
         // data refresh. Handled inline here rather than through the refresh
         // queue because it's a synchronous metadata-only operation.
         final boolean isStatsReset = SqlKeywords.isStatsKeyword(tok);
+        // RESUME makes an invalid view valid again, synchronously, see MatViewResume.
+        final boolean isResume = isResumeKeyword(tok);
         long from = Numbers.LONG_NULL;
         long to = Numbers.LONG_NULL;
         if (isRangeKeyword(tok)) {
@@ -5020,8 +5029,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             if (from > to) {
                 throw SqlException.$(lexer.lastTokenPosition(), "TO timestamp must not be earlier than FROM timestamp");
             }
-        } else if (!fullRefresh && !isStatsReset && !isIncrementalKeyword(tok)) {
-            throw SqlException.$(lexer.lastTokenPosition(), "'full', 'incremental', 'range' or 'stats' expected");
+        } else if (!fullRefresh && !isStatsReset && !isResume && !isIncrementalKeyword(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "'full', 'incremental', 'range', 'resume' or 'stats' expected");
         }
 
         tok = SqlUtil.fetchNext(lexer);
@@ -5040,6 +5049,23 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 throw CairoException.readOnlyAccess();
             }
             final MatViewStateStore matViewStateStore = engine.getMatViewStateStore();
+            if (isResume) {
+                MatViewResume.resume(engine, executionContext, matViewToken, matViewNamePosition, matViewSqlValidator);
+                compiledQuery.ofRefreshMatView();
+                return;
+            }
+            if (!isStatsReset && !fullRefresh) {
+                // INCREMENTAL and RANGE on an invalid view would be skipped; RESUME makes the view valid first.
+                final MatViewState viewState = matViewStateStore.getViewState(matViewToken);
+                if (viewState != null && viewState.isInvalid()) {
+                    throw SqlException.$(matViewNamePosition, "materialized view is invalid, run REFRESH MATERIALIZED VIEW ")
+                            .put(matViewToken.getTableName()).put(" RESUME first [reason=")
+                            .put(viewState.getInvalidationReasonForReport()).put(']');
+                }
+            }
+            if (fullRefresh) {
+                checkMatViewFullRefreshBaseTable(matViewToken, matViewDefinition, matViewNamePosition);
+            }
             if (isStatsReset) {
                 final MatViewState viewState = matViewStateStore.getViewState(matViewToken);
                 if (viewState != null) {
@@ -5074,6 +5100,35 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
         }
         compiledQuery.ofRefreshMatView();
+    }
+
+    // REFRESH ... FULL refuses a base table the view cannot be refreshed from: one that is not a WAL table or a
+    // materialized view, or has another designated timestamp type than the view's. The refresh job checks again
+    // before it truncates. A missing base table is left to the refresh job, which invalidates the view.
+    private void checkMatViewFullRefreshBaseTable(
+            TableToken matViewToken,
+            MatViewDefinition matViewDefinition,
+            int matViewNamePosition
+    ) throws SqlException {
+        final TableToken baseTableToken = engine.getTableTokenIfExists(matViewDefinition.getBaseTableName());
+        if (baseTableToken == null) {
+            return;
+        }
+        CharSequence refusal = MatViewRefreshJob.getBaseTableKindRefusal(matViewToken, baseTableToken);
+        if (refusal == null) {
+            final int viewTimestampType;
+            try (TableMetadata viewMetadata = engine.getTableMetadata(matViewToken)) {
+                viewTimestampType = viewMetadata.getTimestampType();
+            }
+            final int baseTableTimestampType;
+            try (TableMetadata baseTableMetadata = engine.getTableMetadata(baseTableToken)) {
+                baseTableTimestampType = baseTableMetadata.getTimestampType();
+            }
+            refusal = MatViewRefreshJob.getBaseTableTimestampRefusal(matViewToken, baseTableToken, viewTimestampType, baseTableTimestampType);
+        }
+        if (refusal != null) {
+            throw SqlException.$(matViewNamePosition, refusal);
+        }
     }
 
     private void compileReindex(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {

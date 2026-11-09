@@ -193,6 +193,8 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
                             "rename table base_price to base_price2",
                             "refresh materialized view 'price_1h' full;"
                     );
+                    // The FULL waits until the view's WAL applies the invalidation of the rename, and runs then.
+                    execute("2024-10-24T17:00:33.000000Z", refreshJob, telemetryJob);
                 }
 
                 assertQuery("sys.telemetry_mat_view")
@@ -227,12 +229,14 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
                                     "from long_sequence(24 * 20 * 5)"
                     );
 
+                    // The view state event that persists the base table id at the view's first refresh comes first.
                     assertQuery("select sequencerTxn, minTimestamp, maxTimestamp from wal_transactions('price_1h')")
                             .noLeakCheck()
                             .noRandomAccess()
                             .returns("""
                                     sequencerTxn\tminTimestamp\tmaxTimestamp
-                                    1\t2024-09-10T12:00:00.000000Z\t2024-09-18T19:00:00.000000Z
+                                    1\t\t
+                                    2\t2024-09-10T12:00:00.000000Z\t2024-09-18T19:00:00.000000Z
                                     """);
 
                     execute("2024-10-24T17:01:30.000000Z", refreshJob, telemetryJob,
@@ -246,9 +250,10 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
                         .noRandomAccess()
                         .returns("""
                                 sequencerTxn\tminTimestamp\tmaxTimestamp
-                                1\t2024-09-10T12:00:00.000000Z\t2024-09-18T19:00:00.000000Z
-                                2\t\t
-                                3\t2024-09-10T12:00:00.000000Z\t2024-09-10T13:00:00.000000Z
+                                1\t\t
+                                2\t2024-09-10T12:00:00.000000Z\t2024-09-18T19:00:00.000000Z
+                                3\t\t
+                                4\t2024-09-10T12:00:00.000000Z\t2024-09-10T13:00:00.000000Z
                                 """);
 
                 assertViewMatchesSqlOverBaseTable();

@@ -53,6 +53,7 @@ import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.idx.IndexFactory;
+import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.pool.RecentWriteTracker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableRecordMetadata;
@@ -176,6 +177,8 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     private long lastReplaceRangeLowTs = 0;
     private long lastTxnMaxTimestamp = -1;
     private byte lastTxnType = WalTxnType.DATA;
+    // The base table id that the next view state event carries, see resetMatViewState().
+    private int matViewBaseTableId = MatViewState.BASE_TABLE_ID_UNKNOWN;
     private @Nullable WalPreCommitValidator preCommitValidator;
     private long segmentRowCount = -1;
     private long totalSegmentsRowCount;
@@ -643,7 +646,38 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     }
 
     // Marks the materialized view as invalid or resets its invalidation status,
-    // depending on the input values.
+    // depending on the input values. baseTableId is the id of the base table that the refresh position
+    // and the cached intervals belong to, MatViewState.BASE_TABLE_ID_UNKNOWN when unknown. The event
+    // goes through the overridable form below, which a subclass that intercepts view state events
+    // overrides, so that both forms reach it.
+    public void resetMatViewState(
+            long lastRefreshBaseTxn,
+            long lastRefreshTimestamp,
+            boolean invalid,
+            @Nullable CharSequence invalidationReason,
+            long lastPeriodHi,
+            @Nullable LongList refreshIntervals,
+            long refreshIntervalsBaseTxn,
+            int baseTableId
+    ) {
+        matViewBaseTableId = baseTableId;
+        try {
+            resetMatViewState(
+                    lastRefreshBaseTxn,
+                    lastRefreshTimestamp,
+                    invalid,
+                    invalidationReason,
+                    lastPeriodHi,
+                    refreshIntervals,
+                    refreshIntervalsBaseTxn
+            );
+        } finally {
+            matViewBaseTableId = MatViewState.BASE_TABLE_ID_UNKNOWN;
+        }
+    }
+
+    // Marks the materialized view as invalid or resets its invalidation status,
+    // depending on the input values. Called directly, the event carries no base table id.
     public void resetMatViewState(
             long lastRefreshBaseTxn,
             long lastRefreshTimestamp,
@@ -661,7 +695,8 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                     invalidationReason,
                     lastPeriodHi,
                     refreshIntervals,
-                    refreshIntervalsBaseTxn
+                    refreshIntervalsBaseTxn,
+                    matViewBaseTableId
             );
             final int syncedMode = syncAdaptiveEventsBeforeSequencing();
             final long seqTxn = getSequencerTxn();

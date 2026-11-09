@@ -156,8 +156,11 @@ public class MatViewBareNameGuard implements QuietCloseable {
             long seqTxn
     ) {
         // The same gate as MatViewRefreshJob.invalidateView(): an invalid view keeps its reason, unless a pending
-        // FULL refresh is rebuilding it, which a change that its fixed snapshot does not cover must invalidate again.
-        if (viewState.isInvalid() && !viewState.isPendingFullRefresh()) {
+        // FULL refresh is rebuilding it, which a change that its fixed snapshot does not cover must invalidate again,
+        // or RESUME is recovering it, which must not leave the view valid on a SQL whose bare name the change
+        // switches. The resuming flag is read before the invalid flag: RESUME makes the view valid before it clears it.
+        final boolean isResuming = viewState.isResuming();
+        if (viewState.isInvalid() && !viewState.isPendingFullRefresh() && !isResuming) {
             LOG.info().$("materialized view is already invalid, keeping its reason [view=").$(viewToken)
                     .$(", guardReason=").$safe(invalidationReason)
                     .I$();

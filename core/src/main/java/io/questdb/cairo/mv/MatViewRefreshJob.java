@@ -82,6 +82,9 @@ import java.util.concurrent.locks.Lock;
 import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
 
 public class MatViewRefreshJob implements Job, QuietCloseable {
+    // The invalidation reason of a view whose base table name now resolves to another table than the one its refresh
+    // position and cached intervals belong to.
+    public static final String BASE_TABLE_CHANGED_REASON = "base table changed";
     private static final int PREFLIGHT_CONFLICT = -1;
     private static final int PREFLIGHT_DEFERRED = 0;
     private static final int PREFLIGHT_READY = 1;
@@ -229,6 +232,43 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             boolean shouldIncrementRefreshSeq
     ) {
         finalizeAndUnlock0(engine, stateStore, viewToken, viewState, shouldIncrementRefreshSeq, null, null);
+    }
+
+    /**
+     * Returns why a view cannot be refreshed from the given base table, judging by the table's kind alone, or null
+     * when it can: the base must be a WAL table or a materialized view, not a regular view or a live view.
+     * REFRESH ... FULL and RESUME refuse such a base at the statement, and the FULL refresh job checks again before it
+     * truncates.
+     */
+    public static @Nullable CharSequence getBaseTableKindRefusal(@NotNull TableToken viewToken, @NotNull TableToken baseTableToken) {
+        if (!baseTableToken.isWal() || baseTableToken.isView() || baseTableToken.isLiveView()) {
+            return "base table is not a WAL table or a materialized view [view=" + viewToken.getTableName()
+                    + ", baseTable=" + baseTableToken.getTableName()
+                    + "]; move the view to another base table with ALTER MATERIALIZED VIEW ... WITH BASE, or re-create the view";
+        }
+        return null;
+    }
+
+    /**
+     * Returns why a view cannot be refreshed from the given base table, judging by the designated timestamp types
+     * alone, or null when it can: the base table's must equal the view's. REFRESH ... FULL and RESUME refuse such a
+     * base at the statement, after {@link #getBaseTableKindRefusal(TableToken, TableToken)}, and the FULL refresh job
+     * checks again before it truncates.
+     */
+    public static @Nullable CharSequence getBaseTableTimestampRefusal(
+            @NotNull TableToken viewToken,
+            @NotNull TableToken baseTableToken,
+            int viewTimestampType,
+            int baseTableTimestampType
+    ) {
+        if (viewTimestampType != baseTableTimestampType) {
+            return "base table designated timestamp type does not match the view's [view=" + viewToken.getTableName()
+                    + ", baseTable=" + baseTableToken.getTableName()
+                    + ", viewType=" + ColumnType.nameOf(viewTimestampType)
+                    + ", baseTableType=" + ColumnType.nameOf(baseTableTimestampType)
+                    + "]; move the view to another base table with ALTER MATERIALIZED VIEW ... WITH BASE, or re-create the view";
+        }
+        return null;
     }
 
     @Override
@@ -918,6 +958,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             return false;
         }
 
+        if (!checkBaseTableIdentity(viewDefinition, viewState, walWriter, baseTableToken, false)) {
+            // The view's refresh position belongs to another table than the one under the base's name now.
+            return false;
+        }
+
         // Bring the cache up to the base's applied transaction. The scan applies the TRUNCATE cut, so a truncate
         // applied after the operation has cleared the intervals queued before it by now.
         final long lastBaseTxn = engine.getTableSequencerAPI().getTxnTracker(baseTableToken).getWriterTxn();
@@ -952,7 +997,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 null,
                 viewState.getLastPeriodHi(),
                 viewState.getRefreshIntervals(),
-                viewState.getRefreshIntervalsBaseTxn()
+                viewState.getRefreshIntervalsBaseTxn(),
+                viewState.getBaseTableId()
         );
         LOG.info().$("added base table range to materialized view refresh intervals [view=").$(viewToken)
                 .$(", baseTable=").$(baseTableToken)
@@ -1032,7 +1078,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         null,
                         commitPeriodHi,
                         viewState.getRefreshIntervals(),
-                        viewState.getRefreshIntervalsBaseTxn()
+                        viewState.getRefreshIntervalsBaseTxn(),
+                        viewState.getBaseTableId()
                 );
             }
             viewState.rangeRefreshSuccess(
@@ -1097,21 +1144,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     // that defend the native cursor are untouched. The fence is a strict no-op for non-replicating
     // deployments: the read lock is uncontended and the read-only flag is static.
     private Lock acquireMatViewCommitFence() {
-        if (engine.isReadOnlyMode()) {
-            throw CairoException.readOnlyAccess();
-        }
-        final Lock lock = engine.getRoleSwitchReadLock();
-        lock.lock();
-        try {
-            if (engine.isReadOnlyMode()) {
-                throw CairoException.readOnlyAccess();
-            }
-            engine.fireRoleSwitchMintObserver();
-            return lock;
-        } catch (Throwable th) {
-            lock.unlock();
-            throw th;
-        }
+        return MatViewCommitFence.acquire(engine);
     }
 
     private void fencedCommitMatView(
@@ -1150,6 +1183,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         }
     }
 
+    // Writes a view state event. baseTableId is the id of the base table that the refresh position and the cached
+    // intervals belong to, and every state event carries it, so that a restart keeps it.
     private void fencedResetMatViewState(
             WalWriter walWriter,
             long lastRefreshBaseTxn,
@@ -1158,22 +1193,21 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             @Nullable CharSequence invalidationReason,
             long lastPeriodHi,
             @Nullable LongList refreshIntervals,
-            long refreshIntervalsBaseTxn
+            long refreshIntervalsBaseTxn,
+            int baseTableId
     ) {
-        final Lock lock = acquireMatViewCommitFence();
-        try {
-            walWriter.resetMatViewState(
-                    lastRefreshBaseTxn,
-                    lastRefreshTimestamp,
-                    isInvalid,
-                    invalidationReason,
-                    lastPeriodHi,
-                    refreshIntervals,
-                    refreshIntervalsBaseTxn
-            );
-        } finally {
-            lock.unlock();
-        }
+        MatViewCommitFence.resetMatViewState(
+                engine,
+                walWriter,
+                lastRefreshBaseTxn,
+                lastRefreshTimestamp,
+                isInvalid,
+                invalidationReason,
+                lastPeriodHi,
+                refreshIntervals,
+                refreshIntervalsBaseTxn,
+                baseTableId
+        );
     }
 
     private void fencedTruncateSoft(WalWriter walWriter) {
@@ -1334,27 +1368,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             // Check if we're doing incremental/full refresh on a period mat view.
             // If so, we may need to remove incomplete periods from the final refresh interval.
             if (viewDefinition.getPeriodLength() > 0) {
-                TimestampSampler periodSampler = viewDefinition.getPeriodSampler();
-                if (periodSampler == null) {
-                    periodSampler = TimestampSamplerFactory.getInstance(
-                            driver,
-                            viewDefinition.getPeriodLength(),
-                            viewDefinition.getPeriodLengthUnit(),
-                            -1
-                    );
-                    viewDefinition.setPeriodSampler(periodSampler);
-                }
-                periodSampler.setStart(driver.fromMicros(viewDefinition.getTimerStartUs()));
-
-                final long nowLocal = viewDefinition.getTimerTzRulesUs() != null
-                        ? now + driver.fromMicros(viewDefinition.getTimerTzRulesUs().getOffset(driver.toMicros(now)))
-                        : now;
-                final long delay = driver.from(viewDefinition.getPeriodDelay(), viewDefinition.getPeriodDelayUnit());
-                // Period hi is exclusive, but maxTs is inclusive, so we align them.
-                final long periodHiLocal = periodSampler.round(nowLocal - delay) - 1;
-                final long periodHi = viewDefinition.getTimerTzRulesUs() != null
-                        ? periodHiLocal - driver.fromMicros(viewDefinition.getTimerTzRulesUs().getOffset(driver.toMicros(periodHiLocal)))
-                        : periodHiLocal;
+                final long periodHi = getCompletePeriodHi(viewDefinition, now);
 
                 // Remove incomplete periods from both txn intervals and refresh interval.
                 intersectIntervals(refreshIntervals, Long.MIN_VALUE, periodHi);
@@ -1636,7 +1650,23 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         // the rename branch below re-enqueues this invocation's owner under the updated token; the
         // finally hands it to finalizeAndUnlock0, which suppresses only that owner's wake.
         Object suppressedFullRefreshOwner = null;
+        // Set when this invocation parks its owner until the view's own WAL is applied, see below.
+        boolean isParkedOnViewWal = false;
         try (WalWriter walWriter = engine.getWalWriter(viewToken)) {
+            // FULL on an invalid view rebuilds it under the latest definition, so it waits while the view's own WAL
+            // has unapplied transactions. It parks its owner on the view's marker, as for a suspended view, and the
+            // WAL apply job redelivers it once it has applied the view's WAL (reenqueuePendingOnResume). The check
+            // runs under the latch, which a base change also holds while it writes. The park suppresses this
+            // owner's own wake on unlock, or the release would redeliver it at once and the job would spin, and
+            // re-checks the view's WAL after the unlock, see redeliverParkedFullRefresh().
+            if (viewState.isInvalid() && hasUnappliedViewWal(viewToken)) {
+                LOG.info().$("materialized view WAL is not applied, full refresh waits for it [view=").$(viewToken).I$();
+                isFullRefreshDeferred = true;
+                suppressedFullRefreshOwner = fullRefreshOwner;
+                isParkedOnViewWal = true;
+                return false;
+            }
+
             final TableToken baseTableToken = verifyBaseTableToken(viewDefinition, viewState, walWriter);
             if (baseTableToken == null) {
                 runFullRefreshTerminalFailureSeamForTesting();
@@ -1647,6 +1677,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 refreshFailState(viewDefinition, viewState, walWriter, "base table is not a WAL table");
                 return false;
             }
+            // The statement refused a base the view cannot refresh from, and the refresh job checks again before it
+            // truncates: such a base fails the refresh with the view's rows in place.
+            final CharSequence baseTableKindRefusal = getBaseTableKindRefusal(viewToken, baseTableToken);
+            if (baseTableKindRefusal != null) {
+                refreshFailState(viewDefinition, viewState, walWriter, baseTableKindRefusal);
+                return false;
+            }
 
             // Steps:
             // - truncate view (only when no REFRESH LIMIT is set)
@@ -1655,6 +1692,17 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             // - apply resulting commit
             // - update applied to txn in MatViewStateStore
             try (TableReader baseTableReader = engine.getReader(baseTableToken)) {
+                // The designated timestamp type check, on the reader the rebuild reads.
+                final CharSequence baseTableTimestampRefusal = getBaseTableTimestampRefusal(
+                        viewToken,
+                        baseTableToken,
+                        walWriter.getMetadata().getTimestampType(),
+                        baseTableReader.getMetadata().getTimestampType()
+                );
+                if (baseTableTimestampRefusal != null) {
+                    refreshFailState(viewDefinition, viewState, walWriter, baseTableTimestampRefusal);
+                    return false;
+                }
                 // Operate SQL on a fixed reader that has known max transaction visible. The reader
                 // is used to initialize base table readers returned from the refreshExecutionContext.getReader()
                 // call, so that all of them are at the same txn.
@@ -1693,7 +1741,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         fencedTruncateSoft(walWriter);
                     }
 
-                    resetInvalidState(viewState, walWriter);
+                    resetInvalidState(viewState, walWriter, baseTableToken);
 
                     // Seam fires after resetInvalidState, modelling an INVALIDATE that arrives during the
                     // pump while the lock and a fixed base snapshot are held.
@@ -1822,6 +1870,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 // redelivered by the handoff and re-runs once, which is bounded and safe). Same pattern as
                 // clearBlockedFullRefresh.
                 finalizeAndUnlock0(engine, stateStore, viewToken, viewState, true, null, suppressedFullRefreshOwner);
+                if (isParkedOnViewWal) {
+                    redeliverParkedFullRefresh(viewToken, viewState, fullRefreshOwner);
+                }
             }
         }
 
@@ -1916,6 +1967,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         );
                         viewState.setRecordCopyPositional(isPositional);
                         copierMetadataVersion = walWriter.getMetadata().getMetadataVersion();
+                        // A query timestamp of another type than the view's fails every refresh, so it fails the
+                        // refresh here, before a FULL refresh truncates the view.
+                        checkTimestampType(factory, walWriter);
                     }
                 } finally {
                     refreshSqlExecutionContext.setMemoryTracker(null);
@@ -1992,6 +2046,17 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             if (!returned) {
                 Misc.free(factory);
             }
+        }
+    }
+
+    private static void checkTimestampType(RecordCursorFactory factory, WalWriter walWriter) {
+        final int timestampType = factory.getMetadata().getTimestampType();
+        if (timestampType != walWriter.getMetadata().getTimestampType()) {
+            throw CairoException.nonCritical().put("timestamp type mismatch between materialized view and query [view=")
+                    .put(ColumnType.nameOf(walWriter.getMetadata().getTimestampType()))
+                    .put(", query=")
+                    .put(ColumnType.nameOf(timestampType))
+                    .put(']');
         }
     }
 
@@ -2280,13 +2345,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     assert factory != null;
                     assert copier != null;
                     final int timestampType = factory.getMetadata().getTimestampType();
-                    if (timestampType != walWriter.getMetadata().getTimestampType()) {
-                        throw CairoException.nonCritical().put("timestamp type mismatch between materialized view and query [view=")
-                                .put(ColumnType.nameOf(walWriter.getMetadata().getTimestampType()))
-                                .put(", query=")
-                                .put(ColumnType.nameOf(timestampType))
-                                .put(']');
-                    }
+                    checkTimestampType(factory, walWriter);
 
                     final int viewTimestampIndex = walWriter.getMetadata().getTimestampIndex();
                     final CharSequence timestampName = walWriter.getMetadata().getColumnName(viewTimestampIndex);
@@ -2739,8 +2798,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         // is still recovering an invalid view, a newer base invalidation must publish ownership now: FULL
         // can otherwise reset the old invalid flag after a fixed snapshot that does not contain this change.
         final boolean isFullRefreshPending = viewState != null && viewState.isPendingFullRefresh();
+        // RESUME recovers an invalid view too, and the same ordering holds: it makes the view valid before it
+        // clears its resuming flag, so a read that misses the flag observes the view valid.
+        final boolean isResuming = viewState != null && viewState.isResuming();
         final boolean isInvalid = viewState != null && viewState.isInvalid();
-        final boolean isInvalidViewRecovery = isInvalid && isFullRefreshPending;
+        final boolean isInvalidViewRecovery = isInvalid && (isFullRefreshPending || isResuming);
         if (viewState != null && !viewState.isDropped() && (!isInvalid || isInvalidViewRecovery)) {
             assert invalidationReason != null : DEFERRED_INVALIDATION_NEEDS_REASON;
 
@@ -2879,6 +2941,42 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 && !viewState.isInvalid()
                 && !viewState.isDropped()
                 && (!isRefreshDueRequired || viewState.isRefreshDue(microsecondClock.getTicks()));
+    }
+
+    /**
+     * Returns the inclusive high boundary of the complete periods of a period view at {@code now}, in the base table's
+     * timestamp units: the end of the last period that its delay has passed, minus one. The caller holds the view
+     * latch, which guards the view definition's period sampler.
+     */
+    static long getCompletePeriodHi(@NotNull MatViewDefinition viewDefinition, long now) throws SqlException {
+        final TimestampDriver driver = viewDefinition.getBaseTableTimestampDriver();
+        TimestampSampler periodSampler = viewDefinition.getPeriodSampler();
+        if (periodSampler == null) {
+            periodSampler = TimestampSamplerFactory.getInstance(
+                    driver,
+                    viewDefinition.getPeriodLength(),
+                    viewDefinition.getPeriodLengthUnit(),
+                    -1
+            );
+            viewDefinition.setPeriodSampler(periodSampler);
+        }
+        periodSampler.setStart(driver.fromMicros(viewDefinition.getTimerStartUs()));
+
+        final long nowLocal = viewDefinition.getTimerTzRulesUs() != null
+                ? now + driver.fromMicros(viewDefinition.getTimerTzRulesUs().getOffset(driver.toMicros(now)))
+                : now;
+        final long delay = driver.from(viewDefinition.getPeriodDelay(), viewDefinition.getPeriodDelayUnit());
+        // Period hi is exclusive, but maxTs is inclusive, so we align them.
+        final long periodHiLocal = periodSampler.round(nowLocal - delay) - 1;
+        return viewDefinition.getTimerTzRulesUs() != null
+                ? periodHiLocal - driver.fromMicros(viewDefinition.getTimerTzRulesUs().getOffset(driver.toMicros(periodHiLocal)))
+                : periodHiLocal;
+    }
+
+    // True while the view's own WAL has transactions the WAL apply job has not applied yet.
+    private boolean hasUnappliedViewWal(TableToken viewToken) {
+        final SeqTxnTracker viewSeqTracker = engine.getTableSequencerAPI().getTxnTracker(viewToken);
+        return viewSeqTracker.getWriterTxn() < viewSeqTracker.getSeqTxn();
     }
 
     private boolean isViewWriteSuspended(TableToken viewToken) {
@@ -3211,6 +3309,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 return false;
             }
 
+            if (!checkBaseTableIdentity(viewDefinition, viewState, walWriter, baseTableToken, false)) {
+                return false;
+            }
+
             try (TableReader baseTableReader = engine.getReader(baseTableToken)) {
                 if (isInvalidationPublished(viewState, false)) {
                     return false;
@@ -3382,6 +3484,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
                 try (WalWriter walWriter = engine.getWalWriter(viewToken)) {
                     try {
+                        // The base table token comes from the commit notification, so the check compares the view's
+                        // base table id with the table that committed.
+                        if (!checkBaseTableIdentity(viewDefinition, viewState, walWriter, baseTableToken, true)) {
+                            continue;
+                        }
                         final long result = refreshIncremental0(baseTableToken, viewDefinition, viewState, walWriter, refreshTriggerTimestamp, refreshTask);
                         refreshed |= (result & 1L) != 0;
                         final long examinedBaseTxn = result >> 1;
@@ -3471,7 +3578,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         errorMessage,
                         viewState.getLastPeriodHi(),
                         viewState.getRefreshIntervals(),
-                        viewState.getRefreshIntervalsBaseTxn()
+                        viewState.getRefreshIntervalsBaseTxn(),
+                        viewState.getBaseTableId()
                 );
             } catch (CairoException refused) {
                 // A demote landed between the eager check above and the fence's in-lock re-check, so the
@@ -3554,6 +3662,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             }
 
             try {
+                if (!checkBaseTableIdentity(viewDefinition, viewState, walWriter, baseTableToken, true)) {
+                    return false;
+                }
                 // The examined base txn is only needed when refreshing dependent views; here we just
                 // return the "refreshed" flag from bit 0.
                 final long result = refreshIncremental0(baseTableToken, viewDefinition, viewState, walWriter, refreshTriggerTimestamp, refreshTask);
@@ -3732,7 +3843,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     null,
                     periodHi,
                     null,
-                    -1
+                    -1,
+                    viewState.getBaseTableId()
             );
         }
         viewState.refreshSuccessNoRows(
@@ -3748,6 +3860,26 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     // each view it locked inside the loop, and a throw there would skip the remaining views and
     // notifyBaseRefreshed, which leaves the base table marked as notified so that its later commits enqueue
     // nothing. Any other throwable is a defect, so this caller lets it propagate despite that cost.
+    // A FULL refresh that parked its owner until the view's own WAL applies suppressed the owner's wake on its unlock.
+    // The WAL apply job redelivers the owner once it has applied the view's WAL, but a redelivery that it published
+    // while this FULL still held the latch may have found the latch held and left the owner to the holder's wake,
+    // which the suppression dropped. So the FULL checks the view's WAL again after the unlock, and redelivers the
+    // owner itself when the WAL is applied by then.
+    private void redeliverParkedFullRefresh(TableToken viewToken, MatViewState viewState, Object fullRefreshOwner) {
+        if (hasUnappliedViewWal(viewToken) || !viewState.isPendingFullRefreshOwner(fullRefreshOwner)) {
+            return;
+        }
+        LOG.info().$("materialized view WAL is applied, redelivering parked full refresh [view=").$(viewToken).I$();
+        try {
+            stateStore.enqueueFullRefresh(viewToken, fullRefreshOwner);
+        } catch (Throwable th) {
+            engine.getMatViewStateStore().requestPendingFullRefreshReenqueue(viewState);
+            LOG.error().$("could not redeliver parked full refresh, the retry scan delivers it [view=").$(viewToken)
+                    .$(", ex=").$(th)
+                    .I$();
+        }
+    }
+
     private void releaseLockLoggingFailure(TableToken viewToken, MatViewState viewState, boolean shouldIncrementRefreshSeq) {
         try {
             finalizeAndUnlock(viewToken, viewState, shouldIncrementRefreshSeq);
@@ -3759,12 +3891,15 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         }
     }
 
-    private void resetInvalidState(MatViewState viewState, WalWriter walWriter) {
+    // FULL rebuilds the view from the table now under the base table's name, so the state event it writes after its
+    // truncate carries that table's id, and the view's refresh position belongs to it from then on.
+    private void resetInvalidState(MatViewState viewState, WalWriter walWriter, TableToken baseTableToken) {
         final boolean invalid = viewState.isInvalid();
         final String invalidationReason = viewState.getInvalidationReason();
         if (!invalid) {
             viewState.markAsValid();
         }
+        viewState.setBaseTableId(baseTableToken.getTableId());
         viewState.setLastRefreshBaseTableTxn(-1);
         viewState.setRefreshIntervalsBaseTxn(-1);
         viewState.getRefreshIntervals().clear();
@@ -3778,7 +3913,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 invalidationReason,
                 viewState.getLastPeriodHi(),
                 null,
-                -1
+                -1,
+                viewState.getBaseTableId()
         );
     }
 
@@ -3869,7 +4005,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 invalidationReason,
                 viewState.getLastPeriodHi(),
                 viewState.getRefreshIntervals(),
-                viewState.getRefreshIntervalsBaseTxn()
+                viewState.getRefreshIntervalsBaseTxn(),
+                viewState.getBaseTableId()
         );
     }
 
@@ -3905,6 +4042,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
                 final TableToken baseTableToken = verifyBaseTableToken(viewDefinition, viewState, walWriter);
                 if (baseTableToken == null) {
+                    return;
+                }
+                if (!checkBaseTableIdentity(viewDefinition, viewState, walWriter, baseTableToken, false)) {
                     return;
                 }
 
@@ -3989,7 +4129,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         null,
                         viewState.getLastPeriodHi(),
                         viewState.getRefreshIntervals(),
-                        viewState.getRefreshIntervalsBaseTxn()
+                        viewState.getRefreshIntervalsBaseTxn(),
+                        viewState.getBaseTableId()
                 );
 
                 return viewState.getRefreshIntervals();
@@ -4051,7 +4192,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
      *
      * @throws CairoException if the query no longer matches the view schema
      */
-    private static void validateViewSchema(
+    static void validateViewSchema(
             TableToken viewToken,
             RecordMetadata queryMetadata,
             RecordMetadata viewMetadata,
@@ -4090,6 +4231,62 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     .$(", viewColumn=").$safe(viewColumnName)
                     .I$();
         }
+    }
+
+    /**
+     * The base identity check of every refresh except FULL, and of the tasks that update a view's cached refresh
+     * intervals, under the view latch once the caller resolved the base table. A view's refresh position and cached
+     * intervals are transaction numbers of one table. When the view's state knows that table's id and the table now
+     * under the base table's name has another one, because the base was dropped and re-created, renamed while a new
+     * table took its name, or rebased, the check invalidates the view with {@link #BASE_TABLE_CHANGED_REASON} and
+     * returns false, so the caller writes nothing.
+     * <p>
+     * When the id is unknown, as in the state of a new view before its first refresh or of a view last written by a
+     * previous version, an incremental refresh ({@code isSettingUnknownId}) sets it and persists it at once, with a
+     * view state event that carries the rest of the view state unchanged, before it reads the base table or compiles
+     * the view's SQL. A failed write throws, and the refresh fails before it writes any data. The other callers leave
+     * an unknown id as it is.
+     */
+    private boolean checkBaseTableIdentity(
+            @NotNull MatViewDefinition viewDefinition,
+            @NotNull MatViewState viewState,
+            @NotNull WalWriter walWriter,
+            @NotNull TableToken baseTableToken,
+            boolean isSettingUnknownId
+    ) {
+        assert viewState.isLocked();
+        final int baseTableId = viewState.getBaseTableId();
+        if (baseTableId == MatViewState.BASE_TABLE_ID_UNKNOWN) {
+            if (isSettingUnknownId) {
+                fencedResetMatViewState(
+                        walWriter,
+                        viewState.getLastRefreshBaseTxn(),
+                        viewState.getLastRefreshFinishTimestampUs(),
+                        false,
+                        null,
+                        viewState.getLastPeriodHi(),
+                        viewState.getRefreshIntervals(),
+                        viewState.getRefreshIntervalsBaseTxn(),
+                        baseTableToken.getTableId()
+                );
+                viewState.setBaseTableId(baseTableToken.getTableId());
+                LOG.info().$("persisted base table id of materialized view [view=").$(viewDefinition.getMatViewToken())
+                        .$(", baseTable=").$(baseTableToken)
+                        .$(", baseTableId=").$(baseTableToken.getTableId())
+                        .I$();
+            }
+            return true;
+        }
+        if (baseTableId != baseTableToken.getTableId()) {
+            LOG.error().$("base table of materialized view was replaced, invalidating the view [view=").$(viewDefinition.getMatViewToken())
+                    .$(", baseTable=").$(baseTableToken)
+                    .$(", baseTableId=").$(baseTableToken.getTableId())
+                    .$(", viewBaseTableId=").$(baseTableId)
+                    .I$();
+            refreshFailState(viewDefinition, viewState, walWriter, BASE_TABLE_CHANGED_REASON);
+            return false;
+        }
+        return true;
     }
 
     private @Nullable TableToken verifyBaseTableToken(@NotNull MatViewDefinition viewDefinition, @NotNull MatViewState viewState, @NotNull WalWriter walWriter) {

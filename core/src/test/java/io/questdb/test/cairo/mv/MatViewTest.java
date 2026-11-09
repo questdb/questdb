@@ -240,9 +240,11 @@ public class MatViewTest extends AbstractCairoTest {
             assertQuery("select view_status from materialized_views").noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns("view_status\nvalid\n");
             assertQuery("select suspended from wal_tables() where name = 'price_1h'").noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns("suspended\ntrue\n");
 
-            // Resume and recover with a full refresh against the rebased base; the worker stays healthy.
+            // Resume and recover with a full refresh against the rebased base; the worker stays healthy. The FULL
+            // waits until the view's WAL applies the invalidation that RESUME WAL redelivered.
             execute("alter materialized view price_1h resume wal");
             execute("refresh materialized view price_1h full");
+            drainQueues();
             drainQueues();
             assertQuery("select view_status from materialized_views").noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns("view_status\nvalid\n");
             assertQuery("select count() from price_1h").noLeakCheck().expectSize().noRandomAccess().returns("count\n1\n");
@@ -2590,6 +2592,8 @@ public class MatViewTest extends AbstractCairoTest {
             currentMicros = parseFloorPartialTimestamp("2024-10-24T18");
             execute("rename table base_price to base_price2");
             execute("refresh materialized view 'price_1h' full;");
+            // FULL on the view the rename invalidated waits until the view's WAL applies the invalidation
+            drainQueues();
             drainQueues();
 
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
@@ -2603,14 +2607,18 @@ public class MatViewTest extends AbstractCairoTest {
                             """);
 
             // Create another base table instead of the one that was renamed.
-            // This table is non-WAL, so mat view should be still invalid.
+            // This table is non-WAL, so REFRESH ... FULL refuses it at the statement, and the mat view stays invalid.
             executeWithRewriteTimestamp(
                     "create table base_price (" +
                             "sym varchar, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY BYPASS WAL"
             );
             currentMicros = parseFloorPartialTimestamp("2024-10-24T19");
-            execute("refresh materialized view 'price_1h' full;");
+            assertExceptionNoLeakCheck(
+                    "refresh materialized view 'price_1h' full;",
+                    26,
+                    "base table is not a WAL table or a materialized view [view=price_1h, baseTable=base_price]"
+            );
             drainQueues();
 
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
@@ -2620,7 +2628,7 @@ public class MatViewTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("""
                             view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\tinvalidation_reason\trefresh_base_table_txn\tbase_table_txn
-                            price_1h\timmediate\tbase_price\t2024-10-24T18:00:00.000000Z\t2024-10-24T19:00:00.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tinvalid\tbase table is not a WAL table\t1\t-1
+                            price_1h\timmediate\tbase_price\t2024-10-24T18:00:00.000000Z\t2024-10-24T18:00:00.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tinvalid\t[-105]: table does not exist [table=base_price]\t1\t-1
                             """);
         });
     }
@@ -2824,15 +2832,20 @@ public class MatViewTest extends AbstractCairoTest {
             );
             drainQueues();
 
-            // revalidate the view
-            execute("refresh materialized view price_1h full");
+            // REFRESH ... FULL refuses a base of another designated timestamp type at the statement, and the view
+            // keeps its rows and its invalidation
+            assertExceptionNoLeakCheck(
+                    "refresh materialized view price_1h full",
+                    26,
+                    "base table designated timestamp type does not match the view's [view=price_1h, baseTable=base_price, viewType=TIMESTAMP_NS, baseTableType=TIMESTAMP]"
+            );
             drainQueues();
             assertQuery("select view_name, base_table_name, view_status, invalidation_reason from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             view_name\tbase_table_name\tview_status\tinvalidation_reason
-                            price_1h\tbase_price\tinvalid\t[-1]: timestamp type mismatch between materialized view and query [view=TIMESTAMP_NS, query=TIMESTAMP]
+                            price_1h\tbase_price\tinvalid\tbase table is dropped or renamed
                             """);
         });
     }
@@ -3179,13 +3192,14 @@ public class MatViewTest extends AbstractCairoTest {
                             sym30\t30.0\t2022-02-26T10:00:00.000000Z
                             """));
 
-            // Expect 3 (30 rows / 10 rows per batch) commits.
+            // Expect 3 (30 rows / 10 rows per batch) commits, after the view state event that persists the base
+            // table id at the view's first refresh.
             assertQuery("select writerTxn, sequencerTxn from wal_tables() where name = 'price_1h'")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             writerTxn\tsequencerTxn
-                            3\t3
+                            4\t4
                             """);
         });
     }
@@ -7548,15 +7562,20 @@ public class MatViewTest extends AbstractCairoTest {
                             """);
 
             // Make the view invalid: a base rename invalidates it, and renaming the base back keeps it invalid.
-            // Range refresh should be ignored. Each rename is a base transaction, so the base reaches txn 6: two
-            // inserts, two renames, the truncate and the insert.
+            // Range refresh on an invalid view fails at the view name and changes nothing. Each rename is a base
+            // transaction, so the base reaches txn 6: two inserts, two renames, the truncate and the insert.
             execute("rename table x to x_tmp;");
             execute("rename table x_tmp to x;");
             drainQueues();
             execute("truncate table x;");
             execute(insertOlderRows);
             drainQueues();
-            execute("refresh materialized view x_1h range from '2024-09-10T12:02' to '2024-09-11T12:02';");
+            assertExceptionNoLeakCheck(
+                    "refresh materialized view x_1h range from '2024-09-10T12:02' to '2024-09-11T12:02';",
+                    26,
+                    "materialized view is invalid, run REFRESH MATERIALIZED VIEW x_1h RESUME first [reason=table rename operation]"
+            );
+            drainQueues();
             assertQuery("x_1h order by sym, ts")
                     .expectSize()
                     .noLeakCheck()
@@ -11344,13 +11363,14 @@ public class MatViewTest extends AbstractCairoTest {
                                     jpyusd\t103.21\t2024-09-10T12:00:00.000000Z
                                     """));
 
+            // the view's first refresh wrote the view state event that persists the base table id and its data commit
             assertQuery("wal_tables()")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs
                             base_price\tfalse\t2\t0\t2\t\t\t0\t0\t0\t-1\t
-                            price_1h\ttrue\t1\t0\t3\t\t\t0\t0\t0\t-1\t
+                            price_1h\ttrue\t2\t0\t4\t\t\t0\t0\t0\t-1\t
                             """);
 
             // resume mat view
@@ -11375,7 +11395,7 @@ public class MatViewTest extends AbstractCairoTest {
                     .returns("""
                             name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs
                             base_price\tfalse\t2\t0\t2\t\t\t0\t0\t0\t-1\t
-                            price_1h\tfalse\t3\t0\t3\t\t\t0\t0\t0\t-1\t
+                            price_1h\tfalse\t4\t0\t4\t\t\t0\t0\t0\t-1\t
                             """);
 
             // suspend mat view again
@@ -11402,11 +11422,12 @@ public class MatViewTest extends AbstractCairoTest {
                     .returns("""
                             name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs
                             base_price\tfalse\t3\t0\t3\t\t\t0\t0\t0\t-1\t
-                            price_1h\ttrue\t3\t0\t5\t\t\t0\t0\t0\t-1\t
+                            price_1h\ttrue\t4\t0\t6\t\t\t0\t0\t0\t-1\t
                             """);
 
-            // resume mat view from txn
-            execute("alter materialized view price_1h resume wal from txn 3");
+            // resume mat view from txn; the view's WAL starts with the view state event that persisted the base
+            // table id at its first refresh, so its transactions are one higher than without it
+            execute("alter materialized view price_1h resume wal from txn 4");
             drainQueues();
 
             assertQuery("price_1h order by sym")
@@ -11427,7 +11448,7 @@ public class MatViewTest extends AbstractCairoTest {
                     .returns("""
                             name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs
                             base_price\tfalse\t3\t0\t3\t\t\t0\t0\t0\t-1\t
-                            price_1h\tfalse\t5\t0\t5\t\t\t0\t0\t0\t-1\t
+                            price_1h\tfalse\t6\t0\t6\t\t\t0\t0\t0\t-1\t
                             """);
         });
     }
@@ -14068,7 +14089,8 @@ public class MatViewTest extends AbstractCairoTest {
 
             drainQueues();
 
-            // the view must be marked as invalid as the result of refresh attempt
+            // the view must be marked as invalid as the result of refresh attempt: the table now under the base
+            // table's name has another id than the one the view's refresh position belongs to
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
                     "view_sql, view_status, invalidation_reason, " + txnColumns() + " " +
                     "from materialized_views")
@@ -14076,7 +14098,7 @@ public class MatViewTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("""
                             view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\tinvalidation_reason\trefresh_base_table_txn\tbase_table_txn
-                            price_1h\tmanual\tbase_price\t2025-01-01T01:01:01.000000Z\t2025-01-01T01:01:07.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h;\tinvalid\t[-1]: unexpected txn numbers, base table may have been renamed [view=price_1h, fromBaseTxn=2, toBaseTxn=1]\t2\t1
+                            price_1h\tmanual\tbase_price\t2025-01-01T01:01:01.000000Z\t2025-01-01T01:01:07.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h;\tinvalid\tbase table changed\t2\t1
                             """);
         });
     }
@@ -14130,7 +14152,8 @@ public class MatViewTest extends AbstractCairoTest {
 
             drainQueues();
 
-            // the view must be marked as invalid since the base table was dropped
+            // the view must be marked as invalid since the base table was dropped: the refresh intervals update
+            // finds another table under the base table's name than the one its cached intervals belong to
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
                     "view_sql, view_status, invalidation_reason, " + txnColumns() + " " +
                     "from materialized_views")
@@ -14138,7 +14161,7 @@ public class MatViewTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("""
                             view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\tinvalidation_reason\trefresh_base_table_txn\tbase_table_txn
-                            price_1h\tmanual\tbase_price\t2099-01-01T01:01:07.000000Z\t2099-01-01T01:01:07.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h;\tinvalid\tbase table is dropped or renamed\t2\t1
+                            price_1h\tmanual\tbase_price\t2099-01-01T01:01:01.000000Z\t2099-01-01T01:01:07.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h;\tinvalid\tbase table changed\t2\t1
                             """);
         });
     }
@@ -15168,12 +15191,14 @@ public class MatViewTest extends AbstractCairoTest {
             );
             drainQueues();
 
+            // The view state event that persists the base table id at the view's first refresh comes first.
             assertQuery("select sequencerTxn, minTimestamp, maxTimestamp from wal_transactions('price_1h')")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             sequencerTxn\tminTimestamp\tmaxTimestamp
-                            1\t2024-09-10T12:00:00.000000Z\t2024-09-18T19:00:00.000000Z
+                            1\t\t
+                            2\t2024-09-10T12:00:00.000000Z\t2024-09-18T19:00:00.000000Z
                             """);
 
             execute(
@@ -15187,9 +15212,10 @@ public class MatViewTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("""
                             sequencerTxn\tminTimestamp\tmaxTimestamp
-                            1\t2024-09-10T12:00:00.000000Z\t2024-09-18T19:00:00.000000Z
-                            2\t\t
-                            3\t2024-09-10T12:00:00.000000Z\t2024-09-10T13:00:00.000000Z
+                            1\t\t
+                            2\t2024-09-10T12:00:00.000000Z\t2024-09-18T19:00:00.000000Z
+                            3\t\t
+                            4\t2024-09-10T12:00:00.000000Z\t2024-09-10T13:00:00.000000Z
                             """);
 
             assertViewMatchesSqlOverBaseTable(viewSql);

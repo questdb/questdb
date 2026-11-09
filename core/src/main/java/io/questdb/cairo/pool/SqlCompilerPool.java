@@ -327,10 +327,11 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         public void validateMatViewSql(
                 MatViewDefinition viewDefinition,
                 boolean isCompiling,
+                boolean isReadingBareNamesAsColumns,
                 SqlExecutionContext executionContext,
                 MatViewSqlValidator validator
         ) throws SqlException {
-            delegate.validateMatViewSql(viewDefinition, isCompiling, executionContext, validator);
+            delegate.validateMatViewSql(viewDefinition, isCompiling, isReadingBareNamesAsColumns, executionContext, validator);
         }
     }
 }

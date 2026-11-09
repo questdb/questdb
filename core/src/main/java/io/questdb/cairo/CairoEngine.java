@@ -4929,8 +4929,11 @@ public class CairoEngine implements Closeable, WriterSource {
                     return;
                 }
 
+                // The view's base table id comes from a view state event that the view's WAL has not applied yet,
+                // or else from the state file, so the scan stops at the applied transactions.
+                final long appliedSeqTxn = readMatViewAppliedSeqTxn(tableToken, path, pathLen);
                 path.trimTo(pathLen).concat(tableToken);
-                if (!WalUtils.readMatViewState(path, tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader)) {
+                if (!WalUtils.readMatViewState(path, tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader, appliedSeqTxn)) {
                     LOG.info().$("could not find materialized view state, default values will be used [table=")
                             .$safe(viewDefinition.getBaseTableName())
                             .$(", view=").$(tableToken)
@@ -4976,6 +4979,25 @@ public class CairoEngine implements Closeable, WriterSource {
                 rec.$(", msg=").$safe(th.getMessage());
             }
             rec.I$();
+        }
+    }
+
+    // Returns the seqTxn that the view's table has applied up to, or -1 when its _txn file cannot be read, in which
+    // case the load scans every transaction of the view's WAL for its base table id.
+    private long readMatViewAppliedSeqTxn(TableToken viewToken, Path path, int pathLen) {
+        try (TableMetadata metadata = getTableMetadata(viewToken); TxReader txReader = new TxReader(configuration.getFilesFacade())) {
+            path.trimTo(pathLen).concat(viewToken).concat(TableUtils.TXN_FILE_NAME);
+            txReader.ofRO(path.$(), metadata.getTimestampType(), metadata.getPartitionBy());
+            TableUtils.safeReadTxn(txReader, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
+            return txReader.getSeqTxn();
+        } catch (Throwable th) {
+            LOG.info().$("could not read applied seqTxn of materialized view, scanning its whole WAL for the base table id [view=")
+                    .$(viewToken)
+                    .$(", ex=").$(th)
+                    .I$();
+            return -1;
+        } finally {
+            path.trimTo(pathLen);
         }
     }
 

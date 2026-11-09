@@ -355,18 +355,19 @@ public class CheckpointTest extends AbstractCairoTest {
             });
             // At this point the view is caught up to the only base-table write in this test.
             // Read the mat_view seqTxn once, right before CHECKPOINT CREATE.
-            // Two valid startup interleavings exist:
+            // Two valid startup interleavings exist. Both start with the view state event that persists the base
+            // table id at the view's first refresh => seqTxn=1.
             // Path A (first refresh before wal_table1 INSERT is applied):
-            //   1) fromTxn=-1,toTxn=0 -> refreshSuccessNoRows() writes resetMatViewState() => seqTxn=1
-            //   2) follow-up refresh updates cached intervals via resetMatViewState() => seqTxn=2
-            //   3) data refresh writes commitMatView() => seqTxn=3
+            //   1) fromTxn=-1,toTxn=0 -> refreshSuccessNoRows() writes resetMatViewState() => seqTxn=2
+            //   2) follow-up refresh updates cached intervals via resetMatViewState() => seqTxn=3
+            //   3) data refresh writes commitMatView() => seqTxn=4
             // Path B (first refresh after wal_table1 INSERT is applied):
-            //   1) fromTxn=-1,toTxn=1 -> single data refresh writes commitMatView() => seqTxn=1
+            //   1) fromTxn=-1,toTxn=1 -> single data refresh writes commitMatView() => seqTxn=2
             // Not a TOCTOU in this test: after lastRefreshBaseTxn reaches 1 we do not perform any new base-table
             // commits, and this immediate view has no additional incremental work (fromTxn==toTxn).
             // So reading mat_view seqTxn once here and comparing it to checkpoint callback value is stable.
             long matViewSeqTxn = server.getEngine().getTableSequencerAPI().getTxnTracker(matViewToken).getSeqTxn();
-            Assert.assertTrue("mat_view seqTxn should be either 1 or 3, was " + matViewSeqTxn, matViewSeqTxn == 1L || matViewSeqTxn == 3L);
+            Assert.assertTrue("mat_view seqTxn should be either 2 or 4, was " + matViewSeqTxn, matViewSeqTxn == 2L || matViewSeqTxn == 4L);
 
             // Verify listener not called yet
             Assert.assertEquals("Listener should not be called before checkpoint", 0, events.size());
@@ -3771,6 +3772,52 @@ public class CheckpointTest extends AbstractCairoTest {
             }
 
             execute("CHECKPOINT RELEASE;");
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoresMatViewBaseTableId() throws Exception {
+        // The view's persisted base table id survives a checkpoint restore, so the restored view keeps refreshing
+        // from its base table.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base_price (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base_price VALUES('a', 9.0, '2024-09-13T12:00')");
+            execute("CREATE MATERIALIZED VIEW price_1h AS SELECT sym, last(price) AS price, ts FROM base_price SAMPLE BY 1h");
+            drainWalAndMatViewQueues();
+            final int baseTableId = engine.verifyTableName("base_price").getTableId();
+            Assert.assertEquals(baseTableId, engine.getMatViewStateStore().getViewState(engine.verifyTableName("price_1h")).getBaseTableId());
+
+            execute("CHECKPOINT CREATE");
+
+            engine.clear();
+            engine.closeNameRegistry();
+            createTriggerFile();
+            engine.checkpointRecover();
+            engine.reloadTableNames();
+            engine.getMetadataCache().onStartupAsyncHydrator();
+            engine.buildViewGraphs();
+
+            final MatViewState viewState = engine.getMatViewStateStore().getViewState(engine.verifyTableName("price_1h"));
+            Assert.assertNotNull(viewState);
+            Assert.assertEquals(baseTableId, viewState.getBaseTableId());
+            Assert.assertFalse(viewState.isInvalid());
+            execute("CHECKPOINT RELEASE");
+
+            execute("INSERT INTO base_price VALUES('a', 10.0, '2024-09-13T13:00')");
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT view_status FROM materialized_views() WHERE view_name = 'price_1h'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("view_status\nvalid\n");
+            assertQuery("price_1h ORDER BY ts")
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            sym\tprice\tts
+                            a\t9.0\t2024-09-13T12:00:00.000000Z
+                            a\t10.0\t2024-09-13T13:00:00.000000Z
+                            """);
         });
     }
 

@@ -216,14 +216,18 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
      * validator what it found. A SQL that does not parse or compile reports its error; the method throws only an
      * authorization error, a cancellation or a timeout.
      *
-     * @param viewDefinition   the definition of the view
-     * @param isCompiling      false to only parse the SQL
-     * @param executionContext the context to compile the SQL with, which the method leaves as it found it
-     * @param validator        receives the outcome
+     * @param viewDefinition              the definition of the view
+     * @param isCompiling                 false to only parse the SQL
+     * @param isReadingBareNamesAsColumns true to read every bare name as a column, as CREATE does, and fail a bare
+     *                                    name of a zero-argument function with the parentheses the call needs;
+     *                                    false to read bare names as the view's refresh does
+     * @param executionContext            the context to compile the SQL with, which the method leaves as it found it
+     * @param validator                   receives the outcome
      */
     void validateMatViewSql(
             MatViewDefinition viewDefinition,
             boolean isCompiling,
+            boolean isReadingBareNamesAsColumns,
             SqlExecutionContext executionContext,
             MatViewSqlValidator validator
     ) throws SqlException;

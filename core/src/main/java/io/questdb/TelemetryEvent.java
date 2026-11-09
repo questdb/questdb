@@ -35,6 +35,7 @@ public final class TelemetryEvent {
     public static final short MAT_VIEW_INVALIDATE = 202;
     public static final short MAT_VIEW_REFRESH_FAIL = 203;
     public static final short MAT_VIEW_REFRESH_SUCCESS = 204;
+    public static final short MAT_VIEW_RESUME = 205;
     public static final short QUERY_RESULT_EXPORT_CSV = 110;
     public static final short QUERY_RESULT_EXPORT_PARQUET = 111;
     public static final short READ_PARQUET = 150;

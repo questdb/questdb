@@ -11059,7 +11059,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
             execute("create materialized view x_view with base x as (select ts, max(v) as max from x sample by 1d) partition by day;");
             assertQuery("REFRESH MATERIALIZED VIEW 'x_view' foobar")
                     .noLeakCheck()
-                    .fails(35, "'full', 'incremental', 'range' or 'stats' expected");
+                    .fails(35, "'full', 'incremental', 'range', 'resume' or 'stats' expected");
         });
     }
 

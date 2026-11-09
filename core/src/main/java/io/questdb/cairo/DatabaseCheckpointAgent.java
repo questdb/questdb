@@ -925,6 +925,17 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
             // Load missing intervals from WAL transactions
             try {
                 TableToken baseTableToken = engine.verifyTableName(baseTableName);
+                final int baseTableId = matViewStateReader.getBaseTableId();
+                if (baseTableId != MatViewState.BASE_TABLE_ID_UNKNOWN && baseTableId != baseTableToken.getTableId()) {
+                    // The view's refresh position belongs to a base table that another table replaced. Its
+                    // transactions are not the view's to merge; the restored view's first refresh finds the
+                    // replaced base and invalidates the view.
+                    LOG.info().$("base table was replaced, not merging its refresh intervals into materialized view state [view=").$(matViewToken)
+                            .$(", baseTable=").$(baseTableToken)
+                            .$(", stateBaseTableId=").$(baseTableId)
+                            .I$();
+                    continue;
+                }
                 intervals.clear();
                 walTxnRangeLoader.load(engine, Path.PATH.get(), baseTableToken, intervals, mvLastRefreshTxn, checkpointBaseSeqTxn);
                 // The TRUNCATE cut, as in the refresh: when the gap holds a base TRUNCATE, the loader keeps only
@@ -963,6 +974,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                         matViewStateReader.getBackfillFrontier(),
                         matViewStateReader.getFrozenBoundaryFloor(),
                         matViewStateReader.getFrozenBoundaryLimitHoursOrMonths(),
+                        baseTableId,
                         matViewFileWriter
                 );
 

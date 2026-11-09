@@ -386,7 +386,8 @@ class WalEventWriter implements Closeable {
             @Nullable CharSequence invalidationReason,
             long lastPeriodHi,
             @Nullable LongList refreshIntervals,
-            long refreshIntervalsBaseTxn
+            long refreshIntervalsBaseTxn,
+            int baseTableId
     ) {
         startOffset = eventMem.getAppendOffset() - Integer.BYTES;
         eventMem.putLong(txn);
@@ -406,6 +407,8 @@ class WalEventWriter implements Closeable {
             } else {
                 eventMem.putInt(-1);
             }
+            // A trailing field: older readers stop at the record's length, which the size prefix gives.
+            eventMem.putInt(baseTableId);
         }
         eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
         eventMem.putInt(-1);

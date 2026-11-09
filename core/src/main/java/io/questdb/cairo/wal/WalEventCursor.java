@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.BorrowedArray;
+import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
@@ -603,11 +604,21 @@ public class WalEventCursor {
     public class MatViewInvalidationInfo {
         private final StringSink error = new StringSink();
         private final LongList refreshIntervals = new LongList();
+        private int baseTableId;
         private boolean invalid;
         private long lastPeriodHi;
         private long lastRefreshBaseTableTxn;
         private long lastRefreshTimestampUs;
         private long refreshIntervalsBaseTxn;
+
+        /**
+         * Returns the id of the base table that the refresh position and the cached intervals belong to, or
+         * {@link MatViewState#BASE_TABLE_ID_UNKNOWN} when the event carries none, as an event that a previous
+         * version wrote.
+         */
+        public int getBaseTableId() {
+            return baseTableId;
+        }
 
         public CharSequence getInvalidationReason() {
             return error;
@@ -659,6 +670,12 @@ public class WalEventCursor {
                 }
             } else {
                 refreshIntervalsBaseTxn = -1;
+            }
+
+            if (nextOffset - offset >= Integer.BYTES) {
+                baseTableId = readInt();
+            } else {
+                baseTableId = MatViewState.BASE_TABLE_ID_UNKNOWN;
             }
         }
     }

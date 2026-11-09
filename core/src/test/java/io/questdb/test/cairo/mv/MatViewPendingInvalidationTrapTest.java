@@ -1486,6 +1486,9 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
 
                 engine.getMatViewStateStore().enqueueInvalidate(viewToken, "update operation");
                 drainMatViewQueue(invalidationJob);
+                // The woken FULL waits until the view's WAL applies the invalidation, and the WAL apply redelivers it.
+                drainWalQueue();
+                drainMatViewQueue(invalidationJob);
                 drainWalQueue();
             }
 
@@ -1548,7 +1551,8 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                     state.unlock();
                 }
             }
-            drainWalQueue();
+            // The retained FULL waits until the view's WAL applies the invalidation, and the WAL apply redelivers it.
+            drainWalAndMatViewQueues();
 
             // The handoff delivers both operations. INVALIDATE mints first, then the retained FULL refresh
             // rebuilds the view and consumes only its own ownership flag.
@@ -3584,7 +3588,8 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             } finally {
                 walRefusalToken.set(null);
             }
-            drainWalQueue();
+            // The final FULL waits until the view's WAL applies the invalidation, and the WAL apply redelivers it.
+            drainWalAndMatViewQueues();
 
             Assert.assertFalse("the recovery must consume both facets", state.isPendingInvalidation());
             Assert.assertFalse("the final full refresh must leave the view valid", state.isInvalid());

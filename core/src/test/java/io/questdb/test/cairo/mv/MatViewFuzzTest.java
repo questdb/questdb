@@ -416,6 +416,54 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
+    public void testResumeFullAndBaseReplacement() throws Exception {
+        // Random base inserts, base replacements (DROP and CREATE under the same name), forced invalidations and
+        // restarts of the view states, with RESUME and FULL recovering the view. Oracle: a twin view with the same
+        // SQL, rebuilt with FULL at each check, which equals the SQL over the current base. While the view stays
+        // valid with no RESUME in between, its incremental refreshes alone must match the twin; after a RESUME,
+        // which jumps over the rows the base received while the view was invalid, a RANGE over the base's days
+        // must. Every base, the replacements included, has rows in each of the same days, so the partition clip
+        // keeps no view row the twin lacks.
+        assertMemoryLeak(() -> {
+            final Rnd rnd = generateRandom(LOG);
+            final String viewSql = "SELECT ts, sym, last(price) AS price, sum(qty) AS qty FROM base SAMPLE BY 1h";
+            final long dayLo = MicrosFormatUtils.parseTimestamp("2024-01-01T00:00:00.000000Z");
+            final int dayCount = 4;
+            createResumeFuzzBase(rnd, dayLo, dayCount);
+            execute("CREATE MATERIALIZED VIEW mv AS (" + viewSql + ") PARTITION BY DAY");
+            execute("CREATE MATERIALIZED VIEW twin REFRESH MANUAL DEFERRED AS (" + viewSql + ") PARTITION BY DAY");
+            drainWalAndMatViewQueues();
+
+            boolean isGapAccepted = false;
+            final int steps = 20 + rnd.nextInt(20);
+            for (int step = 0; step < steps; step++) {
+                final int op = rnd.nextInt(10);
+                if (op < 5) {
+                    insertResumeFuzzRows(rnd, dayLo, dayCount, 1 + rnd.nextInt(5));
+                } else if (op == 5) {
+                    LOG.info().$("fuzz: replacing base table").$();
+                    execute("DROP TABLE base");
+                    createResumeFuzzBase(rnd, dayLo, dayCount);
+                } else if (op == 6) {
+                    LOG.info().$("fuzz: restarting view states").$();
+                    engine.getMatViewStateStore().clear();
+                    engine.hydrateMatViewStateStore();
+                } else if (op == 7) {
+                    engine.getMatViewStateStore().enqueueInvalidate(engine.verifyTableName("mv"), "fuzz invalidation");
+                } else if (op == 8) {
+                    drainWalQueue();
+                }
+                if (rnd.nextBoolean()) {
+                    drainWalAndMatViewQueues();
+                }
+                if (step % 5 == 4 || step == steps - 1) {
+                    isGapAccepted = checkResumeFuzzViews(rnd, dayLo, dayCount, isGapAccepted);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSelfJoinQuery() throws Exception {
         final String tableName = testName.getMethodName();
         final String mvName = testName.getMethodName() + "_mv";
@@ -586,6 +634,78 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         }
         Assert.assertTrue("no view without NOT BETWEEN in 100 draws", plainCount > 0);
         Assert.assertTrue("no view with NOT BETWEEN in 100 draws", notBetweenCount > 0);
+    }
+
+    // Asserts the view against its twin, rebuilt from the current base with FULL, and returns whether a gap that only
+    // a RANGE fills may remain in the view: a RESUME jumps over the base changes made while the view was invalid.
+    private static boolean checkResumeFuzzViews(Rnd rnd, long dayLo, int dayCount, boolean isGapAccepted) throws Exception {
+        drainResumeFuzzQueues();
+        final io.questdb.cairo.mv.MatViewState state = engine.getMatViewStateStore().getViewState(engine.verifyTableName("mv"));
+        if (state.isInvalid()) {
+            if (rnd.nextBoolean()) {
+                LOG.info().$("fuzz: resuming view").$();
+                execute("REFRESH MATERIALIZED VIEW mv RESUME");
+                isGapAccepted = true;
+            } else {
+                LOG.info().$("fuzz: rebuilding view with FULL").$();
+                execute("REFRESH MATERIALIZED VIEW mv FULL");
+                isGapAccepted = false;
+            }
+            drainResumeFuzzQueues();
+        }
+        Assert.assertFalse(state.isInvalid());
+        if (isGapAccepted) {
+            final StringSink sink = new StringSink();
+            sink.put("REFRESH MATERIALIZED VIEW mv RANGE FROM '");
+            MicrosFormatUtils.appendDateTimeUSec(sink, dayLo);
+            sink.put("' TO '");
+            MicrosFormatUtils.appendDateTimeUSec(sink, dayLo + dayCount * Micros.DAY_MICROS);
+            sink.put('\'');
+            execute(sink);
+            drainResumeFuzzQueues();
+        }
+        execute("REFRESH MATERIALIZED VIEW twin FULL");
+        drainResumeFuzzQueues();
+        Assert.assertFalse(state.isInvalid());
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            TestUtils.assertSqlCursors(compiler, sqlExecutionContext, "twin ORDER BY ts, sym", "mv ORDER BY ts, sym", LOG);
+        }
+        return false;
+    }
+
+    // A base with rows in each of its days, and at the first and the last microsecond of its days, so a replacement
+    // covers the same days as the base it replaces, and a RANGE over the days, which reads from the base's minimum to
+    // its maximum timestamp, recomputes all of them.
+    private static void createResumeFuzzBase(Rnd rnd, long dayLo, int dayCount) throws SqlException {
+        execute("CREATE TABLE base (sym SYMBOL, price DOUBLE, qty LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        insertResumeFuzzRow(rnd, dayLo);
+        for (int d = 0; d < dayCount; d++) {
+            insertResumeFuzzRow(rnd, dayLo + d * Micros.DAY_MICROS + rnd.nextLong(Micros.DAY_MICROS));
+        }
+        insertResumeFuzzRow(rnd, dayLo + dayCount * Micros.DAY_MICROS - 1);
+    }
+
+    // FULL on an invalid view waits for the view's own WAL, and the WAL apply job redelivers it, so the queues drain
+    // in rounds.
+    private static void drainResumeFuzzQueues() {
+        for (int i = 0; i < 3; i++) {
+            drainWalAndMatViewQueues();
+        }
+    }
+
+    private static void insertResumeFuzzRow(Rnd rnd, long ts) throws SqlException {
+        final StringSink sink = new StringSink();
+        sink.put("INSERT INTO base VALUES ('s").put(rnd.nextInt(3)).put("', ").put(rnd.nextInt(1000)).put(".5, ")
+                .put(rnd.nextInt(100)).put(", '");
+        MicrosFormatUtils.appendDateTimeUSec(sink, ts);
+        sink.put("')");
+        execute(sink);
+    }
+
+    private static void insertResumeFuzzRows(Rnd rnd, long dayLo, int dayCount, int rowCount) throws SqlException {
+        for (int i = 0; i < rowCount; i++) {
+            insertResumeFuzzRow(rnd, dayLo + rnd.nextLong(dayCount * Micros.DAY_MICROS));
+        }
     }
 
     private static void createMatView(String viewSql, String mvName, boolean deferred) throws SqlException {

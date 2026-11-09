@@ -178,6 +178,10 @@ public class MatViewUpgradeTest extends AbstractCairoTest {
                 // Every view loads with its rows, and the upgrade invalidates no valid view.
                 assertStatus(upgraded, STATUS_LOADED);
                 assertViews(upgraded, VALID_MV_LOADED, COUNT_MV_LOADED, GEN_MV_LOADED, NEVER_MV_LOADED);
+                // The previous release persisted no base table id.
+                for (String view : new String[]{"valid_mv", "count_mv", "gen_mv", "never_mv", "invalid_mv"}) {
+                    assertBaseTableId(upgraded, view, MatViewState.BASE_TABLE_ID_UNKNOWN);
+                }
 
                 upgraded.execute("""
                         INSERT INTO trades VALUES
@@ -197,6 +201,14 @@ public class MatViewUpgradeTest extends AbstractCairoTest {
                 assertRecordCopy(upgraded, "valid_mv", false);
                 assertRecordCopy(upgraded, "count_mv", false);
                 assertRecordCopy(upgraded, "never_mv", false);
+
+                // Each valid view's first refresh on this version persisted its base table id; the invalid view
+                // did not refresh.
+                final int tradesId = upgraded.verifyTableName("trades").getTableId();
+                for (String view : new String[]{"valid_mv", "count_mv", "gen_mv", "never_mv"}) {
+                    assertBaseTableId(upgraded, view, tradesId);
+                }
+                assertBaseTableId(upgraded, "invalid_mv", MatViewState.BASE_TABLE_ID_UNKNOWN);
             }
 
             try (CairoEngine restarted = new CairoEngine(conf)) {
@@ -204,6 +216,12 @@ public class MatViewUpgradeTest extends AbstractCairoTest {
                 restarted.hydrateMatViewStateStore();
                 assertStatus(restarted, STATUS_LOADED);
                 assertViews(restarted, VALID_MV_AFTER_INSERTS, COUNT_MV_AFTER_INSERTS, GEN_MV_AFTER_INSERTS, NEVER_MV_AFTER_INSERTS);
+                // A restart right after the first refresh on this version keeps the base table id known.
+                final int tradesId = restarted.verifyTableName("trades").getTableId();
+                for (String view : new String[]{"valid_mv", "count_mv", "gen_mv", "never_mv"}) {
+                    assertBaseTableId(restarted, view, tradesId);
+                }
+                assertBaseTableId(restarted, "invalid_mv", MatViewState.BASE_TABLE_ID_UNKNOWN);
 
                 for (String view : new String[]{"valid_mv", "count_mv", "gen_mv", "never_mv"}) {
                     restarted.execute("REFRESH MATERIALIZED VIEW " + view + " FULL");
@@ -213,6 +231,12 @@ public class MatViewUpgradeTest extends AbstractCairoTest {
                 assertViews(restarted, VALID_MV_AFTER_INSERTS, COUNT_MV_AFTER_INSERTS, GEN_MV_AFTER_INSERTS, NEVER_MV_AFTER_INSERTS);
             }
         });
+    }
+
+    private static void assertBaseTableId(CairoEngine engine, String viewName, int expected) {
+        final MatViewState state = engine.getMatViewStateStore().getViewState(engine.verifyTableName(viewName));
+        Assert.assertNotNull(state);
+        Assert.assertEquals(viewName, expected, state.getBaseTableId());
     }
 
     private static void assertRecordCopy(CairoEngine engine, String viewName, boolean isPositional) {
