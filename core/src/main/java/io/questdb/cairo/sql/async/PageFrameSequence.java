@@ -155,7 +155,8 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
 
         final MCSequence pageFrameReduceSubSeq = messageBus.getPageFrameReduceSubSeq(shard);
         final PageFrameReduceDispatcher dispatcher = messageBus.getPageFrameReduceDispatcher();
-        final boolean canPark = dispatcher != null && isFiberSuspendable();
+        final boolean isFiberSuspendable = isFiberSuspendable();
+        final boolean canPark = dispatcher != null && isFiberSuspendable;
         while (!done) {
             // Sampled before the work checks below: a producer that signals progress after the
             // checks but before the sample would otherwise be missed and this fiber would park.
@@ -210,14 +211,14 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                 } else if (canPark) {
                     awaitProgress(dispatcher, observedProgress, observedShardProgress, true, getBlockedShard());
                 } else {
-                    Os.pause();
+                    yieldOrPause(isFiberSuspendable);
                 }
             }
         }
 
         // It could be the case that one of the workers reduced a page frame, then marked the task as done,
         // but haven't incremented reduce counter yet. In this case, we wait for the desired counter value.
-        awaitReduced(dispatcher, canPark);
+        awaitReduced(dispatcher, isFiberSuspendable);
 
         if (frameCount > 0) {
             suspendCollectSubSeq();
@@ -225,8 +226,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
     }
 
     public void awaitReduced() {
-        final PageFrameReduceDispatcher dispatcher = messageBus.getPageFrameReduceDispatcher();
-        awaitReduced(dispatcher, dispatcher != null && isFiberSuspendable());
+        awaitReduced(messageBus.getPageFrameReduceDispatcher(), isFiberSuspendable());
     }
 
     @Override
@@ -378,7 +378,8 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
 
         assert collectedFrameIndex < frameCount - 1;
         final PageFrameReduceDispatcher dispatcher = messageBus.getPageFrameReduceDispatcher();
-        final boolean canPark = dispatcher != null && isFiberSuspendable();
+        final boolean isFiberSuspendable = isFiberSuspendable();
+        final boolean canPark = dispatcher != null && isFiberSuspendable;
         while (true) {
             // Sampled before collectSubSeq.next() so a producer signalling progress between the
             // failed collect and the sample cannot be missed.
@@ -406,7 +407,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                 } else {
                     final int previousDispatchStartFrameIndex = dispatchStartFrameIndex;
                     if (dispatch(dispatchLimit, countOnly)
-                            && (!canPark || dispatchStartFrameIndex != previousDispatchStartFrameIndex)) {
+                            && (!isFiberSuspendable || dispatchStartFrameIndex != previousDispatchStartFrameIndex)) {
                         continue;
                     }
                     if (dispatcher != null && !isActive()) {
@@ -422,7 +423,10 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                     awaitProgress(dispatcher, observedProgress, observedShardProgress, isDraining, getBlockedShard());
                     continue;
                 }
-                return -1;
+                if (!isFiberSuspendable) {
+                    return -1;
+                }
+                yieldOrPause(true);
             } else {
                 Os.pause();
             }
@@ -603,7 +607,8 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         }
     }
 
-    private void awaitReduced(PageFrameReduceDispatcher dispatcher, boolean canPark) {
+    private void awaitReduced(PageFrameReduceDispatcher dispatcher, boolean isFiberSuspendable) {
+        final boolean canPark = dispatcher != null && isFiberSuspendable;
         while (true) {
             final long observedProgress = canPark ? getProgressVersion() : 0;
             if (reduceFinishedCounter.get() >= dispatchStartFrameIndex) {
@@ -612,7 +617,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
             if (canPark) {
                 awaitProgress(dispatcher, observedProgress, true);
             } else {
-                Os.pause();
+                yieldOrPause(isFiberSuspendable);
             }
         }
     }

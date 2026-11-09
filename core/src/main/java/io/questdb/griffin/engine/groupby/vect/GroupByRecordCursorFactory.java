@@ -68,7 +68,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
-import io.questdb.std.Os;
 import io.questdb.std.Rosti;
 import io.questdb.std.RostiAllocFacade;
 import io.questdb.std.Transient;
@@ -360,10 +359,10 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                     }
                     reclaimed++;
                 } else {
-                    Os.pause();
+                    ownerLoop.pause();
                 }
             } else if (!ownerLoop.awaitProgressWhileDraining(isOwnerTripped)) {
-                Os.pause();
+                ownerLoop.pause();
             }
             mergedCount = -doneLatch.getCount();
         }
@@ -671,7 +670,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                                     break;
                                 }
                                 if (!ownerLoop.awaitProgress()) {
-                                    Os.pause();
+                                    ownerLoop.pause();
                                 }
                             } else {
                                 final VectorAggregateEntry entry = entryPool.next();

@@ -43,6 +43,7 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.async.AsyncQueryErrorState;
 import io.questdb.cairo.sql.async.AsyncQueryProgressState;
 import io.questdb.cairo.sql.async.QueryParallelFiberDispatcher;
+import io.questdb.cairo.sql.async.QueryParallelOwnerLoop;
 import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -1538,6 +1539,32 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
                     closeRuntime(runtime);
                     Misc.free(dispatcher);
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testOwnerLoopPauseYieldsFiberWithoutDispatcher() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final FiberRuntime runtime = new FiberRuntime(1);
+            final QueryParallelOwnerLoop ownerLoop = new QueryParallelOwnerLoop();
+            final FiberTask owner = new FiberTask() {
+                @Override
+                protected boolean runStep() {
+                    ownerLoop.of(null, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER, new AsyncQueryProgressState());
+                    ownerLoop.pause();
+                    return true;
+                }
+            };
+            try {
+                Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(owner));
+                Assert.assertEquals(1, runtime.drain(1));
+                Assert.assertFalse(owner.isDone());
+                Assert.assertEquals(1, runtime.drain(1));
+                Assert.assertTrue(owner.isDone());
+                Assert.assertEquals(2, runtime.getMountCount());
+            } finally {
+                closeRuntime(runtime);
             }
         });
     }

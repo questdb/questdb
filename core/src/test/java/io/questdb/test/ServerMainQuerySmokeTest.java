@@ -241,7 +241,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
             final boolean isHangShape = round == 0;
             final boolean isPgFiberEnabled = isHangShape || rnd.nextBoolean();
             final boolean isHttpFiberEnabled = isHangShape || rnd.nextBoolean();
-            final boolean isQueryFiberEnabled = isPgFiberEnabled || isHttpFiberEnabled || rnd.nextBoolean();
+            final boolean isQueryFiberEnabled = isHangShape || rnd.nextBoolean();
             final boolean isJitEnabled = !isHangShape && rnd.nextBoolean();
             final boolean isParallelGroupByEnabled = isHangShape || rnd.nextBoolean();
             final boolean isParallelTopKEnabled = isHangShape || rnd.nextBoolean();

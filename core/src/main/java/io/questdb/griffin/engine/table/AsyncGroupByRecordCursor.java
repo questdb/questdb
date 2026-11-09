@@ -56,7 +56,6 @@ import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.std.DirectLongLongSortedList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.Os;
 import io.questdb.tasks.GroupByLongTopKTask;
 import org.jetbrains.annotations.NotNull;
 
@@ -290,7 +289,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                             break;
                         }
                         if (!ownerLoop.awaitProgress()) {
-                            Os.pause();
+                            ownerLoop.pause();
                         }
                     } else {
                         queue.get(cursor).of(
@@ -339,10 +338,10 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                             }
                             reclaimed++;
                         } else {
-                            Os.pause();
+                            ownerLoop.pause();
                         }
                     } else if (!ownerLoop.awaitProgressWhileDraining(isOwnerTripped)) {
-                        Os.pause();
+                        ownerLoop.pause();
                     }
                     processedCount = -postAggregationDoneLatch.getCount();
                 }
