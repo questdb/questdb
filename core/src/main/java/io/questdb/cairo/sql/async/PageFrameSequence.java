@@ -416,11 +416,15 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                     if (dispatchStartFrameIndex == collectedFrameIndex + 1) {
                         return -2;
                     }
-                } else if (dispatch(dispatchLimit, countOnly)) {
-                    // We have dispatched something, so let's try to collect it.
-                    continue;
-                } else if (dispatcher != null && !isActive()) {
-                    continue;
+                } else {
+                    final int previousDispatchStartFrameIndex = dispatchStartFrameIndex;
+                    if (dispatch(dispatchLimit, countOnly)
+                            && (!canPark || dispatchStartFrameIndex != previousDispatchStartFrameIndex)) {
+                        continue;
+                    }
+                    if (dispatcher != null && !isActive()) {
+                        continue;
+                    }
                 }
                 if (dispatchStartFrameIndex == collectedFrameIndex + 1) {
                     reduceLocally(countOnly);
