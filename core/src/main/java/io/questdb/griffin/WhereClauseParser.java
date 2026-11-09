@@ -639,6 +639,17 @@ public final class WhereClauseParser implements Mutable {
         keyExclNodes.add(parentNode);
     }
 
+    // returns false when the value clashes with a collected key of the other kind, e.g. ':id' literal and :id bind variable
+    private boolean addTempKey(@Nullable CharSequence value, int position, int type) {
+        if (tempKeys.add(value)) {
+            tempPos.add(position);
+            tempType.add(type);
+            return true;
+        }
+        // a bind variable key is never null
+        return value == null || !isTypeMismatch(tempType.getQuick(tempKeys.getListIndexOf(value)), type);
+    }
+
     private void addValue(ExpressionNode parentNode, ExpressionNode valueNode, CharSequence value) {
         if (tempKeyValues.add(value)) {
             tempKeyValuePos.add(valueNode.position);
@@ -1572,11 +1583,10 @@ public final class WhereClauseParser implements Mutable {
                             value = unquote(c.token);
                         }
 
-                        if (tempKeys.add(value)) {
-                            tempPos.add(c.position);
-                            tempType.add(c.type);
-                            tmpAllKeyValuesAreKnown &= (c.type != ExpressionNode.BIND_VARIABLE);
+                        if (!addTempKey(value, c.position, c.type)) {
+                            return false;
                         }
+                        tmpAllKeyValuesAreKnown &= (c.type != ExpressionNode.BIND_VARIABLE);
                     }
                 }
             }
@@ -2179,11 +2189,10 @@ public final class WhereClauseParser implements Mutable {
                             value = unquote(c.token);
                         }
 
-                        if (tempKeys.add(value)) {
-                            tempPos.add(c.position);
-                            tempType.add(c.type);
-                            tmpAllKeyExcludedValuesAreKnown &= (c.type != ExpressionNode.BIND_VARIABLE);
+                        if (!addTempKey(value, c.position, c.type)) {
+                            return;
                         }
+                        tmpAllKeyExcludedValuesAreKnown &= (c.type != ExpressionNode.BIND_VARIABLE);
                     }
                 }
             }

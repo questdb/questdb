@@ -219,6 +219,92 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBindVariableInListCharBind() throws Exception {
+        // pgwire binds a bpchar parameter as CHAR; a CHAR key selects the symbol spelled by that char
+        for (boolean isIndexed : new boolean[]{false, true}) {
+            assertMemoryLeak(() -> {
+                execute("CREATE TABLE t (s SYMBOL" + (isIndexed ? " INDEX" : "") + ", v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+                execute("""
+                        INSERT INTO t VALUES
+                            ('A', 1, '2026-01-01T00:00:00.000000Z'),
+                            ('B', 2, '2026-01-01T00:00:01.000000Z'),
+                            ('C', 3, '2026-01-01T00:00:02.000000Z'),
+                            ('D', 4, '2026-01-01T00:00:03.000000Z'),
+                            ('A', 5, '2026-01-01T00:00:04.000000Z')
+                        """);
+                final String rowsABC = """
+                        s\tv
+                        A\t1
+                        B\t2
+                        C\t3
+                        A\t5
+                        """;
+                final ObjList<BindVarTuple> inCases = new ObjList<>();
+                inCases.add(BindVarTuple.ok("B,C,'A'", rowsABC, binds -> {
+                    binds.setStr(0, "B");
+                    binds.setStr(1, "C");
+                    binds.setChar(2, 'A');
+                }));
+                inCases.add(BindVarTuple.ok("B,C,'C'", """
+                        s\tv
+                        B\t2
+                        C\t3
+                        """, binds -> {
+                    binds.setStr(0, "B");
+                    binds.setStr(1, "C");
+                    binds.setChar(2, 'C');
+                }));
+                inCases.add(BindVarTuple.ok("B,C,'X'", """
+                        s\tv
+                        B\t2
+                        C\t3
+                        """, binds -> {
+                    binds.setStr(0, "B");
+                    binds.setStr(1, "C");
+                    binds.setChar(2, 'X');
+                }));
+                assertQuery("SELECT s, v FROM t WHERE s IN ($1, $2, $3)").noLeakCheck().assertBinds(inCases);
+                assertQuery("SELECT s, v FROM t WHERE s IN ($1, $2, $3) AND v > 0").noLeakCheck().assertBinds(inCases);
+
+                final ObjList<BindVarTuple> notInCases = new ObjList<>();
+                notInCases.add(BindVarTuple.ok("B,C,'A'", """
+                        s\tv
+                        D\t4
+                        """, binds -> {
+                    binds.setStr(0, "B");
+                    binds.setStr(1, "C");
+                    binds.setChar(2, 'A');
+                }));
+                assertQuery("SELECT s, v FROM t WHERE s NOT IN ($1, $2, $3)").noLeakCheck().assertBinds(notInCases);
+
+                final ObjList<BindVarTuple> eqCases = new ObjList<>();
+                eqCases.add(BindVarTuple.ok("'A'", """
+                        s\tv
+                        A\t1
+                        A\t5
+                        """, binds -> binds.setChar(0, 'A')));
+                assertQuery("SELECT s, v FROM t WHERE s = $1").noLeakCheck().assertBinds(eqCases);
+                assertQuery("SELECT s, v FROM t WHERE s = $1 AND v > 0").noLeakCheck().assertBinds(eqCases);
+
+                final ObjList<BindVarTuple> latestCases = new ObjList<>();
+                latestCases.add(BindVarTuple.ok("B,'A'", """
+                        s\tv
+                        B\t2
+                        A\t5
+                        """, binds -> {
+                    binds.setStr(0, "B");
+                    binds.setChar(1, 'A');
+                }));
+                assertQuery("SELECT s, v FROM (t WHERE s IN ($1, $2) LATEST ON ts PARTITION BY s) ORDER BY v")
+                        .expectSize()
+                        .noLeakCheck()
+                        .assertBinds(latestCases);
+                execute("DROP TABLE t");
+            });
+        }
+    }
+
+    @Test
     public void testBindVariableInListIndexedLookup() throws Exception {
         testBindVariableInLookupList(true);
     }
@@ -236,18 +322,140 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         ('D', '2026-01-01T00:00:03.000000Z'),
                         ('E', '2026-01-01T00:00:04.000000Z')
                     """);
-            final String allRows = "s\nA\nB\nC\nD\nE\n";
+            final String allRows = """
+                    s
+                    A
+                    B
+                    C
+                    D
+                    E
+                    """;
+            final String rowsABCD = """
+                    s
+                    A
+                    B
+                    C
+                    D
+                    """;
+            final String rowsABC = """
+                    s
+                    A
+                    B
+                    C
+                    """;
+            final String rowsAC = """
+                    s
+                    A
+                    C
+                    """;
+            final String rowsE = """
+                    s
+                    E
+                    """;
             final ObjList<BindVarTuple> cases = new ObjList<>();
             cases.add(BindVarTuple.ok("A,B,C,D,E,E,E,E", allRows, binds -> setStrBinds(binds, "A", "B", "C", "D", "E", "E", "E", "E")));
             cases.add(BindVarTuple.ok("A,B,C,D,E,X,X,X", allRows, binds -> setStrBinds(binds, "A", "B", "C", "D", "E", "X", "X", "X")));
             cases.add(BindVarTuple.ok("A,B,C,D,E,E,E,E again", allRows, binds -> setStrBinds(binds, "A", "B", "C", "D", "E", "E", "E", "E")));
-            cases.add(BindVarTuple.ok("E,E,E,E,E,E,E,E", "s\nE\n", binds -> setStrBinds(binds, "E", "E", "E", "E", "E", "E", "E", "E")));
-            cases.add(BindVarTuple.ok("A,A,A,B,B,B,C,C", "s\nA\nB\nC\n", binds -> setStrBinds(binds, "A", "A", "A", "B", "B", "B", "C", "C")));
-            cases.add(BindVarTuple.ok("C,A,C,A,C,A,C,A", "s\nA\nC\n", binds -> setStrBinds(binds, "C", "A", "C", "A", "C", "A", "C", "A")));
+            cases.add(BindVarTuple.ok("E,E,E,E,E,E,E,E", rowsE, binds -> setStrBinds(binds, "E", "E", "E", "E", "E", "E", "E", "E")));
+            cases.add(BindVarTuple.ok("A,A,A,B,B,B,C,C", rowsABC, binds -> setStrBinds(binds, "A", "A", "A", "B", "B", "B", "C", "C")));
+            cases.add(BindVarTuple.ok("C,A,C,A,C,A,C,A", rowsAC, binds -> setStrBinds(binds, "C", "A", "C", "A", "C", "A", "C", "A")));
+            // keys sort descending, so the pair A,A ends the sorted list
+            cases.add(BindVarTuple.ok("A,A,B,B,C,C,D,D", rowsABCD, binds -> setStrBinds(binds, "A", "A", "B", "B", "C", "C", "D", "D")));
             assertQuery("SELECT s FROM t WHERE s IN ($1,$2,$3,$4,$5,$6,$7,$8)")
                     .noLeakCheck()
                     .assertBinds(cases);
         });
+    }
+
+    @Test
+    public void testBindVariableInListLiteralSpelledAsBindVariable() throws Exception {
+        // the literal '$1' and the bind variable $1 are different keys, even when one IN list holds both
+        for (boolean isIndexed : new boolean[]{false, true}) {
+            assertMemoryLeak(() -> {
+                execute("CREATE TABLE t (s SYMBOL" + (isIndexed ? " INDEX" : "") + ", v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+                execute("""
+                        INSERT INTO t VALUES
+                            ('$1', 1, '2026-01-01T00:00:00.000000Z'),
+                            ('B', 2, '2026-01-01T00:00:01.000000Z'),
+                            ('C', 3, '2026-01-01T00:00:02.000000Z'),
+                            (':b', 4, '2026-01-01T00:00:03.000000Z'),
+                            ('$1', 5, '2026-01-01T00:00:04.000000Z'),
+                            ('B', 6, '2026-01-01T00:00:05.000000Z'),
+                            (NULL, 7, '2026-01-01T00:00:06.000000Z')
+                        """);
+                final String literalAndBind = """
+                        s\tv
+                        $1\t1
+                        B\t2
+                        $1\t5
+                        B\t6
+                        """;
+                final String literalOnly = """
+                        s\tv
+                        $1\t1
+                        $1\t5
+                        """;
+                final ObjList<BindVarTuple> cases = new ObjList<>();
+                cases.add(BindVarTuple.ok("B", literalAndBind, binds -> binds.setStr(0, "B")));
+                cases.add(BindVarTuple.ok("$1", literalOnly, binds -> binds.setStr(0, "$1")));
+                assertQuery("SELECT s, v FROM t WHERE s IN ('$1', $1)").noLeakCheck().assertBinds(cases);
+                assertQuery("SELECT s, v FROM t WHERE s IN ($1, '$1')").noLeakCheck().assertBinds(cases);
+                assertQuery("SELECT s, v FROM t WHERE s IN ('$' || '1', $1)").noLeakCheck().assertBinds(cases);
+                // the repeated $1 merges before '$1' clashes with it
+                assertQuery("SELECT s, v FROM t WHERE s IN ($1, $1, '$1')").noLeakCheck().assertBinds(cases);
+                final ObjList<BindVarTuple> nullCases = new ObjList<>();
+                nullCases.add(BindVarTuple.ok("B", literalAndBind + "\t7\n", binds -> binds.setStr(0, "B")));
+                nullCases.add(BindVarTuple.ok("$1", literalOnly + "\t7\n", binds -> binds.setStr(0, "$1")));
+                assertQuery("SELECT s, v FROM t WHERE s IN (NULL, nullif('a', 'a'), '$1', $1)")
+                        .noLeakCheck()
+                        .assertBinds(nullCases);
+
+                final ObjList<BindVarTuple> notInCases = new ObjList<>();
+                notInCases.add(BindVarTuple.ok("B", """
+                        s\tv
+                        C\t3
+                        :b\t4
+                        """, binds -> binds.setStr(0, "B")));
+                notInCases.add(BindVarTuple.ok("$1", """
+                        s\tv
+                        B\t2
+                        C\t3
+                        :b\t4
+                        B\t6
+                        """, binds -> binds.setStr(0, "$1")));
+                assertQuery("SELECT s, v FROM t WHERE s NOT IN ('$1', $1, NULL)").noLeakCheck().assertBinds(notInCases);
+                assertQuery("SELECT s, v FROM t WHERE s NOT IN ($1, '$1', NULL)").noLeakCheck().assertBinds(notInCases);
+
+                final ObjList<BindVarTuple> latestCases = new ObjList<>();
+                latestCases.add(BindVarTuple.ok("B", """
+                        s\tv
+                        $1\t5
+                        B\t6
+                        """, binds -> binds.setStr(0, "B")));
+                latestCases.add(BindVarTuple.ok("$1", """
+                        s\tv
+                        $1\t5
+                        """, binds -> binds.setStr(0, "$1")));
+                assertQuery("SELECT s, v FROM (t WHERE s IN ('$1', $1) LATEST ON ts PARTITION BY s) ORDER BY v")
+                        .expectSize()
+                        .noLeakCheck()
+                        .assertBinds(latestCases);
+                assertQuery("SELECT s, v FROM (t WHERE s IN ($1, '$1') LATEST ON ts PARTITION BY s) ORDER BY v")
+                        .expectSize()
+                        .noLeakCheck()
+                        .assertBinds(latestCases);
+
+                final ObjList<BindVarTuple> namedCases = new ObjList<>();
+                namedCases.add(BindVarTuple.ok(":b = C", """
+                        s\tv
+                        C\t3
+                        :b\t4
+                        """, binds -> binds.setStr("b", "C")));
+                assertQuery("SELECT s, v FROM t WHERE s IN (':b', :b)").noLeakCheck().assertBinds(namedCases);
+                assertQuery("SELECT s, v FROM t WHERE s IN (:b, ':b')").noLeakCheck().assertBinds(namedCases);
+                execute("DROP TABLE t");
+            });
+        }
     }
 
     @Test
