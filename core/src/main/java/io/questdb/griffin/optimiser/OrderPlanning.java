@@ -26,6 +26,7 @@ package io.questdb.griffin.optimiser;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.griffin.FunctionFactoryCache;
+import io.questdb.griffin.model.WindowExpression;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
@@ -171,18 +172,12 @@ final class OrderPlanning implements OptimiserPass {
     }
 
     /**
-     * True when the input order, {@code orderColumnId} in {@code direction}, is the order of each window whose function
-     * requires its input in the order of the window.
+     * True when the frame of a window with no ORDER BY holds the whole partition, as every row of it is a peer of the
+     * current row.
      */
-    private static boolean isOrderedInputServed(WindowPlan window, int orderColumnId, SortDirection direction) {
-        for (int i = 0, n = window.getFunctions().size(); i < n; i++) {
-            final WindowSpec spec = window.getSpecs().getQuick(i);
-            if ((window.getFunctions().getQuick(i).getFunctionFlags() & BoundExpression.ORDERED_INPUT) != 0
-                    && (spec.getOrderByColumnIds().getQuick(0) != orderColumnId || spec.getOrderByDirections().getQuick(0) != direction)) {
-                return false;
-            }
-        }
-        return true;
+    private static boolean isPartitionFrame(WindowSpec spec) {
+        return spec.getRowsLo() == Long.MIN_VALUE && (spec.getRowsHi() == Long.MAX_VALUE
+                || spec.getFramingMode() == WindowExpression.FRAMING_RANGE && spec.getRowsHi() == 0);
     }
 
     private static boolean isSingleRow(LogicalPlan plan) {
@@ -459,6 +454,38 @@ final class OrderPlanning implements OptimiserPass {
             }
         }
         return false;
+    }
+
+    /**
+     * True when the value of the window function depends on the order its input delivers its rows in, the input's own
+     * order: its window has no ORDER BY, and the function reads rows by their position, as {@code row_number()} and
+     * {@code lag()} do, rather than ranking them among peers, or aggregates a frame narrower than the partition.
+     */
+    private boolean isInputOrderRead(WindowPlan window, int index) {
+        final WindowSpec spec = window.getSpecs().getQuick(index);
+        final FunctionExpression function = window.getFunctions().getQuick(index);
+        return spec.getOrderByColumnIds().size() == 0
+                && (functionFactoryCache.isPureWindowFunction(function.getName()) && !function.getOverload().getFactory().isPeerRanking()
+                || !isPartitionFrame(spec));
+    }
+
+    /**
+     * True when the input order, {@code orderColumnId} in {@code direction}, is the order of each window whose function
+     * requires its input in the order of the window, and keeps the input's own order, none or its designated timestamp
+     * ascending, for each function that reads it, see {@link #isInputOrderRead}.
+     */
+    private boolean isOrderedInputServed(WindowPlan window, int orderColumnId, SortDirection direction) {
+        final boolean isOwnOrder = orderColumnId < 0
+                || orderColumnId == window.getChild().getOutput().getTimestampColumnId() && direction == SortDirection.ASCENDING;
+        for (int i = 0, n = window.getFunctions().size(); i < n; i++) {
+            final WindowSpec spec = window.getSpecs().getQuick(i);
+            if ((window.getFunctions().getQuick(i).getFunctionFlags() & BoundExpression.ORDERED_INPUT) != 0
+                    && (spec.getOrderByColumnIds().getQuick(0) != orderColumnId || spec.getOrderByDirections().getQuick(0) != direction)
+                    || !isOwnOrder && isInputOrderRead(window, i)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
@@ -757,7 +784,10 @@ final class OrderPlanning implements OptimiserPass {
                     .rowOrderRequired(orderedInput != null || !isQueryOrder && requirement.isRowOrderRequired() && !hasGroupByWindowFunction(window)));
             return;
         }
-        assert orderedInput != null;
+        if (orderedInput == null) {
+            requireNothing(input, requirement);
+            return;
+        }
         final int orderedInputColumnId = orderedInput.getOrderByColumnIds().getQuick(0);
         final SortDirection orderedInputDirection = orderedInput.getOrderByDirections().getQuick(0);
         if (isOrderedInputServed(window, orderedInputColumnId, orderedInputDirection)) {

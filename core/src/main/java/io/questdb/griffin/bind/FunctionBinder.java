@@ -72,10 +72,12 @@ import io.questdb.griffin.plan.logical.BoundExpressionRewriter;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.CursorExpression;
+import io.questdb.griffin.plan.logical.ExpressionVisitor;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.OuterColumnExpression;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.Subquery;
+import io.questdb.griffin.plan.logical.TreeWalk;
 import io.questdb.griffin.plan.logical.TypeExpression;
 import io.questdb.std.Chars;
 import io.questdb.std.Decimal128;
@@ -119,6 +121,20 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
     private final Decimal256 decimal256 = new Decimal256();
     private final IntList expressionLeafMarks = new IntList();
     private final ObjList<BoundExpression> expressionStack = new ObjList<>();
+    /**
+     * The column references of the expressions folds drop, each as {@code columnId << 32 | position}: the query
+     * references the columns although its plan no longer reads them, see {@link #getFoldedReferences}.
+     */
+    private final LongList foldedReferences = new LongList();
+    private final ExpressionVisitor foldedReferenceRecorder = expression -> {
+        switch (expression) {
+            case ColumnExpression column -> foldedReferences.add(foldedReference(column.getColumnId(), column.getPosition()));
+            case OuterColumnExpression outer -> foldedReferences.add(foldedReference(outer.getColumnId(), outer.getPosition()));
+            default -> {
+            }
+        }
+        return TreeWalk.CONTINUE;
+    };
     private final ObjList<Function> functionStack = new ObjList<>();
     private final StringSink intervalSink = new StringSink();
     private final StringSink intervalText;
@@ -389,6 +405,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         argumentLeafMarks.clear();
         argumentPositions.clear();
         argumentTypes.clear();
+        foldedReferences.clear();
         clearUnconstructed(0);
         sqlExecutionContext = null;
     }
@@ -557,6 +574,10 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
             function = resolveCall(node, count);
         }
         pushFunction(function, node.position);
+    }
+
+    private static long foldedReference(int columnId, int position) {
+        return (long) columnId << 32 | (position & 0xFFFF_FFFFL);
     }
 
     private static int getColumnIndexQuiet(OutputSchema input, CharSequence qualifier, CharSequence name, int lo, int hi) {
@@ -1305,10 +1326,14 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
             // Preserve that replacement rather than retaining false dependencies.
             final BoundExpression expression;
             if (function instanceof ConstantFunction && !ColumnType.isArray(function.getType())) {
+                for (int i = 0, n = arguments.size(); i < n; i++) {
+                    arguments.getQuick(i).walk(foldedReferenceRecorder);
+                }
                 expression = markSource(constant(function, position), overload, function.getType(), BoundExpression.functionFlags(function), position);
                 dropLeaves(callLeafMark(), leafMark());
             } else if (first != null && isConnective(name) && (function == first || function == second)) {
                 // A connective with a constant operand returns its other operand.
+                arguments.getQuick(function == first ? 1 : 0).walk(foldedReferenceRecorder);
                 expression = arguments.getQuick(function == first ? 0 : 1);
             } else {
                 final int flags = role == CallRole.WINDOW_ROOT ? callFlags(function, arguments) | windowContextFlags(sqlExecutionContext.getWindowContext())
@@ -1392,8 +1417,10 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
 
     private void finish(Function function) {
         final int index = expressionStack.size() - 1;
-        final BoundExpression normalized = normalizeArgument(expressionStack.getQuick(index), function);
+        final BoundExpression expression = expressionStack.getQuick(index);
+        final BoundExpression normalized = normalizeArgument(expression, function);
         if (normalized instanceof ConstantExpression) {
+            expression.walk(foldedReferenceRecorder);
             dropLeaves(expressionLeafMarks.getQuick(index), leafMark());
         }
         expressionStack.setQuick(index, normalized);
@@ -1404,6 +1431,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         try {
             if (argument instanceof ConstantFunction && !(argument instanceof TypeConstant)) {
                 final BoundExpression expression = arguments.getQuick(index);
+                expression.walk(foldedReferenceRecorder);
                 if (ColumnType.isArray(argument.getType())) {
                     arguments.setQuick(index, normalizeArgument(expression, argument));
                 } else {
@@ -2256,6 +2284,14 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
      */
     BoundExpression bindStandalone(ExpressionNode node, SqlExecutionContext executionContext) throws SqlException {
         return bind(node, BindingRole.STANDALONE, ctx.emptySchema, null, ColumnType.UNDEFINED, null, null, null, executionContext);
+    }
+
+    /**
+     * The column references of the expressions the folds of the statement dropped, each as
+     * {@code columnId << 32 | position}, with the position of the reference in the text.
+     */
+    LongList getFoldedReferences() {
+        return foldedReferences;
     }
 
     /**

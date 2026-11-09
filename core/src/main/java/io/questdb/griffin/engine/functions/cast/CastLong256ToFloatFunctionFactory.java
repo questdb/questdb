@@ -31,7 +31,9 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
-import io.questdb.std.Numbers;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.Long256Util;
 import io.questdb.std.ObjList;
 
 public class CastLong256ToFloatFunctionFactory implements FunctionFactory {
@@ -57,8 +59,8 @@ public class CastLong256ToFloatFunctionFactory implements FunctionFactory {
 
         @Override
         public float getFloat(Record rec) {
-            final long value = arg.getLong(rec);
-            return value == Numbers.LONG_NULL ? Float.NaN : value;
+            final Long256 value = arg.getLong256A(rec);
+            return Long256Impl.isNull(value) ? Float.NaN : Long256Util.toFloat(value);
         }
     }
 }

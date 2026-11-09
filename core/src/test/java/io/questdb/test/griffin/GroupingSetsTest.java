@@ -1901,6 +1901,50 @@ public class GroupingSetsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupingNoOpCastArgument() throws Exception {
+        // PostgreSQL drops a cast to the type its operand already has, so GROUPING(k::INT) of an INT key k is GROUPING(k)
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (i INT, l LONG, d DOUBLE, s SYMBOL, vc VARCHAR, ts TIMESTAMP, v DOUBLE)");
+            execute("""
+                    INSERT INTO t VALUES
+                        (1, 10, 1.5, 'a', 'x', '2024-01-01T00:00:00.000000Z', 3),
+                        (2, 20, 2.5, 'b', 'y', '2024-01-02T00:00:00.000000Z', 4)
+                    """);
+            final String[] keys = {"i", "l", "d", "s", "vc", "ts"};
+            final String[] types = {"INT", "LONG", "DOUBLE", "SYMBOL", "VARCHAR", "TIMESTAMP"};
+            for (int k = 0; k < keys.length; k++) {
+                final String key = keys[k];
+                final String cast = key + "::" + types[k];
+                for (String grouping : new String[]{"ROLLUP(" + key + ")", "CUBE(" + key + ")", "GROUPING SETS ((" + key + "), ())"}) {
+                    assertQuery("SELECT GROUPING(" + cast + ") g, GROUPING_ID(" + cast + ", " + key + ") gid, SUM(v) sv FROM t GROUP BY " + grouping + " ORDER BY g, sv")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
+                                    g\tgid\tsv
+                                    0\t0\t3.0
+                                    0\t0\t4.0
+                                    1\t3\t7.0
+                                    """);
+                }
+            }
+            assertQuery("SELECT i, GROUPING(i::INT) g, GROUPING(i) gi, SUM(v) s FROM t GROUP BY i::INT, ROLLUP(i) ORDER BY g, gi, s")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            i\tg\tgi\ts
+                            1\t0\t0\t3.0
+                            2\t0\t0\t4.0
+                            null\t0\t1\t3.0
+                            null\t0\t1\t4.0
+                            """);
+            final String widening = "SELECT GROUPING(i::LONG), SUM(v) FROM t GROUP BY ROLLUP(i)";
+            assertException(widening, widening.indexOf("::"), "argument must be a column reference");
+            final String nonKey = "SELECT GROUPING(l::LONG), SUM(v) FROM t GROUP BY ROLLUP(i)";
+            assertException(nonKey, nonKey.indexOf("::"), "argument must be a column reference");
+        });
+    }
+
+    @Test
     public void testGroupingSetsAliasEquivalentKeys() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (a INT, v DOUBLE)");

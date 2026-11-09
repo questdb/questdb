@@ -111,18 +111,18 @@ final class FilterFactoryGenerator {
     }
 
     /**
-     * Consumes the factory, which holds the decorrelation domains the generator placed from {@code producerLo} on, and
+     * Consumes the factory, which holds what the generator placed from {@code placementLo} on, and
      * a constant Boolean filter, including on failure: keeps the factory when the filter folds to true, else replaces it
      * with an empty one, see {@link GenerationFrame#emptied}.
      */
-    private static RecordCursorFactory generateFolded(GenerationFrame frame, int producerLo, RecordCursorFactory factory, Function filter, boolean isTrue) {
+    private static RecordCursorFactory generateFolded(GenerationFrame frame, int placementLo, RecordCursorFactory factory, Function filter, boolean isTrue) {
         assert filter.isConstant() && filter.getBool(null) == isTrue : "folded filter differs from its constant";
         final Throwable failure = Misc.freeBestEffort(null, filter);
         if (failure != null) {
             Misc.free(factory, failure);
             CairoException.rethrowCleanupFailure(failure);
         }
-        return isTrue ? factory : frame.emptied(producerLo, frame.producerMark(), factory);
+        return isTrue ? factory : frame.emptied(placementLo, frame.placementMark(), factory);
     }
 
     private static boolean isNegated(FunctionExpression pattern) {
@@ -366,8 +366,8 @@ final class FilterFactoryGenerator {
     /**
      * Consumes both executable roots on entry, including on failure; applies the filter as {@code algorithm}, which
      * operator planning records, says: folds it, gates the base on it, or builds the parallel or the serial filter.
-     * The base holds the decorrelation domains the generator placed from {@code producerLo} on, see
-     * {@link GenerationFrame#producerMark}.
+     * The base holds what the generator placed from {@code placementLo} on, see
+     * {@link GenerationFrame#placementMark}.
      */
     RecordCursorFactory generate(
             GenerationFrame frame,
@@ -375,7 +375,7 @@ final class FilterFactoryGenerator {
             OutputSchema input,
             RecordCursorFactory base,
             Function filter,
-            int producerLo,
+            int placementLo,
             SqlExecutionContext executionContext,
             boolean isUpdate,
             FilterPlan.Algorithm algorithm,
@@ -384,8 +384,8 @@ final class FilterFactoryGenerator {
     ) throws SqlException {
         assert algorithm.isFolded() || (algorithm == FilterPlan.Algorithm.GATE) == filter.isRuntimeConstant() : "filter algorithm differs from its function";
         return switch (algorithm) {
-            case FOLDED_TRUE -> generateFolded(frame, producerLo, base, filter, true);
-            case FOLDED_FALSE -> generateFolded(frame, producerLo, base, filter, false);
+            case FOLDED_TRUE -> generateFolded(frame, placementLo, base, filter, true);
+            case FOLDED_FALSE -> generateFolded(frame, placementLo, base, filter, false);
             case GATE -> new RuntimeConstGateRecordCursorFactory(base, filter);
             case PARALLEL ->
                     generateParallel(frame, predicate, input, base, filter, executionContext, isUpdate, limitCount, enablePreTouch);
@@ -474,7 +474,7 @@ final class FilterFactoryGenerator {
             JoinInput step,
             BoundExpression predicate,
             RecordCursorFactory base,
-            int producerLo,
+            int placementLo,
             SqlExecutionContext executionContext
     ) throws SqlException {
         final Function filter;
@@ -484,11 +484,11 @@ final class FilterFactoryGenerator {
             Misc.free(base, th);
             throw th;
         }
-        return generatePostJoin(frame, step, predicate, base, filter, producerLo, executionContext);
+        return generatePostJoin(frame, step, predicate, base, filter, placementLo, executionContext);
     }
 
     /**
-     * Filters the factory, which holds the decorrelation domains the generator placed from {@code producerLo} on, with
+     * Filters the factory, which holds what the generator placed from {@code placementLo} on, with
      * the filter the join step applies to its joined rows, as {@link JoinInput#getFilterAlgorithm} says. Consumes both
      * executable roots on entry, including on failure.
      */
@@ -498,10 +498,10 @@ final class FilterFactoryGenerator {
             BoundExpression predicate,
             RecordCursorFactory base,
             Function filter,
-            int producerLo,
+            int placementLo,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        return generate(frame, predicate, step.getOutput(), base, filter, producerLo, executionContext, false,
+        return generate(frame, predicate, step.getOutput(), base, filter, placementLo, executionContext, false,
                 step.getFilterAlgorithm(), null, false);
     }
 

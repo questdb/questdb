@@ -182,6 +182,17 @@ public interface FunctionFactory {
     }
 
     /**
+     * Returns true if the window function ranks a row among its peers, so that a window without ORDER BY, where every
+     * row is a peer of every other, gives every row of a partition the same value whatever order the rows come in:
+     * rank(), dense_rank(), percent_rank() and cume_dist().
+     *
+     * @return true if the window function ranks a row among its peers
+     */
+    default boolean isPeerRanking() {
+        return false;
+    }
+
+    /**
      * @return true if the {@link Function} produced by the factory is guaranteed to be constant for
      * a query such that its result does not depend on any {@link Record} in the result set, i.e. now().
      */

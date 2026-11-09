@@ -243,24 +243,6 @@ final class ScanFactoryGenerator {
                 ? keyIds.indexOf(column.getColumnId(), 0, keyIds.size()) : -1;
     }
 
-    private static PartitionFrameCursorFactory newFrames(ScanPlan scan, RuntimeIntrinsicIntervalModel intervalModel,
-                                                         PlanTable table, int order) {
-        final TableDescriptor descriptor = table.getTableDescriptor();
-        final PartitionFrameCursorFactory frames = intervalModel == null
-                ? new FullPartitionFrameCursorFactory(scan.getTableToken(), scan.getMetadataVersion(), descriptor, order,
-                scan.getViewName(), scan.getViewPosition(), scan.isUpdate())
-                : new IntervalPartitionFrameCursorFactory(scan.getTableToken(), scan.getMetadataVersion(), intervalModel,
-                descriptor, order, scan.getViewName(), scan.getViewPosition(), scan.isUpdate());
-        try {
-            frames.setAuthorizedColumnIndexes(scan.getAuthorizedColumnIndexes());
-            frames.setRowCountRange(scan.getMinRowCount(), scan.getMaxRowCount());
-        } catch (Throwable th) {
-            Misc.free(frames, th);
-            throw th;
-        }
-        return frames;
-    }
-
     private static SortDirection requestedDirection(ScanPlan scan) {
         final SortKeys requestedOrder = scan.getRequestedOrder();
         return requestedOrder.isEmpty() ? SortDirection.ASCENDING : requestedOrder.getDirections().getQuick(0);
@@ -334,8 +316,12 @@ final class ScanFactoryGenerator {
         }
     }
 
+    /**
+     * Filters the base, the scan the generator placed at {@code placementLo}, see {@link GenerationFrame#placeScan}.
+     */
     private RecordCursorFactory filterScan(GenerationFrame frame, RecordCursorFactory base, ScanPlan scan, BoundExpression residual,
-                                           @Nullable PreparedFilter stolenFilter, SqlExecutionContext executionContext) throws SqlException {
+                                           @Nullable PreparedFilter stolenFilter, int placementLo, SqlExecutionContext executionContext)
+            throws SqlException {
         final Function filter;
         try {
             filter = functionInstantiator.instantiate(residual, scan.getOutput(), base.getMetadata(), executionContext);
@@ -348,7 +334,7 @@ final class ScanFactoryGenerator {
             stolenFilter.of(residual, scan.getOutput(), filter, isParallel && FilterFactoryGenerator.isJitApplicable(scan.isUpdate(), executionContext));
             return base;
         }
-        return filterGenerator.generate(frame, residual, scan.getOutput(), base, filter, frame.producerMark(), executionContext,
+        return filterGenerator.generate(frame, residual, scan.getOutput(), base, filter, placementLo, executionContext,
                 scan.isUpdate(), scan.getResidualAlgorithm(), scan.getFilterLimit(), scan.isResidualPreTouched());
     }
 
@@ -474,7 +460,7 @@ final class ScanFactoryGenerator {
     private RecordCursorFactory generatePageFrameScan(GenerationFrame frame, ScanPlan scan, SqlExecutionContext executionContext,
                                                       IntervalExtractor scanIntervals, GenericRecordMetadata metadata,
                                                       PlanTable table, IntList indexes, IntList shifts,
-                                                      @Nullable PreparedFilter stolenFilter) throws SqlException {
+                                                      @Nullable PreparedFilter stolenFilter, int placementLo) throws SqlException {
         final BoundExpression residual = scan.getTableToken().isLiveView() ? null : scan.getResidual();
         final int order = frameOrder(scan);
         final PartitionFrameCursorFactory frames = newFrames(scan, buildIntervals(scan, scanIntervals, table), table, order);
@@ -490,7 +476,7 @@ final class ScanFactoryGenerator {
         if (residual == null) {
             return factory;
         }
-        return filterScan(frame, factory, scan, residual, stolenFilter, executionContext);
+        return filterScan(frame, factory, scan, residual, stolenFilter, placementLo, executionContext);
     }
 
     private RecordCursorFactory generatePostingDistinctScan(AggregatePlan aggregate, ScanPlan scan, IntervalExtractor scanIntervals,
@@ -526,10 +512,12 @@ final class ScanFactoryGenerator {
         if (accessPath == null) {
             throw new IllegalStateException("scan access path is not planned");
         }
+        final int placementLo = frame.placementMark();
+        frame.placeScan(scan, table);
         return switch (accessPath) {
-            case EMPTY -> new EmptyTableRecordCursorFactory(metadata);
+            case EMPTY -> frame.emptied(placementLo, frame.placementMark(), new EmptyTableRecordCursorFactory(metadata));
             case PAGE_FRAMES -> generatePageFrameScan(frame, scan, executionContext, scanIntervals, metadata, table,
-                    indexes, shifts, stolenFilter);
+                    indexes, shifts, stolenFilter, placementLo);
             case SORTED_SYMBOL_INDEX -> {
                 final PartitionFrameCursorFactory frames = newFrames(scan, buildIntervals(scan, scanIntervals, table), table, frameOrder(scan));
                 yield new SortedSymbolIndexRecordCursorFactory(configuration, metadata, frames,
@@ -735,6 +723,24 @@ final class ScanFactoryGenerator {
         return mapping;
     }
 
+    static PartitionFrameCursorFactory newFrames(ScanPlan scan, RuntimeIntrinsicIntervalModel intervalModel,
+                                                 PlanTable table, int order) {
+        final TableDescriptor descriptor = table.getTableDescriptor();
+        final PartitionFrameCursorFactory frames = intervalModel == null
+                ? new FullPartitionFrameCursorFactory(scan.getTableToken(), scan.getMetadataVersion(), descriptor, order,
+                scan.getViewName(), scan.getViewPosition(), scan.isUpdate())
+                : new IntervalPartitionFrameCursorFactory(scan.getTableToken(), scan.getMetadataVersion(), intervalModel,
+                descriptor, order, scan.getViewName(), scan.getViewPosition(), scan.isUpdate());
+        try {
+            frames.setAuthorizedColumnIndexes(scan.getAuthorizedColumnIndexes());
+            frames.setRowCountRange(scan.getMinRowCount(), scan.getMaxRowCount());
+        } catch (Throwable th) {
+            Misc.free(frames, th);
+            throw th;
+        }
+        return frames;
+    }
+
     void configurePushdown(GenerationFrame frame, FunctionSourcePlan source, RecordCursorFactory base, BoundExpression residual,
                            SqlExecutionContext executionContext) throws SqlException {
         final RecordCursorFactory target = base instanceof SelectedRecordCursorFactory ? base.getBaseFactory() : base;
@@ -757,11 +763,12 @@ final class ScanFactoryGenerator {
                 frame.intervals.extract(predicate, scan.getOutput().getColumnId(timestampIndex), scan.getOutput(), intervalBounds,
                         expressionRewriter, scan.getDepth(), executionContext);
             }
+            final int placementLo = frame.placementMark();
             final RecordCursorFactory scanFactory = generateScan(frame, scan, executionContext, frame.intervals, null, stolenFilter);
             final BoundExpression residual = scan.getResidual();
             // Rows the live view serves from memory bypass the wrapped scan, so only intervals go below it.
             factory = scan.getTableToken().isLiveView() && residual != null
-                    ? filterScan(frame, scanFactory, scan, residual, stolenFilter, executionContext) : scanFactory;
+                    ? filterScan(frame, scanFactory, scan, residual, stolenFilter, placementLo, executionContext) : scanFactory;
         } catch (Throwable th) {
             Misc.clear(frame.intervals, th);
             throw th;
@@ -832,7 +839,9 @@ final class ScanFactoryGenerator {
                 frame.intervals.extract(predicate, scan.getNativeTimestampColumnId(), scan.getOutput(), intervalBounds,
                         expressionRewriter, scan.getDepth(), executionContext);
             }
-            factory = generatePostingDistinctScan(aggregate, scan, predicate == null ? null : frame.intervals, planTables.of(scan));
+            final PlanTable table = planTables.of(scan);
+            frame.placeScan(scan, table);
+            factory = generatePostingDistinctScan(aggregate, scan, predicate == null ? null : frame.intervals, table);
         } catch (Throwable th) {
             Misc.clear(frame.intervals, th);
             throw th;

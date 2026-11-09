@@ -42,6 +42,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCursorFactory {
+    private static final IntList NO_COLUMNS = new IntList(0);
     private final IntList authorizedColumnIndexes = new IntList();
     private final IntHashSet authorizedColumns = new IntHashSet();
     private final IntList checkedColumnIndexes = new IntList();
@@ -73,6 +74,11 @@ abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCurs
         this.viewPosition = viewPosition;
         this.updateQuery = updateQuery;
         this.viewReadColumns = viewName != null ? new LowerCaseCharSequenceHashSet() : null;
+    }
+
+    @Override
+    public void authorizeSelect(SqlExecutionContext executionContext) throws SqlException {
+        authorizeSelect(executionContext, NO_COLUMNS);
     }
 
     @Override

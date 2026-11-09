@@ -524,6 +524,53 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRawWindowWhenOrderDependentKeepsScanOrderUnderAnyReadOrder() throws Exception {
+        // A window without ORDER BY reads its input in scan order, so a descending read keeps the rows the plain
+        // read keeps: the first row of each key, in timestamp order.
+        assertMemoryLeak(() -> {
+            execute("create table base (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("""
+                    insert into base values
+                    ('A', 1.0, '2024-01-01T00:00:00.000000Z'),
+                    ('B', 10.0, '2024-01-01T01:00:00.000000Z'),
+                    ('A', 2.0, '2024-01-01T02:00:00.000000Z'),
+                    ('B', 20.0, '2024-01-01T03:00:00.000000Z'),
+                    ('A', 3.0, '2024-01-02T04:00:00.000000Z'),
+                    ('B', 30.0, '2024-01-02T05:00:00.000000Z')""");
+            final String[] policies = {
+                    "row_number() over (partition by k) > 1",
+                    "lag(v) over (partition by k) is not null",
+                    "v <> first_value(v) over (partition by k)"
+            };
+            for (int i = 0; i < policies.length; i++) {
+                execute("create materialized view mv" + i + " as (select * from base) expire rows when " + policies[i]);
+            }
+            drainWalAndMatViewQueues();
+            for (int i = 0; i < policies.length; i++) {
+                final String view = "mv" + i;
+                assertQuery("select k, v, ts from " + view).noLeakCheck().timestamp("ts").noRandomAccess().returns("""
+                        k\tv\tts
+                        A\t1.0\t2024-01-01T00:00:00.000000Z
+                        B\t10.0\t2024-01-01T01:00:00.000000Z
+                        """);
+                assertQuery("select k, v, ts from " + view + " order by ts desc").noLeakCheck().timestampDesc("ts").returns("""
+                        k\tv\tts
+                        B\t10.0\t2024-01-01T01:00:00.000000Z
+                        A\t1.0\t2024-01-01T00:00:00.000000Z
+                        """);
+                assertQuery("select k, v, ts from " + view + " order by ts desc limit 1").noLeakCheck().timestampDesc("ts").returns("""
+                        k\tv\tts
+                        B\t10.0\t2024-01-01T01:00:00.000000Z
+                        """);
+                assertQuery("select max(ts) from " + view).noLeakCheck().noRandomAccess().expectSize().returns("""
+                        max
+                        2024-01-01T01:00:00.000000Z
+                        """);
+            }
+        });
+    }
+
+    @Test
     public void testRawWindowWhenSelfReferenceIgnoresNameCase() throws Exception {
         // A policy subquery that names the view itself reads the view without the policy. Table names are
         // case-insensitive, so the policy text and the read may each spell the name in a different case, and

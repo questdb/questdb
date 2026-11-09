@@ -55,6 +55,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.io.IOException;
+import java.util.TreeSet;
 
 public class SqlBinderTest extends AbstractCairoTest {
     @Test
@@ -95,6 +96,40 @@ public class SqlBinderTest extends AbstractCairoTest {
                             .returns("id\n2\n4\n3\n");
                     Assert.assertTrue(authorizations[0] > 0);
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testAuthorizationRequiresColumnsFoldedAway() throws Exception {
+        assertMemoryLeak(() -> {
+            createRows();
+            final TreeSet<String> authorized = new TreeSet<>();
+            try (
+                    SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1).with(new AllowAllSecurityContext() {
+                        @Override
+                        public void authorizeSelect(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
+                            final StringSink columns = new StringSink();
+                            for (int i = 0, n = columnNames.size(); i < n; i++) {
+                                columns.put(i > 0 ? "," : "").put(columnNames.getQuick(i));
+                            }
+                            authorized.add(columns.toString());
+                        }
+                    });
+                    SqlCompilerImpl compiler = new SqlCompilerImpl(engine)
+            ) {
+                final String allIds = "id\n3\n1\n4\n2\n";
+                assertAuthorizedColumns(compiler, executionContext, authorized, "SELECT id FROM lp_rows WHERE active OR true", "id,active", allIds);
+                assertAuthorizedColumns(compiler, executionContext, authorized, "SELECT id FROM lp_rows WHERE true OR active", "id,active", allIds);
+                assertAuthorizedColumns(compiler, executionContext, authorized, "SELECT id FROM lp_rows WHERE (active AND false) OR id > 0", "id,active", allIds);
+                assertAuthorizedColumns(compiler, executionContext, authorized, "SELECT id FROM lp_rows WHERE label IS NULL OR true", "id,label", allIds);
+                assertAuthorizedColumns(compiler, executionContext, authorized, "SELECT label FROM lp_rows WHERE id = 'abc'", "label,id", "label\n");
+                assertAuthorizedColumns(compiler, executionContext, authorized, "SELECT count() FROM lp_rows WHERE active OR true", "active", "count\n4\n");
+                assertAuthorizedColumns(compiler, executionContext, authorized, "SELECT id, (active OR true) f FROM lp_rows", "id,active",
+                        "id\tf\n3\ttrue\n1\ttrue\n4\ttrue\n2\ttrue\n");
+                assertAuthorizedColumns(compiler, executionContext, authorized, "SELECT id FROM (SELECT id, (active OR true) f FROM lp_rows)", "id,active", allIds);
+                assertAuthorizedColumns(compiler, executionContext, authorized, "SELECT a.id FROM lp_rows a LEFT JOIN lp_rows b ON a.id = b.id AND b.active AND false",
+                        "id id,active", allIds);
             }
         });
     }
@@ -1033,6 +1068,16 @@ public class SqlBinderTest extends AbstractCairoTest {
                 Assert.assertEquals(position, e.getPosition());
             }
         }
+    }
+
+    private void assertAuthorizedColumns(
+            SqlCompilerImpl compiler, SqlExecutionContext executionContext, TreeSet<String> authorized, String query, String expectedColumns, String expectedRows
+    ) throws Exception {
+        authorized.clear();
+        try (RecordCursorFactory factory = compiler.compile(query, executionContext).getRecordCursorFactory()) {
+            assertFactory(factory).withContext(executionContext).inferRandomAccess().inferTimestamp().sizeMayVary().returns(expectedRows);
+        }
+        Assert.assertEquals(expectedColumns, String.join(" ", authorized));
     }
 
     private void createRows() throws SqlException {

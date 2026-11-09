@@ -190,7 +190,7 @@ public final class SqlBinder implements Mutable {
         this.parserCallback = parserCallback;
         joinBinder.collectHintAliases(model);
         final LogicalPlan plan = model.isUpdate() ? updateBinder.bind(model, executionContext) : bindQuery(model, executionContext);
-        referencedColumns.mark(plan);
+        referencedColumns.mark(plan, ctx.functionBinder.getFoldedReferences());
         return plan;
     }
 

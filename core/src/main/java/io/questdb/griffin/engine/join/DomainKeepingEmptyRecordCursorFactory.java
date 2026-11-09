@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.join;
 
+import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -35,6 +36,7 @@ import io.questdb.griffin.engine.EmptyTableRandomRecordCursor;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * The empty factory the generator builds in place of a factory whose rows it proves empty, when that factory holds
@@ -48,10 +50,16 @@ public class DomainKeepingEmptyRecordCursorFactory extends EmptyTableRecordCurso
     private RecordCursorFactory kept;
 
     /**
-     * Takes ownership of {@code kept}, which holds the {@code domains}, once constructed.
+     * Takes ownership of {@code kept}, which holds the {@code domains}, and of the {@code frames} of the reads of tables
+     * it holds, see {@link EmptyTableRecordCursorFactory}, once constructed.
      */
-    public DomainKeepingEmptyRecordCursorFactory(RecordMetadata metadata, RecordCursorFactory kept, ObjList<RecordCursorFactory> domains) {
-        super(metadata);
+    public DomainKeepingEmptyRecordCursorFactory(
+            RecordMetadata metadata,
+            @Nullable ObjList<PartitionFrameCursorFactory> frames,
+            RecordCursorFactory kept,
+            ObjList<RecordCursorFactory> domains
+    ) {
+        super(metadata, frames);
         this.kept = kept;
         this.domains = domains;
     }

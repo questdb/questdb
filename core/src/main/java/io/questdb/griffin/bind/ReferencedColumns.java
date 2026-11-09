@@ -37,15 +37,16 @@ import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.griffin.plan.logical.SetOperationPlan;
 import io.questdb.griffin.plan.logical.TreeWalk;
 import io.questdb.std.IntIntHashMap;
+import io.questdb.std.LongList;
 
 /**
  * Records on the scans of a bound query level the columns its text references, with the text position of the first
- * reference, which selecting from a table requires the permission on whatever the optimiser later prunes. Every
- * expression and column id a node reads references its columns, except in an implied projection, whose column is
- * referenced when a reference of its output column is; a set operation passes the references of its output columns
- * on to its inputs. A sub-query binds and marks its own scans, so its plan is not visited, and a scan that reads a
- * table through a view records none: the view's own text references its columns, and the view's permission covers
- * them.
+ * reference, which selecting from a table requires the permission on whatever the optimiser later prunes or binding
+ * folds away. Every expression and column id a node reads references its columns, except in an implied projection,
+ * whose column is referenced when a reference of its output column is; a set operation passes the references of its
+ * output columns on to its inputs. A sub-query binds and marks its own scans, so its plan is not visited, and a scan
+ * that reads a table through a view records none: the view's own text references its columns, and the view's
+ * permission covers them.
  */
 final class ReferencedColumns implements ExpressionVisitor, PlanExpressionVisitor {
     private final PlanVisitor passedReads = this::passReferences;
@@ -136,10 +137,15 @@ final class ReferencedColumns implements ExpressionVisitor, PlanExpressionVisito
     }
 
     /**
-     * Records the references of a bound query level on its scans, before any pass prunes their columns.
+     * Records the references of a bound query level on its scans, before any pass prunes their columns, together with
+     * the references that binding folded away, each {@code columnId << 32 | position}.
      */
-    void mark(LogicalPlan plan) {
+    void mark(LogicalPlan plan, LongList foldedReferences) {
         positions.clear();
+        for (int i = 0, n = foldedReferences.size(); i < n; i++) {
+            final long reference = foldedReferences.getQuick(i);
+            visitColumnId((int) (reference >>> 32), (int) reference);
+        }
         plan.walkTopDown(statedReads);
         plan.walkTopDown(passedReads);
         plan.walkTopDown(scans);

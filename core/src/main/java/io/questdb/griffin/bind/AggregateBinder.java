@@ -704,7 +704,13 @@ final class AggregateBinder implements Mutable {
             final ExpressionNode expression = argument.type == ExpressionNode.LITERAL ? resolveGroupBy(argument, model) : argument;
             final int keyIndex = findGroupingExpression(expression, source, aggregate);
             if (keyIndex < 0) {
-                nonKey = nonKey == null || argument.position < nonKey.position ? argument : nonKey;
+                final ColumnExpression castKey = groupingCastKey(argument, source, aggregate, aggregateScope, executionContext);
+                if (castKey != null) {
+                    scope.substitutionNodes.add(argument);
+                    scope.aggregateSubstitutions.add(castKey);
+                } else {
+                    nonKey = nonKey == null || argument.position < nonKey.position ? argument : nonKey;
+                }
             } else if (keyIndex == aggregate.getBucketKeyIndex()) {
                 scope.substitutionNodes.add(argument);
                 scope.aggregateSubstitutions.add(ctx.functionBinder.bind(scope.sampleByBucketNode, aggregateScope, sourceAlias(source), executionContext));
@@ -1080,6 +1086,22 @@ final class AggregateBinder implements Mutable {
             violation = findGroupByViolation(expression.args.getQuick(i));
         }
         return violation;
+    }
+
+    /**
+     * The grouping key column a GROUPING() argument casts to the type it already has, such as {@code a::INT} of an INT
+     * key {@code a}, as a reference to the key; null when the argument is no such cast. A cast that the GROUP BY list
+     * keys by itself is a key of its own, which the argument matches before it reaches here.
+     */
+    private ColumnExpression groupingCastKey(
+            ExpressionNode argument, QueryModel source, GroupingPlan aggregate, OutputSchema aggregateScope, SqlExecutionContext executionContext
+    ) throws SqlException {
+        if (argument.type != ExpressionNode.FUNCTION || !SqlKeywords.isCastKeyword(argument.token)) {
+            return null;
+        }
+        final BoundExpression cast = ctx.functionBinder.bindValue(argument, aggregateScope, sourceAlias(source), executionContext);
+        return cast instanceof ColumnExpression column && LogicalPlans.groupingColumnIndex(aggregate, column.getColumnId()) >= 0
+                ? ctx.planNodes.columns.next().of(column.getColumnId(), column.getDataType(), argument.position) : null;
     }
 
     private boolean hasAggregateComputation() {

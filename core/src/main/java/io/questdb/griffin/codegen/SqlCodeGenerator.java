@@ -403,7 +403,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private RecordCursorFactory generateUnary(GenerationFrame frame, LogicalPlan plan, SqlExecutionContext executionContext) throws SqlException {
         final LogicalPlan input = plan.inputAt(0);
         final BoundExpression residual = plan instanceof FilterPlan filter ? filter.getPredicate() : null;
-        final int producerLo = frame.producerMark();
+        final int placementLo = frame.placementMark();
         final RecordCursorFactory base;
         if (plan instanceof FilterPlan filter && residual != null && PlanToFactoryRules.fusedScan(filter) instanceof ScanPlan scan) {
             return scanGenerator.generateFiltered(frame, scan, residual, null, executionContext);
@@ -444,7 +444,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         throw th;
                     }
                 }
-                return filterGenerator.generate(frame, residual, input.getOutput(), base, predicate, producerLo,
+                return filterGenerator.generate(frame, residual, input.getOutput(), base, predicate, placementLo,
                         executionContext, LogicalPlans.hasUpdateScan(filter.getChild()), filter.getAlgorithm(), null, false);
             }
             case ProjectPlan project -> {

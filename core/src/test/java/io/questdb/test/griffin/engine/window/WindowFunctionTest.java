@@ -18595,6 +18595,52 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnorderedWindowReadsScanOrderUnderDescendingQueryOrder() throws Exception {
+        // A window without ORDER BY reads its input in table scan order; the query's ORDER BY orders its output only.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, k symbol, v double) timestamp(ts)", timestampType.getTypeName());
+            execute("""
+                    insert into tab values
+                        ('1970-01-01T00:00:00.000000Z', 'A', 1.0),
+                        ('1970-01-01T00:00:01.000000Z', 'B', 10.0),
+                        ('1970-01-01T00:00:02.000000Z', 'A', 2.0),
+                        ('1970-01-01T00:00:03.000000Z', 'B', 20.0),
+                        ('1970-01-01T00:00:04.000000Z', 'A', 3.0)
+                    """);
+            final String expected = replaceTimestampSuffix("""
+                    ts\tk\tv\tprev\trn\tfv\ts2\ttotal
+                    1970-01-01T00:00:04.000000Z\tA\t3.0\t2.0\t3\t1.0\t5.0\t6.0
+                    1970-01-01T00:00:03.000000Z\tB\t20.0\t10.0\t2\t10.0\t30.0\t30.0
+                    1970-01-01T00:00:02.000000Z\tA\t2.0\t1.0\t2\t1.0\t3.0\t6.0
+                    1970-01-01T00:00:01.000000Z\tB\t10.0\tnull\t1\t10.0\t10.0\t30.0
+                    1970-01-01T00:00:00.000000Z\tA\t1.0\tnull\t1\t1.0\t1.0\t6.0
+                    """, timestampType.getTypeName());
+            final String query = "select ts, k, v, lag(v) over (partition by k) prev, row_number() over (partition by k) rn, " +
+                    "first_value(v) over (partition by k) fv, sum(v) over (partition by k rows between 1 preceding and current row) s2, " +
+                    "sum(v) over (partition by k) total from tab";
+            assertQuery(query + " order by ts desc")
+                    .timestampDesc("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("select * from (" + query + ") order by ts desc")
+                    .timestampDesc("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("select ts, k, v, lag(v) over (partition by k) prev from tab order by ts desc limit 2")
+                    .timestampDesc("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix("""
+                            ts\tk\tv\tprev
+                            1970-01-01T00:00:04.000000Z\tA\t3.0\t2.0
+                            1970-01-01T00:00:03.000000Z\tB\t20.0\t10.0
+                            """, timestampType.getTypeName()));
+        });
+    }
+
+    @Test
     public void testRowNumberWithNoPartitionAndNoOrderInSubQuery() throws Exception {
         assertQuery("select symbol, rn + 1 as rn from (select symbol, row_number() over() as rn from trades)")
                 .ddl("create table trades as " +
@@ -20272,12 +20318,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .timestampDesc("ts")
                     .supportsRandomAccess(true)
                     .expectSize(false)
-                    .withPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                    .withPlan("Encode sort light\n  keys: [ts desc]\n" + (isCacheLightWindowEnabled ? "    CachedWindowLight\n" : "    CachedWindow\n") +
                             """
-                                      unorderedFunctions: [first_value(j) over (),first_value(j) ignore nulls over (),last_value(j) over (),last_value(j) ignore nulls over (),avg(j) over (),sum(j) over (),count(*) over (),count(j) over (),count(sym) over (),count(c) over (),max(j) over (),min(j) over ()]
-                                        PageFrame
-                                            Row backward scan
-                                            Frame backward scan on: tab
+                                          unorderedFunctions: [first_value(j) over (),first_value(j) ignore nulls over (),last_value(j) over (),last_value(j) ignore nulls over (),avg(j) over (),sum(j) over (),count(*) over (),count(j) over (),count(sym) over (),count(c) over (),max(j) over (),min(j) over ()]
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: tab
                                     """)
                     .returns("ts\ti\tj\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\n");
 
@@ -20380,12 +20426,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .timestampDesc("ts")
                     .supportsRandomAccess(true)
                     .expectSize(false)
-                    .withPlan((isCacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                    .withPlan("Encode sort light\n  keys: [ts desc]\n" + (isCacheLightWindowEnabled ? "    CachedWindowLight\n" : "    CachedWindow\n") +
                             """
-                                      unorderedFunctions: [first_value(j) over (partition by [i]),first_value(j) ignore nulls over (partition by [i]),last_value(j) over (partition by [i]),last_value(j) ignore nulls over (partition by [i]),avg(j) over (partition by [i]),sum(j) over (partition by [i]),count(*) over (partition by [i]),count(j) over (partition by [i]),count(sym) over (partition by [i]),count(c) over (partition by [i]),max(j) over (partition by [i]),min(j) over (partition by [i])]
-                                        PageFrame
-                                            Row backward scan
-                                            Frame backward scan on: tab
+                                          unorderedFunctions: [first_value(j) over (partition by [i]),first_value(j) ignore nulls over (partition by [i]),last_value(j) over (partition by [i]),last_value(j) ignore nulls over (partition by [i]),avg(j) over (partition by [i]),sum(j) over (partition by [i]),count(*) over (partition by [i]),count(j) over (partition by [i]),count(sym) over (partition by [i]),count(c) over (partition by [i]),max(j) over (partition by [i]),min(j) over (partition by [i])]
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: tab
                                     """)
                     .returns("ts\ti\tj\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\n");
 
@@ -20548,34 +20594,38 @@ public class WindowFunctionTest extends AbstractCairoTest {
             assertQuery("select ts, i, j, row_number() over () from tab where sym = 'X' order by ts desc")
                     .noLeakCheck()
                     .timestampDesc("ts")
-                    .supportsRandomAccess(false)
+                    .supportsRandomAccess(true)
                     .expectSize(false)
                     .withPlan("""
-                            Window
-                              functions: [row_number()]
-                                DeferredSingleSymbolFilterPageFrame
-                                    Index backward scan on: sym deferred: true
-                                      filter: sym='X'
-                                    Frame backward scan on: tab
+                            Encode sort
+                              keys: [ts desc]
+                                Window
+                                  functions: [row_number()]
+                                    DeferredSingleSymbolFilterPageFrame
+                                        Index forward scan on: sym deferred: true
+                                          filter: sym='X'
+                                        Frame forward scan on: tab
                             """)
                     .returns("ts\ti\tj\trow_number\n");
 
             assertQuery("select ts, i, j, row_number() over () from tab where sym IN ('X', 'Y') order by sym")
                     .noLeakCheck()
                     .timestamp(null)
-                    .supportsRandomAccess(false)
+                    .supportsRandomAccess(true)
                     .expectSize(false)
                     .withPlan("""
                             SelectedRecord
-                                Window
-                                  functions: [row_number()]
-                                    FilterOnValues symbolOrder: asc
-                                        Cursor-order scan
-                                            Index forward scan on: sym deferred: true
-                                              filter: sym='X'
-                                            Index forward scan on: sym deferred: true
-                                              filter: sym='Y'
-                                        Frame forward scan on: tab
+                                Encode sort
+                                  keys: [sym]
+                                    Window
+                                      functions: [row_number()]
+                                        FilterOnValues
+                                            Table-order scan
+                                                Index forward scan on: sym deferred: true
+                                                  filter: sym='Y'
+                                                Index forward scan on: sym deferred: true
+                                                  filter: sym='X'
+                                            Frame forward scan on: tab
                             """)
                     .returns("ts\ti\tj\trow_number\n");
 
@@ -20606,15 +20656,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .supportsRandomAccess(true)
                     .expectSize(false)
                     .withPlan("""
-                            SelectedRecord
+                            Encode sort light
+                              keys: [ts desc]
+                                SelectedRecord
                             """ +
-                            (isCacheLightWindowEnabled ? "    CachedWindowLight\n" : "    CachedWindow\n") +
+                            (isCacheLightWindowEnabled ? "        CachedWindowLight\n" : "        CachedWindow\n") +
                             """
-                                          unorderedFunctions: [lead(j, 1, NULL) over (),lag(j, 1, NULL) over (),lead(j, 1, NULL) ignore nulls over (),lag(j, 1, NULL) ignore nulls over ()]
-                                            DeferredSingleSymbolFilterPageFrame
-                                                Index backward scan on: sym deferred: true
-                                                  filter: sym='X'
-                                                Frame backward scan on: tab
+                                              unorderedFunctions: [lead(j, 1, NULL) over (),lag(j, 1, NULL) over (),lead(j, 1, NULL) ignore nulls over (),lag(j, 1, NULL) ignore nulls over ()]
+                                                DeferredSingleSymbolFilterPageFrame
+                                                    Index forward scan on: sym deferred: true
+                                                      filter: sym='X'
+                                                    Frame forward scan on: tab
                                     """)
                     .returns("ts\ti\tj\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\n");
 
@@ -20626,17 +20678,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     .expectSize(false)
                     .withPlan("""
                             SelectedRecord
+                                Encode sort light
+                                  keys: [sym]
                             """ +
-                            (isCacheLightWindowEnabled ? "    CachedWindowLight\n" : "    CachedWindow\n") +
+                            (isCacheLightWindowEnabled ? "        CachedWindowLight\n" : "        CachedWindow\n") +
                             """
-                                          unorderedFunctions: [lead(j, 1, NULL) over (),lag(j, 1, NULL) over (),lead(j, 1, NULL) ignore nulls over (),lag(j, 1, NULL) ignore nulls over ()]
-                                            FilterOnValues symbolOrder: asc
-                                                Cursor-order scan
-                                                    Index forward scan on: sym deferred: true
-                                                      filter: sym='X'
-                                                    Index forward scan on: sym deferred: true
-                                                      filter: sym='Y'
-                                                Frame forward scan on: tab
+                                              unorderedFunctions: [lead(j, 1, NULL) over (),lag(j, 1, NULL) over (),lead(j, 1, NULL) ignore nulls over (),lag(j, 1, NULL) ignore nulls over ()]
+                                                FilterOnValues
+                                                    Table-order scan
+                                                        Index forward scan on: sym deferred: true
+                                                          filter: sym='Y'
+                                                        Index forward scan on: sym deferred: true
+                                                          filter: sym='X'
+                                                    Frame forward scan on: tab
                                     """)
                     .returns("ts\ti\tj\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\n");
         });

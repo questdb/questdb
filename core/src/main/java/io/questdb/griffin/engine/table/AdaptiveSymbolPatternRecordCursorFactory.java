@@ -763,6 +763,11 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
         }
 
         @Override
+        public void authorizeSelect(SqlExecutionContext executionContext) throws SqlException {
+            delegate.authorizeSelect(executionContext);
+        }
+
+        @Override
         public void close() {
             if (stolenFilter != null) {
                 delegate = Misc.free(delegate);

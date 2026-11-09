@@ -96,4 +96,57 @@ public class Long256Util {
 
         return Long.compareUnsigned(a.getLong0(), b.getLong0());
     }
+
+    /**
+     * The unsigned value of a LONG256 that is not NULL, rounded to the nearest double, ties to even.
+     */
+    public static double toDouble(Long256 value) {
+        final long top = topBits(value.getLong0(), value.getLong1(), value.getLong2(), value.getLong3());
+        final double scaled = top < 0 ? (double) (top >>> 1 | top & 1) * 2.0 : (double) top;
+        return Math.scalb(scaled, topScale(value.getLong1(), value.getLong2(), value.getLong3()));
+    }
+
+    /**
+     * The unsigned value of a LONG256 that is not NULL, rounded to the nearest float, ties to even, and infinity past
+     * the largest float.
+     */
+    public static float toFloat(Long256 value) {
+        final long top = topBits(value.getLong0(), value.getLong1(), value.getLong2(), value.getLong3());
+        final float scaled = top < 0 ? (float) (top >>> 1 | top & 1) * 2.0f : (float) top;
+        return Math.scalb(scaled, topScale(value.getLong1(), value.getLong2(), value.getLong3()));
+    }
+
+    /**
+     * The 64 bits of {@code hi:lo:rest} from the highest set bit of {@code hi} down, with bit 0 also set when a lower
+     * bit is, so that rounding the bits to a double or a float rounds the whole value.
+     */
+    private static long normalize(long hi, long lo, long rest) {
+        final int shift = Long.numberOfLeadingZeros(hi);
+        final long sticky = (shift == 0 ? lo : lo << shift) != 0 || rest != 0 ? 1 : 0;
+        return shift == 0 ? hi | sticky : hi << shift | lo >>> (64 - shift) | sticky;
+    }
+
+    /**
+     * The value scaled down by {@code 2^topScale}: its highest 64 bits, see {@link #normalize}, or the value itself
+     * when it fits.
+     */
+    private static long topBits(long l0, long l1, long l2, long l3) {
+        if (l3 != 0) {
+            return normalize(l3, l2, l1 | l0);
+        }
+        if (l2 != 0) {
+            return normalize(l2, l1, l0);
+        }
+        return l1 != 0 ? normalize(l1, l0, 0) : l0;
+    }
+
+    private static int topScale(long l1, long l2, long l3) {
+        if (l3 != 0) {
+            return 192 - Long.numberOfLeadingZeros(l3);
+        }
+        if (l2 != 0) {
+            return 128 - Long.numberOfLeadingZeros(l2);
+        }
+        return l1 != 0 ? 64 - Long.numberOfLeadingZeros(l1) : 0;
+    }
 }

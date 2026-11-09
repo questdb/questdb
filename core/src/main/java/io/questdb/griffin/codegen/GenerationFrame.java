@@ -35,6 +35,7 @@ import io.questdb.cairo.IndexType;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.join.DomainKeepingEmptyRecordCursorFactory;
@@ -46,6 +47,7 @@ import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
+import io.questdb.griffin.plan.logical.PlanTable;
 import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.std.BitSet;
 import io.questdb.std.IntList;
@@ -99,10 +101,18 @@ final class GenerationFrame implements Closeable, Mutable {
      */
     private final IntList pendingProducers = new IntList();
     /**
-     * The entries of the decorrelation domains the generator placed in the factory tree, in the order it placed them,
-     * see {@link #producerMark}.
+     * The scan of each of {@link #placements} that is one, null for a decorrelation domain.
      */
-    private final IntList placedProducers = new IntList();
+    private final ObjList<ScanPlan> placedScans = new ObjList<>();
+    /**
+     * The table of each of {@link #placedScans}, null for a decorrelation domain.
+     */
+    private final ObjList<PlanTable> placedTables = new ObjList<>();
+    /**
+     * What the generator placed in the factory tree, in the order it placed it, see {@link #placementMark}: the entry
+     * of a decorrelation domain, or -1 for a scan of a table, which {@link #placedScans} holds at the same index.
+     */
+    private final IntList placements = new IntList();
     private final ObjList<PreparedFilter> preparedFilters = new ObjList<>();
     private final ObjList<TableColumnMetadata> projectionSlotColumns = new ObjList<>();
     /**
@@ -180,7 +190,9 @@ final class GenerationFrame implements Closeable, Mutable {
         schema.clear();
         columnReferenceCounts.clear();
         failure = freePendingProducers(failure);
-        placedProducers.clear();
+        placements.clear();
+        placedScans.clear();
+        placedTables.clear();
         sharedConsumerCounts.clear();
         sharedConsumerEntries.clear();
         sharedConsumers.clear();
@@ -240,7 +252,7 @@ final class GenerationFrame implements Closeable, Mutable {
         if (index < 0) {
             throw new IllegalStateException("decorrelation domain is generated twice");
         }
-        placedProducers.add(entry);
+        place(entry, null, null);
         pendingProducers.removeIndex(index);
         return sharedFactories.getQuick(entry);
     }
@@ -269,18 +281,29 @@ final class GenerationFrame implements Closeable, Mutable {
 
     /**
      * Replaces the factory, whose rows the generator proves empty, with an empty factory, consuming it, including on
-     * failure. When the factory holds decorrelation domains that other consumers share, the ones the generator placed
-     * from {@code producerLo} to {@code producerHi}, see {@link #producerMark}, the empty factory keeps the factory and
-     * opens those domains whenever it opens, so that their consumers keep reading them. The empty factory copies the
-     * metadata container: closeable metadata may own lookup state the copy must not retain once the factory closes.
+     * failure. The factory holds what the generator placed from {@code placementLo} to {@code placementHi}, see
+     * {@link #placementMark}. The empty factory checks, whenever it opens, that the context may read what each scan of
+     * a table among them references, as the scan would. When the factory holds decorrelation domains that other
+     * consumers share, the empty factory keeps the factory and opens those domains whenever it opens, so that their
+     * consumers keep reading them. The empty factory copies the metadata container: closeable metadata may own lookup
+     * state the copy must not retain once the factory closes.
      */
-    RecordCursorFactory emptied(int producerLo, int producerHi, RecordCursorFactory factory) {
+    RecordCursorFactory emptied(int placementLo, int placementHi, RecordCursorFactory factory) {
         final RecordCursorFactory empty;
+        ObjList<PartitionFrameCursorFactory> frames = null;
         try {
             final GenericRecordMetadata metadata = GenericRecordMetadata.copyOfNew(factory.getMetadata());
             ObjList<RecordCursorFactory> domains = null;
-            for (int i = producerLo; i < producerHi; i++) {
-                final int entry = placedProducers.getQuick(i);
+            for (int i = placementLo; i < placementHi; i++) {
+                final ScanPlan scan = placedScans.getQuick(i);
+                if (scan != null) {
+                    if (frames == null) {
+                        frames = new ObjList<>();
+                    }
+                    frames.add(ScanFactoryGenerator.newFrames(scan, null, placedTables.getQuick(i), PartitionFrameCursorFactory.ORDER_ASC));
+                    continue;
+                }
+                final int entry = placements.getQuick(i);
                 if (((AggregatePlan) sharedPlans.getQuick(entry)).getSharedConsumerCount() > 0) {
                     if (domains == null) {
                         domains = new ObjList<>();
@@ -289,10 +312,11 @@ final class GenerationFrame implements Closeable, Mutable {
                 }
             }
             if (domains != null) {
-                return new DomainKeepingEmptyRecordCursorFactory(metadata, factory, domains);
+                return new DomainKeepingEmptyRecordCursorFactory(metadata, frames, factory, domains);
             }
-            empty = new EmptyTableRecordCursorFactory(metadata);
+            empty = new EmptyTableRecordCursorFactory(metadata, frames);
         } catch (Throwable th) {
+            Misc.freeObjList(frames, th);
             Misc.free(factory, th);
             throw th;
         }
@@ -308,7 +332,23 @@ final class GenerationFrame implements Closeable, Mutable {
      * which domain reads may then share.
      */
     void placeProducer(LogicalPlan producer, RecordCursorFactory factory) {
-        placedProducers.add(addShared(producer, factory));
+        place(addShared(producer, factory), null, null);
+    }
+
+    /**
+     * Records the factory the generator built for a scan of a table at the scan's place in the factory tree, which an
+     * empty factory that replaces it authorizes, see {@link #emptied}.
+     */
+    void placeScan(ScanPlan scan, PlanTable table) {
+        place(-1, scan, table);
+    }
+
+    /**
+     * The mark of the next decorrelation domain or scan of a table the generator places in the factory tree: a factory
+     * it builds from here on holds what it places from this mark on, see {@link #emptied}.
+     */
+    int placementMark() {
+        return placements.size();
     }
 
     /**
@@ -342,14 +382,6 @@ final class GenerationFrame implements Closeable, Mutable {
      */
     void popPreparedFilter(Throwable primary) {
         Misc.free(preparedFilters.getQuick(--preparedFilterCount), primary);
-    }
-
-    /**
-     * The mark of the next decorrelation domain the generator places in the factory tree: a factory it builds from
-     * here on holds the domains it places from this mark on, see {@link #emptied}.
-     */
-    int producerMark() {
-        return placedProducers.size();
     }
 
     /**
@@ -436,5 +468,11 @@ final class GenerationFrame implements Closeable, Mutable {
         }
         pendingProducers.clear();
         return failure;
+    }
+
+    private void place(int entry, ScanPlan scan, PlanTable table) {
+        placements.add(entry);
+        placedScans.add(scan);
+        placedTables.add(table);
     }
 }

@@ -66,6 +66,12 @@ public interface PartitionFrameCursorFactory extends Sinkable, Closeable, Planna
         };
     }
 
+    /**
+     * Checks that the context may read what the scan references, as opening a cursor does, for a read of the table
+     * that binding proved empty and that opens no cursor.
+     */
+    void authorizeSelect(SqlExecutionContext executionContext) throws SqlException;
+
     @Override
     void close();
 

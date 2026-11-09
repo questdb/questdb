@@ -49,6 +49,11 @@ public class DenseRankFunctionFactory extends AbstractWindowFunctionFactory {
     }
 
     @Override
+    public boolean isPeerRanking() {
+        return true;
+    }
+
+    @Override
     public Function newInstance(
             int position,
             ObjList<Function> args,
