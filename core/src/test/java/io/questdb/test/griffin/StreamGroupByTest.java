@@ -698,6 +698,19 @@ public class StreamGroupByTest extends AbstractCairoTest {
             try (RecordCursorFactory factory = compiler.compile("SELECT sum, count() count FROM (SELECT k, sum(d) sum FROM s WHERE k IN ('b', 'd'))", context).getRecordCursorFactory()) {
                 Assert.assertEquals("sum\tcount\nnull\t2\n", read(factory, context));
             }
+            // A key column added after the data reads as a column top, so vectorized GROUP BY sums each frame alone.
+            engine.execute("ALTER TABLE s ADD COLUMN i INT", context);
+            final String[] intervals = {"", " WHERE ts IN '2024-01-01'", " WHERE ts IN '2024-01-02'", " WHERE ts >= '2024-01-03'"};
+            final double[] perInterval = {Double.NaN, Double.POSITIVE_INFINITY, Double.NaN, Double.NEGATIVE_INFINITY};
+            for (int i = 0; i < intervals.length; i++) {
+                final String sql = "SELECT i, sum(d) sum FROM s" + intervals[i];
+                if (parallel) {
+                    try (RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory()) {
+                        Assert.assertTrue(sql, plan(factory, context).contains("GroupBy vectorized: true"));
+                    }
+                }
+                assertSums(compiler, context, sql, new double[]{perInterval[i]});
+            }
         });
     }
 
