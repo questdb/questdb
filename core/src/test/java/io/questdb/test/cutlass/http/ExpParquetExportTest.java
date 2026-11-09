@@ -1677,9 +1677,11 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                             testHttpClient.setKeepConnection(true);
                             int fileIdx = 0;
                             for (String select : selects) {
-                                final StringSink plan = new StringSink();
-                                TestUtils.printSql(engine, sqlExecutionContext, "EXPLAIN SELECT " + select, plan);
-                                TestUtils.assertContains(plan, "CoveringIndex on: sym");
+                                assertQuery("SELECT " + select)
+                                        .withEngine(engine)
+                                        .withContext(sqlExecutionContext)
+                                        .noLeakCheck()
+                                        .assertsPlanContaining("CoveringIndex on: sym");
                                 for (int rowGroupSize : new int[]{1, 3, 7, 10, 1_000}) {
                                     HttpClient.Request req = testHttpClient.getHttpClient().newRequest("localhost", 9001);
                                     req.GET().url("/exp");
@@ -1744,9 +1746,11 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                         ) {
                             testHttpClient.setKeepConnection(true);
                             for (int s = 0; s < selects.length; s++) {
-                                final StringSink plan = new StringSink();
-                                TestUtils.printSql(engine, sqlExecutionContext, "EXPLAIN SELECT " + selects[s], plan);
-                                TestUtils.assertContains(plan, "CoveringIndex on: sym with: price, dbl");
+                                assertQuery("SELECT " + selects[s])
+                                        .withEngine(engine)
+                                        .withContext(sqlExecutionContext)
+                                        .noLeakCheck()
+                                        .assertsPlanContaining("CoveringIndex on: sym with: price, dbl");
                                 HttpClient.Request req = testHttpClient.getHttpClient().newRequest("localhost", 9001);
                                 req.GET().url("/exp");
                                 req.query("query", "SELECT " + selects[s]);

@@ -753,9 +753,8 @@ public class QwpEgressBackwardScanTest extends AbstractReusedServerQwpEgressTest
                         "SELECT x FROM (SELECT * FROM t ORDER BY ts DESC)",
                         "SELECT x FROM t WHERE ts IN '1970-01-02' ORDER BY ts DESC"
                 }) {
-                    assertPlanContains(serverMain, sql, "Row backward scan");
-                    assertPlanNotContains(serverMain, sql, "Sort");
-                    assertPlanNotContains(serverMain, sql, "Limit");
+                    assertQuery(serverMain, sql).assertsPlanContaining("Row backward scan");
+                    assertQuery(serverMain, sql).assertsPlanNotContaining("Sort", "Limit");
                 }
             }
         });
@@ -1172,23 +1171,13 @@ public class QwpEgressBackwardScanTest extends AbstractReusedServerQwpEgressTest
     private void assertBackwardScan(TestServerMain serverMain, QwpQueryClient client, String table, String where) throws Exception {
         final String desc = "SELECT * FROM " + table + " " + where + " ORDER BY ts DESC";
         final String asc = "SELECT * FROM " + table + " " + where + " ORDER BY ts";
-        assertPlanContains(serverMain, desc, "Row backward scan");
-        assertPlanContains(serverMain, asc, "Row forward scan");
+        assertQuery(serverMain, desc).assertsPlanContaining("Row backward scan");
+        assertQuery(serverMain, asc).assertsPlanContaining("Row forward scan");
         final List<String> descRows = qwpRows(client, desc);
         // oracle 1: the forward stream, reversed
         Assert.assertEquals(desc, reversed(qwpRows(client, asc)), descRows);
         // oracle 2: the engine's own cursor; x is the first column of every table here
         Assert.assertEquals(desc, inProcessRows(serverMain, desc, "x"), column(descRows, 0));
-    }
-
-    private void assertPlanContains(TestServerMain serverMain, String sql, String fragment) throws Exception {
-        final String plan = TestUtils.printSqlToString(serverMain.getEngine(), serverMain.getSqlExecutionContext(), "EXPLAIN " + sql, new StringSink());
-        Assert.assertTrue(sql + " -> " + plan, plan.contains(fragment));
-    }
-
-    private void assertPlanNotContains(TestServerMain serverMain, String sql, String fragment) throws Exception {
-        final String plan = TestUtils.printSqlToString(serverMain.getEngine(), serverMain.getSqlExecutionContext(), "EXPLAIN " + sql, new StringSink());
-        Assert.assertFalse(sql + " -> " + plan, plan.contains(fragment));
     }
 
     private QwpQueryClient connect(String options) {

@@ -34,7 +34,6 @@ import io.questdb.client.std.Decimal128;
 import io.questdb.client.std.Decimal256;
 import io.questdb.client.std.Decimal64;
 import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
-import io.questdb.std.str.StringSink;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -131,8 +130,7 @@ public class QwpEgressCoveringIndexTest extends AbstractReusedServerQwpEgressTes
                 serverMain.awaitTable("tc");
 
                 final String sql = "SELECT price, dbl, d18, d9 FROM tc WHERE sym = 'A'";
-                assertPlan(serverMain, sql, """
-                        QUERY PLAN
+                assertQuery(serverMain, sql).assertsPlan("""
                         SelectedRecord
                             CoveringIndex on: sym with: price, dbl, d18, d9
                               filter: sym='A'
@@ -151,11 +149,11 @@ public class QwpEgressCoveringIndexTest extends AbstractReusedServerQwpEgressTes
             try (TestServerMain serverMain = startEgressServer()) {
                 createPriceTable(serverMain, "tp", true);
                 final String inList = "SELECT sym, price, dbl FROM tp WHERE sym IN ('A', 'C')";
-                assertPlanContains(serverMain, inList, "CoveringIndex on: sym with: price, dbl");
+                assertQuery(serverMain, inList).assertsPlanContaining("CoveringIndex on: sym with: price, dbl");
                 // the merge emits rows in designated-timestamp order, keys interleaved
                 Assert.assertEquals("A\t1\t1.5\nA\t3\t3.5\nC\t4\t4.5\n", queryQwp(inList));
                 final String noCovering = "SELECT /*+ no_covering */ sym, price, dbl FROM tp WHERE sym = 'A'";
-                assertPlanNotContains(serverMain, noCovering, "CoveringIndex");
+                assertQuery(serverMain, noCovering).assertsPlanNotContaining("CoveringIndex");
                 Assert.assertEquals("A\t1\t1.5\nA\t3\t3.5\n", queryQwp(noCovering));
             }
         });
@@ -193,7 +191,7 @@ public class QwpEgressCoveringIndexTest extends AbstractReusedServerQwpEgressTes
                 createKeyTable(serverMain, "tx", rows);
                 CoveringIndexRecordCursorFactory.setMaxRowsPerFrameForTesting(1_000);
                 final String sql = "SELECT price FROM tx WHERE sym IN ('A', 'C')";
-                assertPlanContains(serverMain, sql, "CoveringIndex on: sym with: price");
+                assertQuery(serverMain, sql).assertsPlanContaining("CoveringIndex on: sym with: price");
                 try (QwpQueryClient client = QwpQueryClient.fromConfig("ws::addr=127.0.0.1:" + HTTP_PORT + ";failover=off;").withInitialCredit(1)) {
                     client.connect();
                     final byte[] status = {-1};
@@ -262,9 +260,9 @@ public class QwpEgressCoveringIndexTest extends AbstractReusedServerQwpEgressTes
                 for (String projection : projections) {
                     for (String keys : keyLists) {
                         final String covering = "SELECT " + projection + " FROM t_all WHERE sym IN (" + keys + ")";
-                        assertPlanContains(serverMain, covering, "CoveringIndex on: sym");
+                        assertQuery(serverMain, covering).assertsPlanContaining("CoveringIndex on: sym");
                         final String reference = "SELECT /*+ no_covering */ " + projection + " FROM t_all WHERE sym IN (" + keys + ")";
-                        assertPlanNotContains(serverMain, reference, "CoveringIndex");
+                        assertQuery(serverMain, reference).assertsPlanNotContaining("CoveringIndex");
                         final String expected = queryQwp(reference);
                         Assert.assertTrue(countLines(expected) > 500);
                         Assert.assertEquals(covering, expected, queryQwp(covering));
@@ -290,7 +288,7 @@ public class QwpEgressCoveringIndexTest extends AbstractReusedServerQwpEgressTes
                 serverMain.awaitTable("tt");
                 CoveringIndexRecordCursorFactory.setMaxRowsPerFrameForTesting(1);
                 final String sql = "SELECT price, qty FROM tt WHERE sym IN ('A', 'C')";
-                assertPlanContains(serverMain, sql, "CoveringIndex on: sym with: price, qty");
+                assertQuery(serverMain, sql).assertsPlanContaining("CoveringIndex on: sym with: price, qty");
                 Assert.assertEquals("1\tnull\n2\tnull\n3\t3.5\n5\t5.5\n", queryQwp(sql));
             }
         });
@@ -326,14 +324,14 @@ public class QwpEgressCoveringIndexTest extends AbstractReusedServerQwpEgressTes
             try (TestServerMain serverMain = startEgressServer()) {
                 createPriceTable(serverMain, "tp_bypass", false);
                 CoveringIndexRecordCursorFactory.setMaxRowsPerFrameForTesting(1);
-                assertPlanContains(serverMain, "SELECT price, dbl FROM tp_bypass WHERE sym IN ('A', 'C')", "CoveringIndex");
+                assertQuery(serverMain, "SELECT price, dbl FROM tp_bypass WHERE sym IN ('A', 'C')").assertsPlanContaining("CoveringIndex");
                 Assert.assertEquals("1\t1.5\n3\t3.5\n4\t4.5\n", queryQwp("SELECT price, dbl FROM tp_bypass WHERE sym IN ('A', 'C')"));
 
                 // one partition: the merge splits it into a frame per row
                 serverMain.execute("CREATE TABLE tp_none (sym SYMBOL, price LONG, dbl DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY NONE");
                 serverMain.execute("INSERT INTO tp_none VALUES ('A', 1, 1.5, '2024-01-01T00:00:00Z'), ('B', 2, 2.5, '2024-01-01T01:00:00Z'), ('C', 3, 3.5, '2024-01-02T00:00:00Z'), ('A', 4, 4.5, '2024-01-02T01:00:00Z')");
                 serverMain.execute("ALTER TABLE tp_none ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, dbl)");
-                assertPlanContains(serverMain, "SELECT price, dbl FROM tp_none WHERE sym IN ('A', 'C')", "CoveringIndex");
+                assertQuery(serverMain, "SELECT price, dbl FROM tp_none WHERE sym IN ('A', 'C')").assertsPlanContaining("CoveringIndex");
                 Assert.assertEquals("1\t1.5\n3\t3.5\n4\t4.5\n", queryQwp("SELECT price, dbl FROM tp_none WHERE sym IN ('A', 'C')"));
             }
         });
@@ -349,7 +347,7 @@ public class QwpEgressCoveringIndexTest extends AbstractReusedServerQwpEgressTes
                 serverMain.awaitTable("tp");
                 CoveringIndexRecordCursorFactory.setMaxRowsPerFrameForTesting(1);
                 final String sql = "SELECT price, dbl FROM tp WHERE sym IN ('A', 'C')";
-                assertPlanContains(serverMain, sql, "CoveringIndex");
+                assertQuery(serverMain, sql).assertsPlanContaining("CoveringIndex");
                 Assert.assertEquals("1\t1.5\n3\t3.5\n4\t4.5\n", queryQwp(sql));
                 Assert.assertEquals(queryQwp("SELECT /*+ no_covering */ price, dbl FROM tp WHERE sym IN ('A', 'C')"), queryQwp(sql));
             }
@@ -372,7 +370,7 @@ public class QwpEgressCoveringIndexTest extends AbstractReusedServerQwpEgressTes
             )) {
                 createKeyTable(serverMain, "tm", rows);
                 final String sql = "SELECT price, dbl FROM tm WHERE sym IN ('A', 'C')";
-                assertPlanContains(serverMain, sql, "CoveringIndex on: sym with: price, dbl");
+                assertQuery(serverMain, sql).assertsPlanContaining("CoveringIndex on: sym with: price, dbl");
                 try (QwpQueryClient client = newClient()) {
                     client.connect();
                     // a single frame of 40_000 rows outgrows the limit on its own
@@ -413,7 +411,7 @@ public class QwpEgressCoveringIndexTest extends AbstractReusedServerQwpEgressTes
                 createPriceTable(serverMain, "tp", true);
                 CoveringIndexRecordCursorFactory.setMaxRowsPerFrameForTesting(1);
                 serverMain.execute("CREATE VIEW tp_ac AS (SELECT price, dbl FROM tp WHERE sym IN ('A', 'C'))");
-                assertPlanContains(serverMain, "SELECT * FROM tp_ac", "CoveringIndex");
+                assertQuery(serverMain, "SELECT * FROM tp_ac").assertsPlanContaining("CoveringIndex");
                 Assert.assertEquals("1\t1.5\n3\t3.5\n4\t4.5\n", queryQwp("SELECT * FROM tp_ac"));
                 Assert.assertEquals("1\t1.5\n3\t3.5\n4\t4.5\n", queryQwp("WITH c AS (SELECT price, dbl FROM tp WHERE sym IN ('A', 'C')) SELECT * FROM c"));
                 Assert.assertEquals("1.5\t1\n3.5\t3\n4.5\t4\n", queryQwp("SELECT dbl, price FROM (SELECT price, dbl FROM tp WHERE sym IN ('A', 'C'))"));
@@ -454,11 +452,11 @@ public class QwpEgressCoveringIndexTest extends AbstractReusedServerQwpEgressTes
                     Assert.assertEquals("1\t1.5\n3\t3.5\n", queryQwp(client, sql, null));
                     serverMain.execute("ALTER TABLE tp ALTER COLUMN sym DROP INDEX");
                     serverMain.awaitTable("tp");
-                    assertPlanNotContains(serverMain, sql, "CoveringIndex");
+                    assertQuery(serverMain, sql).assertsPlanNotContaining("CoveringIndex");
                     Assert.assertEquals("1\t1.5\n3\t3.5\n", queryQwp(client, sql, null));
                     serverMain.execute("ALTER TABLE tp ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, dbl)");
                     serverMain.awaitTable("tp");
-                    assertPlanContains(serverMain, sql, "CoveringIndex");
+                    assertQuery(serverMain, sql).assertsPlanContaining("CoveringIndex");
                     Assert.assertEquals("1\t1.5\n3\t3.5\n", queryQwp(client, sql, null));
                 }
             }
@@ -569,9 +567,9 @@ public class QwpEgressCoveringIndexTest extends AbstractReusedServerQwpEgressTes
                 };
                 for (String projection : projections) {
                     final String covering = "SELECT " + projection + " FROM t_all WHERE sym = 'A'";
-                    assertPlanContains(serverMain, covering, "CoveringIndex on: sym");
+                    assertQuery(serverMain, covering).assertsPlanContaining("CoveringIndex on: sym");
                     final String reference = "SELECT /*+ no_covering */ " + projection + " FROM t_all WHERE sym = 'A'";
-                    assertPlanNotContains(serverMain, reference, "CoveringIndex");
+                    assertQuery(serverMain, reference).assertsPlanNotContaining("CoveringIndex");
                     final String expected = queryQwp(reference);
                     Assert.assertEquals(5, countLines(expected));
                     Assert.assertEquals(projection, expected, queryQwp(covering));
@@ -606,7 +604,7 @@ public class QwpEgressCoveringIndexTest extends AbstractReusedServerQwpEgressTes
                 serverMain.execute("ALTER TABLE tt ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)");
                 serverMain.awaitTable("tt");
                 final String sql = "SELECT price, qty FROM tt WHERE sym = 'A'";
-                assertPlanContains(serverMain, sql, "CoveringIndex on: sym with: price, qty");
+                assertQuery(serverMain, sql).assertsPlanContaining("CoveringIndex on: sym with: price, qty");
                 Assert.assertEquals("1\tnull\n2\tnull\n3\t3.5\n", queryQwp(sql));
             }
         });
@@ -632,7 +630,7 @@ public class QwpEgressCoveringIndexTest extends AbstractReusedServerQwpEgressTes
                 try (QwpQueryClient client = newClient()) {
                     client.connect();
                     final String a = "SELECT sym, venue, price FROM ts1 WHERE sym = 'A'";
-                    assertPlanContains(serverMain, a, "CoveringIndex on: sym with: venue, price");
+                    assertQuery(serverMain, a).assertsPlanContaining("CoveringIndex on: sym with: venue, price");
                     Assert.assertEquals("A\tnyse\t1\nA\tnull\t3\nA\tlse\t4\n", queryQwp(client, a, null));
                     Assert.assertEquals("B\tlse\t2\n", queryQwp(client, "SELECT sym, venue, price FROM ts1 WHERE sym = 'B'", null));
                     Assert.assertEquals("lse\tA\n", queryQwp(client, "SELECT venue, sym FROM ts1 WHERE sym = 'A' AND ts >= '2024-01-02'", null));
@@ -667,7 +665,7 @@ public class QwpEgressCoveringIndexTest extends AbstractReusedServerQwpEgressTes
                 serverMain.execute("ALTER TABLE tm ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, dbl)");
                 serverMain.awaitTable("tm");
                 final String sql = "SELECT price, dbl FROM tm WHERE sym = 'A'";
-                assertPlanContains(serverMain, sql, "CoveringIndex on: sym with: price, dbl");
+                assertQuery(serverMain, sql).assertsPlanContaining("CoveringIndex on: sym with: price, dbl");
 
                 try (QwpQueryClient client = newClient().withInitialCredit(1)) {
                     client.connect();
@@ -710,13 +708,13 @@ public class QwpEgressCoveringIndexTest extends AbstractReusedServerQwpEgressTes
         TestUtils.assertMemoryLeak(() -> {
             try (TestServerMain serverMain = startEgressServer()) {
                 createPriceTable(serverMain, "tp_bypass", false);
-                assertPlanContains(serverMain, "SELECT price, dbl FROM tp_bypass WHERE sym = 'A'", "CoveringIndex");
+                assertQuery(serverMain, "SELECT price, dbl FROM tp_bypass WHERE sym = 'A'").assertsPlanContaining("CoveringIndex");
                 Assert.assertEquals("1\t1.5\n3\t3.5\n", queryQwp("SELECT price, dbl FROM tp_bypass WHERE sym = 'A'"));
 
                 serverMain.execute("CREATE TABLE tp_none (sym SYMBOL, price LONG, dbl DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY NONE");
                 serverMain.execute("INSERT INTO tp_none VALUES ('A', 1, 1.5, '2024-01-01T00:00:00Z'), ('B', 2, 2.5, '2024-01-01T01:00:00Z'), ('A', 3, 3.5, '2024-01-02T00:00:00Z')");
                 serverMain.execute("ALTER TABLE tp_none ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, dbl)");
-                assertPlanContains(serverMain, "SELECT price, dbl FROM tp_none WHERE sym = 'A'", "CoveringIndex");
+                assertQuery(serverMain, "SELECT price, dbl FROM tp_none WHERE sym = 'A'").assertsPlanContaining("CoveringIndex");
                 Assert.assertEquals("1\t1.5\n3\t3.5\n", queryQwp("SELECT price, dbl FROM tp_none WHERE sym = 'A'"));
             }
         });
@@ -731,7 +729,7 @@ public class QwpEgressCoveringIndexTest extends AbstractReusedServerQwpEgressTes
                 serverMain.execute("ALTER TABLE tp CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'");
                 serverMain.awaitTable("tp");
                 final String sql = "SELECT price, dbl FROM tp WHERE sym = 'A'";
-                assertPlanContains(serverMain, sql, "CoveringIndex");
+                assertQuery(serverMain, sql).assertsPlanContaining("CoveringIndex");
                 Assert.assertEquals("1\t1.5\n3\t3.5\n", queryQwp(sql));
                 Assert.assertEquals(queryQwp("SELECT /*+ no_covering */ price, dbl FROM tp WHERE sym = 'A'"), queryQwp(sql));
             }
@@ -765,7 +763,7 @@ public class QwpEgressCoveringIndexTest extends AbstractReusedServerQwpEgressTes
                 serverMain.execute("ALTER TABLE tw ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price)");
                 serverMain.awaitTable("tw");
                 final String sql = "SELECT price FROM tw WHERE sym = 'A'";
-                assertPlanContains(serverMain, sql, "CoveringIndex on: sym with: price");
+                assertQuery(serverMain, sql).assertsPlanContaining("CoveringIndex on: sym with: price");
 
                 try (QwpQueryClient client = newClient().withInitialCredit(1)) {
                     client.connect();
@@ -829,7 +827,7 @@ public class QwpEgressCoveringIndexTest extends AbstractReusedServerQwpEgressTes
             try (TestServerMain serverMain = startEgressServer()) {
                 createPriceTable(serverMain, "tp", true);
                 serverMain.execute("CREATE VIEW tp_a AS (SELECT price, dbl FROM tp WHERE sym = 'A')");
-                assertPlanContains(serverMain, "SELECT * FROM tp_a", "CoveringIndex");
+                assertQuery(serverMain, "SELECT * FROM tp_a").assertsPlanContaining("CoveringIndex");
                 Assert.assertEquals("1\t1.5\n3\t3.5\n", queryQwp("SELECT * FROM tp_a"));
                 Assert.assertEquals("1\t1.5\n3\t3.5\n", queryQwp("WITH c AS (SELECT price, dbl FROM tp WHERE sym = 'A') SELECT * FROM c"));
                 Assert.assertEquals("1.5\t1\n3.5\t3\n", queryQwp("SELECT dbl, price FROM (SELECT price, dbl FROM tp WHERE sym = 'A')"));
@@ -888,20 +886,6 @@ public class QwpEgressCoveringIndexTest extends AbstractReusedServerQwpEgressTes
         Assert.assertEquals(rows / 3 * 2, count[0]);
     }
 
-    private static void assertPlan(TestServerMain serverMain, String sql, String expectedPlan) throws Exception {
-        Assert.assertEquals(expectedPlan, plan(serverMain, sql));
-    }
-
-    private static void assertPlanContains(TestServerMain serverMain, String sql, String fragment) throws Exception {
-        final String plan = plan(serverMain, sql);
-        Assert.assertTrue("plan of [" + sql + "] lacks [" + fragment + "]:\n" + plan, plan.contains(fragment));
-    }
-
-    private static void assertPlanNotContains(TestServerMain serverMain, String sql, String fragment) throws Exception {
-        final String plan = plan(serverMain, sql);
-        Assert.assertFalse("plan of [" + sql + "] has [" + fragment + "]:\n" + plan, plan.contains(fragment));
-    }
-
     private static int countLines(String text) {
         int n = 0;
         for (int i = 0, len = text.length(); i < len; i++) {
@@ -937,10 +921,6 @@ public class QwpEgressCoveringIndexTest extends AbstractReusedServerQwpEgressTes
 
     private static QwpQueryClient newClient() {
         return QwpQueryClient.fromConfig("ws::addr=127.0.0.1:" + HTTP_PORT + ";");
-    }
-
-    private static String plan(TestServerMain serverMain, String sql) throws Exception {
-        return TestUtils.printSqlToString(serverMain.getEngine(), serverMain.getSqlExecutionContext(), "EXPLAIN " + sql, new StringSink());
     }
 
     private static String queryQwp(String sql) {

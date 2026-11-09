@@ -33,6 +33,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractBootstrapTest;
+import io.questdb.test.QueryAssertion;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
@@ -90,6 +91,18 @@ public abstract class AbstractReusedServerQwpEgressTest extends AbstractBootstra
         } catch (Exception e) {
             throw new AssertionError(e);
         }
+    }
+
+    /**
+     * Starts a {@link QueryAssertion} on the engine and SQL execution context of
+     * {@code serverMain}. It skips the leak check: the running server allocates on its own
+     * threads, and each test checks for leaks around the whole server instead.
+     */
+    protected QueryAssertion assertQuery(TestServerMain serverMain, CharSequence query) {
+        return assertQuery(query)
+                .withEngine(serverMain.getEngine())
+                .withContext(serverMain.getSqlExecutionContext())
+                .noLeakCheck();
     }
 
     /**
