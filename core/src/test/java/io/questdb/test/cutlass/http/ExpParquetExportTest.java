@@ -2900,12 +2900,17 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     Files.close(fd);
                 }
 
-                String selectFromParquet = "read_parquet('" + filename + "')";
-                var expectedSink = new StringSink();
-                var actualSink = new StringSink();
-                TestUtils.printSql(engine, sqlExecutionContext, query, expectedSink);
-                TestUtils.printSql(engine, sqlExecutionContext, selectFromParquet, actualSink);
-                TestUtils.assertEquals(expectedSink, actualSink);
+                final StringSink expected = new StringSink();
+                TestUtils.printSql(engine, sqlExecutionContext, query, expected);
+                // The queries differ in their designated timestamps, so the assertion takes the
+                // one read_parquet() reports and checks that the rows follow it.
+                assertQuery("read_parquet('" + filename + "')")
+                        .withEngine(engine)
+                        .withContext(sqlExecutionContext)
+                        .noLeakCheck()
+                        .expectSize()
+                        .inferTimestamp()
+                        .returns(expected);
             }
         }
     }
