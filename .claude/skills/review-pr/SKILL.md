@@ -16,7 +16,7 @@ is run as `/skill:review-pr <args>`, the `<args>` are appended as a `User:` mess
 treat that text as `$ARGUMENTS`. The review target is a PR number/URL,
 `--range=<base>..<head>`, or both. The range head may be omitted (`--range=<base>..`)
 to review the working tree, including uncommitted changes. Both together review a
-PR's local commits, which may not be pushed yet: the PR supplies
+PR's local commits, which may not be pushed yet, as `fix-pr` does: the PR supplies
 the title, body, labels and comments, and the range supplies the code (Step 1). If
 neither is supplied, ask for one.
 
@@ -1023,7 +1023,7 @@ Critical findings that Step 3c rates below `--block-at`: real defects this PR in
 - **Suggested fix:** one or two lines
 - **Found in:** the PR or range, and the reviewed revision
 
-Offer to file them; do not file anything without being asked. `approve-pr` files them when it approves the PR, with the labels `bug` and `deferred` (`deferred` alone for a coverage gap). When `gh repo view questdb/questdb-enterprise` fails, as it does for OSS contributors, keep the drafts in the console report and file nothing.
+Offer to file them; do not file anything without being asked. `approve-pr` files them when it approves the PR, and `fix-pr` during its run, with the labels `bug` and `deferred` (`deferred` alone for a coverage gap). When `gh repo view questdb/questdb-enterprise` fails, as it does for OSS contributors, keep the drafts in the console report and file nothing.
 
 ### Moderate
 Non-blocking admitted issues worth fixing. Number them M1, M2, ... Every item must still include the three summary lines and its decisive evidence. Dynamic behavioral speculation is not allowed here.
