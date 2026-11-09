@@ -2612,7 +2612,7 @@ public class SqlUtil {
             @NotNull ViewWildcardSources wildcardSources,
             boolean isTimestampRequired
     ) {
-        if (model == null || !wildcardSources.visit(model, isTimestampRequired)) {
+        if (model == null || !wildcardSources.isFirstVisit(model, isTimestampRequired)) {
             return;
         }
         // The walk skips the sub-queries of expressions: they read their tables as the reader, and the
@@ -3423,6 +3423,13 @@ public class SqlUtil {
             return true;
         }
 
+        // Whether the walk of the columns the plan reads reaches the model for the first time under the
+        // timestamp requirement, and so visits it, which this records.
+        private boolean isFirstVisit(IQueryModel model, boolean isTimestampRequired) {
+            visitCount++;
+            return (isTimestampRequired ? visitedTimestampModels : visitedModels).add(model);
+        }
+
         // Whether root reaches target. A model of the parsed SELECT can drop out of the optimised one, when
         // optimisation replaces the models around it. The optimiser shares models, and the search stops at one
         // it has visited: it returns as soon as it finds target, so target is not under that model.
@@ -3463,13 +3470,6 @@ public class SqlUtil {
                 isReachable0(root, null, rootReachableModels);
             }
             return rootReachableModels.contains(target);
-        }
-
-        // Whether the walk of the columns the plan reads reaches the model for the first time under the
-        // timestamp requirement, and so visits it, which this records.
-        private boolean visit(IQueryModel model, boolean isTimestampRequired) {
-            visitCount++;
-            return (isTimestampRequired ? visitedTimestampModels : visitedModels).add(model);
         }
     }
 

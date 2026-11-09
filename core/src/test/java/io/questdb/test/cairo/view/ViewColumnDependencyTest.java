@@ -730,6 +730,10 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
             assertReads("SELECT v FROM v_alias", "{v_alias=[], x=[?a, ?b, ?ts, k]}", "SELECT v FROM v", "DECLARE @c := k SELECT * FROM v");
             assertOverrideDenied("SELECT v FROM v_alias", "DECLARE @c := b SELECT * FROM v", "permission denied [table=x, columns=b]");
             assertOverrideDenied("SELECT v FROM v_alias", "DECLARE @c := ts SELECT * FROM v", "permission denied [table=x, columns=ts]");
+            // The own plan of this view reads only k through v_alias, so only the compile of the reads planned
+            // otherwise scans ts, a and b through it, and they keep the mark v_alias gives them.
+            assertReads("SELECT k, v FROM v_alias", "{v_alias=[], x=[?a, ?b, ?ts, k]}", "SELECT v FROM v");
+            assertOverrideDenied("SELECT k, v FROM v_alias", "DECLARE @c := b SELECT * FROM v", "permission denied [table=x, columns=b]");
             assertReads("SELECT v FROM v_join", "{v_join=[], x=[?a, ?b, k], y=[?c, ?d, k]}", "SELECT v FROM v");
             assertOverrideDenied("SELECT v FROM v_join", "DECLARE @c := d SELECT * FROM v", "permission denied [table=y, columns=d]");
             assertReads("SELECT v FROM v_wildcard", "{v_wildcard=[], x=[?*, k]}", "SELECT v FROM v");

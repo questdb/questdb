@@ -9591,23 +9591,6 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    // The outputs of the view the top-down column alias of the model serves, null for every output, see
-    // recordKeptWholeOrigins(). A column no projection column or clause reached is one every read needs. Every column
-    // of a model a projection withholds serves the outputs of the reads that keep the model whole, see
-    // emitKeptWholeProjection().
-    private @Nullable IntHashSet recordedKeptWholeOrigins(IQueryModel model, CharSequence alias) {
-        if (!isSubQueryKeptWhole) {
-            return null;
-        }
-        final LowerCaseCharSequenceObjHashMap<IntHashSet> columnOrigins = keptWholeOrigins.get(model);
-        final IntHashSet origins = columnOrigins != null ? columnOrigins.get(alias) : null;
-        if (origins instanceof KeptWholeOrigins columnSet) {
-            // whoever takes the set shares it, so the column copies it before it adds to it, see recordKeptWholeOrigins()
-            columnSet.isOwned = false;
-        }
-        return origins;
-    }
-
     // Records that the outputs of the view in origins, or every output when it is null, need the top-down
     // column alias of the model, while the columns of a query propagate in kept-whole mode. A column serves
     // the outputs of every projection column and clause that reaches it: a read that names only the other
@@ -9682,6 +9665,23 @@ public class SqlOptimiser implements Mutable {
             collectSameModelProjectionColumns(column.getAst(), joinModel, false);
         }
         recordKeptWholeOrigins(joinModel, columnName, keptWholeEmittedOrigins);
+    }
+
+    // The outputs of the view the top-down column alias of the model serves, null for every output, see
+    // recordKeptWholeOrigins(). A column no projection column or clause reached is one every read needs. Every column
+    // of a model a projection withholds serves the outputs of the reads that keep the model whole, see
+    // emitKeptWholeProjection().
+    private @Nullable IntHashSet recordedKeptWholeOrigins(IQueryModel model, CharSequence alias) {
+        if (!isSubQueryKeptWhole) {
+            return null;
+        }
+        final LowerCaseCharSequenceObjHashMap<IntHashSet> columnOrigins = keptWholeOrigins.get(model);
+        final IntHashSet origins = columnOrigins != null ? columnOrigins.get(alias) : null;
+        if (origins instanceof KeptWholeOrigins columnSet) {
+            // whoever takes the set shares it, so the column copies it before it adds to it, see recordKeptWholeOrigins()
+            columnSet.isOwned = false;
+        }
+        return origins;
     }
 
     /**
