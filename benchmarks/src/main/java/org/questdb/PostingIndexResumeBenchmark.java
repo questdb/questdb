@@ -86,6 +86,7 @@ public class PostingIndexResumeBenchmark {
     private final LongList coverTops = new LongList();
     private final LongList coverTxns = new LongList();
     private final IntList coverTypes = new IntList();
+    private final MemoryCMARW keyMem = Vm.getCMARWInstance();
     private DefaultCairoConfiguration configuration;
     private CairoEngine engine;
     private FilesFacade ff;
@@ -156,6 +157,7 @@ public class PostingIndexResumeBenchmark {
             ff.close(symbolFd);
         }
         columnVersions.close();
+        keyMem.close();
         sqlContext.close();
         engine.close();
         ff.rmdir(path.of(root));
@@ -168,8 +170,9 @@ public class PostingIndexResumeBenchmark {
     }
 
     private void rebuild() {
+        // As ADD INDEX does for a partition it cannot reuse: start over from an empty chain.
+        PostingIndexUtils.resetIndex(ff, path, plen, "s", -1, keyMem);
         try (SymbolColumnIndexer indexer = new SymbolColumnIndexer(configuration, IndexType.POSTING)) {
-            indexer.getWriter().setCurrentTableTxn(0);
             indexer.configureWriter(path, "s", -1, 0, 0, -1);
             if (isCovering) {
                 indexer.configureCovering(coverNames, coverTxns, coverTops, coverShifts, coverColumns, coverTypes, -1);

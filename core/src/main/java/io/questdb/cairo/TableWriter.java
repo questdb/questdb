@@ -269,12 +269,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private static final int ROW_ACTION_OPEN_PARTITION = 0;
     private static final int ROW_ACTION_SWITCH_PARTITION = 4;
     private static final int TODO_META_INDEX_OFFSET = 48;
-    // The txn at which writeIndex runs the posting recovery walk. The column it indexes has no committed posting
-    // chain, so an entry that an interrupted build left on disk is visible to nobody, whatever txn tagged it. A commit
-    // since that build may have reached the tag, and a walk at the table txn would keep the entry and rebuild over it.
-    // A build tags its entries with the table txn + 1, never less than 1, so a walk at this txn drops them all. A
-    // negative value would skip the walk.
-    private static final long UNINDEXED_COLUMN_RECOVERY_TXN = 0;
     // Starting copy ratios of a WAL apply block, see getWalBlockCopyRatio(): p90-ish values of the market-loader
     // bench, since under-estimating the copy is the expensive direction (dynamic-block-size.md, section 4).
     private static final double WAL_BLOCK_COPY_RATIO_MERGE = 0.15;
@@ -11433,8 +11427,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return;
         }
 
-        // ALTER TABLE ALTER COLUMN ADD INDEX: building a fresh index, no live indexer holds the .pk. The writer opens
-        // below drop whatever chain an interrupted build left in it, see UNINDEXED_COLUMN_RECOVERY_TXN.
+        // ALTER TABLE ALTER COLUMN ADD INDEX: building a fresh index, no live indexer holds the .pk. An interrupted
+        // build can leave its chain here, torn by a power loss or naming files a checkpoint copy lost. The column has
+        // no committed index, so nothing reads that chain: start over from an empty one.
+        if (IndexType.isPosting(indexType)) {
+            PostingIndexUtils.resetIndex(ff, path, plen, columnName, columnNameTxn, ddlMem);
+        }
         createIndexFiles(columnName, columnNameTxn, indexValueBlockSize, indexType, plen, true, true);
 
         final long lastPartitionTs = txWriter.getLastPartitionTimestamp();
@@ -11448,7 +11446,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // follower bound to a closed mapping has no file to read.
         if (isLastPartitionAppendBlocked() || isLastPartitionClosed()) {
             // A COMPOSITE last partition is left closed, so there is no column mapping to follow.
-            indexer.getWriter().setCurrentTableTxn(UNINDEXED_COLUMN_RECOVERY_TXN);
+            indexer.getWriter().setCurrentTableTxn(txWriter.getTxn());
             indexer.configureWriter(path.trimTo(plen), columnName, columnNameTxn, columnTop, lastPartitionTs, lastPartitionNameTxn);
             configureCoveringIfNeeded(indexer, columnIndex, lastPartitionTs);
             indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn() + 1);
@@ -11471,7 +11469,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         // set indexer up to continue functioning as normal
-        indexer.getWriter().setCurrentTableTxn(UNINDEXED_COLUMN_RECOVERY_TXN);
+        indexer.getWriter().setCurrentTableTxn(txWriter.getTxn());
         indexer.configureFollowerAndWriter(path.trimTo(plen), columnName, columnNameTxn, getPrimaryColumn(columnIndex), columnTop, lastPartitionTs, lastPartitionNameTxn);
         configureCoveringIfNeeded(indexer, columnIndex, lastPartitionTs);
         // Tag this seal's chain entry with the txn the upcoming
@@ -11511,25 +11509,28 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         path.trimTo(plen);
         // The whole DIRECTORY's shared frame, not one piece's rows - see getPartitionPhysicalRowCount.
         final long partitionSize = getPartitionFileRowCountByTimestamp(timestamp);
-        if (IndexType.isPosting(indexType) && PostingIndexBuildValidator.isComplete(
-                ff, path, columnName, columnNameTxn, txWriter.getTxn() + 1, partitionSize,
-                metadata.getCoveringColumnIndices(columnIndex), columnVersionWriter, timestamp
-        )) {
-            LOG.info().$("skipping already-indexed partition [path=").$substr(pathRootSize, path).I$();
-            return;
+        if (IndexType.isPosting(indexType)) {
+            if (PostingIndexBuildValidator.isComplete(
+                    ff, path, columnName, columnNameTxn, txWriter.getTxn() + 1, partitionSize,
+                    metadata.getCoveringColumnIndices(columnIndex), columnVersionWriter, timestamp
+            )) {
+                LOG.info().$("skipping already-indexed partition [path=").$substr(pathRootSize, path).I$();
+                return;
+            }
+            // An interrupted ADD INDEX can leave a chain that covers part of the partition, torn by a power loss, and
+            // a checkpoint can copy a .pk without the files it names. The probe did not prove this one reusable, and
+            // the column has no committed index, so nothing reads it: start over from an empty chain.
+            PostingIndexUtils.resetIndex(ff, path, plen, columnName, columnNameTxn, ddlMem);
         }
         LOG.info().$("indexing [path=").$substr(pathRootSize, path).I$();
 
-        // An interrupted ADD INDEX can leave a complete .pk without its .pv/covering files in a checkpoint, and a
-        // commit since then can make its entries look committed. Unless the probe proved the whole build reusable,
-        // configureWriter() drops that chain before rebuilding, see UNINDEXED_COLUMN_RECOVERY_TXN.
         createIndexFiles(columnName, columnNameTxn, indexValueBlockSize, indexType, plen, true, true);
         final long columnTop = columnVersionWriter.getColumnTop(timestamp, columnIndex);
 
         if (columnTop > -1 && partitionSize > columnTop) {
             long columnDataFd = openRO(ff, dFile(path.trimTo(plen), columnName, columnNameTxn), LOG);
             try {
-                indexer.getWriter().setCurrentTableTxn(UNINDEXED_COLUMN_RECOVERY_TXN);
+                indexer.getWriter().setCurrentTableTxn(txWriter.getTxn());
                 indexer.configureWriter(path.trimTo(plen), columnName, columnNameTxn, columnTop, timestamp, txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp));
                 configureCoveringIfNeeded(indexer, columnIndex, timestamp);
                 // Tag this seal's chain entry with the txn the upcoming
@@ -11726,6 +11727,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // parquet partition
         path.trimTo(plen);
         LOG.info().$("indexing parquet [path=").$substr(pathRootSize, path).I$();
+        // As for a native partition, nothing reads what an interrupted ADD INDEX left here: start over.
+        if (IndexType.isPosting(indexType)) {
+            PostingIndexUtils.resetIndex(ff, path, plen, columnName, columnNameTxn, ddlMem);
+        }
 
         long parquetAddr = 0;
         long parquetSize = 0;

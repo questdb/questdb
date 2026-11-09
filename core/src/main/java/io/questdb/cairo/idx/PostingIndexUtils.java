@@ -25,6 +25,7 @@
 package io.questdb.cairo.idx;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
@@ -1721,6 +1722,51 @@ public final class PostingIndexUtils {
         return anyFailed[0];
     }
 
+    /**
+     * Resets the posting index of one column instance in a partition directory to an empty chain, for a column whose
+     * index is not committed: ADD INDEX does it before it builds the index, and checkpoint restore for a column the
+     * restored metadata does not index. Nothing reads what an earlier attempt left in the directory, and a crash or a
+     * copy can leave its chain torn, so the chain is never opened: the key file and every sealed file of the instance
+     * go. The new chain starts past every sealTxn the old one counted or left a file for, so a seal purge queued for
+     * one of those files cannot reach a file of the new chain.
+     *
+     * @return {@code false} when the directory holds no key file of the instance, so there was nothing to reset
+     */
+    public static boolean resetIndex(
+            FilesFacade ff,
+            Path path,
+            int pathTrimTo,
+            CharSequence columnName,
+            long postingColumnNameTxn,
+            MemoryMA keyMem
+    ) {
+        try {
+            if (!ff.exists(keyFileName(path.trimTo(pathTrimTo), columnName, postingColumnNameTxn))) {
+                return false;
+            }
+            final long lastSealTxn = readLastSealTxn(ff, path, pathTrimTo, columnName, postingColumnNameTxn);
+            if (removeAllSealedFiles(ff, path, pathTrimTo, columnName, postingColumnNameTxn)) {
+                throw CairoException.critical(ff.errno()).put("could not remove posting index files [path=")
+                        .put(path.trimTo(pathTrimTo)).put(", column=").put(columnName).put(']');
+            }
+            // A new key file rather than a rewrite: an older partition version may share the old one through a hard link.
+            final LPSZ keyFile = keyFileName(path.trimTo(pathTrimTo), columnName, postingColumnNameTxn);
+            if (!ff.removeQuiet(keyFile) && ff.exists(keyFile)) {
+                throw CairoException.critical(ff.errno()).put("could not remove posting index key file [path=")
+                        .put(keyFile).put(']');
+            }
+            keyMem.smallFile(ff, keyFile, MemoryTag.MMAP_INDEX_WRITER);
+            try {
+                PostingIndexWriter.initKeyMemory(keyMem, lastSealTxn + 1);
+            } finally {
+                keyMem.close();
+            }
+            return true;
+        } finally {
+            path.trimTo(pathTrimTo);
+        }
+    }
+
     public static void scanSealedFiles(
             FilesFacade ff,
             Path path,
@@ -2030,6 +2076,51 @@ public final class PostingIndexUtils {
         } catch (NumericException e) {
             return PARSE_FAIL;
         }
+    }
+
+    /**
+     * The highest sealTxn that a stable header page of the instance's key file counted, or that a sealed file of the
+     * instance names, or -1. Matches files the way {@link #removeAllSealedFiles} does.
+     */
+    private static long readLastSealTxn(
+            FilesFacade ff,
+            Path path,
+            int pathTrimTo,
+            CharSequence columnName,
+            long postingColumnNameTxn
+    ) {
+        final long[] lastSealTxn = {-1};
+        final long fd = ff.openRO(keyFileName(path.trimTo(pathTrimTo), columnName, postingColumnNameTxn));
+        if (fd > -1) {
+            try {
+                for (long page = PAGE_A_OFFSET; page <= PAGE_B_OFFSET; page += PAGE_SIZE) {
+                    final long sequence = ff.readNonNegativeLong(fd, page + V2_HEADER_OFFSET_SEQUENCE_START);
+                    if (sequence > 0 && (sequence & 1L) == 0
+                            && sequence == ff.readNonNegativeLong(fd, page + V2_HEADER_OFFSET_SEQUENCE_END)) {
+                        lastSealTxn[0] = Math.max(lastSealTxn[0], ff.readNonNegativeLong(fd, page + V2_HEADER_OFFSET_GEN_COUNTER));
+                    }
+                }
+            } finally {
+                ff.close(fd);
+            }
+        }
+        final long coverFilePostingColumnNameTxn = coverFilePostingColumnNameTxn(postingColumnNameTxn);
+        scanSealedFiles(ff, path, pathTrimTo, columnName, new SealedFileVisitor() {
+            @Override
+            public void onCoverDataFile(int includeIdx, long filePostingColumnNameTxn, long coveredColumnNameTxn, long sealTxn) {
+                if (filePostingColumnNameTxn == coverFilePostingColumnNameTxn) {
+                    lastSealTxn[0] = Math.max(lastSealTxn[0], sealTxn);
+                }
+            }
+
+            @Override
+            public void onValueFile(long fileColumnNameTxn, long sealTxn) {
+                if (fileColumnNameTxn == postingColumnNameTxn) {
+                    lastSealTxn[0] = Math.max(lastSealTxn[0], sealTxn);
+                }
+            }
+        });
+        return lastSealTxn[0];
     }
 
     private static int efFirstOrdinalForHigh(long srcAddr, long trailer, int bitsL, long high) {

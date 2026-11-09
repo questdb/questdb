@@ -26,9 +26,12 @@ package io.questdb.test.cairo.idx;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnVersionReader;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.idx.PostingIndexBuildValidator;
 import io.questdb.cairo.idx.PostingIndexChainEntry;
 import io.questdb.cairo.idx.PostingIndexChainHeader;
@@ -58,9 +61,17 @@ public class PostingIndexBuildValidatorTest extends AbstractCairoTest {
         // Merge-append WAL tables build the last partition's index through the writer that does not follow the column.
         setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
         assertMemoryLeak(() -> {
-            assertAddIndexDropsLeftoverEntry("historic", "BYPASS WAL", "2024-01-01");
-            assertAddIndexDropsLeftoverEntry("last_followed", "BYPASS WAL", "2024-01-02");
-            assertAddIndexDropsLeftoverEntry("last_merge_append", "WAL", "2024-01-02");
+            assertAddIndexDropsLeftoverEntry("historic", "BYPASS WAL", 0, false);
+            assertAddIndexDropsLeftoverEntry("last_followed", "BYPASS WAL", 1, false);
+            assertAddIndexDropsLeftoverEntry("last_merge_append", "WAL", 1, false);
+        });
+    }
+
+    @Test
+    public void testAddIndexDropsLeftoverEntryOfParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            assertAddIndexDropsLeftoverEntry("parquet", "BYPASS WAL", 0, true);
+            assertAddIndexDropsLeftoverEntry("parquet_wal", "WAL", 0, true);
         });
     }
 
@@ -404,6 +415,39 @@ public class PostingIndexBuildValidatorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRetryRebuildsLeftoverChainTornByPowerLoss() throws Exception {
+        setProperty(PropertyKey.CAIRO_MAX_SWAP_FILE_COUNT, 1);
+        final MetaSwapFailingFacade ff = new MetaSwapFailingFacade();
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE x (s SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            // three daily partitions of 10_000 rows, 'a' on even v and NULL on odd v
+            execute("""
+                    INSERT INTO x
+                    SELECT CASE WHEN x % 2 = 0 THEN 'a'::STRING ELSE NULL END, x, timestamp_sequence('2024-01-01', 8_640_000L)
+                    FROM long_sequence(30_000)
+                    """);
+            engine.releaseAllWriters();
+            final String sql = "ALTER TABLE x ALTER COLUMN s ADD INDEX TYPE POSTING INCLUDE (v)";
+            assertAddIndexFailsAtMetadataSwap(ff, sql);
+            engine.releaseAllWriters();
+            // A power loss kept the header and the size of the .pk the build left in a historic and in the active
+            // partition, but not the page their newest entries were on, which reads back as zeros.
+            final long historicSealTxn = loseHeadEntryPage("2024-01-01");
+            final long activeSealTxn = loseHeadEntryPage("2024-01-03");
+            execute(sql);
+            assertQuery("SELECT count(), sum(v) FROM x WHERE s = 'a'")
+                    .noLeakCheck().noRandomAccess().expectSize().withPlanContaining("CoveringIndex")
+                    .returns("count\tsum\n15000\t225015000\n");
+            assertQuery("SELECT count(), sum(v) FROM x WHERE s IS NULL")
+                    .noLeakCheck().noRandomAccess().expectSize()
+                    .returns("count\tsum\n15000\t225000000\n");
+            // The rebuilt chains start past every sealTxn the torn ones used.
+            Assert.assertTrue(readPostingSealTxn("2024-01-01") > historicSealTxn);
+            Assert.assertTrue(readPostingSealTxn("2024-01-03") > activeSealTxn);
+        });
+    }
+
+    @Test
     public void testRetryReusesCompletePartitionAfterMetadataFailure() throws Exception {
         setProperty(PropertyKey.CAIRO_MAX_SWAP_FILE_COUNT, 1);
         setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256);
@@ -539,10 +583,34 @@ public class PostingIndexBuildValidatorTest extends AbstractCairoTest {
                 reader.getMetadata().getColumnMetadata(columnIndex).getCoveringColumnIndices(), reader.getColumnVersionReader(), 0);
     }
 
+    // Zeroes the page of the partition's .pk that holds its head entry, and returns that entry's sealTxn.
+    private static long loseHeadEntryPage(String partitionName) throws Exception {
+        final long[] sealTxn = {-1};
+        try (Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(engine.verifyTableName("x")).concat(partitionName);
+            withKey(path, (mem, header, head) -> {
+                sealTxn[0] = head.sealTxn;
+                final long pageLo = header.headEntryOffset & ~(PAGE_SIZE - 1L);
+                for (long offset = pageLo, pageHi = Math.min(pageLo + PAGE_SIZE, mem.size()); offset < pageHi; offset += Long.BYTES) {
+                    mem.putLong(offset, 0);
+                }
+            });
+        }
+        Assert.assertTrue(sealTxn[0] > -1);
+        return sealTxn[0];
+    }
+
     private static PostingIndexChainEntry.Snapshot readHead(Path path) throws Exception {
         final PostingIndexChainEntry.Snapshot result = new PostingIndexChainEntry.Snapshot();
         withKey(path, (mem, header, head) -> PostingIndexChainEntry.read(mem, head.offset, head.coverCount, result));
         return result;
+    }
+
+    private static long readPostingSealTxn(String partitionName) {
+        try (Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(engine.verifyTableName("x")).concat(partitionName);
+            return readSealTxnFromKeyFile(configuration.getFilesFacade(), keyFileName(path, "s", -1));
+        }
     }
 
     private static void withKey(Path path, KeyAction action) throws Exception {
@@ -563,7 +631,7 @@ public class PostingIndexBuildValidatorTest extends AbstractCairoTest {
 
     // An interrupted build left an entry in the partition's .pk, a commit has since reached the txn that tags it, and
     // the .pv it names is gone. ADD INDEX must drop the entry rather than open it.
-    private void assertAddIndexDropsLeftoverEntry(String tableName, String walClause, String partitionName) throws Exception {
+    private void assertAddIndexDropsLeftoverEntry(String tableName, String walClause, int partitionIndex, boolean isParquet) throws Exception {
         execute("CREATE TABLE " + tableName + " (s SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY " + walClause);
         execute("""
                 INSERT INTO %s VALUES
@@ -573,15 +641,25 @@ public class PostingIndexBuildValidatorTest extends AbstractCairoTest {
                 ('b', 4, '2024-01-02T12:00')
                 """.formatted(tableName));
         drainWalQueue();
+        if (isParquet) {
+            execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+        }
         engine.releaseAllWriters();
         final TableToken tableToken = engine.verifyTableName(tableName);
         final long txn;
+        final long partitionTimestamp;
+        final long partitionNameTxn;
         try (TableReader reader = getReader(tableName)) {
             txn = reader.getTxn();
+            partitionTimestamp = reader.getPartitionTimestampByIndex(partitionIndex);
+            partitionNameTxn = reader.getTxFile().getPartitionNameTxn(partitionIndex);
+            Assert.assertEquals(isParquet, reader.getTxFile().isPartitionParquet(partitionIndex));
         }
         final FilesFacade ff = configuration.getFilesFacade();
         try (Path path = new Path()) {
-            path.of(configuration.getDbRoot()).concat(tableToken).concat(partitionName);
+            path.of(configuration.getDbRoot()).concat(tableToken);
+            TableUtils.setPathForNativePartition(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTimestamp, partitionNameTxn);
             final int plen = path.size();
             try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
                 writer.of(path, "s", -1, true);

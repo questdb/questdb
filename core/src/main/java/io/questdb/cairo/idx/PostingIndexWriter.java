@@ -373,6 +373,46 @@ public class PostingIndexWriter implements IndexWriter {
         initKeyMemory(keyMem, 0L);
     }
 
+    /**
+     * Writes the header pages of an empty chain whose first entry takes {@code startSealTxn}. The writer maps
+     * {@code .pv.{startSealTxn}} for the data of that entry.
+     */
+    public static void initKeyMemory(MemoryMA keyMem, long startSealTxn) {
+        // v2 layout: two 4 KB header pages followed by an empty entry region.
+        // Page A is published with sequence=2 (even, non-zero) and an empty
+        // chain. Page B is zeroed and stays inactive until the first
+        // publish flips the seqlock to it.
+        // GEN_COUNTER = startSealTxn - 1 so the very first appendNewEntry
+        // accepts exactly startSealTxn — that lines the first chain entry
+        // up with the .pv.{startSealTxn} file the writer is mapping.
+        keyMem.jumpTo(0);
+        keyMem.truncate();
+
+        // ----- Page A header (active, empty chain) -----
+        keyMem.putLong(2L);                                                  // SEQUENCE_START
+        keyMem.putLong(PostingIndexUtils.V2_FORMAT_VERSION);                 // FORMAT_VERSION
+        keyMem.putLong(PostingIndexUtils.V2_NO_HEAD);                        // HEAD_ENTRY_OFFSET
+        keyMem.putLong(0L);                                                  // ENTRY_COUNT
+        keyMem.putLong(PostingIndexUtils.V2_ENTRY_REGION_BASE);              // REGION_BASE
+        keyMem.putLong(PostingIndexUtils.V2_ENTRY_REGION_BASE);              // REGION_LIMIT
+        keyMem.putLong(startSealTxn - 1L);                                   // GEN_COUNTER
+        // Reserved bytes between GEN_COUNTER (offset 48) and SEQUENCE_END
+        // (offset 4088). Pad with zeros.
+        long pageAReservedBytes = PostingIndexUtils.V2_HEADER_OFFSET_SEQUENCE_END
+                - (PostingIndexUtils.V2_HEADER_OFFSET_GEN_COUNTER + Long.BYTES);
+        for (long i = 0; i < pageAReservedBytes; i += Long.BYTES) {
+            keyMem.putLong(0L);
+        }
+        Unsafe.storeFence();
+        keyMem.putLong(2L);                                                  // SEQUENCE_END
+
+        // ----- Page B header (inactive, all zeros) -----
+        for (int i = 0; i < PostingIndexUtils.PAGE_SIZE / Long.BYTES; i++) {
+            keyMem.putLong(0L);
+        }
+        // Entry region is empty; the file is exactly KEY_FILE_RESERVED bytes.
+    }
+
     @Override
     public void abandon() {
         // Unlike closeNoTruncate(), no seal here: the caller's files were already rewritten by a different writer
@@ -2327,42 +2367,6 @@ public class PostingIndexWriter implements IndexWriter {
      */
     private static long encodeCtxPeakBytes(int maxKeyCount) {
         return (long) maxKeyCount * 26L + 2048L;
-    }
-
-    private static void initKeyMemory(MemoryMA keyMem, long startSealTxn) {
-        // v2 layout: two 4 KB header pages followed by an empty entry region.
-        // Page A is published with sequence=2 (even, non-zero) and an empty
-        // chain. Page B is zeroed and stays inactive until the first
-        // publish flips the seqlock to it.
-        // GEN_COUNTER = startSealTxn - 1 so the very first appendNewEntry
-        // accepts exactly startSealTxn — that lines the first chain entry
-        // up with the .pv.{startSealTxn} file the writer is mapping.
-        keyMem.jumpTo(0);
-        keyMem.truncate();
-
-        // ----- Page A header (active, empty chain) -----
-        keyMem.putLong(2L);                                                  // SEQUENCE_START
-        keyMem.putLong(PostingIndexUtils.V2_FORMAT_VERSION);                 // FORMAT_VERSION
-        keyMem.putLong(PostingIndexUtils.V2_NO_HEAD);                        // HEAD_ENTRY_OFFSET
-        keyMem.putLong(0L);                                                  // ENTRY_COUNT
-        keyMem.putLong(PostingIndexUtils.V2_ENTRY_REGION_BASE);              // REGION_BASE
-        keyMem.putLong(PostingIndexUtils.V2_ENTRY_REGION_BASE);              // REGION_LIMIT
-        keyMem.putLong(startSealTxn - 1L);                                   // GEN_COUNTER
-        // Reserved bytes between GEN_COUNTER (offset 48) and SEQUENCE_END
-        // (offset 4088). Pad with zeros.
-        long pageAReservedBytes = PostingIndexUtils.V2_HEADER_OFFSET_SEQUENCE_END
-                - (PostingIndexUtils.V2_HEADER_OFFSET_GEN_COUNTER + Long.BYTES);
-        for (long i = 0; i < pageAReservedBytes; i += Long.BYTES) {
-            keyMem.putLong(0L);
-        }
-        Unsafe.storeFence();
-        keyMem.putLong(2L);                                                  // SEQUENCE_END
-
-        // ----- Page B header (inactive, all zeros) -----
-        for (int i = 0; i < PostingIndexUtils.PAGE_SIZE / Long.BYTES; i++) {
-            keyMem.putLong(0L);
-        }
-        // Entry region is empty; the file is exactly KEY_FILE_RESERVED bytes.
     }
 
     private static void putFixedValue(MemoryMARW mem, long addr, int valueSize) {

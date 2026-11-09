@@ -46,7 +46,7 @@ public final class PostingIndexBuildValidator {
     /**
      * Accepts only the single dense generation that seal() leaves after a complete build. The caller holds the
      * table writer lock and supplies the upcoming ADD INDEX txn, not the last committed txn: the build's files
-     * are complete but not yet committed. Check before opening an index writer, whose recovery would discard them.
+     * are complete but not yet committed. Check before {@link PostingIndexUtils#resetIndex}, which would discard them.
      * Column/partition versions in the paths identify the source files; the generation must cover the expected
      * physical row extent. A checkpoint can copy .pk without the .pv or covering files it names, so check their
      * published extents too. This reads metadata only, never the indexed column or the encoded postings.
