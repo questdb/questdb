@@ -163,6 +163,7 @@ public class FuzzRunner {
     private int timestampType = ColumnType.TIMESTAMP_MICRO;
     private int transactionCount;
     private double truncateProb;
+    private double vacuumProb = 0.001;
 
     public FuzzRunner() {
         checkNoSuspendedTablesRef = this::checkNoSuspendedTables;
@@ -596,6 +597,7 @@ public class FuzzRunner {
                 (int) sequencerMetadata.getMetadataVersion(),
                 setParquetEncodingProb,
                 addCoveringIndexProb, setTableFormatProb,
+                vacuumProb,
                 backfillProb
         );
     }
@@ -921,6 +923,13 @@ public class FuzzRunner {
      */
     public void setTimestampType(int timestampType) {
         this.timestampType = timestampType;
+    }
+
+    /**
+     * Inserts VACUUM before each generated transaction with this probability, independently of operation weights.
+     */
+    public void setVacuumProbability(double vacuumProb) {
+        this.vacuumProb = vacuumProb;
     }
 
     public void withDb(CairoEngine engine, SqlExecutionContext sqlExecutionContext) {

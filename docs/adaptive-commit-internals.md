@@ -639,6 +639,17 @@ write nothing, and the purge could remove the version the `_txn` on the device s
   membership. Structural column-type changes are not eligible for the suspended-table bypass. Physical partition
   conversions and background storage-policy tasks retain their existing publication cadence; they do not acquire
   a blanket two-save-point rule.
+- **`ALTER TABLE ... FORCE REINDEX PARQUET`** (`TableWriter.forceReindex`) rebuilds the indexes of Parquet
+  partitions outside the WAL, repairing their stale `_cv` column tops on the way: one node-local `_txn` commit per
+  partition, each giving the partition a new directory version whose files are hard links of the old one, with the
+  rebuilt index files of its own. Native partitions are left alone: their column files change in place (a squash
+  appends into them), so a hard-linked version would let those writes reach readers and checkpoints of the old one. No WAL replay redoes it, so a recovery to an earlier save point would bring stale
+  tops back; the statement ends with a best-effort inline save point (`advanceDurableEpochAfter`), and only then
+  removes the replaced directories, which the save point's partition pin keeps until the purge. A failure partway
+  through several partitions keeps the partitions already committed and still takes their save point, unless the
+  writer is distressed, in which case the next writer open reclaims the directories `_txn` does not name. The same
+  Parquet repair inside an `ADD INDEX` takes no save point: it is in the WAL, and a replay repeats it. On a replica
+  the table is not enrolled, so FORCE REINDEX takes no save point and removes the replaced directories right away.
 - **The old UDP receiver** writes outside the WAL. In `adaptive` mode it refuses WAL tables
   (`LineUdpParserImpl.refuseWalTable`), because recovery would roll its rows back.
 
