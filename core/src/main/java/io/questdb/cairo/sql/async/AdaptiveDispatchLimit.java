@@ -109,6 +109,14 @@ public final class AdaptiveDispatchLimit {
     }
 
     /**
+     * Returns whether the reader may stop before the last row: a parent announced a limited read
+     * with {@link #expectLimitedRead()}, or the cursor has a LIMIT of its own.
+     */
+    public boolean isLimitedRead() {
+        return isLimitedRead;
+    }
+
+    /**
      * Opens a read.
      *
      * @param limitRowCount the LIMIT of the cursor itself, Long.MAX_VALUE when it has none

@@ -89,6 +89,25 @@ public class AdaptiveDispatchLimitTest {
     }
 
     @Test
+    public void testIsLimitedRead() {
+        final AdaptiveDispatchLimit limit = new AdaptiveDispatchLimit(INITIAL_LIMIT);
+        Assert.assertFalse(limit.isLimitedRead());
+        // a read without a LIMIT of its own is limited once its parent announces it
+        limit.of(Long.MAX_VALUE);
+        Assert.assertFalse(limit.isLimitedRead());
+        limit.expectLimitedRead();
+        Assert.assertTrue(limit.isLimitedRead());
+        // toTop() keeps the read limited, and opening it again drops the parent's announcement
+        limit.toTop();
+        Assert.assertTrue(limit.isLimitedRead());
+        limit.of(Long.MAX_VALUE);
+        Assert.assertFalse(limit.isLimitedRead());
+        // a LIMIT of its own makes the read limited
+        limit.of(10);
+        Assert.assertTrue(limit.isLimitedRead());
+    }
+
+    @Test
     public void testKnownRowCountSizesToTheFramesStillNeeded() {
         final AdaptiveDispatchLimit limit = new AdaptiveDispatchLimit(INITIAL_LIMIT);
         // LIMIT 10 on the cursor

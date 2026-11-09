@@ -60,6 +60,8 @@ public class ParallelLimitedReadTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 16);
         // 1 caps every limited read at the start, 16 fills the queue at once
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, 1 + rnd.nextInt(16));
+        // the scans ahead of RIGHT and FULL joins start with frames of 1 to 100 rows
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_RAMP_START_ROWS, 1 + rnd.nextInt(100));
         super.setUp();
     }
 
@@ -181,6 +183,25 @@ public class ParallelLimitedReadTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testRightAndFullJoinLimitsReadPastTheRampFrames() throws Exception {
+        withWorkers((engine, ctx) -> {
+            // s holds every second row of t with v = 0
+            engine.execute("CREATE TABLE s AS (SELECT x * 2_000 x, x y FROM long_sequence(50))", ctx);
+            final String right = "SELECT a.x, b.y FROM t a RIGHT JOIN s b ON a.x = b.x WHERE a.v = 0";
+            assertRowsNoRandomAccess(engine, ctx, right + " LIMIT 3", rightJoinRows(0, 3));
+            assertRowsNoRandomAccess(engine, ctx, right + " LIMIT 20, 30", rightJoinRows(20, 30));
+            final String full = "SELECT a.x, b.y FROM t a FULL JOIN s b ON a.x = b.x WHERE a.v = 0";
+            assertRowsNoRandomAccess(engine, ctx, full + " LIMIT 3", fullJoinRows(0, 3));
+            assertRowsNoRandomAccess(engine, ctx, full + " LIMIT 95, 100", fullJoinRows(95, 100));
+            // no row of t passes the filter: the read collects every frame
+            assertRowsNoRandomAccess(engine, ctx, "SELECT a.x, b.y FROM t a RIGHT JOIN s b ON a.x = b.x WHERE a.v = -1 LIMIT 10", "x\ty\n");
+            // the only match sits in the last hour: the read passes every frame of the ramp-up
+            engine.execute("CREATE TABLE z AS (SELECT 99_000L x, 1L y FROM long_sequence(1))", ctx);
+            assertRowsNoRandomAccess(engine, ctx, "SELECT a.x, b.y FROM t a RIGHT JOIN z b ON a.x = b.x WHERE a.v = 0 LIMIT 1", "x\ty\n99000\t1\n");
+        });
+    }
+
     // Rows lo (inclusive) to hi (exclusive) of v < 500: x % 1000 < 500, x from 1.
     private static String dense(int lo, int hi) {
         final StringBuilder sb = new StringBuilder("x\n");
@@ -196,10 +217,36 @@ public class ParallelLimitedReadTest extends AbstractCairoTest {
         return sb.toString();
     }
 
+    // Rows lo (inclusive) to hi (exclusive) of the FULL join of t and s: every row of t with v = 0, x = 1000 * k,
+    // with y = k / 2 for the even k that s holds and NULL for the odd ones.
+    private static String fullJoinRows(int lo, int hi) {
+        final StringBuilder sb = new StringBuilder("x\ty\n");
+        for (long k = lo + 1; k <= Math.min(hi, 100); k++) {
+            sb.append(k * 1_000).append('\t');
+            if (k % 2 == 0) {
+                sb.append(k / 2);
+            } else {
+                sb.append("null");
+            }
+            sb.append('\n');
+        }
+        return sb.toString();
+    }
+
     private static String horizonRows(int lo, int hi) {
         final StringBuilder sb = new StringBuilder("x\toffset\ty\n");
         for (long k = lo + 1; k <= Math.min(hi, 100); k++) {
             sb.append(k * 1_000).append("\t0\t").append(k * 1_000).append('\n');
+        }
+        return sb.toString();
+    }
+
+    // Rows lo (inclusive) to hi (exclusive) of the RIGHT join of t and s: the rows of s, x = 2000 * k and y = k,
+    // in the order of t, as every row of s matches a row of t with v = 0.
+    private static String rightJoinRows(int lo, int hi) {
+        final StringBuilder sb = new StringBuilder("x\ty\n");
+        for (long k = lo + 1; k <= Math.min(hi, 50); k++) {
+            sb.append(k * 2_000).append('\t').append(k).append('\n');
         }
         return sb.toString();
     }

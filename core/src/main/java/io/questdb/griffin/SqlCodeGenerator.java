@@ -6224,6 +6224,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 enablePreTouch
                         );
                         perWorkerFilters = null;
+                        if (hasRightOrFullJoin(model)) {
+                            // The scan ahead of a RIGHT or FULL join takes no LIMIT, see getLimitLoFunctionOnly(),
+                            // so a LIMIT above the join reads it until the join has its rows. Its page frames
+                            // start small and ramp up, so that the join returns its first rows without waiting
+                            // for the filter to scan a whole page frame of up to cairo.sql.page.frame.max.rows rows.
+                            asyncJitFilterFactory.rampUpLimitedReads();
+                        }
                         return asyncJitFilterFactory;
                     } catch (SqlException | LimitOverflowException ex) {
                         // for these errors we are intentionally **not** rethrowing the exception
@@ -6278,6 +6285,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         enablePreTouch
                 );
                 perWorkerFilters = null;
+                if (hasRightOrFullJoin(model)) {
+                    // ramps up the page frames, as the JIT filter above does
+                    asyncFilterFactory.rampUpLimitedReads();
+                }
                 return asyncFilterFactory;
             }
             return new FilteredRecordCursorFactory(factory, filter);

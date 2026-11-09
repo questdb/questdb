@@ -57,6 +57,8 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
     // Used for random access: we may have to deserialize Parquet page frame.
     private final PageFrameMemoryPool frameMemoryPool;
     private final boolean hasDescendingOrder;
+    // The rows of the first page frame of a limited read whose frames ramp up, 0 when they do not.
+    private final int rampFirstFrameRowCount;
     private final PageFrameMemoryRecord record;
     private boolean allFramesActive;
     private long cursor = -1;
@@ -66,6 +68,7 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
     private long frameRowIndex;
     private PageFrameSequence<?> frameSequence;
     private boolean isOpen;
+    private boolean isRampingUpLimitedReads;
     // The OG rows remaining, used to reset the counter when re-running cursor from top().
     private long ogRowsRemaining;
     private PageFrameMemoryRecord recordB;
@@ -92,6 +95,7 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
         this.record = record;
         this.frameMemoryPool = frameMemoryPool;
         this.dispatchLimit = new AdaptiveDispatchLimit(configuration.getSqlParallelFilterDispatchLimit());
+        this.rampFirstFrameRowCount = configuration.getSqlPageFrameRampStartRows();
     }
 
     @Override
@@ -384,6 +388,12 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
 
     private void fetchNextFrame(boolean countOnly) {
         if (frameLimit == -1) {
+            // A parent that stops early, such as the LIMIT above a RIGHT or FULL join, reads the rows of
+            // a frame only once a worker filtered the whole frame. Frames that start small give it the
+            // first rows without filtering a regular frame of up to cairo.sql.page.frame.max.rows rows.
+            if (isRampingUpLimitedReads && rampFirstFrameRowCount > 0 && dispatchLimit.isLimitedRead()) {
+                frameSequence.rampUpFrameSizes(rampFirstFrameRowCount);
+            }
             frameSequence.prepareForDispatch();
             frameLimit = frameSequence.getFrameCount() - 1;
         }
@@ -479,5 +489,11 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
         if (recordB != null) {
             recordB.of(frameSequence.getSymbolTableSource());
         }
+    }
+
+    // Makes the page frames of every read that a parent may stop early start at
+    // cairo.sql.page.frame.ramp.start.rows rows and ramp up, see PageFrameCursor#rampUpFrameSizes(int).
+    void rampUpLimitedReads() {
+        isRampingUpLimitedReads = true;
     }
 }

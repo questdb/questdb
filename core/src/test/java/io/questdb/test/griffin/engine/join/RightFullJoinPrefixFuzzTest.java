@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.join;
 
+import io.questdb.PropertyKey;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -143,8 +144,13 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testFlatJoinWhereWithLimitReturnsRowsOfFlatJoinWhere() throws Exception {
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        // The scan ahead of a RIGHT or FULL join under a LIMIT n or a LIMIT lo, hi either starts with
+        // one-row page frames and grows them, or reads each partition of the small tables as one frame.
+        final int rampStartRows = rnd.nextInt(2);
+        LOG.info().$("page frame ramp-up [startRows=").$(rampStartRows).I$();
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_RAMP_START_ROWS, rampStartRows);
         assertMemoryLeak(() -> {
-            final Rnd rnd = TestUtils.generateRandom(LOG);
             createTables();
             final StringSink rows = new StringSink();
             final StringSink limitRows = new StringSink();

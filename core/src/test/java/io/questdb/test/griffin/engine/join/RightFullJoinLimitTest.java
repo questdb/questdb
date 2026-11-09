@@ -146,6 +146,14 @@ public class RightFullJoinLimitTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExecutionModesOverRampedPageFrames() throws Exception {
+        // the parallel filter ahead of the RIGHT or FULL join starts the scans of a LIMIT n and a
+        // LIMIT lo, hi with one-row page frames, and grows the frames from there
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_RAMP_START_ROWS, 1);
+        assertExecutionModes();
+    }
+
+    @Test
     public void testFullJoinKeepsRowsOfFirstTable() throws Exception {
         // Without a conjunct on w, the FULL join returns every row of t that passes x > 1, matched or not,
         // ahead of the unmatched rows of w, which the post-join filter drops.
