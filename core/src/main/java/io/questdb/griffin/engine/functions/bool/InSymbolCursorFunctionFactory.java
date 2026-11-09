@@ -110,14 +110,29 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
         private final Record.CharSequenceFunction func;
         private final StringSink sink = new StringSink();
         private final Function valueArg;
-        private final CharSequenceHashSet valueSet = new CharSequenceHashSet();
         private boolean stateInherited = false;
         private boolean stateShared = false;
+        private CharSequenceHashSet valueSet = new CharSequenceHashSet();
 
         public StrInCursorFunc(Function valueArg, Function cursorArg, Record.CharSequenceFunction func) {
             this.valueArg = valueArg;
             this.cursorArg = cursorArg;
             this.func = func;
+        }
+
+        @Override
+        public void cursorClosed() {
+            try {
+                BinaryFunction.super.cursorClosed();
+            } finally {
+                // A cached factory outlives its cursor: drop the subquery's values together with
+                // the capacity they grew to. Forget inherited state too, so that an init() that is
+                // not preceded by offerStateTo() rebuilds the set rather than reading an empty one.
+                if (valueSet.size() > 0) {
+                    valueSet = new CharSequenceHashSet();
+                }
+                stateInherited = false;
+            }
         }
 
         @Override
@@ -215,15 +230,28 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
     private static class SymbolInCursorFunc extends BooleanFunction implements BinaryFunction {
         private final Function cursorArg;
         private final Record.CharSequenceFunction func;
-        private final IntHashSet symbolKeys = new IntHashSet();
         private final SymbolFunction valueArg;
         private boolean stateInherited = false;
         private boolean stateShared = false;
+        private IntHashSet symbolKeys = new IntHashSet();
 
         public SymbolInCursorFunc(SymbolFunction valueArg, Function cursorArg, Record.CharSequenceFunction func) {
             this.valueArg = valueArg;
             this.cursorArg = cursorArg;
             this.func = func;
+        }
+
+        @Override
+        public void cursorClosed() {
+            try {
+                BinaryFunction.super.cursorClosed();
+            } finally {
+                // See StrInCursorFunc.cursorClosed().
+                if (symbolKeys.size() > 0) {
+                    symbolKeys = new IntHashSet();
+                }
+                stateInherited = false;
+            }
         }
 
         @Override

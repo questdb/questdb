@@ -45,17 +45,18 @@ import org.jetbrains.annotations.Nullable;
  */
 public abstract class AbstractCastToSymbolFunction extends SymbolFunction implements CastFunction {
     protected final Function arg;
-    protected final StringSink sink = new StringSink();
     /**
-     * Map for symbol table shortcuts. The default sentinel is {@link Numbers#INT_NULL}
+     * Sentinel of the {@link #symbolTableShortcut} map. The default is {@link Numbers#INT_NULL}
      * (not {@code -1}) so {@code -1}, which {@code length()} returns for a null, can be a
      * key; INT_NULL never reaches the map for INT/BYTE/SHORT/CHAR casts (filtered upstream).
      * The FLOAT cast supplies its own NaN-based sentinel since
      * {@code Float.floatToIntBits(-0.0f) == INT_NULL}.
      */
-    protected final IntIntHashMap symbolTableShortcut;
-    protected final ObjList<String> symbols = new ObjList<>();
+    private final int noKeyValue;
+    protected final StringSink sink = new StringSink();
     protected int next = 1;
+    protected IntIntHashMap symbolTableShortcut;
+    protected ObjList<String> symbols = new ObjList<>();
 
     public AbstractCastToSymbolFunction(Function arg) {
         this(arg, Numbers.INT_NULL);
@@ -63,8 +64,18 @@ public abstract class AbstractCastToSymbolFunction extends SymbolFunction implem
 
     protected AbstractCastToSymbolFunction(Function arg, int noKeyValue) {
         this.arg = arg;
+        this.noKeyValue = noKeyValue;
         this.symbolTableShortcut = new IntIntHashMap(16, 0.5, noKeyValue);
         symbols.add(null);
+    }
+
+    @Override
+    public void cursorClosed() {
+        try {
+            arg.cursorClosed();
+        } finally {
+            releaseDictionary();
+        }
     }
 
     @Override
@@ -80,10 +91,7 @@ public abstract class AbstractCastToSymbolFunction extends SymbolFunction implem
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         arg.init(symbolTableSource, executionContext);
-        symbolTableShortcut.clear();
-        symbols.clear();
-        symbols.add(null);
-        next = 1;
+        releaseDictionary();
     }
 
     @Override
@@ -166,5 +174,17 @@ public abstract class AbstractCastToSymbolFunction extends SymbolFunction implem
         sink.clear();
         sink.put(key);
         return Chars.toString(sink);
+    }
+
+    // A cached factory outlives its cursor. Replacing the collections, rather than clearing
+    // them, also gives back the capacity they grew to. newSymbolTable() hands out a copy, so
+    // nothing else holds on to them.
+    private void releaseDictionary() {
+        if (next > 1) {
+            symbolTableShortcut = new IntIntHashMap(16, 0.5, noKeyValue);
+            symbols = new ObjList<>();
+            symbols.add(null);
+            next = 1;
+        }
     }
 }

@@ -61,13 +61,22 @@ public class CastDoubleToSymbolFunctionFactory implements FunctionFactory {
     private static class Func extends SymbolFunction implements UnaryFunction {
         private final Function arg;
         private final StringSink sink = new StringSink();
-        private final LongIntHashMap symbolTableShortcut = new LongIntHashMap();
-        private final ObjList<String> symbols = new ObjList<>();
         private int next = 1;
+        private LongIntHashMap symbolTableShortcut = new LongIntHashMap();
+        private ObjList<String> symbols = new ObjList<>();
 
         public Func(Function arg) {
             this.arg = arg;
             symbols.add(null);
+        }
+
+        @Override
+        public void cursorClosed() {
+            try {
+                arg.cursorClosed();
+            } finally {
+                releaseDictionary();
+            }
         }
 
         @Override
@@ -124,10 +133,7 @@ public class CastDoubleToSymbolFunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             arg.init(symbolTableSource, executionContext);
-            symbolTableShortcut.clear();
-            symbols.clear();
-            symbols.add(null);
-            next = 1;
+            releaseDictionary();
         }
 
         @Override
@@ -166,6 +172,18 @@ public class CastDoubleToSymbolFunctionFactory implements FunctionFactory {
         @Override
         public CharSequence valueOf(int symbolKey) {
             return symbols.getQuick(TableUtils.toIndexKey(symbolKey));
+        }
+
+        // A cached factory outlives its cursor. Replacing the collections, rather than clearing
+        // them, also gives back the capacity they grew to. newSymbolTable() hands out a copy, so
+        // nothing else holds on to them.
+        private void releaseDictionary() {
+            if (next > 1) {
+                symbolTableShortcut = new LongIntHashMap();
+                symbols = new ObjList<>();
+                symbols.add(null);
+                next = 1;
+            }
         }
     }
 }

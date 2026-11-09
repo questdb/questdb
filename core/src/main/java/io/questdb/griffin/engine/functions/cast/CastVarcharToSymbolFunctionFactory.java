@@ -80,13 +80,22 @@ public class CastVarcharToSymbolFunctionFactory implements FunctionFactory {
 
     private static class Func extends SymbolFunction implements UnaryFunction {
         private final Function arg;
-        private final Utf8SequenceIntHashMap lookupMap = new Utf8SequenceIntHashMap();
-        private final ObjList<CharSequence> symbols = new ObjList<>();
+        private Utf8SequenceIntHashMap lookupMap = new Utf8SequenceIntHashMap();
         private int next = 1;
+        private ObjList<CharSequence> symbols = new ObjList<>();
 
         public Func(Function arg) {
             this.arg = arg;
             symbols.add(null);
+        }
+
+        @Override
+        public void cursorClosed() {
+            try {
+                arg.cursorClosed();
+            } finally {
+                releaseDictionary();
+            }
         }
 
         @Override
@@ -134,10 +143,7 @@ public class CastVarcharToSymbolFunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             arg.init(symbolTableSource, executionContext);
-            lookupMap.clear();
-            symbols.clear();
-            symbols.add(null);
-            next = 1;
+            releaseDictionary();
         }
 
         @Override
@@ -182,6 +188,18 @@ public class CastVarcharToSymbolFunctionFactory implements FunctionFactory {
                 return str;
             }
             return symbols.getQuick(lookupMap.valueAt(keyIndex));
+        }
+
+        // A cached factory outlives its cursor. Replacing the collections, rather than clearing
+        // them, also gives back the capacity they grew to. newSymbolTable() hands out a copy, so
+        // nothing else holds on to them.
+        private void releaseDictionary() {
+            if (next > 1) {
+                lookupMap = new Utf8SequenceIntHashMap();
+                symbols = new ObjList<>();
+                symbols.add(null);
+                next = 1;
+            }
         }
     }
 }

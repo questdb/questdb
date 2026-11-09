@@ -87,7 +87,6 @@ import io.questdb.std.ObjObjHashMap;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.ObjectStackPool;
 import io.questdb.std.QuietCloseable;
-import io.questdb.std.SimpleAssociativeCache;
 import io.questdb.std.Transient;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Uuid;
@@ -265,7 +264,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
     public void cacheIfPossible(
             @NotNull AssociativeCache<TypesAndSelect> tasCache,
-            @NotNull SimpleAssociativeCache<TypesAndInsert> taiCache
+            @NotNull AssociativeCache<TypesAndInsert> taiCache
     ) {
         if (isPortal()) {
             return;

@@ -68,6 +68,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
+import io.questdb.std.NoOpAssociativeCache;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjObjHashMap;
@@ -89,6 +90,7 @@ import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.ArrayDeque;
 import java.util.function.Consumer;
@@ -199,7 +201,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private long sendBufferPtr;
     private int sendBufferSize;
     // insert 'statements' are cached only for the duration of user session
-    private SimpleAssociativeCache<TypesAndInsert> taiCache;
+    private AssociativeCache<TypesAndInsert> taiCache;
     private final PGResumeCallback msgFlushRef = this::msgFlush0;
     private boolean tlsSessionStarting = false;
     private long totalReceived = 0;
@@ -250,7 +252,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             final boolean enableInsertCache = configuration.isInsertCacheEnabled();
             final int insertBlockCount = enableInsertCache ? configuration.getInsertCacheBlockCount() : 1;
             final int insertRowCount = enableInsertCache ? configuration.getInsertCacheRowCount() : 1;
-            this.taiCache = new SimpleAssociativeCache<>(insertBlockCount, insertRowCount);
+            // when the insert cache is disabled, the no-op cache frees inserts offered to it
+            this.taiCache = enableInsertCache
+                    ? new SimpleAssociativeCache<>(insertBlockCount, insertRowCount)
+                    : new NoOpAssociativeCache<>();
             this.taiPool = new WeakSelfReturningObjectPool<>(TypesAndInsert::new, insertBlockCount * insertRowCount);
             this.namedStatementLimit = configuration.getNamedStatementLimit();
 
@@ -337,6 +342,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         Misc.clear(pendingWriters);
         Misc.clear(authenticator);
         Misc.clear(bindVariableService);
+        // Cached inserts belong to the user session. An idle pooled context must not
+        // retain them, since they hold compiled factory trees.
+        Misc.clear(taiCache);
         bufferRemainingOffset = 0;
         bufferRemainingSize = 0;
         freezeRecvBuffer = false;
@@ -398,6 +406,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             fiberTask = new PGConnectionFiberTask(this, dispatcher, metrics, engine.getTimerShards());
         }
         return fiberTask;
+    }
+
+    @TestOnly
+    public AssociativeCache<TypesAndInsert> getInsertCache() {
+        return taiCache;
     }
 
     public void handleClientOperation(int operation) throws Exception {

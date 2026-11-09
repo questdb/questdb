@@ -74,17 +74,22 @@ public class CastDateToSymbolFunctionFactory implements FunctionFactory {
     private static class Func extends SymbolFunction implements UnaryFunction {
         private final Function arg;
         private final StringSink sink = new StringSink();
-        // The sentinel is Numbers.LONG_NULL rather than the default -1 so that -1
-        // (a perfectly legal DATE input -- 1ms before the epoch) can be stored as
-        // a key without colliding with the "empty slot" marker. LONG_NULL itself
-        // never reaches this map because it is filtered upstream in getInt()/getSymbol().
-        private final LongIntHashMap symbolTableShortcut = new LongIntHashMap(16, 0.5, Numbers.LONG_NULL);
-        private final ObjList<String> symbols = new ObjList<>();
         private int next = 1;
+        private LongIntHashMap symbolTableShortcut = newSymbolTableShortcut();
+        private ObjList<String> symbols = new ObjList<>();
 
         public Func(Function arg) {
             this.arg = arg;
             symbols.add(null);
+        }
+
+        @Override
+        public void cursorClosed() {
+            try {
+                arg.cursorClosed();
+            } finally {
+                releaseDictionary();
+            }
         }
 
         @Override
@@ -139,10 +144,7 @@ public class CastDateToSymbolFunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             arg.init(symbolTableSource, executionContext);
-            symbolTableShortcut.clear();
-            symbols.clear();
-            symbols.add(null);
-            next = 1;
+            releaseDictionary();
         }
 
         @Override
@@ -181,6 +183,26 @@ public class CastDateToSymbolFunctionFactory implements FunctionFactory {
         @Override
         public CharSequence valueOf(int symbolKey) {
             return symbols.getQuick(TableUtils.toIndexKey(symbolKey));
+        }
+
+        // The sentinel is Numbers.LONG_NULL rather than the default -1 so that -1
+        // (a perfectly legal DATE input -- 1ms before the epoch) can be stored as
+        // a key without colliding with the "empty slot" marker. LONG_NULL itself
+        // never reaches this map because it is filtered upstream in getInt()/getSymbol().
+        private static LongIntHashMap newSymbolTableShortcut() {
+            return new LongIntHashMap(16, 0.5, Numbers.LONG_NULL);
+        }
+
+        // A cached factory outlives its cursor. Replacing the collections, rather than clearing
+        // them, also gives back the capacity they grew to. newSymbolTable() hands out a copy, so
+        // nothing else holds on to them.
+        private void releaseDictionary() {
+            if (next > 1) {
+                symbolTableShortcut = newSymbolTableShortcut();
+                symbols = new ObjList<>();
+                symbols.add(null);
+                next = 1;
+            }
         }
     }
 }
