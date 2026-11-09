@@ -330,14 +330,23 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // runs end on departures install it.
     private final FrontierTruncateCrash frontierTruncateCrash = new FrontierTruncateCrash();
     // Heads a departure left below the newest timestamp the view has seen whose base coordinate
-    // the stretch of cycles without rows after it moved, over a batch: see commitRowlessStretch.
+    // the stretch of cycles without rows after it moved, past the commits of any late rows ahead
+    // of them, over a batch: see commitRowlessStretch.
     private int departureHeadAdvances;
     // Of those, the heads a sparse departure whose rebuild emitted no row re-stamped on the root
     // at the new frontier: see departNewestRowsOverSparseRoots.
     private int restampedHeadAdvances;
+    // Of departureHeadAdvances, the heads of filtered views whose in-order rows came straight
+    // after the departure, with no late row ahead of them: see commitRowlessStretch.
+    private int inOrderOnlyHeadAdvances;
     // Late rows a batch's filters dropped below the newest timestamp a view had seen after a
     // departure, each of whose resumes moved the head to its commit: see commitLateRowsTheFilterDrops.
     private int lateRowlessHeadAdvances;
+    // Filtered stretches of a batch that could commit late rows ahead of their in-order rows.
+    // Every other one, from the first, does, and the rest commit their in-order rows straight
+    // after the departure: see commitRowlessStretch. Counted rather than drawn, so a pinned-seed
+    // batch draws what it drew before.
+    private int lateRowStretchCandidates;
     // Departure episodes a batch ran. The episodes draw their stretch length and their unsealed
     // shape from it rather than from the run's random sequence, so a pinned-seed batch draws what
     // it drew before they existed.
@@ -951,6 +960,10 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         // and a fault that outlasts the pause retires the timeline at the fourth failure. Their
         // sparse departures re-stamp the head on the root at the new frontier inside a pause the
         // seal's failures armed ahead of them, and the stretch after it moves the head's base.
+        // Each batch's keeping departure leaves its head below the newest timestamp its filtered
+        // view has seen, so the batches run at least three stretches that may commit late rows,
+        // and every other one does: at least one commits late rows ahead of its in-order rows,
+        // and at least one commits its in-order rows straight after the departure.
         // A truncating one crashes between its frontier truncate's marker and the truncate's
         // publication, and the restart from what the crash left never restores.
         final long[][] seeds = {
@@ -972,6 +985,8 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 restoredAfterThePauseOwedSealEpisodes > restoredAfterThePauseResumedOwedSealEpisodes
         );
         Assert.assertTrue("no sparse departure re-stamped its head inside a pause", restampsInsideThePause > 0);
+        Assert.assertTrue("no late row the filter dropped below a departure moved the head", lateRowlessHeadAdvances > 0);
+        Assert.assertTrue("no departure's in-order rows moved its head with no late row ahead of them", inOrderOnlyHeadAdvances > 0);
         logFrontierTruncateCrashes();
         Assert.assertTrue("no crash interrupted a sparse departure's frontier truncate", headMissFrontierTruncateCrashes > 0);
     }
@@ -2423,34 +2438,44 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
 
     /**
      * Commits that put no row through the view after a departure, each past any duration cadence
-     * a run draws: one to three rows the view's filter drops, after, when {@code isLateRowStretchDrawn}
-     * and the departure left the head below the newest timestamp the view has seen, the late rows
-     * of {@link #commitLateRowsTheFilterDrops}; or, over a view with no filter, one
-     * column added to the base, which the view takes by restoring its runtime from the timeline
-     * in place, or, once the departure retired the timeline, a REPLACE_RANGE above every row that
-     * deletes nothing. A departure leaves the newest timestamp the view has seen above the newest
-     * row it holds, where a cycle without rows once sealed a root every later restart failed
-     * against. Asserts no root sits above that row, and that a head the departure left below that
-     * timestamp moved its base coordinate, which {@code isHeadRestamped} says a departure that
-     * emitted no row re-stamped.
+     * a run draws: one to three in-order rows the view's filter drops, above the newest timestamp
+     * the view has seen; or, over a view with no filter, one column added to the base, which the
+     * view takes by restoring its runtime from the timeline in place, or, once the departure
+     * retired the timeline, a REPLACE_RANGE above every row that deletes nothing. When
+     * {@code isLateRowStretchAllowed} and the departure left the head below the newest timestamp
+     * the view has seen, every other such filtered stretch, counted by lateRowStretchCandidates,
+     * commits the late rows of {@link #commitLateRowsTheFilterDrops} ahead of its in-order rows,
+     * and the rest commit their in-order rows straight after the departure. A departure leaves the
+     * newest timestamp the view has seen above the newest row it holds, where a cycle without rows
+     * once sealed a root every later restart failed against. Asserts no root sits above that row,
+     * and that a head the departure left below that timestamp, which {@code isHeadRestamped} says
+     * a departure that emitted no row re-stamped, moved its base coordinate past the commit of any
+     * late row. Over a filtered view nothing reached the window since that head, or since the last
+     * late row re-stamped it, so the in-order rows must move it to the commit of the last of them,
+     * on the root the departure left.
      */
     private void commitRowlessStretch(
             LiveViewRefreshJob job,
             @Nullable LongHashSet usedTs,
             boolean withWhere,
             boolean isHeadRestamped,
-            boolean isLateRowStretchDrawn
+            boolean isLateRowStretchAllowed
     ) throws Exception {
         final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
         Assert.assertNotNull(instance);
         final long headMaxTs = instance.getHeadCheckpointMaxTs();
         final boolean isDepartureHead = headMaxTs != Numbers.LONG_NULL && headMaxTs < instance.getLatestSeenTs();
-        final long headBaseSeqTxn = instance.getHeadCheckpointBaseSeqTxn();
+        final boolean isLateRowStretch = withWhere && isDepartureHead && isLateRowStretchAllowed
+                && lateRowStretchCandidates++ % 2 == 0;
+        // The base coordinate the stretch must move the head past: the one the departure left, or
+        // the commit of the last late row, which re-stamped the head there.
+        long headBaseSeqTxn = instance.getHeadCheckpointBaseSeqTxn();
         LOG.info().$("LV fuzz rowless stretch: head=").$ts(headMaxTs).$(", latestSeen=").$ts(instance.getLatestSeenTs())
-                .$(", filtered=").$(withWhere).$();
+                .$(", filtered=").$(withWhere).$(", lateRows=").$(isLateRowStretch).$();
         if (withWhere) {
-            if (isDepartureHead && isLateRowStretchDrawn) {
+            if (isLateRowStretch) {
                 commitLateRowsTheFilterDrops(job, usedTs, instance, headMaxTs);
+                headBaseSeqTxn = instance.getHeadCheckpointBaseSeqTxn();
             }
             long ts = Math.max(queryTimestamp("SELECT max(ts) FROM base"), instance.getLatestSeenTs());
             for (int c = 0, n = 1 + departureEpisodes % 3; c < n; c++) {
@@ -2476,9 +2501,20 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         assertNoCheckpointRootAboveTheNewestRow(instance);
         if (isDepartureHead) {
             Assert.assertTrue(
-                    "the stretch must move the base coordinate of the head the departure left",
+                    "the stretch must move the base coordinate of the head the departure left past any late row's commit",
                     instance.getHeadCheckpointBaseSeqTxn() > headBaseSeqTxn
             );
+            if (withWhere) {
+                Assert.assertEquals(
+                        "the in-order rows the filter drops must move the head to their commit",
+                        instance.getStateReader().getLvConsumedSeqTxn(),
+                        instance.getHeadCheckpointBaseSeqTxn()
+                );
+                Assert.assertEquals("on the root the departure left", headMaxTs, instance.getHeadCheckpointMaxTs());
+                if (!isLateRowStretch) {
+                    inOrderOnlyHeadAdvances++;
+                }
+            }
             departureHeadAdvances++;
             if (isHeadRestamped) {
                 restampedHeadAdvances++;
