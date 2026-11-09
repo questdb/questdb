@@ -691,10 +691,10 @@ public class QwpEgressBackwardScanTest extends AbstractReusedServerQwpEgressTest
                 createAllTypesTable(serverMain, "t", 800, 4, true);
                 serverMain.execute("ALTER TABLE t CONVERT PARTITION TO PARQUET WHERE ts < '1970-01-03'");
                 serverMain.awaitTable("t");
-                TestUtils.assertEquals(
-                        "count\n2\n",
-                        TestUtils.printSqlToString(serverMain.getEngine(), serverMain.getSqlExecutionContext(), "SELECT count() FROM table_partitions('t') WHERE isParquet", new StringSink())
-                );
+                assertQuery(serverMain, "SELECT count() FROM table_partitions('t') WHERE isParquet")
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("count\n2\n");
                 try (QwpQueryClient client = connect("")) {
                     assertBackwardScan(serverMain, client, "t", "");
                     assertBackwardScan(serverMain, client, "t", "WHERE ts >= '1970-01-01T20:00:00.000000Z'");
