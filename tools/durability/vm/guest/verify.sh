@@ -270,6 +270,21 @@ case "$ARM" in
             # owner for a JVM the agent killed.
             line="NOT_EVALUATED: verifier produced no verdict ($why)"
         fi
+        # The replay checks below may replace pass B's verdict, but not a product failure pass B
+        # found itself: a lost acked txn must not be filed as a harness fault because the replay
+        # client also died. Their finding is printed beside it instead. Naming the failures to
+        # keep, rather than the passes to replace, means a token missing here can relabel a
+        # failure but never pass it. LOUD_FAILURE is left out because its "table does not exist"
+        # form is renamed NO_COMMIT below, which is a pass.
+        sf_verdict() {  # LINE -> becomes the verdict unless pass B already reported a failure
+            case "$line" in
+                # Two lines, one from stdout and one from stderr: the caller reads the last, so
+                # keeping both could pass a failure. Replaced, as before.
+                *$'\n'*) line="$1" ;;
+                DURABILITY_FAILURE*|SILENT_CORRUPTION*) echo "DETAIL SF_ALSO_FOUND $1" ;;
+                *) line="$1" ;;
+            esac
+        }
         # The delta between the two passes is what the client put back.
         if [ "$SFREPLAY" = "compare" ] && [ "${sfa_distinct:--1}" -ge 0 ] 2>/dev/null; then
             sfb_distinct=$(read_result "$vbres" distinctIds)
@@ -280,7 +295,7 @@ case "$ARM" in
                 # finding about the harness rather than a durability verdict.
                 if [ "$delta" -lt 0 ]; then
                     echo "DETAIL SF_INDETERMINATE armA=$sfa_distinct armB=$sfb_distinct delta=$delta"
-                    line="NOT_EVALUATED qwp-sf: impossible negative replay delta ($delta) — the oracle's own numbers did not parse, so this boundary was not evaluated"
+                    sf_verdict "NOT_EVALUATED qwp-sf: impossible negative replay delta ($delta) — the oracle's own numbers did not parse, so this boundary was not evaluated"
                     sfb_distinct=-1
                 fi
             fi
@@ -289,31 +304,59 @@ case "$ARM" in
                 # At-risk rows are measured against what the client sent, not the server's own
                 # committed frontier: `F == C` says only that the server kept what it committed
                 # and is silent about rows it never committed, which is the set sf protects.
-                sent=$(grep -oE '^sent=[0-9]+' "$DB/_qwp_progress" 2>/dev/null | head -1 | cut -d= -f2)
+                # Each grep below matches nothing when its line is missing, and under
+                # `set -euo pipefail` that would end the script with no verdict: `|| true` lets the
+                # empty value reach the checks below, which report it.
+                sent=$(grep -oE '^sent=[0-9]+' "$DB/_qwp_progress" 2>/dev/null | head -1 | cut -d= -f2 || true)
                 : "${sent:=-1}"
-                if [ "$sent" -lt 0 ] 2>/dev/null; then
-                    echo "DETAIL SF_INDETERMINATE no sent= in _qwp_progress; cannot say what was at risk"
-                elif [ "$sfa_distinct" -lt "$sent" ] 2>/dev/null; then
-                    # The server alone held less than the client had sent, so this is the
-                    # boundary that tests the pairing: the client must put something back.
-                    atrisk=$(( sent - sfa_distinct ))
-                    shortfall=$(( sent - sfb_distinct ))
-                    if [ "$delta" -gt 0 ]; then
-                        echo "DETAIL SF_REPLAY_PROVEN sent=$sent serverAlone=$sfa_distinct atRisk=$atrisk"
-                        echo "DETAIL SF_REPLAY_PROVEN client replayed $delta rows; endToEndShortfall=$shortfall"
-                        # A residual shortfall is expected: sf_durability=periodic makes the
-                        # client's buffer durable only to its last sync, so rows sent after it
-                        # died with the client's disk. Reported so that window's size is visible.
-                    else
-                        # The failure this arm exists to catch: rows the client sent were missing
-                        # and the client replayed none of them. Overrides pass B's verdict, which
-                        # would otherwise read as a pass.
-                        line="DURABILITY_FAILURE qwp-sf: $atrisk rows the client sent were absent after recovery (sent=$sent serverAlone=$sfa_distinct) and the client replayed NOTHING — store-and-forward did not close the gap"
-                    fi
+                # What the client can replay is what its buffer held at the cut, not what it
+                # sent. sf_durability=periodic syncs the buffer only every sf_sync_interval, while
+                # the workload fsyncs `sent` after every batch, so a cut between the two leaves
+                # `sent` counting rows that died with the client's disk. The replay client reports
+                # the highest frame its startup recovery found. One frame is one batch: the
+                # workload turns off the client's own auto-flush, so only its flush() starts a
+                # frame, and it stops the recording if a flush ever publishes a different count.
+                batch=$(grep -oE '^batch=[0-9]+' "$DB/_qwp_progress" 2>/dev/null | head -1 | cut -d= -f2 || true)
+                rfsn=$(grep -oE 'sfRecoveredFsn=-?[0-9]+' /mnt/qdb/replay-client.log 2>/dev/null | head -1 | cut -d= -f2 || true)
+                if [ -z "$rfsn" ] || [ "${batch:-0}" -le 0 ] 2>/dev/null; then
+                    # Without both numbers the boundary cannot be judged. Never a pass: a replay
+                    # client that died before reporting is exactly what this arm must not miss.
+                    echo "DETAIL SF_INDETERMINATE sfRecoveredFsn='${rfsn}' batch='${batch:-}'"
+                    # The next boundary resets the device and deletes this log, so its end is kept
+                    # here: it tells a replay server that never came up from a client that failed.
+                    # `$a\` ends a last line the client was killed in the middle of, which would
+                    # otherwise swallow the verdict printed after it.
+                    tail -n 20 /mnt/qdb/replay-client.log 2>/dev/null \
+                        | sed -e 's/^/DETAIL SF_REPLAY_CLIENT /' -e '$a\' || true
+                    sf_verdict "NOT_EVALUATED qwp-sf: the replay client reported no recovered frame or _qwp_progress has no batch=, so the replay could not be judged (the end of the replay client's log, if any, is in the DETAIL SF_REPLAY_CLIENT lines)"
                 else
-                    # Legitimate: the server already held everything the client had sent, so the
-                    # replay had nothing to do. Reported, never counted as proof of the mechanism.
-                    echo "DETAIL SF_NOT_DEMONSTRATED server alone already held everything sent (sent=$sent serverAlone=$sfa_distinct); replay had nothing to recover"
+                    recovered=$(( (rfsn + 1) * batch ))
+                    echo "DETAIL SF_RECOVERED sfRecoveredFsn=$rfsn recoveredRows=$recovered sent=$sent serverAlone=$sfa_distinct afterReplay=$sfb_distinct"
+                    if [ "$sfb_distinct" -lt "$recovered" ]; then
+                        # The failure this arm exists to catch: the client's buffer held rows that
+                        # are still missing after it replayed. Overrides pass B's verdict, which
+                        # would otherwise read as a pass.
+                        sf_verdict "DURABILITY_FAILURE qwp-sf: the client recovered rows up to $recovered from its buffer but only $sfb_distinct were present after its replay (sent=$sent serverAlone=$sfa_distinct replayed=$delta) — store-and-forward did not close the gap"
+                    elif [ "$sent" -lt 0 ] 2>/dev/null; then
+                        # The replay restored every row it recovered, which is the bar. Without
+                        # `sent` there is no telling whether the server had lost any rows, so the
+                        # boundary is reported and not counted as proof of the mechanism.
+                        echo "DETAIL SF_INDETERMINATE no sent= in _qwp_progress; cannot say what was at risk"
+                    elif [ "$sfa_distinct" -ge "$sent" ]; then
+                        # Legitimate: the server already held everything the client had sent, so
+                        # the replay had nothing to do. Reported, never counted as proof.
+                        echo "DETAIL SF_NOT_DEMONSTRATED server alone already held everything sent (sent=$sent serverAlone=$sfa_distinct); replay had nothing to recover"
+                    elif [ "$recovered" -le "$sfa_distinct" ]; then
+                        # The rows the server lost were never synced to the client's buffer, so
+                        # nothing could replay them: the loss sf_durability=periodic allows.
+                        # Reported with its size, and not counted as proof of the mechanism.
+                        echo "DETAIL SF_NOT_DEMONSTRATED unsynced tail: $(( sent - sfa_distinct )) rows sent beyond serverAlone=$sfa_distinct were not in the client's synced buffer (recoveredRows=$recovered)"
+                    else
+                        # The server lost rows, the client's buffer held some of them, and the
+                        # replay restored all it held. Any rest is the unsynced tail.
+                        echo "DETAIL SF_REPLAY_PROVEN sent=$sent serverAlone=$sfa_distinct atRisk=$(( sent - sfa_distinct ))"
+                        echo "DETAIL SF_REPLAY_PROVEN client replayed $delta rows; unsyncedTail=$(( sent > sfb_distinct ? sent - sfb_distinct : 0 ))"
+                    fi
                 fi
             fi
         fi
