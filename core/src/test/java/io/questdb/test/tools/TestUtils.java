@@ -741,6 +741,12 @@ public final class TestUtils {
         assertEventually(assertion, 30, exceptionTypesToCatch);
     }
 
+    /**
+     * Runs {@code assertion} until it completes, for up to {@code timeoutSeconds}. A failure of
+     * one of {@code exceptionTypesToCatch}, or of a subclass, makes it try again; that includes
+     * errors such as {@link AssertionError} when the caller lists them. Any other failure, and
+     * the last one when the time is up, goes to the caller.
+     */
     public static void assertEventually(EventualCode assertion, int timeoutSeconds, Set<Class<?>> exceptionTypesToCatch) throws Exception {
         long maxSleepingTimeMillis = 1000;
         long nextSleepingTimeMillis = 10;
@@ -750,11 +756,8 @@ public final class TestUtils {
             try {
                 assertion.run();
                 return;
-            } catch (Exception error) {
-                if (!exceptionTypesToCatch.contains(error.getClass())) {
-                    throw error;
-                }
-                if (System.nanoTime() >= deadline) {
+            } catch (Throwable error) {
+                if (!isInstanceOfAny(exceptionTypesToCatch, error) || System.nanoTime() >= deadline) {
                     throw error;
                 }
             }
@@ -3232,6 +3235,15 @@ public final class TestUtils {
         StringSink ss = tlSink.get();
         ss.clear();
         return ss;
+    }
+
+    private static boolean isInstanceOfAny(Set<Class<?>> types, Throwable error) {
+        for (Class<?> type : types) {
+            if (type.isInstance(error)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static long partitionIncrement(TimestampDriver driver, int partitionBy, long fromTimestamp, int totalRows, int partitionCount) {
