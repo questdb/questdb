@@ -43,8 +43,28 @@ public class InterpolationUtil {
     static final StoreYFunction STORE_Y_LONG = InterpolationUtil::storeYLong;
     static final StoreYFunction STORE_Y_SHORT = InterpolationUtil::storeYShort;
 
+    /**
+     * Returns y at x on the line through the points (x1, y1) and (x2, y2).
+     * SampleByInterpolateRecordCursorFactory also passes an x outside [x1, x2], to extrapolate
+     * the leading and trailing gaps of a key.
+     * <p>
+     * x is a timestamp in micros or nanos, so for a large y the product {@code y1 * (x2 - x)}
+     * overflows to infinity before the division can bring it back, and the bucket would read as
+     * NULL. An overflow never yields a wrong finite value, only infinity or NaN, so this method
+     * keeps the direct form for its rounding and recomputes the value from the weights
+     * {@code (x2 - x) / (x2 - x1)} and {@code (x - x1) / (x2 - x1)} only when the direct form
+     * is not finite. For x within [x1, x2] both weights lie in [0, 1], and the recomputed value
+     * overflows only when it lies within rounding error of the double range limit. Outside
+     * [x1, x2] one weight exceeds 1, and a y above Double.MAX_VALUE divided by that weight still
+     * overflows, so the bucket reads as NULL.
+     */
     public static double interpolate(long x, long x1, double y1, long x2, double y2) {
-        return (y1 * (x2 - x) + y2 * (x - x1)) / (x2 - x1);
+        final double y = (y1 * (x2 - x) + y2 * (x - x1)) / (x2 - x1);
+        if (Double.isFinite(y)) {
+            return y;
+        }
+        final double span = x2 - x1;
+        return y1 * ((x2 - x) / span) + y2 * ((x - x1) / span);
     }
 
     public static void interpolateByte(
