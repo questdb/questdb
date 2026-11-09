@@ -35,6 +35,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
@@ -53,6 +54,7 @@ import org.junit.Test;
 import java.util.Formatter;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -414,6 +416,191 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCvReadSafeHoldsNoVersionAheadOfExpected() throws Exception {
+        // A commit publishes _cv before the _txn record that references it. Until _txn names the new version, the
+        // commit can still fail: the writer rolls _cv back and its next commit publishes other column versions under
+        // the same number. A reader holding the failed commit's column versions would find that number matching the
+        // next commit's _txn and keep them.
+        assertMemoryLeak(() -> {
+            final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+            try (Path path = new Path()) {
+                final LPSZ cvPath = path.of(root).concat("_cv").$();
+                try (
+                        ColumnVersionWriter w = new ColumnVersionWriter(configuration, cvPath, true);
+                        ColumnVersionReader held = new ColumnVersionReader().ofRO(ff, cvPath);
+                        ColumnVersionReader fresh = new ColumnVersionReader();
+                        ColumnVersionReader single = new ColumnVersionReader().ofRO(ff, cvPath)
+                ) {
+                    w.upsert(1, 0, 1, 10);
+                    w.commit();
+                    Assert.assertEquals(1, w.getVersion());
+                    // _txn names version 1
+                    Assert.assertTrue(held.readSafe(configuration.getMillisecondClock(), 100, 1));
+                    Assert.assertEquals(1, held.getVersion());
+                    Assert.assertEquals(10, held.getColumnTopQuick(1, 0));
+
+                    // F publishes version 2, _txn still names version 1
+                    w.upsert(2, 0, 1, 20);
+                    w.commit();
+                    Assert.assertEquals(2, w.getVersion());
+                    // a reader that already read the file, and the first read of a mapping, which verifies the live area
+                    fresh.ofRO(ff, cvPath);
+                    for (ColumnVersionReader r : new ColumnVersionReader[]{held, fresh}) {
+                        Assert.assertFalse(r.readSafe(configuration.getMillisecondClock(), 100, 1));
+                        Assert.assertEquals("F's column versions must not load", -1, r.getRecordIndex(2, 0));
+                        // the caller polls until _txn names a version
+                        Assert.assertFalse(r.readSafe(1));
+                        Assert.assertEquals(-1, r.getRecordIndex(2, 0));
+                    }
+                    Assert.assertEquals("what the reader held stays", 1, held.getVersion());
+                    Assert.assertEquals(10, held.getColumnTopQuick(1, 0));
+                    Assert.assertEquals("the verified area ahead is not held", -1, fresh.getVersion());
+                    Assert.assertEquals(-1, fresh.getRecordIndex(1, 0));
+                    Assert.assertFalse(single.readSafe(1));
+                    Assert.assertEquals(-1, single.getVersion());
+
+                    // F fails and rolls back, G publishes version 2 with other column versions
+                    w.rollback();
+                    Assert.assertEquals(1, w.getVersion());
+                    w.upsert(3, 0, 1, 30);
+                    w.commit();
+                    Assert.assertEquals(2, w.getVersion());
+
+                    // _txn names version 2, G's
+                    Assert.assertTrue(held.readSafe(configuration.getMillisecondClock(), 100, 2));
+                    Assert.assertTrue(fresh.readSafe(configuration.getMillisecondClock(), 100, 2));
+                    Assert.assertTrue(single.readSafe(2));
+                    for (ColumnVersionReader r : new ColumnVersionReader[]{held, fresh, single}) {
+                        Assert.assertEquals(2, r.getVersion());
+                        Assert.assertEquals("F's column versions must not show", -1, r.getRecordIndex(2, 0));
+                        Assert.assertEquals("G's column versions must show", 30, r.getColumnTopQuick(3, 0));
+                        Assert.assertEquals(10, r.getColumnTopQuick(1, 0));
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCvReadSafeRetriesWhenAreaIsReplacedUnderTheSameVersion() throws Exception {
+        // Versions 1 to 3 are committed, _txn names 3, and F publishes 4. A first read verifies the live area of 4
+        // while F rolls back and G publishes 4 again at F's place: the bytes no longer match the trailer, yet the
+        // version is still 4, which looks like a torn area. Each variant then moves the writer on while the read
+        // falls back to the other area, or while it checks the live area again. The read must end with column
+        // versions committed under the version it reports, or with none.
+        assertMemoryLeak(() -> {
+            for (int variant = 0; variant < 3; variant++) {
+                final int v = variant;
+                final AtomicInteger lengthCallCount = new AtomicInteger();
+                final AtomicBoolean isArmed = new AtomicBoolean();
+                final ObjList<Runnable> hooks = new ObjList<>();
+                // the hooks run on the calls of the read's mapping to length(): the first verifies the live area, the
+                // second falls back to the other area and the third checks the live area again
+                final FilesFacade ff = new TestFilesFacadeImpl() {
+                    @Override
+                    public long length(long fd) {
+                        if (isArmed.get()) {
+                            final int call = lengthCallCount.getAndIncrement();
+                            if (call < hooks.size()) {
+                                hooks.getQuick(call).run();
+                            }
+                        }
+                        return super.length(fd);
+                    }
+                };
+                try (Path path = new Path()) {
+                    final LPSZ cvPath = path.of(root).concat("_cv" + v).$();
+                    try (ColumnVersionWriter w = new ColumnVersionWriter(configuration, cvPath, true)) {
+                        for (int top = 10; top <= 12; top++) {
+                            w.upsert(1, 0, 1, top);
+                            w.commit();
+                        }
+                        Assert.assertEquals(3, w.getVersion());
+                        final long offset3 = peekLong(ff, cvPath, OFFSET_OFFSET_B_64);
+                        // F publishes version 4
+                        w.upsert(1, 0, 1, 13);
+                        w.commit();
+                        final long offset4 = peekLong(ff, cvPath, OFFSET_OFFSET_A_64);
+                        final long lastWordOffset4 = offset4 + 3 * Long.BYTES;
+
+                        hooks.add(() -> {
+                            // F rolls back, G publishes 4 at F's place, its last body word not written yet
+                            w.rollback();
+                            w.upsert(1, 0, 1, 14);
+                            w.commit();
+                            Assert.assertEquals(offset4, peekLong(ff, cvPath, OFFSET_OFFSET_A_64));
+                            pokeLong(ff, cvPath, lastWordOffset4, 0);
+                        });
+                        if (v == 2) {
+                            hooks.add(() -> {
+                            });
+                            // G, still half written, rolls back while the read checks the live area again
+                            hooks.add(w::rollback);
+                        } else {
+                            hooks.add(() -> {
+                                // G completes and commits, H publishes 5 over the area of 3
+                                pokeLong(ff, cvPath, lastWordOffset4, 14);
+                                w.upsert(1, 0, 1, 15);
+                                w.commit();
+                                Assert.assertEquals(offset3, peekLong(ff, cvPath, OFFSET_OFFSET_B_64));
+                                if (v == 0) {
+                                    // and rolls back: the other area holds 5's column versions, not 3's
+                                    w.rollback();
+                                }
+                            });
+                        }
+
+                        ColumnVersionReader.resetBodyChecksumFallbackCount();
+                        try (ColumnVersionReader r = new ColumnVersionReader().ofRO(ff, cvPath)) {
+                            isArmed.set(true);
+                            final boolean isHeld = r.readSafe(configuration.getMillisecondClock(), 1_000, 3);
+                            Assert.assertTrue("variant " + v + ": the hooks must have run", lengthCallCount.get() > hooks.size());
+                            Assert.assertEquals("variant " + v + ": no area was torn", 0, ColumnVersionReader.getBodyChecksumFallbackCount());
+                            if (v == 2) {
+                                // G rolled back to 3
+                                Assert.assertTrue(isHeld);
+                                Assert.assertEquals(3, r.getVersion());
+                                Assert.assertEquals(12, r.getColumnTopQuick(1, 0));
+                            } else {
+                                Assert.assertFalse("variant " + v + ": the file is ahead of version 3", isHeld);
+                                Assert.assertEquals(-1, r.getVersion());
+                                // _txn names the live version: G's 4, or H's 5
+                                final long liveVersion = v == 0 ? 4 : 5;
+                                Assert.assertTrue(r.readSafe(configuration.getMillisecondClock(), 1_000, liveVersion));
+                                Assert.assertEquals(liveVersion + 10, r.getColumnTopQuick(1, 0));
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCvReadSafeTornEmptyVersionFailsWithoutRetry() throws Exception {
+        // Version 0 names no column versions, so a torn area there is not a writer replacing it: the read fails as
+        // for any torn area, rather than retrying until the timeout.
+        assertMemoryLeak(() -> {
+            final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+            try (Path path = new Path()) {
+                final LPSZ cvPath = path.of(root).concat("_cv").$();
+                // a header that names version 0, with an area A that lies outside the file
+                pokeLong(ff, cvPath, OFFSET_VERSION_64, 0);
+                pokeLong(ff, cvPath, OFFSET_OFFSET_A_64, -BLOCK_SIZE_BYTES);
+                pokeLong(ff, cvPath, OFFSET_SIZE_A_64, 0);
+                pokeLong(ff, cvPath, OFFSET_OFFSET_B_64, 0);
+                pokeLong(ff, cvPath, OFFSET_SIZE_B_64, 0);
+                try (ColumnVersionReader r = new ColumnVersionReader().ofRO(ff, cvPath)) {
+                    r.readSafe(configuration.getMillisecondClock(), 1_000);
+                    Assert.fail("a torn version 0 must not read");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "_cv checksum mismatch in both A and B areas [version=0");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testCvReadSafeNamesVersionBehindExpected() throws Exception {
         assertMemoryLeak(() -> {
             final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
@@ -427,10 +614,11 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                 }
                 Assert.assertEquals(2, peekLong(ff, cvPath, OFFSET_VERSION_64));
                 try (ColumnVersionReader r = new ColumnVersionReader().ofRO(ff, cvPath)) {
-                    // Exactly what _txn names, or ahead of it (a commit in flight): both are the caller's to act on.
-                    r.readSafe(configuration.getMillisecondClock(), 100, 2);
+                    // Exactly what _txn names, or ahead of it (a commit in flight, which loads nothing): both are the
+                    // caller's to act on.
+                    Assert.assertTrue(r.readSafe(configuration.getMillisecondClock(), 100, 2));
                     Assert.assertEquals(2, r.getVersion());
-                    r.readSafe(configuration.getMillisecondClock(), 100, 1);
+                    Assert.assertFalse(r.readSafe(configuration.getMillisecondClock(), 100, 1));
                     Assert.assertEquals(2, r.getVersion());
                     // Behind it: _cv is published before the _txn that references it, so there is no writer to
                     // wait for. Named, with no clock involved.
@@ -556,6 +744,113 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                     );
                     assertReaderMatchesArea(ff, cvPath, priorOffset, priorSize, r);
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testCvReadersFollowingTxnHoldOnlyCommittedVersionsUnderRollbacks() throws Exception {
+        // A writer publishes each _cv commit, then either commits it, publishing its version as _txn does, or rolls it
+        // back, so that its next commit reuses the version number with another column top. Readers follow the
+        // published version as TableReader follows _txn: the column versions a reader holds must be the ones
+        // committed under their version number.
+        assertMemoryLeak(() -> {
+            final int commitCount = 10_000;
+            final int readerCount = 2;
+            final FilesFacade ff = configuration.getFilesFacade();
+            final Rnd seeds = TestUtils.generateRandom(LOG);
+            try (
+                    Path path = new Path();
+                    ColumnVersionWriter w = new ColumnVersionWriter(configuration, path.of(root).concat("_cv").$(), true)
+            ) {
+                // the column top committed under each version number
+                final long[] committedTops = new long[commitCount + 2];
+                final AtomicLong txnVersion = new AtomicLong();
+                w.upsert(1, 0, 0, 0);
+                w.commit();
+                committedTops[(int) w.getVersion()] = 0;
+                txnVersion.set(w.getVersion());
+
+                final CyclicBarrier barrier = new CyclicBarrier(readerCount + 1);
+                final ConcurrentLinkedQueue<Throwable> exceptions = new ConcurrentLinkedQueue<>();
+                final AtomicInteger done = new AtomicInteger();
+                final AtomicLong checkCount = new AtomicLong();
+                final long writerSeed0 = seeds.nextLong();
+                final long writerSeed1 = seeds.nextLong();
+                final Thread writer = new Thread(() -> {
+                    final Rnd rnd = new Rnd(writerSeed0, writerSeed1);
+                    try {
+                        barrier.await();
+                        for (int i = 1; i <= commitCount; i++) {
+                            w.upsert(1, 0, 0, i);
+                            w.commit();
+                            if (rnd.nextBoolean()) {
+                                committedTops[(int) w.getVersion()] = i;
+                                txnVersion.set(w.getVersion());
+                            } else {
+                                w.rollback();
+                            }
+                        }
+                    } catch (Throwable th) {
+                        exceptions.add(th);
+                    } finally {
+                        done.incrementAndGet();
+                    }
+                });
+
+                final ObjList<Thread> readers = new ObjList<>();
+                for (int t = 0; t < readerCount; t++) {
+                    final long readerSeed0 = seeds.nextLong();
+                    final long readerSeed1 = seeds.nextLong();
+                    readers.add(new Thread(() -> {
+                        final Rnd rnd = new Rnd(readerSeed0, readerSeed1);
+                        try (
+                                Path readerPath = new Path().of(root).concat("_cv");
+                                ColumnVersionReader r = new ColumnVersionReader().ofRO(ff, readerPath.$())
+                        ) {
+                            barrier.await();
+                            while (done.get() == 0) {
+                                if (rnd.nextInt(64) == 0) {
+                                    // a new mapping, which verifies the area it reads first
+                                    r.ofRO(ff, readerPath.$());
+                                }
+                                final long version = txnVersion.get();
+                                if (r.getVersion() != version) {
+                                    if (rnd.nextBoolean()) {
+                                        r.readSafe(configuration.getMillisecondClock(), 5_000, version);
+                                    } else {
+                                        // one attempt, as SymbolCache retries on its own
+                                        r.readSafe(version);
+                                    }
+                                }
+                                if (r.getVersion() == version) {
+                                    final long top = r.getColumnTopQuick(1, 0);
+                                    if (top != committedTops[(int) version]) {
+                                        throw new AssertionError("version " + version + " holds column top " + top
+                                                + ", committed " + committedTops[(int) version]);
+                                    }
+                                    checkCount.incrementAndGet();
+                                }
+                                Os.pause();
+                            }
+                        } catch (Throwable th) {
+                            exceptions.add(th);
+                        }
+                    }));
+                }
+
+                writer.start();
+                for (int t = 0; t < readerCount; t++) {
+                    readers.getQuick(t).start();
+                }
+                writer.join();
+                for (int t = 0; t < readerCount; t++) {
+                    readers.getQuick(t).join();
+                }
+                if (!exceptions.isEmpty()) {
+                    throw new AssertionError(exceptions.poll());
+                }
+                Assert.assertTrue("the readers must have checked column versions", checkCount.get() > 0);
             }
         });
     }
