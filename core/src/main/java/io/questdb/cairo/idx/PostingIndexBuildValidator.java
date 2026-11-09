@@ -36,7 +36,9 @@ import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.idx.PostingIndexUtils.*;
 
-/** Read-only validation of partition-local work left by an interrupted ADD INDEX. */
+/**
+ * Read-only validation of partition-local work left by an interrupted ADD INDEX.
+ */
 public final class PostingIndexBuildValidator {
     private PostingIndexBuildValidator() {
     }
