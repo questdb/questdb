@@ -796,6 +796,68 @@ public class SymbolMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSymbolTableViewsKeepHashesOfKeysSharingSlot() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                // keys 1 and 1,025 share a slot of the 1,024-slot hash array
+                createMap(path, "x", "v", 1_026, -1, 0);
+                try (
+                        SymbolMapCachePool pool = new SymbolMapCachePool(new NativeMemoryBudget(1024 * 1024));
+                        SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, 1_026, pool, 0)
+                ) {
+                    reader.putValueHash(1, 42);
+                    Assert.assertFalse(reader.hasValueHash(1_025));
+                    Assert.assertEquals("v1025".hashCode(), Chars.hashCode(reader.valueOf(1_025)));
+                    Assert.assertTrue(reader.hasValueHash(1_025));
+
+                    // key 1,025 took the slot, so key 1 hashes its chars again
+                    Assert.assertFalse(reader.hasValueHash(1));
+                    Assert.assertEquals("v1".hashCode(), Chars.hashCode(reader.valueBOf(1)));
+                    Assert.assertTrue(reader.hasValueHash(1));
+                    Assert.assertFalse(reader.hasValueHash(1_025));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testQueriesMatchCachedSymbolsSharingHashSlots() throws Exception {
+        assertMemoryLeak(() -> {
+            // keys 1,024 and up share hash slots with lower keys; b numbers its values in the
+            // opposite order, so equal values have different keys in a and b
+            execute("CREATE TABLE a (s SYMBOL CACHE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE b (s SYMBOL CACHE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO a SELECT 'k' || x, (x * 1_000_000)::TIMESTAMP FROM long_sequence(3_000)");
+            execute("INSERT INTO b SELECT 'k' || (3_001 - x), x::TIMESTAMP FROM long_sequence(3_000)");
+
+            assertQuery("SELECT count(b.s) FROM a ASOF JOIN b ON (s)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n3000\n");
+            assertQuery("""
+                    SELECT sum(c) FROM (
+                        SELECT count() c FROM a WINDOW JOIN b ON (a.s = b.s)
+                        RANGE BETWEEN 1 hour PRECEDING AND 1 hour FOLLOWING EXCLUDE PREVAILING
+                    )""")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("sum\n3000\n");
+            assertQuery("SELECT count() FROM a WHERE s IN (SELECT s FROM b)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n3000\n");
+            assertQuery("SELECT count_distinct(s) FROM (SELECT s FROM a UNION ALL SELECT s FROM b)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count_distinct\n3000\n");
+        });
+    }
+
+    @Test
     public void testSharedCacheConcurrentStopAndResume() throws Exception {
         assertMemoryLeak(() -> {
             final int count = 16 * SymbolMapSegments.SEGMENT_KEYS;

@@ -353,6 +353,11 @@ public class SymbolCacheBenchmark {
         return readCount(stringDistinctAgg);
     }
 
+    @Benchmark
+    public long symbolNotEqualAll(SymbolNotEqualAll state) throws SqlException {
+        return readCount(state.notEqualAll);
+    }
+
     @TearDown(Level.Trial)
     public void tearDown() {
         denseHighKeys = Misc.free(denseHighKeys);
@@ -607,6 +612,22 @@ public class SymbolCacheBenchmark {
         public void tearDown() {
             benchmark.engine.releaseAllReaders();
             benchmark.engine.getSymbolMapCachePool().getBudget().setLimit(limit);
+        }
+    }
+
+    // castStringNotEqualAll without the cast; compiles apart from setUp() like MixedCacheModes.
+    @State(Scope.Benchmark)
+    public static class SymbolNotEqualAll {
+        private RecordCursorFactory notEqualAll;
+
+        @Setup(Level.Trial)
+        public void setUp(SymbolCacheBenchmark benchmark) throws SqlException {
+            notEqualAll = benchmark.engine.select("SELECT count() FROM t WHERE " + DAY_ONE + " AND s <> ALL('{symbol1,symbol2,symbol3}'::text[])", benchmark.context);
+        }
+
+        @TearDown(Level.Trial)
+        public void tearDown() {
+            notEqualAll = Misc.free(notEqualAll);
         }
     }
 
