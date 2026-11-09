@@ -68,6 +68,8 @@ import java.util.stream.Stream;
  *     <li>{@code cross_inner_full}: t0 CROSS JOIN t1 JOIN t2 ON t2.k = t1.k FULL JOIN t3 ON t3.k = t2.k CROSS JOIN t4 ...</li>
  *     <li>{@code cross_full_non_equi}: t0 CROSS JOIN t1 FULL JOIN t2 ON t2.k &gt; t1.k CROSS JOIN t3 ...</li>
  *     <li>{@code full}: t0 FULL JOIN t1 ON t1.k = t0.k FULL JOIN t2 ON t2.k = t1.k ..., no CROSS join</li>
+ *     <li>{@code cross_inner}: t0 CROSS JOIN t1 JOIN t2 ON t2.k = t1.k AND t2.j = t0.j CROSS JOIN t3 ..., no
+ *     outer join</li>
  * </ul>
  * The class uses only APIs that predate it, so it runs unchanged against a base commit.
  */
@@ -89,7 +91,7 @@ import java.util.stream.Stream;
         "--add-exports=java.base/jdk.internal.vm=ALL-UNNAMED"
 })
 public class JoinChainCompileBenchmark {
-    @Param({"cross_full", "cross_right_t0", "cross_inner_full", "cross_full_non_equi", "full"})
+    @Param({"cross_full", "cross_right_t0", "cross_inner_full", "cross_full_non_equi", "full", "cross_inner"})
     public String shape;
     @Param({"320", "1280"})
     public int tables;
@@ -128,7 +130,7 @@ public class JoinChainCompileBenchmark {
         );
         compiler = engine.getSqlCompiler();
         for (int i = 0; i < tables; i++) {
-            engine.execute("CREATE TABLE t" + i + " (k INT)", ctx);
+            engine.execute("CREATE TABLE t" + i + ("cross_inner".equals(shape) ? " (k INT, j INT)" : " (k INT)"), ctx);
         }
         final StringBuilder sb = new StringBuilder("SELECT count(*) FROM t0");
         for (int i = 1; i < tables; i++) {
@@ -144,6 +146,14 @@ public class JoinChainCompileBenchmark {
                     }
                 }
                 case "full" -> appendCrossOrOuter(sb, i, false, "FULL", "=", i - 1);
+                case "cross_inner" -> {
+                    if (i % 2 == 1) {
+                        sb.append(" CROSS JOIN t").append(i);
+                    } else {
+                        sb.append(" JOIN t").append(i).append(" ON t").append(i).append(".k = t").append(i - 1)
+                                .append(".k AND t").append(i).append(".j = t0.j");
+                    }
+                }
                 default -> throw new IllegalArgumentException("unknown shape: " + shape);
             }
         }
