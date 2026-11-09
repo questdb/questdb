@@ -44,7 +44,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.function.Predicate;
+import java.util.function.IntConsumer;
 
 import static io.questdb.cutlass.http.HttpConstants.SESSION_COOKIE_NAME_UTF8;
 import static io.questdb.test.tools.TestUtils.*;
@@ -66,7 +66,7 @@ public abstract class BaseHttpCookieConcurrentTest extends AbstractBootstrapTest
                     closeSession(httpClient, sessionId);
                 }
             }
-        }, numOfSessions -> numOfSessions == 0);
+        }, numOfSessions -> Assert.assertEquals("session count", 0, numOfSessions));
     }
 
     @Test
@@ -186,47 +186,48 @@ public abstract class BaseHttpCookieConcurrentTest extends AbstractBootstrapTest
             Assert.assertNull(sessionStore.getSession(sessionId));
             // assert that new session id is still registered
             Assert.assertEquals(session, sessionStore.getSession(newSessionId));
-        }, numOfSessions -> numOfSessions <= numOfThreads);
+        }, numOfSessions -> Assert.assertTrue(
+                "expected at most " + numOfThreads + " sessions, actual: " + numOfSessions,
+                numOfSessions <= numOfThreads
+        ));
     }
 
     @Test
     public void testConcurrentSingleSessionExpired() throws Exception {
         final AtomicInteger sessionCount = new AtomicInteger();
         runTest(true, (threadId, sessionId, currentMicros, sessionStore, sessionTimeout, rnd, barriers) -> {
-            final long timeIncrement = sessionTimeout + 1_000_000L;
-            final long expiresAt = currentMicros.get() + sessionTimeout;
-
-            // all threads have to initialize expiresAt before the clock is moved
-            barriers[0].await();
+            try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance()) {
+                runSuccessfulQuery(httpClient, sessionId);
+            } finally {
+                // Finish every pre-expiry request before advancing the clock: validation and renewal
+                // read it separately, so an in-flight request could otherwise renew the expired session.
+                // Join both barriers even if a request fails, so the other threads can finish.
+                barriers[0].await();
+                if (threadId == 0) {
+                    final long expiredMicros = currentMicros.addAndGet(sessionTimeout + 1_000_000L);
+                    LOG.info().$("clock moved to ").$(expiredMicros).$();
+                }
+                barriers[1].await();
+            }
 
             try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance()) {
+                runFailedQuery(httpClient, sessionId);
+                Assert.assertNull("expired session remains registered", sessionStore.getSession(sessionId));
+
+                final String newSessionId = createSession(httpClient, sessionStore, ADMIN_USER, ADMIN_PWD);
+                sessionCount.incrementAndGet();
                 final int numOfIterations = Math.max(20, rnd.nextInt(40));
                 for (int i = 0; i < numOfIterations; i++) {
-                    // select a thread to move the clock over expiresAt
-                    // the 'i == numOfIterations-1' part of the condition guarantees that the clock
-                    // will be moved before any thread finishes
-                    synchronized (this) {
-                        if ((rnd.nextBoolean() || i == numOfIterations - 1) && currentMicros.get() < expiresAt) {
-                            currentMicros.addAndGet(timeIncrement);
-                            LOG.info().$("clock moved to " + currentMicros.get()).$();
-                        }
-                    }
-
-                    try {
-                        runSuccessfulQuery(httpClient, sessionId);
-                    } catch (AssertionError e) {
-                        assertEquals("expected:<200> but was:<401>", e.getMessage());
-
-                        // this is expected to happen maximum once
-                        // let's recover by starting a new session
-                        // at the end of the test we will assert that the original session has been closed
-                        // and that the num of open sessions are less or equal to the num of threads
-                        sessionId = createSession(httpClient, sessionStore, ADMIN_USER, ADMIN_PWD);
-                        sessionCount.incrementAndGet();
-                    }
+                    runSuccessfulQuery(httpClient, newSessionId);
                 }
             }
-        }, numOfSessions -> numOfSessions == sessionCount.get() && numOfSessions <= numOfThreads);
+        }, numOfSessions -> {
+            Assert.assertEquals("session count", sessionCount.get(), numOfSessions);
+            Assert.assertTrue(
+                    "expected at most " + numOfThreads + " sessions, actual: " + numOfSessions,
+                    numOfSessions <= numOfThreads
+            );
+        });
     }
 
     @Test
@@ -254,7 +255,7 @@ public abstract class BaseHttpCookieConcurrentTest extends AbstractBootstrapTest
                     runSuccessfulQuery(httpClient, sessionId);
                 }
             }
-        }, numOfSessions -> numOfSessions == 2);
+        }, numOfSessions -> Assert.assertEquals("session count", 2, numOfSessions));
     }
 
     private static void awaitAllBarriers(CyclicBarrier[] barriers, int from) throws Exception {
@@ -306,6 +307,7 @@ public abstract class BaseHttpCookieConcurrentTest extends AbstractBootstrapTest
 
     // randomized usage of the `main` httpClient for failed queries
     private static void runFailedQuery(HttpClient httpClient, String sessionId, Rnd rnd) {
+        sessionId += "whatever";
         if (rnd.nextBoolean()) {
             runFailedQuery(httpClient, sessionId);
             return;
@@ -315,13 +317,13 @@ public abstract class BaseHttpCookieConcurrentTest extends AbstractBootstrapTest
         }
     }
 
-    // send wrong session id and no auth header, query should fail
+    // send an invalid or expired session id and no auth header, query should fail
     private static void runFailedQuery(HttpClient httpClient, String sessionId) {
         try (HttpClient.ResponseHeaders responseHeaders = httpClient.newRequest("localhost", HTTP_PORT)
                 .GET()
                 .url("/exec")
                 .query("query", "select 1")
-                .setCookie(HttpConstants.SESSION_COOKIE_NAME, sessionId + "whatever")
+                .setCookie(HttpConstants.SESSION_COOKIE_NAME, sessionId)
                 .send()
         ) {
             responseHeaders.await();
@@ -356,7 +358,7 @@ public abstract class BaseHttpCookieConcurrentTest extends AbstractBootstrapTest
         }
     }
 
-    private void runTest(boolean openSession, TestCode test, Predicate<Integer> assertSessions) throws Exception {
+    private void runTest(boolean openSession, TestCode test, IntConsumer assertSessions) throws Exception {
         assertMemoryLeak(() -> {
             final Rnd rnd = generateRandom(LOG);
             final AtomicLong currentMicros = new AtomicLong(1761055200000000L);
@@ -405,17 +407,13 @@ public abstract class BaseHttpCookieConcurrentTest extends AbstractBootstrapTest
                 }
                 end.await();
 
-                final int numOfSessions = getNumOfSessions(sessionStore);
-                if (!assertSessions.test(numOfSessions)) {
-                    errors.put(-1, new AssertionError("Assert sessions failed"));
-                }
-
                 if (!errors.isEmpty()) {
                     for (Map.Entry<Integer, Throwable> entry : errors.entrySet()) {
                         LOG.error().$("Error in thread [id=").$(entry.getKey()).$("] ").$(entry.getValue()).$();
                     }
                     Assert.fail("Error in threads");
                 }
+                assertSessions.accept(getNumOfSessions(sessionStore));
             }
         });
     }
