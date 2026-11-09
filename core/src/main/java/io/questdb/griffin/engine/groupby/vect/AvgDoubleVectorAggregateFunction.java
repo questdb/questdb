@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
-import io.questdb.std.Numbers;
 import io.questdb.std.Rosti;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
@@ -73,8 +72,8 @@ public class AvgDoubleVectorAggregateFunction extends DoubleFunction implements 
     public void aggregate(long address, long frameRowCount, int workerId) {
         if (address != 0) {
             final double s = Vect.sumDoubleAcc(address, frameRowCount, countsAddr + (long) workerId * Misc.CACHE_LINE_SIZE);
-            if (Numbers.isFinite(s)) {
-                final long c = Unsafe.getLong(countsAddr + (long) workerId * Misc.CACHE_LINE_SIZE);
+            final long c = Unsafe.getLong(countsAddr + (long) workerId * Misc.CACHE_LINE_SIZE);
+            if (c > 0) {
                 sum.add(s);
                 count.add(c);
             }

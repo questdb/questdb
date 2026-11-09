@@ -795,6 +795,7 @@ kIntKSumDouble(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong pDouble, jlong
         MM_PREFETCH_T0(pd + i + 8);
         const int32_t key = to_int(pKeys, i);
         const jdouble d = pd[i];
+        const bool finite = std::isfinite(d);
         auto res = find(map, key);
         auto dest = map->slots_ + res.first;
         if (PREDICT_FALSE(res.second)) {
@@ -802,18 +803,18 @@ kIntKSumDouble(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong pDouble, jlong
                 return JNI_FALSE;
             }
             *reinterpret_cast<int32_t *>(dest) = key;
-            *reinterpret_cast<jdouble *>(dest + value_offset) = std::isnan(d) ? 0 : d;
+            *reinterpret_cast<jdouble *>(dest + value_offset) = finite ? d : 0;
             *reinterpret_cast<jdouble *>(dest + c_offset) = 0.;
-            *reinterpret_cast<jlong *>(dest + count_offset) = std::isnan(d) ? 0 : 1;
-        } else {
+            *reinterpret_cast<jlong *>(dest + count_offset) = finite ? 1 : 0;
+        } else if (finite) {
             const jdouble c = *reinterpret_cast<jdouble *>(dest + c_offset);
             const jdouble sum = *reinterpret_cast<jdouble *>(dest + value_offset);
-            const jdouble y = std::isnan(d) ? 0 : d - c; // y = d -c
+            const jdouble y = d - c;
             const jdouble t = sum + y;
 
             *reinterpret_cast<jdouble *>(dest + c_offset) = t - sum - y;
             *reinterpret_cast<jdouble *>(dest + value_offset) = t;
-            *reinterpret_cast<jlong *>(dest + count_offset) += std::isnan(d) ? 0 : 1;
+            *reinterpret_cast<jlong *>(dest + count_offset) += 1;
         }
     }
     return JNI_TRUE;
@@ -1058,21 +1059,6 @@ Java_io_questdb_std_Rosti_keyedIntSumDoubleWrapUp(JNIEnv *env, jclass cl, jlong 
     auto map = reinterpret_cast<rosti_t *>(pRosti);
     const auto value_offset = map->value_offsets_[valueOffset];
     const auto count_offset = map->value_offsets_[valueOffset + 1];
-    const auto capacity = map->capacity_;
-    const auto ctrl = map->ctrl_;
-    const auto shift = map->slot_size_shift_;
-    const auto slots = map->slots_;
-
-    for (size_t i = 0; i < capacity; i++) {
-        ctrl_t c = ctrl[i];
-        if (c > -1) {
-            const auto src = slots + (i << shift);
-            auto count = *reinterpret_cast<jlong *>(src + count_offset);
-            if (PREDICT_FALSE(count == 0)) {
-                *reinterpret_cast<jdouble *>(src + value_offset) = D_NAN;
-            }
-        }
-    }
 
     // populate null value
     if (valueAtNullCount > 0) {
@@ -1090,6 +1076,21 @@ Java_io_questdb_std_Rosti_keyedIntSumDoubleWrapUp(JNIEnv *env, jclass cl, jlong 
         } else {
             *reinterpret_cast<jdouble *>(dest + value_offset) += valueAtNull;
             *reinterpret_cast<jlong *>(dest + count_offset) += valueAtNullCount;
+        }
+    }
+
+    const auto capacity = map->capacity_;
+    const auto ctrl = map->ctrl_;
+    const auto shift = map->slot_size_shift_;
+    const auto slots = map->slots_;
+    for (size_t i = 0; i < capacity; i++) {
+        ctrl_t c = ctrl[i];
+        if (c > -1) {
+            const auto src = slots + (i << shift);
+            auto count = *reinterpret_cast<jlong *>(src + count_offset);
+            if (PREDICT_FALSE(count == 0)) {
+                *reinterpret_cast<jdouble *>(src + value_offset) = D_NAN;
+            }
         }
     }
     return JNI_TRUE;
@@ -1235,10 +1236,6 @@ Java_io_questdb_std_Rosti_keyedIntKSumDoubleWrapUp(JNIEnv *env, jclass cl, jlong
     const auto value_offset = map->value_offsets_[valueOffset];
     const auto c_offset = map->value_offsets_[valueOffset + 1];
     const auto count_offset = map->value_offsets_[valueOffset + 2];
-    const auto capacity = map->capacity_;
-    const auto ctrl = map->ctrl_;
-    const auto shift = map->slot_size_shift_;
-    const auto slots = map->slots_;
 
     // populate null value
     if (valueAtNullCount > 0) {
@@ -1262,6 +1259,10 @@ Java_io_questdb_std_Rosti_keyedIntKSumDoubleWrapUp(JNIEnv *env, jclass cl, jlong
         }
     }
 
+    const auto capacity = map->capacity_;
+    const auto ctrl = map->ctrl_;
+    const auto shift = map->slot_size_shift_;
+    const auto slots = map->slots_;
     for (size_t i = 0; i < capacity; i++) {
         ctrl_t c = ctrl[i];
         if (c > -1) {

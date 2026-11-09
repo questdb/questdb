@@ -1304,6 +1304,55 @@ public class StreamGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testColumnTopKeyAggregatesMatchPerRowSemantics() throws Exception {
+        run((engine, compiler, context) -> {
+            engine.execute("CREATE TABLE s (ts TIMESTAMP, d DOUBLE, e DOUBLE) TIMESTAMP(ts) PARTITION BY DAY", context);
+            engine.execute("""
+                    INSERT INTO s (ts, d) VALUES
+                        ('2024-01-01T00', 1), ('2024-01-01T01', 2), ('2024-01-01T02', 'Infinity'), ('2024-01-01T03', 3),
+                        ('2024-01-02T00', 10), ('2024-01-02T01', 20),
+                        ('2024-01-03T00', 'Infinity'), ('2024-01-04T00', 'Infinity'),
+                        ('2024-01-05T00', null), ('2024-01-06T00', null)""", context);
+            engine.execute("ALTER TABLE s ADD COLUMN i INT", context);
+            engine.execute("INSERT INTO s (ts, d, i) VALUES ('2024-01-07T00', null, null), ('2024-01-07T01', 4, 1), ('2024-01-07T02', 'Infinity', 1), ('2024-01-07T03', null, 1)", context);
+            final double inf = Double.POSITIVE_INFINITY;
+            final double nan = Double.NaN;
+            final String[] functions = {"avg", "sum", "ksum", "nsum", "min", "max"};
+            final double[] finiteAndInfinite = {inf, inf, 36, 36, 1, 20};
+            final double[] infiniteOnly = {inf, inf, nan, nan, nan, nan};
+            final double[] keyed = {inf, inf, 4, 4, 4, 4};
+            final String[] filters = {
+                    " WHERE ts < '2024-01-03'",
+                    " WHERE ts >= '2024-01-03' AND ts < '2024-01-05'",
+                    " WHERE ts >= '2024-01-05' AND ts < '2024-01-07'",
+                    " WHERE ts >= '2024-01-05'",
+                    ""
+            };
+            for (int f = 0; f < functions.length; f++) {
+                final double[][] expected = {
+                        {finiteAndInfinite[f]},
+                        {infiniteOnly[f]},
+                        {nan},
+                        {nan, keyed[f]},
+                        {finiteAndInfinite[f], keyed[f]}
+                };
+                for (int j = 0; j < filters.length; j++) {
+                    final String sql = "SELECT i, sum(e) e, " + functions[f] + "(d) v FROM s" + filters[j] + " ORDER BY i";
+                    if (parallel) {
+                        try (RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory()) {
+                            Assert.assertTrue(sql, plan(factory, context).contains("GroupBy vectorized: true"));
+                        }
+                    }
+                    assertValues(compiler, context, sql, "v", expected[j]);
+                    final double[] nulls = new double[expected[j].length];
+                    Arrays.fill(nulls, nan);
+                    assertValues(compiler, context, sql, "e", nulls);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testCompensatedSumAcrossFrames() throws Exception {
         run((engine, compiler, context) -> {
             for (String[] table : new String[][]{{"a", "1e16", "1", "-1e16"}, {"b", "1e8", "1e-8", "-1e8"}}) {

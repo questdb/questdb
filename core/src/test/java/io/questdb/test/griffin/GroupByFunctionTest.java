@@ -323,8 +323,8 @@ public class GroupByFunctionTest extends AbstractCairoTest {
                 .expectSize()
                 .returns("""
                         s\tksum
-                        aa\t416262.4729439181
-                        bb\t416933.3416598129
+                        aa\t416262.4729439178
+                        bb\t416933.3416598177
                         """);
     }
 
@@ -344,7 +344,7 @@ public class GroupByFunctionTest extends AbstractCairoTest {
                 .returns("""
                         s\tksum\tksum1
                         aa\t416262.47294392\t416262.47294392
-                        bb\t416933.34165981\t416933.34165981
+                        bb\t416933.34165982\t416933.34165982
                         """);
     }
 
