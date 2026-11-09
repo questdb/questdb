@@ -7933,10 +7933,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     /**
      * Commits {@code _txn} and keeps the on-disk {@code _meta} storage version in step with whether the
-     * table holds composite partitions. An upgrade to {@link ColumnType#MAX_STORAGE_VERSION} runs BEFORE
-     * the commit, so a downgrade binary - which rejects an unknown {@code _meta} version - never sees a
-     * composite {@code _txn} and misreads it as flat. A downgrade back to {@link ColumnType#VERSION} runs
-     * AFTER the commit, once the last composite flag has been cleared from {@code _txn}. A crash between
+     * table holds composite or Delta partitions. An upgrade runs BEFORE the commit, so a downgrade binary -
+     * which rejects an unknown {@code _meta} version - never sees a composite or Delta {@code _txn} and
+     * misreads it. A downgrade back runs AFTER the commit, once the {@code _txn} no longer holds that
+     * state. A crash between
      * the two writes leaves {@code _meta} conservatively high, which is safe (the table just reads on this
      * binary and is refused by an older one) and self-heals on the next commit.
      */
@@ -7973,19 +7973,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * Drops the on-disk {@code _meta} storage version back to {@link ColumnType#VERSION} once the table no
-     * longer holds any composite partition. The caller runs this AFTER the {@code _txn} commit that cleared
-     * the last composite flag, so the version never claims plain data while {@code _txn} still points at a
-     * composite piece. Reads the in-memory count, never scans.
+     * Lowers the on-disk {@code _meta} storage version once the table no longer holds the partitions that
+     * raised it. The caller runs this AFTER the {@code _txn} commit that cleared them, so the version never
+     * claims plain data while {@code _txn} still references them. Reads the in-memory counts, never scans.
      * <p>
      * Best effort: the {@code _txn} commit is already durable, so a failure here must not surface as a failed
      * commit or skip the caller's post-commit steps. The cached version follows whatever reached {@code _meta}:
      * a failure before the write leaves both conservatively high, and the next commit tries again.
      */
     private void maybeDowngradeStorageVersion() {
-        if (compositePartitionCount == 0 && metadata.getStorageVersion() > ColumnType.VERSION) {
+        final int version = storageVersionForCurrentState();
+        if (metadata.getStorageVersion() > version) {
             try {
-                writeStorageVersionToMeta(ColumnType.VERSION);
+                writeStorageVersionToMeta(version);
             } catch (Throwable th) {
                 LOG.critical().$("could not downgrade storage version in _meta [table=")
                         .$(tableToken)
@@ -7996,13 +7996,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * Raises the on-disk {@code _meta} storage version to {@link ColumnType#MAX_STORAGE_VERSION} as soon as
-     * the table gains its first composite partition. The caller runs this BEFORE the {@code _txn} commit that
-     * publishes the composite flag. Reads the in-memory count, never scans.
+     * Raises the on-disk {@code _meta} storage version as soon as the table gains its first composite or
+     * Delta partition. The caller runs this BEFORE the {@code _txn} commit that publishes the flag. Reads the
+     * in-memory counts, never scans.
      */
     private void maybeUpgradeStorageVersion() {
-        if (compositePartitionCount > 0 && metadata.getStorageVersion() < ColumnType.MAX_STORAGE_VERSION) {
-            writeStorageVersionToMeta(ColumnType.MAX_STORAGE_VERSION);
+        final int version = storageVersionForCurrentState();
+        if (metadata.getStorageVersion() < version) {
+            writeStorageVersionToMeta(version);
         }
     }
 
@@ -8146,10 +8147,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     /**
      * The storage version that {@code _meta} should carry for the table's current shape:
+     * {@link ColumnType#DELTA_STORAGE_VERSION} while it holds Delta partitions, otherwise
      * {@link ColumnType#MAX_STORAGE_VERSION} while it holds composite partitions, otherwise
      * {@link ColumnType#VERSION}. Used when a full meta rewrite must reproduce the elevated version.
      */
     private int storageVersionForCurrentState() {
+        if (txWriter.hasAnyDeltaActive()) {
+            return ColumnType.DELTA_STORAGE_VERSION;
+        }
         return compositePartitionCount > 0 ? ColumnType.MAX_STORAGE_VERSION : ColumnType.VERSION;
     }
 
