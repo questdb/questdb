@@ -44,7 +44,8 @@ public class ParquetTimestampFinder implements TimestampFinder, Mutable, QuietCl
     private final ParquetPartitionDecoder partitionDecoder; // the decoder is managed externally
     private final RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER, true);
     private final DirectIntList timestampIdAndType = new DirectIntList(2, MemoryTag.NATIVE_DEFAULT);
-    // Partition rows [lo, hi) of the timestamps held in rowGroupBuffers.
+    // Partition rows [lo, hi) of the timestamps held in rowGroupBuffers. Valid across prepare()
+    // while the partition's file is unchanged, so repeated searches reuse one decode.
     private long blockRowHi;
     private long blockRowLo;
     private long maxTimestampUpperBound;
@@ -152,27 +153,35 @@ public class ParquetTimestampFinder implements TimestampFinder, Mutable, QuietCl
         final long rowGroupRowLo = Math.max(rowLo - offset, 0);
         final long rowGroupRowHi = Math.min(rowHi - offset, metadata.getRowGroupSize(rowGroupIndex) - 1);
         assert rowGroupRowLo <= rowGroupRowHi;
-        blockRowHi = 0;
-        partitionDecoder.decodeRowGroup(
-                rowGroupBuffers,
-                timestampIdAndType,
-                rowGroupIndex,
-                (int) rowGroupRowLo,
-                (int) (rowGroupRowHi + 1) // exclusive
-        );
+        // A range the last decode covers needs no decode: repeated interval searches narrow
+        // within one row group, e.g. backward intervals sharing rowLo = 0 and a shrinking rowHi.
+        final long searchRowLo = offset + rowGroupRowLo;
+        final long searchRowHi = offset + rowGroupRowHi;
+        if (searchRowLo < blockRowLo || searchRowHi >= blockRowHi) {
+            blockRowHi = 0;
+            partitionDecoder.decodeRowGroup(
+                    rowGroupBuffers,
+                    timestampIdAndType,
+                    rowGroupIndex,
+                    (int) rowGroupRowLo,
+                    (int) (rowGroupRowHi + 1) // exclusive
+            );
+            blockRowLo = searchRowLo;
+            blockRowHi = searchRowHi + 1;
+        }
 
         // At last, we can do binary search.
         long idx = Vect.binarySearch64Bit(
                 rowGroupBuffers.getChunkDataPtr(0),
                 value,
-                0,
-                rowGroupRowHi - rowGroupRowLo,
+                searchRowLo - blockRowLo,
+                searchRowHi - blockRowLo,
                 BIN_SEARCH_SCAN_DOWN
         );
         if (idx < 0) {
             idx = -idx - 2;
         }
-        return idx + rowGroupRowLo + offset;
+        return idx + blockRowLo;
     }
 
     @Override
@@ -224,8 +233,11 @@ public class ParquetTimestampFinder implements TimestampFinder, Mutable, QuietCl
             return;
         }
         ParquetPartitionDecoder decoder = reader.getAndInitParquetPartitionDecoder(partitionIndex);
+        if (partitionDecoder.getParquetMetaAddr() != decoder.getParquetMetaAddr()
+                || partitionDecoder.getParquetMetaSize() != decoder.getParquetMetaSize()) {
+            blockRowHi = 0;
+        }
         partitionDecoder.of(decoder);
-        blockRowHi = 0;
         rowGroupBuffers.reopen();
 
         int writerIndex = reader.getMetadata().getWriterIndex(timestampIndex);
