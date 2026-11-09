@@ -377,11 +377,7 @@ public class QwpIngressIdleWriterReleaseTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * A writer whose close fails during the release stays set on the released entry, so the
-     * table cache must not serve that entry for the name again. Two frames that re-create the
-     * dropped table in one receive pass must share one commit batch on the new table's writer.
-     */
+    /** A released entry keeps a writer whose close failed; frames re-creating the table share one batch. */
     @Test
     public void testIdleReleaseFailureDoesNotServeReleasedEntry() throws Exception {
         // See testIdleReleaseSurvivesWriterCloseFailure for the commit mode.

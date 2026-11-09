@@ -440,22 +440,7 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * Each producer cycles its rows through 3 to 26 tables, so its flushes carry rows of
-     * several tables and its frames interleave them, and the server batches their
-     * commits across tables. The server bounces mid-stream: the client replays from
-     * its acked watermark, sending again rows the server committed before it could ack
-     * them, which the tables' DEDUP keys absorb. Halfway through their rows, the even
-     * producers add a column to one table, so their flushes carry that table's block with
-     * a column the table lacks behind blocks of other tables, which cannot join the
-     * server's commit batch once those blocks joined it. Every table must end up holding
-     * exactly its rows. A batch commit that fails on one table after others committed
-     * is covered by QwpIngressCommitBatchTest: nothing here fails a commit.
-     * <p>
-     * Half the runs lower {@code http.send.buffer.size} below what an ack naming many of
-     * the tables takes, so such acks leave in pieces, under the same fragmentation and
-     * bounces.
-     */
+    /** Producers interleave 3-26 DEDUP tables, some add a column, the server bounces, and half the runs stage acks. */
     @Test
     public void testOracleMultiTableTortureUnderServerBounces() throws Exception {
         // Without fsync: the tiny frames make many tiny commits, and syncing each one

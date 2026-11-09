@@ -70,11 +70,7 @@ public class QwpIngressStagedAckFrameTest extends AbstractCairoTest {
     // Bytes a table takes in an ack besides its name: name length (2) and seqTxn (8).
     private static final int TABLE_ENTRY_OVERHEAD = 10;
 
-    /**
-     * The trigger a commit batch adds: one-row frames to many tables, all in one receive
-     * pass, answered by one ack that names every table. The ack must leave whole, in pieces
-     * that each fit the send buffer, and name every table with the seqTxn it committed.
-     */
+    /** One-row frames to many tables in one pass get one ack, which leaves in pieces naming every table's seqTxn. */
     @Test
     public void testBatchAckLargerThanSendBufferLeavesInPieces() throws Exception {
         assertMemoryLeak(() -> {
@@ -110,12 +106,7 @@ public class QwpIngressStagedAckFrameTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * The durable acks of a pass name the same tables as its OK ack, so they outgrow the
-     * send buffer together. A local|replicated grant sends the local frame and then the
-     * replicated one: the second is staged after the first has left, and a block inside
-     * the local frame parks the replicated one behind it.
-     */
+    /** A local|replicated grant stages the replicated ack after the local one; a block in the local parks it. */
     @Test
     public void testDurableAcksLargerThanSendBufferLeaveInPieces() throws Exception {
         assertMemoryLeak(() -> {
@@ -163,10 +154,6 @@ public class QwpIngressStagedAckFrameTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * An error queued behind a parked staged ack follows the whole ack, not the piece the
-     * send buffer held.
-     */
     @Test
     public void testErrorQueuedBehindStagedAckFollowsWholeAck() throws Exception {
         assertMemoryLeak(() -> {
@@ -191,11 +178,7 @@ public class QwpIngressStagedAckFrameTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * Frames up to the send buffer go out whole; one byte more takes a second piece, and so
-     * on, up to a frame whose payload needs the 8-byte WebSocket length. The staging memory
-     * grows to the largest frame and then serves smaller ones without allocating.
-     */
+    /** Sizes from the buffer to an 8-byte payload length; the staging memory grows to the largest, then is reused. */
     @Test
     public void testFrameSizesAroundSendBuffer() throws Exception {
         assertMemoryLeak(() -> {
@@ -236,9 +219,7 @@ public class QwpIngressStagedAckFrameTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * Table names of 2-, 3- and 4-byte UTF-8 characters arrive intact in a staged ack.
-     */
+    /** Table names of 2-, 3- and 4-byte UTF-8 characters arrive intact. */
     @Test
     public void testStagedAckCarriesMultiByteTableNames() throws Exception {
         assertMemoryLeak(() -> {
@@ -270,11 +251,7 @@ public class QwpIngressStagedAckFrameTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * A blocked piece parks the ack until resumeSend, which sends the rest from where the
-     * block left it, as many times as the peer blocks. A block on the last piece leaves
-     * nothing staged, only the send buffer's part.
-     */
+    /** Each block parks the ack until resumeSend; a block on the last piece leaves nothing staged. */
     @Test
     public void testResumeSendsStagedAckFromWhereBlocksLeftIt() throws Exception {
         assertMemoryLeak(() -> {
@@ -317,10 +294,7 @@ public class QwpIngressStagedAckFrameTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * Staging memory the server cannot allocate drops the connection before any of the ack
-     * goes out. A teardown that tries the ack again fails the same way and stays quiet.
-     */
+    /** A teardown that tries the ack again fails the same way and stays quiet. */
     @Test
     public void testStagingFailureDropsConnectionBeforeSendingAnything() throws Exception {
         assertMemoryLeak(() -> {
@@ -347,10 +321,7 @@ public class QwpIngressStagedAckFrameTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * A peer gone in the middle of a staged ack: the send fails, and the teardown that
-     * follows tries the rest, fails the same way, stays quiet, and frees the staging memory.
-     */
+    /** The send fails mid-ack; the teardown's retry fails quietly and frees the staging memory. */
     @Test
     public void testPeerGoneInsideStagedAck() throws Exception {
         assertMemoryLeak(() -> {
@@ -373,11 +344,7 @@ public class QwpIngressStagedAckFrameTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * A connection torn down while a staged ack is parked sends the rest of it, so a peer
-     * still reading gets the ack whole, and frees the staging memory, which a pooled
-     * context must not keep. The connection's next life stages afresh.
-     */
+    /** Teardown sends the rest of a parked staged ack and frees the staging memory; the next life stages afresh. */
     @Test
     public void testTeardownFinishesParkedStagedAck() throws Exception {
         assertMemoryLeak(() -> {
@@ -474,10 +441,7 @@ public class QwpIngressStagedAckFrameTest extends AbstractCairoTest {
         };
     }
 
-    /**
-     * Server WebSocket frames, unmasked and unfragmented, in the order they appear in
-     * {@code bytes}, which must end at a frame boundary. Returns their payloads.
-     */
+    /** Payloads of the unmasked, unfragmented server frames in {@code bytes}, which must end at a frame boundary. */
     private static ObjList<byte[]> parseFrames(byte[] bytes) {
         final ObjList<byte[]> payloads = new ObjList<>();
         int pos = 0;
@@ -522,12 +486,7 @@ public class QwpIngressStagedAckFrameTest extends AbstractCairoTest {
         return entries;
     }
 
-    /**
-     * Sets up the connection to owe an ack of exactly {@code frameSize} bytes for four frames,
-     * behind a parked ack for the ones before, and returns its tables. The next
-     * {@code resumeSend} finishes the parked ack and sends this one, for
-     * {@link Connection#ackSequence}.
-     */
+    /** Makes the connection owe a {@code frameSize}-byte ack behind a parked one; returns its tables. */
     private static Map<String, Long> stageAck(Connection connection, int frameSize) {
         final QwpIngressProcessorState state = connection.state;
         final long parkedSequence = connection.ackSequence + 4;
@@ -556,10 +515,7 @@ public class QwpIngressStagedAckFrameTest extends AbstractCairoTest {
         return tables;
     }
 
-    /**
-     * One server connection over in-memory sockets: a send buffer of the given size and a
-     * receive buffer large enough for every frame of a test.
-     */
+    /** One server connection over in-memory sockets, with a send buffer of the given size. */
     private static class Connection implements AutoCloseable {
         final TestableContext context;
         final PhasedNetworkFacade nf;

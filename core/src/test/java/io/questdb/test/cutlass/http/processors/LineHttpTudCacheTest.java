@@ -46,10 +46,6 @@ import java.lang.ref.WeakReference;
 
 public class LineHttpTudCacheTest extends AbstractCairoTest {
 
-    /**
-     * reset() and the distressed clear() free every table entry and leave none of them
-     * reachable.
-     */
     @Test
     public void testResetAndDistressedClearReleaseFreedEntries() throws Exception {
         // Only writer closes that succeed: when a free throws, reset() and clear() stop at

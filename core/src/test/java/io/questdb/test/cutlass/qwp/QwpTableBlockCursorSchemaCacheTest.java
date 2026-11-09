@@ -81,10 +81,7 @@ public class QwpTableBlockCursorSchemaCacheTest {
         Assert.assertEquals("client native memory leaked", clientMemUsedBefore, Unsafe.getMemUsed());
     }
 
-    /**
-     * Each table keeps its own parse, so blocks that alternate between tables, even
-     * tables with identical columns, parse each table's schema once.
-     */
+    /** Blocks alternating between tables, even with identical columns, parse each table's schema once. */
     @Test
     public void testInterleavedTablesKeepTheirParses() throws Exception {
         final long clientMemUsedBefore = Unsafe.getMemUsed();
@@ -113,10 +110,7 @@ public class QwpTableBlockCursorSchemaCacheTest {
         Assert.assertEquals("client native memory leaked", clientMemUsedBefore, Unsafe.getMemUsed());
     }
 
-    /**
-     * A table the cache has no slot for, and a decoder without a cache, parse every
-     * block.
-     */
+    /** Also a decoder without a cache. */
     @Test
     public void testTableWithoutSlotParsesEveryBlock() throws Exception {
         final long clientMemUsedBefore = Unsafe.getMemUsed();
@@ -132,11 +126,7 @@ public class QwpTableBlockCursorSchemaCacheTest {
         Assert.assertEquals("client native memory leaked", clientMemUsedBefore, Unsafe.getMemUsed());
     }
 
-    /**
-     * A block of a cached table whose data ends inside its schema section must not
-     * take the cached parse: it parses the section, fails, and leaves the table's
-     * slot holding no parse.
-     */
+    /** A block whose data ends inside its schema section parses it, fails, and leaves the slot without a parse. */
     @Test
     public void testTruncatedSchemaSkipsCacheAndLeavesNoParse() throws Exception {
         final long clientMemUsedBefore = Unsafe.getMemUsed();

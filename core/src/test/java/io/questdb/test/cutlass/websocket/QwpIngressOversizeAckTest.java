@@ -67,11 +67,7 @@ public class QwpIngressOversizeAckTest extends AbstractQwpBootstrapTest {
         dbPath.parent().$();
     }
 
-    /**
-     * A durable-ack client trims a frame only once a durable ack covers every table its OK ack
-     * named, so both must arrive. A durable ack lacks the OK ack's sequence and is 8 bytes
-     * shorter over the same tables: 3 times the send buffer keeps both well above it.
-     */
+    /** Both acks must arrive; at 3 times the send buffer, the durable ack, 8 bytes shorter, still outgrows it. */
     @Test
     public void testLocalDurableAckLargerThanSendBufferReachesClient() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
@@ -93,11 +89,7 @@ public class QwpIngressOversizeAckTest extends AbstractQwpBootstrapTest {
         });
     }
 
-    /**
-     * The scenario a commit batch makes common: a few tables per frame, many frames in one
-     * receive pass, and one ack for the pass that names every table. Whether the frames share a
-     * pass depends on timing, but the ack must reach the client however they group.
-     */
+    /** A few tables per frame and many frames; how they share receive passes depends on timing. */
     @Test
     public void testOkAckForManyFramesLargerThanSendBufferReachesClient() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
@@ -123,11 +115,7 @@ public class QwpIngressOversizeAckTest extends AbstractQwpBootstrapTest {
         });
     }
 
-    /**
-     * One frame that carries many tables, so that its ack alone outgrows the send buffer.
-     * Each ack size gets its own frame and tables, acked before the next frame goes out:
-     * exactly the buffer, one byte more, and several times the buffer.
-     */
+    /** Acks of exactly the buffer, one byte more and several times the buffer, each for a frame of its own. */
     @Test
     public void testOkAckForOneFrameLargerThanSendBufferReachesClient() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
@@ -187,10 +175,7 @@ public class QwpIngressOversizeAckTest extends AbstractQwpBootstrapTest {
         return sb.toString();
     }
 
-    /**
-     * New tables whose OK ack frame takes exactly {@code frameSize} bytes: names of
-     * {@code nameLength} characters, the first few longer to make up the remainder.
-     */
+    /** New tables whose OK ack takes exactly {@code frameSize} bytes, with names of {@code nameLength} characters. */
     private ObjList<String> tablesForOkAckFrame(int frameSize, int nameLength) {
         final int entries = frameSize - FRAME_HEADER_SIZE - OK_ACK_FIXED_SIZE;
         final int entrySize = TABLE_ENTRY_OVERHEAD + nameLength;

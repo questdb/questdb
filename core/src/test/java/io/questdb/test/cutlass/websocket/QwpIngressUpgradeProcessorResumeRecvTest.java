@@ -286,10 +286,7 @@ public class QwpIngressUpgradeProcessorResumeRecvTest extends AbstractCairoTest 
         });
     }
 
-    /**
-     * An ack larger than the send buffer leaves in buffer-sized pieces, even when the buffer
-     * is smaller than the ack's fixed fields.
-     */
+    /** Also when the send buffer is smaller than the ack's fixed fields. */
     @Test
     public void testAckLargerThanSendBufferLeavesInPieces() throws Exception {
         assertMemoryLeak(() -> {
@@ -1811,13 +1808,7 @@ public class QwpIngressUpgradeProcessorResumeRecvTest extends AbstractCairoTest 
         });
     }
 
-    /**
-     * A frame appends to the commit batch and then fails on its second block: its row goes
-     * back out of the batch table's writer, the batch commits, and the frame gets its own
-     * NACK. That NACK finds the send blocked: the ack for the batch is parked, the NACK
-     * queued behind it, and resuming the send delivers both in that order without
-     * processing any frame again.
-     */
+    /** A rewound frame's NACK queues behind the batch's blocked ack; resuming sends both in order. */
     @Test
     public void testRewoundFrameNackBehindBlockedAckResumesInOrder() throws Exception {
         assertMemoryLeak(() -> {

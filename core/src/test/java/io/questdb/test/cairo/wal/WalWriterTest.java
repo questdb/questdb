@@ -1542,11 +1542,7 @@ public class WalWriterTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * A cancelled columnar write that cannot rewind its columns leaves them at unknown
-     * positions: the writer latches distressed, so caches evict it and the pool expels
-     * it, and the table takes rows through a fresh writer afterwards.
-     */
+    /** A cancel that cannot rewind its columns distresses the writer; the table takes rows through a fresh one. */
     @Test
     public void testCancelColumnarWriteFailureDistressesWriter() throws Exception {
         final long pageSize = 16_384;
@@ -4671,10 +4667,7 @@ public class WalWriterTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * A second mark in one transaction replaces the first: the rollback keeps the rows
-     * appended between the two marks.
-     */
+    /** The rollback keeps the rows appended between the two marks. */
     @Test
     public void testSavepointMarkedAgainReplacesEarlierMark() throws Exception {
         setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
@@ -4707,12 +4700,7 @@ public class WalWriterTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * A row that was started, but neither appended nor cancelled, has written its
-     * timestamp and a value past the savepoint. The rollback drops them too, so the next
-     * row starts clean: its timestamp lands in its own slot, and the value it does not set
-     * is null.
-     */
+    /** A started, unappended row's timestamp and value go too: the next row takes its own slot, with nulls. */
     @Test
     public void testSavepointRollbackDropsStartedRow() throws Exception {
         assertMemoryLeak(() -> {
@@ -4735,11 +4723,7 @@ public class WalWriterTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * The rollback's rewind of a column has to map an earlier page of the column's file
-     * again, and the mapping fails: the writer is distressed, refuses a second rollback,
-     * and commits nothing. The table takes rows through a fresh writer afterwards.
-     */
+    /** The rollback cannot remap an earlier page: the writer refuses a second rollback and commits nothing. */
     @Test
     public void testSavepointRollbackFailureDistressesWriter() throws Exception {
         final long pageSize = 16_384;
@@ -4796,11 +4780,7 @@ public class WalWriterTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * The rollback refuses a writer in the middle of a columnar write, whose columns are
-     * past the rows it counts, and leaves it as it was: the write then completes and its
-     * rows commit.
-     */
+    /** The writer stays as it was: the columnar write completes and its rows commit. */
     @Test
     public void testSavepointRollbackRefusedDuringColumnarWrite() throws Exception {
         assertMemoryLeak(() -> {
@@ -4833,11 +4813,7 @@ public class WalWriterTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * The transaction's rows before the mark are out of order, the rolled back row is in
-     * order: the rollback keeps the out-of-order flag the mark saw, which the WAL event
-     * carries to the apply job, and the table reads back sorted.
-     */
+    /** Rows before the mark are out of order and the rolled back row is not: the flag stays, the table reads sorted. */
     @Test
     public void testSavepointRollbackRestoresOutOfOrderOfRowsBeforeMark() throws Exception {
         setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
@@ -4874,13 +4850,7 @@ public class WalWriterTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * Rows appended after the mark widen both timestamp bounds of the transaction and
-     * put it out of order. The rollback drops them and restores the bounds and the
-     * in-order flag of the rows before the mark, which the sequencer records and the WAL
-     * event carries once the transaction commits. A rollback with nothing appended since
-     * the mark changes nothing.
-     */
+    /** Rows after the mark widen the bounds and break the order; the rollback restores both, or does nothing. */
     @Test
     public void testSavepointRollbackRestoresTransactionBounds() throws Exception {
         setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
@@ -4922,14 +4892,7 @@ public class WalWriterTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * The rollback rewinds every kind of column to the row at the mark: fixed-size,
-     * designated timestamp, var-size with an aux file (VARCHAR, STRING, BINARY, arrays) and
-     * symbol columns. The rolled back rows carry longer values than the rows around
-     * them, so a var-size column left at the wrong data offset would show in the rows
-     * after the rollback, as would a column left with a value of a rolled back row
-     * where the next rows leave it null.
-     */
+    /** Fixed, timestamp, var-size and symbol columns, with rolled back values longer than the rows around them. */
     @Test
     public void testSavepointRollbackRewindsEveryColumnType() throws Exception {
         assertMemoryLeak(() -> {
@@ -4964,12 +4927,7 @@ public class WalWriterTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * A savepoint of no rows, marked while the writer holds a segment roll for its next
-     * row. The next block rolls the transaction into a new segment, and the rollback
-     * still drops exactly the rows after the mark: the savepoint counts rows from the
-     * transaction's start, not from the segment's.
-     */
+    /** A mark of no rows with a segment roll pending: the savepoint counts from the transaction's start. */
     @Test
     public void testSavepointWithoutRowsSurvivesSegmentRoll() throws Exception {
         setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);

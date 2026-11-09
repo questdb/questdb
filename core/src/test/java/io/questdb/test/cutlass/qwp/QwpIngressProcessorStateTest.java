@@ -193,12 +193,7 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * The batch commit checks that each table's writer holds exactly its batch rows. A
-     * row that reached a batch table's writer behind the batch's back, which no
-     * production path does, stops the commit at that table: the table before it
-     * commits, and the watermark stops before its first frame.
-     */
+    /** A row added to a batch table's writer behind the batch's back stops the commit at that table. */
     @Test
     public void testCommitBatchStopsAtTableWhoseRowsChanged() throws Exception {
         assertMemoryLeak(() -> {
@@ -231,15 +226,7 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * A frame that fails leaves the batch as it stood before the frame, so the batch then
-     * commits. The appender cancels a failed block, so a frame that fails on its first
-     * block's append left nothing in a writer, whether its table is in the batch or new
-     * to it, and neither does a frame without a payload. A frame that fails after its first
-     * block appended to a batch table takes that block's rows back out of the table's
-     * writer, and so does one whose first block had no rows. A table that the failed frame
-     * brought into the batch leaves it.
-     */
+    /** A frame that fails before or after appending leaves the batch rows as they were, so the batch commits. */
     @Test
     public void testFailedFrameLeavesCommitBatchAsItStood() throws Exception {
         assertMemoryLeak(() -> {
@@ -309,15 +296,7 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * How a failed frame meets a pending batch of a symbol table. A failure that distresses
-     * the table cache, which then commits nothing, leaves the batch no longer intact,
-     * whether the frame got to its first block's lookup or failed in its preparation, and
-     * the batch commit refuses it. A failure that leaves the cache healthy and touched no
-     * writer leaves the batch intact, whether the decode failed outright or after it
-     * applied a dictionary delta that only adds ids. A frame that redefines a dictionary
-     * id joins like any other.
-     */
+    /** A failure that distresses the cache loses the batch; one that touched no writer keeps it. */
     @Test
     public void testFailedFrameInDistressedCacheLosesCommitBatch() throws Exception {
         assertMemoryLeak(() -> {
@@ -450,11 +429,6 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * Frames that alternate between tables keep each table's schema parse and column
-     * resolution, and keep joining one commit batch: once warm, they allocate nothing,
-     * as frames of one table do.
-     */
     @Test
     public void testInterleavedTablesAllocateNothingOnceWarm() throws Exception {
         assertMemoryLeak(() -> {
@@ -539,11 +513,7 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * Every plain frame joins the commit batch, whatever its tables: frames without
-     * tables or rows, frames of several tables, and frames of tables the batch does
-     * not hold yet. A block without rows joins nothing. Each table commits once.
-     */
+    /** Frames without tables or rows, of several tables, or of new tables join; each table commits once. */
     @Test
     public void testPreparedMessageJoinsWhateverItsTables() throws Exception {
         assertMemoryLeak(() -> {
@@ -869,12 +839,7 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * Every path that frees a table's entry drops the entry's QWP caches, its column
-     * mapping and its schema slot with the parse, also when closing the entry's writer
-     * throws, as closing the writer of a dropped or distressed table can on I/O. The path
-     * still reports the close failure as before, and the cache goes on serving the table.
-     */
+    /** Every path that frees an entry drops its QWP caches, also when closing its writer throws. */
     @Test
     public void testEntryFreedByFailingWriterCloseKeepsNoQwpCache() throws Exception {
         // Closing a WAL writer msyncs its column files only when the commit mode is not NOSYNC,
@@ -1019,12 +984,7 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * A QWP commit batch commits its tables under one hold of the role-switch read lock and
-     * reads the node's role once under it, so a table's commit there neither takes the lock
-     * nor reads the role again. Such a commit outside the lock is a bug the assert catches;
-     * under it, the commit goes through as the batch's does.
-     */
+    /** Outside the role-switch read lock the fenced commit trips its assert; under it, the commit goes through. */
     @Test
     public void testFencedCommitRequiresRoleSwitchReadLock() throws Exception {
         assertMemoryLeak(() -> {
@@ -1075,11 +1035,7 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * Every path that takes a table's entry out of the table cache keeps the lookup
-     * shortcut, which checks the entry found last before hashing, from serving it again,
-     * whether that entry was the one found last or not.
-     */
+    /** No path that removes an entry leaves the lookup shortcut, the entry found last, serving it. */
     @Test
     public void testRemovedEntryIsNotServedAgain() throws Exception {
         final AtomicBoolean isChangeLogOpenFailing = new AtomicBoolean();
@@ -1174,10 +1130,7 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * reset() and the distressed clear() free every table entry and leave none of them
-     * reachable, nor the writer of an entry whose writer close threw.
-     */
+    /** Not even the writer of an entry whose writer close threw stays reachable. */
     @Test
     public void testResetAndDistressedClearReleaseFreedEntries() throws Exception {
         // Closing a WAL writer msyncs its column files only when the commit mode is not NOSYNC,
@@ -1234,14 +1187,7 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * The block cursor keeps a table's schema parse on the table's entry in the
-     * connection's table cache: none before the table is open, one shared by every
-     * spelling of its name while it is open, and none once the entry is freed, which
-     * also drops the freed entry's own caches. A block parsed before its table was
-     * open keeps its parse to itself: the table's next block parses into the entry, and
-     * the one after it finds that parse.
-     */
+    /** A table's schema parse lives on its cache entry, shared by every spelling of its name, until it is freed. */
     @Test
     public void testSchemaParseLivesWithItsTableEntry() throws Exception {
         assertMemoryLeak(() -> {
@@ -1294,12 +1240,7 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * Successive connections on one pooled connection state write more and more tables:
-     * each keeps a schema parse per table it writes, and none survives its disconnect.
-     * A table's first block on a connection parses before its entry exists, so each
-     * table gets two frames.
-     */
+    /** Successive connections on one pooled state write more and more tables; no parse survives a disconnect. */
     @Test
     public void testSchemaParsesGoWithTheConnection() throws Exception {
         assertMemoryLeak(() -> {
@@ -1346,11 +1287,7 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * A schema is settled for a table once Phase 1 resolved it onto that table's
-     * writer, and stays settled while other tables resolve theirs, until the table's
-     * own metadata changes.
-     */
+    /** A schema stays settled for its table while other tables resolve theirs, until its own metadata changes. */
     @Test
     public void testSchemaSettledFollowsEachTablesOwnResolution() throws Exception {
         assertMemoryLeak(() -> {
@@ -1573,11 +1510,7 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * Frames of two tables with 20 columns each, past the initial capacity of a
-     * table's column mapping and of its cached schema section, alternate and keep
-     * joining one commit batch.
-     */
+    /** Two tables of 20 columns, past the initial mapping and schema-cache capacity, alternate in one batch. */
     @Test
     public void testWideSchemaFramesJoinCommitBatch() throws Exception {
         assertMemoryLeak(() -> {
