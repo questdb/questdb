@@ -76,6 +76,9 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.LockSupport;
+import java.util.concurrent.locks.StampedLock;
+import java.util.function.Consumer;
 
 import static io.questdb.test.cutlass.websocket.QwpIngressWireHarness.*;
 
@@ -646,61 +649,6 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
                 drainWalQueue(demotableEngine);
                 try (TableReader a = demotableEngine.getReader("a"); TableReader b = demotableEngine.getReader("b")) {
                     Assert.assertEquals(0, a.size() + b.size());
-                }
-            }
-        });
-    }
-
-    /**
-     * A demote requested as the batch takes the role-switch lock waits for the lock, as a
-     * role switch's write lock does. The batch hands the lock over after a's commit, the
-     * demote lands, and the batch reads the role again before b's: b is refused, the ack
-     * covers the frame before b's first, and the role-change CLOSE follows it, with no
-     * error response. The demote waits for one table's commit, not the whole batch's;
-     * the client's replay from b's first frame sends a's later row again.
-     */
-    @Test
-    public void testDemoteRequestedDuringBatchCommitLandsBetweenTables() throws Exception {
-        assertMemoryLeak(() -> {
-            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-            execute("CREATE TABLE a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE TABLE b (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            try (DemotableEngine demotableEngine = new DemotableEngine()) {
-                // The batch commit's hold is the pass's only acquisition of the lock.
-                demotableEngine.requestDemoteAtCommit(1);
-                final TableToken aToken = demotableEngine.verifyTableName("a");
-                final TableToken bToken = demotableEngine.verifyTableName("b");
-                final long aTxnBefore = demotableEngine.getTableSequencerAPI().lastTxn(aToken);
-                final long bTxnBefore = demotableEngine.getTableSequencerAPI().lastTxn(bToken);
-                try (Connection connection = new Connection(
-                        demotableEngine,
-                        httpConfig,
-                        AllowAllSecurityContext.INSTANCE,
-                        false,
-                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 100L, 1_000_000L)),
-                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 200L, 2_000_000L)),
-                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 300L, 3_000_000L))
-                )) {
-                    connection.deliverFrames(3);
-                    Assert.assertTrue("test setup: the demote must land within the batch commit", demotableEngine.isReadOnlyMode());
-                    final ObjList<byte[]> sent = connection.sentFrames();
-                    Assert.assertEquals("the ack stops before b's first frame", 0, maxCumulativeOkAck(sent));
-                    final int closeIndex = indexOfCloseFrame(sent);
-                    Assert.assertTrue("the demote must close the connection", closeIndex >= 0);
-                    Assert.assertEquals(WebSocketCloseCode.NORMAL_CLOSURE, closeCode(sent.getQuick(closeIndex)));
-                    Assert.assertTrue("the ack must precede the CLOSE", indexOfBinaryFrame(sent, QwpConstants.STATUS_OK, 0) < closeIndex);
-                    for (int seq = 0; seq < 3; seq++) {
-                        Assert.assertFalse("a role-change refusal sends no error response", hasErrorResponseForSeq(sent, seq));
-                    }
-                }
-                Assert.assertEquals("a commits before the demote", aTxnBefore + 1,
-                        demotableEngine.getTableSequencerAPI().lastTxn(aToken));
-                Assert.assertEquals("b, after the demote, commits nothing", bTxnBefore,
-                        demotableEngine.getTableSequencerAPI().lastTxn(bToken));
-                drainWalQueue(demotableEngine);
-                assertHookQuery(demotableEngine, "SELECT v FROM a").expectSize().returns("v\n100\n300\n");
-                try (TableReader b = demotableEngine.getReader("b")) {
-                    Assert.assertEquals(0, b.size());
                 }
             }
         });
@@ -3170,124 +3118,35 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     }
 
     /**
-     * The batch hands the role-switch lock to a pending role switch between two tables'
-     * commits, and the re-acquire fails. The batch stops at the table it was about to
-     * commit, as at a failed commit: the table before it stays committed, the ack covers
-     * the frame before that table's first, and the NACK names that frame. Nothing is left
-     * holding the lock or releasing it twice.
+     * A role switch that leaves the node writable, such as a reverted demote, queues for the
+     * real write lock while a batch of interleaved frames commits. It gets the lock only
+     * after the batch's last table, so one ack covers the pass and the next frame commits.
      */
     @Test
-    public void testRoleSwitchHandOffFailureStopsBatchAtNextTable() throws Exception {
-        assertMemoryLeak(() -> {
-            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-            execute("CREATE TABLE a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE TABLE b (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            final AtomicInteger lockCalls = new AtomicInteger();
-            try (CairoEngine failingEngine = new CairoEngine(new DefaultTestCairoConfiguration(root)) {
-                private Lock readLock;
-
-                @Override
-                public Lock getRoleSwitchReadLock() {
-                    if (readLock == null) {
-                        final Lock delegate = super.getRoleSwitchReadLock();
-                        readLock = new Lock() {
-                            @Override
-                            public void lock() {
-                                // The batch's own acquire, then the re-acquire after the hand-off.
-                                if (lockCalls.incrementAndGet() == 2) {
-                                    throw new IllegalStateException("test: role-switch lock failed");
-                                }
-                                delegate.lock();
-                            }
-
-                            @Override
-                            public void lockInterruptibly() throws InterruptedException {
-                                delegate.lockInterruptibly();
-                            }
-
-                            @Override
-                            public @NotNull Condition newCondition() {
-                                return delegate.newCondition();
-                            }
-
-                            @Override
-                            public boolean tryLock() {
-                                return delegate.tryLock();
-                            }
-
-                            @Override
-                            public boolean tryLock(long time, @NotNull TimeUnit unit) throws InterruptedException {
-                                return delegate.tryLock(time, unit);
-                            }
-
-                            @Override
-                            public void unlock() {
-                                delegate.unlock();
-                            }
-                        };
-                    }
-                    return readLock;
-                }
-
-                @Override
-                public boolean hasPendingRoleSwitchWriter() {
-                    return true;
-                }
-            }) {
-                final TableToken aToken = failingEngine.verifyTableName("a");
-                final TableToken bToken = failingEngine.verifyTableName("b");
-                final long aTxnBefore = failingEngine.getTableSequencerAPI().lastTxn(aToken);
-                final long bTxnBefore = failingEngine.getTableSequencerAPI().lastTxn(bToken);
-                final ObjList<byte[]> sent;
-                try (Connection connection = new Connection(
-                        failingEngine,
-                        httpConfig,
-                        AllowAllSecurityContext.INSTANCE,
-                        false,
-                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 100L, 1_000_000L)),
-                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 200L, 2_000_000L)),
-                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 300L, 3_000_000L))
-                )) {
-                    Assert.assertFalse("the failure must not tear the connection down", connection.deliverFrames(3));
-                    sent = connection.sentFrames();
-                    Assert.assertEquals("test setup: the hand-off must have re-acquired once", 2, lockCalls.get());
-                    Assert.assertEquals("no role-switch read hold may remain", 0, failingEngine.getRoleSwitchReadLockCount());
-                }
-                Assert.assertEquals("a commits before the hand-off", aTxnBefore + 1,
-                        failingEngine.getTableSequencerAPI().lastTxn(aToken));
-                Assert.assertEquals("b, after it, commits nothing", bTxnBefore,
-                        failingEngine.getTableSequencerAPI().lastTxn(bToken));
-                Assert.assertEquals("the ack stops before b's first frame", 0, maxCumulativeOkAck(sent));
-                Assert.assertFalse(hasErrorResponseForSeq(sent, 0));
-                Assert.assertEquals("the NACK names b's first frame",
-                        QwpConstants.STATUS_INTERNAL_ERROR, errorStatusForSeq(sent, 1));
-                TestUtils.assertContains(errorMessageForSeq(sent, 1), "test: role-switch lock failed");
-                Assert.assertFalse(hasErrorResponseForSeq(sent, 2));
-                drainWalQueue(failingEngine);
-                assertHookQuery(failingEngine, "SELECT v FROM a").expectSize().returns("v\n100\n300\n");
-            }
-        });
+    public void testRoleSwitchDuringBatchCommitLetsNextFrameCommit() throws Exception {
+        assertRoleSwitchDuringBatchCommit(false, false);
     }
 
     /**
-     * A role switch that leaves the node writable, such as a reverted demote, takes the
-     * real write lock while a batch of three tables commits. It gets the lock between a's
-     * commit and b's, and the batch then commits b and c: one ack covers the pass.
+     * A demote queues for the real write lock while a batch of frames that alternate between
+     * a and b commits. It lands only after b's commit: the ack covers the whole pass, the
+     * next frame gets the role-change CLOSE, and the client's replay from it stores no row
+     * twice. A demote between a's commit and b's would leave a's later rows committed in
+     * frames the client replays.
      */
     @Test
-    public void testRoleSwitchWriterGetsLockBetweenTablesAndBatchContinues() throws Exception {
-        assertRoleSwitchWriterGetsLockBetweenTables(false);
+    public void testRoleSwitchDuringBatchCommitOfInterleavedFramesDemotesAfterLastTable() throws Exception {
+        assertRoleSwitchDuringBatchCommit(true, false);
     }
 
     /**
-     * A demote takes the real role-switch write lock while a batch of three tables
-     * commits. It gets the lock between a's commit and b's, not after the last table, and
-     * the batch, reading the role again, commits neither b nor c: the ack covers the frame
-     * before b's first, and the role-change CLOSE follows, with no error response.
+     * Like {@link #testRoleSwitchDuringBatchCommitOfInterleavedFramesDemotesAfterLastTable},
+     * with frames that each carry a row of a and a row of b, so both tables join the batch
+     * with its first frame.
      */
     @Test
-    public void testRoleSwitchWriterGetsLockBetweenTablesAndDemoteStopsBatch() throws Exception {
-        assertRoleSwitchWriterGetsLockBetweenTables(true);
+    public void testRoleSwitchDuringBatchCommitOfMultiTableFramesDemotesAfterLastTable() throws Exception {
+        assertRoleSwitchDuringBatchCommit(true, true);
     }
 
     /**
@@ -4694,104 +4553,115 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         });
     }
 
-    // A role switch takes the engine's real write lock while a batch of a, b and c commits.
-    // The engine starts it when the batch first asks, between a's commit and b's, whether a
-    // role switch is pending, and waits until the switch queues for the lock.
-    private void assertRoleSwitchWriterGetsLockBetweenTables(boolean isDemote) throws Exception {
+    // A batch of a and b, with n rows each, arrives in one receive pass: frames that
+    // alternate between the tables, or frames that each carry a row of both. A role switch
+    // queues for the real write lock as the batch reads the node's role, before any table
+    // commits, and gets the lock only after the batch's last table: the ack covers the
+    // pass. The next pass's frame then meets the role the switch left. After a demote it
+    // gets the role-change CLOSE, and the client replays every frame above the ack once the
+    // node is writable again. Either way, each row is stored exactly once.
+    private void assertRoleSwitchDuringBatchCommit(boolean isDemote, boolean isMultiTableFrame) throws Exception {
         assertMemoryLeak(() -> {
             final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-            final String[] tables = {"a", "b", "c"};
-            final TableToken[] tokens = new TableToken[tables.length];
-            final long[] txnBefore = new long[tables.length];
-            for (String table : tables) {
-                execute("CREATE TABLE " + table + " (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE b (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // Row i of a holds 1_000 + i and row i of b 2_000 + i, both at i + 1 seconds; the
+            // frame after the batch holds a's row n.
+            final int n = 10;
+            final int batchFrameCount = isMultiTableFrame ? n : 2 * n;
+            final byte[][] frames = new byte[batchFrameCount + 1][];
+            final StringBuilder expectedA = new StringBuilder("v\n");
+            final StringBuilder expectedB = new StringBuilder("v\n");
+            int batchBytes = 0;
+            for (int i = 0; i < n; i++) {
+                final long ts = (i + 1) * 1_000_000L;
+                if (isMultiTableFrame) {
+                    frames[i] = createMaskedFrame(WebSocketOpcode.BINARY, qwpMessage(
+                            tableBlock("a", 1_000 + i, ts),
+                            tableBlock("b", 2_000 + i, ts)
+                    ));
+                    batchBytes += frames[i].length;
+                } else {
+                    frames[2 * i] = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 1_000 + i, ts));
+                    frames[2 * i + 1] = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 2_000 + i, ts));
+                    batchBytes += frames[2 * i].length + frames[2 * i + 1].length;
+                }
+                expectedA.append(1_000 + i).append('\n');
+                expectedB.append(2_000 + i).append('\n');
             }
-            final AtomicBoolean isReadOnly = new AtomicBoolean();
-            final AtomicInteger committedAtGrant = new AtomicInteger(-1);
-            final AtomicReference<Throwable> switchFailure = new AtomicReference<>();
-            final AtomicReference<Thread> roleSwitch = new AtomicReference<>();
-            try (CairoEngine roleSwitchEngine = new CairoEngine(new DefaultTestCairoConfiguration(root)) {
-                @Override
-                public boolean hasPendingRoleSwitchWriter() {
-                    if (roleSwitch.get() == null) {
-                        final Thread thread = new Thread(() -> {
-                            try {
-                                final Lock writeLock = getRoleSwitchWriteLock();
-                                writeLock.lock();
-                                try {
-                                    int committed = 0;
-                                    for (int t = 0; t < tokens.length; t++) {
-                                        if (getTableSequencerAPI().lastTxn(tokens[t]) > txnBefore[t]) {
-                                            committed++;
-                                        }
-                                    }
-                                    committedAtGrant.set(committed);
-                                    isReadOnly.set(isDemote);
-                                } finally {
-                                    writeLock.unlock();
-                                }
-                            } catch (Throwable th) {
-                                switchFailure.set(th);
-                            }
-                        }, "qwp-role-switch");
-                        roleSwitch.set(thread);
-                        thread.start();
-                        while (!super.hasPendingRoleSwitchWriter() && thread.isAlive()) {
-                            Thread.onSpinWait();
-                        }
-                    }
-                    return super.hasPendingRoleSwitchWriter();
-                }
+            frames[batchFrameCount] = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 1_000 + n, (n + 1) * 1_000_000L));
+            expectedA.append(1_000 + n).append('\n');
+            Assert.assertTrue("test setup: the batch must arrive in one receive pass", batchBytes <= RECV_BUFFER_SIZE);
 
-                @Override
-                public boolean isReadOnlyMode() {
-                    return isReadOnly.get();
+            final AtomicInteger committedAtGrant = new AtomicInteger(-1);
+            final TableToken[] tokens = new TableToken[2];
+            final long[] txnBefore = new long[2];
+            try (RoleSwitchingEngine roleSwitchEngine = new RoleSwitchingEngine(isDemote, switchingEngine -> {
+                int committed = 0;
+                for (int t = 0; t < tokens.length; t++) {
+                    if (switchingEngine.getTableSequencerAPI().lastTxn(tokens[t]) > txnBefore[t]) {
+                        committed++;
+                    }
                 }
-            }) {
-                for (int t = 0; t < tables.length; t++) {
-                    tokens[t] = roleSwitchEngine.verifyTableName(tables[t]);
-                    txnBefore[t] = roleSwitchEngine.getTableSequencerAPI().lastTxn(tokens[t]);
-                }
+                committedAtGrant.set(committed);
+            })) {
+                tokens[0] = roleSwitchEngine.verifyTableName("a");
+                tokens[1] = roleSwitchEngine.verifyTableName("b");
+                txnBefore[0] = roleSwitchEngine.getTableSequencerAPI().lastTxn(tokens[0]);
+                txnBefore[1] = roleSwitchEngine.getTableSequencerAPI().lastTxn(tokens[1]);
                 final ObjList<byte[]> sent;
                 try (Connection connection = new Connection(
                         roleSwitchEngine,
                         httpConfig,
                         AllowAllSecurityContext.INSTANCE,
                         false,
-                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 100L, 1_000_000L)),
-                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("b", 200L, 2_000_000L)),
-                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("c", 300L, 3_000_000L)),
-                        createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 400L, 4_000_000L))
+                        frames
                 )) {
-                    connection.deliverFrames(4);
+                    connection.deliverFrames(batchFrameCount);
+                    roleSwitchEngine.awaitRoleSwitch();
+                    Assert.assertEquals("the role switch gets the lock after the batch's last table", 2, committedAtGrant.get());
+                    Assert.assertEquals("one ack covers the batch", batchFrameCount - 1, maxCumulativeOkAck(connection.sentFrames()));
+                    Assert.assertEquals("no CLOSE within the batch's pass", -1, indexOfCloseFrame(connection.sentFrames()));
+                    connection.deliverFrames(1);
                     sent = connection.sentFrames();
                 }
-                final Thread thread = roleSwitch.get();
-                Assert.assertNotNull("test setup: the batch must ask for a pending role switch", thread);
-                thread.join();
-                Assert.assertNull(switchFailure.get());
-                Assert.assertEquals("the role switch gets the lock after a's commit, before b's", 1, committedAtGrant.get());
-                for (int seq = 0; seq < 4; seq++) {
+                for (int seq = 0; seq <= batchFrameCount; seq++) {
                     Assert.assertFalse("no frame gets an error response", hasErrorResponseForSeq(sent, seq));
                 }
-                drainWalQueue(roleSwitchEngine);
-                assertHookQuery(roleSwitchEngine, "SELECT v FROM a").expectSize().returns("v\n100\n400\n");
+                Assert.assertEquals("b commits once", txnBefore[1] + 1,
+                        roleSwitchEngine.getTableSequencerAPI().lastTxn(tokens[1]));
                 if (isDemote) {
-                    Assert.assertEquals("the ack stops before b's first frame", 0, maxCumulativeOkAck(sent));
+                    Assert.assertEquals("a commits once", txnBefore[0] + 1,
+                            roleSwitchEngine.getTableSequencerAPI().lastTxn(tokens[0]));
+                    Assert.assertEquals("the ack stays at the batch", batchFrameCount - 1, maxCumulativeOkAck(sent));
                     final int closeIndex = indexOfCloseFrame(sent);
-                    Assert.assertTrue("the demote must close the connection", closeIndex >= 0);
+                    Assert.assertTrue("the frame after the demote gets the role-change CLOSE", closeIndex >= 0);
                     Assert.assertEquals(WebSocketCloseCode.NORMAL_CLOSURE, closeCode(sent.getQuick(closeIndex)));
-                    Assert.assertTrue("the ack must precede the CLOSE", indexOfBinaryFrame(sent, QwpConstants.STATUS_OK, 0) < closeIndex);
-                    for (int t = 1; t < tables.length; t++) {
-                        Assert.assertEquals(tables[t] + ", after the demote, commits nothing", txnBefore[t],
-                                roleSwitchEngine.getTableSequencerAPI().lastTxn(tokens[t]));
+                    Assert.assertTrue("the ack must precede the CLOSE",
+                            indexOfBinaryFrame(sent, QwpConstants.STATUS_OK, batchFrameCount - 1) < closeIndex);
+                    // The client replays every frame above the ack once the node is writable.
+                    roleSwitchEngine.revertDemote();
+                    final int replayFrom = (int) maxCumulativeOkAck(sent) + 1;
+                    try (Connection replay = new Connection(
+                            roleSwitchEngine,
+                            httpConfig,
+                            AllowAllSecurityContext.INSTANCE,
+                            false,
+                            Arrays.copyOfRange(frames, replayFrom, frames.length)
+                    )) {
+                        replay.deliverFrames(frames.length - replayFrom);
+                        Assert.assertEquals("the replay is acked", frames.length - replayFrom - 1,
+                                maxCumulativeOkAck(replay.sentFrames()));
                     }
                 } else {
-                    Assert.assertEquals("one ack covers the pass", 3, maxCumulativeOkAck(sent));
+                    Assert.assertEquals("a commits again with the next frame", txnBefore[0] + 2,
+                            roleSwitchEngine.getTableSequencerAPI().lastTxn(tokens[0]));
+                    Assert.assertEquals("the next frame is acked", batchFrameCount, maxCumulativeOkAck(sent));
                     Assert.assertEquals("no CLOSE", -1, indexOfCloseFrame(sent));
-                    assertHookQuery(roleSwitchEngine, "SELECT v FROM b").expectSize().returns("v\n200\n");
-                    assertHookQuery(roleSwitchEngine, "SELECT v FROM c").expectSize().returns("v\n300\n");
                 }
+                drainWalQueue(roleSwitchEngine);
+                assertHookQuery(roleSwitchEngine, "SELECT v FROM a").expectSize().returns(expectedA.toString());
+                assertHookQuery(roleSwitchEngine, "SELECT v FROM b").expectSize().returns(expectedB.toString());
             }
         });
     }
@@ -5545,8 +5415,6 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     private static final class DemotableEngine extends CairoEngine {
         // Commits left before the one the demote lands at; 0 when no demote is armed.
         private final AtomicInteger commitsUntilDemote = new AtomicInteger();
-        // Commits left before the one that requests a demote, see requestDemoteAtCommit().
-        private final AtomicInteger commitsUntilDemoteRequest = new AtomicInteger();
         private final AtomicBoolean isReadOnly = new AtomicBoolean();
         private final DurableAckRegistry laggingRegistry = new DurableAckRegistry() {
             @Override
@@ -5573,8 +5441,6 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
             public void onTableDropped(TableToken tableToken) {
             }
         };
-        // A requested demote waits for the last read hold to go, see requestDemoteAtCommit().
-        private boolean isDemoteRequested;
         private Lock roleSwitchReadLock;
 
         DemotableEngine() {
@@ -5595,11 +5461,6 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         }
 
         @Override
-        public boolean hasPendingRoleSwitchWriter() {
-            return isDemoteRequested;
-        }
-
-        @Override
         public boolean isReadOnlyMode() {
             return isReadOnly.get();
         }
@@ -5612,20 +5473,8 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
             demoteAtCommit(1);
         }
 
-        /**
-         * Requests a demote at the {@code commit}-th acquisition of the role-switch read
-         * lock. Unlike {@link #demoteAtCommit}, it lands as a role switch's write lock would:
-         * once no read hold remains, and until then it shows as a pending role-switch
-         * writer, so a batch commit hands it the lock between two tables' commits.
-         */
-        void requestDemoteAtCommit(int commit) {
-            commitsUntilDemoteRequest.set(commit);
-        }
-
         private final class DemotingLock implements Lock {
             private final Lock delegate;
-            // Read holds currently open; the connection takes them all on the test thread.
-            private int holdCount;
 
             DemotingLock(Lock delegate) {
                 this.delegate = delegate;
@@ -5669,19 +5518,11 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
             @Override
             public void unlock() {
                 delegate.unlock();
-                if (--holdCount == 0 && isDemoteRequested) {
-                    isDemoteRequested = false;
-                    isReadOnly.set(true);
-                }
             }
 
             private void onAcquired() {
-                holdCount++;
                 if (commitsUntilDemote.get() > 0 && commitsUntilDemote.decrementAndGet() == 0) {
                     isReadOnly.set(true);
-                }
-                if (commitsUntilDemoteRequest.get() > 0 && commitsUntilDemoteRequest.decrementAndGet() == 0) {
-                    isDemoteRequested = true;
                 }
             }
         }
@@ -5907,6 +5748,70 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
                 }
             }
             return -1;
+        }
+    }
+
+    /**
+     * An engine whose role switches through the real role-switch write lock. The first time
+     * the node's role is read under a role-switch read hold, as a commit batch reads it
+     * before its first table commits, the engine starts a role switch on another thread and
+     * waits until the switch is parked on the write lock. The switch gets the lock once no
+     * read hold remains, runs {@code onGranted} under it, and leaves the node read-only when
+     * it demotes.
+     */
+    private static final class RoleSwitchingEngine extends CairoEngine {
+        private final boolean isDemote;
+        private final AtomicBoolean isReadOnly = new AtomicBoolean();
+        private final Consumer<CairoEngine> onGranted;
+        private final AtomicReference<Throwable> switchFailure = new AtomicReference<>();
+        // Started and read on the connection's thread only.
+        private Thread roleSwitch;
+
+        RoleSwitchingEngine(boolean isDemote, Consumer<CairoEngine> onGranted) {
+            super(new DefaultTestCairoConfiguration(root));
+            this.isDemote = isDemote;
+            this.onGranted = onGranted;
+        }
+
+        @Override
+        public boolean isReadOnlyMode() {
+            if (roleSwitch == null && getRoleSwitchReadLockCount() > 0) {
+                roleSwitch = new Thread(this::switchRole, "qwp-role-switch");
+                roleSwitch.start();
+                // The switch parks in the write lock's StampedLock only while a read hold is open.
+                while (!(LockSupport.getBlocker(roleSwitch) instanceof StampedLock) && roleSwitch.isAlive()) {
+                    Thread.onSpinWait();
+                }
+            }
+            return isReadOnly.get();
+        }
+
+        void awaitRoleSwitch() throws InterruptedException {
+            Assert.assertNotNull("test setup: a commit must read the role under its read hold", roleSwitch);
+            roleSwitch.join();
+            final Throwable failure = switchFailure.get();
+            if (failure != null) {
+                throw new AssertionError("role switch failed", failure);
+            }
+        }
+
+        void revertDemote() {
+            isReadOnly.set(false);
+        }
+
+        private void switchRole() {
+            try {
+                final Lock writeLock = getRoleSwitchWriteLock();
+                writeLock.lock();
+                try {
+                    onGranted.accept(this);
+                    isReadOnly.set(isDemote);
+                } finally {
+                    writeLock.unlock();
+                }
+            } catch (Throwable th) {
+                switchFailure.set(th);
+            }
         }
     }
 

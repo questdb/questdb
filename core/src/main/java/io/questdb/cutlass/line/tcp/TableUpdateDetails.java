@@ -187,8 +187,7 @@ public class TableUpdateDetails implements Closeable {
 
     /**
      * Throws when this entry's identity may not insert into the table, the check every
-     * commit of the entry's rows runs. QWP also runs it when a table joins a commit batch,
-     * and for every table of the batch before committing any of them.
+     * commit of the entry's rows runs. QWP also runs it when a table joins a commit batch.
      */
     public void authorizeCommit() {
         if (ownSecurityContext != null) {

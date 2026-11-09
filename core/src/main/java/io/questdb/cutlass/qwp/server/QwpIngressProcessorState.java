@@ -336,11 +336,12 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     // ends the batch, the frames before it commit, and that frame gets the refusal.
     //
     // The tables commit one at a time, in the order they joined, under the role-switch
-    // read lock, taken once and read for the node's role once: a batch pays little for a
-    // role switch, which is rare. A role switch that waits for the lock gets it between
-    // two tables' commits, and the role is read again after it. Any refusal there, or a
-    // failed commit -- a storage fault, or a DROP, RENAME, SUSPEND WAL or REVOKE that
-    // landed while the table waited in the batch -- stops the commits. The frames before
+    // read lock, held across all their commits and read for the node's role once: a batch
+    // pays little for a role switch, which is rare. A role switch that waits for the lock
+    // gets it after the batch's last table, never between two tables, whose rows the
+    // batch's frames can interleave. A read-only node refuses the whole batch. A failed
+    // commit -- a storage fault, or a DROP, RENAME, SUSPEND WAL or REVOKE that landed
+    // while the table waited in the batch -- stops the commits. The frames before
     // the failed table's first frame hold rows of tables that committed and nothing else,
     // so the watermark covers them, and the client replays the rest: rows that those
     // later frames added to the committed tables arrive a second time.
@@ -596,14 +597,14 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
      * only while the table cache is healthy and the table's writer holds exactly its
      * batch rows.
      * <p>
-     * The commits run under the role-switch read lock, taken once, and the batch is refused
-     * as a whole, with nothing committed, when the node is read-only under it. A role
-     * switch that waits for the lock gets it between two tables' commits, after which the
-     * role is read again. QuestDB commits each table on its own, so a table that fails
-     * after an earlier one committed leaves rows the client replays twice: a demote that
-     * lands mid-batch, a storage fault, or a DROP, RENAME, SUSPEND WAL or REVOKE that lands
-     * while the table waits in the batch. Refusals that hold already as a table joins keep
-     * it out of the batch instead, see {@link #joinCommitBatch}.
+     * The commits run under the role-switch read lock, held across all of them, and the
+     * batch is refused as a whole, with nothing committed, when the node is read-only under
+     * it. A role switch that waits for the lock gets it only after the last table's commit,
+     * so a demote never splits the batch. QuestDB commits each table on its own, so a table
+     * that fails after an earlier one committed leaves rows the client replays twice: a
+     * storage fault, or a DROP, RENAME, SUSPEND WAL or REVOKE that lands while the table
+     * waits in the batch. Refusals that hold already as a table joins keep it out of the
+     * batch instead, see {@link #joinCommitBatch}.
      * <p>
      * On success the watermark is past the batch. On a failure the commits stop, and:
      * this state is in error, with {@code roleChangeClosePending} set for a read-only
@@ -2115,37 +2116,25 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     }
 
     // commitBatch() for a batch that holds tables: commits them one at a time under the
-    // role-switch read lock, which fences them against a role switch. The node's role is
-    // read once under the lock, and again only after the lock went to a pending role
-    // switch between two tables' commits.
+    // role-switch read lock, held across every table's commit, and reads the node's role
+    // once under it. A role switch therefore lands before the batch or after it, never
+    // between two tables: the batch's frames can carry rows of several tables, so a demote
+    // there would leave committed rows in frames above the ack, which the client replays.
     private boolean commitBatchEntries(int n) {
         final Lock roleSwitchLock = engine.getRoleSwitchReadLock();
         roleSwitchLock.lock();
-        boolean isLocked = true;
         try {
+            try {
+                throwIfReadOnlyUnderFence();
+            } catch (Throwable th) {
+                LOG.error().$('[').$(fd).$("] commit batch refused [firstSeq=").$(firstCommitBatchSequence)
+                        .$(", lastSeq=").$(lastCommitBatchSequence)
+                        .$("]: ").$(th).$();
+                rejectCommitError(th);
+                return onCommitBatchFailed(commitBatchEntries.getQuick(0));
+            }
             for (int i = 0; i < n; i++) {
                 final CommitBatchEntry entry = commitBatchEntries.getQuick(i);
-                try {
-                    if (i == 0) {
-                        throwIfReadOnlyUnderFence();
-                    } else if (engine.hasPendingRoleSwitchWriter()) {
-                        // A role switch waits for this hold. No table is mid-commit here, so
-                        // let the switch land now rather than after the last table, then read
-                        // the role it may have changed.
-                        isLocked = false;
-                        roleSwitchLock.unlock();
-                        roleSwitchLock.lock();
-                        isLocked = true;
-                        throwIfReadOnlyUnderFence();
-                    }
-                } catch (Throwable th) {
-                    LOG.error().$('[').$(fd).$("] commit batch refused [table=").$(entry.tud.getTableToken())
-                            .$(", committedTables=").$(i)
-                            .$(", firstSeq=").$(entry.firstSequence)
-                            .$("]: ").$(th).$();
-                    rejectCommitError(th);
-                    return onCommitBatchFailed(entry);
-                }
                 if (!isCommitBatchEntryIntact(entry, i)) {
                     LOG.error().$('[').$(fd).$("] commit batch rows are not intact [table=").$(entry.tud.getTableToken())
                             .$(", cacheDistressed=").$(tudCache.isDistressed())
@@ -2167,9 +2156,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
             }
             return true;
         } finally {
-            if (isLocked) {
-                roleSwitchLock.unlock();
-            }
+            roleSwitchLock.unlock();
         }
     }
 
