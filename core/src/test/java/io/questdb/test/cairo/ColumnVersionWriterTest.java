@@ -754,8 +754,13 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
         // back, so that its next commit reuses the version number with another column top. Readers follow the
         // published version as TableReader follows _txn: the column versions a reader holds must be the ones
         // committed under their version number.
+        // The writer stops only once every reader has checked a version it published: on a busy or single CPU, the
+        // scheduler can otherwise run all of the writer's commits before it runs a reader. No thread waits for another
+        // to start, and the commits have a bound, so a thread that fails or never starts cannot hang the test.
         assertMemoryLeak(() -> {
             final int commitCount = 10_000;
+            // bounds the commits that wait for the readers, so that readers that never check fail the test, not hang it
+            final int maxCommitCount = 1_000_000;
             final int readerCount = 2;
             final FilesFacade ff = configuration.getFilesFacade();
             final Rnd seeds = TestUtils.generateRandom(LOG);
@@ -763,30 +768,29 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                     Path path = new Path();
                     ColumnVersionWriter w = new ColumnVersionWriter(configuration, path.of(root).concat("_cv").$(), true)
             ) {
-                // the column top committed under each version number
-                final long[] committedTops = new long[commitCount + 2];
-                final AtomicLong txnVersion = new AtomicLong();
+                // the version _txn names in the upper 32 bits, the column top committed under it in the lower 32
+                final AtomicLong txnVersionAndTop = new AtomicLong();
                 w.upsert(1, 0, 0, 0);
                 w.commit();
-                committedTops[(int) w.getVersion()] = 0;
-                txnVersion.set(w.getVersion());
+                final long initialVersion = w.getVersion();
+                txnVersionAndTop.set(initialVersion << 32);
 
-                final CyclicBarrier barrier = new CyclicBarrier(readerCount + 1);
                 final ConcurrentLinkedQueue<Throwable> exceptions = new ConcurrentLinkedQueue<>();
                 final AtomicInteger done = new AtomicInteger();
-                final AtomicLong checkCount = new AtomicLong();
+                final AtomicInteger checkedReaderCount = new AtomicInteger();
                 final long writerSeed0 = seeds.nextLong();
                 final long writerSeed1 = seeds.nextLong();
                 final Thread writer = new Thread(() -> {
-                    final Rnd rnd = new Rnd(writerSeed0, writerSeed1);
                     try {
-                        barrier.await();
-                        for (int i = 1; i <= commitCount; i++) {
+                        final Rnd rnd = new Rnd(writerSeed0, writerSeed1);
+                        for (int i = 1; i <= maxCommitCount; i++) {
+                            if (i > commitCount && (checkedReaderCount.get() == readerCount || !exceptions.isEmpty())) {
+                                break;
+                            }
                             w.upsert(1, 0, 0, i);
                             w.commit();
                             if (rnd.nextBoolean()) {
-                                committedTops[(int) w.getVersion()] = i;
-                                txnVersion.set(w.getVersion());
+                                txnVersionAndTop.set(w.getVersion() << 32 | i);
                             } else {
                                 w.rollback();
                             }
@@ -803,18 +807,19 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                     final long readerSeed0 = seeds.nextLong();
                     final long readerSeed1 = seeds.nextLong();
                     readers.add(new Thread(() -> {
-                        final Rnd rnd = new Rnd(readerSeed0, readerSeed1);
                         try (
                                 Path readerPath = new Path().of(root).concat("_cv");
                                 ColumnVersionReader r = new ColumnVersionReader().ofRO(ff, readerPath.$())
                         ) {
-                            barrier.await();
+                            final Rnd rnd = new Rnd(readerSeed0, readerSeed1);
+                            boolean hasCheckedPublishedVersion = false;
                             while (done.get() == 0) {
                                 if (rnd.nextInt(64) == 0) {
                                     // a new mapping, which verifies the area it reads first
                                     r.ofRO(ff, readerPath.$());
                                 }
-                                final long version = txnVersion.get();
+                                final long versionAndTop = txnVersionAndTop.get();
+                                final long version = versionAndTop >>> 32;
                                 if (r.getVersion() != version) {
                                     if (rnd.nextBoolean()) {
                                         r.readSafe(configuration.getMillisecondClock(), 5_000, version);
@@ -825,11 +830,15 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                                 }
                                 if (r.getVersion() == version) {
                                     final long top = r.getColumnTopQuick(1, 0);
-                                    if (top != committedTops[(int) version]) {
+                                    final long committedTop = versionAndTop & 0xffff_ffffL;
+                                    if (top != committedTop) {
                                         throw new AssertionError("version " + version + " holds column top " + top
-                                                + ", committed " + committedTops[(int) version]);
+                                                + ", committed " + committedTop);
                                     }
-                                    checkCount.incrementAndGet();
+                                    if (!hasCheckedPublishedVersion && version > initialVersion) {
+                                        hasCheckedPublishedVersion = true;
+                                        checkedReaderCount.incrementAndGet();
+                                    }
                                 }
                                 Os.pause();
                             }
@@ -839,18 +848,22 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                     }));
                 }
 
-                writer.start();
-                for (int t = 0; t < readerCount; t++) {
-                    readers.getQuick(t).start();
-                }
-                writer.join();
-                for (int t = 0; t < readerCount; t++) {
-                    readers.getQuick(t).join();
+                try {
+                    writer.start();
+                    for (int t = 0; t < readerCount; t++) {
+                        readers.getQuick(t).start();
+                    }
+                } finally {
+                    // joins the threads that started, also when one fails to start, before the writer's file closes
+                    writer.join();
+                    for (int t = 0; t < readerCount; t++) {
+                        readers.getQuick(t).join();
+                    }
                 }
                 if (!exceptions.isEmpty()) {
                     throw new AssertionError(exceptions.poll());
                 }
-                Assert.assertTrue("the readers must have checked column versions", checkCount.get() > 0);
+                Assert.assertEquals("every reader must have checked a version the writer published", readerCount, checkedReaderCount.get());
             }
         });
     }
