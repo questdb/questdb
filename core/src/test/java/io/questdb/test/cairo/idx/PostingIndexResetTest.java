@@ -180,6 +180,13 @@ public class PostingIndexResetTest extends AbstractCairoTest {
         }
     }
 
+    private static void assertFiles(String expected) {
+        final String[] files = partitionDir().list((_, name) -> name.startsWith("s.p"));
+        Assert.assertNotNull(files);
+        Arrays.sort(files);
+        Assert.assertEquals(expected, Arrays.toString(files));
+    }
+
     // The partition holds the key file of an empty chain and none of the instance's sealed files, and the chain
     // starts past lastSealTxn.
     private static void assertReset(FilesFacade ff, long lastSealTxn) {
@@ -219,13 +226,6 @@ public class PostingIndexResetTest extends AbstractCairoTest {
             });
             Assert.assertEquals(0, sealedFiles.size());
         }
-    }
-
-    private static void assertFiles(String expected) {
-        final String[] files = partitionDir().list((_, name) -> name.startsWith("s.p"));
-        Assert.assertNotNull(files);
-        Arrays.sort(files);
-        Assert.assertEquals(expected, Arrays.toString(files));
     }
 
     // Builds a covering posting index over the non-partitioned table x, so its partition holds a key file, value
