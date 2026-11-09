@@ -3151,6 +3151,35 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConstantFalseWindowJoinUnderFilteredVirtualProjectionSortedByTimestamp() throws Exception {
+        // A WHERE on a column that a VIRTUAL projection computes stays on that projection and filters its rows,
+        // which offer no page frames. So, with parallel filters on, the filter still runs serially and cannot read
+        // the page frames that the constant-false WINDOW JOIN passes on from its covering-index master, and ORDER BY
+        // keeps the sort that gives SPLICE JOIN random access.
+        assertMemoryLeak(() -> {
+            createSpliceOverWindowJoinTables();
+            final String zCi = "(SELECT t.sym, avg(p.price) ap, t.ts FROM (SELECT ts, sym, price FROM ci WHERE sym = 'A') t " +
+                    "WINDOW JOIN prices p ON (t.sym = p.sym AND 1 = 0) RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW " +
+                    "EXCLUDE PREVAILING ORDER BY t.ts)";
+            // Twice the NULL average of an empty window is NULL, so the filter keeps every trade.
+            assertQuery(spliceOverOperand("(SELECT * FROM (SELECT sym, ap * 2 ap, ts FROM " + zCi + ") WHERE ap IS NULL)"))
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining(
+                            "Splice Join",
+                            "Filter filter: ap is null\n" +
+                                    "            VirtualRecord\n" +
+                                    "              functions: [sym,ap*2,ts]\n" +
+                                    "                Encode sort\n" +
+                                    "                  keys: [ts]\n",
+                            "CoveringIndex"
+                    )
+                    .withPlanNotContaining("Async Filter", "Async JIT Filter")
+                    .returns(spliceOfSymbolARows("null", "null", "null", false));
+        });
+    }
+
+    @Test
     public void testCountOnlyWindowJoin() throws Exception {
         assertMemoryLeak(() -> {
             prepareTable();
