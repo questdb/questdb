@@ -308,9 +308,9 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
                 // One loop method per probe implementation, so that a hot call site sees one
                 // receiver class. The branch below runs once per page frame, not per row.
                 if (atom.isCountedByKey()) {
-                    countByKey(atom, slot, probeRecord, rowCount);
+                    countByKey(atom, slot, atom.getStageSlot(slotId), probeRecord, rowCount);
                 } else if (atom.isCountedByMatch()) {
-                    countByMatch(atom, slot, probeRecord, rowCount);
+                    countByMatch(atom, slot, atom.getStageSlot(slotId), probeRecord, rowCount);
                 } else if (atom.isKeyStaged()) {
                     if (atom.isBuildPartitioned()) {
                         if (atom.isBuildUnique()) {
@@ -376,8 +376,9 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         // Join fanout can exceed a frame, so duplicate iteration repeats that check
         // once per page frame of matched pairs, counted across all rows of this frame.
         final AsyncHashJoinGroupByAtom.Slot slot = atom.getSlot(slotId);
+        final HashJoinBuildStage.Slot stageSlot = atom.getStageSlot(slotId);
         final HashJoinGroupByRecord record = slot.joinedRecord;
-        final FrozenHashJoinBuild.IntProbe probe = slot.intProbe;
+        final FrozenHashJoinBuild.IntProbe probe = stageSlot.intProbe;
         final HashJoinGroupByFunctions functions = atom.getFunctions();
         final RecordSink sink = functions.getMapSink(slotId);
         final GroupByFunctionsUpdater updater = functions.getUpdater(slotId);
@@ -425,8 +426,9 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
             UnorderedPageFrameSequence<?> sequence
     ) {
         final AsyncHashJoinGroupByAtom.Slot slot = atom.getSlot(slotId);
+        final HashJoinBuildStage.Slot stageSlot = atom.getStageSlot(slotId);
         final HashJoinGroupByRecord record = slot.joinedRecord;
-        final FrozenHashJoinBuild.IntProbe probe = slot.intProbe;
+        final FrozenHashJoinBuild.IntProbe probe = stageSlot.intProbe;
         final HashJoinGroupByFunctions functions = atom.getFunctions();
         final RecordSink sink = functions.getMapSink(slotId);
         final GroupByFunctionsUpdater updater = functions.getUpdater(slotId);
@@ -471,8 +473,9 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         // The filtered twin of aggregateIntUnique(): same singleton probe, driven by the
         // row list the filter phase produced instead of by every row of the frame.
         final AsyncHashJoinGroupByAtom.Slot slot = atom.getSlot(slotId);
+        final HashJoinBuildStage.Slot stageSlot = atom.getStageSlot(slotId);
         final HashJoinGroupByRecord record = slot.joinedRecord;
-        final FrozenHashJoinBuild.IntProbe probe = slot.intProbe;
+        final FrozenHashJoinBuild.IntProbe probe = stageSlot.intProbe;
         final HashJoinGroupByFunctions functions = atom.getFunctions();
         final RecordSink sink = functions.getMapSink(slotId);
         final GroupByFunctionsUpdater updater = functions.getUpdater(slotId);
@@ -508,8 +511,9 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
             UnorderedPageFrameSequence<?> sequence
     ) {
         final AsyncHashJoinGroupByAtom.Slot slot = atom.getSlot(slotId);
+        final HashJoinBuildStage.Slot stageSlot = atom.getStageSlot(slotId);
         final HashJoinGroupByRecord record = slot.joinedRecord;
-        final FrozenHashJoinBuild.IntProbe probe = slot.partitionedIntProbe;
+        final FrozenHashJoinBuild.IntProbe probe = stageSlot.partitionedIntProbe;
         final HashJoinGroupByFunctions functions = atom.getFunctions();
         final RecordSink sink = functions.getMapSink(slotId);
         final GroupByFunctionsUpdater updater = functions.getUpdater(slotId);
@@ -559,8 +563,9 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
             UnorderedPageFrameSequence<?> sequence
     ) {
         final AsyncHashJoinGroupByAtom.Slot slot = atom.getSlot(slotId);
+        final HashJoinBuildStage.Slot stageSlot = atom.getStageSlot(slotId);
         final HashJoinGroupByRecord record = slot.joinedRecord;
-        final FrozenHashJoinBuild.IntProbe probe = slot.partitionedIntProbe;
+        final FrozenHashJoinBuild.IntProbe probe = stageSlot.partitionedIntProbe;
         final HashJoinGroupByFunctions functions = atom.getFunctions();
         final RecordSink sink = functions.getMapSink(slotId);
         final GroupByFunctionsUpdater updater = functions.getUpdater(slotId);
@@ -606,8 +611,9 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
             DirectLongList rows
     ) {
         final AsyncHashJoinGroupByAtom.Slot slot = atom.getSlot(slotId);
+        final HashJoinBuildStage.Slot stageSlot = atom.getStageSlot(slotId);
         final HashJoinGroupByRecord record = slot.joinedRecord;
-        final FrozenHashJoinBuild.IntProbe probe = slot.partitionedIntProbe;
+        final FrozenHashJoinBuild.IntProbe probe = stageSlot.partitionedIntProbe;
         final HashJoinGroupByFunctions functions = atom.getFunctions();
         final RecordSink sink = functions.getMapSink(slotId);
         final GroupByFunctionsUpdater updater = functions.getUpdater(slotId);
@@ -639,8 +645,9 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
             long rowCount
     ) {
         final AsyncHashJoinGroupByAtom.Slot slot = atom.getSlot(slotId);
+        final HashJoinBuildStage.Slot stageSlot = atom.getStageSlot(slotId);
         final HashJoinGroupByRecord record = slot.joinedRecord;
-        final FrozenHashJoinBuild.IntProbe probe = slot.partitionedIntProbe;
+        final FrozenHashJoinBuild.IntProbe probe = stageSlot.partitionedIntProbe;
         final HashJoinGroupByFunctions functions = atom.getFunctions();
         final RecordSink sink = functions.getMapSink(slotId);
         final GroupByFunctionsUpdater updater = functions.getUpdater(slotId);
@@ -671,8 +678,9 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         // Keep the singleton loop separate so its additional call sites do not
         // enlarge the general loop that handles arbitrarily long duplicate chains.
         final AsyncHashJoinGroupByAtom.Slot slot = atom.getSlot(slotId);
+        final HashJoinBuildStage.Slot stageSlot = atom.getStageSlot(slotId);
         final HashJoinGroupByRecord record = slot.joinedRecord;
-        final FrozenHashJoinBuild.IntProbe probe = slot.intProbe;
+        final FrozenHashJoinBuild.IntProbe probe = stageSlot.intProbe;
         final HashJoinGroupByFunctions functions = atom.getFunctions();
         final RecordSink sink = functions.getMapSink(slotId);
         final GroupByFunctionsUpdater updater = functions.getUpdater(slotId);
@@ -707,10 +715,11 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
             UnorderedPageFrameSequence<?> sequence
     ) {
         final AsyncHashJoinGroupByAtom.Slot slot = atom.getSlot(slotId);
+        final HashJoinBuildStage.Slot stageSlot = atom.getStageSlot(slotId);
         final HashJoinGroupByRecord record = slot.joinedRecord;
-        final FrozenHashJoinBuild.RecordProbe probe = slot.recordProbe;
+        final FrozenHashJoinBuild.RecordProbe probe = stageSlot.recordProbe;
         // What the key sink reads: the probe record, or its SYMBOL-translating view of it.
-        final Record keyRecord = slot.keyRecord;
+        final Record keyRecord = stageSlot.keyRecord;
         final HashJoinGroupByFunctions functions = atom.getFunctions();
         final RecordSink sink = functions.getMapSink(slotId);
         final GroupByFunctionsUpdater updater = functions.getUpdater(slotId);
@@ -757,10 +766,11 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
             UnorderedPageFrameSequence<?> sequence
     ) {
         final AsyncHashJoinGroupByAtom.Slot slot = atom.getSlot(slotId);
+        final HashJoinBuildStage.Slot stageSlot = atom.getStageSlot(slotId);
         final HashJoinGroupByRecord record = slot.joinedRecord;
-        final FrozenHashJoinBuild.RecordProbe probe = slot.recordProbe;
+        final FrozenHashJoinBuild.RecordProbe probe = stageSlot.recordProbe;
         // What the key sink reads: the probe record, or its SYMBOL-translating view of it.
-        final Record keyRecord = slot.keyRecord;
+        final Record keyRecord = stageSlot.keyRecord;
         final HashJoinGroupByFunctions functions = atom.getFunctions();
         final RecordSink sink = functions.getMapSink(slotId);
         final GroupByFunctionsUpdater updater = functions.getUpdater(slotId);
@@ -802,10 +812,11 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
             DirectLongList rows
     ) {
         final AsyncHashJoinGroupByAtom.Slot slot = atom.getSlot(slotId);
+        final HashJoinBuildStage.Slot stageSlot = atom.getStageSlot(slotId);
         final HashJoinGroupByRecord record = slot.joinedRecord;
-        final FrozenHashJoinBuild.RecordProbe probe = slot.recordProbe;
+        final FrozenHashJoinBuild.RecordProbe probe = stageSlot.recordProbe;
         // What the key sink reads: the probe record, or its SYMBOL-translating view of it.
-        final Record keyRecord = slot.keyRecord;
+        final Record keyRecord = stageSlot.keyRecord;
         final HashJoinGroupByFunctions functions = atom.getFunctions();
         final RecordSink sink = functions.getMapSink(slotId);
         final GroupByFunctionsUpdater updater = functions.getUpdater(slotId);
@@ -840,10 +851,11 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
             UnorderedPageFrameSequence<?> sequence
     ) {
         final AsyncHashJoinGroupByAtom.Slot slot = atom.getSlot(slotId);
+        final HashJoinBuildStage.Slot stageSlot = atom.getStageSlot(slotId);
         final HashJoinGroupByRecord record = slot.joinedRecord;
-        final FrozenHashJoinBuild.RecordProbe probe = slot.partitionedRecordProbe;
+        final FrozenHashJoinBuild.RecordProbe probe = stageSlot.partitionedRecordProbe;
         // What the key sink reads: the probe record, or its SYMBOL-translating view of it.
-        final Record keyRecord = slot.keyRecord;
+        final Record keyRecord = stageSlot.keyRecord;
         final HashJoinGroupByFunctions functions = atom.getFunctions();
         final RecordSink sink = functions.getMapSink(slotId);
         final GroupByFunctionsUpdater updater = functions.getUpdater(slotId);
@@ -892,10 +904,11 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
             UnorderedPageFrameSequence<?> sequence
     ) {
         final AsyncHashJoinGroupByAtom.Slot slot = atom.getSlot(slotId);
+        final HashJoinBuildStage.Slot stageSlot = atom.getStageSlot(slotId);
         final HashJoinGroupByRecord record = slot.joinedRecord;
-        final FrozenHashJoinBuild.RecordProbe probe = slot.partitionedRecordProbe;
+        final FrozenHashJoinBuild.RecordProbe probe = stageSlot.partitionedRecordProbe;
         // What the key sink reads: the probe record, or its SYMBOL-translating view of it.
-        final Record keyRecord = slot.keyRecord;
+        final Record keyRecord = stageSlot.keyRecord;
         final HashJoinGroupByFunctions functions = atom.getFunctions();
         final RecordSink sink = functions.getMapSink(slotId);
         final GroupByFunctionsUpdater updater = functions.getUpdater(slotId);
@@ -940,10 +953,11 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
             DirectLongList rows
     ) {
         final AsyncHashJoinGroupByAtom.Slot slot = atom.getSlot(slotId);
+        final HashJoinBuildStage.Slot stageSlot = atom.getStageSlot(slotId);
         final HashJoinGroupByRecord record = slot.joinedRecord;
-        final FrozenHashJoinBuild.RecordProbe probe = slot.partitionedRecordProbe;
+        final FrozenHashJoinBuild.RecordProbe probe = stageSlot.partitionedRecordProbe;
         // What the key sink reads: the probe record, or its SYMBOL-translating view of it.
-        final Record keyRecord = slot.keyRecord;
+        final Record keyRecord = stageSlot.keyRecord;
         final HashJoinGroupByFunctions functions = atom.getFunctions();
         final RecordSink sink = functions.getMapSink(slotId);
         final GroupByFunctionsUpdater updater = functions.getUpdater(slotId);
@@ -974,10 +988,11 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
             long rowCount
     ) {
         final AsyncHashJoinGroupByAtom.Slot slot = atom.getSlot(slotId);
+        final HashJoinBuildStage.Slot stageSlot = atom.getStageSlot(slotId);
         final HashJoinGroupByRecord record = slot.joinedRecord;
-        final FrozenHashJoinBuild.RecordProbe probe = slot.partitionedRecordProbe;
+        final FrozenHashJoinBuild.RecordProbe probe = stageSlot.partitionedRecordProbe;
         // What the key sink reads: the probe record, or its SYMBOL-translating view of it.
-        final Record keyRecord = slot.keyRecord;
+        final Record keyRecord = stageSlot.keyRecord;
         final HashJoinGroupByFunctions functions = atom.getFunctions();
         final RecordSink sink = functions.getMapSink(slotId);
         final GroupByFunctionsUpdater updater = functions.getUpdater(slotId);
@@ -1005,10 +1020,11 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
             long rowCount
     ) {
         final AsyncHashJoinGroupByAtom.Slot slot = atom.getSlot(slotId);
+        final HashJoinBuildStage.Slot stageSlot = atom.getStageSlot(slotId);
         final HashJoinGroupByRecord record = slot.joinedRecord;
-        final FrozenHashJoinBuild.RecordProbe probe = slot.recordProbe;
+        final FrozenHashJoinBuild.RecordProbe probe = stageSlot.recordProbe;
         // What the key sink reads: the probe record, or its SYMBOL-translating view of it.
-        final Record keyRecord = slot.keyRecord;
+        final Record keyRecord = stageSlot.keyRecord;
         final HashJoinGroupByFunctions functions = atom.getFunctions();
         final RecordSink sink = functions.getMapSink(slotId);
         final GroupByFunctionsUpdater updater = functions.getUpdater(slotId);
@@ -1043,9 +1059,10 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
             UnorderedPageFrameSequence<?> sequence
     ) {
         final AsyncHashJoinGroupByAtom.Slot slot = atom.getSlot(slotId);
+        final HashJoinBuildStage.Slot stageSlot = atom.getStageSlot(slotId);
         final HashJoinGroupByRecord record = slot.joinedRecord;
-        final FrozenHashJoinBuild.IntProbe probe = slot.intProbe;
-        final SymbolKeyTranslator.View translator = slot.symbolKeyView;
+        final FrozenHashJoinBuild.IntProbe probe = stageSlot.intProbe;
+        final SymbolKeyTranslator.View translator = stageSlot.symbolKeyView;
         final HashJoinGroupByFunctions functions = atom.getFunctions();
         final RecordSink sink = functions.getMapSink(slotId);
         final GroupByFunctionsUpdater updater = functions.getUpdater(slotId);
@@ -1093,9 +1110,10 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
             UnorderedPageFrameSequence<?> sequence
     ) {
         final AsyncHashJoinGroupByAtom.Slot slot = atom.getSlot(slotId);
+        final HashJoinBuildStage.Slot stageSlot = atom.getStageSlot(slotId);
         final HashJoinGroupByRecord record = slot.joinedRecord;
-        final FrozenHashJoinBuild.IntProbe probe = slot.intProbe;
-        final SymbolKeyTranslator.View translator = slot.symbolKeyView;
+        final FrozenHashJoinBuild.IntProbe probe = stageSlot.intProbe;
+        final SymbolKeyTranslator.View translator = stageSlot.symbolKeyView;
         final HashJoinGroupByFunctions functions = atom.getFunctions();
         final RecordSink sink = functions.getMapSink(slotId);
         final GroupByFunctionsUpdater updater = functions.getUpdater(slotId);
@@ -1138,9 +1156,10 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
             DirectLongList rows
     ) {
         final AsyncHashJoinGroupByAtom.Slot slot = atom.getSlot(slotId);
+        final HashJoinBuildStage.Slot stageSlot = atom.getStageSlot(slotId);
         final HashJoinGroupByRecord record = slot.joinedRecord;
-        final FrozenHashJoinBuild.IntProbe probe = slot.intProbe;
-        final SymbolKeyTranslator.View translator = slot.symbolKeyView;
+        final FrozenHashJoinBuild.IntProbe probe = stageSlot.intProbe;
+        final SymbolKeyTranslator.View translator = stageSlot.symbolKeyView;
         final HashJoinGroupByFunctions functions = atom.getFunctions();
         final RecordSink sink = functions.getMapSink(slotId);
         final GroupByFunctionsUpdater updater = functions.getUpdater(slotId);
@@ -1176,9 +1195,10 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
             UnorderedPageFrameSequence<?> sequence
     ) {
         final AsyncHashJoinGroupByAtom.Slot slot = atom.getSlot(slotId);
+        final HashJoinBuildStage.Slot stageSlot = atom.getStageSlot(slotId);
         final HashJoinGroupByRecord record = slot.joinedRecord;
-        final FrozenHashJoinBuild.IntProbe probe = slot.partitionedIntProbe;
-        final SymbolKeyTranslator.View translator = slot.symbolKeyView;
+        final FrozenHashJoinBuild.IntProbe probe = stageSlot.partitionedIntProbe;
+        final SymbolKeyTranslator.View translator = stageSlot.symbolKeyView;
         final HashJoinGroupByFunctions functions = atom.getFunctions();
         final RecordSink sink = functions.getMapSink(slotId);
         final GroupByFunctionsUpdater updater = functions.getUpdater(slotId);
@@ -1228,9 +1248,10 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
             UnorderedPageFrameSequence<?> sequence
     ) {
         final AsyncHashJoinGroupByAtom.Slot slot = atom.getSlot(slotId);
+        final HashJoinBuildStage.Slot stageSlot = atom.getStageSlot(slotId);
         final HashJoinGroupByRecord record = slot.joinedRecord;
-        final FrozenHashJoinBuild.IntProbe probe = slot.partitionedIntProbe;
-        final SymbolKeyTranslator.View translator = slot.symbolKeyView;
+        final FrozenHashJoinBuild.IntProbe probe = stageSlot.partitionedIntProbe;
+        final SymbolKeyTranslator.View translator = stageSlot.symbolKeyView;
         final HashJoinGroupByFunctions functions = atom.getFunctions();
         final RecordSink sink = functions.getMapSink(slotId);
         final GroupByFunctionsUpdater updater = functions.getUpdater(slotId);
@@ -1276,9 +1297,10 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
             DirectLongList rows
     ) {
         final AsyncHashJoinGroupByAtom.Slot slot = atom.getSlot(slotId);
+        final HashJoinBuildStage.Slot stageSlot = atom.getStageSlot(slotId);
         final HashJoinGroupByRecord record = slot.joinedRecord;
-        final FrozenHashJoinBuild.IntProbe probe = slot.partitionedIntProbe;
-        final SymbolKeyTranslator.View translator = slot.symbolKeyView;
+        final FrozenHashJoinBuild.IntProbe probe = stageSlot.partitionedIntProbe;
+        final SymbolKeyTranslator.View translator = stageSlot.symbolKeyView;
         final HashJoinGroupByFunctions functions = atom.getFunctions();
         final RecordSink sink = functions.getMapSink(slotId);
         final GroupByFunctionsUpdater updater = functions.getUpdater(slotId);
@@ -1310,9 +1332,10 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
             long rowCount
     ) {
         final AsyncHashJoinGroupByAtom.Slot slot = atom.getSlot(slotId);
+        final HashJoinBuildStage.Slot stageSlot = atom.getStageSlot(slotId);
         final HashJoinGroupByRecord record = slot.joinedRecord;
-        final FrozenHashJoinBuild.IntProbe probe = slot.partitionedIntProbe;
-        final SymbolKeyTranslator.View translator = slot.symbolKeyView;
+        final FrozenHashJoinBuild.IntProbe probe = stageSlot.partitionedIntProbe;
+        final SymbolKeyTranslator.View translator = stageSlot.symbolKeyView;
         final HashJoinGroupByFunctions functions = atom.getFunctions();
         final RecordSink sink = functions.getMapSink(slotId);
         final GroupByFunctionsUpdater updater = functions.getUpdater(slotId);
@@ -1341,9 +1364,10 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
             long rowCount
     ) {
         final AsyncHashJoinGroupByAtom.Slot slot = atom.getSlot(slotId);
+        final HashJoinBuildStage.Slot stageSlot = atom.getStageSlot(slotId);
         final HashJoinGroupByRecord record = slot.joinedRecord;
-        final FrozenHashJoinBuild.IntProbe probe = slot.intProbe;
-        final SymbolKeyTranslator.View translator = slot.symbolKeyView;
+        final FrozenHashJoinBuild.IntProbe probe = stageSlot.intProbe;
+        final SymbolKeyTranslator.View translator = stageSlot.symbolKeyView;
         final HashJoinGroupByFunctions functions = atom.getFunctions();
         final RecordSink sink = functions.getMapSink(slotId);
         final GroupByFunctionsUpdater updater = functions.getUpdater(slotId);
@@ -1373,22 +1397,23 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
     private static void countByKey(
             AsyncHashJoinGroupByAtom atom,
             AsyncHashJoinGroupByAtom.Slot slot,
+            HashJoinBuildStage.Slot stageSlot,
             PageFrameMemoryRecord probeRecord,
             long rowCount
     ) {
         final long pairCount;
         if (atom.isKeyStaged()) {
             pairCount = atom.isBuildPartitioned()
-                    ? countRecordPartitioned(slot, probeRecord, rowCount)
-                    : countRecord(slot, probeRecord, rowCount);
+                    ? countRecordPartitioned(stageSlot, probeRecord, rowCount)
+                    : countRecord(stageSlot, probeRecord, rowCount);
         } else if (atom.isSymbolKey()) {
             pairCount = atom.isBuildPartitioned()
-                    ? countSymbolPartitioned(slot, probeRecord, atom.getProbeKeyColumn(), rowCount)
-                    : countSymbol(slot, probeRecord, atom.getProbeKeyColumn(), rowCount);
+                    ? countSymbolPartitioned(stageSlot, probeRecord, atom.getProbeKeyColumn(), rowCount)
+                    : countSymbol(stageSlot, probeRecord, atom.getProbeKeyColumn(), rowCount);
         } else {
             pairCount = atom.isBuildPartitioned()
-                    ? countIntPartitioned(slot, probeRecord, atom.getProbeKeyColumn(), rowCount)
-                    : countInt(slot, probeRecord, atom.getProbeKeyColumn(), rowCount);
+                    ? countIntPartitioned(stageSlot, probeRecord, atom.getProbeKeyColumn(), rowCount)
+                    : countInt(stageSlot, probeRecord, atom.getProbeKeyColumn(), rowCount);
         }
         atom.addPairCount(slot, pairCount);
     }
@@ -1399,22 +1424,23 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
     private static void countByKeyFiltered(
             AsyncHashJoinGroupByAtom atom,
             AsyncHashJoinGroupByAtom.Slot slot,
+            HashJoinBuildStage.Slot stageSlot,
             PageFrameMemoryRecord probeRecord,
             DirectLongList rows
     ) {
         final long pairCount;
         if (atom.isKeyStaged()) {
             pairCount = atom.isBuildPartitioned()
-                    ? countRecordPartitionedFiltered(slot, probeRecord, rows)
-                    : countRecordFiltered(slot, probeRecord, rows);
+                    ? countRecordPartitionedFiltered(stageSlot, probeRecord, rows)
+                    : countRecordFiltered(stageSlot, probeRecord, rows);
         } else if (atom.isSymbolKey()) {
             pairCount = atom.isBuildPartitioned()
-                    ? countSymbolPartitionedFiltered(slot, probeRecord, atom.getProbeKeyColumn(), rows)
-                    : countSymbolFiltered(slot, probeRecord, atom.getProbeKeyColumn(), rows);
+                    ? countSymbolPartitionedFiltered(stageSlot, probeRecord, atom.getProbeKeyColumn(), rows)
+                    : countSymbolFiltered(stageSlot, probeRecord, atom.getProbeKeyColumn(), rows);
         } else {
             pairCount = atom.isBuildPartitioned()
-                    ? countIntPartitionedFiltered(slot, probeRecord, atom.getProbeKeyColumn(), rows)
-                    : countIntFiltered(slot, probeRecord, atom.getProbeKeyColumn(), rows);
+                    ? countIntPartitionedFiltered(stageSlot, probeRecord, atom.getProbeKeyColumn(), rows)
+                    : countIntFiltered(stageSlot, probeRecord, atom.getProbeKeyColumn(), rows);
         }
         atom.addPairCount(slot, pairCount);
     }
@@ -1428,22 +1454,23 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
     private static void countByMatch(
             AsyncHashJoinGroupByAtom atom,
             AsyncHashJoinGroupByAtom.Slot slot,
+            HashJoinBuildStage.Slot stageSlot,
             PageFrameMemoryRecord probeRecord,
             long rowCount
     ) {
         final long pairCount;
         if (atom.isKeyStaged()) {
             pairCount = atom.isBuildPartitioned()
-                    ? countRecordPartitionedUnique(slot, probeRecord, rowCount)
-                    : countRecordUnique(slot, probeRecord, rowCount);
+                    ? countRecordPartitionedUnique(stageSlot, probeRecord, rowCount)
+                    : countRecordUnique(stageSlot, probeRecord, rowCount);
         } else if (atom.isSymbolKey()) {
             pairCount = atom.isBuildPartitioned()
-                    ? countSymbolPartitionedUnique(slot, probeRecord, atom.getProbeKeyColumn(), rowCount)
-                    : countSymbolUnique(slot, probeRecord, atom.getProbeKeyColumn(), rowCount);
+                    ? countSymbolPartitionedUnique(stageSlot, probeRecord, atom.getProbeKeyColumn(), rowCount)
+                    : countSymbolUnique(stageSlot, probeRecord, atom.getProbeKeyColumn(), rowCount);
         } else {
             pairCount = atom.isBuildPartitioned()
-                    ? countIntPartitionedUnique(slot, probeRecord, atom.getProbeKeyColumn(), rowCount)
-                    : countIntUnique(slot, probeRecord, atom.getProbeKeyColumn(), rowCount);
+                    ? countIntPartitionedUnique(stageSlot, probeRecord, atom.getProbeKeyColumn(), rowCount)
+                    : countIntUnique(stageSlot, probeRecord, atom.getProbeKeyColumn(), rowCount);
         }
         atom.addPairCount(slot, pairCount);
     }
@@ -1454,22 +1481,23 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
     private static void countByMatchFiltered(
             AsyncHashJoinGroupByAtom atom,
             AsyncHashJoinGroupByAtom.Slot slot,
+            HashJoinBuildStage.Slot stageSlot,
             PageFrameMemoryRecord probeRecord,
             DirectLongList rows
     ) {
         final long pairCount;
         if (atom.isKeyStaged()) {
             pairCount = atom.isBuildPartitioned()
-                    ? countRecordPartitionedFilteredUnique(slot, probeRecord, rows)
-                    : countRecordFilteredUnique(slot, probeRecord, rows);
+                    ? countRecordPartitionedFilteredUnique(stageSlot, probeRecord, rows)
+                    : countRecordFilteredUnique(stageSlot, probeRecord, rows);
         } else if (atom.isSymbolKey()) {
             pairCount = atom.isBuildPartitioned()
-                    ? countSymbolPartitionedFilteredUnique(slot, probeRecord, atom.getProbeKeyColumn(), rows)
-                    : countSymbolFilteredUnique(slot, probeRecord, atom.getProbeKeyColumn(), rows);
+                    ? countSymbolPartitionedFilteredUnique(stageSlot, probeRecord, atom.getProbeKeyColumn(), rows)
+                    : countSymbolFilteredUnique(stageSlot, probeRecord, atom.getProbeKeyColumn(), rows);
         } else {
             pairCount = atom.isBuildPartitioned()
-                    ? countIntPartitionedFilteredUnique(slot, probeRecord, atom.getProbeKeyColumn(), rows)
-                    : countIntFilteredUnique(slot, probeRecord, atom.getProbeKeyColumn(), rows);
+                    ? countIntPartitionedFilteredUnique(stageSlot, probeRecord, atom.getProbeKeyColumn(), rows)
+                    : countIntFilteredUnique(stageSlot, probeRecord, atom.getProbeKeyColumn(), rows);
         }
         atom.addPairCount(slot, pairCount);
     }
@@ -1478,7 +1506,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
      * Returns the joined pairs of the frame's rows: the sum of their keys' build row counts.
      */
     private static long countInt(
-            AsyncHashJoinGroupByAtom.Slot slot,
+            HashJoinBuildStage.Slot slot,
             PageFrameMemoryRecord probeRecord,
             int probeKeyColumn,
             long rowCount
@@ -1496,7 +1524,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
      * The filtered twin of countInt(), driven by the rows the filter phase kept.
      */
     private static long countIntFiltered(
-            AsyncHashJoinGroupByAtom.Slot slot,
+            HashJoinBuildStage.Slot slot,
             PageFrameMemoryRecord probeRecord,
             int probeKeyColumn,
             DirectLongList rows
@@ -1514,7 +1542,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
      * The filtered twin of countIntUnique(), driven by the rows the filter phase kept.
      */
     private static long countIntFilteredUnique(
-            AsyncHashJoinGroupByAtom.Slot slot,
+            HashJoinBuildStage.Slot slot,
             PageFrameMemoryRecord probeRecord,
             int probeKeyColumn,
             DirectLongList rows
@@ -1532,7 +1560,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
      * The twin of countInt() for a build of more than one hash partition; see aggregateIntPartitioned().
      */
     private static long countIntPartitioned(
-            AsyncHashJoinGroupByAtom.Slot slot,
+            HashJoinBuildStage.Slot slot,
             PageFrameMemoryRecord probeRecord,
             int probeKeyColumn,
             long rowCount
@@ -1550,7 +1578,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
      * The twin of countIntFiltered() for a build of more than one hash partition; see aggregateIntPartitioned().
      */
     private static long countIntPartitionedFiltered(
-            AsyncHashJoinGroupByAtom.Slot slot,
+            HashJoinBuildStage.Slot slot,
             PageFrameMemoryRecord probeRecord,
             int probeKeyColumn,
             DirectLongList rows
@@ -1568,7 +1596,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
      * The twin of countIntFilteredUnique() for a build of more than one hash partition; see aggregateIntPartitioned().
      */
     private static long countIntPartitionedFilteredUnique(
-            AsyncHashJoinGroupByAtom.Slot slot,
+            HashJoinBuildStage.Slot slot,
             PageFrameMemoryRecord probeRecord,
             int probeKeyColumn,
             DirectLongList rows
@@ -1586,7 +1614,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
      * The twin of countIntUnique() for a build of more than one hash partition; see aggregateIntPartitioned().
      */
     private static long countIntPartitionedUnique(
-            AsyncHashJoinGroupByAtom.Slot slot,
+            HashJoinBuildStage.Slot slot,
             PageFrameMemoryRecord probeRecord,
             int probeKeyColumn,
             long rowCount
@@ -1605,7 +1633,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
      * build holds its key.
      */
     private static long countIntUnique(
-            AsyncHashJoinGroupByAtom.Slot slot,
+            HashJoinBuildStage.Slot slot,
             PageFrameMemoryRecord probeRecord,
             int probeKeyColumn,
             long rowCount
@@ -1624,7 +1652,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
      * the build's map.
      */
     private static long countRecord(
-            AsyncHashJoinGroupByAtom.Slot slot,
+            HashJoinBuildStage.Slot slot,
             PageFrameMemoryRecord probeRecord,
             long rowCount
     ) {
@@ -1643,7 +1671,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
      * The filtered twin of countRecord(), driven by the rows the filter phase kept.
      */
     private static long countRecordFiltered(
-            AsyncHashJoinGroupByAtom.Slot slot,
+            HashJoinBuildStage.Slot slot,
             PageFrameMemoryRecord probeRecord,
             DirectLongList rows
     ) {
@@ -1662,7 +1690,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
      * The filtered twin of countRecordUnique(), driven by the rows the filter phase kept.
      */
     private static long countRecordFilteredUnique(
-            AsyncHashJoinGroupByAtom.Slot slot,
+            HashJoinBuildStage.Slot slot,
             PageFrameMemoryRecord probeRecord,
             DirectLongList rows
     ) {
@@ -1681,7 +1709,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
      * The twin of countRecord() for a build of more than one hash partition; see aggregateRecordPartitioned().
      */
     private static long countRecordPartitioned(
-            AsyncHashJoinGroupByAtom.Slot slot,
+            HashJoinBuildStage.Slot slot,
             PageFrameMemoryRecord probeRecord,
             long rowCount
     ) {
@@ -1700,7 +1728,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
      * The twin of countRecordFiltered() for a build of more than one hash partition; see aggregateRecordPartitioned().
      */
     private static long countRecordPartitionedFiltered(
-            AsyncHashJoinGroupByAtom.Slot slot,
+            HashJoinBuildStage.Slot slot,
             PageFrameMemoryRecord probeRecord,
             DirectLongList rows
     ) {
@@ -1719,7 +1747,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
      * The twin of countRecordFilteredUnique() for a build of more than one hash partition; see aggregateRecordPartitioned().
      */
     private static long countRecordPartitionedFilteredUnique(
-            AsyncHashJoinGroupByAtom.Slot slot,
+            HashJoinBuildStage.Slot slot,
             PageFrameMemoryRecord probeRecord,
             DirectLongList rows
     ) {
@@ -1738,7 +1766,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
      * The twin of countRecordUnique() for a build of more than one hash partition; see aggregateRecordPartitioned().
      */
     private static long countRecordPartitionedUnique(
-            AsyncHashJoinGroupByAtom.Slot slot,
+            HashJoinBuildStage.Slot slot,
             PageFrameMemoryRecord probeRecord,
             long rowCount
     ) {
@@ -1758,7 +1786,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
      * build holds its key.
      */
     private static long countRecordUnique(
-            AsyncHashJoinGroupByAtom.Slot slot,
+            HashJoinBuildStage.Slot slot,
             PageFrameMemoryRecord probeRecord,
             long rowCount
     ) {
@@ -1778,7 +1806,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
      * into the build's symbol key domain first.
      */
     private static long countSymbol(
-            AsyncHashJoinGroupByAtom.Slot slot,
+            HashJoinBuildStage.Slot slot,
             PageFrameMemoryRecord probeRecord,
             int probeKeyColumn,
             long rowCount
@@ -1797,7 +1825,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
      * The filtered twin of countSymbol(), driven by the rows the filter phase kept.
      */
     private static long countSymbolFiltered(
-            AsyncHashJoinGroupByAtom.Slot slot,
+            HashJoinBuildStage.Slot slot,
             PageFrameMemoryRecord probeRecord,
             int probeKeyColumn,
             DirectLongList rows
@@ -1816,7 +1844,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
      * The filtered twin of countSymbolUnique(), driven by the rows the filter phase kept.
      */
     private static long countSymbolFilteredUnique(
-            AsyncHashJoinGroupByAtom.Slot slot,
+            HashJoinBuildStage.Slot slot,
             PageFrameMemoryRecord probeRecord,
             int probeKeyColumn,
             DirectLongList rows
@@ -1835,7 +1863,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
      * The twin of countSymbol() for a build of more than one hash partition; see aggregateIntPartitioned().
      */
     private static long countSymbolPartitioned(
-            AsyncHashJoinGroupByAtom.Slot slot,
+            HashJoinBuildStage.Slot slot,
             PageFrameMemoryRecord probeRecord,
             int probeKeyColumn,
             long rowCount
@@ -1854,7 +1882,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
      * The twin of countSymbolFiltered() for a build of more than one hash partition; see aggregateIntPartitioned().
      */
     private static long countSymbolPartitionedFiltered(
-            AsyncHashJoinGroupByAtom.Slot slot,
+            HashJoinBuildStage.Slot slot,
             PageFrameMemoryRecord probeRecord,
             int probeKeyColumn,
             DirectLongList rows
@@ -1873,7 +1901,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
      * The twin of countSymbolFilteredUnique() for a build of more than one hash partition; see aggregateIntPartitioned().
      */
     private static long countSymbolPartitionedFilteredUnique(
-            AsyncHashJoinGroupByAtom.Slot slot,
+            HashJoinBuildStage.Slot slot,
             PageFrameMemoryRecord probeRecord,
             int probeKeyColumn,
             DirectLongList rows
@@ -1892,7 +1920,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
      * The twin of countSymbolUnique() for a build of more than one hash partition; see aggregateIntPartitioned().
      */
     private static long countSymbolPartitionedUnique(
-            AsyncHashJoinGroupByAtom.Slot slot,
+            HashJoinBuildStage.Slot slot,
             PageFrameMemoryRecord probeRecord,
             int probeKeyColumn,
             long rowCount
@@ -1912,7 +1940,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
      * build holds its key.
      */
     private static long countSymbolUnique(
-            AsyncHashJoinGroupByAtom.Slot slot,
+            HashJoinBuildStage.Slot slot,
             PageFrameMemoryRecord probeRecord,
             int probeKeyColumn,
             long rowCount
@@ -1978,9 +2006,9 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
                 // One loop method per probe implementation, so that a hot call site sees one
                 // receiver class. The branch below runs once per page frame, not per row.
                 if (atom.isCountedByKey()) {
-                    countByKeyFiltered(atom, slot, probeRecord, rows);
+                    countByKeyFiltered(atom, slot, atom.getStageSlot(slotId), probeRecord, rows);
                 } else if (atom.isCountedByMatch()) {
-                    countByMatchFiltered(atom, slot, probeRecord, rows);
+                    countByMatchFiltered(atom, slot, atom.getStageSlot(slotId), probeRecord, rows);
                 } else if (atom.isKeyStaged()) {
                     if (atom.isBuildPartitioned()) {
                         if (atom.isBuildUnique()) {

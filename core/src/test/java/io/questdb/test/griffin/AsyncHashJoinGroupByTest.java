@@ -1332,6 +1332,40 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelBuildNeedsThreadSafeFiltersOrWorkerCopies() throws Exception {
+        assertMemoryLeak(() -> {
+            useParallelBuild();
+            frameRows = 2;
+            createTables();
+            // The fixture steals the build scan's filter without worker copies, which the planner
+            // gives every filter that is not thread safe. A thread-safe filter runs on the workers
+            // as it is; a regex holds a matcher, so the build stays on the owner.
+            final String[][] cases = {
+                    {"p.installed_kwp > 6", "installed_kwp > 6", "true"},
+                    {"p.country::VARCHAR ~ 'E.*'", "country::VARCHAR ~ 'E.*'", "false"}
+            };
+            for (String[] filter : cases) {
+                for (String aggregates : new String[]{AGGREGATES, SCALAR_AGGREGATES}) {
+                    final String sql = aggregates + INNER + " where " + filter[0];
+                    try (Fixture f = new Fixture(sql, "r", ints(0, 1, 2, 3), "p where " + filter[1], ints(0, 1, 2), null, null)) {
+                        assertBuiltInRounds(f, sql, Boolean.parseBoolean(filter[2]));
+                    }
+                }
+            }
+            // So does an outer join's ON condition on the build alone, which the fixture hands over
+            // without worker copies and which its hook keeps from being thread safe.
+            for (String aggregates : new String[]{AGGREGATES, SCALAR_AGGREGATES}) {
+                final String sql = aggregates + OUTER + " and p.installed_kwp > 6";
+                final Hook hook = new Hook();
+                hook.buildOnFilterSql = "installed_kwp > 6";
+                try (Fixture f = new Fixture(sql, "r", ints(0, 1, 2, 3), "p", ints(0, 1, 2), null, hook)) {
+                    assertBuiltInRounds(f, sql, false);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testParallelBuildWorkerFailureAndReuse() throws Exception {
         assertMemoryLeak(() -> {
             useParallelBuild();
@@ -2398,6 +2432,15 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
         return list;
     }
 
+    // Reads the fixture's first row, which builds, checks where the build ran, and then the results.
+    private static void assertBuiltInRounds(Fixture f, String sql, boolean isBuiltInRounds) throws Exception {
+        try (RecordCursor cursor = f.getCursor()) {
+            Assert.assertTrue(sql, cursor.hasNext());
+            Assert.assertEquals(sql, isBuiltInRounds, f.factory.getAtom().isBuiltInRounds());
+        }
+        f.assertResults(sql);
+    }
+
     // True when the failure's stack passes through the given method of a class with this simple name.
     private static boolean isThrownFrom(Throwable th, String className, String methodName) {
         for (StackTraceElement frame : th.getStackTrace()) {
@@ -2700,6 +2743,9 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
         boolean isBuildInstrumented;
         // When set, the fixture wraps the probe scan in an ObservedProbeFactory.
         boolean isProbeInstrumented;
+        // When set, the fixture hands the factory this ON condition on the build alone, without
+        // worker copies, as the outer join's build ON filter.
+        String buildOnFilterSql;
         // Runs on the owner once an execution's build is frozen, before its payload copy and probes.
         volatile Runnable onProbeFrames;
         int buildFailAt;
@@ -2947,6 +2993,7 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
             HashJoinGroupByFunctions functions = null;
             AsyncFilterContext filterContext = null;
             AsyncFilterContext buildFilterContext = null;
+            Function buildOnFilter = null;
             try {
                 probeFactory = childFactory(probeSql);
                 buildFactory = childFactory(buildSql);
@@ -3045,18 +3092,24 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                         }
                         filterContext = new AsyncFilterContext(configuration, compiledFilter, bindVarMemory,
                                 bindVarFunctions, probeFilter, null, workerFilters, WORKERS, 0, 0, 0);
+                        if (hook != null && hook.buildOnFilterSql != null) {
+                            ExpressionNode expression = compiler.testParseExpression(hook.buildOnFilterSql, QueryModel.FACTORY.newInstance());
+                            buildOnFilter = parser.parseFunction(expression, buildFactory.getMetadata(), sqlExecutionContext);
+                        }
                         RecordCursorFactory probeOwned = probeFactory;
                         RecordCursorFactory buildOwned = buildFactory;
                         AsyncFilterContext buildFiltersOwned = buildFilterContext;
                         HashJoinGroupByFunctions functionsOwned = functions;
                         AsyncFilterContext filtersOwned = filterContext;
+                        Function buildOnFilterOwned = buildOnFilter;
                         probeFactory = null;
                         buildFactory = null;
                         buildFilterContext = null;
                         functions = null;
                         filterContext = null;
+                        buildOnFilter = null;
                         factory = new AsyncHashJoinGroupByRecordCursorFactory(engine, probeOwned, buildOwned, buildFiltersOwned,
-                                null, metadata, functionsOwned, filtersOwned,
+                                buildOnFilterOwned, metadata, functionsOwned, filtersOwned,
                                 candidate.getPhysicalJoinType() == IQueryModel.JOIN_LEFT_OUTER, factoryWorkerCount);
                     }
                     queryFactory = new QueryProgress(engine.getQueryRegistry(), sql, factory);
@@ -3067,6 +3120,7 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                 Misc.free(functions);
                 Misc.free(filterContext);
                 Misc.free(buildFilterContext);
+                Misc.free(buildOnFilter);
             }
         }
 

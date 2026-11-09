@@ -38,6 +38,7 @@ import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactor
 import io.questdb.griffin.engine.table.AsyncHashJoinGroupByAtom;
 import io.questdb.griffin.engine.table.AsyncHashJoinGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.HashJoinBuildFrames;
+import io.questdb.griffin.engine.table.HashJoinBuildStage;
 import io.questdb.mp.WorkerPoolMode;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
@@ -77,8 +78,9 @@ import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.result;
  * take effect fails the case too.
  */
 public class HashJoinGroupByCancellationTest extends AbstractCairoTest {
-    private static final String ATOM = AsyncHashJoinGroupByAtom.class.getName();
     private static final String FACTORY = AsyncHashJoinGroupByRecordCursorFactory.class.getName();
+    // The build's rounds run the reducers of the atom's build stage.
+    private static final String STAGE = HashJoinBuildStage.class.getName();
     // Each key shape and the prefix of its probe loops: the INT layout, a key staged into the build's
     // map, and the INT layout's translated SYMBOL key.
     private static final String[][] KEYS = {
@@ -315,7 +317,7 @@ public class HashJoinGroupByCancellationTest extends AbstractCairoTest {
                             Assert.assertTrue(plan(factory, context).contains("Hash Join Group By"));
                             final AsyncHashJoinGroupByAtom atom = fused(factory).getAtom();
                             for (int run = 0; run < 2; run++) {
-                                final MethodCheckCircuitBreaker breaker = new MethodCheckCircuitBreaker(db, ATOM, "buildPartition", 1, true);
+                                final MethodCheckCircuitBreaker breaker = new MethodCheckCircuitBreaker(db, STAGE, "buildPartition", 1, true);
                                 context.with(breaker);
                                 assertCancelled(factory, context, sql);
                                 Assert.assertTrue(sql, breaker.getChecks() > 0);
@@ -355,7 +357,7 @@ public class HashJoinGroupByCancellationTest extends AbstractCairoTest {
                                 Assert.assertTrue(plan(factory, context).contains("buildPayload: copied when the probe is large enough"));
                                 final AsyncHashJoinGroupByAtom atom = fused(factory).getAtom();
                                 for (int run = 0; run < 2; run++) {
-                                    final MethodCheckCircuitBreaker breaker = new MethodCheckCircuitBreaker(db, ATOM, "copyFramePayload", 1, true);
+                                    final MethodCheckCircuitBreaker breaker = new MethodCheckCircuitBreaker(db, STAGE, "copyFramePayload", 1, true);
                                     context.with(breaker);
                                     assertCancelled(factory, context, sql);
                                     Assert.assertTrue(sql, breaker.getChecks() > 0);

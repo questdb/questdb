@@ -65,6 +65,13 @@ public class TestLatchedCounterFunctionFactory implements FunctionFactory {
         default void onClose() {
         }
 
+        /**
+         * Runs when the cursor that the function filters closes, see {@link Function#cursorClosed()},
+         * so that a test can fail that cleanup step.
+         */
+        default void onCursorClosed() {
+        }
+
         default boolean onGet(Record rec, int count) {
             return true;
         }
@@ -81,6 +88,13 @@ public class TestLatchedCounterFunctionFactory implements FunctionFactory {
         public void close() {
             if (callback != null) {
                 callback.onClose();
+            }
+        }
+
+        @Override
+        public void cursorClosed() {
+            if (callback != null) {
+                callback.onCursorClosed();
             }
         }
 

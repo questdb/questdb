@@ -182,6 +182,15 @@ public final class HashJoinGroupByMetadata implements Closeable {
     }
 
     /**
+     * The equality keys compiled against the two inputs, which a build stage takes its key columns,
+     * sinks and SYMBOL key columns from. Its sinks borrow the input metadatas, so take them while the
+     * inputs are alive.
+     */
+    public HashJoinKeyLayout getKeyLayout() {
+        return keyLayout;
+    }
+
+    /**
      * Column types of the staged key, in sink order, which is the layout both key sinks write and
      * the layout the build's map stores. Empty for the INT layout, which stages no key.
      */

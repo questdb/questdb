@@ -158,7 +158,7 @@ public final class HashJoinGroupByCandidate {
      * on which the holder of the factory compiles the query again. A reused RIGHT join factory
      * therefore keeps building the table before the join while that table holds between one and
      * two times the rows of the preserved table. An execution whose context tolerates row count
-     * changes keeps the compile-time choice; see {@link io.questdb.griffin.engine.table.AsyncHashJoinGroupByAtom}.
+     * changes keeps the compile-time choice; see {@link io.questdb.griffin.engine.table.HashJoinBuildStage}.
      * An outer join's ON condition on the build alone that reads a build column outside
      * {@link #isSupportedValueType(int)}, and does more than compare columns, constants and bind
      * variables, qualifies only where this holds, and so does one that passes a STRING, VARCHAR,

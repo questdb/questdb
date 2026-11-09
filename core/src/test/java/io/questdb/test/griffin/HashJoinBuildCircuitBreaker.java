@@ -27,6 +27,7 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.griffin.engine.table.AsyncHashJoinGroupByAtom;
+import io.questdb.griffin.engine.table.HashJoinBuildStage;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.CyclicBarrier;
@@ -48,6 +49,8 @@ import java.util.function.BooleanSupplier;
  */
 final class HashJoinBuildCircuitBreaker extends AtomicBooleanCircuitBreaker {
     private static final String ATOM_CLASS_NAME = AsyncHashJoinGroupByAtom.class.getName();
+    // The build's rounds run the reducers of the atom's build stage.
+    private static final String STAGE_CLASS_NAME = HashJoinBuildStage.class.getName();
     private static final StackWalker STACK_WALKER = StackWalker.getInstance();
     private final AtomicLong buildChecks = new AtomicLong();
     // Where the owner waits for the other queries once its build is ready; null without a meeting.
@@ -163,16 +166,17 @@ final class HashJoinBuildCircuitBreaker extends AtomicBooleanCircuitBreaker {
 
     // True on the owner inside the atom's build() call, and on any thread inside a task of its rounds.
     private static boolean isInsideBuild() {
-        return STACK_WALKER.walk(frames -> frames.anyMatch(frame -> frame.getClassName().equals(ATOM_CLASS_NAME)
-                && (frame.getMethodName().equals("build")
-                || frame.getMethodName().equals("partitionFrame")
+        return STACK_WALKER.walk(frames -> frames.anyMatch(frame -> (frame.getClassName().equals(ATOM_CLASS_NAME)
+                && frame.getMethodName().equals("build"))
+                || (frame.getClassName().equals(STAGE_CLASS_NAME)
+                && (frame.getMethodName().equals("partitionFrame")
                 || frame.getMethodName().equals("buildPartition")
-                || frame.getMethodName().equals("countPartitions"))));
+                || frame.getMethodName().equals("countPartitions")))));
     }
 
     // True on any thread inside a task of the round that counts a parallel build's key rows.
     private static boolean isInsideKeyRowCount() {
-        return STACK_WALKER.walk(frames -> frames.anyMatch(frame -> frame.getClassName().equals(ATOM_CLASS_NAME)
+        return STACK_WALKER.walk(frames -> frames.anyMatch(frame -> frame.getClassName().equals(STAGE_CLASS_NAME)
                 && frame.getMethodName().equals("countPartitions")));
     }
 

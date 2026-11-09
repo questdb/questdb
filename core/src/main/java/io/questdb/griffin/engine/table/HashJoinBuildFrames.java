@@ -58,6 +58,7 @@ import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
@@ -93,7 +94,7 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
  * the build's Parquet frames decode past a reader's share, see
  * {@link #isReaderCacheExceeded(long)}, for a probe whose matches can land on as many of those
  * frames as the copy decodes, and otherwise when the probe repays the copy; see
- * {@code AsyncHashJoinGroupByAtom.maybeCopyPayload()}. A payload that the copy cannot hold keeps
+ * {@code HashJoinBuildStage.maybeCopyPayload()}. A payload that the copy cannot hold keeps
  * that cost.
  * <p>
  * Reading a column where it lives costs a cache line per payload column per match, which a probe
@@ -108,7 +109,7 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
  * its thread, see {@link #beginCopy}. Only fixed-size payload columns copy; a build with any other
  * payload column keeps reading where the columns live.
  */
-public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCloseable {
+public final class HashJoinBuildFrames implements HashJoinPayloadSource, Mutable, QuietCloseable {
     // The copy pass checks the breaker once per this many rows; a power of two.
     private static final int COPY_ROWS_PER_CHECK = 64 * 1024;
     private final PageFrameAddressCache addressCache = new PageFrameAddressCache();
@@ -253,6 +254,7 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCl
     /**
      * Closes the execution's frame cursor. Only call once every probe and reader of the execution is closed.
      */
+    @Override
     public void clear() {
         Throwable failure = Misc.freeObjListAndKeepObjectsBestEffort(null, copyReaders);
         if (copyAddress != 0) {
