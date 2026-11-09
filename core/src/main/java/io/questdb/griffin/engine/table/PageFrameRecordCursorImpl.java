@@ -73,12 +73,13 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         // Mirrors the slow-path gate in skipRows(): pushdown pruning drops whole non-matching
         // parquet row groups, so the metadata-only accounting below would count physical rows
         // the cursor never yields and over-report the size. The row-by-row walk counts exactly
-        // the rows hasNext() yields, matching the pruned scan.
+        // the rows hasNext() yields, matching the pruned scan. Inexact frames are counted
+        // whole by the partition frame cursor, so a partly consumed scan must walk its rows.
         if (!frameCursor.supportsSizeCalculation()
                 || filter != null
                 || rowCursorFactory.isUsingIndex()
                 || frameCursor.hasActivePushdownFilter()
-                || frameCursor.hasInexactFrames()) {
+                || ((frameCount > 0 || rowCursor != null) && frameCursor.hasInexactFrames())) {
             while (hasNext()) {
                 counter.inc();
             }

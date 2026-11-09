@@ -55,6 +55,35 @@ public class PageFrameAddressCacheTest extends AbstractCairoTest {
     private static final int HEADER_LONGS = 8;
 
     @Test
+    public void testHistoricalKeyPagesVaryByFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            try (PageFrameAddressCache cache = new PageFrameAddressCache()) {
+                cache.of(new GenericRecordMetadata(), new CustomFrameCursor());
+                cache.add(0, keyFrame(0, 0));
+                cache.add(1, keyFrame(2, 100));
+                cache.add(2, keyFrame(1, 200));
+                Assert.assertEquals(0, cache.getDedupKeyPageCount(0));
+                Assert.assertEquals(2, cache.getDedupKeyPageCount(1));
+                Assert.assertEquals(1, cache.getDedupKeyPageCount(2));
+                Assert.assertEquals(111, cache.getDedupKeyPage(1, 1, 1));
+                Assert.assertEquals(201, cache.getDedupKeyPage(2, 0, 1));
+
+                // Lazy opening can replace a keyless skeleton with historical key pages.
+                cache.updateAddresses(0, keyFrame(3, 300));
+                cache.updateAddresses(1, keyFrame(1, 400));
+                Assert.assertEquals(3, cache.getDedupKeyPageCount(0));
+                Assert.assertEquals(321, cache.getDedupKeyPage(0, 2, 1));
+                Assert.assertEquals(1, cache.getDedupKeyPageCount(1));
+                Assert.assertEquals(401, cache.getDedupKeyPage(1, 0, 1));
+                Assert.assertEquals(201, cache.getDedupKeyPage(2, 0, 1));
+                cache.clear();
+                cache.add(0, keyFrame(1, 500));
+                Assert.assertEquals(501, cache.getDedupKeyPage(0, 0, 1));
+            }
+        });
+    }
+
+    @Test
     public void testInexactFrameRequiresCustomDecode() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             // Without a partition frame state there is no decoder able to report an actual
@@ -247,6 +276,20 @@ public class PageFrameAddressCacheTest extends AbstractCairoTest {
         } catch (CairoException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), "invalid page frame row count bounds");
         }
+    }
+
+    private static PageFrame keyFrame(int count, long seed) {
+        return new BoundedFrame(0, 0, 10, 10) {
+            @Override
+            public long getDedupKeyPage(int key, int cell) {
+                return seed + 10L * key + cell;
+            }
+
+            @Override
+            public int getDedupKeyPageCount() {
+                return count;
+            }
+        };
     }
 
     private static long partitionFrameStateBytes() {

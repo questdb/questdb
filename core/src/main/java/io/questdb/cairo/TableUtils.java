@@ -128,6 +128,7 @@ public final class TableUtils {
     public static final short META_FORMAT_MINOR_VERSION_TTL = 1;
     public static final long META_OFFSET_COLUMN_TYPES = 128;
     public static final long META_OFFSET_COUNT = 0;
+    public static final long META_OFFSET_DEDUP_VERSION = 56; // LONG, last dedup-setting metadata version
     public static final long META_OFFSET_MAX_UNCOMMITTED_ROWS = 20; // INT
     public static final long META_OFFSET_METADATA_VERSION = 32; // LONG
     public static final long META_OFFSET_O3_MAX_LAG = 24; // LONG
@@ -2949,6 +2950,8 @@ public final class TableUtils {
         mem.putInt(TableUtils.calculateMetaFormatMinorVersionField(0, count));
         mem.putInt(tableStruct.getTtlHoursOrMonths());
         mem.putInt(tableStruct.getTableFormat());
+        mem.jumpTo(META_OFFSET_DEDUP_VERSION);
+        mem.putLong(0);
 
         mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
         assert count > 0;

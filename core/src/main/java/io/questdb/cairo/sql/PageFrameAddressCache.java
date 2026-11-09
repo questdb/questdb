@@ -83,8 +83,9 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
     private final IntList coveredKeys = new IntList();
     private final LongList coveredRowHis = new LongList();
     private final LongList coveredRowLos = new LongList();
-    // Per custom-capable frame, PageFrame.DEDUP_KEY_PAGE_CELLS longs for each of the
-    // dedupKeyPageCount non-timestamp dedup keys; see PageFrame#getDedupKeyPage.
+    // Historical key unions can differ between partitions of the same cursor.
+    private final IntList dedupKeyPageCounts = new IntList();
+    private final IntList dedupKeyPageOffsets = new IntList();
     private final LongList dedupKeyPages = new LongList();
     private final LongList designatedTimestampPageAddresses = new LongList();
     private final LongList designatedTimestampPageSizes = new LongList();
@@ -105,8 +106,6 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
     // Makes it possible to determine real row id, not the one relative to the page.
     private final LongList rowIdOffsets = new LongList();
     private int columnCount;
-    // Dedup key pages per frame; fixed by the first frame of the cursor.
-    private int dedupKeyPageCount;
     // True in case of external parquet files, false in case of table partition files.
     private boolean external;
     private boolean hasCoveredFrames;
@@ -139,7 +138,7 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
                 && partitionFrameState != 0
                 && PartitionFrameState.requiresMaterialization(partitionFrameState, parquetRowGroup);
         final long rowCountLo = rowCountLo(frame, frameSize, customDecode);
-        final int keyPageCount = checkDedupKeyPageCount(frame, frameSizes.size() == 0);
+        final int keyPageCount = checkDedupKeyPageCount(frame);
 
         // Covered-frame stash (mirrors the parquet stash below) built in the SAME pass as the
         // native page addresses, so a plain (non-covered) frame pays no second per-column loop.
@@ -210,7 +209,8 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
             designatedTimestampPageSizes.add(frame.getDesignatedTimestampPageSize());
             designatedTimestampPageTops.add(frame.getDesignatedTimestampPageTop());
             partitionFrameStates.add(partitionFrameState);
-            dedupKeyPageCount = keyPageCount;
+            dedupKeyPageCounts.add(keyPageCount);
+            dedupKeyPageOffsets.add(dedupKeyPages.size());
             for (int key = 0; key < keyPageCount; key++) {
                 for (int cell = 0; cell < PageFrame.DEDUP_KEY_PAGE_CELLS; cell++) {
                     dedupKeyPages.add(frame.getDedupKeyPage(key, cell));
@@ -294,7 +294,8 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         designatedTimestampPageSizes.clear();
         designatedTimestampPageTops.clear();
         dedupKeyPages.clear();
-        dedupKeyPageCount = 0;
+        dedupKeyPageCounts.clear();
+        dedupKeyPageOffsets.clear();
         parquetDecoders.clear();
         partitionFrameStates.clear();
         parquetRowGroups.clear();
@@ -416,11 +417,11 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
      * One {@code PageFrame.DEDUP_KEY_PAGE_*} cell of a dedup key page of a custom-capable frame.
      */
     public long getDedupKeyPage(int frameIndex, int key, int cell) {
-        return dedupKeyPages.getQuick((frameIndex * dedupKeyPageCount + key) * PageFrame.DEDUP_KEY_PAGE_CELLS + cell);
+        return dedupKeyPages.getQuick(dedupKeyPageOffsets.getQuick(frameIndex) + key * PageFrame.DEDUP_KEY_PAGE_CELLS + cell);
     }
 
-    public int getDedupKeyPageCount() {
-        return hasCustomFrames ? dedupKeyPageCount : 0;
+    public int getDedupKeyPageCount(int frameIndex) {
+        return hasCustomFrames ? dedupKeyPageCounts.getQuick(frameIndex) : 0;
     }
 
     public long getDesignatedTimestampPageAddress(int frameIndex) {
@@ -671,7 +672,7 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
                 && partitionFrameState != 0
                 && PartitionFrameState.requiresMaterialization(partitionFrameState, parquetRowGroup);
         final long rowCountLo = rowCountLo(frame, frameSize, customDecode);
-        final int keyPageCount = checkDedupKeyPageCount(frame, false);
+        final int keyPageCount = checkDedupKeyPageCount(frame);
 
         final int offset = frameIndex * columnCount;
         if (frame.getFormat() == PartitionFormat.NATIVE) {
@@ -690,18 +691,26 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
                 designatedTimestampPageAddresses.setQuick(frameIndex, frame.getDesignatedTimestampPageAddress());
                 designatedTimestampPageSizes.setQuick(frameIndex, frame.getDesignatedTimestampPageSize());
                 designatedTimestampPageTops.setQuick(frameIndex, frame.getDesignatedTimestampPageTop());
-                final int keyOffset = frameIndex * keyPageCount * PageFrame.DEDUP_KEY_PAGE_CELLS;
-                for (int key = 0; key < keyPageCount; key++) {
-                    for (int cell = 0; cell < PageFrame.DEDUP_KEY_PAGE_CELLS; cell++) {
-                        dedupKeyPages.setQuick(keyOffset + key * PageFrame.DEDUP_KEY_PAGE_CELLS + cell, frame.getDedupKeyPage(key, cell));
-                    }
-                }
             }
         } else {
             parquetDecoders.setQuick(frameIndex, frame.getParquetDecoder());
         }
         if (hasCustomFrames) {
             partitionFrameStates.setQuick(frameIndex, partitionFrameState);
+            final int keyOffset;
+            if (keyPageCount == dedupKeyPageCounts.getQuick(frameIndex)) {
+                keyOffset = dedupKeyPageOffsets.getQuick(frameIndex);
+            } else {
+                keyOffset = dedupKeyPages.size();
+                dedupKeyPages.setPos(keyOffset + keyPageCount * PageFrame.DEDUP_KEY_PAGE_CELLS);
+                dedupKeyPageOffsets.setQuick(frameIndex, keyOffset);
+                dedupKeyPageCounts.setQuick(frameIndex, keyPageCount);
+            }
+            for (int key = 0; key < keyPageCount; key++) {
+                for (int cell = 0; cell < PageFrame.DEDUP_KEY_PAGE_CELLS; cell++) {
+                    dedupKeyPages.setQuick(keyOffset + key * PageFrame.DEDUP_KEY_PAGE_CELLS + cell, frame.getDedupKeyPage(key, cell));
+                }
+            }
         }
         parquetRowGroups.setQuick(frameIndex, parquetRowGroup);
         parquetRowGroupLos.setQuick(frameIndex, frame.getParquetRowGroupLo());
@@ -715,18 +724,14 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         }
     }
 
-    // Validates that every frame of the cursor carries the same number of dedup key pages, so
-    // the per-frame stride stays fixed. Pure validation, as rowCountLo().
-    private int checkDedupKeyPageCount(@Transient PageFrame frame, boolean first) {
+    private int checkDedupKeyPageCount(@Transient PageFrame frame) {
         if (!hasCustomFrames) {
             return 0;
         }
         final int count = frame.getDedupKeyPageCount();
-        if (count < 0 || (!first && count != dedupKeyPageCount)) {
+        if (count < 0) {
             throw CairoException.critical(0)
-                    .put("inconsistent page frame dedup key page count [expected=").put(dedupKeyPageCount)
-                    .put(", actual=").put(count)
-                    .put(']');
+                    .put("invalid page frame dedup key page count [actual=").put(count).put(']');
         }
         return count;
     }

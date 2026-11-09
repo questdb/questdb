@@ -229,7 +229,7 @@ final class PartitionFrameWindowContext implements QuietCloseable {
         // the frame carries its pages next to the designated timestamp. Anything else would
         // silently decode as nulls, so it fails loud.
         private void addDedupKeyView(PageFrameAddressCache addressCache, int frameIndex, int columnId, int type) {
-            for (int key = 0, n = addressCache.getDedupKeyPageCount(); key < n; key++) {
+            for (int key = 0, n = addressCache.getDedupKeyPageCount(frameIndex); key < n; key++) {
                 if (addressCache.getDedupKeyPage(frameIndex, key, PageFrame.DEDUP_KEY_PAGE_COLUMN_ID) == columnId) {
                     addView(
                             columnId,

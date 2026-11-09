@@ -371,46 +371,48 @@ public class FuzzRunner {
 
     public void applyToWal(ObjList<FuzzTransaction> transactions, String tableName, int walWriterCount, Rnd applyRnd) {
         ObjList<WalWriter> writers = new ObjList<>();
-        for (int i = 0; i < walWriterCount; i++) {
-            writers.add((WalWriter) engine.getTableWriterAPI(tableName, "apply trans test"));
-        }
-
-        Rnd tempRnd = new Rnd();
-        for (int i = 0, n = transactions.size(); i < n; i++) {
-            WalWriter writer = writers.getQuick(applyRnd.nextPositiveInt() % walWriterCount);
-            writer.goActive();
-            FuzzTransaction transaction = transactions.getQuick(i);
-            for (int operationIndex = 0; operationIndex < transaction.operationList.size(); operationIndex++) {
-                FuzzTransactionOperation operation = transaction.operationList.getQuick(operationIndex);
-                // WAL tables support replace range commits
-                // we apply them by using special commit rather than excluding Ts ranges from the commit
-                operation.apply(tempRnd, engine, writer, -1, null);
+        try {
+            for (int i = 0; i < walWriterCount; i++) {
+                writers.add((WalWriter) engine.getTableWriterAPI(tableName, "apply trans test"));
             }
 
-            if (transaction.reopenTable) {
-                // Table is dropped, reopen all writers.
-                for (int writerIndex = 0; writerIndex < walWriterCount; writerIndex++) {
-                    writers.getQuick(writerIndex).close();
-                    writers.setQuick(writerIndex, (WalWriter) engine.getTableWriterAPI(tableName, "apply trans test"));
+            Rnd tempRnd = new Rnd();
+            for (int i = 0, n = transactions.size(); i < n; i++) {
+                WalWriter writer = writers.getQuick(applyRnd.nextPositiveInt() % walWriterCount);
+                writer.goActive();
+                FuzzTransaction transaction = transactions.getQuick(i);
+                for (int operationIndex = 0; operationIndex < transaction.operationList.size(); operationIndex++) {
+                    FuzzTransactionOperation operation = transaction.operationList.getQuick(operationIndex);
+                    // WAL tables support replace range commits
+                    // we apply them by using special commit rather than excluding Ts ranges from the commit
+                    operation.apply(tempRnd, engine, writer, -1, null);
                 }
-            } else {
-                if (transaction.rollback) {
-                    writer.rollback();
+
+                if (transaction.reopenTable) {
+                    // Table is dropped, reopen all writers.
+                    for (int writerIndex = 0; writerIndex < walWriterCount; writerIndex++) {
+                        Misc.free(writers.getAndSetQuick(writerIndex, null));
+                        writers.setQuick(writerIndex, (WalWriter) engine.getTableWriterAPI(tableName, "apply trans test"));
+                    }
                 } else {
-                    if (transaction.hasReplaceRange()) {
-                        writer.commitWithParams(
-                                transaction.getReplaceLoTs(),
-                                transaction.getReplaceHiTs(),
-                                WAL_DEDUP_MODE_REPLACE_RANGE
-                        );
+                    if (transaction.rollback) {
+                        writer.rollback();
                     } else {
-                        writer.commit();
+                        if (transaction.hasReplaceRange()) {
+                            writer.commitWithParams(
+                                    transaction.getReplaceLoTs(),
+                                    transaction.getReplaceHiTs(),
+                                    WAL_DEDUP_MODE_REPLACE_RANGE
+                            );
+                        } else {
+                            writer.commit();
+                        }
                     }
                 }
             }
+        } finally {
+            Misc.freeObjList(writers);
         }
-
-        Misc.freeObjList(writers);
     }
 
     public void applyWal(ObjList<FuzzTransaction> transactions, String tableName, int walWriterCount, Rnd applyRnd) {

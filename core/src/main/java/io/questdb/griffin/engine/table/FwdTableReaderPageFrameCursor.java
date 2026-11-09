@@ -243,7 +243,8 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         this.partitionFrameCursor = partitionFrameCursor;
         this.reader = partitionFrameCursor.getTableReader();
         TablePageFrameCursor.buildColumnMapping(columnMapping, columnIndexes, reader.getMetadata());
-        initDedupKeyPages(reader.getMetadata());
+        dedupKeyColumns.clear();
+        dedupKeyPages.clear();
         this.pageFrameMinRows = executionContext.getPageFrameMinRows();
         this.pageFrameMaxRows = executionContext.getPageFrameMaxRows();
         if (pushdownFilterConditions != null) {
@@ -343,23 +344,29 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
 
     private void setReenterPartitionFrameState(PartitionFrame partitionFrame) {
         reenterPartitionFrameState = partitionFrame.getPartitionFrameState();
+        initDedupKeyPages(reader.getMetadata(), reenterPartitionFrameState);
     }
 
-    // The keys use the same column IDs as the partition frame state: original writer indexes.
-    private void initDedupKeyPages(TableReaderMetadata metadata) {
+    // Historical keys may no longer be keys in the current table metadata.
+    private void initDedupKeyPages(TableReaderMetadata metadata, long state) {
         dedupKeyColumns.clear();
         dedupKeyPages.clear();
-        final int timestampIndex = metadata.getTimestampIndex();
-        if (timestampIndex < 0 || !metadata.isDedupKey(timestampIndex)) {
+        if (state == 0) {
             return;
         }
-        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-            if (i != timestampIndex && metadata.isDedupKey(i)) {
-                dedupKeyColumns.add(i);
-                dedupKeyPages.add(metadata.getColumnMetadata(i).getOriginalWriterIndex());
-                for (int cell = PageFrame.DEDUP_KEY_PAGE_DATA_ADDRESS; cell < PageFrame.DEDUP_KEY_PAGE_CELLS; cell++) {
-                    dedupKeyPages.add(0);
+        for (int key = 0, count = PartitionFrameState.getDedupKeyCount(state); key < count; key++) {
+            final int columnId = PartitionFrameState.getDedupKeyColumnId(state, key);
+            int columnIndex = -1;
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                if (metadata.getColumnMetadata(i).getOriginalWriterIndex() == columnId) {
+                    columnIndex = i;
+                    break;
                 }
+            }
+            dedupKeyColumns.add(columnIndex);
+            dedupKeyPages.add(columnId);
+            for (int cell = PageFrame.DEDUP_KEY_PAGE_DATA_ADDRESS; cell < PageFrame.DEDUP_KEY_PAGE_CELLS; cell++) {
+                dedupKeyPages.add(0);
             }
         }
     }
@@ -380,6 +387,20 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     }
 
     private void prepareNativePartitionFrameBaseColumn(int base, int columnIndex, int outputIndex, boolean timestamp) {
+        if (columnIndex < 0) {
+            final int key = -2 - outputIndex;
+            final int offset = key * PageFrame.DEDUP_KEY_PAGE_CELLS;
+            final var column = reader.getHistoricalColumn(reenterPartitionIndex,
+                    (int) dedupKeyPages.getQuick(offset), PartitionFrameState.getDedupKeyType(reenterPartitionFrameState, key));
+            final MemoryR data = column.data();
+            final MemoryR aux = column.aux();
+            dedupKeyPages.setQuick(offset + PageFrame.DEDUP_KEY_PAGE_DATA_ADDRESS, data == null ? 0 : data.getPageAddress(0));
+            dedupKeyPages.setQuick(offset + PageFrame.DEDUP_KEY_PAGE_DATA_SIZE, data == null ? 0 : data.size());
+            dedupKeyPages.setQuick(offset + PageFrame.DEDUP_KEY_PAGE_AUX_ADDRESS, aux == null ? 0 : aux.getPageAddress(0));
+            dedupKeyPages.setQuick(offset + PageFrame.DEDUP_KEY_PAGE_AUX_SIZE, aux == null ? 0 : aux.size());
+            dedupKeyPages.setQuick(offset + PageFrame.DEDUP_KEY_PAGE_TOP, column.top());
+            return;
+        }
         reader.openPageFrameColumn(reenterPartitionIndex, columnIndex);
         final int primary = TableReader.getPrimaryColumnIndex(base, columnIndex);
         final MemoryR data = reader.getColumn(primary);

@@ -104,13 +104,6 @@ public abstract class AbstractFullPartitionFrameCursor implements PartitionFrame
         this.partitionScanHi = targetPartitionIndex + 1;
     }
 
-    protected long getLogicalPartitionRowCount(int partitionIndex, long baseRows) {
-        if (!reader.getTxFile().getPartitionHasDelta(partitionIndex)) {
-            return baseRows;
-        }
-        return reader.getLogicalPartitionRowCount(partitionIndex, baseRows);
-    }
-
     /**
      * A partition frame representing a full table partition.
      */
