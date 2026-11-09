@@ -129,6 +129,17 @@ public interface FrozenHashJoinBuild {
      */
     interface Probe extends SymbolTableSource, QuietCloseable {
         /**
+         * The link at which the duplicate iterator stands, the one that the next {@link #next()}
+         * follows, and 0 once the iterator is exhausted. Right after a lookup this is the lookup's
+         * first link, which heads its key's chain, and 0 on a miss; a unique lookup clears the
+         * iterator, so it leaves 0 too. A link is a positive value local to the build's execution,
+         * which any probe of the build takes back through {@link #ofChain(long)}: a thread that
+         * defers walking a key's matches hands the chain's head to another thread, whose own probe
+         * walks them later. A build that counted its key rows keeps no chain to stand in.
+         */
+        long chainHead();
+
+        /**
          * The payload columns of the last row that {@link #next()}, a unique lookup or
          * {@link #recordAt(long)} positioned; null for a build without payload columns.
          */
@@ -140,6 +151,16 @@ public interface FrozenHashJoinBuild {
          * Advances the payload record and returns an opaque, execution-local handle.
          */
         long next();
+
+        /**
+         * Restarts duplicate iteration at a link that {@link #chainHead()} of any probe of this
+         * build returned in the current execution, and replaces the current iterator, as a lookup
+         * does: the following {@link #next()} calls walk the rest of that chain, in chain order,
+         * the matches that the probe the link came from would have walked from there. 0 leaves the
+         * iterator exhausted. Positions no payload. A build that counted its key rows keeps no
+         * chain to restart.
+         */
+        void ofChain(long head);
 
         /**
          * Positions the payload record without changing the duplicate iterator.

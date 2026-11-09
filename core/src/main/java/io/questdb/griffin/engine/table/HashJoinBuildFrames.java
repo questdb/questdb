@@ -592,7 +592,10 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, Mutable
 
     /**
      * One probe's view of the build rows: payload column {@code i} reads build scan column
-     * {@code payloadColumns[i]} of the row that {@link #position(long)} selected.
+     * {@code payloadColumns[i]} of the row that {@link #position(long, long)} or
+     * {@link #positionLocator(long)} selected. Its locator is the build row's id,
+     * {@link Rows#toRowID(int, long)}, while it reads the columns where they live, and the copied
+     * row's ordinal once the execution's copy is published.
      */
     private final class Reader implements HashJoinPayloadSource.Reader {
         // Scratch sinks of the copy pass, which reads the two wide decimals through a sink alone;
@@ -612,6 +615,8 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, Mutable
         private int frameIndex = -1;
         // True while the current frame is native, so that getters read the shared address table.
         private boolean isDirect;
+        // The current row's locator: its ordinal while the reader reads the copy, its id otherwise.
+        private long locator;
         // The frame the record is bound to; the record binds only for a read the table cannot serve.
         private int recordFrameIndex = -1;
         private long row;
@@ -1021,6 +1026,11 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, Mutable
         }
 
         @Override
+        public long locator() {
+            return locator;
+        }
+
+        @Override
         public SymbolTable newSymbolTable(int col) {
             return frameCursor.newSymbolTable(payloadColumns[col]);
         }
@@ -1030,9 +1040,24 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, Mutable
             final long copy = copyAddress;
             if (copy != 0) {
                 copyRow = copy + ordinal * copyRowSize;
+                locator = ordinal;
                 return;
             }
             positionRow(Unsafe.getLong(rowIdAddress));
+        }
+
+        @Override
+        public void positionLocator(long locator) {
+            final long copy = copyAddress;
+            if (copy != 0) {
+                assert locator >= 0 && locator < copyCapacity / copyRowSize;
+                copyRow = copy + locator * copyRowSize;
+                this.locator = locator;
+                return;
+            }
+            // A row id of a frame that loadFrames() walked for this execution.
+            assert locator >= 0 && Rows.toPartitionIndex(locator) < frameRowCounts.size() && Rows.toLocalRowID(locator) < frameRowCounts.getQuick(Rows.toPartitionIndex(locator));
+            positionRow(locator);
         }
 
         @Override
@@ -1057,6 +1082,7 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, Mutable
                 isDirect = addressCache.getFrameFormat(frameIndex) == PartitionFormat.NATIVE;
             }
             row = Rows.toLocalRowID(rowId);
+            locator = rowId;
         }
 
         // Rebinds the reader to the current execution without taking symbol tables: the copy pass

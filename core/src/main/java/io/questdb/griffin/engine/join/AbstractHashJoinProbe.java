@@ -69,6 +69,16 @@ abstract class AbstractHashJoinProbe implements FrozenHashJoinBuild.Probe {
         this.rowHeap = rowHeap;
     }
 
+    /**
+     * The link that the next {@link #next()} follows: the {@link #next} field itself, so a worker
+     * that defers a key's chain pays nothing to take its head.
+     */
+    @Override
+    public final long chainHead() {
+        assert isCurrent() && !rowHeap.hasChainLengths();
+        return next;
+    }
+
     @Override
     public void close() {
         if (payload != null) {
@@ -119,6 +129,17 @@ abstract class AbstractHashJoinProbe implements FrozenHashJoinBuild.Probe {
         }
         next = Unsafe.getLong(row);
         return handleBase + offset;
+    }
+
+    /**
+     * Sets the {@link #next} field to the link: a link is a row's byte offset plus eight, and any
+     * probe of the snapshot reads the same rows at the same offsets.
+     */
+    @Override
+    public final void ofChain(long head) {
+        assert isCurrent() && !rowHeap.hasChainLengths();
+        assert head == 0 || (head >= 8 && (head - 8) % rowHeap.getRowSize() == 0 && (head - 8) / rowHeap.getRowSize() < rowsCount);
+        next = head;
     }
 
     @Override

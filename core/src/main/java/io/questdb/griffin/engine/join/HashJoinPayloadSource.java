@@ -44,6 +44,11 @@ import io.questdb.std.QuietCloseable;
  * execution's build input before the build freezes, and keeps that input open until the build
  * closes. A reader belongs to one probe, so to one execution slot: it keeps per-slot positioning
  * state and symbol tables, and must not be shared across workers.
+ * <p>
+ * A reader names the row it is positioned at by a locator, which any reader of the same source
+ * follows back to that row's payload: a thread that walks a build's matches hands them to another
+ * thread as locators, and that thread positions a reader of its own at each, without the build's
+ * row heap; see {@link Reader#locator()}.
  */
 public interface HashJoinPayloadSource {
 
@@ -59,6 +64,19 @@ public interface HashJoinPayloadSource {
     interface Reader extends Record, SymbolTableSource, QuietCloseable {
 
         /**
+         * The locator of the build row that the reader is positioned at: a non-negative value that
+         * {@link #positionLocator(long)} takes back to the same row's payload, on this reader or on
+         * any other reader of the same source, until the execution ends. A reader over a copy of the
+         * payload columns names the row by its ordinal, the copied row it reads, and a reader that
+         * reads the columns where they live by the build row's id, so a locator costs nothing to take
+         * and nothing to follow. A source switches its readers to a copy only before any probe of the
+         * execution runs, so every locator that the probes take names its row the same way; a
+         * locator taken before the switch does not survive it. Defined once {@link #position} or
+         * {@link #positionLocator} positioned the reader in the execution.
+         */
+        long locator();
+
+        /**
          * Positions the reader at a build row. Probes call it once per match. {@code rowIdAddress}
          * is where the build stores the row's id, and {@code ordinal} counts the rows the build
          * appended before it. A reader that reads the row's columns where they live loads the id;
@@ -66,6 +84,13 @@ public interface HashJoinPayloadSource {
          * leaves the id unread.
          */
         void position(long rowIdAddress, long ordinal);
+
+        /**
+         * Positions the reader at the build row that a {@link #locator()} of a reader of this source
+         * named in the current execution, as the call to {@link #position} that the locator came
+         * from did: the getters then read that row's payload.
+         */
+        void positionLocator(long locator);
 
         /**
          * Binds the reader to the source's current execution. This takes symbol tables from the

@@ -295,6 +295,50 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
     }
 
     /**
+     * True when a build copies its payload columns for a probe of this many rows: a payload that
+     * the copy can hold, a copy within the byte bound, and a probe that the copy repays. A payload
+     * that the copy cannot hold, one with a STRING, VARCHAR, BINARY or ARRAY column, has a copy row
+     * size of zero, see {@link HashJoinBuildFrames#getCopyRowSize()}, so it never copies, whatever
+     * the probe and the Parquet decode cache: its readers read the columns where they live. A probe
+     * repays the copy of a native build once it holds at least the given ratio of the build's rows,
+     * so that its matches read enough of them. The build's rows from Parquet frames change that only
+     * for a probe whose matches can land on as many of those frames as the copy decodes,
+     * {@code isParquetReached}, see {@link #isParquetInProbeReach(long, long, long, long)}:
+     * without the copy, every slot that probes decodes the frames its matches land on into its own
+     * share of the decode cache, where the copy decodes each frame once and caches none of them for
+     * the probe. While those frames fit a share, the ratio then weighs the native rows alone, so a
+     * build of Parquet rows alone copies for any such probe. Once they decode past a share,
+     * {@code isParquetOverReaderCache}, a slot whose matches move between them decodes them again and
+     * again, so the build copies for any such probe, however many native rows it has. The matches of
+     * a probe that cannot land on that many frames make the slots decode fewer frames in all than
+     * the copy would, however often they decode one again, so the ratio weighs all the build's rows,
+     * Parquet rows too, as it does a native build's, whatever the cache: such a build copies exactly
+     * when a native build of as many rows would. A native build is always in reach, and weighs all
+     * its rows. The probe's count is its frame rows, before any row filter, so a selective probe
+     * filter can copy a build it need not; the byte bound caps what that costs.
+     */
+    public static boolean isPayloadCopyWorthIt(
+            long buildRows,
+            long parquetBuildRows,
+            boolean isParquetReached,
+            boolean isParquetOverReaderCache,
+            int copyRowSize,
+            long probeRows,
+            long copyMaxSize,
+            double copyMinProbeRatio
+    ) {
+        // A build with Parquet rows is in reach of a probe with rows only.
+        assert !isParquetReached || parquetBuildRows == 0 || probeRows > 0;
+        if (copyRowSize <= 0 || buildRows <= 0 || buildRows > copyMaxSize / copyRowSize) {
+            return false;
+        }
+        if (!isParquetReached) {
+            return probeRows >= copyMinProbeRatio * buildRows;
+        }
+        return isParquetOverReaderCache || probeRows >= copyMinProbeRatio * (buildRows - parquetBuildRows);
+    }
+
+    /**
      * Releases what the open cursor's execution took: the build filters' per-execution state, the
      * slots' build views and probes, the frozen build, the translation caches and, last, the build
      * scan. Every reducer must have finished, and every reader of the frozen build's payload and of
@@ -648,47 +692,6 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
             }
         }
         return failure;
-    }
-
-    /**
-     * True when this build copies its payload columns for a probe of this many rows: a payload that
-     * the copy can hold, a copy within the byte bound, and a probe that the copy repays. A probe
-     * repays the copy of a native build once it holds at least the given ratio of the build's rows,
-     * so that its matches read enough of them. The build's rows from Parquet frames change that only
-     * for a probe whose matches can land on as many of those frames as the copy decodes,
-     * {@code isParquetReached}, see {@link #isParquetInProbeReach(long, long, long, long)}:
-     * without the copy, every slot that probes decodes the frames its matches land on into its own
-     * share of the decode cache, where the copy decodes each frame once and caches none of them for
-     * the probe. While those frames fit a share, the ratio then weighs the native rows alone, so a
-     * build of Parquet rows alone copies for any such probe. Once they decode past a share,
-     * {@code isParquetOverReaderCache}, a slot whose matches move between them decodes them again and
-     * again, so the build copies for any such probe, however many native rows it has. The matches of
-     * a probe that cannot land on that many frames make the slots decode fewer frames in all than
-     * the copy would, however often they decode one again, so the ratio weighs all the build's rows,
-     * Parquet rows too, as it does a native build's, whatever the cache: such a build copies exactly
-     * when a native build of as many rows would. A native build is always in reach, and weighs all
-     * its rows. The probe's count is its frame rows, before any row filter, so a selective probe
-     * filter can copy a build it need not; the byte bound caps what that costs.
-     */
-    private static boolean isPayloadCopyWorthIt(
-            long buildRows,
-            long parquetBuildRows,
-            boolean isParquetReached,
-            boolean isParquetOverReaderCache,
-            int copyRowSize,
-            long probeRows,
-            long copyMaxSize,
-            double copyMinProbeRatio
-    ) {
-        // A build with Parquet rows is in reach of a probe with rows only.
-        assert !isParquetReached || parquetBuildRows == 0 || probeRows > 0;
-        if (copyRowSize <= 0 || buildRows <= 0 || buildRows > copyMaxSize / copyRowSize) {
-            return false;
-        }
-        if (!isParquetReached) {
-            return probeRows >= copyMinProbeRatio * buildRows;
-        }
-        return isParquetOverReaderCache || probeRows >= copyMinProbeRatio * (buildRows - parquetBuildRows);
     }
 
     /**
