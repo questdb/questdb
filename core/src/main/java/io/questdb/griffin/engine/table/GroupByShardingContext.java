@@ -417,7 +417,8 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
                     ownerLoop.observeProgress();
                     long cursor = pubSeq.next();
                     if (cursor < 0) {
-                        if (strategy.shouldSteal(mergedCount)) {
+                        mergedCount = -postAggregationDoneLatch.getCount();
+                        if (mergedCount == queuedCount || strategy.shouldSteal(mergedCount)) {
                             ownerLoop.checkBeforeHelping();
                             mergeShard(-1, shardIndex);
                             ownCount++;
@@ -428,7 +429,6 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
                         if (!ownerLoop.awaitProgress()) {
                             Os.pause();
                         }
-                        mergedCount = -postAggregationDoneLatch.getCount();
                     } else {
                         queue.get(cursor).of(
                                 postAggregationCircuitBreaker,

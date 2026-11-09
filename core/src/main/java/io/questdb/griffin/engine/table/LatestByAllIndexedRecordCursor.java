@@ -407,11 +407,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                 // done(seq) releases the slot
                 subSeq.done(seq);
                 if (dispatcher != null) {
-                    try {
-                        dispatcher.signalQueueProgress();
-                    } finally {
-                        dispatcher.signalOwnerProgress(stolenProgress);
-                    }
+                    dispatcher.signalOwnerProgress(stolenProgress);
                 }
             }
         }

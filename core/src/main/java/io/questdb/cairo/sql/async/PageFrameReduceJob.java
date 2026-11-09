@@ -274,6 +274,7 @@ public class PageFrameReduceJob implements Job, QuietCloseable {
                         try {
                             MemoryTracker.detachResourceMemoryCurrentThread();
                         } finally {
+                            final int shard = frameSequence.getShard();
                             try {
                                 subSeq.done(cursor);
                             } finally {
@@ -281,7 +282,7 @@ public class PageFrameReduceJob implements Job, QuietCloseable {
                                 // sure that the task is available for consumers.
                                 frameSequence.getReduceFinishedCounter().incrementAndGet();
                                 if (dispatcher != null) {
-                                    dispatcher.signalProgress(frameSequence);
+                                    dispatcher.signalProgress(frameSequence, shard);
                                 }
                             }
                         }

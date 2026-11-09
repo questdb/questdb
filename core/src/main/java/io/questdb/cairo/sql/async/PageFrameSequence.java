@@ -160,7 +160,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
             // Sampled before the work checks below: a producer that signals progress after the
             // checks but before the sample would otherwise be missed and this fiber would park.
             final long observedProgress = canPark ? getProgressVersion() : 0;
-            final long observedGlobalProgress = canPark ? dispatcher.getProgressVersion() : 0;
+            final long observedShardProgress = canPark ? dispatcher.getRingProgressVersion(shard) : 0;
             // First check the local task: maybe we were reducing locally and got interrupted by an exception?
             if (localTask != null && localTask.getFrameSequence() == this && dispatchStartFrameIndex == localTask.getFrameIndex() + 1) {
                 collectedFrameIndex = localTask.getFrameIndex();
@@ -209,13 +209,13 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                     collectSubSeq.done(cursor);
                     if (dispatcher != null) {
                         if (taskFrameSequence != null) {
-                            dispatcher.signalProgress(taskFrameSequence);
+                            dispatcher.signalProgress(taskFrameSequence, shard);
                         } else {
-                            dispatcher.signalProgress();
+                            dispatcher.signalRingProgress(shard);
                         }
                     }
                 } else if (canPark) {
-                    awaitProgress(dispatcher, observedProgress, observedGlobalProgress, true);
+                    awaitProgress(dispatcher, observedProgress, observedShardProgress, true, getBlockedShard());
                 } else {
                     Os.pause();
                 }
@@ -280,7 +280,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         }
         final PageFrameReduceDispatcher dispatcher = messageBus.getPageFrameReduceDispatcher();
         if (dispatcher != null) {
-            dispatcher.signalProgress(this);
+            dispatcher.signalProgress(this, shard);
         }
     }
 
@@ -395,7 +395,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
             // Sampled before collectSubSeq.next() so a producer signalling progress between the
             // failed collect and the sample cannot be missed.
             final long observedProgress = canPark ? getProgressVersion() : 0;
-            final long observedGlobalProgress = canPark ? dispatcher.getProgressVersion() : 0;
+            final long observedShardProgress = canPark ? dispatcher.getRingProgressVersion(shard) : 0;
             long cursor = collectSubSeq.next();
             if (cursor > -1) {
                 PageFrameReduceTask task = reduceQueue.get(cursor);
@@ -408,14 +408,13 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                     collectSubSeq.done(cursor);
                     if (dispatcher != null) {
                         if (thatFrameSequence != null) {
-                            dispatcher.signalProgress(thatFrameSequence);
+                            dispatcher.signalProgress(thatFrameSequence, shard);
                         } else {
-                            dispatcher.signalProgress();
+                            dispatcher.signalRingProgress(shard);
                         }
                     }
                 }
             } else if (cursor == -1) {
-                int blockedShard = -1;
                 if (dispatcher != null && !isActive()) {
                     if (getCancelReason() != SqlExecutionCircuitBreaker.STATE_OK) {
                         throw buildInterruptionException();
@@ -425,11 +424,9 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                     }
                 } else {
                     final int previousDispatchStartFrameIndex = dispatchStartFrameIndex;
-                    if (dispatch(dispatchLimit, countOnly)) {
-                        if (!canPark || dispatchStartFrameIndex != previousDispatchStartFrameIndex) {
-                            continue;
-                        }
-                        blockedShard = shard;
+                    if (dispatch(dispatchLimit, countOnly)
+                            && (!canPark || dispatchStartFrameIndex != previousDispatchStartFrameIndex)) {
+                        continue;
                     }
                     if (dispatcher != null && !isActive()) {
                         continue;
@@ -441,7 +438,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                 }
                 if (canPark) {
                     final boolean isDraining = !isActive();
-                    awaitProgress(dispatcher, observedProgress, observedGlobalProgress, isDraining, blockedShard);
+                    awaitProgress(dispatcher, observedProgress, observedShardProgress, isDraining, getBlockedShard());
                     continue;
                 }
                 return -1;
@@ -576,7 +573,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                 messageBus.getPageFrameCollectFanOut(shard).remove(collectSubSeqToRemove);
                 final PageFrameReduceDispatcher dispatcher = messageBus.getPageFrameReduceDispatcher();
                 if (dispatcher != null) {
-                    dispatcher.signalProgress();
+                    dispatcher.signalRingProgress(shard);
                 }
                 LOG.debug().$("removed [seq=").$(collectSubSeqToRemove).I$();
             } catch (Throwable th) {
@@ -632,12 +629,11 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
     private void awaitReduced(PageFrameReduceDispatcher dispatcher, boolean canPark) {
         while (true) {
             final long observedProgress = canPark ? getProgressVersion() : 0;
-            final long observedGlobalProgress = canPark ? dispatcher.getProgressVersion() : 0;
             if (reduceFinishedCounter.get() >= dispatchStartFrameIndex) {
                 break;
             }
             if (canPark) {
-                awaitProgress(dispatcher, observedProgress, observedGlobalProgress, true);
+                awaitProgress(dispatcher, observedProgress, true);
             } else {
                 Os.pause();
             }
@@ -826,6 +822,10 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         }
     }
 
+    private int getBlockedShard() {
+        return reduceFinishedCounter.get() > collectedFrameIndex + 1 ? shard : -1;
+    }
+
     private void reduceLocally(boolean countOnly) {
         assert dispatchStartFrameIndex < frameCount;
 
@@ -939,7 +939,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         messageBus.getPageFrameCollectFanOut(shard).suspend(collectSubSeq);
         final PageFrameReduceDispatcher dispatcher = messageBus.getPageFrameReduceDispatcher();
         if (dispatcher != null) {
-            dispatcher.signalProgress(this);
+            dispatcher.signalProgress(this, shard);
         }
     }
 }

@@ -39,7 +39,6 @@ public final class QueryParallelOwnerLoop {
     private boolean isFiberOwner;
     private boolean isOwnerParkable;
     private long lastOwnerYieldNanos;
-    private long observedGlobalProgress;
     private long observedProgress;
     private AsyncQueryProgressState progressState;
 
@@ -50,7 +49,7 @@ public final class QueryParallelOwnerLoop {
             return false;
         }
         assert dispatcher != null;
-        if (!dispatcher.awaitProgress(progressState, observedProgress, observedGlobalProgress, circuitBreaker)) {
+        if (!dispatcher.awaitProgress(progressState, observedProgress, circuitBreaker)) {
             Os.pause();
         }
         return true;
@@ -65,7 +64,6 @@ public final class QueryParallelOwnerLoop {
         if (!dispatcher.awaitProgressWhileDraining(
                 progressState,
                 observedProgress,
-                observedGlobalProgress,
                 isOwnerTripped ? null : circuitBreaker
         )) {
             Os.pause();
@@ -93,7 +91,6 @@ public final class QueryParallelOwnerLoop {
 
     public void observeProgress() {
         observedProgress = progressState.getVersion();
-        observedGlobalProgress = dispatcher != null ? dispatcher.getProgressVersion() : 0;
         isOwnerParkable = dispatcher != null && dispatcher.isOwnerParkable();
     }
 
