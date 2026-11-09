@@ -80,11 +80,13 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         // Mirrors the slow-path gate in skipRows(): pushdown pruning drops whole non-matching
         // parquet row groups, so the metadata-only accounting below would count physical rows
         // the cursor never yields and over-report the size. The row-by-row walk counts exactly
-        // the rows hasNext() yields, matching the pruned scan.
+        // the rows hasNext() yields, matching the pruned scan. Inexact frames are counted
+        // whole by the partition frame cursor, so a partly consumed scan must walk its rows.
         if (!frameCursor.supportsSizeCalculation()
                 || filter != null
                 || rowCursorFactory.isUsingIndex()
-                || frameCursor.hasActivePushdownFilter()) {
+                || frameCursor.hasActivePushdownFilter()
+                || ((frameCount > 0 || rowCursor != null) && frameCursor.hasInexactFrames())) {
             while (hasNext()) {
                 counter.inc();
             }
@@ -155,7 +157,11 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
                 frameAddressCache.add(frameCount, frame);
                 final long remaining = maxRowsAfterSkip - rowsProducedSinceSkip;
                 final long frameSize = frame.getPartitionHi() - frame.getPartitionLo();
-                final int inFrameHi = (int) Math.min(Math.min(frameSize, remaining), Integer.MAX_VALUE);
+                // The LIMIT clamp decodes only the leading rows of a frame on the assumption that
+                // they are the frame's first rows 1:1. A frame whose row count is inexact may drop
+                // rows anywhere, so it is decoded whole and the clamp applies to the yielded rows.
+                final long clampedHi = frame.isExactRowCount() ? Math.min(frameSize, remaining) : frameSize;
+                final int inFrameHi = (int) Math.min(clampedHi, Integer.MAX_VALUE);
                 final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameCount++, inFrameHi);
                 rowCursor = Misc.free(rowCursor);
                 rowCursor = rowCursorFactory.getCursor(frame, frameMemory);
@@ -218,7 +224,7 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         // Same gate as calculateSize() and skipRows(): pushdown pruning drops whole
         // non-matching parquet row groups, so frameCursor.size() reports physical rows
         // the cursor never yields. Report unknown size instead of that over-count.
-        if (frameCursor.hasActivePushdownFilter()) {
+        if (frameCursor.hasActivePushdownFilter() || frameCursor.hasInexactFrames()) {
             return -1;
         }
         return entityCursor ? frameCursor.size() : -1;
@@ -268,7 +274,12 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         //   the cache when it reproduced the cached layout's leading skip (or when neither walk skipped),
         //   and a skip that ran after that point recorded its own ordinal, which stops the next walk from
         //   reaching here at all.
-        if (filter != null || rowCursorFactory.isUsingIndex() || frameCursor.hasActivePushdownFilter()
+        // - frames may be inexact (dedup on a delta partition): the declared spans the fast path
+        //   subtracts over-count the rows the cursor yields, so the skip would land short.
+        if (filter != null
+                || rowCursorFactory.isUsingIndex()
+                || frameCursor.hasActivePushdownFilter()
+                || frameCursor.hasInexactFrames()
                 || (hasFramesOfAnotherWalk && frameCount > 0)) {
             // hasNext() charges every row it yields against the clamp, but the rows this loop
             // walks are the skip itself, not reads after it. So walk unclamped and arm the

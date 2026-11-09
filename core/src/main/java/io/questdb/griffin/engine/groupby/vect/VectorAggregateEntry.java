@@ -80,6 +80,8 @@ public class VectorAggregateEntry implements Mutable {
         try {
             final PageFrameMemoryPool frameMemoryPool = frameMemoryPools.getQuick(slot);
             final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
+            // A frame whose row count is inexact reports its decoded count once decoded.
+            frameRowCount = frameMemory.getRowCount();
             // for functions like `count()`, that do not have arguments we are required to provide
             // count of rows in table in a form of "pageSize >> shr". Since `vaf` doesn't provide column
             // this code used column 0. Assumption here that column 0 is fixed size.

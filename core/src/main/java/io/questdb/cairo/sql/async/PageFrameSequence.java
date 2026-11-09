@@ -31,6 +31,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.PartitionFrameState;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -302,8 +303,21 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         return frameCount;
     }
 
+    /**
+     * Declared row span of the frame: an upper bound on the rows it yields once decoded,
+     * and the exact count when {@link #isFrameRowCountExact(int)}. Scheduling and buffer
+     * sizing may use it as is; loops over decoded columns must use
+     * {@link PageFrameMemory#getRowCount()}.
+     */
     public long getFrameRowCount(int frameIndex) {
         return frameRowCounts.getQuick(frameIndex);
+    }
+
+    /**
+     * Lower bound on the rows the frame yields once decoded; see {@link PageFrame#getRowCountLo()}.
+     */
+    public long getFrameRowCountLo(int frameIndex) {
+        return frameAddressCache.getFrameRowCountLo(frameIndex);
     }
 
     public long getId() {
@@ -375,6 +389,14 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
 
     public byte getTaskType() {
         return taskType;
+    }
+
+    /**
+     * Whether {@link #getFrameRowCount(int)} is the frame's exact decoded row count; see
+     * {@link PageFrame#isExactRowCount()}.
+     */
+    public boolean isFrameRowCountExact(int frameIndex) {
+        return frameAddressCache.isFrameRowCountExact(frameIndex);
     }
 
     @Override

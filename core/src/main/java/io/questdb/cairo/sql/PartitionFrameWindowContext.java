@@ -25,6 +25,7 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.engine.table.parquet.ParquetDecoder;
 import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
@@ -47,6 +48,7 @@ final class PartitionFrameWindowContext implements QuietCloseable {
     private final BaseViewLease baseViewLease;
     private final PartitionFrameDecoder decoder;
     private final ProjectionPlan projectionPlan;
+    private BaseViewLease precedingBase;
     private long preparedPlanRevision = -1;
     private long preparedTrackerAddress;
     private int preparedWindow = -1;
@@ -78,6 +80,7 @@ final class PartitionFrameWindowContext implements QuietCloseable {
     public void close() {
         releaseWindow();
         Misc.free(baseViewLease);
+        precedingBase = Misc.free(precedingBase);
         Misc.free(decoder);
         Misc.free(projectionPlan);
         state = 0;
@@ -129,7 +132,7 @@ final class PartitionFrameWindowContext implements QuietCloseable {
             baseViewLease.prepare(
                     addressCache,
                     frameIndex,
-                    projectionPlan.requiredColumns(),
+                    projectionPlan.requiredColumns(frameState, window),
                     targetBuffers,
                     frameState,
                     window
@@ -142,6 +145,18 @@ final class PartitionFrameWindowContext implements QuietCloseable {
                     baseViewLease.viewCount(),
                     trackerAddress
             );
+            for (int previous; (previous = decoder.requiredBaseWindow()) >= 0; ) {
+                if (precedingBase == null) {
+                    precedingBase = new BaseViewLease(baseViewLease.configuration);
+                }
+                try {
+                    precedingBase.prepare(addressCache, frameIndex,
+                            projectionPlan.requiredColumns(frameState, window), targetBuffers, frameState, previous);
+                    decoder.addBaseWindow(previous, precedingBase.viewAddress(), precedingBase.viewCount());
+                } finally {
+                    precedingBase.clear();
+                }
+            }
             preparedPlanRevision = projectionPlan.revision();
             preparedTrackerAddress = trackerAddress;
             preparedWindow = window;
@@ -212,6 +227,30 @@ final class PartitionFrameWindowContext implements QuietCloseable {
             Misc.free(parquetColumns);
             parquetDecoder = Misc.free(parquetDecoder);
             Misc.free(views);
+        }
+
+        // A required column the query does not select is a dedup key of an inexact window;
+        // the frame carries its pages next to the designated timestamp. Anything else would
+        // silently decode as nulls, so it fails loud.
+        private void addDedupKeyView(PageFrameAddressCache addressCache, int frameIndex, int columnId, int type) {
+            for (int key = 0, n = addressCache.getDedupKeyPageCount(frameIndex); key < n; key++) {
+                if (addressCache.getDedupKeyPage(frameIndex, key, PageFrame.DEDUP_KEY_PAGE_COLUMN_ID) == columnId) {
+                    addView(
+                            columnId,
+                            type,
+                            addressCache.getDedupKeyPage(frameIndex, key, PageFrame.DEDUP_KEY_PAGE_DATA_ADDRESS),
+                            addressCache.getDedupKeyPage(frameIndex, key, PageFrame.DEDUP_KEY_PAGE_DATA_SIZE),
+                            addressCache.getDedupKeyPage(frameIndex, key, PageFrame.DEDUP_KEY_PAGE_AUX_ADDRESS),
+                            addressCache.getDedupKeyPage(frameIndex, key, PageFrame.DEDUP_KEY_PAGE_AUX_SIZE),
+                            addressCache.getDedupKeyPage(frameIndex, key, PageFrame.DEDUP_KEY_PAGE_TOP)
+                    );
+                    return;
+                }
+            }
+            throw CairoException.critical(0)
+                    .put("native base column is not available to the partition frame decoder [columnId=").put(columnId)
+                    .put(", frameIndex=").put(frameIndex)
+                    .put(']');
         }
 
         private void addView(
@@ -301,6 +340,8 @@ final class PartitionFrameWindowContext implements QuietCloseable {
                             addressCache.getAuxPageSizes().get(columnOffset + queryColumn),
                             addressCache.getPageTops().get(columnOffset + queryColumn)
                     );
+                } else {
+                    addDedupKeyView(addressCache, frameIndex, columnId, type);
                 }
             }
         }
@@ -393,6 +434,8 @@ final class PartitionFrameWindowContext implements QuietCloseable {
         private final DirectIntList candidatePairs;
         private final DirectIntList pairs;
         private final DirectIntList requiredColumns;
+        // requiredColumns plus the dedup keys of an inexact window, rebuilt per prepared window.
+        private final DirectIntList windowRequiredColumns;
         private int candidatePrimaryColumnCount;
         private int primaryColumnCount = -1;
         private long revision;
@@ -401,19 +444,23 @@ final class PartitionFrameWindowContext implements QuietCloseable {
             DirectIntList candidatePairs = null;
             DirectIntList pairs = null;
             DirectIntList requiredColumns = null;
+            DirectIntList windowRequiredColumns = null;
             try {
                 candidatePairs = new DirectIntList(32, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
                 pairs = new DirectIntList(32, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
                 requiredColumns = new DirectIntList(32, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                windowRequiredColumns = new DirectIntList(32, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
             } catch (Throwable th) {
                 Misc.free(candidatePairs);
                 Misc.free(pairs);
                 Misc.free(requiredColumns);
+                Misc.free(windowRequiredColumns);
                 throw th;
             }
             this.candidatePairs = candidatePairs;
             this.pairs = pairs;
             this.requiredColumns = requiredColumns;
+            this.windowRequiredColumns = windowRequiredColumns;
         }
 
         @Override
@@ -421,43 +468,34 @@ final class PartitionFrameWindowContext implements QuietCloseable {
             Misc.free(candidatePairs);
             Misc.free(pairs);
             Misc.free(requiredColumns);
+            Misc.free(windowRequiredColumns);
         }
 
-        private void addRequiredColumn(int columnId, int type) {
+        private static void addRequiredColumn(DirectIntList columns, int columnId, int type) {
             if (columnId < 0 || type <= 0) {
                 return;
             }
             final int normalizedType = normalizeType(type);
-            for (long i = 0, n = requiredColumns.size(); i < n; i += 2) {
-                if (requiredColumns.get(i) == columnId) {
+            for (long i = 0, n = columns.size(); i < n; i += 2) {
+                if (columns.get(i) == columnId) {
                     return;
                 }
             }
-            requiredColumns.add(columnId);
-            requiredColumns.add(normalizedType);
+            columns.add(columnId);
+            columns.add(normalizedType);
         }
 
         private void buildRequiredColumns(ColumnMapping columnMapping) {
             requiredColumns.clear();
             for (long i = 0, n = pairs.size(); i < n; i += 2) {
-                addRequiredColumn(pairs.get(i), pairs.get(i + 1));
+                addRequiredColumn(requiredColumns, pairs.get(i), pairs.get(i + 1));
             }
             addRequiredColumn(
+                    requiredColumns,
                     columnMapping.getTimestampWriterIndex(),
                     columnMapping.getTimestampType()
             );
-            for (long i = 2, n = requiredColumns.size(); i < n; i += 2) {
-                final int columnId = requiredColumns.get(i);
-                final int type = requiredColumns.get(i + 1);
-                long j = i - 2;
-                while (j >= 0 && requiredColumns.get(j) > columnId) {
-                    requiredColumns.set(j + 2, requiredColumns.get(j));
-                    requiredColumns.set(j + 3, requiredColumns.get(j + 1));
-                    j -= 2;
-                }
-                requiredColumns.set(j + 2, columnId);
-                requiredColumns.set(j + 3, type);
-            }
+            sortByColumnId(requiredColumns);
         }
 
         private void commitCandidate(ColumnMapping columnMapping) {
@@ -527,12 +565,47 @@ final class PartitionFrameWindowContext implements QuietCloseable {
             return primaryColumnCount;
         }
 
-        private DirectIntList requiredColumns() {
-            return requiredColumns;
+        /**
+         * The base columns the decoder needs for {@code window}: the projection plus the
+         * timestamp, and for a window whose row count is inexact also every dedup key, since
+         * duplicate resolution compares keys of rows the query may not select.
+         */
+        private DirectIntList requiredColumns(long state, int window) {
+            final int keyCount = PartitionFrameState.getDedupKeyCount(state);
+            if (keyCount == 0 || PartitionFrameState.isExactRowCount(state, window)) {
+                return requiredColumns;
+            }
+            windowRequiredColumns.clear();
+            windowRequiredColumns.addAll(requiredColumns);
+            for (int i = 0; i < keyCount; i++) {
+                addRequiredColumn(
+                        windowRequiredColumns,
+                        PartitionFrameState.getDedupKeyColumnId(state, i),
+                        PartitionFrameState.getDedupKeyType(state, i)
+                );
+            }
+            sortByColumnId(windowRequiredColumns);
+            return windowRequiredColumns;
         }
 
         private long revision() {
             return revision;
+        }
+
+        // Base views must be listed in strictly increasing column ID order.
+        private static void sortByColumnId(DirectIntList columns) {
+            for (long i = 2, n = columns.size(); i < n; i += 2) {
+                final int columnId = columns.get(i);
+                final int type = columns.get(i + 1);
+                long j = i - 2;
+                while (j >= 0 && columns.get(j) > columnId) {
+                    columns.set(j + 2, columns.get(j));
+                    columns.set(j + 3, columns.get(j + 1));
+                    j -= 2;
+                }
+                columns.set(j + 2, columnId);
+                columns.set(j + 3, type);
+            }
         }
     }
 }

@@ -36,6 +36,7 @@ import org.jetbrains.annotations.NotNull;
 import static io.questdb.cairo.TableUtils.META_OFFSET_PARTITION_BY;
 
 public class TableWriterMetadata extends AbstractRecordMetadata implements TableMetadata {
+    private long dedupVersion;
     private long expiryCleanupIntervalMicros;
     private String expiryPredicate;
     private int maxUncommittedRows;
@@ -63,6 +64,10 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     @Override
     public IntList getCoveringColumnIndices(int columnIndex) {
         return getColumnMetadata(columnIndex).getCoveringColumnIndices();
+    }
+
+    public long getDedupVersion() {
+        return dedupVersion;
     }
 
     @Override
@@ -184,6 +189,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         this.columnMetadata.clear();
         this.metadataVersion = metaMem.getLong(TableUtils.META_OFFSET_METADATA_VERSION);
         this.storageVersion = metaMem.getInt(TableUtils.META_OFFSET_VERSION);
+        this.dedupVersion = metaMem.getLong(TableUtils.META_OFFSET_DEDUP_VERSION);
         this.walEnabled = metaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
         this.ttlHoursOrMonths = TableUtils.getTtlHoursOrMonths(metaMem);
         this.expiryPredicate = null;
@@ -268,6 +274,10 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
                 }
             }
         }
+    }
+
+    public void setDedupVersion(long value) {
+        this.dedupVersion = value;
     }
 
     public void setMaxUncommittedRows(int rows) {

@@ -31,6 +31,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
@@ -417,11 +418,21 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
     }
 
     /**
-     * Rows of the frame, or, while a round runs, of the round's task with this index.
+     * Rows of the frame, or, while a round runs, of the round's task with this index. A frame's
+     * value is its declared row span: an upper bound on the rows it yields once decoded, and
+     * the exact count when {@link #isFrameRowCountExact(int)}. Scheduling and buffer sizing
+     * may use it as is; loops over decoded columns must use {@link PageFrameMemory#getRowCount()}.
      */
     public long getFrameRowCount(int frameIndex) {
         final LongList roundTaskRowCounts = this.roundTaskRowCounts;
         return roundTaskRowCounts != null ? roundTaskRowCounts.getQuick(frameIndex) : frameRowCounts.getQuick(frameIndex);
+    }
+
+    /**
+     * Lower bound on the rows the frame yields once decoded; see {@link PageFrame#getRowCountLo()}.
+     */
+    public long getFrameRowCountLo(int frameIndex) {
+        return frameAddressCache.getFrameRowCountLo(frameIndex);
     }
 
     public long getId() {
@@ -466,6 +477,14 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
      */
     public WorkStealingStrategy getWorkStealingStrategy() {
         return workStealingStrategy;
+    }
+
+    /**
+     * Whether {@link #getFrameRowCount(int)} is the frame's exact decoded row count; see
+     * {@link PageFrame#isExactRowCount()}.
+     */
+    public boolean isFrameRowCountExact(int frameIndex) {
+        return frameAddressCache.isFrameRowCountExact(frameIndex);
     }
 
     @Override

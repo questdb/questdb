@@ -297,14 +297,16 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
             try {
                 // Decoder initialization and map allocation must both release the acquired slot on failure.
                 final PageFrameMemoryRecord probeRecord = slot.probeRecord;
-                probeRecord.init(pool.navigateTo(frameIndex));
+                final PageFrameMemory frameMemory = pool.navigateTo(frameIndex);
+                probeRecord.init(frameMemory);
                 final GroupByMapFragment fragment = atom.getFragment(slotId);
                 if (atom.isSharded()) {
                     fragment.shard();
                 }
                 final Map map = fragment == null ? null
                         : fragment.isNotSharded() ? fragment.reopenMap() : fragment.getShards().getQuick(0);
-                final long rowCount = sequence.getFrameRowCount(frameIndex);
+                // A frame whose row count is inexact reports its decoded count once decoded.
+                final long rowCount = frameMemory.getRowCount();
                 // One loop method per probe implementation, so that a hot call site sees one
                 // receiver class. The branch below runs once per page frame, not per row.
                 if (atom.isCountedByKey()) {
@@ -1946,7 +1948,8 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
                 final PageFrameMemoryRecord probeRecord = slot.probeRecord;
                 final PageFrameMemory frameMemory = pool.navigateTo(frameIndex);
                 probeRecord.init(frameMemory);
-                final long rowCount = sequence.getFrameRowCount(frameIndex);
+                // A frame whose row count is inexact reports its decoded count once decoded.
+                final long rowCount = frameMemory.getRowCount();
                 // Phase one: narrow the frame to the rows the probe filter keeps. The compiled
                 // filter reads raw column addresses, so column tops and Parquet type casts, which
                 // the logical record resolves per row, fall back to the interpreted filter.

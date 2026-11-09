@@ -395,6 +395,16 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         }
 
         @Override
+        public long getDedupKeyPage(int key, int cell) {
+            return baseFrame.getDedupKeyPage(key, cell);
+        }
+
+        @Override
+        public int getDedupKeyPageCount() {
+            return baseFrame.getDedupKeyPageCount();
+        }
+
+        @Override
         public long getDesignatedTimestampPageAddress() {
             return baseFrame.getDesignatedTimestampPageAddress();
         }
@@ -485,6 +495,16 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         }
 
         @Override
+        public long getRowCountHi() {
+            return baseFrame.getRowCountHi();
+        }
+
+        @Override
+        public long getRowCountLo() {
+            return baseFrame.getRowCountLo();
+        }
+
+        @Override
         public boolean isSkipSkeleton() {
             return baseFrame.isSkipSkeleton();
         }
@@ -548,6 +568,11 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         @Override
         public boolean hasCustomFrames() {
             return baseCursor.hasCustomFrames();
+        }
+
+        @Override
+        public boolean hasInexactFrames() {
+            return baseCursor.hasInexactFrames();
         }
 
         @Override

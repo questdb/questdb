@@ -283,6 +283,8 @@ public class AsyncGroupingSetsRecordCursorFactory extends AbstractRecordCursorFa
         try {
             memoryPool = atom.getFilterContext().getMemoryPool(slotId);
             PageFrameMemory frameMemory = memoryPool.navigateTo(frameIndex);
+            // A frame whose row count is inexact reports its decoded count once decoded.
+            frameRowCount = frameMemory.getRowCount();
             record.init(frameMemory);
             long baseRowId = Rows.toRowID(frameIndex, 0);
             RecordSink recordSink = atom.getRecordSink(slotId);
@@ -355,6 +357,8 @@ public class AsyncGroupingSetsRecordCursorFactory extends AbstractRecordCursorFa
         // the slot.
         try {
             PageFrameMemory frameMemory = memoryPool.navigateTo(frameIndex);
+            // A frame whose row count is inexact reports its decoded count once decoded.
+            frameRowCount = frameMemory.getRowCount();
             record.init(frameMemory);
 
             DirectLongList rows = filterContext.getFilteredRows(slotId);

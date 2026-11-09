@@ -30,6 +30,7 @@ import io.questdb.cairo.ColumnTypeDriver;
 import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.PartitionGeometry;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.sql.ColumnMapping;
@@ -62,6 +63,10 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     private final ColumnMapping columnMapping = new ColumnMapping();
     private final LongList columnPageAddresses = new LongList();
     private final LongList columnPageTops = new LongList();
+    // Reader column indexes of the non-timestamp dedup keys, and their pages for the current
+    // custom-decode window as PageFrame.DEDUP_KEY_PAGE_CELLS longs per key.
+    private final IntList dedupKeyColumns = new IntList();
+    private final LongList dedupKeyPages = new LongList();
     private final IntList columnSizeShifts;
     private final DirectLongList filterList;
     private final MemoryCARWImpl filterValues;
@@ -168,6 +173,11 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     }
 
     @Override
+    public boolean hasInexactFrames() {
+        return reader.hasInexactRowCount();
+    }
+
+    @Override
     public boolean hasIntervalFilter() {
         return partitionFrameCursor != null && partitionFrameCursor.hasIntervalFilter();
     }
@@ -238,6 +248,8 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         this.partitionFrameCursor = partitionFrameCursor;
         this.reader = partitionFrameCursor.getTableReader();
         TablePageFrameCursor.buildColumnMapping(columnMapping, columnIndexes, reader.getMetadata());
+        dedupKeyColumns.clear();
+        dedupKeyPages.clear();
         this.pageFrameMinRows = executionContext.getPageFrameMinRows();
         this.pageFrameMaxRows = executionContext.getPageFrameMaxRows();
         if (pushdownFilterConditions != null) {
@@ -308,6 +320,16 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         timestampPageAddress = 0;
         timestampPageSize = 0;
         timestampPageTop = 0;
+        clearDedupKeyPages();
+    }
+
+    private void clearDedupKeyPages() {
+        for (int key = 0, n = dedupKeyColumns.size(); key < n; key++) {
+            final int offset = key * PageFrame.DEDUP_KEY_PAGE_CELLS;
+            for (int cell = PageFrame.DEDUP_KEY_PAGE_DATA_ADDRESS; cell < PageFrame.DEDUP_KEY_PAGE_CELLS; cell++) {
+                dedupKeyPages.setQuick(offset + cell, 0);
+            }
+        }
     }
 
     private void clearReenterPartitionFrameState() {
@@ -765,7 +787,45 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         return computeNativeFrame(lo, hi, skipTarget);
     }
 
+    // Historical keys may no longer be keys in the current table metadata.
+    private void initDedupKeyPages(TableReaderMetadata metadata, long state) {
+        dedupKeyColumns.clear();
+        dedupKeyPages.clear();
+        if (state == 0) {
+            return;
+        }
+        for (int key = 0, count = PartitionFrameState.getDedupKeyCount(state); key < count; key++) {
+            final int columnId = PartitionFrameState.getDedupKeyColumnId(state, key);
+            int columnIndex = -1;
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                if (metadata.getColumnMetadata(i).getOriginalWriterIndex() == columnId) {
+                    columnIndex = i;
+                    break;
+                }
+            }
+            dedupKeyColumns.add(columnIndex);
+            dedupKeyPages.add(columnId);
+            for (int cell = PageFrame.DEDUP_KEY_PAGE_DATA_ADDRESS; cell < PageFrame.DEDUP_KEY_PAGE_CELLS; cell++) {
+                dedupKeyPages.add(0);
+            }
+        }
+    }
+
     private void prepareNativePartitionFrameBaseColumn(int base, int columnIndex, int outputIndex, boolean timestamp) {
+        if (columnIndex < 0) {
+            final int key = -2 - outputIndex;
+            final int offset = key * PageFrame.DEDUP_KEY_PAGE_CELLS;
+            final var column = reader.getHistoricalColumn(reenterPartitionIndex,
+                    (int) dedupKeyPages.getQuick(offset), PartitionFrameState.getDedupKeyType(reenterPartitionFrameState, key));
+            final MemoryR data = column.data();
+            final MemoryR aux = column.aux();
+            dedupKeyPages.setQuick(offset + PageFrame.DEDUP_KEY_PAGE_DATA_ADDRESS, data == null ? 0 : data.getPageAddress(0));
+            dedupKeyPages.setQuick(offset + PageFrame.DEDUP_KEY_PAGE_DATA_SIZE, data == null ? 0 : data.size());
+            dedupKeyPages.setQuick(offset + PageFrame.DEDUP_KEY_PAGE_AUX_ADDRESS, aux == null ? 0 : aux.getPageAddress(0));
+            dedupKeyPages.setQuick(offset + PageFrame.DEDUP_KEY_PAGE_AUX_SIZE, aux == null ? 0 : aux.size());
+            dedupKeyPages.setQuick(offset + PageFrame.DEDUP_KEY_PAGE_TOP, column.top());
+            return;
+        }
         reader.openPageFrameColumn(reenterPartitionIndex, columnIndex);
         final int primary = TableReader.getPrimaryColumnIndex(base, columnIndex);
         final MemoryR data = reader.getColumn(primary);
@@ -789,6 +849,13 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
             timestampPageAddress = dataAddress;
             timestampPageSize = dataSize;
             timestampPageTop = top;
+        } else if (outputIndex < -1) {
+            final int offset = (-2 - outputIndex) * PageFrame.DEDUP_KEY_PAGE_CELLS;
+            dedupKeyPages.setQuick(offset + PageFrame.DEDUP_KEY_PAGE_DATA_ADDRESS, dataAddress);
+            dedupKeyPages.setQuick(offset + PageFrame.DEDUP_KEY_PAGE_DATA_SIZE, dataSize);
+            dedupKeyPages.setQuick(offset + PageFrame.DEDUP_KEY_PAGE_AUX_ADDRESS, auxAddress);
+            dedupKeyPages.setQuick(offset + PageFrame.DEDUP_KEY_PAGE_AUX_SIZE, auxSize);
+            dedupKeyPages.setQuick(offset + PageFrame.DEDUP_KEY_PAGE_TOP, top);
         } else {
             columnPageAddresses.setQuick(2 * outputIndex, dataAddress);
             columnPageAddresses.setQuick(2 * outputIndex + 1, auxAddress);
@@ -806,6 +873,10 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         if (timestampIndex >= 0) {
             prepareNativePartitionFrameBaseColumn(base, timestampIndex, -1, true);
         }
+        // Duplicate resolution compares keys of rows the query may not select.
+        for (int key = 0, n = dedupKeyColumns.size(); key < n; key++) {
+            prepareNativePartitionFrameBaseColumn(base, dedupKeyColumns.getQuick(key), -2 - key, false);
+        }
         preparedNativeBaseWindow = window;
     }
 
@@ -815,6 +886,7 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
 
     private void setReenterPartitionFrameState(PartitionFrame partitionFrame) {
         reenterPartitionFrameState = partitionFrame.getPartitionFrameState();
+        initDedupKeyPages(reader.getMetadata(), reenterPartitionFrameState);
     }
 
     private class TableReaderPageFrame implements PageFrame {
@@ -843,6 +915,16 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         @Override
         public int getColumnCount() {
             return columnCount;
+        }
+
+        @Override
+        public long getDedupKeyPage(int key, int cell) {
+            return dedupKeyPages.getQuick(key * DEDUP_KEY_PAGE_CELLS + cell);
+        }
+
+        @Override
+        public int getDedupKeyPageCount() {
+            return dedupKeyColumns.size();
         }
 
         @Override
@@ -934,6 +1016,19 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         @Override
         public long getPartitionLo() {
             return partitionLo;
+        }
+
+        @Override
+        public long getRowCountLo() {
+            // Only a window that needs custom materialization can drop rows while decoding;
+            // the Rust binding flags such windows, and the frame then promises nothing
+            // beyond its declared span. Every other frame is served as is and stays exact.
+            if (partitionFrameState != 0
+                    && rowGroupIndex >= 0
+                    && !PartitionFrameState.isExactRowCount(partitionFrameState, rowGroupIndex)) {
+                return 0;
+            }
+            return partitionHi - partitionLo;
         }
 
         @Override

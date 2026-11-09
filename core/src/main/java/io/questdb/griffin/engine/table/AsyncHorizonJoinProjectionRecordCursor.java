@@ -161,7 +161,10 @@ class AsyncHorizonJoinProjectionRecordCursor implements NoRandomAccessRecordCurs
 
     @Override
     public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
-        if (!isMasterFiltered) {
+        prepareForDispatchConditionally();
+        // Declared frame spans over-count master frames that drop duplicates on decode;
+        // the counting path counts what the workers actually produced.
+        if (!isMasterFiltered && !frameSequence.getPageFrameAddressCache().hasInexactFrames()) {
             calculateSizeNoFilter(counter);
             return;
         }
@@ -317,6 +320,9 @@ class AsyncHorizonJoinProjectionRecordCursor implements NoRandomAccessRecordCurs
             return -1;
         }
         prepareForDispatchConditionally();
+        if (frameSequence.getPageFrameAddressCache().hasInexactFrames()) {
+            return -1;
+        }
         long rowCount = 0;
         for (int i = 0, n = frameSequence.getFrameCount(); i < n; i++) {
             rowCount += frameSequence.getFrameRowCount(i);
