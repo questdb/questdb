@@ -27,7 +27,9 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.griffin.PurgingOperator;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -41,6 +43,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rows;
@@ -61,6 +64,10 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
     private static final int PARTITION_BY_COLUMN = 6;
     private static final int PARTITION_NAME_COLUMN = 10;
     private static final int PARTITION_TIMESTAMP_COLUMN = 9;
+    // The partition timestamp exactly as _txn has it, in the unit of the table timestamp. partition_timestamp holds it
+    // in micros, which drops the sub-microsecond part of a TIMESTAMP_NS split partition. A log that a version before
+    // this column created gains it when the job starts, and the rows that version wrote read NULL in it.
+    private static final String PARTITION_TIMESTAMP_RAW_COLUMN_NAME = "partition_timestamp_raw";
     private static final int TABLE_ID_COLUMN = 3;
     private static final int TABLE_NAME_COLUMN = 1;
     private static final int TABLE_TRUNCATE_VERSION = 4;
@@ -75,6 +82,8 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
     private final TableToken tableToken;
     private ColumnPurgeOperator columnPurgeOperator;
     private int inErrorCount;
+    // the writer index of partition_timestamp_raw, or -1 when the log lacks the column
+    private int partitionTimestampRawWriterIndex = -1;
     private SqlExecutionContextImpl sqlExecutionContext;
     private WeakMutableObjectPool<ColumnPurgeRetryTask> taskPool;
     private TableWriter writer;
@@ -113,13 +122,16 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                                 "column_version long, " + // 8
                                 "partition_timestamp timestamp, " + // 9
                                 "partition_name_txn long," + // 10
-                                "completed timestamp" + // 11
+                                "completed timestamp, " + // 11
+                                PARTITION_TIMESTAMP_RAW_COLUMN_NAME + " long" + // 12
                                 ") timestamp(ts) partition by MONTH BYPASS WAL"
                         )
                         .createTable(sqlExecutionContext);
             }
 
             this.writer = engine.getWriter(tableToken, TableUtils.SYSTEM_WRITER_LOCK_REASON);
+            addPartitionTimestampRawColumn(engine);
+            this.partitionTimestampRawWriterIndex = getPartitionTimestampRawIndex(writer.getMetadata());
             this.columnPurgeOperator = new ColumnPurgeOperator(
                     engine,
                     this.writer,
@@ -155,6 +167,19 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
         return Long.compare(task1.nextRunTimestamp, task2.nextRunTimestamp);
     }
 
+    // The index of partition_timestamp_raw in the metadata of the log or of a query on it, or -1 when the log lacks
+    // the column, or has a column of that name that the job did not create.
+    private static int getPartitionTimestampRawIndex(RecordMetadata metadata) {
+        final int index = metadata.getColumnIndexQuiet(PARTITION_TIMESTAMP_RAW_COLUMN_NAME);
+        if (index > -1 && metadata.getColumnType(index) != ColumnType.LONG) {
+            LOG.error().$("ignoring column of unexpected type in column purge log [column=").$(PARTITION_TIMESTAMP_RAW_COLUMN_NAME)
+                    .$(", type=").$(ColumnType.nameOf(metadata.getColumnType(index)))
+                    .I$();
+            return -1;
+        }
+        return index;
+    }
+
     // Purges a task the startup pass read. When a save point holds the task, the task joins heldTasks, which owns it
     // from then on, and the method returns true. A task that fails for any other reason is not kept, so the log
     // truncate drops it. Both the tasks inside the read loop and the last task go through here.
@@ -168,6 +193,44 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
             return true;
         }
         return false;
+    }
+
+    // The partition timestamp of a log row. A row without partition_timestamp_raw, which a version before the column
+    // wrote, has it in partition_timestamp only: toMicros() dropped the sub-microsecond part of a TIMESTAMP_NS split
+    // partition, which no one can restore, and moved the root partition marker of a TIMESTAMP_NS table.
+    private static long readPartitionTimestamp(Record rec, int partitionTimestampRawIndex, TimestampDriver driver) {
+        if (partitionTimestampRawIndex > -1) {
+            final long partitionTimestamp = rec.getLong(partitionTimestampRawIndex);
+            if (partitionTimestamp != Numbers.LONG_NULL) {
+                return partitionTimestamp;
+            }
+        }
+        final long partitionTimestampMicros = rec.getLong(PARTITION_TIMESTAMP_COLUMN);
+        if (partitionTimestampMicros == driver.toMicros(PurgingOperator.TABLE_ROOT_PARTITION)) {
+            return PurgingOperator.TABLE_ROOT_PARTITION;
+        }
+        return driver.fromMicros(partitionTimestampMicros);
+    }
+
+    // Adds partition_timestamp_raw to a log that a version before the column created. When the column cannot be
+    // added, the job logs as that version did, and the next start tries again.
+    private void addPartitionTimestampRawColumn(CairoEngine engine) {
+        if (writer.getMetadata().getColumnIndexQuiet(PARTITION_TIMESTAMP_RAW_COLUMN_NAME) > -1) {
+            return;
+        }
+        try {
+            writer.addColumn(PARTITION_TIMESTAMP_RAW_COLUMN_NAME, ColumnType.LONG, null);
+        } catch (CairoException | CairoError e) {
+            LOG.error().$("could not add column to column purge log [table=").$(tableToken)
+                    .$(", column=").$(PARTITION_TIMESTAMP_RAW_COLUMN_NAME)
+                    .$(", error=").$((Throwable) e)
+                    .I$();
+        }
+        if (writer.isDistressed()) {
+            // TableWriter asks for a new instance after a failed column add, and its open repairs the metadata
+            writer = Misc.free(writer);
+            writer = engine.getWriter(tableToken, TableUtils.SYSTEM_WRITER_LOCK_REASON);
+        }
     }
 
     private void calculateNextTimestamp(ColumnPurgeRetryTask task, long currentTime) {
@@ -246,6 +309,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
             return;
         }
 
+        final int partitionTimestampRawIndex = getPartitionTimestampRawIndex(recordCursorFactory.getMetadata());
         long microTime = clock.getTicks();
         // Tasks a save point still holds. The log truncate below would forget them, so they are written back to
         // the log and retried by the running job.
@@ -334,7 +398,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                         task.timestamp = ts;
                     }
                     long columnVersion = rec.getLong(COLUMN_VERSION_COLUMN);
-                    long partitionTs = task.getTimestampTypeDriver().fromMicros(rec.getLong(PARTITION_TIMESTAMP_COLUMN));
+                    long partitionTs = readPartitionTimestamp(rec, partitionTimestampRawIndex, task.getTimestampTypeDriver());
                     long partitionNameTxn = rec.getLong(PARTITION_NAME_COLUMN);
                     task.appendColumnInfo(columnVersion, partitionTs, partitionNameTxn, rec.getUpdateRowId());
                 }
@@ -436,9 +500,13 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                     row.putInt(PARTITION_BY_COLUMN, cleanTask.getPartitionBy());
                     row.putLong(UPDATE_TXN_COLUMN, cleanTask.getUpdateTxn());
                     row.putLong(COLUMN_VERSION_COLUMN, updatedColumnInfo.getQuick(i + ColumnPurgeTask.OFFSET_COLUMN_VERSION));
-                    // We always store `timestamp_micro` types in `column_versions_purge_log` to maintain uniformity in table output.
-                    // This doesn't result in any loss of precision when restore from table, as the `PARTITION BY` unit is larger than nanos (the nanosecond portion is always 0).
-                    row.putTimestamp(PARTITION_TIMESTAMP_COLUMN, cleanTask.getTimestampTypeDriver().toMicros(updatedColumnInfo.getQuick(i + ColumnPurgeTask.OFFSET_PARTITION_TIMESTAMP)));
+                    final long partitionTimestamp = updatedColumnInfo.getQuick(i + ColumnPurgeTask.OFFSET_PARTITION_TIMESTAMP);
+                    // partition_timestamp keeps micros, for display and for the versions before partition_timestamp_raw.
+                    // The replay reads partition_timestamp_raw.
+                    row.putTimestamp(PARTITION_TIMESTAMP_COLUMN, cleanTask.getTimestampTypeDriver().toMicros(partitionTimestamp));
+                    if (partitionTimestampRawWriterIndex > -1) {
+                        row.putLong(partitionTimestampRawWriterIndex, partitionTimestamp);
+                    }
                     row.putLong(PARTITION_NAME_COLUMN, updatedColumnInfo.getQuick(i + ColumnPurgeTask.OFFSET_PARTITION_NAME_TXN));
                     row.append();
                     updatedColumnInfo.setQuick(
