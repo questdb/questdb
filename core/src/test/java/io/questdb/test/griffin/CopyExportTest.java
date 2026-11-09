@@ -65,6 +65,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.ParquetTestUtils;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.BeforeClass;
@@ -1822,7 +1823,10 @@ public class CopyExportTest extends AbstractCairoTest {
                                 .expectSize()
                                 .returns("export_path\tnum_exported_files\tstatus\n" +
                                         parquetPath + "\t1\tfinished\n");
-                        assertParquetMatchesQuery(query, parquetPath);
+                        // A computed column makes the projection a VirtualRecord, which keeps the designated
+                        // timestamp only under its exact name. Over the join the projection names the column
+                        // <table>.ts, so neither the query nor its export has a designated timestamp.
+                        assertParquetMatchesQuery(query, parquetPath, null);
                         ParquetTestUtils.assertColumnsUseDictionaryEncoding(
                                 parquetPath,
                                 configuration.getFilesFacade(),
@@ -1879,7 +1883,7 @@ public class CopyExportTest extends AbstractCairoTest {
                                 .expectSize()
                                 .returns("export_path\tnum_exported_files\tstatus\n" +
                                         parquetPath + "\t1\tfinished\n");
-                        assertParquetMatchesQuery(query, parquetPath);
+                        assertParquetMatchesQuery(query, parquetPath, "ts");
                         ParquetTestUtils.assertColumnsUseDictionaryEncoding(
                                 parquetPath,
                                 configuration.getFilesFacade(),
@@ -1959,7 +1963,7 @@ public class CopyExportTest extends AbstractCairoTest {
                                 .expectSize()
                                 .returns("export_path\tnum_exported_files\tstatus\n" +
                                         parquetPath + "\t1\tfinished\n");
-                        assertParquetMatchesQuery(query, parquetPath);
+                        assertParquetMatchesQuery(query, parquetPath, "ts");
                         // Output column order: id, metric, ts, id1, total, ts1.
                         // metric is column 1 and total is column 4.
                         ParquetTestUtils.assertColumnsUseDictionaryEncoding(
@@ -2126,7 +2130,10 @@ public class CopyExportTest extends AbstractCairoTest {
                                 .expectSize()
                                 .returns("export_path\tnum_exported_files\tstatus\n" +
                                         parquetPath + "\t1\tfinished\n");
-                        assertParquetMatchesQuery(query, parquetPath);
+                        // A computed column makes the projection a VirtualRecord, which keeps the designated
+                        // timestamp only under its exact name. Over the join the projection names the column
+                        // <table>.ts, so neither the query nor its export has a designated timestamp.
+                        assertParquetMatchesQuery(query, parquetPath, null);
 
                         // Col 0 (label, SYMBOL->STRING) is type-changed; col 2 (computed_label)
                         // is a computed expression. Neither should inherit the RLE_DICTIONARY
@@ -4525,11 +4532,13 @@ public class CopyExportTest extends AbstractCairoTest {
                                 .returns("status\nfinished\n");
                         assertParquetMatchesQuery(
                                 "SELECT * FROM ct WHERE ts IN '2024-01-01'",
-                                exportRoot + File.separator + "composite_export" + File.separator + "2024-01-01.parquet"
+                                exportRoot + File.separator + "composite_export" + File.separator + "2024-01-01.parquet",
+                                "ts"
                         );
                         assertParquetMatchesQuery(
                                 "SELECT * FROM ct WHERE ts IN '2024-01-03'",
-                                exportRoot + File.separator + "composite_export" + File.separator + "2024-01-03.parquet"
+                                exportRoot + File.separator + "composite_export" + File.separator + "2024-01-03.parquet",
+                                "ts"
                         );
                     });
 
@@ -4588,11 +4597,13 @@ public class CopyExportTest extends AbstractCairoTest {
                     .returns("status\nfinished\n");
             assertParquetMatchesQuery(
                     "SELECT * FROM ct WHERE ts IN '2024-01-01'",
-                    exportRoot + File.separator + "transition_export" + File.separator + "2024-01-01.parquet"
+                    exportRoot + File.separator + "transition_export" + File.separator + "2024-01-01.parquet",
+                    "ts"
             );
             assertParquetMatchesQuery(
                     "SELECT * FROM ct WHERE ts IN '2024-01-03'",
-                    exportRoot + File.separator + "transition_export" + File.separator + "2024-01-03.parquet"
+                    exportRoot + File.separator + "transition_export" + File.separator + "2024-01-03.parquet",
+                    "ts"
             );
         });
     }
@@ -4623,11 +4634,13 @@ public class CopyExportTest extends AbstractCairoTest {
                     .returns("status\nfinished\n");
             assertParquetMatchesQuery(
                     "SELECT * FROM \"src ct\" WHERE ts IN '2024-01-01'",
-                    exportRoot + File.separator + "quoted_enqueue_export" + File.separator + "2024-01-01.parquet"
+                    exportRoot + File.separator + "quoted_enqueue_export" + File.separator + "2024-01-01.parquet",
+                    "ts"
             );
             assertParquetMatchesQuery(
                     "SELECT * FROM \"src ct\" WHERE ts IN '2024-01-03'",
-                    exportRoot + File.separator + "quoted_enqueue_export" + File.separator + "2024-01-03.parquet"
+                    exportRoot + File.separator + "quoted_enqueue_export" + File.separator + "2024-01-03.parquet",
+                    "ts"
             );
         });
     }
@@ -4662,11 +4675,13 @@ public class CopyExportTest extends AbstractCairoTest {
                     .returns("status\nfinished\n");
             assertParquetMatchesQuery(
                     "SELECT * FROM \"src ct\" WHERE ts IN '2024-01-01'",
-                    exportRoot + File.separator + "quoted_transition_export" + File.separator + "2024-01-01.parquet"
+                    exportRoot + File.separator + "quoted_transition_export" + File.separator + "2024-01-01.parquet",
+                    "ts"
             );
             assertParquetMatchesQuery(
                     "SELECT * FROM \"src ct\" WHERE ts IN '2024-01-03'",
-                    exportRoot + File.separator + "quoted_transition_export" + File.separator + "2024-01-03.parquet"
+                    exportRoot + File.separator + "quoted_transition_export" + File.separator + "2024-01-03.parquet",
+                    "ts"
             );
         });
     }
@@ -4993,12 +5008,19 @@ public class CopyExportTest extends AbstractCairoTest {
         engine.releaseAllReaders();
     }
 
-    private void assertParquetMatchesQuery(String query, String parquetPath) throws Exception {
-        StringSink expectedSink = new StringSink();
-        StringSink actualSink = new StringSink();
-        TestUtils.printSql(engine, sqlExecutionContext, query, expectedSink);
-        TestUtils.printSql(engine, sqlExecutionContext, "SELECT * FROM read_parquet('" + parquetPath + "')", actualSink);
-        TestUtils.assertEquals(expectedSink, actualSink);
+    /**
+     * Asserts that {@code read_parquet()} of the file at {@code parquetPath} returns the rows of
+     * {@code query}. {@code timestamp} names the designated timestamp {@code read_parquet()}
+     * reports, or is null when it reports none.
+     */
+    private void assertParquetMatchesQuery(String query, String parquetPath, @Nullable String timestamp) throws Exception {
+        final StringSink expected = new StringSink();
+        TestUtils.printSql(engine, sqlExecutionContext, query, expected);
+        assertQuery("SELECT * FROM read_parquet('" + parquetPath + "')")
+                .noLeakCheck()
+                .expectSize()
+                .timestamp(timestamp)
+                .returns(expected);
     }
 
     private boolean exportFileExists(String fileName) {
