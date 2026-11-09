@@ -252,10 +252,14 @@ START, not only this run's. Number the rounds from 1.
 
 1. With a PR, write `<state>/pr-body.md` without reading it: in round 1 the
    published body (`gh pr view <PR> --json body -q .body`), later the
-   previous round's `<state>/review<N-1>/pr-body.md`, followed by the EFFECT
-   bullet of each item built since, one `- ` line each, and then their
-   APPROACH lines. The review checks the body the PR will get, not the
-   published one.
+   previous round's `<state>/review<N-1>/pr-body.md`, followed by the lines
+   of the items built since, under the section labels of CLAUDE.md "Git &
+   PR Conventions": their BACKGROUND text under `**Background.**`, their
+   EFFECT lines under `**Effects.**` and their APPROACH lines under
+   `**Approach.**`, one `- ` line each for EFFECT and APPROACH. Skip lines
+   that are `none` and leave out a section with no lines. The review checks
+   the body the PR will get, not the published one, and its Step 2 merges
+   the sections into the pr-body.md it writes.
 2. Launch the review helper for round N. It follows review-pr with
    `<PR> --range=<PR base>..<HEAD sha> --level=<review-level>
    --block-at=<block-at> --body=<state>/pr-body.md --prior=<files>`; without
@@ -363,12 +367,15 @@ pushed. Then print in full each crash or Deferred issue the Issue list
 could not file.
 
 End with the PR body, per CLAUDE.md "Git & PR Conventions". With a PR, print
-the last round's `<state>/review<N>/pr-body.md` plus the EFFECT bullet and
-APPROACH of each item built after that round, and the title and labels from
-that round's report when it changed them. Without a PR, print the EFFECT
-bullet of each built item, then their APPROACH lines. Skip EFFECT and
-APPROACH lines that are `none`, and add any benchmark an EFFECT line names,
-whose JMH results go in the body. No test plan, commit hashes or test counts.
+the last round's `<state>/review<N>/pr-body.md` with the BACKGROUND, EFFECT
+and APPROACH lines of each item built after that round merged into its
+Background, Effects and Approach sections, and the title and labels from
+that round's report when it changed them. Without a PR, build the body from
+the built items: their BACKGROUND text under `**Background.**`, their EFFECT
+bullets under `**Effects.**` and their APPROACH bullets under
+`**Approach.**`. Define each term once, skip lines that are `none`, leave
+out a section with no lines, and add after Approach the JMH results of any
+benchmark an EFFECT line names. No test plan, commit hashes or test counts.
 
 ## Task templates
 
@@ -474,15 +481,18 @@ from what it wrote in <state>/<ID>/; don't repeat its probes.]
    oracle (reference query, sqllogictest file or model), the existing test
    classes that exercise the code you change, and, for a speed change, the
    deterministic performance assertion and the benchmark.
-8. For BUILD and FIX: write the PR body bullet, per CLAUDE.md "Git & PR
-   Conventions": the net effect against the PR base, what users gain or no
-   longer suffer, in at most 15 words, not what the code does. Then the
-   approach the body states after its bullets: one to three sentences
-   naming the root cause or the design and how the change addresses it.
-   For a change made for speed or on a data path, name the JMH benchmark
-   whose results the PR reports. Both are none when users see no change
-   against the PR base, such as a fix for a bug only this PR's own commits
-   have, or a missing test.
+8. For BUILD and FIX: write this item's part of the PR body, per CLAUDE.md
+   "Git & PR Conventions". The Effects bullet: the net effect against the
+   PR base, what users gain or no longer suffer, in at most 20 words, not
+   what the code does. The Approach bullet: the root cause or the design
+   and how the change addresses it, in one to three sentences per effect.
+   The Background: a definition of each term those two use that a reviewer
+   who knows QuestDB, but not this area, would not know, by the property
+   the change depends on; none when every such term is common QuestDB
+   vocabulary. For a change made for speed or on a data path, name the JMH
+   benchmark whose results the PR reports. All three are none when users
+   see no change against the PR base, such as a fix for a bug only this
+   PR's own commits have, or a missing test.
 9. Other bugs your work ran into, such as the same kind of bug in other
    code; don't go looking for more. Mark each one PR if this PR caused it,
    this run's commits included: some trigger gets a worse result than on
@@ -509,8 +519,9 @@ lines:
 DECISION: BUILD | FIX | SKIP | ASK | BLOCK | SPLIT
 PROBLEM: <one line>
 IMPACT: <one line>
-EFFECT: <the PR body bullet; the JMH benchmark to report, if any> | none
-APPROACH: <the PR body's approach for this item, one to three sentences> | none
+BACKGROUND: <the definitions of the terms EFFECT and APPROACH use, one to three sentences> | none
+EFFECT: <the Effects bullet, at most 20 words; the JMH benchmark to report, if any> | none
+APPROACH: <the Approach bullet for this item, one to three sentences per effect> | none
 CHANGE: <one line, naming the files> | REASON: <one line, for SKIP or BLOCK> | QUESTIONS: <for ASK, one line each> | ITEMS: <for SPLIT, one line per sub-item: its root cause and the tests or symptoms it covers>
 WHY: <one line: why this change beats the alternatives>
 TESTS: <one line: the dimensions covered and the ones not applicable>

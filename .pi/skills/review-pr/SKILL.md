@@ -8,7 +8,7 @@ metadata:
 
 # Review a QuestDB pull request
 
-**Version 4.0.** Each PR that changes this file raises it.
+**Version 4.1.** Each PR that changes this file raises it.
 
 **Usage:** `/review-pr [PR number or URL] [--range=<base>..<head>] [--level=0..3] [--block-at=critical|high|medium|low] [--body=<file>] [--prior=<file>,...]`
 
@@ -180,15 +180,18 @@ Check the title, body and labels against CLAUDE.md "Git & PR Conventions". With 
 - **Type.** A change users can see (query results, SQL, configuration, error messages, wire or on-disk format, anything breaking) takes `feat`, `fix` or `perf`. Flag a technical type (`chore`, `ci`, `test`, `build`, `refactor`, `style`) on such a change and name what users see.
 - **User-facing title** (`feat`, `fix`, `perf`, `docs`). Would that user understand it and see what they gain? Flag class and method names, internal mechanisms and jargon, and a title that describes the code change instead of its effect. The description repeats the verb.
 - **Technical title.** Technical terms are fine, but the title alone must make the reason for the change obvious. Flag a title that only says what changed.
-- **Body.** Short bullets, one per net effect against the base branch, at most 15 words each, with `Fixes #NNN` on the bullet for that issue, then the approach: one to three sentences per fix or feature. Flag:
-  - a bullet that describes a code change instead of its effect;
-  - an effect of the diff that no bullet states, above all a regression or a breaking change;
-  - a bullet or an approach the diff does not support;
-  - a fix or feature with no approach;
+- **Body.** Up to three sections, each under a bold label on a line of its own, in this order: **Background.**, **Effects.**, **Approach.**, followed by any tandem PR links. Background describes the code before the PR and defines every term that Effects and Approach use and a reviewer outside the area would not know, by the property the PR depends on; it may be absent when every such term is common QuestDB vocabulary. Effects has one bullet per net effect against the base branch, at most 20 words each, with `Fixes #NNN` on the bullet for that issue. Approach has one bullet per fix or feature, in the order of the effects: the root cause or the design and how the change addresses it, in one to three sentences per effect. Read the body top to bottom as that reviewer and flag:
+  - a term in Effects or Approach that such a reviewer would not know and Background does not define, or a term used before Background defines it;
+  - Background that lists the changed files or classes, or describes detail the PR does not depend on, such as a test's workload when the PR changes only how the test is split;
+  - a section out of order or without its label;
+  - an Effects bullet that describes a code change instead of its effect;
+  - an effect of the diff that no Effects bullet states, above all a regression or a breaking change;
+  - a bullet or an Approach the diff does not support;
+  - a fix or feature with no Approach bullet;
   - a slowdown or tradeoff without its measured size;
-  - a change made for speed, or one on a data path, without its JMH table;
+  - a change made for speed, or one on a data path, without its JMH table after Approach;
   - a commit hash, a tandem PR's head and submodule pointers included, or a count of tests, files, lines or commits. Ask for its removal without checking it against the code: such details go stale, and the review records the revisions;
-  - anything else: a test plan, coverage, fuzz seeds, investigation output (probe results, "fails without the fix" evidence, lists of covered shapes or configs, "Not changed" lists), a file walkthrough, design narrative beyond the approach, selling. Never ask the author to add such material.
+  - anything else: a test plan, coverage, fuzz seeds, investigation output (probe results, "fails without the fix" evidence, lists of covered shapes or configs, "Not changed" lists), a file walkthrough, narrative beyond Background and Approach, selling. Never ask the author to add such material.
 - **Deferred findings** (Step 3c) are not effects for this check. They are known bugs the PR ships with, kept in private issues: never ask for one in the body, and never name one in this section.
 - **Labels** match the title (`perf(sql)` gets SQL and Performance).
 - Bundled related fixes are allowed; do not demand a split.
