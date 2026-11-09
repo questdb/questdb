@@ -470,6 +470,13 @@ public class TableSnapshotRestore implements QuietCloseable {
             // caller loads the next table into the same objects.
             finalizeParallelTasks();
 
+            if (!tableMetadata.isWalEnabled()) {
+                // A non-WAL table replays nothing after a restore, so its next commits can write other rows at the
+                // txns that an ADD INDEX run after the checkpoint tagged its build with. A copy can hold that build's
+                // posting files for a column the restored metadata does not index, and ADD INDEX would reuse them.
+                resetUnindexedPostingIndexes(tablePath, pathTableLen);
+            }
+
             if (tableMetadata.isWalEnabled() && txWriter.getLagRowCount() > 0) {
                 LOG.info().$("resetting WAL lag [table=").$(tablePath)
                         .$(", walLagRowCount=").$(txWriter.getLagRowCount())
@@ -1587,6 +1594,44 @@ public class TableSnapshotRestore implements QuietCloseable {
             } finally {
                 partitionCleanPath.trimTo(pathTableLen);
             }
+        }
+    }
+
+    /**
+     * Resets the posting index files a non-WAL table's partitions hold for a SYMBOL column the restored metadata does
+     * not index, see {@link PostingIndexUtils#resetIndex}.
+     */
+    private void resetUnindexedPostingIndexes(Path tablePath, int pathTableLen) {
+        final int partitionBy = tableMetadata.getPartitionBy();
+        final boolean isPartitioned = PartitionBy.isPartitioned(partitionBy);
+        final int timestampType = tableMetadata.getTimestampType();
+        // One default partition for non-partitioned tables, else every attached one.
+        final int partitionCount = isPartitioned ? txWriter.getPartitionCount() : 1;
+        try {
+            for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
+                final long partitionTimestamp = isPartitioned
+                        ? txWriter.getPartitionTimestampByIndex(partitionIndex)
+                        : TxReader.DEFAULT_PARTITION_TIMESTAMP;
+                final long partitionNameTxn = isPartitioned
+                        ? txWriter.getPartitionNameTxn(partitionIndex)
+                        : txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp);
+                TableUtils.setPathForNativePartition(tablePath.trimTo(pathTableLen), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+                final int partitionDirLen = tablePath.size();
+                for (int colIdx = 0, n = tableMetadata.getColumnCount(); colIdx < n; colIdx++) {
+                    if (!ColumnType.isSymbol(tableMetadata.getColumnType(colIdx)) || tableMetadata.isColumnIndexed(colIdx)) {
+                        continue;
+                    }
+                    final String columnName = tableMetadata.getColumnName(colIdx);
+                    final long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, tableMetadata.getWriterIndex(colIdx));
+                    if (PostingIndexUtils.resetIndex(ff, tablePath, partitionDirLen, columnName, columnNameTxn, memFile)) {
+                        LOG.info().$("reset posting index of unindexed column [path=").$(tablePath)
+                                .$(", column=").$safe(columnName)
+                                .I$();
+                    }
+                }
+            }
+        } finally {
+            tablePath.trimTo(pathTableLen);
         }
     }
 

@@ -50,6 +50,7 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.io.File;
+import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class CheckpointFuzzTest extends AbstractFuzzTest {
@@ -71,6 +72,53 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
     public void setUp() {
         super.setUp();
         triggerFilePath.of(engine.getConfiguration().getDbRoot()).parent().concat(TableUtils.RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME);
+    }
+
+    @Test
+    public void testCheckpointCopyKeepsCommittedPostingIndexOfNonWalTable() throws Exception {
+        Assume.assumeFalse(Os.isWindows());
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s SYMBOL, t SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('p', 'q', 1, '2024-01-01T00:00'), ('r', 'q', 2, '2024-01-01T12:00'),
+                    ('p', 'u', 3, '2024-01-02T00:00'), ('r', 'u', 4, '2024-01-02T12:00')
+                    """);
+            execute("ALTER TABLE x ALTER COLUMN s ADD INDEX TYPE POSTING INCLUDE (v)");
+            final TableToken tableToken = engine.verifyTableName("x");
+            final long committedSealTxn = readPostingSealTxn(tableToken, "2024-01-01");
+            checkpointCreate(false, true);
+            // Model a copy taken after ADD INDEX built t's index, which the checkpoint does not have.
+            execute("ALTER TABLE x ALTER COLUMN t ADD INDEX TYPE POSTING");
+            engine.releaseAllWriters();
+            linkToCheckpointCopy(tableToken, "2024-01-01", "t.p");
+            checkpointRecover();
+
+            // The restore resets what the copy holds of t's index, and leaves the index s had at the checkpoint.
+            assertPartitionFiles(tableToken, "2024-01-01", "t.p", "[t.pk]");
+            Assert.assertEquals(committedSealTxn, readPostingSealTxn(tableToken, "2024-01-01"));
+            assertQuery("SELECT v, ts FROM x WHERE s = 'p'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("ts")
+                    .withPlanContaining("CoveringIndex on: s")
+                    .returns("""
+                            v\tts
+                            1\t2024-01-01T00:00:00.000000Z
+                            3\t2024-01-02T00:00:00.000000Z
+                            """);
+            execute("ALTER TABLE x ALTER COLUMN t ADD INDEX TYPE POSTING");
+            assertQuery("SELECT v, ts FROM x WHERE t = 'q'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlanContaining("Index forward scan on: t")
+                    .returns("""
+                            v\tts
+                            1\t2024-01-01T00:00:00.000000Z
+                            2\t2024-01-01T12:00:00.000000Z
+                            """);
+        });
     }
 
     @Test
@@ -286,6 +334,100 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
+    public void testCheckpointCopyRebuildsPostingIndexAfterDivergentCommit() throws Exception {
+        Assume.assumeFalse(Os.isWindows());
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('x', 1, '2024-01-01T00:00'), ('y', 2, '2024-01-01T01:00'),
+                    ('x', 3, '2024-01-01T02:00'), ('y', 4, '2024-01-01T03:00')
+                    """);
+            final TableToken tableToken = engine.verifyTableName("x");
+            checkpointCreate(false, true);
+            // Model a copy taken after this non-WAL table moved on: one commit appended to 2024-01-01 and opened
+            // 2024-01-02, then ADD INDEX indexed 2024-01-01 with the rows that commit wrote.
+            execute("""
+                    INSERT INTO x VALUES
+                    ('x', 11, '2024-01-01T04:00'), ('y', 12, '2024-01-01T05:00'),
+                    ('x', 13, '2024-01-01T06:00'), ('y', 14, '2024-01-01T07:00'),
+                    ('x', 15, '2024-01-02')
+                    """);
+            execute("ALTER TABLE x ALTER COLUMN s ADD INDEX TYPE POSTING INCLUDE (v)");
+            engine.releaseAllWriters();
+            linkToCheckpointCopy(tableToken, "2024-01-01", "s.p");
+            checkpointRecover();
+
+            // A non-WAL table replays nothing after a restore. Its next commit writes other rows, up to the same
+            // count and at the same txn, as the commit the index in the copy was built over.
+            execute("""
+                    INSERT INTO x VALUES
+                    ('y', 21, '2024-01-01T04:00'), ('x', 22, '2024-01-01T05:00'),
+                    ('y', 23, '2024-01-01T06:00'), ('x', 24, '2024-01-01T07:00'),
+                    ('x', 25, '2024-01-02')
+                    """);
+            execute("ALTER TABLE x ALTER COLUMN s ADD INDEX TYPE POSTING INCLUDE (v)");
+            assertQuery("SELECT v, ts FROM x WHERE s = 'x'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("ts")
+                    .withPlanContaining("CoveringIndex")
+                    .returns("""
+                            v\tts
+                            1\t2024-01-01T00:00:00.000000Z
+                            3\t2024-01-01T02:00:00.000000Z
+                            22\t2024-01-01T05:00:00.000000Z
+                            24\t2024-01-01T07:00:00.000000Z
+                            25\t2024-01-02T00:00:00.000000Z
+                            """);
+            assertQuery("SELECT v, ts FROM x WHERE s = 'y'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("ts")
+                    .withPlanContaining("CoveringIndex")
+                    .returns("""
+                            v\tts
+                            2\t2024-01-01T01:00:00.000000Z
+                            4\t2024-01-01T03:00:00.000000Z
+                            21\t2024-01-01T04:00:00.000000Z
+                            23\t2024-01-01T06:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testCheckpointCopyResetsPostingFilesOfNonPartitionedTable() throws Exception {
+        Assume.assumeFalse(Os.isWindows());
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s SYMBOL, v LONG)");
+            execute("INSERT INTO x VALUES ('a', 1), ('b', 2), ('a', 3)");
+            final TableToken tableToken = engine.verifyTableName("x");
+            checkpointCreate(false, true);
+            // Model a copy taken after ADD INDEX built the index of this non-WAL table.
+            execute("ALTER TABLE x ALTER COLUMN s ADD INDEX TYPE POSTING INCLUDE (v)");
+            engine.releaseAllWriters();
+            linkToCheckpointCopy(tableToken, "default", "s.p");
+            checkpointRecover();
+
+            // An empty chain, and none of the value and cover files the build wrote.
+            assertPartitionFiles(tableToken, "default", "s.p", "[s.pk]");
+            execute("ALTER TABLE x ALTER COLUMN s ADD INDEX TYPE POSTING INCLUDE (v)");
+            assertQuery("SELECT v FROM x WHERE s = 'a'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("CoveringIndex on: s")
+                    .returns("""
+                            v
+                            1
+                            3
+                            """);
+        });
+    }
+
+    @Test
     public void testCheckpointCopyReusesPostingIndexOnCompositePartition() throws Exception {
         Assume.assumeFalse(Os.isWindows());
         setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
@@ -385,6 +527,14 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
 
     private static void createTriggerFile() {
         Files.touch(triggerFilePath.$());
+    }
+
+    private void assertPartitionFiles(TableToken tableToken, String partitionName, String fileNamePrefix, String expected) {
+        final File partitionDir = new File(new File(configuration.getDbRoot(), tableToken.getDirName()), partitionName);
+        final String[] files = partitionDir.list((_, name) -> name.startsWith(fileNamePrefix));
+        Assert.assertNotNull(files);
+        Arrays.sort(files);
+        Assert.assertEquals(expected, Arrays.toString(files));
     }
 
     private void checkpointCreate(boolean legacy, boolean hardLinkCopy) throws SqlException {
