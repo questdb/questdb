@@ -1122,7 +1122,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     // Incremental refresh on a period mat view works in a special way.
                     // We need to refresh whatever is in the txn intervals and all periods
                     // that became complete since the last refresh.
-                    long periodLo = viewState.getLastPeriodHi();
+                    final long lastPeriodHi = viewState.getLastPeriodHi();
+                    long periodLo = lastPeriodHi;
                     if (periodLo == Numbers.LONG_NULL) {
                         periodLo = baseTableReader.getMinTimestamp();
                     }
@@ -1137,6 +1138,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         }
                         // Bump lastPeriodHi once we're done.
                         // lastPeriodHi is exclusive, but the local periodHi value is inclusive.
+                        refreshContext.periodHi = periodHi + 1;
+                    } else if (lastPeriodHi == Numbers.LONG_NULL) {
+                        // No base table row lies in a complete period, but the view is still refreshed up to
+                        // periodHi, so record it. The refresh that runs once a period completes starts at
+                        // lastPeriodHi, or at the base table's first row when there is none. Starting at the
+                        // first row would skip a bucket that crosses periodHi when a range replace deletes the
+                        // bucket's rows in the incomplete period: that moves the first row past them.
                         refreshContext.periodHi = periodHi + 1;
                     }
                 } else {

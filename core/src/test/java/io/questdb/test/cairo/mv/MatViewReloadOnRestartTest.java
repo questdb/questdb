@@ -33,6 +33,7 @@ import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewTimerJob;
 import io.questdb.cairo.wal.WalPurgeJob;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.client.Sender;
 import io.questdb.client.cutlass.line.LineSenderException;
 import io.questdb.client.cutlass.line.LineUdpSender;
@@ -67,6 +68,7 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
 
+import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
 import static io.questdb.test.cairo.mv.MatViewTest.parseFloorPartialTimestamp;
 import static io.questdb.test.tools.TestUtils.assertContains;
@@ -950,6 +952,45 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testPeriodMatViewRefreshesFromRecordedPeriodHiAfterRestart() throws Exception {
+        // The view records the end of the last complete period even though no base row lies before it. After a
+        // restart, the period refresh starts there and recomputes the bucket [04:00, 08:00) whose rows a range
+        // replace deleted before their period completed.
+        TestUtils.assertMemoryLeak(() -> {
+            // The 7h periods end at 05:00, 12:00 and 19:00 on 2022-01-02, and the 4h bucket [04:00, 08:00) crosses 05:00.
+            final TestMicroClock testClock = new TestMicroClock(parseFloorPartialTimestamp("2022-01-02T10:00:00.000000Z"));
+            final String viewSql = "select min(v) as min_v, max(v) as max_v, ts from base sample by 4h";
+            try (final TestServerMain main1 = startMainPortsDisabled(testClock)) {
+                execute(main1, "create table base (v int, ts " + timestampType.getTypeName() + ") timestamp(ts) partition by DAY WAL");
+                execute(main1, "create materialized view mv refresh immediate period (length 7h) as " + viewSql);
+                final CairoEngine engine1 = main1.getEngine();
+                try (var refreshJob = createMatViewRefreshJob(engine1)) {
+                    drainWalAndMatViewQueues(refreshJob, engine1);
+                    replaceRange(engine1, "2022-01-02T00:13", "2022-01-02T17:00", 1, "2022-01-02T07:34", "2022-01-02T09:38");
+                    drainWalAndMatViewQueues(refreshJob, engine1);
+                    replaceRange(engine1, "2022-01-02T05:24", "2022-01-02T22:12", 2, "2022-01-02T12:45");
+                    drainWalAndMatViewQueues(refreshJob, engine1);
+                }
+                assertSql(main1, replaceExpectedTimestamp("min_v\tmax_v\tts\n1\t1\t2022-01-02T04:00:00.000000Z\n"), "mv");
+                assertSql(main1, "refresh_period_hi\n2022-01-02T05:00:00.000000Z\n", "select refresh_period_hi from materialized_views()");
+            }
+
+            testClock.micros.set(parseFloorPartialTimestamp("2022-01-02T19:00:00.000000Z"));
+            try (final TestServerMain main2 = startMainPortsDisabled(testClock)) {
+                final CairoEngine engine2 = main2.getEngine();
+                try (var refreshJob = createMatViewRefreshJob(engine2)) {
+                    final MatViewTimerJob timerJob = new MatViewTimerJob(engine2);
+                    drainMatViewTimerQueue(timerJob);
+                    drainWalAndMatViewQueues(refreshJob, engine2);
+                }
+                assertSql(main2, replaceExpectedTimestamp("min_v\tmax_v\tts\n2\t2\t2022-01-02T12:00:00.000000Z\n"), "mv");
+                assertSql(main2, replaceExpectedTimestamp("min_v\tmax_v\tts\n2\t2\t2022-01-02T12:00:00.000000Z\n"), viewSql);
+                assertSql(main2, "refresh_period_hi\n2022-01-02T19:00:00.000000Z\n", "select refresh_period_hi from materialized_views()");
+            }
+        });
+    }
+
+    @Test
     public void testPeriodMatViewsReloadOnServerStart() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final long start = MicrosFormatUtils.parseUTCTimestamp("2024-12-12T00:00:00.000000Z");
@@ -1230,6 +1271,19 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
 
     private String replaceExpectedTimestamp(String expected) {
         return ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? expected : expected.replaceAll(".000000Z", ".000000000Z");
+    }
+
+    // Commits rows with the value v at the given timestamps, replacing the rows in [lo, hi) of the base table.
+    private void replaceRange(CairoEngine engine, String lo, String hi, int v, String... timestamps) {
+        final TimestampDriver driver = timestampType.getDriver();
+        try (WalWriter walWriter = engine.getWalWriter(engine.verifyTableName("base"))) {
+            for (String timestamp : timestamps) {
+                final TableWriter.Row row = walWriter.newRow(driver.parseFloorLiteral(timestamp));
+                row.putInt(0, v);
+                row.append();
+            }
+            walWriter.commitWithParams(driver.parseFloorLiteral(lo), driver.parseFloorLiteral(hi), WAL_DEDUP_MODE_REPLACE_RANGE);
+        }
     }
 
     enum Transport {
