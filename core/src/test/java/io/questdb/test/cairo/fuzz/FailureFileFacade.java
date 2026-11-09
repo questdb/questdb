@@ -302,6 +302,11 @@ public class FailureFileFacade implements FilesFacade {
     }
 
     @Override
+    public long getThreadMajorFaults() {
+        return ff.getThreadMajorFaults();
+    }
+
+    @Override
     public int hardLink(LPSZ src, LPSZ hardLink) {
         return ff.hardLink(src, hardLink);
     }
@@ -334,6 +339,11 @@ public class FailureFileFacade implements FilesFacade {
     @Override
     public boolean isMadviseWillNeedSupported() {
         return ff.isMadviseWillNeedSupported();
+    }
+
+    @Override
+    public boolean isPageCacheResident(long address, long len) {
+        return ff.isPageCacheResident(address, len);
     }
 
     @Override

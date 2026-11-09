@@ -37,6 +37,7 @@ import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.vm.MemoryCARWImpl;
 import io.questdb.cutlass.qwp.server.egress.QwpBackwardReadAhead;
 import io.questdb.std.Files;
+import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
@@ -56,12 +57,127 @@ import java.util.Comparator;
  * on their way into memory ahead of its walk down. With MADV_WILLNEED the stream asks for
  * windows of rows below the slice it appends: the first window holds the top rows of the
  * frame, the rows of the first batch; the next ones double up to a byte cap; every row of
- * every column is asked for once, before the stream reads it. Without it the stream reads
- * the whole frame once, before the first slice.
+ * every column that is not in memory is asked for once, before the stream reads it. After
+ * the first batch the stream checks whether a window is in memory, backs off checking while
+ * windows are not, and trusts small frames after a streak in memory until its thread reads
+ * from storage. Without MADV_WILLNEED the stream reads the whole frame once, before the
+ * first slice.
  */
 public class QwpBackwardReadAheadTest {
     // the egress walks a frame down in slices of at most this many rows
     private static final int SLICE_ROWS = 1_024;
+    private static final int TRUST_STREAK = QwpBackwardReadAhead.TRUST_STREAK;
+
+    @Test
+    public void testColdChecksBackOff() throws Exception {
+        // After a check finds pages missing, the stream advises the next frames without
+        // checking them: 1, then 3, 7, 15, 31 and at most 63 frames between two checks. It
+        // asks for every frame in full all the same.
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestFrame frame = smallFrame()) {
+                final RecordingFacade ff = new RecordingFacade(true);
+                final QwpBackwardReadAhead readAhead = new QwpBackwardReadAhead(ff);
+                readAhead.of(frame.metadata());
+                walkFirstBatch(readAhead, frame);
+                final IntList checkedFrames = new IntList();
+                for (int f = 0; f < 300; f++) {
+                    final int checks = ff.residencyChecks;
+                    Assert.assertEquals(frame.frameBytes(), walk(readAhead, frame));
+                    if (ff.residencyChecks > checks) {
+                        // a check asks about each of the two columns
+                        Assert.assertEquals(checks + 2, ff.residencyChecks);
+                        checkedFrames.add(f);
+                    }
+                }
+                Assert.assertEquals("[0,2,6,14,30,62,126,190,254]", checkedFrames.toString());
+                Assert.assertEquals(0, ff.faultReads);
+            }
+        });
+    }
+
+    @Test
+    public void testEachStreamStartsAfresh() throws Exception {
+        // of() and clear() start a new stream: its first batch goes out unchecked, it checks
+        // the first frame after the batch even when the stream before had stopped checking, and
+        // it trusts after the first streak, not the longer one the stream before needed.
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestFrame frame = smallFrame()) {
+                final RecordingFacade ff = new RecordingFacade(true);
+                final QwpBackwardReadAhead readAhead = new QwpBackwardReadAhead(ff);
+                for (int stream = 0; stream < 3; stream++) {
+                    if (stream == 2) {
+                        readAhead.clear();
+                    }
+                    readAhead.of(frame.metadata());
+                    ff.isResident = true;
+                    final int checks = ff.residencyChecks;
+                    walkFirstBatch(readAhead, frame);
+                    Assert.assertEquals(checks, ff.residencyChecks);
+                    for (int f = 0; f < TRUST_STREAK; f++) {
+                        Assert.assertEquals(0, walk(readAhead, frame));
+                        Assert.assertEquals(checks + 2 * (f + 1), ff.residencyChecks);
+                    }
+                    // trusted
+                    Assert.assertEquals(0, walk(readAhead, frame));
+                    Assert.assertEquals(checks + 2 * TRUST_STREAK, ff.residencyChecks);
+                    // A read from storage ends the trust, and the next frame is out of memory:
+                    // the stream would advise the frame after it unchecked, and would need a
+                    // streak twice as long to trust again.
+                    ff.majorFaults++;
+                    ff.isResident = false;
+                    Assert.assertEquals(frame.frameBytes(), walk(readAhead, frame));
+                    Assert.assertEquals(checks + 2 * TRUST_STREAK + 2, ff.residencyChecks);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testFirstBatchGoesOutUnchecked() throws Exception {
+        // The rows of the first batch go out as soon as they are read: the stream advises
+        // every window whose top row goes out before row INITIAL_WINDOW_ROWS without checking
+        // whether it is in memory, and checks the windows after them.
+        TestUtils.assertMemoryLeak(() -> {
+            final int batchRows = (int) QwpBackwardReadAhead.INITIAL_WINDOW_ROWS;
+            try (
+                    TestFrame small = smallFrame();
+                    TestFrame longs = new TestFrame(new int[]{ColumnType.LONG}, false, 0, 3_000);
+                    TestFrame shortOfBatch = new TestFrame(new int[]{ColumnType.LONG}, false, 0, batchRows - 1);
+                    TestFrame wholeBatch = new TestFrame(new int[]{ColumnType.LONG}, false, 0, batchRows)
+            ) {
+                final RecordingFacade ff = new RecordingFacade(true);
+                ff.isResident = true;
+                final QwpBackwardReadAhead readAhead = new QwpBackwardReadAhead(ff);
+                readAhead.of(small.metadata());
+                // frames whose top rows go out at rows 0, 3,000 ... 15,000
+                for (int f = 0; f < 6; f++) {
+                    Assert.assertEquals(small.frameBytes(), walk(readAhead, small));
+                }
+                Assert.assertEquals(12, ff.requestCount());
+                Assert.assertEquals(0, ff.residencyChecks);
+                // the next one's top row goes out at row 18,000: in memory, so not asked for
+                Assert.assertEquals(0, walk(readAhead, small));
+                Assert.assertEquals(12, ff.requestCount());
+                Assert.assertEquals(2, ff.residencyChecks);
+
+                // a frame whose top row goes out at row 16,383 still holds a row of the batch
+                readAhead.of(longs.metadata());
+                Assert.assertEquals(shortOfBatch.frameBytes(), walk(readAhead, shortOfBatch));
+                Assert.assertEquals(longs.frameBytes(), walk(readAhead, longs));
+                Assert.assertEquals(2, ff.residencyChecks);
+                Assert.assertEquals(0, walk(readAhead, longs));
+                Assert.assertEquals(3, ff.residencyChecks);
+
+                // one whose top row goes out at row 16,384 does not
+                readAhead.of(longs.metadata());
+                Assert.assertEquals(wholeBatch.frameBytes(), walk(readAhead, wholeBatch));
+                Assert.assertEquals(3, ff.residencyChecks);
+                Assert.assertEquals(0, walk(readAhead, longs));
+                Assert.assertEquals(4, ff.residencyChecks);
+                Assert.assertEquals(0, ff.faultReads);
+            }
+        });
+    }
 
     @Test
     public void testFirstWindowHoldsTheTopRowsOfEveryColumn() throws Exception {
@@ -100,6 +216,166 @@ public class QwpBackwardReadAheadTest {
                 // 7 fixed-size columns, STRING and VARCHAR aux and data, the inline VARCHAR's aux
                 Assert.assertEquals(12, requests);
                 Assert.assertEquals(requests, ff.requestCount());
+            }
+        });
+    }
+
+    @Test
+    public void testFramesWithoutReadAheadAdvanceTheStream() throws Exception {
+        // Parquet frames, empty frames and frames of column tops ask for nothing, but their
+        // rows go out all the same: a native frame after 20,000 such rows starts after the
+        // first batch, so the stream checks it.
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestFrame frame = smallFrame()) {
+                final RecordingFacade ff = new RecordingFacade(true);
+                ff.isResident = true;
+                final QwpBackwardReadAhead readAhead = new QwpBackwardReadAhead(ff);
+                readAhead.of(frame.metadata());
+                frame.format = PartitionFormat.PARQUET;
+                readAhead.ofFrame(frame, 20_000);
+                Assert.assertEquals(0, readAhead.advise(20_000 - SLICE_ROWS));
+                frame.format = PartitionFormat.NATIVE;
+                Assert.assertEquals(0, walk(readAhead, frame));
+                Assert.assertEquals(2, ff.residencyChecks);
+
+                // a frame without rows moves the stream nowhere
+                readAhead.of(frame.metadata());
+                readAhead.ofFrame(frame, 0);
+                Assert.assertEquals(0, readAhead.advise(0));
+                Assert.assertEquals(frame.frameBytes(), walk(readAhead, frame));
+                Assert.assertEquals(2, ff.residencyChecks);
+
+                // 20,000 rows of column tops
+                readAhead.of(frame.metadata());
+                final TestFrame.Saved saved = frame.clearAll();
+                readAhead.ofFrame(frame, 20_000);
+                Assert.assertEquals(0, readAhead.advise(20_000 - SLICE_ROWS));
+                frame.restore(saved);
+                Assert.assertEquals(0, walk(readAhead, frame));
+                Assert.assertEquals(4, ff.residencyChecks);
+                Assert.assertEquals(2, ff.requestCount());
+            }
+        });
+    }
+
+    @Test
+    public void testInMemoryCheckEndsTheBackOff() throws Exception {
+        // A check that finds the frame in memory ends the back-off: the stream checks every
+        // frame after it again.
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestFrame frame = smallFrame()) {
+                final RecordingFacade ff = new RecordingFacade(true);
+                final QwpBackwardReadAhead readAhead = new QwpBackwardReadAhead(ff);
+                readAhead.of(frame.metadata());
+                walkFirstBatch(readAhead, frame);
+                final IntList checkedFrames = new IntList();
+                for (int f = 0; f < 21; f++) {
+                    // the data comes into memory while the stream advises frames 7 to 13 unchecked
+                    ff.isResident = f >= 7;
+                    final int checks = ff.residencyChecks;
+                    Assert.assertEquals(f < 14 ? frame.frameBytes() : 0, walk(readAhead, frame));
+                    if (ff.residencyChecks > checks) {
+                        checkedFrames.add(f);
+                    }
+                }
+                Assert.assertEquals("[0,2,6,14,15,16,17,18,19,20]", checkedFrames.toString());
+                // seven frames in memory in a row: one short of trusting
+                Assert.assertEquals(0, ff.faultReads);
+            }
+        });
+    }
+
+    @Test
+    public void testLargeFramesAreNeverTrusted() throws Exception {
+        // A fault in a frame with a range past SMALL_FRAME_RANGE_BYTES reads 64 KiB of it at a
+        // time, not the whole range, so the stream checks each window of such a frame, however
+        // many before it were in memory.
+        TestUtils.assertMemoryLeak(() -> {
+            // 20,000 LONG rows, 160,000 bytes: windows of 16,384 and 3,616 rows
+            try (TestFrame frame = new TestFrame(new int[]{ColumnType.LONG}, false, 0, 20_000)) {
+                final RecordingFacade ff = new RecordingFacade(true);
+                ff.isResident = true;
+                final QwpBackwardReadAhead readAhead = new QwpBackwardReadAhead(ff);
+                readAhead.of(frame.metadata());
+                // the first window goes out unchecked, the second starts at row 16,384
+                Assert.assertEquals(16_384 * 8L, walk(readAhead, frame));
+                Assert.assertEquals(1, ff.residencyChecks);
+                for (int f = 1; f < 50; f++) {
+                    Assert.assertEquals(0, walk(readAhead, frame));
+                    Assert.assertEquals(1 + 2 * f, ff.residencyChecks);
+                }
+                Assert.assertEquals(1, ff.requestCount());
+                Assert.assertEquals(0, ff.faultReads);
+            }
+        });
+    }
+
+    @Test
+    public void testLargeWindowsInMemoryAreNotAskedFor() throws Exception {
+        // The stream checks each window after the first batch and asks for none that is in
+        // memory: of a 200,000-row frame, whose windows hold 16,384, 32,768, 65,536 and the
+        // last 85,312 rows, it asks for the first only.
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestFrame frame = new TestFrame(new int[]{ColumnType.LONG}, false, 0, 200_000)) {
+                final RecordingFacade ff = new RecordingFacade(true);
+                ff.isResident = true;
+                final QwpBackwardReadAhead readAhead = new QwpBackwardReadAhead(ff);
+                readAhead.of(frame.metadata());
+                Assert.assertEquals(16_384 * 8L, walk(readAhead, frame));
+                final long[] firstWindow = frame.rowRange(0, 200_000 - 16_384, 200_000);
+                Assert.assertTrue(ff.contains(firstWindow[0], firstWindow[1]));
+                Assert.assertEquals(1, ff.requestCount());
+                Assert.assertEquals(3, ff.residencyChecks);
+                Assert.assertEquals(0, ff.faultReads);
+            }
+        });
+    }
+
+    @Test
+    public void testMissingRangesAreAskedFor() throws Exception {
+        // A window that is in memory only in part asks for the ranges that are not, and the
+        // window after it goes out unchecked; the one after that is in memory again.
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestFrame frame = new TestFrame(new int[]{ColumnType.LONG, ColumnType.DOUBLE}, false, 0, 200_000)) {
+                final RecordingFacade ff = new RecordingFacade(true);
+                ff.isResident = true;
+                // the DOUBLE values of the second window, rows [150,848, 183,616)
+                final long[] missing = frame.rowRange(1, 150_848, 183_616);
+                ff.miss(missing[0], missing[1]);
+                final QwpBackwardReadAhead readAhead = new QwpBackwardReadAhead(ff);
+                readAhead.of(frame.metadata());
+                // 16,384 rows of both columns, the missing 32,768 DOUBLEs, then 65,536 rows of both, unchecked
+                Assert.assertEquals(16_384 * 16L + 32_768 * 8L + 65_536 * 16L, walk(readAhead, frame));
+                Assert.assertEquals(5, ff.requestCount());
+                Assert.assertTrue(ff.contains(missing[0], missing[1]));
+                final long[] inMemory = frame.rowRange(0, 150_848, 183_616);
+                Assert.assertEquals(inMemory[1], ff.lowestWithin(inMemory[0], inMemory[1]));
+                final long[] third = frame.rowRange(0, 85_312, 150_848);
+                Assert.assertTrue(ff.contains(third[0], third[1]));
+                // the second window and the last ask about both columns
+                Assert.assertEquals(4, ff.residencyChecks);
+            }
+        });
+    }
+
+    @Test
+    public void testNoTrustWithoutThreadFaults() throws Exception {
+        // Where the OS does not count the major faults of a thread, the stream could not tell
+        // that a trusted frame read from storage, so it checks every frame, and asks for the
+        // count only once.
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestFrame frame = smallFrame()) {
+                final RecordingFacade ff = new RecordingFacade(true);
+                ff.isResident = true;
+                ff.majorFaults = -1;
+                final QwpBackwardReadAhead readAhead = new QwpBackwardReadAhead(ff);
+                readAhead.of(frame.metadata());
+                walkFirstBatch(readAhead, frame);
+                for (int f = 0; f < 100; f++) {
+                    Assert.assertEquals(0, walk(readAhead, frame));
+                    Assert.assertEquals(2 * (f + 1), ff.residencyChecks);
+                }
+                Assert.assertEquals(1, ff.faultReads);
             }
         });
     }
@@ -166,6 +442,37 @@ public class QwpBackwardReadAheadTest {
     }
 
     @Test
+    public void testSmallFrameBounds() throws Exception {
+        // A frame is small, and the stream trusts it after a streak in memory, when no range it
+        // publishes holds more than SMALL_FRAME_RANGE_BYTES: values, aux entries and data
+        // alike. A column top publishes no range, whatever size it hints at.
+        TestUtils.assertMemoryLeak(() -> {
+            final int limit = (int) QwpBackwardReadAhead.SMALL_FRAME_RANGE_BYTES;
+            try (
+                    TestFrame atLimit = new TestFrame(new int[]{ColumnType.LONG}, false, 0, limit / 8);
+                    TestFrame pastLimit = new TestFrame(new int[]{ColumnType.LONG}, false, 0, limit / 8 + 1)
+            ) {
+                Assert.assertTrue(isTrustedAfterStreak(atLimit, atLimit.metadata()));
+                Assert.assertFalse(isTrustedAfterStreak(pastLimit, pastLimit.metadata()));
+            }
+            // VARCHAR values that sit inline in their 16-byte aux entries leave no data
+            assertVarSizeBounds(ColumnType.VARCHAR, 16, "v");
+            // a STRING of 30 chars takes 64 bytes of data, 4 of them for the length, and 8 of aux
+            assertVarSizeBounds(ColumnType.STRING, 64, "012345678901234567890123456789");
+            // a column top next to a small LONG range
+            try (MemoryCARWImpl longs = new MemoryCARWImpl(4_096, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+                for (int r = 0; r < 1_000; r++) {
+                    longs.putLong(r);
+                }
+                final AddressedFrame frame = new AddressedFrame(2, 1_000);
+                frame.set(0, 0, limit + 1, 0, 0);
+                frame.set(1, longs.addressOf(0), 8_000, 0, 0);
+                Assert.assertTrue(isTrustedAfterStreak(frame, metadata(new int[]{ColumnType.LONG, ColumnType.LONG})));
+            }
+        });
+    }
+
+    @Test
     public void testSmallFrameGoesInOneWindow() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (TestFrame frame = new TestFrame(new int[]{ColumnType.INT, ColumnType.DOUBLE}, true, 300, 1_000)) {
@@ -176,6 +483,39 @@ public class QwpBackwardReadAheadTest {
                 Assert.assertEquals(frame.frameBytes(), readAhead.advise(0));
                 Assert.assertEquals(0, readAhead.advise(0));
                 assertEachColumnTiled(frame, ff);
+            }
+        });
+    }
+
+    @Test
+    public void testSmallFramesInMemoryAreTrusted() throws Exception {
+        // After the first batch, TRUST_STREAK small frames in a row found in memory make the
+        // stream trust the next ones: it no longer checks them or asks for them, and before
+        // each it reads the byte its walk reads first, and the major faults of its thread.
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestFrame frame = smallFrame()) {
+                Unsafe.putByte(frame.getPageAddress(0) + frame.getPageSize(0) - 1, (byte) 3);
+                final RecordingFacade ff = new RecordingFacade(true);
+                ff.isResident = true;
+                ff.majorFaults = 5;
+                final QwpBackwardReadAhead readAhead = new QwpBackwardReadAhead(ff);
+                readAhead.of(frame.metadata());
+                walkFirstBatch(readAhead, frame);
+                Assert.assertEquals(12, ff.requestCount());
+                for (int f = 0; f < TRUST_STREAK; f++) {
+                    Assert.assertEquals(0, walk(readAhead, frame));
+                }
+                Assert.assertEquals(2 * TRUST_STREAK, ff.residencyChecks);
+                // the last frame of the streak reads the faults the trust starts from
+                Assert.assertEquals(1, ff.faultReads);
+                final long sink = readAhead.getTouchSink();
+                for (int f = 0; f < 100; f++) {
+                    Assert.assertEquals(0, walk(readAhead, frame));
+                }
+                Assert.assertEquals(2 * TRUST_STREAK, ff.residencyChecks);
+                Assert.assertEquals(101, ff.faultReads);
+                Assert.assertEquals(sink + 100 * 3, readAhead.getTouchSink());
+                Assert.assertEquals(12, ff.requestCount());
             }
         });
     }
@@ -314,6 +654,26 @@ public class QwpBackwardReadAheadTest {
     }
 
     @Test
+    public void testTouchPathNeverChecks() throws Exception {
+        // Without MADV_WILLNEED the stream reads each frame at once, in memory or not, and
+        // has nothing to check or trust.
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestFrame frame = smallFrame()) {
+                final RecordingFacade ff = new RecordingFacade(false);
+                ff.isResident = true;
+                final QwpBackwardReadAhead readAhead = new QwpBackwardReadAhead(ff);
+                readAhead.of(frame.metadata());
+                for (int f = 0; f < 50; f++) {
+                    Assert.assertEquals(frame.frameBytes(), walk(readAhead, frame));
+                }
+                Assert.assertEquals(0, ff.residencyChecks);
+                Assert.assertEquals(0, ff.faultReads);
+                Assert.assertEquals(0, ff.requestCount());
+            }
+        });
+    }
+
+    @Test
     public void testTouchPathReadsNothingOutsideThePublishedExtents() throws Exception {
         // Extents that describe no bytes read nothing, so a frame source that publishes an
         // empty extent or an aux entry pointing outside the data extent cannot steer the
@@ -369,6 +729,125 @@ public class QwpBackwardReadAheadTest {
                 Assert.assertEquals(2, willNeed.requestCount());
                 Assert.assertTrue(willNeed.contains(vcAux.addressOf(16L * 100), vcAux.addressOf(16L * 200)));
                 Assert.assertTrue(willNeed.contains(strAux.addressOf(8L * 5), strAux.addressOf(8L * 10)));
+            }
+        });
+    }
+
+    @Test
+    public void testTrustEndsAtAMajorFault() throws Exception {
+        // A major fault of the thread since the stream started trusting, in the walk of a
+        // trusted frame or in the read of the next one's first byte, ends the trust: the stream
+        // checks that next frame, and trusts again only after twice the streak it needed.
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestFrame frame = smallFrame()) {
+                final RecordingFacade ff = new RecordingFacade(true);
+                ff.isResident = true;
+                final QwpBackwardReadAhead readAhead = new QwpBackwardReadAhead(ff);
+                readAhead.of(frame.metadata());
+                walkFirstBatch(readAhead, frame);
+                int checks = 0;
+                int streak = TRUST_STREAK;
+                for (int round = 0; round < 3; round++) {
+                    for (int f = 0; f < streak; f++) {
+                        Assert.assertEquals(0, walk(readAhead, frame));
+                        Assert.assertEquals(checks += 2, ff.residencyChecks);
+                    }
+                    // trusted
+                    final int faultReads = ff.faultReads;
+                    Assert.assertEquals(0, walk(readAhead, frame));
+                    Assert.assertEquals(checks, ff.residencyChecks);
+                    Assert.assertEquals(faultReads + 1, ff.faultReads);
+                    // the walk of that frame read from storage, and the next frame is not in memory
+                    ff.majorFaults++;
+                    ff.isResident = false;
+                    Assert.assertEquals(frame.frameBytes(), walk(readAhead, frame));
+                    Assert.assertEquals(checks += 2, ff.residencyChecks);
+                    Assert.assertEquals(faultReads + 2, ff.faultReads);
+                    // the frame after a cold check goes out unchecked
+                    ff.isResident = true;
+                    Assert.assertEquals(frame.frameBytes(), walk(readAhead, frame));
+                    Assert.assertEquals(checks, ff.residencyChecks);
+                    streak *= 2;
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testTrustEndsWhenTheStreamMovesThread() throws Exception {
+        // A parked stream can resume on another worker thread, whose major faults say nothing
+        // about the frames before: the stream checks again, and trusts after the usual streak.
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestFrame frame = smallFrame()) {
+                final RecordingFacade ff = new RecordingFacade(true);
+                ff.isResident = true;
+                final QwpBackwardReadAhead readAhead = new QwpBackwardReadAhead(ff);
+                readAhead.of(frame.metadata());
+                walkFirstBatch(readAhead, frame);
+                for (int f = 0; f < TRUST_STREAK; f++) {
+                    walk(readAhead, frame);
+                }
+                // trusted on this thread
+                Assert.assertEquals(0, walk(readAhead, frame));
+                Assert.assertEquals(2 * TRUST_STREAK, ff.residencyChecks);
+                Assert.assertEquals(2, ff.faultReads);
+                onAnotherThread(() -> {
+                    for (int f = 0; f < TRUST_STREAK; f++) {
+                        Assert.assertEquals(0, walk(readAhead, frame));
+                        Assert.assertEquals(2 * TRUST_STREAK + 2 * (f + 1), ff.residencyChecks);
+                    }
+                    // trusted on the other thread, after a streak no longer than the first
+                    Assert.assertEquals(0, walk(readAhead, frame));
+                    Assert.assertEquals(4 * TRUST_STREAK, ff.residencyChecks);
+                });
+                // the faults of the thread the stream trusted are not this thread's
+                Assert.assertEquals(4, ff.faultReads);
+                Assert.assertEquals(0, walk(readAhead, frame));
+                Assert.assertEquals(4 * TRUST_STREAK + 2, ff.residencyChecks);
+                Assert.assertEquals(4, ff.faultReads);
+            }
+        });
+    }
+
+    @Test
+    public void testTrustedFrameReadsTheByteItsWalkReadsFirst() throws Exception {
+        // Before each trusted frame the stream reads the last byte of the first range the
+        // frame publishes, which its walk down reads first: of a fixed-size column the top
+        // value, of a var-size column the top aux entry. Column tops and empty ranges publish
+        // nothing to read.
+        TestUtils.assertMemoryLeak(() -> {
+            try (
+                    MemoryCARWImpl longs = new MemoryCARWImpl(4_096, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                    MemoryCARWImpl vcAux = new MemoryCARWImpl(4_096, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                    MemoryCARWImpl vcData = new MemoryCARWImpl(4_096, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)
+            ) {
+                final int rows = 1_000;
+                for (int r = 0; r < rows; r++) {
+                    longs.putLong(r);
+                    VarcharTypeDriver.appendValue(vcAux, vcData, new Utf8String("v" + (r % 10)));
+                }
+                Unsafe.putByte(longs.addressOf(8L * rows - 1), (byte) 7);
+                final GenericRecordMetadata longFirst = metadata(new int[]{ColumnType.LONG, ColumnType.VARCHAR});
+                final GenericRecordMetadata varcharFirst = metadata(new int[]{ColumnType.VARCHAR, ColumnType.LONG});
+
+                final AddressedFrame frame = new AddressedFrame(2, rows);
+                frame.set(0, longs.addressOf(0), 8L * rows, 0, 0);
+                setVarSizeColumn(frame, 1, VarcharTypeDriver.INSTANCE, vcAux, vcData, 0, rows);
+                Unsafe.putByte(frame.getAuxPageAddress(1) + frame.getAuxPageSize(1) - 1, (byte) 5);
+                Assert.assertEquals(7, trustedFrameTouch(frame, longFirst));
+                // a column top, or a published address with no bytes, publishes no range
+                frame.set(0, 0, 8L * rows, 0, 0);
+                Assert.assertEquals(5, trustedFrameTouch(frame, longFirst));
+                frame.set(0, longs.addressOf(0), 0, 0, 0);
+                Assert.assertEquals(5, trustedFrameTouch(frame, longFirst));
+
+                setVarSizeColumn(frame, 0, VarcharTypeDriver.INSTANCE, vcAux, vcData, 0, rows);
+                frame.set(1, longs.addressOf(0), 8L * rows, 0, 0);
+                Assert.assertEquals(5, trustedFrameTouch(frame, varcharFirst));
+                frame.set(0, 0, 0, 0, 0);
+                Assert.assertEquals(7, trustedFrameTouch(frame, varcharFirst));
+                frame.set(0, 0, 0, vcAux.addressOf(0), 0);
+                Assert.assertEquals(7, trustedFrameTouch(frame, varcharFirst));
             }
         });
     }
@@ -567,6 +1046,34 @@ public class QwpBackwardReadAheadTest {
         });
     }
 
+    // a column of the type takes bytesPerRow in its widest range: one frame of it at the limit
+    // is small, one row more is not
+    private static void assertVarSizeBounds(int columnType, int bytesPerRow, String value) {
+        final int rowsAtLimit = (int) (QwpBackwardReadAhead.SMALL_FRAME_RANGE_BYTES / bytesPerRow);
+        for (int rows : new int[]{rowsAtLimit, rowsAtLimit + 1}) {
+            try (
+                    MemoryCARWImpl aux = new MemoryCARWImpl(4_096, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                    MemoryCARWImpl data = new MemoryCARWImpl(4_096, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)
+            ) {
+                if (columnType == ColumnType.STRING) {
+                    StringTypeDriver.INSTANCE.configureAuxMemO3RSS(aux);
+                }
+                for (int r = 0; r < rows; r++) {
+                    if (columnType == ColumnType.STRING) {
+                        StringTypeDriver.appendValue(aux, data, value);
+                    } else {
+                        VarcharTypeDriver.appendValue(aux, data, new Utf8String(value));
+                    }
+                }
+                final AddressedFrame frame = new AddressedFrame(1, rows);
+                setVarSizeColumn(frame, 0, ColumnType.getDriver(columnType), aux, data, 0, rows);
+                final String context = ColumnType.nameOf(columnType) + " rows=" + rows;
+                Assert.assertEquals(context, (long) rows * bytesPerRow, Math.max(frame.getPageSize(0), frame.getAuxPageSize(0)));
+                Assert.assertEquals(context, rows == rowsAtLimit, isTrustedAfterStreak(frame, metadata(new int[]{columnType})));
+            }
+        }
+    }
+
     private static void assertEachColumnTiled(TestFrame frame, RecordingFacade ff) {
         for (int ci = 0; ci < frame.getColumnCount(); ci++) {
             if (frame.getPageAddress(ci) == 0 && frame.getAuxPageAddress(ci) == 0) {
@@ -581,6 +1088,24 @@ public class QwpBackwardReadAheadTest {
         }
     }
 
+    // whether, after its first batch and TRUST_STREAK frames in memory, a stream of the frame trusts the next one
+    private static boolean isTrustedAfterStreak(PageFrame frame, GenericRecordMetadata metadata) {
+        final RecordingFacade ff = new RecordingFacade(true);
+        ff.isResident = true;
+        final QwpBackwardReadAhead readAhead = new QwpBackwardReadAhead(ff);
+        readAhead.of(metadata);
+        final long rows = frame.getPartitionHi() - frame.getPartitionLo();
+        for (long streamRows = 0; streamRows < QwpBackwardReadAhead.INITIAL_WINDOW_ROWS; streamRows += rows) {
+            walk(readAhead, frame, rows);
+        }
+        for (int f = 0; f < TRUST_STREAK; f++) {
+            walk(readAhead, frame, rows);
+        }
+        final int checks = ff.residencyChecks;
+        Assert.assertEquals(0, walk(readAhead, frame, rows));
+        return ff.residencyChecks == checks;
+    }
+
     private static GenericRecordMetadata metadata(int[] types) {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         for (int i = 0; i < types.length; i++) {
@@ -588,6 +1113,22 @@ public class QwpBackwardReadAheadTest {
             metadata.add(new TableColumnMetadata("c" + i, types[i], IndexType.NONE, 0, false, null));
         }
         return metadata;
+    }
+
+    private static void onAnotherThread(Runnable task) throws InterruptedException {
+        final Throwable[] failure = {null};
+        final Thread thread = new Thread(() -> {
+            try {
+                task.run();
+            } catch (Throwable th) {
+                failure[0] = th;
+            }
+        });
+        thread.start();
+        thread.join();
+        if (failure[0] != null) {
+            throw new AssertionError(failure[0]);
+        }
     }
 
     private static void setVarSizeColumn(
@@ -607,6 +1148,53 @@ public class QwpBackwardReadAheadTest {
                 auxBase + driver.getAuxVectorOffset(lo),
                 driver.getAuxVectorOffset(hi) - driver.getAuxVectorOffset(lo)
         );
+    }
+
+    // two columns, LONG and DOUBLE, of 3,000 rows: 48,000 bytes in two 24,000-byte ranges
+    private static TestFrame smallFrame() {
+        return new TestFrame(new int[]{ColumnType.LONG, ColumnType.DOUBLE}, false, 0, 3_000);
+    }
+
+    // how much a trusted frame adds to the touch sink: the byte its walk reads first
+    private static long trustedFrameTouch(PageFrame frame, GenericRecordMetadata metadata) {
+        Assert.assertTrue(isTrustedAfterStreak(frame, metadata));
+        final RecordingFacade ff = new RecordingFacade(true);
+        ff.isResident = true;
+        final QwpBackwardReadAhead readAhead = new QwpBackwardReadAhead(ff);
+        readAhead.of(metadata);
+        final long rows = frame.getPartitionHi() - frame.getPartitionLo();
+        for (long streamRows = 0; streamRows < QwpBackwardReadAhead.INITIAL_WINDOW_ROWS; streamRows += rows) {
+            walk(readAhead, frame, rows);
+        }
+        for (int f = 0; f < TRUST_STREAK; f++) {
+            walk(readAhead, frame, rows);
+        }
+        final long sink = readAhead.getTouchSink();
+        walk(readAhead, frame, rows);
+        return readAhead.getTouchSink() - sink;
+    }
+
+    // navigates to the frame and advises it slice by slice, top slice first, as the egress does
+    private static long walk(QwpBackwardReadAhead readAhead, PageFrame frame, long rows) {
+        readAhead.ofFrame(frame, rows);
+        long bytes = 0;
+        for (long emitted = 0; emitted < rows; ) {
+            final long slice = Math.min(SLICE_ROWS, rows - emitted);
+            bytes += readAhead.advise(rows - emitted - slice);
+            emitted += slice;
+        }
+        return bytes;
+    }
+
+    private static long walk(QwpBackwardReadAhead readAhead, TestFrame frame) {
+        return walk(readAhead, frame, frame.rows);
+    }
+
+    // the frames of the first batch: those whose top row goes out before row INITIAL_WINDOW_ROWS
+    private static void walkFirstBatch(QwpBackwardReadAhead readAhead, TestFrame frame) {
+        for (long streamRows = 0; streamRows < QwpBackwardReadAhead.INITIAL_WINDOW_ROWS; streamRows += frame.rows) {
+            Assert.assertEquals(frame.frameBytes(), walk(readAhead, frame));
+        }
     }
 
     /**
@@ -702,20 +1290,45 @@ public class QwpBackwardReadAheadTest {
     }
 
     /**
-     * Records the ranges the read-ahead asks the OS for, without asking it.
+     * Records the ranges the read-ahead asks the OS for, without asking it. It reports every
+     * range out of memory, unless a test says otherwise, and the major faults a test sets.
      */
     static final class RecordingFacade extends TestFilesFacadeImpl {
         private final boolean isWillNeedSupported;
+        // [lo, hi) address pairs a test reports out of memory, whatever isResident says
+        private final LongList missingRanges = new LongList();
         // [lo, hi) address pairs, in request order
         private final LongList ranges = new LongList();
+        int faultReads;
+        boolean isResident;
+        long majorFaults;
+        int residencyChecks;
 
         RecordingFacade(boolean isWillNeedSupported) {
             this.isWillNeedSupported = isWillNeedSupported;
         }
 
         @Override
+        public long getThreadMajorFaults() {
+            faultReads++;
+            return majorFaults;
+        }
+
+        @Override
         public boolean isMadviseWillNeedSupported() {
             return isWillNeedSupported;
+        }
+
+        @Override
+        public boolean isPageCacheResident(long address, long len) {
+            Assert.assertTrue("len=" + len, len > 0);
+            residencyChecks++;
+            for (int i = 0, n = missingRanges.size(); i < n; i += 2) {
+                if (address < missingRanges.getQuick(i + 1) && address + len > missingRanges.getQuick(i)) {
+                    return false;
+                }
+            }
+            return isResident;
         }
 
         @Override
@@ -763,6 +1376,11 @@ public class QwpBackwardReadAheadTest {
 
         void clear() {
             ranges.clear();
+        }
+
+        // reports [lo, hi) out of memory
+        void miss(long lo, long hi) {
+            missingRanges.add(lo, hi);
         }
 
         boolean contains(long lo, long hi) {

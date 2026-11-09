@@ -26,6 +26,7 @@ package io.questdb.std;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.log.Log;
+import io.questdb.std.ex.FatalError;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.MutableUtf8Sink;
 import io.questdb.std.str.Path;
@@ -36,6 +37,11 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.File;
+import java.lang.foreign.FunctionDescriptor;
+import java.lang.foreign.Linker;
+import java.lang.foreign.MemorySegment;
+import java.lang.foreign.ValueLayout;
+import java.lang.invoke.MethodHandle;
 import java.net.URL;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
@@ -457,6 +463,16 @@ public final class Files {
      */
     public static boolean isMadviseWillNeedSupported() {
         return Os.isLinux();
+    }
+
+    /**
+     * Whether every page of {@code [address, address + len)}, a range of a mapping, is in
+     * memory, as mincore(2) reports it: for a file mapping, whether reading the range reads
+     * nothing from storage. Returns false for an empty range, when mincore(2) fails, and on
+     * every platform but Linux, the only one where {@link #madviseWillNeed} reads ahead.
+     */
+    public static boolean isPageCacheResident(long address, long len) {
+        return len > 0 && isMadviseWillNeedSupported() && Mincore.isResident(address, len);
     }
 
     public native static boolean isSoftLink(long lpszPath);
@@ -1025,6 +1041,64 @@ public final class Files {
      */
     static int rmdir(Path path, boolean haltOnFail, Log log) {
         return rmdir(path, haltOnFail, 0, RMDIR_MAX_DEPTH, log);
+    }
+
+    /**
+     * mincore(2) from the C library, bound on first use. Only Linux calls it.
+     */
+    private static final class Mincore {
+        // pages one call reports on: the vector holds a byte a page
+        private static final int CHUNK_PAGES = 512;
+        // int mincore(void *addr, size_t length, unsigned char *vec). The address goes as a
+        // long, which the 64-bit ABIs QuestDB runs on pass the same way as a pointer, so the
+        // call allocates no segment for it. mincore(2) never waits for IO, so the binding is
+        // critical, and may fill a heap array.
+        private static final MethodHandle MINCORE;
+        private static final ThreadLocal<MemorySegment> VECTOR = ThreadLocal.withInitial(
+                () -> MemorySegment.ofArray(new byte[CHUNK_PAGES])
+        );
+
+        static boolean isResident(long address, long len) {
+            final MemorySegment vector = VECTOR.get();
+            long lo = address & -PAGE_SIZE;
+            long pages = (address + len - lo + PAGE_SIZE - 1) / PAGE_SIZE;
+            while (pages > 0) {
+                final long n = Math.min(pages, CHUNK_PAGES);
+                if (mincore(lo, n * PAGE_SIZE, vector) != 0) {
+                    return false;
+                }
+                for (long i = 0; i < n; i++) {
+                    // the low bit of a page's byte tells whether the page is in memory
+                    if ((vector.get(ValueLayout.JAVA_BYTE, i) & 1) == 0) {
+                        return false;
+                    }
+                }
+                lo += n * PAGE_SIZE;
+                pages -= n;
+            }
+            return true;
+        }
+
+        private static int mincore(long address, long len, MemorySegment vector) {
+            try {
+                return (int) MINCORE.invokeExact(address, len, vector);
+            } catch (RuntimeException | Error e) {
+                throw e;
+            } catch (Throwable t) {
+                // unreachable: everything an int(long, long, MemorySegment) downcall can throw is a RuntimeException or Error
+                throw new AssertionError(t);
+            }
+        }
+
+        static {
+            final Linker linker = Linker.nativeLinker();
+            MINCORE = linker.downcallHandle(
+                    linker.defaultLookup().find("mincore").orElseThrow(
+                            () -> new FatalError("Internal error: symbol mincore not found in the C library")),
+                    FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.JAVA_LONG, ValueLayout.JAVA_LONG, ValueLayout.ADDRESS),
+                    Linker.Option.critical(true)
+            );
+        }
     }
 
     static {

@@ -159,7 +159,8 @@ public class QwpEgressMetrics implements Mutable {
 
     /**
      * Counts the page-frame bytes a descending scan asked the OS to read ahead of its walk
-     * down, or read itself, see {@link QwpBackwardReadAhead}.
+     * down, or read itself, see {@link QwpBackwardReadAhead}. Bytes already in memory, which
+     * the scan does not ask for, do not count.
      */
     public void markReadAhead(long bytes) {
         if (bytes > 0) {

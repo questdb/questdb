@@ -44,11 +44,14 @@ import org.junit.Before;
  * {@code DEBUG_HTTP_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE} alongside any extra
  * env vars the test wants to set. The same seed picks how the server reads the frames
  * of a backward stream ahead, see {@link ReadAheadFilesFacade}, so the fuzzers cover
- * both ways on every platform.
+ * both ways on every platform, and whether its frames look cold, so they cover both the
+ * frames a stream asks for and the frames in memory it checks and trusts.
  */
 public abstract class AbstractQwpBootstrapTest extends AbstractBootstrapTest {
 
     private static final Log LOG = LogFactory.getLog(AbstractQwpBootstrapTest.class);
+    // reports every frame out of memory to backward streams, or lets the OS tell
+    protected boolean isReadAheadCold;
     // reads the frames of backward streams ahead through MADV_WILLNEED windows, or reads each frame at once
     protected boolean isReadAheadWillNeed;
     protected int recvChunk;
@@ -72,6 +75,7 @@ public abstract class AbstractQwpBootstrapTest extends AbstractBootstrapTest {
         // specific 1-byte split pin sendChunk themselves.
         sendChunk = 64 + rnd.nextInt(437);
         isReadAheadWillNeed = rnd.nextBoolean();
+        isReadAheadCold = rnd.nextBoolean();
     }
 
     protected long firstBatchTimeoutMs(long baseMs) {
@@ -91,6 +95,6 @@ public abstract class AbstractQwpBootstrapTest extends AbstractBootstrapTest {
         all[2] = PropertyKey.DEBUG_HTTP_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE.getEnvVarName();
         all[3] = Integer.toString(sendChunk);
         System.arraycopy(extra, 0, all, 4, extra.length);
-        return startWithEnvVariables(new ReadAheadFilesFacade(isReadAheadWillNeed), all);
+        return startWithEnvVariables(new ReadAheadFilesFacade(isReadAheadWillNeed, isReadAheadCold), all);
     }
 }

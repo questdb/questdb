@@ -37,6 +37,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.lang.foreign.FunctionDescriptor;
 import java.lang.foreign.Linker;
+import java.lang.foreign.MemorySegment;
 import java.lang.foreign.SymbolLookup;
 import java.lang.foreign.ValueLayout;
 import java.lang.invoke.MethodHandle;
@@ -200,6 +201,15 @@ public final class Os {
      * @return used RSS memory in bytes
      */
     public static native long getRss();
+
+    /**
+     * Returns how many major page faults the calling thread has taken: faults that waited
+     * for a read from storage. Returns -1 where the OS does not count them per thread, on
+     * every platform but Linux, or when getrusage(2) fails.
+     */
+    public static long getThreadMajorFaults() {
+        return isLinux() ? ThreadUsage.majorFaults() : -1;
+    }
 
     @SuppressWarnings("EmptyMethod")
     public static void init() {
@@ -373,6 +383,47 @@ public final class Os {
             return false;
         }
         return true;
+    }
+
+    /**
+     * getrusage(2) from the C library, bound on first use. Only Linux calls it.
+     */
+    private static final class ThreadUsage {
+        // int getrusage(int who, struct rusage *usage). The call is short and never waits
+        // for IO, so the binding is critical, and may fill a heap array.
+        private static final MethodHandle GETRUSAGE;
+        // ru_majflt in the struct rusage of 64-bit Linux: two 16-byte struct timevals, then
+        // ru_maxrss, ru_ixrss, ru_idrss, ru_isrss and ru_minflt
+        private static final long MAJFLT_OFFSET = 72;
+        private static final int RUSAGE_THREAD = 1;
+        // struct rusage: the two struct timevals, then 14 longs
+        private static final ThreadLocal<MemorySegment> USAGE = ThreadLocal.withInitial(
+                () -> MemorySegment.ofArray(new long[18])
+        );
+
+        static long majorFaults() {
+            final MemorySegment usage = USAGE.get();
+            final int rc;
+            try {
+                rc = (int) GETRUSAGE.invokeExact(RUSAGE_THREAD, usage);
+            } catch (RuntimeException | Error e) {
+                throw e;
+            } catch (Throwable t) {
+                // unreachable: everything an int(int, MemorySegment) downcall can throw is a RuntimeException or Error
+                throw new AssertionError(t);
+            }
+            return rc == 0 ? usage.get(ValueLayout.JAVA_LONG, MAJFLT_OFFSET) : -1;
+        }
+
+        static {
+            final Linker linker = Linker.nativeLinker();
+            GETRUSAGE = linker.downcallHandle(
+                    linker.defaultLookup().find("getrusage").orElseThrow(
+                            () -> new FatalError("Internal error: symbol getrusage not found in the C library")),
+                    FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.JAVA_INT, ValueLayout.ADDRESS),
+                    Linker.Option.critical(true)
+            );
+        }
     }
 
     static {

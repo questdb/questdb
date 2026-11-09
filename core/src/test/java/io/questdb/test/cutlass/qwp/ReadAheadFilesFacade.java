@@ -32,15 +32,23 @@ import java.util.concurrent.atomic.AtomicLong;
  * Files facade that picks how a backward QWP stream reads its frames ahead, whatever the
  * platform supports: through MADV_WILLNEED windows, which it still passes on to the OS
  * where the OS takes them, or by reading each frame at once. It counts the bytes the
- * stream asks the OS for.
+ * stream asks the OS for. A cold facade reports every range out of memory, so the stream
+ * asks for every window, as it does over data it has not read yet; otherwise the OS tells.
  */
 public class ReadAheadFilesFacade extends FilesFacadeImpl {
     private final AtomicLong advisedBytes = new AtomicLong();
+    private final boolean isCold;
     private final boolean isWillNeedSupported;
     private final AtomicLong requestCount = new AtomicLong();
+    private final AtomicLong residencyCheckCount = new AtomicLong();
 
     public ReadAheadFilesFacade(boolean isWillNeedSupported) {
+        this(isWillNeedSupported, false);
+    }
+
+    public ReadAheadFilesFacade(boolean isWillNeedSupported, boolean isCold) {
         this.isWillNeedSupported = isWillNeedSupported;
+        this.isCold = isCold;
     }
 
     public long advisedBytes() {
@@ -50,6 +58,12 @@ public class ReadAheadFilesFacade extends FilesFacadeImpl {
     @Override
     public boolean isMadviseWillNeedSupported() {
         return isWillNeedSupported;
+    }
+
+    @Override
+    public boolean isPageCacheResident(long address, long len) {
+        residencyCheckCount.incrementAndGet();
+        return !isCold && super.isPageCacheResident(address, len);
     }
 
     @Override
@@ -63,8 +77,12 @@ public class ReadAheadFilesFacade extends FilesFacadeImpl {
         return requestCount.get();
     }
 
+    public long residencyCheckCount() {
+        return residencyCheckCount.get();
+    }
+
     @Override
     public String toString() {
-        return isWillNeedSupported ? "MADV_WILLNEED windows" : "whole-frame reads";
+        return (isWillNeedSupported ? "MADV_WILLNEED windows" : "whole-frame reads") + (isCold ? ", cold" : "");
     }
 }

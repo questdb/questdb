@@ -236,13 +236,62 @@ public class QwpEgressBackwardScanTest extends AbstractReusedServerQwpEgressTest
     }
 
     @Test
+    public void testBackwardScanDoesNotAskForFramesInMemory() throws Exception {
+        // Past its first batch, a backward scan asks the OS for no frame that is in memory: it
+        // checks the frames, and trusts small ones after a streak, until its thread reads from
+        // storage or the stream moves to another thread. Every query starts afresh, however it
+        // parks: the frames of its first batch go out unchecked.
+        TestUtils.assertMemoryLeak(() -> {
+            final ReadAheadFilesFacade ff = new ReadAheadFilesFacade(true) {
+                @Override
+                public long getThreadMajorFaults() {
+                    return 0;
+                }
+
+                @Override
+                public boolean isPageCacheResident(long address, long len) {
+                    // counts the check
+                    super.isPageCacheResident(address, len);
+                    return true;
+                }
+            };
+            try (TestServerMain serverMain = startServer(ff, PropertyKey.METRICS_ENABLED.getEnvVarName(), "true")) {
+                serverMain.execute("CREATE TABLE t (x LONG, d DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                // 60 days of 1,000 rows, a small frame a day
+                serverMain.execute("INSERT INTO t SELECT x, x * 0.5, ((x - 1) * 86_400_000L)::TIMESTAMP FROM long_sequence(60_000)");
+                serverMain.awaitTable("t");
+                final QwpEgressMetrics metrics = serverMain.getEngine().getMetrics().qwpEgressMetrics();
+                final String desc = "SELECT x, d FROM t ORDER BY ts DESC";
+                // the 17 days whose top rows go out before row 16,384, at 16 bytes a row
+                final long firstBatchBytes = 17_000 * 16L;
+                try (QwpQueryClient client = connect("")) {
+                    for (int run = 0; run < 2; run++) {
+                        final long checks = ff.residencyCheckCount();
+                        assertReadAhead(ff, metrics, true, firstBatchBytes, () -> Assert.assertEquals(descendingLongs(60_000, 1), column(qwpRows(client, desc), 0)));
+                        // a column at a time, at least the streak before the stream trusted, at
+                        // most every frame after the first batch
+                        final long streamChecks = ff.residencyCheckCount() - checks;
+                        Assert.assertTrue("checks=" + streamChecks, streamChecks >= 2L * QwpBackwardReadAhead.TRUST_STREAK && streamChecks <= 2L * 43);
+                    }
+                }
+                // parked after every 7-row batch, the stream resumes on either worker thread
+                try (QwpQueryClient client = QwpQueryClient.fromConfig("ws::addr=127.0.0.1:" + HTTP_PORT + ";max_batch_rows=7;")
+                        .withInitialCredit(1)) {
+                    client.connect();
+                    assertReadAhead(ff, metrics, true, firstBatchBytes, () -> Assert.assertEquals(descendingLongs(60_000, 1), column(qwpRows(client, desc), 0)));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testBackwardScanReadsEachFrameAheadOnce() throws Exception {
-        // A backward scan reads every native frame ahead exactly once, whatever the batches
-        // and the parks in between, through MADV_WILLNEED windows and by reading each frame
-        // at once alike; a forward scan and parquet frames read nothing ahead.
+        // A backward scan over data not in memory reads every native frame ahead exactly once,
+        // whatever the batches and the parks in between, through MADV_WILLNEED windows and by
+        // reading each frame at once alike; a forward scan and parquet frames read nothing ahead.
         for (boolean isWillNeed : new boolean[]{true, false}) {
             TestUtils.assertMemoryLeak(() -> {
-                final ReadAheadFilesFacade ff = new ReadAheadFilesFacade(isWillNeed);
+                final ReadAheadFilesFacade ff = new ReadAheadFilesFacade(isWillNeed, true);
                 final String table = isWillNeed ? "t_advised" : "t_read";
                 try (TestServerMain serverMain = startServer(
                         ff,
@@ -288,9 +337,10 @@ public class QwpEgressBackwardScanTest extends AbstractReusedServerQwpEgressTest
     @Test
     public void testBackwardStreamsReadAheadTheirOwnFramesConcurrently() throws Exception {
         // The read-ahead keeps its window per connection: streams that interleave their
-        // batches on one server each read their own frames, every row once.
+        // batches on one server each read their own frames, every row once, over data that
+        // is not in memory.
         TestUtils.assertMemoryLeak(() -> {
-            final ReadAheadFilesFacade ff = new ReadAheadFilesFacade(true);
+            final ReadAheadFilesFacade ff = new ReadAheadFilesFacade(true, true);
             try (TestServerMain serverMain = startReadAheadServer(ff)) {
                 final QwpEgressMetrics metrics = serverMain.getEngine().getMetrics().qwpEgressMetrics();
                 final int streams = 3;
@@ -436,15 +486,15 @@ public class QwpEgressBackwardScanTest extends AbstractReusedServerQwpEgressTest
 
     @Test
     public void testFirstBatchWaitsForItsOwnRowsOnly() throws Exception {
-        // A descending stream asks for the rows of its first batch, and of the next window,
-        // and sends the batch: by then MADV_WILLNEED windows have asked for the top 16,384
+        // A descending stream over data not in memory asks for the rows of its first batch,
+        // and of the next window, and sends the batch: by then MADV_WILLNEED windows have asked for the top 16,384
         // rows of the 200,000-row frame and, from the middle of them on, for the next 32,768.
         // Reading each frame at once reads the whole frame before the first row goes out.
         // Credit for one batch parks the stream after the batch, so the count the client
         // sees in its first batch is all the stream asked for before it.
         for (boolean isWillNeed : new boolean[]{true, false}) {
             TestUtils.assertMemoryLeak(() -> {
-                final ReadAheadFilesFacade ff = new ReadAheadFilesFacade(isWillNeed);
+                final ReadAheadFilesFacade ff = new ReadAheadFilesFacade(isWillNeed, true);
                 try (TestServerMain serverMain = startReadAheadServer(ff)) {
                     final QwpEgressMetrics metrics = serverMain.getEngine().getMetrics().qwpEgressMetrics();
                     try (QwpQueryClient client = QwpQueryClient.fromConfig("ws::addr=127.0.0.1:" + HTTP_PORT + ";failover=off;")

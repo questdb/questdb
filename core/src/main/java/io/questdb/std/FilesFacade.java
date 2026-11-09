@@ -164,6 +164,22 @@ public interface FilesFacade {
         return Files.madviseWillNeed(address, len);
     }
 
+    /**
+     * Returns how many major page faults, reads from storage, the calling thread has taken,
+     * or -1 where the OS does not count them, see {@link Os#getThreadMajorFaults()}.
+     */
+    default long getThreadMajorFaults() {
+        return Os.getThreadMajorFaults();
+    }
+
+    /**
+     * Whether every page of {@code [address, address + len)} of a mapping is in memory, see
+     * {@link Files#isPageCacheResident(long, long)}.
+     */
+    default boolean isPageCacheResident(long address, long len) {
+        return Files.isPageCacheResident(address, len);
+    }
+
     long getDirSize(Path path);
 
     long getDiskFreeSpace(LPSZ path);
