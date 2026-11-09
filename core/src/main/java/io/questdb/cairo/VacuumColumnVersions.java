@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.MessageBus;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.idx.PostingIndexUtils;
+import io.questdb.cairo.wal.WalUtils;
 import io.questdb.griffin.PurgingOperator;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -334,9 +335,12 @@ public class VacuumColumnVersions implements Closeable {
             try {
                 partitionTimestamp = getPartitionDirFormatMethod(timestampType, partitionBy).parse(fileNameSink.asAsciiCharSequence(), 0, dotIndex, EN_LOCALE);
             } catch (NumericException ex) {
-                // Directory is an invalid partition name, continue
-                LOG.error().$("skipping column version purge VACUUM, invalid partition directory name [name=").$(fileNameSink)
-                        .$(", path=").$(path2).I$();
+                // Directory is an invalid partition name, continue. WAL and sequencer directories are not partitions.
+                if (!Utf8s.startsWithAscii(fileNameSink, WalUtils.WAL_NAME_BASE) && !Utf8s.equalsAscii(WalUtils.SEQ_DIR, fileNameSink)
+                        && !Utf8s.equalsAscii(WalUtils.SEQ_DIR_DEPRECATED, fileNameSink)) {
+                    LOG.error().$("skipping column version purge VACUUM, invalid partition directory name [name=").$(fileNameSink)
+                            .$(", path=").$(path2).I$();
+                }
                 return;
             }
 
