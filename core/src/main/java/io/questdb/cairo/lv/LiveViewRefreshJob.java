@@ -9258,6 +9258,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     }
                 }
                 openSegmentRepairPhases.headSealNanos += System.nanoTime() - headSealStart;
+            } else {
+                // A live truncated prefix gets here only under a keyed resume, whose gate admits
+                // insert-only, unfiltered commits over a base that does not deduplicate: its replay
+                // emits every row the commit inserted, so it takes the closing seal above.
+                assert !prefixMarkerLive : "a keyed resume emitted no row over its truncated prefix";
             }
             if (prefixMarkerLive) {
                 // Resolve the repair's live marker. A truncate left the timeline headless, so a

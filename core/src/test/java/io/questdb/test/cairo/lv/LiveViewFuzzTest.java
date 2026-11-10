@@ -32,6 +32,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
+import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
 import io.questdb.cairo.lv.LiveViewCheckpointRecoveryPhase;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairMarker;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairRoute;
@@ -310,6 +311,10 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // the same reason.
     private static final long SPARSE_DEPARTURE_PAUSE_SALT0 = 0x9E3779B97F4A7C15L;
     private static final long SPARSE_DEPARTURE_PAUSE_SALT1 = 0xBF58476D1CE4E5B9L;
+    // Salt the draws of a departure above a rowless anchor apart from the run's sequence, for the
+    // same reason.
+    private static final long ROWLESS_ANCHOR_EPISODE_SALT0 = 0xD6E8FEB86659FD93L;
+    private static final long ROWLESS_ANCHOR_EPISODE_SALT1 = 0xA0761D6478BD642FL;
     // The outcomes of the head-miss rebuild's end-of-table splice departNewestRowsOverSparseRoots
     // sets up, one per shape: the splice kept roots above the new frontier and the rebuild
     // truncates there, the rebuild emits no row over a root at the frontier and keeps the
@@ -354,6 +359,14 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // Departures of a batch that could decline the checkpoint chain: every third one, from the
     // first, does. See departNewestRows.
     private int chainDeclineCandidates;
+    // Departures above a rowless anchor a batch ran, every other one, from the first, with the
+    // kept batch's root at the view's new frontier. Then, by how each ended with the chain
+    // declined: a watermark that published the root the frontier truncate left at the frontier,
+    // and a seal that landed at a frontier the truncate left no root at. See
+    // departNewestRowsAboveARowlessAnchor.
+    private int rowlessAnchorEpisodes;
+    private int rowlessAnchorWatermarks;
+    private int rowlessAnchorFrontierSeals;
     // Departure episodes of a batch whose departed rows no root sealed, so the resume repairing
     // their departure anchored on the head's own root and emitted nothing: see departNewestRows.
     private int unsealedDepartures;
@@ -605,6 +618,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         coverage.assertReachedStat(LiveViewRefreshStats.SPLICE_FRONTIER_TRUNCATE_COUNT);
         coverage.assertReachedStat(LiveViewRefreshStats.SPLICE_ZERO_ROW_KEEP_COUNT);
         coverage.assertReachedStat(LiveViewRefreshStats.TRUNCATE_ZERO_ROW_KEEP_COUNT);
+        assertReachedEveryRowlessAnchorOutcome();
         assertReachedEveryHeadMissSpliceOutcome();
         assertReachedEveryRowlessStretchOutcome();
         assertReachedAnOwedSealEpisode();
@@ -951,6 +965,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         coverage.assertReachedStat(LiveViewRefreshStats.SPLICE_FRONTIER_TRUNCATE_COUNT);
         coverage.assertReachedStat(LiveViewRefreshStats.SPLICE_ZERO_ROW_KEEP_COUNT);
         coverage.assertReachedStat(LiveViewRefreshStats.TRUNCATE_ZERO_ROW_KEEP_COUNT);
+        assertReachedEveryRowlessAnchorOutcome();
         assertReachedEveryHeadMissSpliceOutcome();
         assertReachedEveryRowlessStretchOutcome();
         assertReachedAnOwedSealEpisode();
@@ -1507,6 +1522,12 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         return new Rnd(rnd.getSeed0() ^ SPARSE_DEPARTURE_PAUSE_SALT0, rnd.getSeed1() ^ SPARSE_DEPARTURE_PAUSE_SALT1);
     }
 
+    // The sequence a departure above a rowless anchor draws its rows from, drawn from the run's
+    // without advancing it.
+    private static Rnd rowlessAnchorEpisodeRnd(Rnd rnd) {
+        return new Rnd(rnd.getSeed0() ^ ROWLESS_ANCHOR_EPISODE_SALT0, rnd.getSeed1() ^ ROWLESS_ANCHOR_EPISODE_SALT1);
+    }
+
     // Whether the variant's window has a RANGE frame, which a localized rebuild can run to the end
     // of the base table behind: a ROWS frame needs a finite convergence bound.
     private static boolean isRangeFrameVariant(int variant) {
@@ -1898,6 +1919,16 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         Assert.assertTrue("no crash interrupted a departure's frontier truncate", resumeFrontierTruncateCrashes > 0);
     }
 
+    // Both ends of a departure above a rowless anchor, which every batch's departNewestRows runs
+    // after every departure no crash struck, in turn: see departNewestRowsAboveARowlessAnchor.
+    private void assertReachedEveryRowlessAnchorOutcome() {
+        LOG.info().$("LV fuzz departures above a rowless anchor [episodes=").$(rowlessAnchorEpisodes)
+                .$(", watermarks=").$(rowlessAnchorWatermarks)
+                .$(", frontierSeals=").$(rowlessAnchorFrontierSeals).I$();
+        Assert.assertTrue("no departure above a rowless anchor published the root at the frontier", rowlessAnchorWatermarks > 0);
+        Assert.assertTrue("no departure above a rowless anchor sealed the frontier", rowlessAnchorFrontierSeals > 0);
+    }
+
     private void logFrontierTruncateCrashes() {
         LOG.info().$("LV fuzz frontier truncate crashes [resume=").$(resumeFrontierTruncateCrashes)
                 .$(", headMiss=").$(headMissFrontierTruncateCrashes)
@@ -1978,7 +2009,9 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
      * timestamps, or null on a base whose dedup keys keep every row unique. When
      * {@code isFrontierTruncateCrashAllowed}, the departure crashes between the resume's frontier
      * truncate's marker and the truncate's publication, until one departure of the batch has, and
-     * one departure in three after that: see runUnderTheFrontierTruncateCrash.
+     * one departure in three after that: see runUnderTheFrontierTruncateCrash. When
+     * {@code isRowlessAnchorEpisodeAllowed}, a departure no crash struck is followed by
+     * {@link #departNewestRowsAboveARowlessAnchor}.
      *
      * @return true when rows departed, and the caller restarts
      */
@@ -1990,7 +2023,8 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             int symCount,
             boolean withWhere,
             boolean isUnsealedDepartureAllowed,
-            boolean isFrontierTruncateCrashAllowed
+            boolean isFrontierTruncateCrashAllowed,
+            boolean isRowlessAnchorEpisodeAllowed
     ) throws Exception {
         final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
         final long baseMaxTs = queryTimestamp("SELECT max(ts) FROM base");
@@ -2096,7 +2130,130 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 endSparseCheckpointCadence(rowsCadence);
             }
         }
+        // The restart after a crash comes back from the crash image, which no later root reaches.
+        if (isRowlessAnchorEpisodeAllowed && !frontierTruncateCrash.hasCrashed()) {
+            departNewestRowsAboveARowlessAnchor(rowlessAnchorEpisodeRnd(rnd), job, baseToken, usedTs, symCount, withWhere);
+        }
         return true;
+    }
+
+    /**
+     * A departure above a rowless anchor: three batches of four rows above every row the view has
+     * seen, kept, middle and newest, each committed and refreshed on its own, so each seals a root
+     * at its newest row. A chained correction moves the middle batch out of the view, or, every
+     * other episode, every row of it but its first: the splice re-versions the middle batch's root
+     * with the rows below it, so that root holds no row of its own, and keeps the newest batch's
+     * root above it. With the chain declined, the newest batch then departs: its resume anchors on
+     * the rowless root and replays no row, so the view's new frontier sits below the anchor. A
+     * frontier truncate drops the anchor after the replacement commit, and then a watermark
+     * publishes the kept batch's root, which sits at the frontier, or, where the middle batch's
+     * first row is the frontier and no root sits there, a seal lands there. Either way the head
+     * sits on a root at the frontier at the repair commit, the timeline keeps its prefix, and the
+     * caller's restart restores from it. The rows leave as they do in departNewestRows. Draws
+     * from {@code episodeRnd} alone, so the run's random sequence draws what it drew before.
+     */
+    private void departNewestRowsAboveARowlessAnchor(
+            Rnd episodeRnd,
+            LiveViewRefreshJob job,
+            TableToken baseToken,
+            @Nullable LongHashSet usedTs,
+            int symCount,
+            boolean withWhere
+    ) throws Exception {
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+        Assert.assertNotNull(instance);
+        final boolean isRootKeptAtTheFrontier = rowlessAnchorEpisodes++ % 2 == 0;
+        final long fromTs = Math.max(
+                Math.max(queryTimestamp("SELECT max(ts) FROM base"), instance.getLatestSeenTs()),
+                instance.getDefinition().getViewLowerBoundTimestamp()
+        );
+        final long[] keptTs = new long[4];
+        final long[] middleTs = new long[4];
+        final int[] middleSym = new int[4];
+        final long[] newestTs = new long[4];
+        final int[] newestSym = new int[4];
+        commitEpisodeBatch(episodeRnd, fromTs + 1 + episodeRnd.nextInt(1_000_000), usedTs, symCount, keptTs, null);
+        drainWalQueue();
+        driveRefreshToQuiescence(job);
+        commitEpisodeBatch(episodeRnd, keptTs[3] + 2 + episodeRnd.nextInt(1_000_000), usedTs, symCount, middleTs, middleSym);
+        drainWalQueue();
+        driveRefreshToQuiescence(job);
+        commitEpisodeBatch(episodeRnd, middleTs[3] + 2 + episodeRnd.nextInt(1_000_000), usedTs, symCount, newestTs, newestSym);
+        drainWalQueue();
+        driveRefreshToQuiescence(job);
+        Assert.assertEquals("the newest batch seals its root", newestTs[3], instance.getHeadCheckpointMaxTs());
+
+        // The chain stays on: the splice keeps the middle batch's root above the rows it keeps.
+        final long frontierTs;
+        if (isRootKeptAtTheFrontier) {
+            frontierTs = keptTs[3];
+            departNewestBatch(job, baseToken, usedTs, withWhere, middleTs, middleSym, frontierTs, 0, Numbers.LONG_NULL, 0, 0, 0.0, false);
+        } else {
+            frontierTs = middleTs[0];
+            departNewestBatch(
+                    job,
+                    baseToken,
+                    usedTs,
+                    withWhere,
+                    Arrays.copyOfRange(middleTs, 1, middleTs.length),
+                    Arrays.copyOfRange(middleSym, 1, middleSym.length),
+                    frontierTs,
+                    0,
+                    Numbers.LONG_NULL,
+                    0,
+                    0,
+                    0.0,
+                    false
+            );
+        }
+        final LongList ladder = snapshotCheckpointLadder(instance);
+        final int top = ladder.size();
+        Assert.assertTrue("the kept, middle and newest batches' roots", top >= 6);
+        Assert.assertEquals(newestTs[3], ladder.getQuick(top - 2));
+        Assert.assertEquals(middleTs[3], ladder.getQuick(top - 4));
+        Assert.assertEquals(keptTs[3], ladder.getQuick(top - 6));
+        Assert.assertEquals(
+                "the middle batch's root stands on the rows the splice kept below it, none of its own",
+                ladder.getQuick(top - 5) + (isRootKeptAtTheFrontier ? 0 : 1),
+                ladder.getQuick(top - 3)
+        );
+
+        final long keepsBefore = job.getStatsForTest().get(LiveViewRefreshStats.TRUNCATE_ZERO_ROW_KEEP_COUNT);
+        final long resetsBefore = instance.getCheckpointTimelineResets();
+        final long generationBefore = publishedCheckpointGeneration(instance);
+        final long nextCheckpointIdBefore = publishedNextCheckpointId(instance);
+        final int maxChainedBoundaries = engine.getConfiguration().getLiveViewCheckpointRepairMaxChainedBoundaries();
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+        try {
+            departNewestBatch(job, baseToken, usedTs, withWhere, newestTs, newestSym, frontierTs, 0, Numbers.LONG_NULL, 0, 0, 0.0, false);
+        } finally {
+            setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, maxChainedBoundaries);
+        }
+        Assert.assertEquals("the zero-row resume keeps its timeline", resetsBefore, instance.getCheckpointTimelineResets());
+        Assert.assertEquals(keepsBefore + 1, job.getStatsForTest().get(LiveViewRefreshStats.TRUNCATE_ZERO_ROW_KEEP_COUNT));
+        final LongList kept = snapshotCheckpointLadder(instance);
+        Assert.assertEquals("the frontier truncate drops the rowless anchor", frontierTs, kept.getQuick(kept.size() - 2));
+        Assert.assertEquals(frontierTs, instance.getHeadCheckpointMaxTs());
+        Assert.assertEquals(
+                "at the repair commit",
+                instance.getStateReader().getLvConsumedSeqTxn(),
+                instance.getHeadCheckpointBaseSeqTxn()
+        );
+        Assert.assertEquals(
+                "the truncate, the frontier truncate and the closing publication",
+                generationBefore + 3,
+                publishedCheckpointGeneration(instance)
+        );
+        try (Path dir = checkpointsDirOf(instance)) {
+            Assert.assertFalse("no repair marker stays", LiveViewCheckpointRepairMarker.exists(configuration.getFilesFacade(), dir));
+        }
+        if (isRootKeptAtTheFrontier) {
+            Assert.assertEquals("the watermark mints no checkpoint id", nextCheckpointIdBefore, publishedNextCheckpointId(instance));
+            rowlessAnchorWatermarks++;
+        } else {
+            Assert.assertEquals("the seal mints one checkpoint id", nextCheckpointIdBefore + 1, publishedNextCheckpointId(instance));
+            rowlessAnchorFrontierSeals++;
+        }
     }
 
     // The departure departNewestRows commits: the departed batch upserted out of the filter or
@@ -2118,8 +2275,9 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             boolean isCrashDrawn
     ) throws Exception {
         final boolean isUpsert = usedTs == null && withWhere;
+        final long departedHighTs = departedTs[departedTs.length - 1];
         LOG.info().$("LV fuzz departure: keptHighTs=").$ts(keptHighTs).$(", departedLowTs=").$ts(departedTs[0])
-                .$(", departedHighTs=").$ts(departedTs[3]).$(", upsert=").$(isUpsert)
+                .$(", departedHighTs=").$ts(departedHighTs).$(", upsert=").$(isUpsert)
                 .$(", lateMode=").$(lateMode).$(", lateTs=").$ts(lateTs)
                 .$(", crashDrawn=").$(isCrashDrawn).$();
         runUnderTheFrontierTruncateCrash(isCrashDrawn, () -> {
@@ -2138,7 +2296,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                     if (lateMode == 1) {
                         appendRow(walWriter, lateTs, lateSym, lateI, lateX);
                     }
-                    walWriter.commitWithParams(lateMode == 1 ? lateTs : departedTs[0], departedTs[3] + 1, WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE);
+                    walWriter.commitWithParams(lateMode == 1 ? lateTs : departedTs[0], departedHighTs + 1, WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE);
                 }
             }
             drainWalQueue();
@@ -2639,6 +2797,14 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         return new Path().of(configuration.getDbRoot())
                 .concat(instance.getLiveViewToken())
                 .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
+    }
+
+    // The checkpoint id the next root of the view's timeline takes, which the superblock names.
+    private long publishedNextCheckpointId(LiveViewInstance instance) {
+        try (Path dir = checkpointsDirOf(instance); LiveViewCheckpointMetaStore store = new LiveViewCheckpointMetaStore(configuration)) {
+            store.of(dir);
+            return store.getSuperblock().nextCheckpointId;
+        }
     }
 
     /**
@@ -4872,7 +5038,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 } finally {
                     endSparseCheckpointCadence(rowsCadence);
                 }
-            } else if (departNewestRows(rnd, job, engine.verifyTableName("base"), null, symCount, withWhere, anchor == null, anchor == null)) {
+            } else if (departNewestRows(rnd, job, engine.verifyTableName("base"), null, symCount, withWhere, anchor == null, anchor == null, anchor == null)) {
                 // An anchored run draws repair knobs that can take the departure off the chained
                 // resume, and every route there keeps the timeline, a declined chain whose replay
                 // emits no row included. The default knobs keep the chain, and only they crash the
@@ -6884,7 +7050,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 } finally {
                     endSparseCheckpointCadence(rowsCadence);
                 }
-            } else if (departNewestRows(rnd, job, baseToken, usedTs, symCount, withWhere, true, true)) {
+            } else if (departNewestRows(rnd, job, baseToken, usedTs, symCount, withWhere, true, true, true)) {
                 // A crash the departure drew left the image the restart below comes back from.
                 final boolean isCrashed = frontierTruncateCrash.consumeCrash();
                 commitRowlessStretch(job, usedTs, withWhere, false, true);
