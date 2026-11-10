@@ -105,7 +105,11 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
  * ring where the frame's continuation resumes: the consumer, once it has read those tuples, joins the
  * rest of the frame in chunks of the same cap on the owner's slot, see {@link #continueFrame}. One
  * probe row's pairs always finish in one chunk, so a key with more matches than the cap overruns it
- * by its own matches, in memory that the execution's tracker counts.
+ * by its own matches, in memory that the execution's tracker counts. To keep that rare, the builds
+ * tell the cursor how many rows of a probe frame fit the cap at the fan-out they lead one to expect,
+ * see {@link #getProbeFrameRowCap()}, before the probe scan cuts its frames. Under a LIMIT, the task
+ * of the last frame of the first window joins only the rows that the LIMIT may need, and leaves the
+ * rest to the consumer's continuation, whose chunks then double; see {@link #setRowCappedFrame}.
  * <p>
  * A count of the join's rows dispatches count-only tasks, which walk the stages as a probe task
  * does, but count the frame's joined rows instead of writing tuples, and leave the ring alone; see
@@ -175,6 +179,9 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
     private boolean isProbeFiltered;
     // True when the execution hashes the left input and streams the right one.
     private boolean isSwapped;
+    // The context's cairo.sql.page.frame.min.rows in the open cursor's execution, below which the
+    // fan-out of the builds lowers no probe frame's rows; see getProbeFrameRowCap().
+    private long pageFrameMinRows;
     // The pairs an enumerated stage walks between two checks of the circuit breaker.
     private long pairsPerCheck = 1;
     // The first stage's build scan, which the factory opened before the probe scan, from the moment
@@ -196,6 +203,10 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
     // The execution's probe task columns: probeTaskColumnsA or, swapped, probeTaskColumnsB.
     @Nullable
     private IntHashSet probeTaskColumns;
+    // The frame whose task joins no more than rowCappedFrameRows of its rows, the last frame of the
+    // first window under a LIMIT, -1 for none; see setRowCappedFrame().
+    private int rowCappedFrame = -1;
+    private long rowCappedFrameRows;
     // The first stage's stepper in the execution's orientation.
     private HashJoinStageStepper stepper;
 
@@ -359,6 +370,7 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
         // The filter context's lists shrink back to their initial capacity for the next execution.
         failure = Misc.clearBestEffort(failure, probeFilterContext);
         failure = Misc.clearBestEffort(failure, ring);
+        rowCappedFrame = -1;
         // The slots let go of the probes and the probe scan's symbol tables before the stages close
         // the builds, and the frame sequence closes the probe scan after the atom.
         failure = Misc.clearObjListBestEffort(failure, slots);
@@ -400,6 +412,19 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
         long count = 0;
         for (int i = 0, n = slots.size(); i < n; i++) {
             count += slots.getQuick(i).decodedColumnCount;
+        }
+        return count;
+    }
+
+    /**
+     * The probe rows, or the rows the probe filter kept, that the last execution's tasks and
+     * continuation chunks joined into tuples since its cursor opened; a count joins none.
+     */
+    @TestOnly
+    public long getJoinedProbeRowCount() {
+        long count = 0;
+        for (int i = 0, n = slots.size(); i < n; i++) {
+            count += slots.getQuick(i).joinedRowCount;
         }
         return count;
     }
@@ -481,6 +506,7 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
             // The stages bind their payload readers to the record when they build.
             slot.record.setOrientation(isSwapped);
             slot.decodedColumnCount = 0;
+            slot.joinedRowCount = 0;
             slot.parquetFrameCount = 0;
         }
         // The workers' copies of the probe filter take symbol tables of their own, and the bind
@@ -492,6 +518,7 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
         // their own. A stage walks this many of its pairs between two checks of the breaker, as the
         // fused GROUP BY's reducers do.
         pairsPerCheck = Math.max(1, executionContext.getPageFrameMaxRows());
+        pageFrameMinRows = Math.max(1, executionContext.getPageFrameMinRows());
         continuationCount = 0;
         joinedSymbols.probeSymbols = symbolTableSource;
         isJoinFilterInitialized = true;
@@ -635,7 +662,10 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
         // A frame without a probe filter has no kept rows: its continuation walks its rows.
         final DirectLongList rows = ring.getKeptRowCount(frameIndex) < 0 ? null : task.getFilteredRows();
         continuationCount++;
-        return joinRows(slot, task, rows, resumePosition, circuitBreaker);
+        // The rest of the first window's last frame under a LIMIT goes on only as far as the
+        // consumer reads it: each chunk joins as many rows as the frame joined before it.
+        final long rowLimit = frameIndex == rowCappedFrame ? resumePosition : Long.MAX_VALUE;
+        return joinRows(slot, task, rows, resumePosition, rowLimit, circuitBreaker);
     }
 
     /**
@@ -644,6 +674,36 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
      */
     SymbolTableSource getJoinedSymbols() {
         return joinedSymbols;
+    }
+
+    /**
+     * The most rows of a probe frame whose tuples fit a task's cap,
+     * {@code cairo.sql.parallel.hash.join.task.output.max.rows}, at the fan-out that the execution's
+     * builds lead one to expect: the cap divided by the product of the rows per key of each build
+     * whose matches the workers walk, and no fewer than {@code cairo.sql.page.frame.min.rows}. A
+     * probe row that meets a key yields as many pairs as the key has rows, while the stages that
+     * hand their chains to the consumer write one entry per probe row, so their builds do not count.
+     * Returns {@code Long.MAX_VALUE} when no such build has more rows than keys. The owner calls it
+     * once the builds are done, before the probe scan cuts its frames, so that a frame of duplicate
+     * matches leaves no rest to a serial continuation.
+     */
+    long getProbeFrameRowCap() {
+        double fanOut = 1;
+        for (int k = 0, n = executionStages.size(); k < n; k++) {
+            final HashJoinStageStepper stageStepper = k == 0 ? stepper : specs.getQuick(k).getStepper();
+            if (stageStepper.isEnumerated) {
+                final FrozenHashJoinBuild build = executionStages.getQuick(k).getFrozenBuild();
+                final long keyCount = build.getKeyCount();
+                // An empty build of a LEFT join yields one row per probe row.
+                if (keyCount > 0) {
+                    fanOut *= (double) build.getRowCount() / keyCount;
+                }
+            }
+        }
+        if (fanOut <= 1) {
+            return Long.MAX_VALUE;
+        }
+        return Math.max(pageFrameMinRows, (long) (taskOutputMaxRows / fanOut));
     }
 
     Slot getSlot(int slotId) {
@@ -768,13 +828,32 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
             task.setFilteredRowCount(Math.max(0, countRows(slot, task, rows, 0, circuitBreaker)));
             return;
         }
-        final long tupleCount = joinRows(slot, task, rows, 0, circuitBreaker);
+        // The first window's last frame under a LIMIT joins only the rows the LIMIT may need, and
+        // leaves the rest to the consumer's continuation.
+        final long rowLimit = task.getFrameIndex() == rowCappedFrame ? rowCappedFrameRows : Long.MAX_VALUE;
+        final long tupleCount = joinRows(slot, task, rows, 0, rowLimit, circuitBreaker);
         // A cancelled task's tuples are not read: the consumer drops the frames of a cancelled
         // execution, and neither are the rest of its frame's columns.
         task.setFilteredRowCount(Math.max(0, tupleCount));
         if (isParquetFrame && tupleCount != HashJoinStageStepper.CANCELLED) {
             decodeConsumerColumns(slotId, slot, task, rows, isLateMaterialized);
         }
+    }
+
+    /**
+     * Caps the rows that the task of a frame joins, for the rest of the execution: the last frame of
+     * the first window under a LIMIT joins only the rows the LIMIT may need, and leaves the rest of
+     * them to the consumer, see {@link #continueFrame}, whose chunks then join as many rows as the
+     * frame joined before each. The owner calls it once per execution, before it dispatches the
+     * first task, which publishes it to the workers; the execution's {@link #clear()} removes it.
+     *
+     * @param frameIndex the frame, -1 for none
+     * @param rowLimit   the most rows, or rows the probe filter kept, that the frame's task joins
+     */
+    void setRowCappedFrame(int frameIndex, long rowLimit) {
+        assert frameIndex == -1 || rowLimit > 0;
+        rowCappedFrame = frameIndex;
+        rowCappedFrameRows = rowLimit;
     }
 
     /**
@@ -992,36 +1071,49 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
 
     /**
      * Joins a frame's rows, or the rows its probe filter kept, from the given position in the probe
-     * scan's order, on a slot, into the frame's ring entry, and stops at the first probe row's
-     * boundary where the entry holds the task's cap of tuples: the frame's rows, or
-     * {@code cairo.sql.parallel.hash.join.task.output.max.rows} if that is more. Records in the ring
-     * the frame's kept-row count and the position its continuation resumes at, -1 once every row is
-     * joined or when the execution was cancelled.
+     * scan's order, on a slot, into the frame's ring entry: no more than {@code rowLimit} rows, and
+     * it stops early at the first probe row's boundary where the entry holds the task's cap of
+     * tuples: the frame's rows, or {@code cairo.sql.parallel.hash.join.task.output.max.rows} if that
+     * is more. Records in the ring the frame's kept-row count and the position its continuation
+     * resumes at, -1 once every row is joined or when the execution was cancelled.
      *
-     * @param rows the rows the probe filter kept, null without a probe filter
+     * @param rows     the rows the probe filter kept, null without a probe filter
+     * @param rowLimit the most rows to join, {@code Long.MAX_VALUE} for the rest of the frame
      * @return the tuples, or {@link HashJoinStageStepper#CANCELLED} when the execution was cancelled
      */
-    private long joinRows(Slot slot, PageFrameReduceTask task, @Nullable DirectLongList rows, long from, SqlExecutionCircuitBreaker circuitBreaker) {
+    private long joinRows(
+            Slot slot,
+            PageFrameReduceTask task,
+            @Nullable DirectLongList rows,
+            long from,
+            long rowLimit,
+            SqlExecutionCircuitBreaker circuitBreaker
+    ) {
         final int frameIndex = task.getFrameIndex();
         final long frameRowCount = task.getFrameRowCount();
         final long rowCount = rows != null ? rows.size() : frameRowCount;
         final long keptRowCount = rows != null ? rowCount : -1;
+        final long to = rowLimit < rowCount - from ? from + rowLimit : rowCount;
         final long tupleCap = Math.max(taskOutputMaxRows, frameRowCount) * ring.getTupleStride();
-        // Most probe rows yield one tuple, so the rows left to join size the entry, which grows as
+        // Most probe rows yield one tuple, so the rows to join size the entry, which grows as
         // fan-out fills it.
-        final DirectLongList tuples = ring.openTuples(frameIndex, rowCount - from);
+        final DirectLongList tuples = ring.openTuples(frameIndex, to - from);
         slot.of(tuples, task.getFrameSequence(), circuitBreaker, pairsPerCheck);
         final long position;
         try {
             position = rows != null
-                    ? stepper.probeRows(slot, rows, from, isProbeDescending, tupleCap)
-                    : stepper.probeRows(slot, rowCount, from, isProbeDescending, tupleCap);
+                    ? stepper.probeRows(slot, rows, from, to, isProbeDescending, tupleCap)
+                    : stepper.probeRows(slot, rowCount, from, to, isProbeDescending, tupleCap);
         } finally {
             slot.of(null, null, null, 0);
         }
         final boolean isCancelled = position == HashJoinStageStepper.CANCELLED;
         ring.setResumePosition(frameIndex, keptRowCount, isCancelled || position == rowCount ? -1 : position);
-        return isCancelled ? HashJoinStageStepper.CANCELLED : tuples.size() / ring.getTupleStride();
+        if (isCancelled) {
+            return HashJoinStageStepper.CANCELLED;
+        }
+        slot.joinedRowCount += position - from;
+        return tuples.size() / ring.getTupleStride();
     }
 
     // Points the probe side at the orientation: the probe input's scan order and filter, the first
@@ -1069,6 +1161,9 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
         // True while the slot counts a frame's joined rows rather than writes its tuples; see
         // ofCount().
         boolean isCountOnly;
+        // The rows the slot's tasks and chunks joined into tuples in the open cursor's execution;
+        // see AsyncHashJoinAtom.getJoinedProbeRowCount().
+        long joinedRowCount;
         // The joined rows a count has met so far.
         long pairCount;
         // The rows that each tuple that comes out of the last stage stands for in a count: the

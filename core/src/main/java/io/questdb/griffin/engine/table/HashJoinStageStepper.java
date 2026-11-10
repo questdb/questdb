@@ -159,28 +159,33 @@ abstract class HashJoinStageStepper {
 
     /**
      * Probes the stage for the rows of a frame, in the order the probe scan yields them, from the
-     * last row for a backward scan, starting at the given position in that order, and stops after
-     * the probe row whose tuples bring the slot's tuples to the cap.
+     * last row for a backward scan, from the given position in that order up to, not including,
+     * the given end, and stops early after the probe row whose tuples bring the slot's tuples to the
+     * cap.
      *
      * @param rowCount     the frame's rows
      * @param from         the position, in the scan's order, of the first row to probe
+     * @param to           the position, in the scan's order, of the row to stop before, at most
+     *                     {@code rowCount}
      * @param isDescending true for a backward probe scan
      * @param tupleCap     the longs of the slot's tuples that end the call at a probe row's boundary
-     * @return the position of the first row not probed, {@code rowCount} once every row was, or
+     * @return the position of the first row not probed, {@code to} once every row before it was, or
      * {@link #CANCELLED} when the execution was cancelled
      */
-    abstract long probeRows(AsyncHashJoinAtom.Slot slot, long rowCount, long from, boolean isDescending, long tupleCap);
+    abstract long probeRows(AsyncHashJoinAtom.Slot slot, long rowCount, long from, long to, boolean isDescending, long tupleCap);
 
     /**
      * Probes the stage for the rows of a frame that the probe filter kept, as
-     * {@link #probeRows(AsyncHashJoinAtom.Slot, long, long, boolean, long)} probes every row: from
-     * the last kept row for a backward scan.
+     * {@link #probeRows(AsyncHashJoinAtom.Slot, long, long, long, boolean, long)} probes every row:
+     * from the last kept row for a backward scan.
      *
      * @param rows the kept rows' indexes in the frame, ascending
-     * @return the position of the first kept row not probed, {@code rows.size()} once every kept row
-     * was, or {@link #CANCELLED} when the execution was cancelled
+     * @param to   the position, in the scan's order, of the kept row to stop before, at most
+     *             {@code rows.size()}
+     * @return the position of the first kept row not probed, {@code to} once every kept row before
+     * it was, or {@link #CANCELLED} when the execution was cancelled
      */
-    abstract long probeRows(AsyncHashJoinAtom.Slot slot, DirectLongList rows, long from, boolean isDescending, long tupleCap);
+    abstract long probeRows(AsyncHashJoinAtom.Slot slot, DirectLongList rows, long from, long to, boolean isDescending, long tupleCap);
 
     /**
      * Counts the joined rows of a frame's rows, from the given position in the probe scan's order to

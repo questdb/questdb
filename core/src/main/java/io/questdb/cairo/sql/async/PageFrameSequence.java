@@ -289,6 +289,14 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         return sqlExecutionContext.getCircuitBreaker();
     }
 
+    /**
+     * The frames that the sequence handed out since it was bound or rewound: published to the
+     * reduce queue or reduced locally, whether or not their tasks have run.
+     */
+    public int getDispatchedFrameCount() {
+        return dispatchStartFrameIndex;
+    }
+
     public int getFrameCount() {
         return frameCount;
     }
@@ -574,6 +582,16 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
             }
         }
         CairoException.rethrowCleanupFailure(cleanupFailure);
+    }
+
+    /**
+     * Caps the rows of the native frames that {@link #prepareForDispatch()} reads from the bound
+     * page frame cursor; see {@link PageFrameCursor#setPageFrameMaxRows(long)}. Call it before
+     * {@link #prepareForDispatch()}, whose frames then hold for the rest of the execution.
+     */
+    public void setPageFrameMaxRows(long maxRows) {
+        assert !readyToDispatch : "the frames are counted already";
+        frameCursor.setPageFrameMaxRows(maxRows);
     }
 
     /**

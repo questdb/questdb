@@ -58,6 +58,31 @@ final class NativeFrameBoundaries {
         return rowsPerFrame;
     }
 
+    /**
+     * The rows per frame of {@link #calculatePageFrameRowLimit(long, long, long, long, int)} under a
+     * cap that a consumer set below the maximum, see
+     * {@link io.questdb.cairo.sql.PageFrameCursor#setPageFrameMaxRows(long)}: the cap takes the
+     * maximum's place and bounds the minimum, and no frame grows past it to absorb a short last
+     * frame. A cap at or above the maximum changes nothing.
+     */
+    static long calculatePageFrameRowLimit(
+            long partitionLo,
+            long partitionHi,
+            long pageFrameMinRows,
+            long pageFrameMaxRows,
+            int sharedQueryWorkerCount,
+            long pageFrameRowCap
+    ) {
+        if (pageFrameRowCap >= pageFrameMaxRows) {
+            return calculatePageFrameRowLimit(partitionLo, partitionHi, pageFrameMinRows, pageFrameMaxRows, sharedQueryWorkerCount);
+        }
+        assert pageFrameRowCap > 0;
+        return Math.min(
+                pageFrameRowCap,
+                calculatePageFrameRowLimit(partitionLo, partitionHi, Math.min(pageFrameMinRows, pageFrameRowCap), pageFrameRowCap, sharedQueryWorkerCount)
+        );
+    }
+
     public long getQuick(int index) {
         return frameHis.getQuick(index);
     }

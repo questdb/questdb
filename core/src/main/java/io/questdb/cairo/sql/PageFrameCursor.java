@@ -166,6 +166,25 @@ public interface PageFrameCursor extends QuietCloseable, SymbolTableSource {
     }
 
     /**
+     * Caps the rows of the native page frames that the cursor cuts from the partitions it enters
+     * from now on, below the {@code cairo.sql.page.frame.max.rows} that it took from the execution
+     * context when it opened; a cap at or above that limit changes nothing. A frame of a Parquet
+     * partition is one of its row groups, which the cap does not cut. Call it before the cursor
+     * yields its first frame, or after {@link #toTop()}, so that every frame follows it; the cap
+     * holds until the cursor opens again.
+     * <p>
+     * A consumer that knows how much output each of its frames' rows yields, such as a hash join
+     * whose builds tell how many rows each key matches, lowers its frames' rows this way so that a
+     * frame's output fits what one of its tasks may write. The default ignores the cap, for cursors
+     * whose frames have no row limit to lower.
+     *
+     * @param maxRows the most rows of a native frame, at least 1
+     */
+    default void setPageFrameMaxRows(long maxRows) {
+        // no-op by default
+    }
+
+    /**
      * Sets the scan profile of the underlying reader (kernel page-cache
      * hints, partition retention on pool return). See
      * {@link io.questdb.cairo.ReaderScanProfile} for the meaning of each

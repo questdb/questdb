@@ -57,10 +57,25 @@ import io.questdb.std.Os;
  * task, and before it runs a chunk, the consumer checks that the execution was not cancelled, and
  * drops the frame if it was: the interruption then surfaces once the frames in flight are collected.
  * <p>
- * The cursor passes every {@code next()} the execution's effective dispatch limit, the size of the
- * atom's tuple ring, which keeps frames in flight from sharing an entry; see
- * {@link HashJoinTupleRing}. {@code toTop()} probes again over the same builds, in the same
- * orientation.
+ * The cursor passes every {@code next()} the execution's effective dispatch limit, the window of
+ * the atom's tuple ring, which keeps frames in flight from sharing an entry; see
+ * {@link HashJoinTupleRing}. The ring's window is dynamic: each frame the cursor has read tells the
+ * ring how much memory its entry took, and the window follows the largest, so that frames whose
+ * tuples are few, under a selective probe filter, keep more workers busy within the ring's budget.
+ * {@code toTop()} probes again over the same builds, in the same orientation.
+ * <p>
+ * Once the builds are done, and before the probe scan cuts its frames, the cursor caps the rows of
+ * the probe's native frames at what a task's cap of tuples holds at the fan-out that the builds of
+ * the stages whose matches the workers walk lead one to expect, see
+ * {@link AsyncHashJoinAtom#getProbeFrameRowCap()}, so that duplicate matches rarely leave the rest of
+ * a frame to a serial continuation.
+ * <p>
+ * Under a LIMIT that the query states, see {@link AsyncHashJoinRecordCursorFactory#ofLimit}, the
+ * cursor first dispatches only the leading frames whose rows reach the LIMIT, if they fit the
+ * window, and the task of the last of them joins only as many of its rows as the LIMIT needs; the
+ * consumer, if it reads further, continues that frame itself, in chunks that double, before the
+ * window opens. A LIMIT met by the first rows thus joins about as many rows as it returns, where a
+ * full window would join a frame per worker.
  * <p>
  * An execution that swapped the first join's inputs, see {@link AsyncHashJoinAtom#isSwapped()}, probes
  * the right input's frames and reads the left input's columns from the first stage's matches; the
@@ -102,13 +117,19 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
     private int countedTupleFrameCount;
     // The current frame's task, -1 when the cursor holds none.
     private long cursor = -1;
-    private int dispatchLimit;
+    // The last frame of the first window under a LIMIT, -1 for none; see firstWindow().
+    private int firstWindowEnd = -1;
     private int frameIndex;
     // The last frame's index once the cursor prepared the dispatch, -1 before.
     private int frameLimit;
     private PageFrameSequence<AsyncHashJoinAtom> frameSequence;
+    // The frame whose ring entry the cursor reads, which it hands back to the ring before it
+    // collects the frame, -1 for none.
+    private int heldEntryFrame = -1;
     private boolean isBuilt;
     private boolean isOpen;
+    // The rows of the query's LIMIT, Long.MAX_VALUE when it states none that the cursor can use.
+    private long limitRows = Long.MAX_VALUE;
     private long tupleCount;
     private long tupleIndex;
     private int tupleStride;
@@ -160,6 +181,7 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
                     } else {
                         // A task that the cursor dispatched before the count began carries tuples.
                         tuples = atom.getRing().getTuples(frameIndex);
+                        heldEntryFrame = frameIndex;
                         tupleIndex = 0;
                         tupleCount = task.getFilteredRowCount();
                         countTupleFrame(counter);
@@ -201,6 +223,7 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
                 } finally {
                     buildRounds.reset();
                     probeRecord.of(null);
+                    heldEntryFrame = -1;
                     chainStageCount = 0;
                     outputProbes.setAll(stageCount, null);
                     outputReaders.setAll(stageCount, null);
@@ -248,8 +271,8 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
                 break;
             }
             fetchNextFrame();
-            if (tupleIndex >= tupleCount) {
-                // The frames ran out without a tuple.
+            if (cursor == -1) {
+                // The frames ran out without a tuple to read or a frame to continue.
                 break;
             }
         }
@@ -290,6 +313,8 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
             // An INNER join whose build has no row returns none, so the execution dispatches no probe
             // task: with no frame to read, the cursor ends at once.
             if (atom.build(circuitBreaker, buildRounds)) {
+                // The builds tell how many matches a probe row meets, which the frames' rows follow.
+                frameSequence.setPageFrameMaxRows(atom.getProbeFrameRowCap());
                 frameSequence.prepareForDispatch();
                 frameLimit = frameSequence.getFrameCount() - 1;
                 long probeRows = 0;
@@ -298,8 +323,8 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
                 }
                 atom.maybeCopyPayload(probeRows, circuitBreaker, buildRounds);
                 final HashJoinTupleRing ring = atom.getRing();
-                ring.of(frameSequence);
-                dispatchLimit = ring.getDispatchLimit();
+                ring.of(frameSequence, true);
+                firstWindow(ring.getDispatchLimit());
                 tupleStride = ring.getTupleStride();
                 for (int k = 0; k < stageCount; k++) {
                     final FrozenHashJoinBuild.Probe outputProbe = atom.getStage(k).getOutputSlot().getProbe();
@@ -419,6 +444,12 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
     }
 
     private void collectCursor(boolean forceCollect) {
+        if (heldEntryFrame > -1) {
+            // The ring's window follows the entries the cursor read.
+            final int entryFrame = heldEntryFrame;
+            heldEntryFrame = -1;
+            atom.getRing().release(entryFrame);
+        }
         if (cursor > -1) {
             frameSequence.collect(cursor, forceCollect);
             cursor = -1;
@@ -430,7 +461,7 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
 
     private void fetchNextFrame() {
         do {
-            cursor = frameSequence.next(dispatchLimit, false);
+            cursor = frameSequence.next(getDispatchLimit(frameIndex + 1), false);
             if (cursor > -1) {
                 final PageFrameReduceTask task = frameSequence.getTask(cursor);
                 if (task.hasError()) {
@@ -442,14 +473,19 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
                 frameIndex = task.getFrameIndex();
                 tupleIndex = 0;
                 tupleCount = task.getFilteredRowCount();
-                if (tupleCount > 0 && frameSequence.isActive()) {
-                    tuples = atom.getRing().getTuples(frameIndex);
-                    probeRecord.init(task.getFrameMemory());
-                    return;
+                if (frameSequence.isActive()) {
+                    // The task of a frame of an active sequence ran, and wrote the frame's entry.
+                    heldEntryFrame = frameIndex;
+                    // A task stops at its cap of tuples only once it wrote some, but the capped
+                    // task of a LIMIT's first window may leave the rest of its frame to a
+                    // continuation without any.
+                    if (tupleCount > 0 || atom.getRing().getResumePosition(frameIndex) > -1) {
+                        tuples = atom.getRing().getTuples(frameIndex);
+                        probeRecord.init(task.getFrameMemory());
+                        return;
+                    }
                 }
-                // A cancelled or failed sequence's frames hold nothing to read. A task stops at its
-                // cap only once it wrote tuples, so a frame without any left nothing to continue.
-                assert tupleCount > 0 || !frameSequence.isActive() || atom.getRing().getResumePosition(frameIndex) < 0;
+                // A cancelled or failed sequence's frames hold nothing to read.
                 tupleCount = 0;
                 collectCursor(false);
             } else {
@@ -460,6 +496,38 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
                 Os.pause();
             }
         } while (frameIndex < frameLimit);
+    }
+
+    /**
+     * Picks the first window of an execution under a LIMIT: the leading frames whose rows reach the
+     * LIMIT, if they fit the ring's window, and caps the task of the last of them at the rows that
+     * the LIMIT still needs after the frames before it. The cursor dispatches no later frame until
+     * it has read that one; see {@link #getDispatchLimit(int)}. The frames' rows stand for the
+     * rows a frame yields, though a probe filter keeps fewer and an INNER join may drop some: a
+     * LIMIT that they do not meet reads on, through the capped frame's continuation, into the full
+     * window.
+     */
+    private void firstWindow(int window) {
+        firstWindowEnd = -1;
+        if (limitRows != Long.MAX_VALUE) {
+            long rows = 0;
+            for (int f = 0, n = Math.min(window, frameSequence.getFrameCount()); f < n; f++) {
+                final long frameRows = frameSequence.getFrameRowCount(f);
+                if (frameRows >= limitRows - rows) {
+                    firstWindowEnd = f;
+                    atom.setRowCappedFrame(f, limitRows - rows);
+                    return;
+                }
+                rows += frameRows;
+            }
+        }
+    }
+
+    // The dispatch limit of the next() that fetches the given frame: the ring's window, which the
+    // first window under a LIMIT narrows to the frames up to its last one.
+    private int getDispatchLimit(int nextFrameIndex) {
+        final int window = atom.getRing().getDispatchLimit();
+        return nextFrameIndex <= firstWindowEnd ? Math.min(window, firstWindowEnd + 1 - nextFrameIndex) : window;
     }
 
     /**
@@ -542,12 +610,15 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
     void of(
             PageFrameSequence<AsyncHashJoinAtom> frameSequence,
             UnorderedPageFrameSequence<HashJoinBuildRoundAtom> buildRounds,
-            SqlExecutionCircuitBreaker circuitBreaker
+            SqlExecutionCircuitBreaker circuitBreaker,
+            long limitRows
     ) {
         this.frameSequence = frameSequence;
         this.buildRounds = buildRounds;
         this.atom = frameSequence.getAtom();
         this.circuitBreaker = circuitBreaker;
+        this.limitRows = limitRows;
+        this.firstWindowEnd = -1;
         // The build binds the stages' payload readers to the record.
         record.setOrientation(atom.isSwapped());
         probeRecord.of(frameSequence.getSymbolTableSource());

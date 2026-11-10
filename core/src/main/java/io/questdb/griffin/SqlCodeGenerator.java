@@ -8930,6 +8930,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     throw th;
                 }
             }
+            if (master instanceof AsyncHashJoinRecordCursorFactory join) {
+                // The query's LIMIT applies to the parallel hash join's rows, which then joins at
+                // first only the probe rows the LIMIT may need. The LIMIT itself stays above it.
+                join.ofLimit(getLimitLoFunctionOnly(model, executionContext));
+            }
             return master;
         } catch (Throwable e) {
             Misc.free(master, e);

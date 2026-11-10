@@ -67,10 +67,10 @@ final class HashJoinStageStepperTemplate extends HashJoinStageStepper {
     }
 
     @Override
-    long probeRows(AsyncHashJoinAtom.Slot slot, long rowCount, long from, boolean isDescending, long tupleCap) {
+    long probeRows(AsyncHashJoinAtom.Slot slot, long rowCount, long from, long to, boolean isDescending, long tupleCap) {
         final PageFrameMemoryRecord probeRecord = slot.probeRecord;
         final DirectLongList tuples = slot.tuples;
-        for (long i = from; i < rowCount; i++) {
+        for (long i = from; i < to; i++) {
             final long row = isDescending ? rowCount - 1 - i : i;
             probeRecord.setRowIndex(row);
             slot.probeRow = row;
@@ -81,15 +81,15 @@ final class HashJoinStageStepperTemplate extends HashJoinStageStepper {
                 return i + 1;
             }
         }
-        return rowCount;
+        return to;
     }
 
     @Override
-    long probeRows(AsyncHashJoinAtom.Slot slot, DirectLongList rows, long from, boolean isDescending, long tupleCap) {
+    long probeRows(AsyncHashJoinAtom.Slot slot, DirectLongList rows, long from, long to, boolean isDescending, long tupleCap) {
         final PageFrameMemoryRecord probeRecord = slot.probeRecord;
         final DirectLongList tuples = slot.tuples;
         final long n = rows.size();
-        for (long p = from; p < n; p++) {
+        for (long p = from; p < to; p++) {
             final long row = rows.get(isDescending ? n - 1 - p : p);
             probeRecord.setRowIndex(row);
             slot.probeRow = row;
@@ -100,7 +100,7 @@ final class HashJoinStageStepperTemplate extends HashJoinStageStepper {
                 return p + 1;
             }
         }
-        return n;
+        return to;
     }
 
     @Override

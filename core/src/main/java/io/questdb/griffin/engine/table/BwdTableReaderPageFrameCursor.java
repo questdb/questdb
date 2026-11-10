@@ -73,6 +73,9 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     private int highestOpenPartitionIndex = -1;
     private int pageFrameMaxRows;
     private int pageFrameMinRows;
+    // The cap a consumer set on the native frames' rows since the cursor opened; see
+    // setPageFrameMaxRows().
+    private long pageFrameRowCap = Long.MAX_VALUE;
     private PartitionFrameCursor partitionFrameCursor;
     private TableReader reader;
     private long reenterPageFrameRowLimit;
@@ -224,6 +227,7 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         TablePageFrameCursor.buildColumnMapping(columnMapping, columnIndexes, reader.getMetadata());
         this.pageFrameMinRows = executionContext.getPageFrameMinRows();
         this.pageFrameMaxRows = executionContext.getPageFrameMaxRows();
+        this.pageFrameRowCap = Long.MAX_VALUE;
         if (pushdownFilterConditions != null) {
             for (int i = 0, n = pushdownFilterConditions.size(); i < n; i++) {
                 pushdownFilterConditions.getQuick(i).init(executionContext);
@@ -246,6 +250,12 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
             reader.closePartitionByIndex(i);
         }
         highestOpenPartitionIndex = reenterPartitionIndex;
+    }
+
+    @Override
+    public void setPageFrameMaxRows(long maxRows) {
+        assert maxRows > 0;
+        pageFrameRowCap = maxRows;
     }
 
     @Override
@@ -571,7 +581,7 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
 
         assert format == PartitionFormat.NATIVE;
         reenterParquetDecoder = null;
-        reenterPageFrameRowLimit = NativeFrameBoundaries.calculatePageFrameRowLimit(lo, hi, pageFrameMinRows, pageFrameMaxRows, sharedQueryWorkerCount);
+        reenterPageFrameRowLimit = NativeFrameBoundaries.calculatePageFrameRowLimit(lo, hi, pageFrameMinRows, pageFrameMaxRows, sharedQueryWorkerCount, pageFrameRowCap);
         return computeNativeFrame(lo, hi, skipTarget);
     }
 

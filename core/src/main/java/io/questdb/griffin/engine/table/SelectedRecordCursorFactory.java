@@ -639,6 +639,11 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
+        public void setPageFrameMaxRows(long maxRows) {
+            baseCursor.setPageFrameMaxRows(maxRows);
+        }
+
+        @Override
         public void setScanProfile(ReaderScanProfile profile) {
             baseCursor.setScanProfile(profile);
         }

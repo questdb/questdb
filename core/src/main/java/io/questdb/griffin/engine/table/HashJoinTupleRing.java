@@ -50,7 +50,8 @@ import io.questdb.std.QuietCloseable;
  * </pre>
  * with {@code N} stages, and the ring budget, {@code cairo.sql.parallel.hash.join.tuple.ring.max.size},
  * capped at a quarter of a configured per-query memory limit. The task of frame {@code f} writes
- * entry {@code f % R}. That is safe because {@link PageFrameSequence#next(int, boolean)} keeps the
+ * entry {@code f % R}, or, with a dynamic window, see below, {@code f} modulo the entry count. That
+ * is safe because {@link PageFrameSequence#next(int, boolean)} keeps the
  * frames it dispatched and the owner has not collected, the frame the owner reads included, to a
  * contiguous window of at most the dispatch limit it receives, and reduces a frame locally only
  * when that window is empty. The owner therefore passes {@code R}, or less, to every
@@ -68,6 +69,19 @@ import io.questdb.std.QuietCloseable;
  * Each entry also keeps its frame's resume position, -1 when the task joined every row of the
  * frame, and its kept-row count, -1 when the frame had no probe filter, so that a continuation
  * walks row indexes instead of the task's filtered rows.
+ * <p>
+ * {@code R} sizes the ring for the worst case, every probe row of the largest frame surviving into
+ * one tuple, so a selective probe filter or INNER joins that most rows miss would hold the window
+ * at {@code R} for memory that the entries never take. A ring bound with a dynamic window, see
+ * {@link #of(PageFrameSequence, boolean)}, instead keeps {@code min(dispatch limit, queue capacity)}
+ * entries, which take no memory until a task writes them, and moves its window, the limit that
+ * {@link #getDispatchLimit()} returns, as the owner reads frames, see {@link #release(int)}: it starts
+ * at {@code R}, and each frame read makes it {@code ringBudget / the largest entry read so far},
+ * within one and the entry count. Passing a smaller limit to a later {@code next()} is safe, and so
+ * is a larger one up to the entry count, since frames in flight then still take distinct entries.
+ * While the window holds fewer frames than the ring has entries, an entry larger than its share of
+ * the budget gives its memory back once the owner has read it, so that the entries that the frames
+ * in flight do not hold keep no more than their shares, after frames that needed more too.
  */
 public class HashJoinTupleRing implements Mutable, QuietCloseable {
     private static final int NO_FRAME = -1;
@@ -80,7 +94,14 @@ public class HashJoinTupleRing implements Mutable, QuietCloseable {
     private final LongList resumePositions = new LongList();
     private final long ringMaxSize;
     private final int tupleStride;
+    // The window: the dispatch limit the owner passes to next(); 0 while the ring is not bound.
     private int dispatchLimit;
+    // The entries the frames map to, frame f to entry f % entryCount; 0 while the ring is not bound.
+    private int entryCount;
+    // The largest entry, in bytes, that the owner has read since the ring was bound, 0 before.
+    private long largestEntryBytes;
+    // The bytes the entries may take, see computeRingBudget().
+    private long ringBudget;
 
     /**
      * @param stageCount the joins the operator runs, so that a tuple is a probe row and one entry
@@ -127,6 +148,17 @@ public class HashJoinTupleRing implements Mutable, QuietCloseable {
     }
 
     /**
+     * The entries of a ring with a dynamic window: as many as the frames that the window may ever
+     * hold, {@code max(1, min(dispatchLimit, queueCapacity))}.
+     *
+     * @param dispatchLimit {@code cairo.sql.parallel.filter.dispatch.limit}
+     * @param queueCapacity the capacity of the reduce queue, which caps the window anyway
+     */
+    public static int computeEntryCount(int dispatchLimit, int queueCapacity) {
+        return Math.max(1, Math.min(dispatchLimit, queueCapacity));
+    }
+
+    /**
      * The ring budget of an execution: {@code ringMaxSize}, capped at a quarter of the per-query
      * memory limit when one is configured, so that the ring rarely decides whether a query that
      * the serial plan runs fits.
@@ -153,6 +185,9 @@ public class HashJoinTupleRing implements Mutable, QuietCloseable {
         keptRowCounts.clear();
         resumePositions.clear();
         dispatchLimit = 0;
+        entryCount = 0;
+        largestEntryBytes = 0;
+        ringBudget = 0;
     }
 
     @Override
@@ -173,11 +208,22 @@ public class HashJoinTupleRing implements Mutable, QuietCloseable {
     }
 
     /**
-     * The execution's effective dispatch limit {@code R}, which the owner passes to every
-     * {@code next()} that dispatches tuple-producing tasks; 0 while the ring is not bound.
+     * The execution's effective dispatch limit, the window, which the owner passes to every
+     * {@code next()} that dispatches tuple-producing tasks: {@code R} when the ring is bound, and,
+     * with a dynamic window, what the frames the owner read since make of it, see
+     * {@link #release(int)}; 0 while the ring is not bound.
      */
     public int getDispatchLimit() {
         return dispatchLimit;
+    }
+
+    /**
+     * The entries that the frames map to: {@code R} for a ring bound with a fixed window, and
+     * {@link #computeEntryCount(int, int)} for one bound with a dynamic window; 0 while the ring is
+     * not bound.
+     */
+    public int getEntryCount() {
+        return entryCount;
     }
 
     /**
@@ -209,11 +255,22 @@ public class HashJoinTupleRing implements Mutable, QuietCloseable {
     }
 
     /**
-     * Binds the ring to an execution of the probe sequence and sizes it: the sequence has counted
-     * its frames, in {@link PageFrameSequence#prepareForDispatch()}, and dispatched none. The
-     * entries charge their memory to the sequence's memory tracker.
+     * Binds the ring to an execution of the probe sequence with a fixed window of {@code R}
+     * entries, see {@link #of(PageFrameSequence, boolean)}.
      */
     public void of(PageFrameSequence<?> probeSequence) {
+        of(probeSequence, false);
+    }
+
+    /**
+     * Binds the ring to an execution of the probe sequence and sizes it: the sequence has counted
+     * its frames, in {@link PageFrameSequence#prepareForDispatch()}, and dispatched none. The
+     * entries charge their memory to the sequence's memory tracker. The window starts at
+     * {@code R}. With a fixed window the ring keeps {@code R} entries, and the window never grows;
+     * with a dynamic one it keeps {@link #computeEntryCount(int, int)} entries, and the frames the
+     * owner reads move the window within them, see {@link #release(int)}.
+     */
+    public void of(PageFrameSequence<?> probeSequence, boolean isWindowDynamic) {
         assert dispatchLimit == 0 : "clear() the ring before binding it to another execution";
         long maxFrameRows = 0;
         for (int i = 0, n = probeSequence.getFrameCount(); i < n; i++) {
@@ -222,33 +279,69 @@ public class HashJoinTupleRing implements Mutable, QuietCloseable {
         final MemoryTracker memoryTracker = probeSequence.getMemoryTracker();
         final long ringBudget = computeRingBudget(ringMaxSize, memoryTracker != null ? memoryTracker.getLimit() : 0);
         final int dispatchLimit = computeDispatchLimit(configuredDispatchLimit, queueCapacity, ringBudget, maxFrameRows, tupleStride);
-        for (int i = entries.size(); i < dispatchLimit; i++) {
+        // The window's bound, R, never exceeds the dispatch limit and the queue capacity.
+        final int entryCount = isWindowDynamic ? computeEntryCount(configuredDispatchLimit, queueCapacity) : dispatchLimit;
+        assert entryCount >= dispatchLimit;
+        for (int i = entries.size(); i < entryCount; i++) {
             // Keep the list closed: its memory is allocated by the first task that writes it.
             entries.add(new DirectLongList(tupleStride, MemoryTag.NATIVE_JOIN_MAP, true));
         }
-        for (int i = 0; i < dispatchLimit; i++) {
+        for (int i = 0; i < entryCount; i++) {
             entries.getQuick(i).setMemoryTracker(memoryTracker);
         }
-        entryFrameIndexes.setAll(dispatchLimit, NO_FRAME);
-        keptRowCounts.setAll(dispatchLimit, -1);
-        resumePositions.setAll(dispatchLimit, -1);
+        entryFrameIndexes.setAll(entryCount, NO_FRAME);
+        keptRowCounts.setAll(entryCount, -1);
+        resumePositions.setAll(entryCount, -1);
+        this.ringBudget = ringBudget;
+        this.entryCount = entryCount;
+        this.largestEntryBytes = 0;
         this.dispatchLimit = dispatchLimit;
     }
 
     /**
      * Hands the frame's entry, emptied, to the task that joins the frame, or to the owner for a
      * continuation chunk, with room for at least {@code tupleCapacity} tuples (at least one), so
-     * that {@link DirectLongList#add(long)} grows it from there. The first open of an entry in an
-     * execution allocates its memory on the calling thread. A breach of the per-query memory limit
+     * that {@link DirectLongList#add(long)} grows it from there. An entry with less room, the first
+     * open of an entry in an execution among them, gives its memory back and takes exactly that
+     * room, on the calling thread, with nothing to copy. A breach of the per-query memory limit
      * throws from here, or from a later append, and leaves the entry's memory to {@link #clear()}.
      */
     public DirectLongList openTuples(int frameIndex, long tupleCapacity) {
-        final int entry = frameIndex % dispatchLimit;
+        final int entry = frameIndex % entryCount;
         entryFrameIndexes.setQuick(entry, frameIndex);
         final DirectLongList tuples = entries.getQuick(entry);
         tuples.clear();
-        tuples.ensureCapacity(Math.max(1, tupleCapacity) * tupleStride);
+        final long capacity = Math.max(1, tupleCapacity) * tupleStride;
+        if (tuples.getCapacity() < capacity) {
+            tuples.close();
+        }
+        tuples.ensureCapacity(capacity);
         return tuples;
+    }
+
+    /**
+     * Tells the ring that the owner has read the frame's entry, and will not read it again before
+     * it collects the frame. The entry's memory, which the frame's task and continuation chunks
+     * grew it to, sets the window, if it is the largest the owner has read since the ring was
+     * bound: {@code max(1, min(entry count, ring budget / entry bytes))}. The entry then gives its
+     * memory back if it holds more than its share of the budget, {@code ring budget / entry count},
+     * while the window holds fewer frames than the ring has entries: the frames cycle through every
+     * entry, so the entries that the frames in flight do not hold would otherwise keep, between
+     * them, more than the window leaves of the budget. The next frame that maps to the entry takes
+     * what it needs.
+     * <p>
+     * The owner calls it, for a frame whose task has run, before it collects the frame.
+     */
+    public void release(int frameIndex) {
+        final DirectLongList tuples = entries.getQuick(entryOf(frameIndex));
+        final long entryBytes = tuples.getCapacity() * Long.BYTES;
+        if (entryBytes > largestEntryBytes) {
+            largestEntryBytes = entryBytes;
+            dispatchLimit = (int) Math.max(1, Math.min(entryCount, ringBudget / entryBytes));
+        }
+        if (dispatchLimit < entryCount && entryBytes > ringBudget / entryCount) {
+            tuples.close();
+        }
     }
 
     /**
@@ -262,7 +355,7 @@ public class HashJoinTupleRing implements Mutable, QuietCloseable {
     }
 
     private int entryOf(int frameIndex) {
-        final int entry = frameIndex % dispatchLimit;
+        final int entry = frameIndex % entryCount;
         assert entryFrameIndexes.getQuick(entry) == frameIndex
                 : "frame " + frameIndex + " shares ring entry " + entry + " with frame " + entryFrameIndexes.getQuick(entry);
         return entry;

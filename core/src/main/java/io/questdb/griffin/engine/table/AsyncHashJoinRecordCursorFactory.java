@@ -29,6 +29,7 @@ import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.RecordCursor;
@@ -83,6 +84,10 @@ import java.util.concurrent.atomic.AtomicInteger;
  * them. The joined rows keep their columns, the left input's first. The sizes are those that the
  * inputs' record cursors would report, see {@link HashJoinInput#getSerialSize}, and every execution
  * of a cached factory decides again, from the sizes of its own open scans.
+ * <p>
+ * A query whose LIMIT applies to the join's rows gives the join that LIMIT, see {@link #ofLimit}:
+ * an execution under a positive LIMIT first joins only the probe rows that the LIMIT may need, see
+ * {@link AsyncHashJoinRecordCursor}. The LIMIT itself stays with its own factory over the join.
  */
 public final class AsyncHashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final PageFrameReducer REDUCER = AsyncHashJoinRecordCursorFactory::probeFrame;
@@ -95,6 +100,8 @@ public final class AsyncHashJoinRecordCursorFactory extends AbstractRecordCursor
     private UnorderedPageFrameSequence<HashJoinBuildRoundAtom> buildRounds;
     private AsyncHashJoinRecordCursor cursor;
     private PageFrameSequence<AsyncHashJoinAtom> frameSequence;
+    // The LIMIT of the query over the join, null when it states none.
+    private Function limitLoFunction;
     private AsyncHashJoinSpec spec;
 
     /**
@@ -212,6 +219,7 @@ public final class AsyncHashJoinRecordCursorFactory extends AbstractRecordCursor
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         cursor.close();
         final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
+        final long limitRows = getLimitRows(executionContext);
         cursor.open(frameSequence, buildRounds);
         try {
             // Consult the breaker at open, so a join over empty inputs still observes cancellation.
@@ -237,12 +245,21 @@ public final class AsyncHashJoinRecordCursorFactory extends AbstractRecordCursor
             final PageFrameCursor probeCursor = atom.ofOrientation(isSwapped);
             // The sequence owns the probe scan from here on, whether this returns or throws.
             frameSequence.of(probeCursor, probeInput.getMetadata(), executionContext, collectSubSeq);
-            cursor.of(frameSequence, buildRounds, circuitBreaker);
+            cursor.of(frameSequence, buildRounds, circuitBreaker, limitRows);
             return cursor;
         } catch (Throwable th) {
             Misc.free(cursor, th);
             throw th;
         }
+    }
+
+    /**
+     * The probe frames that the frame sequence handed out, to the workers or to the owner, since the
+     * last execution's cursor opened or went back to the top.
+     */
+    @TestOnly
+    public int getDispatchedFrameCount() {
+        return frameSequence.getDispatchedFrameCount();
     }
 
     /**
@@ -296,7 +313,23 @@ public final class AsyncHashJoinRecordCursorFactory extends AbstractRecordCursor
         frameSequence = null;
         failure = Misc.freeBestEffort(failure, buildRounds);
         buildRounds = null;
+        // The LIMIT belongs to this join's rows, not to the spec's.
+        failure = Misc.freeBestEffort(failure, limitLoFunction);
+        limitLoFunction = null;
         CairoException.rethrowCleanupFailure(failure);
+    }
+
+    /**
+     * Takes the LIMIT of the query over the join, which the factory then owns, as
+     * {@code AsyncFilteredRecordCursorFactory} takes the LIMIT of a query over its filter: the
+     * planner hands it over once the join is final, when the LIMIT applies to the join's rows. Each
+     * execution reads it once; a positive LIMIT narrows the execution's first window, see
+     * {@link AsyncHashJoinRecordCursor}, and any other leaves the execution as it is. The LIMIT
+     * itself stays with its own factory, so the join returns its rows whatever the LIMIT reads.
+     */
+    public void ofLimit(@Nullable Function limitLoFunction) {
+        assert this.limitLoFunction == null;
+        this.limitLoFunction = limitLoFunction;
     }
 
     @Override
@@ -412,6 +445,17 @@ public final class AsyncHashJoinRecordCursorFactory extends AbstractRecordCursor
         }
     }
 
+    // The rows of the query's LIMIT for an execution, Long.MAX_VALUE without a positive one: a NULL,
+    // zero or negative LIMIT leaves the execution as it is.
+    private long getLimitRows(SqlExecutionContext executionContext) throws SqlException {
+        if (limitLoFunction == null) {
+            return Long.MAX_VALUE;
+        }
+        limitLoFunction.init(null, executionContext);
+        final long limitRows = limitLoFunction.getLong(null);
+        return limitRows > 0 ? limitRows : Long.MAX_VALUE;
+    }
+
     @Override
     protected void _close() {
         Throwable failure = Misc.freeBestEffort(null, cursor);
@@ -420,6 +464,8 @@ public final class AsyncHashJoinRecordCursorFactory extends AbstractRecordCursor
         frameSequence = null;
         failure = Misc.freeBestEffort(failure, buildRounds);
         buildRounds = null;
+        failure = Misc.freeBestEffort(failure, limitLoFunction);
+        limitLoFunction = null;
         // The atoms borrowed the spec's inputs, which go last.
         failure = Misc.freeBestEffort(failure, spec);
         spec = null;
