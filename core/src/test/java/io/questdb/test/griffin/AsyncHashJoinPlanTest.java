@@ -220,12 +220,14 @@ public class AsyncHashJoinPlanTest extends AbstractCairoTest {
         // sort fixes it, so that the two executions that assertOrdinaryPlan() compares agree.
         assertOrdinaryPlan("SELECT t2.k, d.w FROM (SELECT k, max(v) v FROM t ORDER BY k) t2 LEFT JOIN d ON t2.k = d.k", sqlExecutionContext);
         assertOrdinaryPlan("SELECT t2.k, d.w FROM (SELECT * FROM t WHERE v > 2 LIMIT 5) t2 LEFT JOIN d ON t2.k = d.k", sqlExecutionContext);
-        // The second join of a query, whose left input is a join.
-        assertQuery("SELECT t.k, d.w, d2.w FROM t LEFT JOIN d ON t.k = d.k LEFT JOIN d d2 ON t.k = d2.k")
+        // The second join of a query, whose key reads a column of the first join's build input, a
+        // snowflake join, wraps the operator as its master; one whose key reads the left input
+        // becomes a stage of the operator, see AsyncHashJoinStackTest.
+        assertQuery("SELECT t.k, d.w, d2.w FROM t LEFT JOIN d ON t.k = d.k LEFT JOIN d d2 ON d.w = d2.w")
                 .assertsPlan("""
                         SelectedRecord
                             Hash Left Outer Join Light
-                              condition: d2.k=t.k
+                              condition: d2.w=d.w
                                 Async Hash Join workers: 1
                                   stages: 1
                                     Probe
@@ -244,7 +246,7 @@ public class AsyncHashJoinPlanTest extends AbstractCairoTest {
                                         Row forward scan
                                         Frame forward scan on: d
                         """);
-        assertParallelHashJoin("SELECT t.k, d.w, d2.w FROM t LEFT JOIN d ON t.k = d.k LEFT JOIN d d2 ON t.k = d2.k", sqlExecutionContext);
+        assertParallelHashJoin("SELECT t.k, d.w, d2.w FROM t LEFT JOIN d ON t.k = d.k LEFT JOIN d d2 ON d.w = d2.w", sqlExecutionContext);
         // A left input without random access cannot swap, so its INNER join takes the operator.
         assertParallelHashJoin("SELECT t.k, d.w FROM '*!*t' t JOIN d ON t.k = d.k", sqlExecutionContext);
     }

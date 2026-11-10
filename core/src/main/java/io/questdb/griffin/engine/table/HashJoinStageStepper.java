@@ -25,11 +25,15 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.std.DirectLongList;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 /**
  * Probes one stage of a parallel hash join for the probe rows of a frame, on the thread that joins
- * the frame, and appends each probe row's joined tuples: the probe row and the stage's entry.
+ * the frame, and hands each of a probe row's matches on to the next stage's stepper, or, at the last
+ * stage, appends the joined tuple: the probe row and every stage's entry. The stages thus run nested,
+ * the first one outermost, as the serial joins of a stack nest, so a probe row's tuples come in the
+ * serial plan's order, lexicographic in stage order.
  * <p>
  * A stage's lookup calls classes that each query compiles for itself or picks per execution: its
  * key sink, its probe of the build, serial or partitioned, its SYMBOL key translation and its
@@ -46,12 +50,14 @@ import org.jetbrains.annotations.TestOnly;
  * <p>
  * A stage whose pairs run a filter, an ON residual or a post-join filter, is enumerated instead: the
  * stepper walks the key's matches itself, runs the filters over each pair of the probe row and a
- * match, and appends a tuple, with the match's locator, for each pair that passes them. A LEFT
- * join's probe row whose pairs all fail the residual, or that has no match, yields one tuple with
- * {@link #NO_MATCH}, if it passes the post-join filter. Its tuples then come in chain order, the
- * order the serial join returns its pairs in, and the consumer walks no chain. The stepper checks
- * the circuit breaker every so many pairs, see {@link AsyncHashJoinAtom.Slot#isInterrupted()}, and
- * unwinds once the execution is cancelled.
+ * match, and hands on each pair that passes them, with the match's locator. A LEFT join's probe row
+ * whose pairs all fail the residual, or that has no match, goes on once with {@link #NO_MATCH}, if it
+ * passes the post-join filter. Its pairs then come in chain order, the order the serial join returns
+ * them in, and the consumer walks no chain. Since a filter may read the columns of every stage before
+ * its own, every stage before the last enumerated one is enumerated too, with its payload reader on
+ * the current match, and only the stages after it hand their chains to the consumer, which expands
+ * them in the same nesting order. The stepper checks the circuit breaker every so many pairs, see
+ * {@link AsyncHashJoinAtom.Slot#isInterrupted()}, and unwinds once the execution is cancelled.
  * <p>
  * The loops over a frame's rows stop at a probe row's boundary once the tuples reach their cap, so
  * that the consumer continues the frame from there; see {@link AsyncHashJoinRecordCursor}.
@@ -65,6 +71,11 @@ abstract class HashJoinStageStepper {
     static final int KEY_SYMBOL = 1;
     // What a loop over a frame's rows returns when the execution was cancelled.
     static final long CANCELLED = -1;
+    // What an enumerated stage makes of a pair: it fails the ON residual, it passes it, or the
+    // execution was cancelled while the later stages joined it.
+    static final int PAIR_CANCELLED = -1;
+    static final int PAIR_FAILED = 0;
+    static final int PAIR_MATCHED = 1;
     // The entry of a LEFT join's probe row that the build has no row for.
     static final long NO_MATCH = -1;
     private static final HiddenClassCopies<HashJoinStageStepper> COPIES = new HiddenClassCopies<>(
@@ -81,6 +92,9 @@ abstract class HashJoinStageStepper {
     // The key source's column that an INT or SYMBOL key reads; -1 for a staged key.
     int keyColumn;
     int keyKind;
+    // The next stage's stepper, which each of this stage's matches goes on to; null for the last
+    // stage, whose matches append their tuples.
+    HashJoinStageStepper next;
 
     /**
      * Returns a stepper whose class no other stage shares, or the shared template when the JVM
@@ -104,14 +118,18 @@ abstract class HashJoinStageStepper {
     }
 
     /**
-     * Binds the stepper to its stage in an operator: what the lookup reads, whether a miss survives
-     * and whether the stepper walks the key's matches itself.
+     * Binds the stepper to its stage in an operator: what the lookup reads, whether a miss survives,
+     * whether the stepper walks the key's matches itself and which stepper the matches go on to.
+     *
+     * @param next the next stage's stepper, null for the last stage
      */
-    final void of(int keyKind, int keyColumn, boolean isOuter, boolean isEnumerated) {
+    final void of(int keyKind, int keyColumn, boolean isOuter, boolean isEnumerated, @Nullable HashJoinStageStepper next) {
+        assert next == null || next != this;
         this.keyKind = keyKind;
         this.keyColumn = keyColumn;
         this.isOuter = isOuter;
         this.isEnumerated = isEnumerated;
+        this.next = next;
     }
 
     /**
@@ -140,8 +158,9 @@ abstract class HashJoinStageStepper {
     abstract long probeRows(AsyncHashJoinAtom.Slot slot, DirectLongList rows, long from, boolean isDescending, long tupleCap);
 
     /**
-     * Probes this stage for the slot's current probe row and appends the row's tuples to the slot's
-     * tuples. An INNER join's miss drops the row.
+     * Probes this stage for the slot's current probe row, hands each match on to the next stage,
+     * and appends the tuples that come out of the last one to the slot's tuples. An INNER join's
+     * miss drops the row.
      *
      * @return false when the execution was cancelled, which unwinds the frame's loop
      */

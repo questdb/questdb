@@ -31,6 +31,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * A parallel hash join as the planner compiled it: the left input, which the join streams, its
@@ -48,9 +49,22 @@ import io.questdb.std.QuietCloseable;
  * holds the joined rows' column map in that orientation too, and records whether a parent fixed the
  * order, which rules the swap out; see {@link #markOrderDetermined(boolean)}.
  * <p>
- * The spec owns the inputs, the stages and the metadata.
+ * A later join of the query whose keys read the left input's columns alone, a star join, joins the
+ * rows of the joins before it, which no page frame holds: the planner absorbs it into the same
+ * operator instead, as a stage of its own; see {@link #addStage(HashJoinStageSpec, RecordMetadata)}.
+ * The spec goes on from one factory to the next as the planner absorbs the joins, with the stages
+ * and their steppers, and with the answers recorded so far, so a parent's question asked of an
+ * earlier factory still holds for the last one.
+ * <p>
+ * The spec owns the inputs, the stages and the metadata, every join's: a stage's filters compiled
+ * against the metadata of its own join and print with it.
  */
 public final class AsyncHashJoinSpec implements QuietCloseable {
+    /**
+     * The joins that one operator runs at most; a later join past them wraps the operator as the
+     * master of an ordinary join.
+     */
+    public static final int MAX_STAGE_COUNT = 32;
     // For each column of the joined rows, its column in the record that holds it: a frame column of
     // the left input, or a payload column of a stage.
     private final IntList columnIndexes = new IntList();
@@ -69,6 +83,8 @@ public final class AsyncHashJoinSpec implements QuietCloseable {
     private final boolean isSwapCandidate;
     private final HashJoinInput leftInput;
     private final int leftScanDirection;
+    // The joined rows' metadata of each join before the last, which that join's stage borrows.
+    private final ObjList<RecordMetadata> previousMetadata = new ObjList<>();
     private final ObjList<HashJoinStageSpec> stages = new ObjList<>();
     // True once a parent asked the join about its order and the answer constrained it.
     private boolean isOrderDetermined;
@@ -125,12 +141,43 @@ public final class AsyncHashJoinSpec implements QuietCloseable {
         assert columnSources.size() == metadata.getColumnCount();
     }
 
+    /**
+     * Appends the stage of a later join, which the operator then runs after the stages before it, a
+     * star join whose keys read the left input's columns alone, and takes over the stage and the
+     * metadata of the rows that join produces: the metadata so far, followed by the stage's build
+     * columns. The metadata so far stays with the spec, for the earlier stages, which borrow it.
+     * Only a spec whose first join never swaps its inputs, and that holds fewer than
+     * {@link #MAX_STAGE_COUNT} stages, takes another.
+     *
+     * @param stage    the later join
+     * @param metadata the joined rows' metadata of the later join
+     */
+    public void addStage(HashJoinStageSpec stage, RecordMetadata metadata) {
+        assert !isSwapCandidate : "a join that may swap its inputs takes no later join";
+        assert stages.size() < MAX_STAGE_COUNT;
+        assert stage.getSwapKeyLayout() == null;
+        assert metadata.getColumnCount() == columnSources.size() + stage.getPayloadColumns().size();
+        previousMetadata.add(this.metadata);
+        this.metadata = metadata;
+        stages.add(stage);
+        // The stage's payload reader reads its payload columns by their payload index.
+        final int source = stages.size();
+        for (int c = 0, n = stage.getPayloadColumns().size(); c < n; c++) {
+            columnSources.add(source);
+            columnIndexes.add(c);
+        }
+    }
+
     @Override
     public void close() {
         Throwable failure = Misc.freeObjListBestEffort(null, stages);
         failure = Misc.freeBestEffort(failure, leftInput);
         failure = Misc.freeIfCloseableBestEffort(failure, metadata);
         metadata = null;
+        for (int i = 0, n = previousMetadata.size(); i < n; i++) {
+            failure = Misc.freeIfCloseableBestEffort(failure, previousMetadata.getQuick(i));
+        }
+        previousMetadata.clear();
         CairoException.rethrowCleanupFailure(failure);
     }
 
@@ -203,6 +250,15 @@ public final class AsyncHashJoinSpec implements QuietCloseable {
     }
 
     /**
+     * True once a parent asked the join, through any of the factories that held the spec, about its
+     * order, and the answer constrained it; see {@link #markOrderDetermined(boolean)}.
+     */
+    @TestOnly
+    public boolean isOrderDetermined() {
+        return isOrderDetermined;
+    }
+
+    /**
      * True when the first join may swap its inputs, as the serial hash join swaps them: an INNER join
      * whose left input offers random access, over two unfiltered table scans that report their
      * sizes, possibly under projections, whose keys the planner compiled in both orientations.
@@ -222,6 +278,15 @@ public final class AsyncHashJoinSpec implements QuietCloseable {
         this.isOrderDetermined |= isDetermined;
         // The first stage's plan names the swap while it is possible.
         stages.getQuick(0).setInputSwapPossible(isInputSwapPossible());
+    }
+
+    /**
+     * Lets go of the joined rows' metadata of the last join without freeing it, for a planner whose
+     * absorption of that join failed after {@link #addStage(HashJoinStageSpec, RecordMetadata)}: the
+     * planner frees that metadata itself, and then the spec, with the rest.
+     */
+    public void releaseMetadata() {
+        metadata = null;
     }
 
     /**

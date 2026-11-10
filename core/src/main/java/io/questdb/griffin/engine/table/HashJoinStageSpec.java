@@ -50,7 +50,10 @@ import org.jetbrains.annotations.Nullable;
  * a copy of their own on every worker when they are not thread safe. A probe row of a LEFT join
  * whose pairs all fail the residual yields one row with NULL build columns, as the serial join's,
  * and the post-join filter runs over that row too. A stage with either filter walks its matches on
- * the workers; see {@link HashJoinStageStepper}.
+ * the workers, and so does every stage before it, whose columns the filters may read; see
+ * {@link HashJoinStageStepper}. The filters of a later join of a stack compiled against that join's
+ * metadata, whose leading columns are those of the stages before it, as the operator's joined row
+ * lists them.
  * <p>
  * The first join of a parallel hash join may swap its inputs at execution, as the serial hash join
  * does, see {@link AsyncHashJoinSpec#isSwapCandidate()}: it then hashes its left input and streams

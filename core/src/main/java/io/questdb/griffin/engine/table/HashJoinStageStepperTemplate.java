@@ -98,14 +98,25 @@ final class HashJoinStageStepperTemplate extends HashJoinStageStepper {
         }
         if (entry != NO_MATCH || isOuter) {
             slot.entries[stage] = entry;
-            slot.appendTuple();
+            return emit(slot, stage);
         }
         return true;
     }
 
-    // Walks the key's matches in chain order and appends a tuple for each pair that passes the
-    // stage's filters, and, for a LEFT join's probe row whose pairs all fail the ON residual or that
-    // has no match, one tuple without a match, if that row passes the post-join filter.
+    // Hands the probe row, with this stage's current entry, on to the next stage, or, at the last
+    // stage, appends its tuple. Returns false when the execution was cancelled.
+    private boolean emit(AsyncHashJoinAtom.Slot slot, int stage) {
+        final HashJoinStageStepper next = this.next;
+        if (next == null) {
+            slot.appendTuple();
+            return true;
+        }
+        return next.step(slot, stage + 1);
+    }
+
+    // Walks the key's matches in chain order and hands on each pair that passes the stage's filters,
+    // and, for a LEFT join's probe row whose pairs all fail the ON residual or that has no match, the
+    // row without a match, if it passes the post-join filter.
     private boolean enumerate(AsyncHashJoinAtom.Slot slot, int stage, AsyncHashJoinAtom.StageProbe s) {
         boolean isMatched = false;
         if (s.isBuildUnique) {
@@ -114,7 +125,11 @@ final class HashJoinStageStepperTemplate extends HashJoinStageStepper {
                 if (isInterrupted(slot)) {
                     return false;
                 }
-                isMatched = joinPair(slot, stage, s);
+                final int pair = joinPair(slot, stage, s);
+                if (pair == PAIR_CANCELLED) {
+                    return false;
+                }
+                isMatched = pair == PAIR_MATCHED;
             }
         } else {
             final FrozenHashJoinBuild.Probe probe = find(s);
@@ -123,15 +138,19 @@ final class HashJoinStageStepperTemplate extends HashJoinStageStepper {
                     return false;
                 }
                 probe.next();
-                isMatched |= joinPair(slot, stage, s);
+                final int pair = joinPair(slot, stage, s);
+                if (pair == PAIR_CANCELLED) {
+                    return false;
+                }
+                isMatched |= pair == PAIR_MATCHED;
             }
         }
         if (!isMatched && isOuter) {
             slot.entries[stage] = NO_MATCH;
             slot.record.setHasMatch(stage, false);
             final Function postFilter = s.postFilter;
-            if (postFilter == null || postFilter.getBool(slot.record)) {
-                slot.appendTuple();
+            if ((postFilter == null || postFilter.getBool(slot.record)) && !emit(slot, stage)) {
+                return false;
             }
         }
         return true;
@@ -164,20 +183,21 @@ final class HashJoinStageStepperTemplate extends HashJoinStageStepper {
     }
 
     // Runs the stage's filters over the pair of the probe row and the match the payload reader is
-    // positioned on, and appends the pair's tuple if it passes both. Returns whether the pair passed
-    // the ON residual, which makes the probe row matched whether or not it passes the post-join
-    // filter.
-    private boolean joinPair(AsyncHashJoinAtom.Slot slot, int stage, AsyncHashJoinAtom.StageProbe s) {
+    // positioned on, and hands the pair on if it passes both. Returns PAIR_MATCHED when the pair
+    // passed the ON residual, which makes the probe row matched whether or not it passes the
+    // post-join filter, PAIR_FAILED when it did not, and PAIR_CANCELLED when the execution was
+    // cancelled while the later stages joined the pair.
+    private int joinPair(AsyncHashJoinAtom.Slot slot, int stage, AsyncHashJoinAtom.StageProbe s) {
         slot.entries[stage] = s.reader.locator();
         slot.record.setHasMatch(stage, true);
         final Function onFilter = s.onFilter;
         if (onFilter != null && !onFilter.getBool(slot.record)) {
-            return false;
+            return PAIR_FAILED;
         }
         final Function postFilter = s.postFilter;
-        if (postFilter == null || postFilter.getBool(slot.record)) {
-            slot.appendTuple();
+        if ((postFilter == null || postFilter.getBool(slot.record)) && !emit(slot, stage)) {
+            return PAIR_CANCELLED;
         }
-        return true;
+        return PAIR_MATCHED;
     }
 }

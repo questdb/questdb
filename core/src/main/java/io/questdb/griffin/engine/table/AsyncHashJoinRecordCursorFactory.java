@@ -60,6 +60,11 @@ import java.util.concurrent.atomic.AtomicInteger;
  * order the left input's cursor yields them and each probe row's matches come newest first, in the
  * order the build input's cursor yields them, as the serial join's chains list them.
  * <p>
+ * The later joins of a star query, whose keys read the left input's columns alone, run as later
+ * stages of the same operator, see {@link AsyncHashJoinSpec#addStage}: a probe task joins each of a
+ * probe row's matches of one stage with the next stage, so the rows come in the order of the serial
+ * joins' nested loops, and every stage builds, in stage order, before the first probe task runs.
+ * <p>
  * The factory owns the join's spec, see {@link AsyncHashJoinSpec}: the inputs, their filter
  * contexts, the stages and the joined rows' metadata. It answers the order questions a parent asks a
  * join, {@link #followedOrderByAdvice()} and {@link #getScanDirection()}, as its left input as
@@ -232,9 +237,9 @@ public final class AsyncHashJoinRecordCursorFactory extends AbstractRecordCursor
     }
 
     /**
-     * The join's spec, which the factory owns.
+     * The join's spec, which the factory owns; the planner reads it to decide whether a later join
+     * can become a stage of this one.
      */
-    @TestOnly
     public AsyncHashJoinSpec getSpec() {
         return spec;
     }
@@ -251,7 +256,7 @@ public final class AsyncHashJoinRecordCursorFactory extends AbstractRecordCursor
     /**
      * Frees what the factory's executions use, its cursor, its frame sequences and their atoms, and
      * keeps the spec, which a caller took with {@link #stealSpec()} to build another join from:
-     * one that absorbs a post-join filter into its last stage.
+     * one that absorbs a post-join filter into its last stage, or a later join as a stage of its own.
      */
     @Override
     public void halfClose() {
@@ -331,7 +336,7 @@ public final class AsyncHashJoinRecordCursorFactory extends AbstractRecordCursor
     /**
      * Makes the constructor throw this failure, as {@link #setConstructorFailureForTesting(RuntimeException)}
      * does, from the construction after the given number of constructions on: a join that absorbs a
-     * post-join filter is constructed twice.
+     * post-join filter, or a later join, is constructed once more for each.
      */
     @TestOnly
     public static void setConstructorFailureForTesting(@Nullable RuntimeException failure, int constructionsBeforeFailure) {

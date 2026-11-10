@@ -29,26 +29,27 @@ import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.cairo.sql.async.UnorderedPageFrameSequence;
 import io.questdb.griffin.engine.join.FrozenHashJoinBuild;
 import io.questdb.griffin.engine.join.HashJoinPayloadSource;
 import io.questdb.std.DirectLongList;
-import io.questdb.std.IntList;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 
 /**
  * The consumer of a parallel hash join: it builds the stages on first demand for a row, dispatches
  * the probe frames' tasks through the ordered frame sequence and reads the joined tuples that each
  * task wrote, frame by frame, in the order of the probe scan. A tuple names its probe row by its
- * index in the frame, which the consumer reads through the task's frame memory, and its stage's
+ * index in the frame, which the consumer reads through the task's frame memory, and each stage's
  * match by an entry: a locator, which positions the stage's output payload reader at the matched
  * build row, a LEFT join's miss, which reads the stage's columns as typed NULLs, or the head of a
  * chain of several matches, which the consumer walks itself, in chain order, with the stage's
- * output probe; see {@link HashJoinStageStepper}. The consumer hashes nothing and evaluates no key.
+ * output probe; see {@link HashJoinStageStepper}. A tuple with several such chains yields every
+ * combination of their matches, odometer-style, the last stage's chain fastest, which is the order
+ * of the serial joins' nested loops. The consumer hashes nothing and evaluates no key.
  * <p>
  * A task that reached its cap of tuples left the rest of its frame to the consumer, which, once it
  * has read the task's tuples, joins the frame's next chunk itself, on the owner's slot, and reads
@@ -67,19 +68,22 @@ import io.questdb.std.Os;
  * hold it.
  */
 class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
-    // The columns of the left input, which come first in the joined row.
-    private final int columnSplit;
-    // For each column of the left input, the probe frame column that holds it.
-    private final IntList leftColumnMap;
-    // For each payload column of the first stage, the build frame column that holds it.
-    private final IntList payloadColumns;
+    // The chain heads of the current tuple's stages that left their chains to the consumer, in
+    // stage order, as many as chainStageCount.
+    private final long[] chainHeads;
+    // The stages of those chains, ascending.
+    private final int[] chainStages;
+    // Each stage's output probe, which walks its chains, and the payload reader it positions.
+    private final ObjList<FrozenHashJoinBuild.Probe> outputProbes = new ObjList<>();
+    private final ObjList<HashJoinPayloadSource.Reader> outputReaders = new ObjList<>();
     private final PageFrameMemoryRecord probeRecord = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
     private final MultiHashJoinRecord record;
+    private final int stageCount;
     private boolean allFramesActive;
     private AsyncHashJoinAtom atom;
     private UnorderedPageFrameSequence<HashJoinBuildRoundAtom> buildRounds;
-    // The output probe while the cursor walks a chain of matches; null otherwise.
-    private FrozenHashJoinBuild.Probe chainProbe;
+    // The chains the cursor walks for the current tuple; 0 when it walks none.
+    private int chainStageCount;
     private SqlExecutionCircuitBreaker circuitBreaker;
     // The current frame's task, -1 when the cursor holds none.
     private long cursor = -1;
@@ -90,21 +94,17 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
     private PageFrameSequence<AsyncHashJoinAtom> frameSequence;
     private boolean isBuilt;
     private boolean isOpen;
-    // True when the execution hashes the left input and streams the right one.
-    private boolean isSwapped;
-    // The first stage's output probe and the payload reader it positions.
-    private FrozenHashJoinBuild.Probe outputProbe;
-    private HashJoinPayloadSource.Reader outputReader;
     private long tupleCount;
     private long tupleIndex;
     private int tupleStride;
     private DirectLongList tuples;
 
     AsyncHashJoinRecordCursor(AsyncHashJoinSpec spec) {
-        assert spec.getStageCount() == 1;
-        this.leftColumnMap = spec.getLeftInput().getColumnMap();
-        this.columnSplit = leftColumnMap.size();
-        this.payloadColumns = spec.getStage(0).getPayloadColumns();
+        this.stageCount = spec.getStageCount();
+        this.chainHeads = new long[stageCount];
+        this.chainStages = new int[stageCount];
+        outputProbes.setPos(stageCount);
+        outputReaders.setPos(stageCount);
         // A LEFT join's miss reads the payload columns as typed NULLs, by their payload index.
         this.record = spec.newJoinedRecord();
         record.setProbeRecord(probeRecord);
@@ -130,9 +130,9 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
                 } finally {
                     buildRounds.reset();
                     probeRecord.of(null);
-                    chainProbe = null;
-                    outputProbe = null;
-                    outputReader = null;
+                    chainStageCount = 0;
+                    outputProbes.setAll(stageCount, null);
+                    outputReaders.setAll(stageCount, null);
                     tuples = null;
                     circuitBreaker = null;
                 }
@@ -145,9 +145,13 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
         return record;
     }
 
+    /**
+     * Resolves through the open scan whose frames hold the column in the execution's orientation:
+     * the probe scan, or the build scan of the stage that reads it.
+     */
     @Override
     public SymbolTable getSymbolTable(int columnIndex) {
-        return getScan(columnIndex).getSymbolTable(getFrameColumn(columnIndex));
+        return atom.getJoinedSymbols().getSymbolTable(columnIndex);
     }
 
     @Override
@@ -155,13 +159,9 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
         if (!isBuilt) {
             build();
         }
-        if (chainProbe != null) {
-            if (chainProbe.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
-                chainProbe.next();
-                return true;
-            }
-            chainProbe = null;
+        if (chainStageCount > 0 && nextChainMatch()) {
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+            return true;
         }
         while (true) {
             if (tupleIndex < tupleCount) {
@@ -190,7 +190,7 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
 
     @Override
     public SymbolTable newSymbolTable(int columnIndex) {
-        return getScan(columnIndex).newSymbolTable(getFrameColumn(columnIndex));
+        return atom.getJoinedSymbols().newSymbolTable(columnIndex);
     }
 
     @Override
@@ -230,9 +230,13 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
                 ring.of(frameSequence);
                 dispatchLimit = ring.getDispatchLimit();
                 tupleStride = ring.getTupleStride();
-                outputProbe = atom.getStage(0).getOutputSlot().getProbe();
-                outputReader = (HashJoinPayloadSource.Reader) outputProbe.getRecord();
-                record.setStageRecord(0, outputReader);
+                for (int k = 0; k < stageCount; k++) {
+                    final FrozenHashJoinBuild.Probe outputProbe = atom.getStage(k).getOutputSlot().getProbe();
+                    final HashJoinPayloadSource.Reader outputReader = (HashJoinPayloadSource.Reader) outputProbe.getRecord();
+                    outputProbes.setQuick(k, outputProbe);
+                    outputReaders.setQuick(k, outputReader);
+                    record.setStageRecord(k, outputReader);
+                }
             }
             isBuilt = true;
         } catch (Throwable th) {
@@ -310,35 +314,53 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
         } while (frameIndex < frameLimit);
     }
 
-    // The column of the frames that hold the joined row's column: a frame column of the left input,
-    // or of the first stage's build input, whichever role the execution gave either.
-    private int getFrameColumn(int columnIndex) {
-        return columnIndex < columnSplit ? leftColumnMap.getQuick(columnIndex) : payloadColumns.getQuick(columnIndex - columnSplit);
+    /**
+     * Moves the current tuple's chains to their next combination of matches, odometer-style: the
+     * last stage's chain moves on, and once a chain runs out, the chain of the stage before it moves
+     * on and every later chain starts over from its head. Returns false, and walks no chain from then
+     * on, once every combination was read.
+     */
+    private boolean nextChainMatch() {
+        for (int i = chainStageCount - 1; i > -1; i--) {
+            final FrozenHashJoinBuild.Probe probe = outputProbes.getQuick(chainStages[i]);
+            if (probe.hasNext()) {
+                probe.next();
+                for (int j = i + 1; j < chainStageCount; j++) {
+                    final FrozenHashJoinBuild.Probe laterProbe = outputProbes.getQuick(chainStages[j]);
+                    laterProbe.ofChain(chainHeads[j]);
+                    laterProbe.next();
+                }
+                return true;
+            }
+        }
+        chainStageCount = 0;
+        return false;
     }
 
-    // The open scan whose frames hold the joined row's column: the probe scan for the input the
-    // execution streams, the first stage's build scan for the one it hashes.
-    private SymbolTableSource getScan(int columnIndex) {
-        return columnIndex < columnSplit != isSwapped ? frameSequence.getSymbolTableSource() : atom.getStage(0).getBuildSymbols();
-    }
-
-    // Positions the record at the next tuple: the probe row, and the first stage's match.
+    // Positions the record at the next tuple: the probe row, and each stage's match, or the first
+    // match of each chain that a stage left to the consumer.
     private void positionTuple() {
         final long base = tupleIndex++ * tupleStride;
         probeRecord.setRowIndex(tuples.get(base));
-        final long entry = tuples.get(base + 1);
-        if (entry > HashJoinStageStepper.NO_MATCH) {
-            outputReader.positionLocator(entry);
-            record.setHasMatch(0, true);
-        } else if (entry == HashJoinStageStepper.NO_MATCH) {
-            record.setHasMatch(0, false);
-        } else {
-            // A key of several matches: the worker left its chain to the consumer, which walks it
-            // in chain order, the order the serial join returns the matches in.
-            outputProbe.ofChain(HashJoinStageStepper.toChainHead(entry));
-            outputProbe.next();
-            record.setHasMatch(0, true);
-            chainProbe = outputProbe;
+        chainStageCount = 0;
+        for (int k = 0; k < stageCount; k++) {
+            final long entry = tuples.get(base + 1 + k);
+            if (entry > HashJoinStageStepper.NO_MATCH) {
+                outputReaders.getQuick(k).positionLocator(entry);
+                record.setHasMatch(k, true);
+            } else if (entry == HashJoinStageStepper.NO_MATCH) {
+                record.setHasMatch(k, false);
+            } else {
+                // A key of several matches: the worker left its chain to the consumer, which walks it
+                // in chain order, the order the serial join returns the matches in.
+                final long head = HashJoinStageStepper.toChainHead(entry);
+                final FrozenHashJoinBuild.Probe outputProbe = outputProbes.getQuick(k);
+                outputProbe.ofChain(head);
+                outputProbe.next();
+                record.setHasMatch(k, true);
+                chainStages[chainStageCount] = k;
+                chainHeads[chainStageCount++] = head;
+            }
         }
     }
 
@@ -346,7 +368,7 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
         frameIndex = -1;
         tupleIndex = 0;
         tupleCount = 0;
-        chainProbe = null;
+        chainStageCount = 0;
         allFramesActive = true;
     }
 
@@ -363,9 +385,8 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
         this.buildRounds = buildRounds;
         this.atom = frameSequence.getAtom();
         this.circuitBreaker = circuitBreaker;
-        isSwapped = atom.isSwapped();
-        // The build binds the first stage's payload reader to the record.
-        record.setOrientation(isSwapped);
+        // The build binds the stages' payload readers to the record.
+        record.setOrientation(atom.isSwapped());
         probeRecord.of(frameSequence.getSymbolTableSource());
         isBuilt = false;
         frameLimit = -1;

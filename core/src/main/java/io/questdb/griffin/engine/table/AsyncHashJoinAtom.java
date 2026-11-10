@@ -64,12 +64,13 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
  * borrows the inputs, their filter contexts and the stages' steppers from the join's spec.
  * <p>
  * {@link #init(SymbolTableSource, SqlExecutionContext)} runs when the cursor opens and reads no row:
- * the first stage adopts the build scan that the factory opened, see {@link #ofOrientation}, and
- * initializes its filters, and the slots bind to the probe scan. {@link #build} runs once per
- * execution, when the cursor is first asked for a row: every stage builds, on the owner or in rounds
- * of the join's build sequence, binds its SYMBOL key translation and hands every slot its probe of
- * the build. The owner dispatches the probe tasks after the build returns, and the first task that
- * the frame sequence publishes is what publishes the builds and the slots' probes to the workers.
+ * the first stage adopts the build scan that the factory opened, see {@link #ofOrientation}, every
+ * later stage opens its own, each stage initializes its filters, and the slots bind to the probe
+ * scan. {@link #build} runs once per execution, when the cursor is first asked for a row: every
+ * stage builds, in stage order, on the owner or in rounds of the join's build sequence, binds its
+ * SYMBOL key translation and hands every slot its probe of the build. The owner dispatches the probe
+ * tasks after the build returns, and the first task that the frame sequence publishes is what
+ * publishes the builds and the slots' probes to the workers.
  * <p>
  * The first join of a swap candidate, see {@link AsyncHashJoinSpec#isSwapCandidate()}, has two runtime
  * stages: the one that hashes its right input, and the one that hashes its left input, which an
@@ -80,10 +81,13 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
  * <p>
  * A probe task joins one frame, see {@link #probeFrame}: it keeps the frame's rows that the probe
  * filter passes, if the probe input has one, and for each kept row, in the probe scan's order, the
- * stage's stepper looks the row's key up and appends the row and the stage's entry to the frame's
- * ring entry, which the consumer reads in frame order. A stage with an ON residual or a post-join
- * filter runs them over each pair on the slot's flat joined record, with the slot's copies of the
- * filters. The task stops at a probe row's boundary once the frame's tuples reach the task's cap,
+ * first stage's stepper looks the row's key up and hands each match on to the next stage's stepper,
+ * and so on, every later stage's key read off the probe row too, and the last stage appends the row
+ * and every stage's entry to the frame's ring entry, which the consumer reads in frame order. A stage
+ * with an ON residual or a post-join filter runs them over each pair on the slot's flat joined
+ * record, with the slot's copies of the filters, and the workers walk the matches of every stage up
+ * to the last such stage, whose filters may read them; the stages after it hand their chains to the
+ * consumer. The task stops at a probe row's boundary once the frame's tuples reach the task's cap,
  * {@code max(cairo.sql.parallel.hash.join.task.output.max.rows, the frame's rows)}, and records in the
  * ring where the frame's continuation resumes: the consumer, once it has read those tuples, joins the
  * rest of the frame in chunks of the same cap on the owner's slot, see {@link #continueFrame}. One
@@ -168,6 +172,16 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
         this.ring = new HashJoinTupleRing(configuration, stageCount);
         this.scanBySource = new int[stageCount + 1];
         final int probeColumnCount = leftInput.getMetadata().getColumnCount();
+        // The stages up to the last one whose pairs run a filter walk their matches on the workers:
+        // a filter reads the joined row, the columns of every stage before its own included, so those
+        // stages' payload readers must sit on the current match. The stages after it hand their
+        // chains to the consumer.
+        int lastEnumeratedStage = -1;
+        for (int k = 0; k < stageCount; k++) {
+            if (spec.getStage(k).hasPairFilter()) {
+                lastEnumeratedStage = k;
+            }
+        }
         for (int k = 0; k < stageCount; k++) {
             final HashJoinStageSpec stageSpec = spec.getStage(k);
             final HashJoinInput buildInput = stageSpec.getBuildInput();
@@ -187,8 +201,14 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
             specs.add(stageSpec);
             scanBySource[k + 1] = k + 1;
             stageSpec.setPayloadCopyable(stage.isPayloadCopyable());
-            // A stage whose pairs run a filter walks its matches on the workers.
-            ofStepper(stageSpec.getStepper(), keyLayout, stageSpec.isOuter(), stageSpec.hasPairFilter());
+            // Each stage's matches go on to the next stage's stepper.
+            ofStepper(
+                    stageSpec.getStepper(),
+                    keyLayout,
+                    stageSpec.isOuter(),
+                    k <= lastEnumeratedStage,
+                    k + 1 < stageCount ? spec.getStage(k + 1).getStepper() : null
+            );
         }
         final HashJoinStageSpec firstSpec = specs.getQuick(0);
         final HashJoinKeyLayout swapKeyLayout = firstSpec.getSwapKeyLayout();
@@ -207,7 +227,9 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
             );
             final HashJoinStageStepper swapStepper = firstSpec.getSwapStepper();
             assert swapStepper != null && !firstSpec.isOuter();
-            ofStepper(swapStepper, swapKeyLayout, false, firstSpec.hasPairFilter());
+            // A join that may swap its inputs runs one stage; see AsyncHashJoinSpec.addStage().
+            assert stageCount == 1;
+            ofStepper(swapStepper, swapKeyLayout, false, firstSpec.hasPairFilter(), null);
         } else {
             swapStage = null;
         }
@@ -342,6 +364,15 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
         pendingBuildCursor = null;
         // The stage owns the build scan from here on, whether its init returns or throws.
         getStage(0).init(symbolTableSource, executionContext, buildCursor);
+        // A later stage's keys read the left input's columns, which the probe scan holds, so it
+        // translates its SYMBOL keys from the probe scan's dictionaries and presizes its key table by
+        // the probe scan's table; it opens its own build scan, in its input's scan order.
+        for (int k = 1, n = executionStages.size(); k < n; k++) {
+            final HashJoinInput buildInput = specs.getQuick(k).getBuildInput();
+            final PageFrameCursor laterBuildCursor = buildInput.getFactory().getPageFrameCursor(executionContext, buildInput.getOrder());
+            // The stage owns the build scan from here on, whether its init returns or throws.
+            executionStages.getQuick(k).init(symbolTableSource, executionContext, laterBuildCursor);
+        }
         for (int i = 0, n = slots.size(); i < n; i++) {
             final Slot slot = slots.getQuick(i);
             slot.probeRecord.of(symbolTableSource);
@@ -388,11 +419,13 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
     }
 
     /**
-     * Builds every stage and binds every slot to the builds. The cursor calls it once per execution,
-     * on first demand for a row, on the thread that then dispatches the probes and before it
-     * dispatches any; nothing here runs when the cursor merely opens. Returns false when an INNER
-     * join's build has no row, so that the join returns no row and needs no probe task. On failure
-     * the caller closes the cursor, whose clear() closes the builds.
+     * Builds every stage, in stage order, and binds every slot to the builds. The cursor calls it
+     * once per execution, on first demand for a row, on the thread that then dispatches the probes
+     * and before it dispatches any; nothing here runs when the cursor merely opens. Returns false
+     * when the build of any INNER join has no row, so that the join returns no row and needs no
+     * probe task. Every stage builds even then, as every serial join of a stack builds its map before
+     * it reads its master, so that a build that fails fails in both plans. On failure the caller
+     * closes the cursor, whose clear() closes the builds.
      *
      * @param buildRounds the task-only sequence that runs the rounds of a stage's parallel build
      */
@@ -436,6 +469,14 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
         final DirectLongList rows = ring.getKeptRowCount(frameIndex) < 0 ? null : task.getFilteredRows();
         continuationCount++;
         return joinRows(slot, task, rows, resumePosition, circuitBreaker);
+    }
+
+    /**
+     * The joined rows' symbol tables, as the open scans whose frames hold each column serve them, in
+     * the execution's orientation; see {@link JoinedSymbols}.
+     */
+    SymbolTableSource getJoinedSymbols() {
+        return joinedSymbols;
     }
 
     Slot getSlot(int slotId) {
@@ -530,12 +571,19 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
         }
     }
 
-    // Binds a stage's stepper to what its lookup reads, as the stage's key layout lays the key out.
-    private static void ofStepper(HashJoinStageStepper stepper, HashJoinKeyLayout keyLayout, boolean isOuter, boolean isEnumerated) {
+    // Binds a stage's stepper to what its lookup reads, as the stage's key layout lays the key out,
+    // and to the stepper of the next stage, null for the last one.
+    private static void ofStepper(
+            HashJoinStageStepper stepper,
+            HashJoinKeyLayout keyLayout,
+            boolean isOuter,
+            boolean isEnumerated,
+            @Nullable HashJoinStageStepper next
+    ) {
         final int keyKind = keyLayout.isKeyStaged()
                 ? HashJoinStageStepper.KEY_STAGED
                 : keyLayout.isSymbolKey() ? HashJoinStageStepper.KEY_SYMBOL : HashJoinStageStepper.KEY_INT;
-        stepper.of(keyKind, keyLayout.isKeyStaged() ? -1 : keyLayout.getProbeKeyColumn(), isOuter, isEnumerated);
+        stepper.of(keyKind, keyLayout.isKeyStaged() ? -1 : keyLayout.getProbeKeyColumn(), isOuter, isEnumerated, next);
     }
 
     // Tells the owner's filter and its worker copies, if any, that the cursor closed.
