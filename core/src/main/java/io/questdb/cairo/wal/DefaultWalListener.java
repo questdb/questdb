@@ -42,7 +42,7 @@ public class DefaultWalListener implements WalListener {
     }
 
     @Override
-    public void tableCreated(TableToken tableToken, long timestamp) {
+    public void tableCreated(TableToken tableToken, long timestamp, int partitionBy, int timestampType) {
     }
 
     @Override

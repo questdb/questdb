@@ -231,7 +231,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                 throw th;
             }
 
-            if (logic.hasOnDiskSegments()) {
+            if (logic.hasOnDiskSegments() || tableToken.isDelta()) {
                 try {
                     tableDropped = fetchSequencerPairs();
                 } catch (Throwable th) {
@@ -258,17 +258,18 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             }
 
             if (tableDropped || (lastTxn < 0 && engine.isTableDropped(tableToken))) {
-                if (hasPendingTasks) {
+                if (TableUtils.exists(ff, Path.getThreadLocal(""), configuration.getDbRoot(), tableToken.getDirName()) == TableUtils.TABLE_EXISTS) {
+                    // Applying DROP can defer data cleanup until uploads or readers
+                    // release their ownership. Retained sequencer parts must not
+                    // prevent that cleanup from being retried; their pending tasks
+                    // still protect the final directory removal below.
+                    LOG.info().$("table is not fully dropped, pinging WAL Apply job to delete table files [table=")
+                            .$(tableToken).I$();
+                    engine.notifyWalTxnCommitted(tableToken);
+                } else if (hasPendingTasks) {
                     LOG.debug().$("table is dropped, but has WALs containing segments with pending tasks [table=")
                             .$(tableToken).I$();
-                } else if (
-                        TableUtils.exists(
-                                ff,
-                                Path.getThreadLocal(""),
-                                configuration.getDbRoot(),
-                                tableToken.getDirName()
-                        ) != TableUtils.TABLE_EXISTS
-                ) {
+                } else {
                     if (!engine.lockWalWriters(tableToken)) {
                         // There are active WAL writers
                         // potentially opened after the table director is scanned above.
@@ -311,11 +312,6 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                         // Unlock WAL writers, even if we removed the entry from the pool already
                         engine.unlockWalWriters(tableToken);
                     }
-                } else {
-                    LOG.info().$("table is not fully dropped, pinging WAL Apply job to delete table files [table=")
-                            .$(tableToken).I$();
-                    // Ping ApplyWal2TableJob to clean up the table files
-                    engine.notifyWalTxnCommitted(tableToken);
                 }
             } else if (lastTxn > -1) {
                 requestIdleSavePoint();
@@ -502,6 +498,9 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                     throw ex;
                 }
                 final long safeToPurgeTxn = getSafeToPurgeUpToTxn(txReader.getSeqTxn());
+                if (tableToken.isDelta()) {
+                    engine.getWalTxnTypeHandler().purgeDeltaEvents(engine, tableToken, safeToPurgeTxn);
+                }
                 LOG.debug().$("checking outstanding WAL transactions [table=").$(tableToken)
                         .$(", writerTxn=").$(safeToPurgeTxn)
                         .I$();

@@ -137,6 +137,9 @@ public class WalTxnDetails implements QuietCloseable {
         for (; txn < txnCount && transactionLogCursor.hasNext(); txn++) {
             // Validate before packing: unknown control kinds must not become zero-row barriers.
             int walId = transactionLogCursor.getWalId();
+            if (transactionLogCursor.isPacked()) {
+                throw CairoException.nonCritical().put("event pack replay is not enabled");
+            }
             checkWalId(walId);
             long long1 = Numbers.encodeLowHighInts(transactionLogCursor.getSegmentId(), walId - MIN_WAL_ID);
             max = Math.max(max, long1);

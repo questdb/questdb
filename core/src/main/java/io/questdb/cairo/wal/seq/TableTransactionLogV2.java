@@ -227,35 +227,6 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
     }
 
     @Override
-    public long addDeltaRunEntry(long structureVersion, int walId, int segmentId, int segmentTxn, long timestamp, long minTimestamp, long maxTimestamp, long rowCount) {
-        openTxnPart();
-        final long appendOffset = txnPartMem.getAppendOffset();
-        final int commitMode = configuration.getCommitMode();
-        try {
-            txnPartMem.putLong(structureVersion);
-            txnPartMem.putInt(walId);
-            txnPartMem.putInt(segmentId);
-            txnPartMem.putInt(segmentTxn);
-            txnPartMem.putLong(timestamp);
-            txnPartMem.putLong(minTimestamp);
-            txnPartMem.putLong(maxTimestamp);
-            txnPartMem.putLong(rowCount);
-            txnPartMem.putLong(0L);
-            if (commitMode != CommitMode.NOSYNC) {
-                txnPartMem.sync(commitMode == CommitMode.ASYNC);
-            }
-        } catch (Throwable th) {
-            txnPartMem.jumpTo(appendOffset);
-            throw th;
-        }
-        Unsafe.storeFence();
-        final long nextTxn = maxTxn.incrementAndGet();
-        txnMem.putLong(MAX_TXN_OFFSET_64, nextTxn);
-        sync0();
-        return nextTxn;
-    }
-
-    @Override
     public long addDeltaTableSwitchEntry(long structureVersion, long timestamp) {
         openTxnPart();
         long appendOffset = txnPartMem.getAppendOffset();
@@ -310,16 +281,16 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
     }
 
     @Override
-    public void beginMetadataChangeEntry(long newStructureVersion, MemorySerializer serializer, Object instance, long timestamp) {
+    public void beginMetadataChangeEntry(long newStructureVersion, MemorySerializer serializer, Object instance, long timestamp, int walId, int segmentId, int segmentTxn) {
         openTxnPart();
         zeroPastTail();
         startUnsyncedFrom();
 
         final long recordStart = txnPartMem.getAppendOffset();
         txnPartMem.putLong(newStructureVersion);
-        txnPartMem.putInt(STRUCTURAL_CHANGE_WAL_ID);
-        txnPartMem.putInt(-1);
-        txnPartMem.putInt(-1);
+        txnPartMem.putInt(walId);
+        txnPartMem.putInt(segmentId);
+        txnPartMem.putInt(segmentTxn);
         txnPartMem.putLong(timestamp);
         txnPartMem.putLong(serializer.getCommandType(instance));
         txnPartMem.putLong(0L);
@@ -417,6 +388,29 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
     }
 
     @Override
+    public long getPackStartTxn() {
+        long packStartTxn = txnMem.getLong(PACK_START_TXN_OFFSET_64);
+        PackTransport.checkPackStartTxn(packStartTxn);
+        return packStartTxn;
+    }
+
+    @Override
+    public void setPackStartTxn(long packStartTxn) {
+        PackTransport.checkBoundary(getPackStartTxn(), packStartTxn, maxTxn.get());
+        if (getPackStartTxn() != packStartTxn) {
+            txnMem.putLong(PACK_START_TXN_OFFSET_64, packStartTxn);
+            // This interpretation must reach the device before a sequencer frame address.
+            try {
+                fdatasyncTxnLog();
+            } catch (Throwable th) {
+                // A failed activation must be retried and flushed, including on the same mapping.
+                txnMem.putLong(PACK_START_TXN_OFFSET_64, 0L);
+                throw th;
+            }
+        }
+    }
+
+    @Override
     public long lastTxn() {
         return maxTxn.get();
     }
@@ -428,6 +422,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
             openTxnMem(path);
         }
 
+        PackTransport.checkPackStartTxn(txnMem.getLong(PACK_START_TXN_OFFSET_64));
         long lastTxn = txnMem.getLong(MAX_TXN_OFFSET_64);
         partTransactionCount = txnMem.getInt(HEADER_SEQ_PART_SIZE_32);
         if (partTransactionCount < 1) {
@@ -578,6 +573,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         // A new log has no field and no slot, whatever an existing file held in those bytes.
         txnMem.putLong(UNSYNCED_FROM_TXN_OFFSET_64, 0L);
         txnMem.putLong(KNOWN_MAX_TXN_OFFSET_64, 0L);
+        txnMem.putLong(PACK_START_TXN_OFFSET_64, 0L);
         sync0();
     }
 
@@ -920,6 +916,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         private boolean bypassFdCache;
         private FilesFacade ff;
         private long headerFd;
+        private long packStartTxn;
         private long partFd = -1;
         private long partId = -1;
         private long partMapSize;
@@ -957,6 +954,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         @Override
         public boolean extend() {
             final long newTxnCount = ff.readNonNegativeLong(headerFd, MAX_TXN_OFFSET_64);
+            readPackStartTxn();
             boolean extended = newTxnCount > txnCount;
             if (extended) {
                 txnCount = newTxnCount;
@@ -1036,6 +1034,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         public boolean hasNext() {
             if (txn >= txnCount) {
                 txnCount = ff.readNonNegativeLong(headerFd, MAX_TXN_OFFSET_64);
+                readPackStartTxn();
                 if (txn >= txnCount) {
                     return false;
                 }
@@ -1047,22 +1046,23 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
             return true;
         }
 
-        // Verify the per-record CRC in the reserved trailing slot, if present. calculateCvAreaChecksum never
-        // returns 0, so a stored 0 means "no CRC written". That has three causes the slot cannot tell apart, and
-        // all three read the record unverified, since rejecting them would suspend a table on records an older
-        // QuestDB wrote correctly:
-        //   (1) a record written by a binary that predates the per-record CRC. Its body is valid.
-        //   (2) an absent record: an all-zero slot the cursor reached because the header's MAX_TXN became
-        //       durable ahead of the record body. No real record carries walId 0 (writers use walId >= 1,
-        //       STRUCTURAL_CHANGE_WAL_ID = -1, DROP_TABLE_WAL_ID = -2), and ApplyWal2TableJob rejects walId 0,
-        //       so nothing is applied from it.
-        //   (3) a torn write that zeroed only this slot. The checksum cannot catch it.
-        // A non-zero stored CRC that does not match the body means a torn or partially written record.
+        @Override
+        public boolean isPacked() {
+            return PackTransport.isPacked(txn, packStartTxn, getWalId());
+        }
+
+        // Legacy WAL records may predate checksums. Packed records are written by this
+        // format and require a CRC: walId 0 is a valid pack ID, so it cannot distinguish
+        // an empty slot from an address as the WAL replay path historically did.
         private void verifyRecordChecksum() {
             final long recordBase = address + txnOffset;
             final long storedCrc = Unsafe.getLong(recordBase + RESERVED_OFFSET);
             if (storedCrc == 0L) {
-                // No checksum for this record: read it unverified.
+                if (PackTransport.isPacked(txn + 1, packStartTxn, Unsafe.getInt(recordBase + TX_LOG_WAL_ID_OFFSET))) {
+                    throw CairoException.critical(CairoException.METADATA_VALIDATION)
+                            .put("missing CRC on packed sequencer record [txn=").put(txn + 1).put(']');
+                }
+                // Legacy records may predate checksums.
                 return;
             }
             TxnLogRecordVerifier.verify(txn, recordBase, RESERVED_OFFSET, storedCrc, txnOffset);
@@ -1131,6 +1131,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
             this.headerFd = openFileRO(ff, path, bypassFdCache);
             this.bypassFdCache = bypassFdCache;
             long newTxnCount = ff.readNonNegativeLong(headerFd, MAX_TXN_OFFSET_64);
+            readPackStartTxn();
             rootPath.of(path);
 
             if (newTxnCount > -1L) {
@@ -1142,6 +1143,13 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
             }
             this.txnLo = txnLo;
             return this;
+        }
+
+        private void readPackStartTxn() {
+            packStartTxn = ff.readNonNegativeLong(headerFd, PACK_START_TXN_OFFSET_64);
+            if (packStartTxn < 0) {
+                throw CairoException.critical(ff.errno()).put("could not read pack boundary");
+            }
         }
 
         private void openPart(long zeroBasedTxn) {

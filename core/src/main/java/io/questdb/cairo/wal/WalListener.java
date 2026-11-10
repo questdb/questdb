@@ -34,7 +34,12 @@ public interface WalListener {
 
     void segmentClosed(final TableToken tableToken, long txn, int walId, int segmentId);
 
-    void tableCreated(TableToken tableToken, long timestamp);
+    /**
+     * Supplies the immutable partition layout; CREATE can notify before registering the table name.
+     *
+     * @param timestampType designated timestamp type, or {@link io.questdb.cairo.ColumnType#UNDEFINED} when absent
+     */
+    void tableCreated(TableToken tableToken, long timestamp, int partitionBy, int timestampType);
 
     void tableDropped(TableToken tableToken, long txn, long timestamp);
 

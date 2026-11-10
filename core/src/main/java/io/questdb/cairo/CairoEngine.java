@@ -5333,7 +5333,13 @@ public class CairoEngine implements Closeable, WriterSource {
                     walWriter.commitRebaseSeed();
                 }
 
-                getWalListener().tableCreated(newToken, configuration.getMicrosecondClock().getTicks());
+                final TableMetadata sourceMetadata = oldWriter.getMetadata();
+                getWalListener().tableCreated(
+                        newToken,
+                        configuration.getMicrosecondClock().getTicks(),
+                        sourceMetadata.getPartitionBy(),
+                        sourceMetadata.getTimestampIndex() < 0 ? ColumnType.UNDEFINED : sourceMetadata.getTimestampType()
+                );
             } catch (Throwable th) {
                 try {
                     // Discard the half-built new dir ONLY while the old table is still intact. Once the swap

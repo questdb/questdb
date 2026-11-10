@@ -290,15 +290,6 @@ public class TableTransactionLog implements Closeable {
         return instance;
     }
 
-    long addDeltaRunEntry(long structureVersion, int walId, int segmentId, int segmentTxn, long timestamp, long minTimestamp, long maxTimestamp, long rowCount) {
-        try {
-            return txnLogFile.addDeltaRunEntry(structureVersion, walId, segmentId, segmentTxn, timestamp, minTimestamp, maxTimestamp, rowCount);
-        } finally {
-            // Header publication can precede a sync failure; this is still an accepted transaction.
-            lastTxn = txnLogFile.lastTxn();
-        }
-    }
-
     long addDeltaTableSwitchEntry(long structureVersion, long timestamp) {
         try {
             return txnLogFile.addDeltaTableSwitchEntry(structureVersion, timestamp);
@@ -310,10 +301,15 @@ public class TableTransactionLog implements Closeable {
     }
 
     long addEntry(long structureVersion, int walId, int segmentId, int segmentTxn, long timestamp, long txnMinTimestamp, long txnMaxTimestamp, long txnRowCount) {
-        return lastTxn = txnLogFile.addEntry(structureVersion, walId, segmentId, segmentTxn, timestamp, txnMinTimestamp, txnMaxTimestamp, txnRowCount);
+        try {
+            return txnLogFile.addEntry(structureVersion, walId, segmentId, segmentTxn, timestamp, txnMinTimestamp, txnMaxTimestamp, txnRowCount);
+        } finally {
+            // Header publication can precede a sync failure; this is still an accepted transaction.
+            lastTxn = txnLogFile.lastTxn();
+        }
     }
 
-    void beginMetadataChangeEntry(long newStructureVersion, MemorySerializer serializer, Object instance, long timestamp) {
+    void beginMetadataChangeEntry(long newStructureVersion, MemorySerializer serializer, Object instance, long timestamp, int walId, int segmentId, int segmentTxn) {
         if (newStructureVersion != txnMetaMemIndex.getAppendOffset() / Long.BYTES) {
             if (instance instanceof AlterOperation) {
                 throw CairoException.critical(0).put("possible corruption in transaction metadata [table=")
@@ -328,7 +324,7 @@ public class TableTransactionLog implements Closeable {
                     .put(']');
         }
 
-        txnLogFile.beginMetadataChangeEntry(newStructureVersion, serializer, instance, timestamp);
+        txnLogFile.beginMetadataChangeEntry(newStructureVersion, serializer, instance, timestamp, walId, segmentId, segmentTxn);
 
         txnMetaMem.putInt(0);
         long varMemBegin = txnMetaMem.getAppendOffset();
@@ -382,6 +378,10 @@ public class TableTransactionLog implements Closeable {
 
     long getMaxMetadataVersion() {
         return maxMetadataVersion.get();
+    }
+
+    long getPackStartTxn() {
+        return txnLogFile.getPackStartTxn();
     }
 
     @NotNull
@@ -447,6 +447,10 @@ public class TableTransactionLog implements Closeable {
         serializer.fromSink(alterToDeserializeTo, txnMetaMem, txnMetaOffset, txnMetaOffset + recordSize);
         txnMetaMem.jumpTo(txnMetaOffset + recordSize);
         return alterToDeserializeTo;
+    }
+
+    void setPackStartTxn(long packStartTxn) {
+        txnLogFile.setPackStartTxn(packStartTxn);
     }
 
     private static class TableMetadataChangeLogImpl implements TableMetadataChangeLog {

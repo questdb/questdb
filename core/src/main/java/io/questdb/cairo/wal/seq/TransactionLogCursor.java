@@ -63,6 +63,11 @@ public interface TransactionLogCursor extends Closeable {
 
     boolean hasNext();
 
+    /** Whether the record positioned by hasNext() addresses a pack frame; DROP and SWITCH remain controls. */
+    default boolean isPacked() {
+        return false;
+    }
+
     void setPosition(long txn);
 
     // Sets cursor to minimum available position.

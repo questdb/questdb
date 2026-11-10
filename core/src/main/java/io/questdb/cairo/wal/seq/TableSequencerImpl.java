@@ -39,9 +39,9 @@ import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriteMode;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.wal.LocalDurabilityPolicy;
-import io.questdb.cairo.TableWriteMode;
 import io.questdb.cairo.wal.WalDirectoryPolicy;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.griffin.engine.ops.AlterOperation;
@@ -129,7 +129,13 @@ public class TableSequencerImpl implements TableSequencer {
                 try {
                     final long timestamp = microClock.getTicks();
                     createSequencerFiles(configuration, walDirectoryPolicy, metadata, tableTransactionLog, path, rootLen, tableStruct, tableToken, tableId, timestamp);
-                    engine.getWalListener().tableCreated(tableToken, timestamp);
+                    final int timestampIndex = tableStruct.getTimestampIndex();
+                    engine.getWalListener().tableCreated(
+                            tableToken,
+                            timestamp,
+                            tableStruct.getPartitionBy(),
+                            timestampIndex < 0 ? ColumnType.UNDEFINED : tableStruct.getColumnType(timestampIndex)
+                    );
                 } finally {
                     unlockWrite();
                 }
@@ -452,14 +458,39 @@ public class TableSequencerImpl implements TableSequencer {
         return metadata.getMetadataVersion() == structureVersion;
     }
 
+    public long nextDeltaStructureTxn(long expectedStructureVersion, TableMetadataChange change, int walId, int segmentId, int segmentTxn) {
+        PackTransport.checkAppend(getPackStartTxn(), lastTxn() + 1, walId, segmentId, segmentTxn);
+        return nextStructureTxn(expectedStructureVersion, change, walId, segmentId, segmentTxn);
+    }
+
     @Override
     public long nextStructureTxn(long expectedStructureVersion, TableMetadataChange change) {
+        // Activation is at the next txn; restored history must be complete before primary appends resume.
+        // Keep caller intent explicit: the legacy (-1,-1,-1) sentinel is also a valid pack address.
+        assert getPackStartTxn() <= lastTxn() + 1;
+        if (getPackStartTxn() > 0) {
+            throw CairoException.nonCritical().put("Delta schema change requires pack coordinates");
+        }
+        return nextStructureTxn(expectedStructureVersion, change, -1, -1, -1);
+    }
+
+    private long nextStructureTxn(long expectedStructureVersion, TableMetadataChange change, int walId, int segmentId, int segmentTxn) {
+        return nextStructureTxn(expectedStructureVersion, change, walId, segmentId, segmentTxn, 0);
+    }
+
+    private long nextStructureTxn(long expectedStructureVersion, TableMetadataChange change, int walId, int segmentId, int segmentTxn, long reservedTxn) {
         // Writing to TableSequencer can happen from multiple threads, so we need to protect against concurrent writes.
         assert !closed;
         checkDropped();
         checkHardSuspended();
         checkNoTableModeTransition();
-        checkNoDeltaPublication();
+        if (reservedTxn == 0) {
+            checkNoDeltaPublication();
+        } else if (deltaReservedTxn != reservedTxn || lastTxn() + 1 != reservedTxn || !tableToken.isDelta()
+                || metadata.getMetadataVersion() != expectedStructureVersion) {
+            throw CairoException.critical(0).put("Delta metadata reservation changed [table=").put(tableToken)
+                    .put(", txn=").put(reservedTxn).put(']');
+        }
         long txn;
         try {
             // From sequencer perspective metadata version is the same as column structure version
@@ -471,7 +502,7 @@ public class TableSequencerImpl implements TableSequencer {
                 // Orphaned pins registered by now are covered by the flushes of this change.
                 final long orphanSweepMark = isDurableMode ? seqTxnTracker.snapshotOrphanSweepMark() : 0;
                 tableTransactionLog.beginMetadataChangeEntry(
-                        expectedStructureVersion + 1, alterCommandWalFormatter, change, timestamp);
+                        expectedStructureVersion + 1, alterCommandWalFormatter, change, timestamp, walId, segmentId, segmentTxn);
 
                 final TableToken oldTableToken = tableToken;
 
@@ -518,6 +549,11 @@ public class TableSequencerImpl implements TableSequencer {
                 return NO_TXN;
             }
         } catch (Throwable th) {
+            if (reservedTxn != 0) {
+                // The failed owner cannot finish its reservation through a distressed sequencer.
+                // TableWriter/role ownership still excludes another Delta publication until unwind.
+                deltaReservedTxn = 0;
+            }
             distressed = true;
             seqTxnTracker.fenceDurableFrontier(th);
             LOG.critical().$("could not apply structure change to WAL table sequencer [table=").$(tableToken)
@@ -626,6 +662,11 @@ public class TableSequencerImpl implements TableSequencer {
         path.trimTo(rootLen);
         metadata.create(tableStruct, tableToken, path, rootLen, tableId);
         tableTransactionLog.create(path, timestamp);
+        if (tableStruct.getWriteMode() == TableWriteMode.DELTA_RUNS) {
+            // Empty Delta tables already require the v6 transport. Publish this
+            // before tableCreated can wake the uploader, not on the first insert.
+            tableTransactionLog.setPackStartTxn(1);
+        }
         // The WAL id counter, created and sized as its generator's first open would, so the flush below covers its
         // entry: a counter lost to a power loss starts again from 0 and hands out WAL ids the log already names.
         try {
@@ -822,12 +863,19 @@ public class TableSequencerImpl implements TableSequencer {
                 if (!cursor.hasNext()) {
                     throw CairoException.critical(0).put("missing committed sequencer tail");
                 }
-                WalUtils.checkWalId(cursor.getWalId());
-                boolean isSwitch = cursor.getWalId() == WalUtils.DELTA_TABLE_SWITCH_WAL_ID;
+                int walId = cursor.getWalId();
+                PackTransport.validateRecord(cursor.getTxn(), tableTransactionLog.getPackStartTxn(), walId, cursor.getSegmentId(), cursor.getSegmentTxn());
+                boolean isSwitch = walId == WalUtils.DELTA_TABLE_SWITCH_WAL_ID;
                 isDeltaTableSwitchPending = isSwitch && !tableToken.isDelta();
-                if (isSwitch && (cursor.getSegmentId() != WalUtils.DELTA_TABLE_SWITCH_VERSION
-                        || cursor.getSegmentTxn() != TableWriteMode.DELTA_RUNS)) {
-                    throw CairoException.critical(0).put("invalid Delta table switch record");
+                if (isSwitch && tableTransactionLog.getPackStartTxn() == 0) {
+                    // SWITCH can survive a crash before its transport header is
+                    // flushed. The accepted control fixes the boundary on reopen.
+                    try {
+                        tableTransactionLog.setPackStartTxn(txn + 1);
+                    } catch (Throwable th) {
+                        seqTxnTracker.fenceDurableFrontier(th);
+                        throw th;
+                    }
                 }
             }
         }
@@ -899,6 +947,7 @@ public class TableSequencerImpl implements TableSequencer {
     long beginDeltaTableSwitch(long validatedMetadataVersion) {
         checkDropped();
         if (isDeltaTableSwitchPending) {
+            setPackStartTxn(lastTxn() + 1);
             return lastTxn();
         }
         if (tableToken.isDelta()) {
@@ -910,30 +959,82 @@ public class TableSequencerImpl implements TableSequencer {
                     .put(validatedMetadataVersion).put(", metadataVersion=").put(metadata.getMetadataVersion()).put(']');
         }
         final long previousTxn = lastTxn();
+        final long timestamp = microClock.getTicks();
+        final boolean isDurableMode = CommitMode.isPowerLossDurable(engine.getConfiguration().getCommitMode());
+        final long orphanSweepMark = isDurableMode ? seqTxnTracker.snapshotOrphanSweepMark() : 0;
         try {
-            long txn = tableTransactionLog.addDeltaTableSwitchEntry(metadata.getMetadataVersion(), microClock.getTicks());
-            notifyTxnCommitted(txn);
+            long txn = tableTransactionLog.addDeltaTableSwitchEntry(metadata.getMetadataVersion(), timestamp);
+            // Persist after the accepted SWITCH: a boundary ahead of an
+            // unaccepted control could reinterpret later ordinary WAL writes.
+            tableTransactionLog.setPackStartTxn(txn + 1);
+            if (isDurableMode) {
+                // SWITCH flushes its record and header synchronously, while earlier
+                // WAL writers may still hold their own pending durability pins.
+                seqTxnTracker.markWriterDurable(STRUCTURAL_CHANGE_WAL_ID, orphanSweepMark, txn);
+            }
             return txn;
+        } catch (Throwable th) {
+            seqTxnTracker.fenceDurableFrontier(th);
+            throw th;
         } finally {
             // A header-sync failure can occur after the switch has become visible.
             isDeltaTableSwitchPending = lastTxn() > previousTxn;
+            if (isDeltaTableSwitchPending) {
+                notifyTxnCommitted(lastTxn());
+                engine.getWalListener().nonDataTxnCommitted(tableToken, lastTxn(), timestamp);
+            }
         }
     }
 
-    long acceptDeltaTxn(long txn, long structureVersion, int walId, int segmentId, int segmentTxn, long timestamp, long minTimestamp, long maxTimestamp, long rowCount) {
+    long acceptDeltaPackTxn(long txn, long structureVersion, int walId, int segmentId, int segmentTxn, long timestamp, long minTimestamp, long maxTimestamp, long rowCount) {
+        PackTransport.checkAppend(getPackStartTxn(), txn, walId, segmentId, segmentTxn);
         checkDropped();
         checkHardSuspended();
+        // Reservations are admitted only for Delta tables; revalidate the mode with the publication fence.
         if (deltaReservedTxn != txn || lastTxn() + 1 != txn || !tableToken.isDelta()
-                || metadata.getMetadataVersion() != structureVersion || walId <= 0 || segmentId < 0 || segmentTxn < 0) {
+                || metadata.getMetadataVersion() != structureVersion) {
             throw CairoException.critical(0).put("Delta transaction reservation changed [table=").put(tableToken).put(", txn=").put(txn).put(']');
         }
+        final CairoConfiguration configuration = engine.getConfiguration();
+        final int commitMode = configuration.getCommitMode();
+        final boolean isDurableMode = CommitMode.isPowerLossDurable(commitMode);
+        final long orphanSweepMark = isDurableMode ? seqTxnTracker.snapshotOrphanSweepMark() : 0;
         try {
-            return tableTransactionLog.addDeltaRunEntry(structureVersion, walId, segmentId, segmentTxn, timestamp, minTimestamp, maxTimestamp, rowCount);
+            final long acceptedTxn = tableTransactionLog.addEntry(structureVersion, walId, segmentId, segmentTxn, timestamp, minTimestamp, maxTimestamp, rowCount);
+            // Delta publishes _txn immediately after admission, without a WAL writer's later group flush.
+            // Keep that publication behind a synchronous sequencer barrier until Delta joins group commit.
+            if (commitMode == CommitMode.ADAPTIVE && configuration.getAdaptiveCommitGroupWindowUs() > 0) {
+                fdatasyncTxnLog();
+            }
+            if (isDurableMode) {
+                // File-ID high words are not WAL writer identities: using walId here could release an
+                // unrelated pending WAL pin from the prefix before SWITCH DELTA. Reuse the metadata slot.
+                seqTxnTracker.markWriterDurable(STRUCTURAL_CHANGE_WAL_ID, orphanSweepMark, acceptedTxn);
+            }
+            return acceptedTxn;
+        } catch (Throwable th) {
+            // Acceptance may already be visible. Preserve its coordinates, and prevent a later flush on
+            // a fresh descriptor from certifying bytes whose writeback error the kernel already reported.
+            // Release this failed owner's reservation before distressing: cleanup cannot reopen a
+            // distressed sequencer, and its close must not stay blocked by that same reservation.
+            deltaReservedTxn = 0;
+            distressed = true;
+            seqTxnTracker.fenceDurableFrontier(th);
+            throw th;
         } finally {
             if (lastTxn() == txn) {
                 notifyTxnCommitted(txn);
+                // This is a sequencer wakeup, not a WAL segment notification. The
+                // uploader resolves the local event address from the sequencer.
+                engine.getWalListener().nonDataTxnCommitted(tableToken, txn, timestamp);
             }
         }
+    }
+
+    /** The Rust event record is prepared while this table transaction reservation fences other appends. */
+    long acceptDeltaStructureTxn(long txn, long structureVersion, TableMetadataChange change, int walId, int segmentId, int segmentTxn) {
+        PackTransport.checkAppend(getPackStartTxn(), txn, walId, segmentId, segmentTxn);
+        return nextStructureTxn(structureVersion, change, walId, segmentId, segmentTxn, txn);
     }
 
     void finishDeltaRecovery(long appliedTxn) {
@@ -984,6 +1085,10 @@ public class TableSequencerImpl implements TableSequencer {
         isDeltaTableSwitchPending = false;
     }
 
+    long getPackStartTxn() {
+        return tableTransactionLog.getPackStartTxn();
+    }
+
     long getPendingDeltaTableSwitch() {
         return isDeltaTableSwitchPending ? lastTxn() : -1;
     }
@@ -995,6 +1100,23 @@ public class TableSequencerImpl implements TableSequencer {
     void readLock() {
         assert !WRITE_LOCKS.get().contains(this) : "sequencer write lock re-entry";
         schemaLock.readLock().lock();
+    }
+
+    void setPackStartTxn(long packStartTxn) {
+        checkDropped();
+        checkHardSuspended();
+        checkNoDeltaPublication();
+        if (!tableToken.isDelta() && !isDeltaTableSwitchPending) {
+            throw CairoException.nonCritical().put("pack transport requires a Delta table or pending switch");
+        }
+        PackTransport.checkBoundary(getPackStartTxn(), packStartTxn, lastTxn());
+        try {
+            tableTransactionLog.setPackStartTxn(packStartTxn);
+        } catch (Throwable th) {
+            distressed = true;
+            seqTxnTracker.fenceDurableFrontier(th);
+            throw th;
+        }
     }
 
     void unlockRead() {

@@ -74,6 +74,46 @@ public class WalListenerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTableCreatedLayoutSurvivesRebase() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            final Deque<TableCreatedLayout> created = new ArrayDeque<>();
+            engine.setWalListener(new DefaultWalListener() {
+                @Override
+                public void tableCreated(TableToken tableToken, long timestamp, int partitionBy, int timestampType) {
+                    created.add(new TableCreatedLayout(tableToken, partitionBy, timestampType));
+                }
+            });
+            try {
+                for (int timestampType : new int[]{ColumnType.TIMESTAMP, ColumnType.TIMESTAMP_NANO}) {
+                    final int partitionBy = timestampType == ColumnType.TIMESTAMP ? PartitionBy.DAY : PartitionBy.WEEK;
+                    final String table = "layout_" + timestampType;
+                    execute("CREATE TABLE " + table + " (x INT, ts " + ColumnType.nameOf(timestampType)
+                            + ") TIMESTAMP(ts) PARTITION BY " + PartitionBy.toString(partitionBy) + " WAL");
+                    final TableToken original = engine.verifyTableName(table);
+                    Assert.assertEquals(new TableCreatedLayout(original, partitionBy, timestampType), created.remove());
+                    Assert.assertTrue(created.isEmpty());
+
+                    execute("ALTER TABLE " + table + " SUSPEND WAL");
+                    execute("ALTER TABLE " + table + " REBASE WAL");
+                    final TableToken rebased = engine.verifyTableName(table);
+                    Assert.assertNotEquals(original.getDirName(), rebased.getDirName());
+                    Assert.assertEquals(new TableCreatedLayout(rebased, partitionBy, timestampType), created.remove());
+                    Assert.assertTrue(created.isEmpty());
+                }
+            } finally {
+                // REBASE creates pooled WAL writers; close them while this listener owns their callbacks.
+                try {
+                    releaseInactive(engine);
+                } finally {
+                    engine.setWalListener(listener);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testWalListener() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync"); // deterministic: adaptive adds a non-deterministic epoch (wall-clock lastEpochTs) / epoch-gated purge; this test asserts mode-independent behavior
         final AtomicReference<TableToken> tableToken1 = new AtomicReference<>();
@@ -319,7 +359,7 @@ public class WalListenerTest extends AbstractCairoTest {
         }
 
         @Override
-        public void tableCreated(TableToken tableToken, long timestamp) {
+        public void tableCreated(TableToken tableToken, long timestamp, int partitionBy, int timestampType) {
             events.add(new WalListenerEvent(
                     WalListenerEventType.TABLE_CREATED,
                     tableToken,
@@ -373,6 +413,9 @@ public class WalListenerTest extends AbstractCairoTest {
                     null
             ));
         }
+    }
+
+    private record TableCreatedLayout(TableToken tableToken, int partitionBy, int timestampType) {
     }
 
     record WalListenerEvent(WalListenerEventType type, TableToken tableToken, long txn, long timestamp, int walId,

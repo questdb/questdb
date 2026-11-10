@@ -27,9 +27,11 @@ package io.questdb.test.cairo.wal;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.DefaultWalDirectoryPolicy;
 import io.questdb.cairo.wal.QdbrWalLocker;
 import io.questdb.cairo.wal.WalPurgeJob;
@@ -325,6 +327,31 @@ public class WalPurgeJobTest extends AbstractCairoTest {
                     assertSegmentExistence(true, tableName, 2, 1);  // wal2/1 kept
                     assertSegmentLocked(tableName, 2, 1);  // wal2/1 locked
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testDroppedTableCleanupRetriesWithRetainedSequencerParts() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 16);
+        assertMemoryLeak(() -> {
+            execute("create table deferred_drop (x int, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("insert into deferred_drop values (1, '2022-02-24')");
+            drainWalQueue();
+            final TableToken token = engine.verifyTableName("deferred_drop");
+            try (Path metaPath = new Path(); ApplyWal2TableJob apply = new ApplyWal2TableJob(engine, 0)) {
+                metaPath.of(root).concat(token).concat(META_FILE_NAME);
+                try (TableReader ignored = engine.getReader(token)) {
+                    execute("drop table deferred_drop");
+                    apply.drain(0);
+                    Assert.assertTrue("the reader must defer initial data cleanup", ff.exists(metaPath.$()));
+                    assertSeqPartExistence(true, token, 0);
+                }
+                // The initial apply notification has been consumed. A retained
+                // sequencer part must not suppress the next cleanup attempt.
+                drainPurgeJob();
+                apply.drain(0);
+                Assert.assertFalse("purge must retry cleanup after the reader closes", ff.exists(metaPath.$()));
             }
         });
     }

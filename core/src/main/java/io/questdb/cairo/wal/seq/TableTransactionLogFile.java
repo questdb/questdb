@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.wal.seq;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.MemorySerializer;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
@@ -75,14 +76,13 @@ public interface TableTransactionLogFile extends Closeable {
     long TABLE_CREATE_TIMESTAMP_OFFSET_64 = MAX_TXN_OFFSET_64 + Long.BYTES;
     long HEADER_SEQ_PART_SIZE_32 = TABLE_CREATE_TIMESTAMP_OFFSET_64 + Long.BYTES;
     long HEADER_SIZE = HEADER_SEQ_PART_SIZE_32 + Integer.BYTES + HEADER_RESERVED;
+    // Reserved header slot shared by V1/V2. Zero means the existing local WAL/event coordinates.
+    long PACK_START_TXN_OFFSET_64 = 56;
     long TX_LOG_STRUCTURE_VERSION_OFFSET = 0L;
     long TX_LOG_WAL_ID_OFFSET = TX_LOG_STRUCTURE_VERSION_OFFSET + Long.BYTES;
     long TX_LOG_SEGMENT_OFFSET = TX_LOG_WAL_ID_OFFSET + Integer.BYTES;
     long TX_LOG_SEGMENT_TXN_OFFSET = TX_LOG_SEGMENT_OFFSET + Integer.BYTES;
     long TX_LOG_COMMIT_TIMESTAMP_OFFSET = TX_LOG_SEGMENT_TXN_OFFSET + Integer.BYTES;
-
-    /** Persists a direct Run record before publishing its transaction number. */
-    long addDeltaRunEntry(long structureVersion, int walId, int segmentId, int segmentTxn, long timestamp, long minTimestamp, long maxTimestamp, long rowCount);
 
     /**
      * Persists a Delta switch record before publishing and persisting its transaction number.
@@ -116,7 +116,16 @@ public interface TableTransactionLogFile extends Closeable {
      * @param instance            instance to serialize
      * @param timestamp           commit timestamp
      */
-    void beginMetadataChangeEntry(long newStructureVersion, MemorySerializer serializer, Object instance, long timestamp);
+    default void beginMetadataChangeEntry(long newStructureVersion, MemorySerializer serializer, Object instance, long timestamp) {
+        assert getPackStartTxn() <= lastTxn() + 1;
+        if (getPackStartTxn() > 0) {
+            throw CairoException.critical(0).put("Delta schema change requires pack coordinates");
+        }
+        beginMetadataChangeEntry(newStructureVersion, serializer, instance, timestamp, STRUCTURAL_CHANGE_WAL_ID, -1, -1);
+    }
+
+    /** Persists coordinates validated by sequencer admission, using the existing schema body. */
+    void beginMetadataChangeEntry(long newStructureVersion, MemorySerializer serializer, Object instance, long timestamp, int walId, int segmentId, int segmentTxn);
 
     /**
      * Creates transaction log files on the disk
@@ -189,6 +198,9 @@ public interface TableTransactionLogFile extends Closeable {
         return getCursor(txnLo, path);
     }
 
+    /** Zero for existing event coordinates; otherwise the first transaction addressed through packs. */
+    long getPackStartTxn();
+
     /**
      * @return Returns true if the table is marked as dropped in the sequencer log files
      */
@@ -206,4 +218,7 @@ public interface TableTransactionLogFile extends Closeable {
      * @return transaction id of the last committed transaction
      */
     long open(Path path);
+
+    /** One-time activation at the next transaction; persisted before any packed append. */
+    void setPackStartTxn(long packStartTxn);
 }

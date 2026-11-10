@@ -75,6 +75,13 @@ public class TableSequencerCursorHolderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLegacyCursorDefaultsToWalTransport() {
+        try (CloseCountingTransactionLogCursor cursor = new CloseCountingTransactionLogCursor()) {
+            Assert.assertFalse(cursor.isPacked());
+        }
+    }
+
+    @Test
     public void testPoolsOwnIndependentReusableCursors() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE cursor_pool (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");

@@ -136,6 +136,10 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         if (txn > maxTxn) {
             return true;
         }
+        final long packStartTxn = ff.readNonNegativeLong(fd, PACK_START_TXN_OFFSET_64);
+        if (packStartTxn < 0) {
+            return false;
+        }
         // The first record read precedes the first one checked: the rule compares a record with the one before it.
         long lo = Math.max(1, txn - 1);
         final long bufSize = Math.min(maxTxn - lo + 1, TAIL_CHECK_READ_RECORDS) * RECORD_SIZE;
@@ -149,7 +153,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
                 final long readHi = lo - 1 + Math.max(bytesRead, 0) / RECORD_SIZE;
                 for (; txn <= hi; txn++) {
                     final long record = buf + (txn - lo) * RECORD_SIZE;
-                    if (txn > readHi || isTornRecord(txn, record, record - RECORD_SIZE)) {
+                    if (txn > readHi || isTornRecord(txn, record, record - RECORD_SIZE, packStartTxn)) {
                         return false;
                     }
                 }
@@ -173,30 +177,6 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         }
         long offset = TableTransactionLogFile.HEADER_SIZE + (maxTxn - 1) * RECORD_SIZE;
         return ff.readNonNegativeLong(logFileFd, offset);
-    }
-
-    @Override
-    public long addDeltaRunEntry(long structureVersion, int walId, int segmentId, int segmentTxn, long timestamp, long minTimestamp, long maxTimestamp, long rowCount) {
-        final long appendOffset = txnMem.getAppendOffset();
-        final int commitMode = configuration.getCommitMode();
-        try {
-            txnMem.putLong(structureVersion);
-            txnMem.putInt(walId);
-            txnMem.putInt(segmentId);
-            txnMem.putInt(segmentTxn);
-            txnMem.putLong(timestamp);
-            if (commitMode != CommitMode.NOSYNC) {
-                txnMem.sync(commitMode == CommitMode.ASYNC);
-            }
-        } catch (Throwable th) {
-            txnMem.jumpTo(appendOffset);
-            throw th;
-        }
-        Unsafe.storeFence();
-        final long nextTxn = maxTxn.incrementAndGet();
-        txnMem.putLong(MAX_TXN_OFFSET_64, nextTxn);
-        sync0();
-        return nextTxn;
     }
 
     @Override
@@ -242,8 +222,8 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
     }
 
     @Override
-    public void beginMetadataChangeEntry(long newStructureVersion, MemorySerializer serializer, Object instance, long timestamp) {
-        putRecord(newStructureVersion, STRUCTURAL_CHANGE_WAL_ID, -1, -1, timestamp);
+    public void beginMetadataChangeEntry(long newStructureVersion, MemorySerializer serializer, Object instance, long timestamp, int walId, int segmentId, int segmentTxn) {
+        putRecord(newStructureVersion, walId, segmentId, segmentTxn, timestamp);
     }
 
     @Override
@@ -273,6 +253,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         txnMem.putLong(tableCreateTimestamp);
         txnMem.putInt(0);
         txnMem.putLong(UNSYNCED_FROM_TXN_OFFSET_64, 1L);
+        txnMem.putLong(PACK_START_TXN_OFFSET_64, 0L);
         if (isReplacingLineage) {
             zeroFrom(HEADER_SIZE);
             txnMem.sync(false);
@@ -362,6 +343,29 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
     }
 
     @Override
+    public long getPackStartTxn() {
+        long packStartTxn = txnMem.getLong(PACK_START_TXN_OFFSET_64);
+        PackTransport.checkPackStartTxn(packStartTxn);
+        return packStartTxn;
+    }
+
+    @Override
+    public void setPackStartTxn(long packStartTxn) {
+        PackTransport.checkBoundary(getPackStartTxn(), packStartTxn, maxTxn.get());
+        if (getPackStartTxn() != packStartTxn) {
+            txnMem.putLong(PACK_START_TXN_OFFSET_64, packStartTxn);
+            // This interpretation must reach the device before a sequencer frame address.
+            try {
+                fdatasyncTxnLog();
+            } catch (Throwable th) {
+                // A failed activation must be retried and flushed, including on the same mapping.
+                txnMem.putLong(PACK_START_TXN_OFFSET_64, 0L);
+                throw th;
+            }
+        }
+    }
+
+    @Override
     public long lastTxn() {
         return maxTxn.get();
     }
@@ -373,6 +377,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
             openTxnLog(path, path.size());
         }
 
+        PackTransport.checkPackStartTxn(txnMem.getLong(PACK_START_TXN_OFFSET_64));
         final long publishedTxn = txnMem.getLong(MAX_TXN_OFFSET_64);
         final long unsyncedFrom = txnMem.getLong(UNSYNCED_FROM_TXN_OFFSET_64);
         final boolean isDurableMode = isDurableMode();
@@ -403,9 +408,14 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
      * which is not read for txn 1. The previous record is intact: the scan starts after a flushed one and stops at
      * the first torn one.
      */
-    private static boolean isTornRecord(long txn, long record, long prevRecord) {
+    private static boolean isTornRecord(long txn, long record, long prevRecord, long packStartTxn) {
         final int walId = Unsafe.getInt(record + TX_LOG_WAL_ID_OFFSET);
-        if (walId == 0) {
+        final boolean isPacked = PackTransport.isPacked(txn, packStartTxn, walId);
+        if (isPacked) {
+            if (Integer.toUnsignedLong(Unsafe.getInt(record + TX_LOG_SEGMENT_TXN_OFFSET)) < PackTransport.MIN_EVENT_OFFSET8) {
+                return true;
+            }
+        } else if (walId == 0) {
             return true;
         }
         if (txn == 1) {
@@ -422,6 +432,11 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
             return false;
         }
         final long prevStructureVersion = Unsafe.getLong(prevRecord + TX_LOG_STRUCTURE_VERSION_OFFSET);
+        if (isPacked) {
+            // SCHEMA has ordinary local event coordinates. An event either retains the schema or
+            // advances it once; its walId can be any non-control unsigned high word.
+            return structureVersion != prevStructureVersion && structureVersion != prevStructureVersion + 1;
+        }
         if (walId == STRUCTURAL_CHANGE_WAL_ID) {
             return structureVersion != prevStructureVersion + 1;
         }
@@ -474,7 +489,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
             return true;
         }
         final long record = txnMem.addressOf(offset);
-        return isTornRecord(txn, record, record - RECORD_SIZE);
+        return isTornRecord(txn, record, record - RECORD_SIZE, getPackStartTxn());
     }
 
     // Every record up to the tail is on disk.
@@ -715,6 +730,13 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         }
 
         @Override
+        public boolean isPacked() {
+            long packStartTxn = Unsafe.getLong(address + PACK_START_TXN_OFFSET_64);
+            PackTransport.checkPackStartTxn(packStartTxn);
+            return PackTransport.isPacked(txn, packStartTxn, getWalId());
+        }
+
+        @Override
         public void setPosition(long txn) {
             this.txnOffset = HEADER_SIZE + (txn - 1) * RECORD_SIZE;
             this.txn = txn;
@@ -765,6 +787,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
                     throw CairoException.critical(Os.errno()).put("cannot mmap transaction log [path=").put(path).put(']');
                 }
                 this.address = newAddr;
+                PackTransport.checkPackStartTxn(Unsafe.getLong(address + PACK_START_TXN_OFFSET_64));
                 this.txnOffset = HEADER_SIZE + (txnLo - 1) * RECORD_SIZE;
             } else {
                 throw CairoException.critical(ff.errno()).put("cannot read sequencer transactions [path=").put(path).put(']');

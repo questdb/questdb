@@ -43,6 +43,10 @@ public interface WalTxnTypeHandler {
 
     int applyUnknownWalTxn(byte walTxnType, TableWriter writer, WalEventCursor cursor, long seqTxn);
 
+    /** Reclaims direct-write metadata through the same safe prefix used for WAL segments. */
+    default void purgeDeltaEvents(CairoEngine engine, TableToken tableToken, long safeSeqTxn) {
+    }
+
     /**
      * Publishes accepted but unpublished Delta transactions. Returns the applied seqTxn, or -1 when skipped.
      */

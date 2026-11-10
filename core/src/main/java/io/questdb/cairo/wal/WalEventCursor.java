@@ -31,7 +31,7 @@ import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.MemoryCMR;
+import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
@@ -56,7 +56,7 @@ public class WalEventCursor {
     private static final int REPLACE_RANGE_EXTRA_OFFSET = REPLACE_RANGE_LO_OFFSET + Long.BYTES;
     private static final int DEDUP_FOOTER_SIZE = REPLACE_RANGE_EXTRA_OFFSET;
     private final DataInfo dataInfo = new DataInfo();
-    private final MemoryCMR eventMem;
+    private final MemoryCR eventMem;
     private final LiveViewDataInfo lvDataInfo = new LiveViewDataInfo();
     private final MatViewDataInfo mvDataInfo = new MatViewDataInfo();
     private final MatViewInvalidationInfo mvInvalidationInfo = new MatViewInvalidationInfo();
@@ -66,10 +66,11 @@ public class WalEventCursor {
     private long memSize;
     private long nextOffset = Integer.BYTES;
     private long offset = Integer.BYTES; // skip wal meta version
+    private long recordOffset;
     private long txn = END_OF_EVENTS;
     private byte type = NONE;
 
-    public WalEventCursor(MemoryCMR eventMem) {
+    public WalEventCursor(MemoryCR eventMem) {
         this.eventMem = eventMem;
     }
 
@@ -188,11 +189,26 @@ public class WalEventCursor {
         return true;
     }
 
+    /** Reads caller-owned, validated event-kind/payload bytes without a WAL file wrapper. */
+    public void ofEvent(long seqTxn) {
+        memSize = eventMem.size();
+        nextOffset = memSize;
+        offset = 0;
+        txn = seqTxn;
+        readRecord();
+    }
+
     public void reset() {
         memSize = eventMem.size();
         nextOffset = WALE_HEADER_SIZE; // skip wal meta version
         txn = END_OF_EVENTS;
         type = WalTxnType.NONE;
+    }
+
+    /** Restarts the current payload, for validation before applying symbol changes. */
+    public void rewindEvent() {
+        offset = recordOffset;
+        readRecord();
     }
 
     public void validateDeltaRecordEnd() {
@@ -375,6 +391,7 @@ public class WalEventCursor {
     }
 
     private void readRecord() {
+        recordOffset = offset;
         type = readByte();
         switch (type) {
             case DATA:

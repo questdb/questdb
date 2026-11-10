@@ -119,8 +119,10 @@ public class TableSequencerImplTest extends AbstractCairoTest {
             final var listener = engine.getWalListener();
             engine.setWalListener(new DefaultWalListener() {
                 @Override
-                public void tableCreated(TableToken token, long timestamp) {
+                public void tableCreated(TableToken token, long timestamp, int partitionBy, int timestampType) {
                     observed.set(true);
+                    Assert.assertEquals(PartitionBy.DAY, partitionBy);
+                    Assert.assertEquals(ColumnType.TIMESTAMP, timestampType);
                     Assert.assertThrows(AssertionError.class, () -> engine.getTableSequencerAPI().fdatasyncTxnLog(token));
                     // The table token is not registered until the constructor returns.
                     Assert.assertThrows(AssertionError.class, () -> engine.getWriterUnsafe(token, "constructor callback"));

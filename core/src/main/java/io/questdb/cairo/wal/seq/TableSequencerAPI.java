@@ -376,6 +376,16 @@ public class TableSequencerAPI implements QuietCloseable {
         return getNextEventWalId(tableToken);
     }
 
+    public long getPackStartTxn(TableToken token) {
+        try (TableSequencerImpl sequencer = openSequencerLocked(token, SequencerLockType.READ)) {
+            try {
+                return sequencer.getPackStartTxn();
+            } finally {
+                sequencer.unlockRead();
+            }
+        }
+    }
+
     public long getPendingDeltaTableSwitch(TableToken tableToken) {
         try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.READ)) {
             try {
@@ -477,14 +487,21 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
-    public long acceptDeltaTxn(TableToken token, long txn, long structureVersion, int walId, int segmentId, int segmentTxn, long timestamp, long minTimestamp, long maxTimestamp, long rowCount) {
+    /** Accepts a reserved Delta transaction whose Rust metadata record has a stable local address. */
+    public long acceptDeltaPackTxn(TableToken token, long txn, long structureVersion, int walId, int segmentId, int segmentTxn, long timestamp, long minTimestamp, long maxTimestamp, long rowCount) {
         try (TableSequencerImpl sequencer = openSequencerLocked(token, SequencerLockType.WRITE)) {
             try {
-                return sequencer.acceptDeltaTxn(txn, structureVersion, walId, segmentId, segmentTxn, timestamp, minTimestamp, maxTimestamp, rowCount);
+                return sequencer.acceptDeltaPackTxn(txn, structureVersion, walId, segmentId, segmentTxn, timestamp, minTimestamp, maxTimestamp, rowCount);
             } finally {
                 sequencer.unlockWrite();
             }
         }
+    }
+
+    /** Accepts a schema operation whose canonical Rust metadata record already has a stable local address. */
+    public long acceptDeltaStructureTxn(TableToken token, long txn, long structureVersion, AlterOperation change,
+                                       int walId, int segmentId, int segmentTxn) {
+        return nextStructureTxn(token, structureVersion, change, true, true, walId, segmentId, segmentTxn, txn);
     }
 
     public void finishDeltaRecovery(TableToken token, long appliedTxn) {
@@ -521,11 +538,25 @@ public class TableSequencerAPI implements QuietCloseable {
         return nextStructureTxn(tableToken, structureVersion, alterOp, true);
     }
 
+    /** Retains the local schema codec/log while publishing the SCHEMA frame's pack address. */
+    public long nextDeltaStructureTxn(final TableToken tableToken, long structureVersion, AlterOperation alterOp, int walId, int segmentId, int segmentTxn) {
+        return nextStructureTxn(tableToken, structureVersion, alterOp, true, true, walId, segmentId, segmentTxn);
+    }
+
     public long nextStructureTxn(final TableToken tableToken, long structureVersion, AlterOperation alterOp) {
         return nextStructureTxn(tableToken, structureVersion, alterOp, false);
     }
 
     private long nextStructureTxn(final TableToken tableToken, long structureVersion, AlterOperation alterOp, boolean delta) {
+        return nextStructureTxn(tableToken, structureVersion, alterOp, delta, false, -1, -1, -1);
+    }
+
+    private long nextStructureTxn(final TableToken tableToken, long structureVersion, AlterOperation alterOp, boolean delta, boolean isPacked, int walId, int segmentId, int segmentTxn) {
+        return nextStructureTxn(tableToken, structureVersion, alterOp, delta, isPacked, walId, segmentId, segmentTxn, 0);
+    }
+
+    private long nextStructureTxn(final TableToken tableToken, long structureVersion, AlterOperation alterOp, boolean delta, boolean isPacked,
+                                  int walId, int segmentId, int segmentTxn, long reservedTxn) {
         try (TableSequencerImpl tableSequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
             long txn;
             try {
@@ -539,7 +570,13 @@ public class TableSequencerAPI implements QuietCloseable {
                     }
                     throw CairoException.nonCritical().put("WAL schema changes are not supported for Delta tables");
                 }
-                txn = tableSequencer.nextStructureTxn(structureVersion, alterOp);
+                if (reservedTxn != 0) {
+                    txn = tableSequencer.acceptDeltaStructureTxn(reservedTxn, structureVersion, alterOp, walId, segmentId, segmentTxn);
+                } else {
+                    txn = isPacked
+                            ? tableSequencer.nextDeltaStructureTxn(structureVersion, alterOp, walId, segmentId, segmentTxn)
+                            : tableSequencer.nextStructureTxn(structureVersion, alterOp);
+                }
             } finally {
                 tableSequencer.unlockWrite();
             }
@@ -821,6 +858,17 @@ public class TableSequencerAPI implements QuietCloseable {
 
     public void setHardSuspended(final TableToken tableToken, boolean hardSuspended) {
         getSeqTxnTracker(tableToken).setHardSuspended(hardSuspended);
+    }
+
+    /** Activates pack transport at the next primary transaction, before publishing any frame address. */
+    public void setPackStartTxn(TableToken token, long packStartTxn) {
+        try (TableSequencerImpl sequencer = openSequencerLocked(token, SequencerLockType.WRITE)) {
+            try {
+                sequencer.setPackStartTxn(packStartTxn);
+            } finally {
+                sequencer.unlockWrite();
+            }
+        }
     }
 
     public void suspendTable(final TableToken tableToken, ErrorTag errorTag, String errorMessage) {
