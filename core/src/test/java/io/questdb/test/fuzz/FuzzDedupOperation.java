@@ -1,6 +1,7 @@
 package io.questdb.test.fuzz;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -23,7 +24,7 @@ public class FuzzDedupOperation implements FuzzTransactionOperation {
         if (keys.size() == 0) {
             builder.ofDedupDisable(0, writer.getTableToken());
         } else {
-            builder.ofDedupEnable(0, writer.getTableToken());
+            builder.ofDedupEnable(0, writer.getTableToken(), TableUtils.DEDUP_MODE_UPSERT);
             for (int i = 0; i < keys.size(); i++) {
                 builder.setDedupKeyFlag(keys.getQuick(i));
             }
