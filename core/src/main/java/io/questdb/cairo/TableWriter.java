@@ -19478,7 +19478,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      */
     private void rollbackColumnVersionOfFailedCommit() {
         try {
-            // A failed mremap unmaps _txn or _cv, and reading it then faults.
+            // A failed mremap unmaps _cv, and reading it then faults. _txn keeps its mapping through a failed commit,
+            // see TxWriter.mapWriteArea(); the writer still checks it before reading.
             if (txWriter.isOpen() && columnVersionWriter.isOpen()) {
                 final long txnColumnVersion = txWriter.unsafeReadColumnVersion();
                 // A failed commit leaves _cv exactly one version ahead of _txn. The next writer's constructor

@@ -2140,10 +2140,7 @@ public final class TableUtils {
         final long page = ff.mremap(fd, prevAddress, prevSize, newSize, offset, mapMode, memoryTag);
         if (page == FilesFacade.MAP_FAILED) {
             int errno = ff.errno();
-            // Closing memory will truncate size to current append offset.
-            // Since the failed resize can occur before append offset can be
-            // explicitly set, we must assume that file size should be
-            // equal to previous memory size
+            // The mapping at prevAddress stays valid and the caller still owns it: see Files.mremap0()
             throw CairoException.critical(errno).put("could not remap file [previousSize=").put(prevSize)
                     .put(", newSize=").put(newSize)
                     .put(", offset=").put(offset)

@@ -150,40 +150,6 @@ public class ColumnVersionAheadOfTxnTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFailedApplyLeavesColumnVersionAheadWhenTxnUnmapped() throws Exception {
-        // mremap fails while the commit grows _txn: the writer loses its _txn mapping and cannot read the
-        // committed column version to roll _cv back to; the next writer to open the table does
-        final ApplyFaultFacade ff = new ApplyFaultFacade();
-        assertMemoryLeak(ff, () -> {
-            setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
-            final TableToken token = createTableWithPendingCommit();
-            failPendingCommit(ff, TXN_FILE_NAME, Fault.MREMAP, "could not remap file");
-            Assert.assertEquals(readTxnColumnVersion(token) + 1, readColumnVersionFileVersion(token));
-            capture.drain();
-            capture.assertNotLogged("rolling back column version");
-            capture.assertNotLogged("could not roll back column version of failed commit");
-
-            skipColumnVersionWaits();
-            engine.releaseAllWalWriters();
-            assertReturns(token, () -> {
-                try (WalWriter walWriter = engine.getWalWriter(token)) {
-                    // writes symbols in full, without the table's symbol table
-                    Assert.assertEquals(0, walWriter.getSymbolCountWatermark(0));
-                }
-            });
-            capture.drain();
-            capture.assertLogged("_cv stays ahead of _txn, writing symbols in full");
-            assertReturns(token, () -> execute(INSERT_SENT_ROW));
-            engine.releaseAllReaders();
-            assertExceptionNoLeakCheck(ROWS_QUERY, ROWS_QUERY.indexOf(" x ") + 1, "Column Version read timeout");
-            assertTableResumes(token, SENT_ROW);
-            // the writer RESUME WAL opened rolled _cv back
-            capture.drain();
-            capture.assertOnlyOnce("rolling back column version change to match _txn file");
-        });
-    }
-
-    @Test
     public void testFailedApplyReleasesWriterWhenColumnVersionRollbackFails() throws Exception {
         // the rollback of _cv fails in turn: the writer still closes, frees what it holds and releases the table
         final ApplyFaultFacade ff = new ApplyFaultFacade();
@@ -203,37 +169,14 @@ public class ColumnVersionAheadOfTxnTest extends AbstractCairoTest {
     @Test
     public void testFailedApplyRollsColumnVersionBack() throws Exception {
         // disk full while the commit grows _txn
-        final ApplyFaultFacade ff = new ApplyFaultFacade();
-        assertMemoryLeak(ff, () -> {
-            setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
-            final TableToken token = createTableWithPendingCommit();
-            failPendingCommit(ff, TXN_FILE_NAME, Fault.ALLOCATE, "No space left");
-            // the writer rolled _cv back as it gave the table up, before the table got suspended
-            assertColumnVersionMatchesTxn(token);
-            capture.drain();
-            capture.assertOnlyOnce("rolling back column version of failed commit");
-            capture.assertNotLogged("could not roll back column version of failed commit");
+        assertFailedApplyRollsColumnVersionBack(Fault.ALLOCATE, "No space left");
+    }
 
-            // no reader or WAL writer waits for the failed commit's _txn
-            final AtomicInteger waitCount = countColumnVersionWaits();
-            engine.releaseAllReaders();
-            assertRows(COMMITTED_ROWS);
-            engine.releaseAllWalWriters();
-            try (WalWriter walWriter = engine.getWalWriter(token)) {
-                // the table's symbol table at its last commit: 'a'
-                Assert.assertEquals(1, walWriter.getSymbolCountWatermark(0));
-                walWriter.rollSegment();
-                Assert.assertEquals(1, walWriter.getSymbolCountWatermark(0));
-            }
-            execute(INSERT_SENT_ROW);
-            Assert.assertEquals(0, waitCount.get());
-            capture.drain();
-            capture.assertNotLogged("_cv stays ahead of _txn");
-            assertTableResumes(token, SENT_ROW);
-            // the writer RESUME WAL opened found nothing to roll back
-            capture.drain();
-            capture.assertNotLogged("rolling back column version change to match _txn file");
-        });
+    @Test
+    public void testFailedApplyRollsColumnVersionBackWhenTxnRemapFails() throws Exception {
+        // mremap fails while the commit grows _txn: the writer keeps its _txn mapping, and rolls _cv back as for disk
+        // full
+        assertFailedApplyRollsColumnVersionBack(Fault.MREMAP, "could not remap file");
     }
 
     @Test
@@ -433,6 +376,40 @@ public class ColumnVersionAheadOfTxnTest extends AbstractCairoTest {
             }
             Assert.assertEquals(0, waitCount.get());
             assertTableResumes(token, "");
+        });
+    }
+
+    private void assertFailedApplyRollsColumnVersionBack(Fault fault, String error) throws Exception {
+        final ApplyFaultFacade ff = new ApplyFaultFacade();
+        assertMemoryLeak(ff, () -> {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
+            final TableToken token = createTableWithPendingCommit();
+            failPendingCommit(ff, TXN_FILE_NAME, fault, error);
+            // the writer rolled _cv back as it gave the table up, before the table got suspended
+            assertColumnVersionMatchesTxn(token);
+            capture.drain();
+            capture.assertOnlyOnce("rolling back column version of failed commit");
+            capture.assertNotLogged("could not roll back column version of failed commit");
+
+            // no reader or WAL writer waits for the failed commit's _txn
+            final AtomicInteger waitCount = countColumnVersionWaits();
+            engine.releaseAllReaders();
+            assertRows(COMMITTED_ROWS);
+            engine.releaseAllWalWriters();
+            try (WalWriter walWriter = engine.getWalWriter(token)) {
+                // the table's symbol table at its last commit: 'a'
+                Assert.assertEquals(1, walWriter.getSymbolCountWatermark(0));
+                walWriter.rollSegment();
+                Assert.assertEquals(1, walWriter.getSymbolCountWatermark(0));
+            }
+            execute(INSERT_SENT_ROW);
+            Assert.assertEquals(0, waitCount.get());
+            capture.drain();
+            capture.assertNotLogged("_cv stays ahead of _txn");
+            assertTableResumes(token, SENT_ROW);
+            // the writer RESUME WAL opened found nothing to roll back
+            capture.drain();
+            capture.assertNotLogged("rolling back column version change to match _txn file");
         });
     }
 

@@ -25,11 +25,13 @@
 package io.questdb.test.cairo.vm;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.vm.MemoryCMARWImpl;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -362,6 +364,46 @@ public class MemoryCMARWImplTest {
         });
     }
 
+    // Owners such as PostingIndexWriter treat a closed memory as the degraded state a failed remap leaves.
+    @Test
+    public void testFailedRemapClosesMemoryByDefault() throws Exception {
+        testFailedRemap(false);
+    }
+
+    // TxWriter reloads what it wrote after a failed commit, so the memory stays as it was.
+    @Test
+    public void testFailedRemapKeepsMappingWhenAsked() throws Exception {
+        testFailedRemap(true);
+    }
+
+    // Files.mremap0() leaves the mapping in place when the remap fails, on every platform, as mremap(2) on Linux.
+    @Test
+    public void testFailedRemapLeavesPreviousMappingInPlace() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+            final long pageSize = Files.PAGE_SIZE;
+            try (Path path = new Path().of(temp.newFile().getAbsolutePath())) {
+                final long fd = ff.openRW(path.$(), CairoConfiguration.O_NONE);
+                Assert.assertTrue(fd > -1);
+                try {
+                    Assert.assertTrue(ff.allocate(fd, pageSize));
+                    final long addr = ff.mmap(fd, pageSize, 0, Files.MAP_RW, MemoryTag.MMAP_DEFAULT);
+                    Assert.assertNotEquals(FilesFacade.MAP_FAILED, addr);
+                    try {
+                        Unsafe.putLong(addr, 0x5EED_CAFEL);
+                        // no address space holds 2^62 bytes
+                        Assert.assertEquals(FilesFacade.MAP_FAILED, ff.mremap(fd, addr, pageSize, 1L << 62, 0, Files.MAP_RW, MemoryTag.MMAP_DEFAULT));
+                        Assert.assertEquals(0x5EED_CAFEL, Unsafe.getLong(addr));
+                    } finally {
+                        ff.munmap(addr, pageSize, MemoryTag.MMAP_DEFAULT);
+                    }
+                } finally {
+                    ff.close(fd);
+                }
+            }
+        });
+    }
+
     @Test
     public void testReopenAfterCloseRestoresAppendBounds() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
@@ -422,6 +464,62 @@ public class MemoryCMARWImplTest {
         for (long i = 0, n = bytes / Long.BYTES; i < n; i++) {
             mem.putLong(i);
         }
+    }
+
+    private static void testFailedRemap(boolean isMappingKept) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final AtomicInteger remapFailures = new AtomicInteger();
+            final FilesFacade ff = new TestFilesFacadeImpl() {
+                @Override
+                public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
+                    if (remapFailures.getAndUpdate(n -> Math.max(0, n - 1)) > 0) {
+                        return FilesFacade.MAP_FAILED;
+                    }
+                    return super.mremap(fd, addr, previousSize, newSize, offset, mode, memoryTag);
+                }
+            };
+            final long pageSize = Files.PAGE_SIZE;
+            try (Path path = new Path().of(temp.newFile().getAbsolutePath())) {
+                final MemoryCMARWImpl mem = new MemoryCMARWImpl();
+                try {
+                    mem.of(ff, path.$(), pageSize, -1, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE, -1);
+                    mem.setMappingKeptOnFailedRemap(isMappingKept);
+                    appendLongs(mem, pageSize);
+                    final long fd = mem.getFd();
+                    final long size = mem.size();
+                    Assert.assertEquals(pageSize, size);
+
+                    remapFailures.set(1);
+                    try {
+                        mem.putLong(pageSize / Long.BYTES);
+                        Assert.fail("the remap did not fail");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "could not remap file");
+                    }
+
+                    if (!isMappingKept) {
+                        Assert.assertFalse(mem.isOpen());
+                        Assert.assertEquals(0, mem.size());
+                        Assert.assertEquals(0, mem.getAppendOffset());
+                        return;
+                    }
+                    Assert.assertEquals(fd, mem.getFd());
+                    Assert.assertEquals(size, mem.size());
+                    Assert.assertEquals(pageSize, mem.getAppendOffset());
+                    for (long i = 0, n = pageSize / Long.BYTES; i < n; i++) {
+                        Assert.assertEquals(i, mem.getLong(i * Long.BYTES));
+                    }
+                    // the write that failed goes through once the remap succeeds
+                    mem.putLong(pageSize / Long.BYTES);
+                    Assert.assertEquals(pageSize + Long.BYTES, mem.getAppendOffset());
+                    for (long i = 0, n = pageSize / Long.BYTES + 1; i < n; i++) {
+                        Assert.assertEquals(i, mem.getLong(i * Long.BYTES));
+                    }
+                } finally {
+                    mem.close();
+                }
+            }
+        });
     }
 
     private static class RecordingFilesFacade extends TestFilesFacadeImpl {
