@@ -205,9 +205,10 @@ public class AsyncHashJoinPlanTest extends AbstractCairoTest {
         assertOrdinaryPlan("SELECT t.k, d.w FROM t FULL JOIN d ON t.k = d.k", sqlExecutionContext);
         // A LEFT join's ON condition beyond its keys whose value may change within an execution.
         assertOrdinaryPlan("SELECT t.k, d.w FROM t LEFT JOIN d ON t.k = d.k AND (d.w > 2 OR systimestamp() < t.ts)", sqlExecutionContext);
-        // An INNER join whose ordinary plan may swap its inputs: neither scans an interval.
-        assertOrdinaryPlan("SELECT t.k, d.w FROM t JOIN d ON t.k = d.k", sqlExecutionContext);
-        assertOrdinaryPlan("SELECT t.k, d.w FROM (SELECT k, ts FROM t) t JOIN d ON t.k = d.k", sqlExecutionContext);
+        // An INNER join whose ordinary plan may swap its inputs, since neither scans an interval,
+        // swaps them by the same rule.
+        TestUtils.assertContains(assertParallelHashJoin("SELECT t.k, d.w FROM t JOIN d ON t.k = d.k", sqlExecutionContext), "inputSwap: when the left input is smaller");
+        TestUtils.assertContains(assertParallelHashJoin("SELECT t.k, d.w FROM (SELECT k, ts FROM t) t JOIN d ON t.k = d.k", sqlExecutionContext), "inputSwap: when the left input is smaller");
         // BINARY and ARRAY keys, which the operator does not stage.
         assertOrdinaryPlan("SELECT t.k, d.w FROM t LEFT JOIN d ON t.b = d.b", sqlExecutionContext);
         assertOrdinaryPlan("SELECT t.k, d.w FROM t LEFT JOIN d ON t.a = d.a", sqlExecutionContext);
@@ -283,8 +284,8 @@ public class AsyncHashJoinPlanTest extends AbstractCairoTest {
             PartitionEncoder.populateFromTableReader(reader, descriptor, 0);
             PartitionEncoder.encode(descriptor, path);
         }
-        // read_parquet() answers its cursor's size itself, so the serial INNER join may swap over it,
-        // which the operator does not reproduce yet: the join keeps the ordinary plan.
+        // read_parquet() answers its cursor's size itself, so the serial INNER join may swap over it
+        // by a size the operator does not reproduce: the join keeps the ordinary plan.
         assertOrdinaryPlan("SELECT t.k, p.w FROM t JOIN read_parquet('d.parquet') p ON t.k = p.k", sqlExecutionContext);
         // A LEFT join never swaps.
         assertParallelHashJoin("SELECT t.k, p.w FROM t LEFT JOIN read_parquet('d.parquet') p ON t.k = p.k", sqlExecutionContext);

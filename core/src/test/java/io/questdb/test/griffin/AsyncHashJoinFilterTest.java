@@ -547,11 +547,11 @@ public class AsyncHashJoinFilterTest extends AbstractCairoTest {
     public void testInnerJoinWithFilteredInputTakesOperator() throws Exception {
         assertMemoryLeak(() -> {
             // The left input is the smaller one, so an unfiltered INNER join's ordinary plan swaps its
-            // inputs and keeps the ordinary plan, but a filtered input's cursor reports no size, so the
-            // ordinary plan streams the left input and the operator takes the join.
+            // inputs, and so does the operator, but a filtered input's cursor reports no size, so the
+            // ordinary plan streams the left input and the operator plans no swap.
             execute("CREATE TABLE small AS (SELECT (x % 4)::INT k, x v, timestamp_sequence('2024-01-01', 600_000_000) ts FROM long_sequence(10)) TIMESTAMP(ts) PARTITION BY HOUR");
             execute("CREATE TABLE big AS (SELECT (x % 6)::INT k, x w, timestamp_sequence('2023-12-31', 600_000_000) bts FROM long_sequence(50)) TIMESTAMP(bts) PARTITION BY HOUR");
-            assertOrdinaryPlan("SELECT small.v, big.w FROM small JOIN big ON small.k = big.k", sqlExecutionContext);
+            TestUtils.assertContains(assertParallelHashJoin("SELECT small.v, big.w FROM small JOIN big ON small.k = big.k", sqlExecutionContext), "inputSwap");
             for (String sql : new String[]{
                     "SELECT small.v, big.w FROM small JOIN big ON small.k = big.k WHERE small.v > 3",
                     "SELECT small.v, b.w FROM small JOIN (SELECT * FROM big WHERE w > 3) b ON small.k = b.k",
@@ -559,7 +559,9 @@ public class AsyncHashJoinFilterTest extends AbstractCairoTest {
                     // An interval scan reports no size either, filtered or not.
                     "SELECT small.v, b.w FROM small JOIN (SELECT * FROM big WHERE bts IN '2023-12-31T02') b ON small.k = b.k",
             }) {
-                TestUtils.assertContains(assertParallelHashJoin(sql, sqlExecutionContext), "joinType: inner");
+                final String plan = assertParallelHashJoin(sql, sqlExecutionContext);
+                TestUtils.assertContains(plan, "joinType: inner");
+                Assert.assertFalse(plan, plan.contains("inputSwap"));
             }
         });
     }

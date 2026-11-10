@@ -69,8 +69,8 @@ import static io.questdb.test.griffin.ParallelHashJoinTestUtils.*;
  * payload type, NULL keys, duplicate keys, scan directions, data shapes, build modes and the cursor's
  * lifecycle, and the plans of the shapes it takes and of the shapes it leaves to the ordinary plan.
  * <p>
- * An INNER join keeps the ordinary plan while that plan may swap its inputs, which it does unless an
- * input scans timestamp intervals, so the INNER joins here scan an interval of the left input.
+ * The INNER joins here scan an interval of the left input, whose cursor reports no size, so that
+ * neither plan swaps the inputs; {@code AsyncHashJoinSwapTest} covers the swap.
  */
 public class AsyncHashJoinTest extends AbstractCairoTest {
     // The key types that HashJoinGroupByKeys stages, each with five values: an INT and a SYMBOL key

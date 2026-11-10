@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.IntList;
@@ -85,6 +86,24 @@ public final class HashJoinInput implements QuietCloseable {
         }
     }
 
+    /**
+     * The size that the record cursor of a page frame scan reports when it opens over these frames,
+     * as {@code PageFrameRecordCursorImpl.size()} reports it, or that of a filter over that scan: -1
+     * under a filter, whose cursor keeps rows that it cannot count before it reads them, and -1 under
+     * a Parquet pushdown filter, which skips row groups whose rows the frame cursor counts; otherwise
+     * the frame cursor's size, which is -1 for a scan of timestamp intervals. The serial hash join
+     * swaps its inputs by these sizes, so a parallel hash join that reproduces its order computes them
+     * from the frame cursors it opens instead of the record cursors it never opens. Only a table scan
+     * that reads every row of its frames, rather than the rows of an index, reports its frames' rows as
+     * its size, and the planner makes no other scan the input of a join that may swap.
+     *
+     * @param cursor          the scan's open page frame cursor
+     * @param hasStolenFilter true when the input is a filter over the scan, see {@link #hasStolenFilter()}
+     */
+    public static long getSerialSize(PageFrameCursor cursor, boolean hasStolenFilter) {
+        return hasStolenFilter || cursor.hasActivePushdownFilter() ? -1 : cursor.size();
+    }
+
     @Override
     public void close() {
         Throwable failure = Misc.freeBestEffort(null, ownedFilterContext);
@@ -134,6 +153,16 @@ public final class HashJoinInput implements QuietCloseable {
      */
     public int getOrder() {
         return order;
+    }
+
+    /**
+     * The size that the input's record cursor reports when it opens over the frames of the given
+     * cursor; see {@link #getSerialSize(PageFrameCursor, boolean)}.
+     *
+     * @param cursor the open page frame cursor of the input's scan
+     */
+    public long getSerialSize(PageFrameCursor cursor) {
+        return getSerialSize(cursor, hasStolenFilter());
     }
 
     /**

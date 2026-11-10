@@ -42,19 +42,36 @@ import io.questdb.std.QuietCloseable;
  * answers them as the serial join does, by asking its left input, and the left input it keeps is
  * the frame scan the planner peeled from what the query compiled.
  * <p>
+ * An INNER first join may swap its inputs at execution, as the serial hash join does: when no parent
+ * has fixed the join's order and its left input is the smaller one, it hashes its left input and
+ * streams its right one, the first stage's build input. The spec of such a join, a swap candidate,
+ * holds the joined rows' column map in that orientation too, and records whether a parent fixed the
+ * order, which rules the swap out; see {@link #markOrderDetermined(boolean)}.
+ * <p>
  * The spec owns the inputs, the stages and the metadata.
  */
 public final class AsyncHashJoinSpec implements QuietCloseable {
     // For each column of the joined rows, its column in the record that holds it: a frame column of
     // the left input, or a payload column of a stage.
     private final IntList columnIndexes = new IntList();
+    // The same, once the first join swapped its inputs: a payload column of the first stage for a
+    // column of the left input, and a frame column of the right input for a column of the first
+    // stage; empty when the join never swaps.
+    private final IntList columnIndexesB = new IntList();
     // For each column of the joined rows, the record that holds it: 0 for the left input's frames,
     // k + 1 for stage k's payload.
     private final IntList columnSources = new IntList();
+    // The same, once the first join swapped its inputs: 1 for the left input, whose rows the first
+    // stage holds, and 0 for the first stage's columns, which the right input's frames hold; empty
+    // when the join never swaps.
+    private final IntList columnSourcesB = new IntList();
     private final boolean isLeftOrderByAdviceFollowed;
+    private final boolean isSwapCandidate;
     private final HashJoinInput leftInput;
     private final int leftScanDirection;
     private final ObjList<HashJoinStageSpec> stages = new ObjList<>();
+    // True once a parent asked the join about its order and the answer constrained it.
+    private boolean isOrderDetermined;
     private RecordMetadata metadata;
 
     /**
@@ -77,6 +94,9 @@ public final class AsyncHashJoinSpec implements QuietCloseable {
         this.metadata = metadata;
         this.isLeftOrderByAdviceFollowed = isLeftOrderByAdviceFollowed;
         this.leftScanDirection = leftScanDirection;
+        // A stage that holds its keys in the swapped orientation is the first join of a candidate.
+        this.isSwapCandidate = stage.getSwapKeyLayout() != null;
+        stage.setInputSwapPossible(isSwapCandidate);
         stages.add(stage);
         final IntList leftColumnMap = leftInput.getColumnMap();
         for (int c = 0, n = leftColumnMap.size(); c < n; c++) {
@@ -84,9 +104,23 @@ public final class AsyncHashJoinSpec implements QuietCloseable {
             columnIndexes.add(leftColumnMap.getQuick(c));
         }
         // A stage's payload reader reads its payload columns by their payload index.
-        for (int c = 0, n = stage.getPayloadColumns().size(); c < n; c++) {
+        final IntList payloadColumns = stage.getPayloadColumns();
+        for (int c = 0, n = payloadColumns.size(); c < n; c++) {
             columnSources.add(1);
             columnIndexes.add(c);
+        }
+        if (isSwapCandidate) {
+            // Swapped, the first stage hashes the left input, whose every column is a payload column
+            // in the left input's order, and the probe reads the right input's frames, whose columns
+            // the stage's payload columns name.
+            for (int c = 0, n = leftColumnMap.size(); c < n; c++) {
+                columnSourcesB.add(1);
+                columnIndexesB.add(c);
+            }
+            for (int c = 0, n = payloadColumns.size(); c < n; c++) {
+                columnSourcesB.add(0);
+                columnIndexesB.add(payloadColumns.getQuick(c));
+            }
         }
         assert columnSources.size() == metadata.getColumnCount();
     }
@@ -153,6 +187,15 @@ public final class AsyncHashJoinSpec implements QuietCloseable {
     }
 
     /**
+     * True while the first join may swap its inputs at execution: it is a candidate, see
+     * {@link #isSwapCandidate()}, and no parent has fixed its order, see
+     * {@link #markOrderDetermined(boolean)}. Every execution then compares the inputs' sizes.
+     */
+    public boolean isInputSwapPossible() {
+        return isSwapCandidate && !isOrderDetermined;
+    }
+
+    /**
      * The compiled left input's {@code followedOrderByAdvice()}, which the join returns as its own.
      */
     public boolean isLeftOrderByAdviceFollowed() {
@@ -160,15 +203,44 @@ public final class AsyncHashJoinSpec implements QuietCloseable {
     }
 
     /**
-     * A flat record over the joined rows, whose sources the caller binds: the left input's frame
-     * record and each stage's payload reader; see {@link MultiHashJoinRecord}.
+     * True when the first join may swap its inputs, as the serial hash join swaps them: an INNER join
+     * whose left input offers random access, over two unfiltered table scans that report their
+     * sizes, possibly under projections, whose keys the planner compiled in both orientations.
+     */
+    public boolean isSwapCandidate() {
+        return isSwapCandidate;
+    }
+
+    /**
+     * Records the answer to a question a parent asked the join about its order, as the serial hash
+     * join records it: an answer that constrains the order, an advice the left input followed or a
+     * scan direction other than {@code SCAN_DIRECTION_OTHER}, rules the swap out for good, since the
+     * parent depends on the left input's order from then on. Only a parent asks; the join, its cursor
+     * and the planner read the recorded answers instead.
+     */
+    public void markOrderDetermined(boolean isDetermined) {
+        this.isOrderDetermined |= isDetermined;
+        // The first stage's plan names the swap while it is possible.
+        stages.getQuick(0).setInputSwapPossible(isInputSwapPossible());
+    }
+
+    /**
+     * A flat record over the joined rows, whose sources the caller binds: the probe scan's frame
+     * record and each stage's payload reader; see {@link MultiHashJoinRecord}. A candidate's record
+     * holds the column map of the swapped orientation too, in which the probe scan is the right input
+     * and the first stage's payload is the left input.
      */
     public MultiHashJoinRecord newJoinedRecord() {
         final ObjList<ColumnTypes> payloadTypes = new ObjList<>();
         for (int i = 0, n = stages.size(); i < n; i++) {
             payloadTypes.add(stages.getQuick(i).getBuildInput().getColumnTypes());
         }
-        return new MultiHashJoinRecord(columnSources, columnIndexes, payloadTypes, null, null, null);
+        if (!isSwapCandidate) {
+            return new MultiHashJoinRecord(columnSources, columnIndexes, payloadTypes, null, null, null);
+        }
+        final ObjList<ColumnTypes> payloadTypesB = new ObjList<>();
+        payloadTypesB.add(leftInput.getColumnTypes());
+        return new MultiHashJoinRecord(columnSources, columnIndexes, payloadTypes, columnSourcesB, columnIndexesB, payloadTypesB);
     }
 
     /**

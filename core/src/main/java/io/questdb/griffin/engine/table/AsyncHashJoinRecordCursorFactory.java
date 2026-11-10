@@ -63,11 +63,18 @@ import java.util.concurrent.atomic.AtomicInteger;
  * The factory owns the join's spec, see {@link AsyncHashJoinSpec}: the inputs, their filter
  * contexts, the stages and the joined rows' metadata. It answers the order questions a parent asks a
  * join, {@link #followedOrderByAdvice()} and {@link #getScanDirection()}, as its left input as
- * compiled answered them, and reports no random access, as the serial join does.
+ * compiled answered them, and reports no random access, as the serial join does. An answer that
+ * constrains the order fixes it, as it fixes the serial join's.
  * <p>
- * {@link #getCursor} opens the build scan, then the probe scan, each in its own scan order, and
- * reads no row: the cursor builds on first demand for a row, so EXPLAIN and {@code LIMIT 0} pay for
- * no more than the two open scans.
+ * {@link #getCursor} opens the first join's right input, then its left input, each in its own scan
+ * order, and reads no row: the cursor builds on first demand for a row, so EXPLAIN and
+ * {@code LIMIT 0} pay for no more than the two open scans. An INNER join whose order no parent fixed
+ * swaps its inputs, as the serial hash join does, when both report a size and the left one is the
+ * smaller: it then hashes the left input and streams the right one, whose rows come in the right
+ * input's order, each with its matches newest first, in the order the left input's cursor yields
+ * them. The joined rows keep their columns, the left input's first. The sizes are those that the
+ * inputs' record cursors would report, see {@link HashJoinInput#getSerialSize}, and every execution
+ * of a cached factory decides again, from the sizes of its own open scans.
  */
 public final class AsyncHashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final PageFrameReducer REDUCER = AsyncHashJoinRecordCursorFactory::probeFrame;
@@ -138,11 +145,18 @@ public final class AsyncHashJoinRecordCursorFactory extends AbstractRecordCursor
     /**
      * Answers as the left input as compiled answered, as the serial join asks its master, unless a
      * stage runs a post-join filter: the serial plan's filter over a join answers false without
-     * asking the join, and so does this join once it absorbed such a filter.
+     * asking the join, and so does this join once it absorbed such a filter. An advice that the left
+     * input followed fixes the join's order, which rules the swap of its inputs out, as it does the
+     * serial join's.
      */
     @Override
     public boolean followedOrderByAdvice() {
-        return !spec.hasPostFilter() && spec.isLeftOrderByAdviceFollowed();
+        if (spec.hasPostFilter()) {
+            return false;
+        }
+        final boolean isFollowed = spec.isLeftOrderByAdviceFollowed();
+        spec.markOrderDetermined(isFollowed);
+        return isFollowed;
     }
 
     @Override
@@ -169,14 +183,25 @@ public final class AsyncHashJoinRecordCursorFactory extends AbstractRecordCursor
             circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
             buildRounds.ofRounds(executionContext);
             final AsyncHashJoinAtom atom = frameSequence.getAtom();
-            // The build scan opens first, as the serial join opens its slave first. The atom keeps it
-            // until the first stage adopts it, and the cursor's close() closes it otherwise.
-            final HashJoinInput buildInput = spec.getStage(0).getBuildInput();
-            atom.ofBuildCursor(buildInput.getFactory().getPageFrameCursor(executionContext, buildInput.getOrder()));
+            // The right input's scan opens first, as the serial join opens its slave first. The atom
+            // keeps both scans until it hands them on, and the cursor's close() closes them otherwise.
+            final HashJoinInput rightInput = spec.getStage(0).getBuildInput();
             final HashJoinInput leftInput = spec.getLeftInput();
-            final PageFrameCursor probeCursor = leftInput.getFactory().getPageFrameCursor(executionContext, leftInput.getOrder());
+            final PageFrameCursor rightCursor = rightInput.getFactory().getPageFrameCursor(executionContext, rightInput.getOrder());
+            PageFrameCursor leftCursor = null;
+            try {
+                leftCursor = leftInput.getFactory().getPageFrameCursor(executionContext, leftInput.getOrder());
+            } finally {
+                atom.ofInputCursors(leftCursor, rightCursor);
+            }
+            // The serial join swaps its inputs by the sizes their record cursors report, once both
+            // cursors are open, unless a parent fixed its order.
+            final boolean isSwapped = spec.isInputSwapPossible()
+                    && isLeftInputSmaller(leftInput.getSerialSize(leftCursor), rightInput.getSerialSize(rightCursor));
+            final HashJoinInput probeInput = isSwapped ? rightInput : leftInput;
+            final PageFrameCursor probeCursor = atom.ofOrientation(isSwapped);
             // The sequence owns the probe scan from here on, whether this returns or throws.
-            frameSequence.of(probeCursor, leftInput.getMetadata(), executionContext, collectSubSeq);
+            frameSequence.of(probeCursor, probeInput.getMetadata(), executionContext, collectSubSeq);
             cursor.of(frameSequence, buildRounds, circuitBreaker);
             return cursor;
         } catch (Throwable th) {
@@ -195,11 +220,23 @@ public final class AsyncHashJoinRecordCursorFactory extends AbstractRecordCursor
     }
 
     /**
-     * Answers as the left input as compiled answered, as the serial join asks its master.
+     * Answers as the left input as compiled answered, as the serial join asks its master. A scan
+     * direction other than {@code SCAN_DIRECTION_OTHER} fixes the join's order, which rules the swap
+     * of its inputs out, as it does the serial join's.
      */
     @Override
     public int getScanDirection() {
-        return spec.getLeftScanDirection();
+        final int scanDirection = spec.getLeftScanDirection();
+        spec.markOrderDetermined(scanDirection != SCAN_DIRECTION_OTHER);
+        return scanDirection;
+    }
+
+    /**
+     * The join's spec, which the factory owns.
+     */
+    @TestOnly
+    public AsyncHashJoinSpec getSpec() {
+        return spec;
     }
 
     /**
@@ -310,6 +347,14 @@ public final class AsyncHashJoinRecordCursorFactory extends AbstractRecordCursor
     @TestOnly
     public static void setStepperCopiesEnabledForTesting(boolean isEnabled) {
         HashJoinStageStepper.setCopiesEnabled(isEnabled);
+    }
+
+    /**
+     * The serial hash join's rule: it hashes its left input and streams its right one when both
+     * report a size and the left one is the smaller.
+     */
+    private static boolean isLeftInputSmaller(long leftSize, long rightSize) {
+        return leftSize > 0 && rightSize > 0 && leftSize < rightSize;
     }
 
     private static void probeFrame(

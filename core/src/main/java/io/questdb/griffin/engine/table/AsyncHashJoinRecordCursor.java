@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.cairo.sql.async.UnorderedPageFrameSequence;
@@ -57,7 +58,13 @@ import io.questdb.std.Os;
  * <p>
  * The cursor passes every {@code next()} the execution's effective dispatch limit, the size of the
  * atom's tuple ring, which keeps frames in flight from sharing an entry; see
- * {@link HashJoinTupleRing}. {@code toTop()} probes again over the same builds.
+ * {@link HashJoinTupleRing}. {@code toTop()} probes again over the same builds, in the same
+ * orientation.
+ * <p>
+ * An execution that swapped the first join's inputs, see {@link AsyncHashJoinAtom#isSwapped()}, probes
+ * the right input's frames and reads the left input's columns from the first stage's matches; the
+ * joined row keeps its columns, and each column's symbol tables come from the open scan whose frames
+ * hold it.
  */
 class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
     // The columns of the left input, which come first in the joined row.
@@ -83,6 +90,8 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
     private PageFrameSequence<AsyncHashJoinAtom> frameSequence;
     private boolean isBuilt;
     private boolean isOpen;
+    // True when the execution hashes the left input and streams the right one.
+    private boolean isSwapped;
     // The first stage's output probe and the payload reader it positions.
     private FrozenHashJoinBuild.Probe outputProbe;
     private HashJoinPayloadSource.Reader outputReader;
@@ -138,10 +147,7 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
 
     @Override
     public SymbolTable getSymbolTable(int columnIndex) {
-        if (columnIndex < columnSplit) {
-            return frameSequence.getSymbolTableSource().getSymbolTable(leftColumnMap.getQuick(columnIndex));
-        }
-        return atom.getStage(0).getBuildSymbols().getSymbolTable(payloadColumns.getQuick(columnIndex - columnSplit));
+        return getScan(columnIndex).getSymbolTable(getFrameColumn(columnIndex));
     }
 
     @Override
@@ -184,10 +190,7 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
 
     @Override
     public SymbolTable newSymbolTable(int columnIndex) {
-        if (columnIndex < columnSplit) {
-            return frameSequence.getSymbolTableSource().newSymbolTable(leftColumnMap.getQuick(columnIndex));
-        }
-        return atom.getStage(0).getBuildSymbols().newSymbolTable(payloadColumns.getQuick(columnIndex - columnSplit));
+        return getScan(columnIndex).newSymbolTable(getFrameColumn(columnIndex));
     }
 
     @Override
@@ -307,6 +310,18 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
         } while (frameIndex < frameLimit);
     }
 
+    // The column of the frames that hold the joined row's column: a frame column of the left input,
+    // or of the first stage's build input, whichever role the execution gave either.
+    private int getFrameColumn(int columnIndex) {
+        return columnIndex < columnSplit ? leftColumnMap.getQuick(columnIndex) : payloadColumns.getQuick(columnIndex - columnSplit);
+    }
+
+    // The open scan whose frames hold the joined row's column: the probe scan for the input the
+    // execution streams, the first stage's build scan for the one it hashes.
+    private SymbolTableSource getScan(int columnIndex) {
+        return columnIndex < columnSplit != isSwapped ? frameSequence.getSymbolTableSource() : atom.getStage(0).getBuildSymbols();
+    }
+
     // Positions the record at the next tuple: the probe row, and the first stage's match.
     private void positionTuple() {
         final long base = tupleIndex++ * tupleStride;
@@ -348,6 +363,9 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
         this.buildRounds = buildRounds;
         this.atom = frameSequence.getAtom();
         this.circuitBreaker = circuitBreaker;
+        isSwapped = atom.isSwapped();
+        // The build binds the first stage's payload reader to the record.
+        record.setOrientation(isSwapped);
         probeRecord.of(frameSequence.getSymbolTableSource());
         isBuilt = false;
         frameLimit = -1;

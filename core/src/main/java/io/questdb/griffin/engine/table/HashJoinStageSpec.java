@@ -52,8 +52,13 @@ import org.jetbrains.annotations.Nullable;
  * and the post-join filter runs over that row too. A stage with either filter walks its matches on
  * the workers; see {@link HashJoinStageStepper}.
  * <p>
- * The stage owns its build input, its filters with their worker copies, and its stepper, the
- * hidden-class copy of {@link HashJoinStageStepperTemplate} that probes the stage's build on the
+ * The first join of a parallel hash join may swap its inputs at execution, as the serial hash join
+ * does, see {@link AsyncHashJoinSpec#isSwapCandidate()}: it then hashes its left input and streams
+ * its build input. Such a stage also holds its keys with the inputs' roles swapped, its swap key
+ * layout, and a stepper of its own for that orientation.
+ * <p>
+ * The stage owns its build input, its filters with their worker copies, and its steppers, the
+ * hidden-class copies of {@link HashJoinStageStepperTemplate} that probe the stage's build on the
  * workers, so that every stage's lookups profile its own key and probe classes alone.
  */
 public final class HashJoinStageSpec implements Plannable, QuietCloseable {
@@ -67,6 +72,16 @@ public final class HashJoinStageSpec implements Plannable, QuietCloseable {
     // Every build column, in build order.
     private final IntList payloadColumns = new IntList();
     private final HashJoinStageStepper stepper = HashJoinStageStepper.newInstance();
+    // The keys with the inputs' roles swapped, which a first join that may swap its inputs builds its
+    // left input by and probes its build input with, and the stepper of that orientation; both null
+    // for a stage that never swaps.
+    @Nullable
+    private final HashJoinKeyLayout swapKeyLayout;
+    @Nullable
+    private final HashJoinStageStepper swapStepper;
+    // True while the stage, the first join of a swap candidate, may still swap its inputs; see
+    // AsyncHashJoinSpec.isInputSwapPossible(), which keeps it.
+    private boolean isInputSwapPossible;
     private boolean isPayloadCopyable;
     private Function onFilter;
     private Function postFilter;
@@ -97,10 +112,35 @@ public final class HashJoinStageSpec implements Plannable, QuietCloseable {
             @Nullable Function onFilter,
             @Nullable ObjList<Function> workerOnFilters
     ) {
+        this(buildInput, keyLayout, null, isOuter, condition, joinMetadata, onFilter, workerOnFilters);
+    }
+
+    /**
+     * The first join of a parallel hash join that may swap its inputs at execution, as
+     * {@link #HashJoinStageSpec(HashJoinInput, HashJoinKeyLayout, boolean, String, RecordMetadata, Function, ObjList)}
+     * takes its arguments, with its keys in the swapped orientation too.
+     *
+     * @param swapKeyLayout the equality keys with the probe on the build input and the build on the
+     *                      join's left input; null for a stage that never swaps. Only an INNER join
+     *                      swaps
+     */
+    public HashJoinStageSpec(
+            HashJoinInput buildInput,
+            HashJoinKeyLayout keyLayout,
+            @Nullable HashJoinKeyLayout swapKeyLayout,
+            boolean isOuter,
+            String condition,
+            @Nullable RecordMetadata joinMetadata,
+            @Nullable Function onFilter,
+            @Nullable ObjList<Function> workerOnFilters
+    ) {
         assert onFilter == null || isOuter : "an INNER join has no ON residual";
         assert onFilter == null || joinMetadata != null;
+        assert swapKeyLayout == null || !isOuter : "only an INNER join swaps its inputs";
         this.buildInput = buildInput;
         this.keyLayout = keyLayout;
+        this.swapKeyLayout = swapKeyLayout;
+        this.swapStepper = swapKeyLayout != null ? HashJoinStageStepper.newInstance() : null;
         this.isOuter = isOuter;
         this.condition = condition;
         this.joinMetadata = joinMetadata;
@@ -169,6 +209,15 @@ public final class HashJoinStageSpec implements Plannable, QuietCloseable {
         return postFilter != null;
     }
 
+    /**
+     * The stage's keys with the inputs' roles swapped, for a first join that may swap its inputs;
+     * null for a stage that never swaps.
+     */
+    @Nullable
+    public HashJoinKeyLayout getSwapKeyLayout() {
+        return swapKeyLayout;
+    }
+
     public boolean isOuter() {
         return isOuter;
     }
@@ -192,6 +241,11 @@ public final class HashJoinStageSpec implements Plannable, QuietCloseable {
         sink.type("Build");
         sink.attr("joinType").val(isOuter ? "left outer" : "inner");
         sink.attr("condition").val(condition);
+        // The plan shows the inputs in the query's roles, and a first join that may still swap them
+        // at execution the rule it swaps by.
+        if (isInputSwapPossible) {
+            sink.attr("inputSwap").val("when the left input is smaller");
+        }
         if (keyLayout.getSymbolKeyProbeColumns().size() > 0) {
             sink.attr("symbolKeyJoin").val(true);
         }
@@ -223,6 +277,12 @@ public final class HashJoinStageSpec implements Plannable, QuietCloseable {
         return stepper;
     }
 
+    // The stepper of the swapped orientation; null for a stage that never swaps.
+    @Nullable
+    HashJoinStageStepper getSwapStepper() {
+        return swapStepper;
+    }
+
     // Each worker's copy of the ON residual, null when the residual is thread safe or absent.
     @Nullable
     ObjList<Function> getWorkerOnFilters() {
@@ -233,6 +293,15 @@ public final class HashJoinStageSpec implements Plannable, QuietCloseable {
     @Nullable
     ObjList<Function> getWorkerPostFilters() {
         return workerPostFilters;
+    }
+
+    /**
+     * Records whether the stage, the first join of a swap candidate, may still swap its inputs, as
+     * EXPLAIN reports; see {@link AsyncHashJoinSpec#isInputSwapPossible()}.
+     */
+    void setInputSwapPossible(boolean isInputSwapPossible) {
+        assert !isInputSwapPossible || swapKeyLayout != null;
+        this.isInputSwapPossible = isInputSwapPossible;
     }
 
     /**
