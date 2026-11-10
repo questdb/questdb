@@ -2761,11 +2761,9 @@ mod tests {
         Ok(chunk_has_no_sql_nulls(&read_decoder(buf)?))
     }
 
-    /// Asserts that a file that reads as null-free declines once a bound is missing or has the wrong
-    /// width, as a third-party writer may leave it.
-    fn assert_malformed_bounds_decline(buf: &[u8]) -> ParquetResult<()> {
-        assert!(has_no_sql_nulls(buf)?);
-        let rewrites: [fn(&mut parquet_format_safe::Statistics); 4] = [
+    /// Rewrites that leave a chunk bound missing or of the wrong width, as a third-party writer may.
+    fn malformed_bound_rewrites() -> [fn(&mut parquet_format_safe::Statistics); 4] {
+        [
             |s| {
                 s.min = None;
                 s.min_value = None;
@@ -2782,8 +2780,14 @@ mod tests {
                 s.max = Some(vec![1]);
                 s.max_value = Some(vec![1]);
             },
-        ];
-        for rewrite in rewrites {
+        ]
+    }
+
+    /// Asserts that a file that reads as null-free declines once a bound is malformed, see
+    /// [`malformed_bound_rewrites`].
+    fn assert_malformed_bounds_decline(buf: &[u8]) -> ParquetResult<()> {
+        assert!(has_no_sql_nulls(buf)?);
+        for rewrite in malformed_bound_rewrites() {
             let mut decoder = read_decoder(buf)?;
             override_statistics(&mut decoder, rewrite);
             assert!(!chunk_has_no_sql_nulls(&decoder));
@@ -2792,8 +2796,8 @@ mod tests {
     }
 
     /// Asserts that a bound above every value of row group 0 prunes it, and that the group stays once
-    /// a chunk bound has the wrong width, or `nan` as its minimum when given, as a third-party writer
-    /// may leave them.
+    /// a chunk bound is malformed, see [`malformed_bound_rewrites`], or has `nan` as its minimum when
+    /// given.
     fn assert_malformed_bounds_keep_row_group(
         buf: &[u8],
         column_type: ColumnTypeTag,
@@ -2812,17 +2816,7 @@ mod tests {
             read_decoder(buf)?.can_skip_row_group(0, buf, &filters, buf_end)?,
             "{column_type:?}"
         );
-        let rewrites: [fn(&mut parquet_format_safe::Statistics); 2] = [
-            |s| {
-                s.min = Some(vec![1]);
-                s.min_value = Some(vec![1]);
-            },
-            |s| {
-                s.max = Some(vec![1]);
-                s.max_value = Some(vec![1]);
-            },
-        ];
-        for rewrite in rewrites {
+        for rewrite in malformed_bound_rewrites() {
             let mut decoder = read_decoder(buf)?;
             override_statistics(&mut decoder, rewrite);
             assert!(

@@ -178,7 +178,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     entityColumnFilter, sortGenerator, tmpIndexes, tmpValues, tmpMasterKeys, temporaries.slaveKeys);
             this.setOperationGenerator = new SetOperationFactoryGenerator(configuration, this, sortGenerator, asm, entityColumnFilter);
             this.windowGenerator = new WindowFactoryGenerator(configuration, this, functionInstantiator, asm, entityColumnFilter,
-                    recordComparatorCompiler, characterStore, temporaries.uniqueNames);
+                    recordComparatorCompiler, characterStore);
         } catch (Throwable th) {
             close();
             throw th;

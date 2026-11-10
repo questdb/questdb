@@ -189,7 +189,7 @@ final class ProjectionFactoryGenerator {
                 scope = input;
                 scopeMetadata = null;
             }
-            final UniqueColumnNames names = frame.projectionNames;
+            final UniqueColumnNames names = frame.columnNames;
             names.clear();
             for (int i = 0; i < count; i++) {
                 final BoundExpression expression = project.getExpressions().getQuick(i);

@@ -94,7 +94,6 @@ final class WindowFactoryGenerator {
     private final EntityColumnFilter entityColumnFilter;
     private final FunctionInstantiator functionInstantiator;
     private final RecordComparatorCompiler recordComparatorCompiler;
-    private final UniqueColumnNames uniqueNames;
 
     WindowFactoryGenerator(
             CairoConfiguration configuration,
@@ -103,8 +102,7 @@ final class WindowFactoryGenerator {
             BytecodeAssembler asm,
             EntityColumnFilter entityColumnFilter,
             RecordComparatorCompiler recordComparatorCompiler,
-            CharacterStore characterStore,
-            UniqueColumnNames uniqueNames
+            CharacterStore characterStore
     ) {
         this.configuration = configuration;
         this.codeGenerator = codeGenerator;
@@ -113,7 +111,6 @@ final class WindowFactoryGenerator {
         this.entityColumnFilter = entityColumnFilter;
         this.recordComparatorCompiler = recordComparatorCompiler;
         this.characterStore = characterStore;
-        this.uniqueNames = uniqueNames;
     }
 
     /**
@@ -400,7 +397,7 @@ final class WindowFactoryGenerator {
             final ObjList<TableColumnMetadata> outputColumns = frame.windowOutputColumns;
             outputColumns.clear();
             outputColumns.setPos(outputCount);
-            uniqueNames.of(inputMetadata);
+            final UniqueColumnNames uniqueNames = frame.columnNames.of(inputMetadata);
             for (int i = 0, n = sources.size(); i < n; i++) {
                 final int source = sources.getQuick(i);
                 if (source >= 0) {

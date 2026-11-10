@@ -73,6 +73,7 @@ import java.io.Closeable;
  */
 final class GenerationFrame implements Closeable, Mutable {
     private static final String FREED_SHARED_FACTORY = "shared cursor reads a factory the generator freed";
+    final UniqueColumnNames columnNames = new UniqueColumnNames();
     final IntList columnReferenceCounts = new IntList();
     final ObjList<BoundExpression> expressions = new ObjList<>();
     final ObjList<Function> functions = new ObjList<>(2);
@@ -84,7 +85,6 @@ final class GenerationFrame implements Closeable, Mutable {
     final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
     final ListColumnFilter listColumnFilterA = new ListColumnFilter();
     final ListColumnFilter listColumnFilterB = new ListColumnFilter();
-    final UniqueColumnNames projectionNames = new UniqueColumnNames();
     final GenericRecordMetadata projectionScopeMetadata = new GenericRecordMetadata();
     final ParquetPushdownExtractor pushdown = new ParquetPushdownExtractor(expressions, intListB);
     final OutputSchema schema = new OutputSchema();
@@ -190,6 +190,7 @@ final class GenerationFrame implements Closeable, Mutable {
         masterSuffixScan = null;
         expressions.clear();
         schema.clear();
+        columnNames.clear();
         columnReferenceCounts.clear();
         failure = freePendingProducers(failure);
         placements.clear();
@@ -200,7 +201,6 @@ final class GenerationFrame implements Closeable, Mutable {
         sharedConsumers.clear();
         sharedFactories.clear();
         sharedPlans.clear();
-        projectionNames.clear();
         projectionScopeMetadata.clear();
         windowGroups.clear();
         windowMetadata.clear();
