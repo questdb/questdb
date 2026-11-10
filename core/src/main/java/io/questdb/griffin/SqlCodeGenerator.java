@@ -252,6 +252,7 @@ import io.questdb.griffin.engine.join.AsOfJoinDenseRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinDenseRecordCursorFactoryBase;
 import io.questdb.griffin.engine.join.AsOfJoinDenseSingleSymbolRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinFastRecordCursorFactory;
+import io.questdb.griffin.engine.join.AsOfJoinIndexedDualSymbolRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinIndexedRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinLightNoKeyRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinLightRecordCursorFactory;
@@ -8531,6 +8532,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     joinColumnSplit,
                                     slaveSymbolColumnIndex,
                                     (SymbolJoinKeyMapping) symbolShortCircuit,
+                                    slaveContext,
+                                    toleranceInterval
+                            );
+                        } else if (isDualSymbolJoin(symbolShortCircuit, listColumnFilterA)
+                                && SqlHints.hasAsOfIndexHint(model, masterAlias, slaveAlias)
+                                && (slaveMetadata.isColumnIndexed(listColumnFilterA.getColumnIndexFactored(0))
+                                || slaveMetadata.isColumnIndexed(listColumnFilterA.getColumnIndexFactored(1)))) {
+                            // Two symbol keys, one of them indexed: walk its index rows back to the other key.
+                            final SymbolJoinKeyMapping[] mappings = ((ChainedSymbolShortCircuit) symbolShortCircuit).mappings();
+                            final int indexed = slaveMetadata.isColumnIndexed(listColumnFilterA.getColumnIndexFactored(0)) ? 0 : 1;
+                            return new AsOfJoinIndexedDualSymbolRecordCursorFactory(
+                                    configuration,
+                                    joinMetadata,
+                                    master,
+                                    slave,
+                                    joinColumnSplit,
+                                    listColumnFilterA.getColumnIndexFactored(indexed),
+                                    listColumnFilterA.getColumnIndexFactored(1 - indexed),
+                                    mappings[indexed],
+                                    mappings[1 - indexed],
                                     slaveContext,
                                     toleranceInterval
                             );
