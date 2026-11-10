@@ -126,6 +126,31 @@ public class VacuumColumnVersions implements Closeable {
         }
     }
 
+    /**
+     * Whether a purge of {@code columnVersion} would remove a file of the live instance of a column, whose column
+     * name txn in the partition is {@code latestColumnNameTxn}.
+     * <p>
+     * A .pc name writes the column name txn NONE and 0 alike, so in a partition of a POSTING column a purge of
+     * either version removes the live .pc files of the other. Txn 0 comes only from a change before the first
+     * commit, so no partition of a partitioned table holds files of both. The default partition of a
+     * non-partitioned table can, and VACUUM leaves the stale files there. A SYMBOL column of txn NONE without a
+     * POSTING index in the reader can get one from ADD INDEX while VACUUM runs, and its .pc files list as txn 0, so
+     * txn 0 is live next to a live NONE. No stale instance 0 can sit there: a partition never goes back to txn NONE
+     * after a change. The table root keeps the plain comparison: its purge removes no POSTING files.
+     */
+    static boolean isLiveVersion(
+            long columnVersion,
+            long latestColumnNameTxn,
+            boolean isPostingColumn,
+            boolean isSymbolColumn,
+            long partitionTimestamp
+    ) {
+        return columnVersion == latestColumnNameTxn
+                || ((isPostingColumn || (isSymbolColumn && latestColumnNameTxn == TableUtils.COLUMN_NAME_TXN_NONE))
+                && partitionTimestamp != PurgingOperator.TABLE_ROOT_PARTITION
+                && PostingIndexUtils.coverFileHostTxn(columnVersion) == PostingIndexUtils.coverFileHostTxn(latestColumnNameTxn));
+    }
+
     private static int resolveName2Index(CharSequence name, TableReader tableReader) {
         return tableReader.getMetadata().getColumnIndexQuiet(name);
     }
@@ -187,20 +212,8 @@ public class VacuumColumnVersions implements Closeable {
             long partitionTs = tableFiles.get(i + 1);
             long columnVersion = tableFiles.get(i + 2);
             long latestColumnNameTxn = columnIndex > -1 ? columnVersionReader.getColumnNameTxn(partitionTs, writerIndex) : reader.getTxn();
-            // A .pc name writes the column name txn NONE and 0 alike, so in a partition of a POSTING column
-            // a purge of either version removes the live .pc files of the other. Txn 0 comes only from a
-            // change before the first commit, so no partition of a partitioned table holds files of both.
-            // The default partition of a non-partitioned table can, and VACUUM leaves the stale files there.
-            // A SYMBOL column of txn NONE without a POSTING index in the reader can get one from ADD INDEX
-            // while VACUUM runs, and its .pc files list as txn 0, so txn 0 is live next to a live NONE. No
-            // stale instance 0 can sit there: a partition never goes back to txn NONE after a change.
-            // The table root keeps the plain comparison: its purge removes no POSTING files.
-            boolean isLiveVersion = columnVersion == latestColumnNameTxn
-                    || ((isPostingColumn || (isSymbolColumn && latestColumnNameTxn == TableUtils.COLUMN_NAME_TXN_NONE))
-                    && partitionTs != PurgingOperator.TABLE_ROOT_PARTITION
-                    && PostingIndexUtils.coverFileHostTxn(columnVersion) == PostingIndexUtils.coverFileHostTxn(latestColumnNameTxn));
             // Do not delete if columnVersion >= reader.getTxn(), this may be the transaction not committed yet
-            if (!isLiveVersion && columnVersion < reader.getTxn()) {
+            if (!isLiveVersion(columnVersion, latestColumnNameTxn, isPostingColumn, isSymbolColumn, partitionTs) && columnVersion < reader.getTxn()) {
                 // Has to be deleted. Columns can have multiple files e.g. .i, .d, .k, .v
                 if (!versionSetToDelete(purgeTask, partitionTs, columnVersion)) {
                     long partitionNameTxn = reader.getTxFile().getPartitionNameTxnByPartitionTimestamp(partitionTs);

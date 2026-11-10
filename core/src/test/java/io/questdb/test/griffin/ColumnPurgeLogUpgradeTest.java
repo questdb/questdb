@@ -32,6 +32,7 @@ import org.junit.Test;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
+import java.util.Arrays;
 import java.util.TreeSet;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
@@ -61,10 +62,66 @@ import java.util.zip.ZipInputStream;
 public class ColumnPurgeLogUpgradeTest extends AbstractCairoTest {
     private static final String[] DROPPED_COLUMNS = {"c", "vc", "s", "p"};
 
+    /**
+     * The fixture {@code column-purge-log/legacy_purge_log_same_microsecond.zip} holds the directories of t_same_us
+     * and the purge log that the purge job wrote before it saved partition_timestamp_raw, with the column purge retry
+     * delay at a day, cairo.o3.partition.split.min.size at 1 byte and both O3 split limits at 20:
+     * <pre>
+     * CREATE TABLE t_same_us (ts TIMESTAMP_NS, v LONG, c2 LONG, s SYMBOL INDEX TYPE POSTING)
+     *     TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL;
+     * -- 100 rows from 2022-02-27T00:00, the last at 00:59:59.999999999, 20 rows from 01:00:00.000000010 to
+     * -- 01:00:00.000000200 and one at 02:00, c2 = v and s = 'a' in each; then O3 rows at 01:00, which splits the
+     * -- day into 2022-02-27T01.6, at 01:00:00.000000500, which splits that partition into
+     * -- 2022-02-27T010000-000000201.6, and at 01:00:00.000000005 and 01:00:00.000000300 in one commit, which
+     * -- rewrites both partitions under name txn 6
+     * -- with a reader open, so that the purges wait in the log:
+     * UPDATE t_same_us SET c2 = 0, s = 'b' WHERE ts >= '2022-02-27T01:00:00.000000201Z';
+     * -- then one run of the column purge job, which saved the purges of c2 and s in its log, at 01:00 and name
+     * -- txn 6
+     * </pre>
+     */
+    @Test
+    public void testReplayOfLogWithoutRawPartitionTimestampInSameMicrosecond() throws Exception {
+        assertMemoryLeak(() -> {
+            loadFixture("/column-purge-log/legacy_purge_log_same_microsecond.zip");
+            final File tableDir = new File(configuration.getDbRoot().toString(), engine.verifyTableName("t_same_us").getDirName());
+            final File firstDir = new File(tableDir, "2022-02-27T01.6");
+            final File secondDir = new File(tableDir, "2022-02-27T010000-000000201.6");
+            Assert.assertEquals("c2.d s.d s.pk s.pv.0 s.pv.1 ts.d v.d", fileNames(firstDir));
+            Assert.assertEquals("c2.d c2.d.7 s.d s.d.7 s.pk s.pk.7 s.pv.0 s.pv.1 s.pv.7.0 s.pv.7.1 ts.d v.d", fileNames(secondDir));
+            try (ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine)) {
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+            }
+            // The log names the second partition by its microsecond, which starts the first partition too, and by
+            // their common name txn. The replay purges the versions the update replaced in the second partition, and
+            // keeps those of the first, which it reads.
+            Assert.assertEquals("c2.d s.d s.pk s.pv.0 s.pv.1 ts.d v.d", fileNames(firstDir));
+            Assert.assertEquals("c2.d.7 s.d.7 s.pk.7 s.pv.7.0 s.pv.7.1 ts.d v.d", fileNames(secondDir));
+            // c2 is v and s is 'a' outside the update, 1..100, 201..220, 400, 600 and 300 at 02:00
+            assertQuery("SELECT s, count(), sum(c2) FROM t_same_us ORDER BY s")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s\tcount\tsum
+                            a\t122\t10260
+                            b\t3\t0
+                            """);
+            assertQuery("SELECT count() FROM t_same_us WHERE s = 'a'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("Index")
+                    .returns("""
+                            count
+                            122
+                            """);
+        });
+    }
+
     @Test
     public void testReplayOfLogWithoutRawPartitionTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            loadFixture();
+            loadFixture("/column-purge-log/legacy_purge_log.zip");
             try (ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine)) {
                 // the job added partition_timestamp_raw to the log, replayed the rows and truncated the log
                 Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
@@ -77,16 +134,9 @@ public class ColumnPurgeLogUpgradeTest extends AbstractCairoTest {
             }
             // every partition of t_us, the split one too, and the symbol maps of s and p in the table directory
             Assert.assertEquals("", droppedColumnFiles("t_us"));
-            // The rows of the split partition of t_ns lost the nanosecond of its timestamp, 09:00:00.000000001, so
-            // the replay did not find it. The replay found the symbol maps: the rows name them with the root
+            // The rows of the split partition of t_ns lost the nanosecond of its timestamp, 09:00:00.000000001: the
+            // replay located the partition in a snapshot of the table. The rows name the symbol maps with the root
             // partition marker in microseconds.
-            final String splitDir = "2024-01-03T090000-000000001.1/";
-            Assert.assertEquals(
-                    splitDir + "c.d " + splitDir + "p.d " + splitDir + "p.pk " + splitDir + "p.pv.0 " + splitDir + "p.pv.1 "
-                            + splitDir + "s.d " + splitDir + "s.k " + splitDir + "s.v " + splitDir + "vc.d " + splitDir + "vc.i",
-                    droppedColumnFiles("t_ns")
-            );
-            execute("VACUUM TABLE t_ns");
             Assert.assertEquals("", droppedColumnFiles("t_ns"));
 
             final String rows = """
@@ -139,10 +189,18 @@ public class ColumnPurgeLogUpgradeTest extends AbstractCairoTest {
         return String.join(" ", files);
     }
 
-    private static void loadFixture() throws Exception {
+    // the names of the files in dir, sorted and space-separated
+    private static String fileNames(File dir) {
+        final String[] names = dir.list();
+        Assert.assertNotNull(dir.toString(), names);
+        Arrays.sort(names);
+        return String.join(" ", names);
+    }
+
+    private static void loadFixture(String resource) throws Exception {
         final byte[] buffer = new byte[64 * 1024];
         final File root = new File(configuration.getDbRoot().toString());
-        try (InputStream is = ColumnPurgeLogUpgradeTest.class.getResourceAsStream("/column-purge-log/legacy_purge_log.zip")) {
+        try (InputStream is = ColumnPurgeLogUpgradeTest.class.getResourceAsStream(resource)) {
             Assert.assertNotNull(is);
             try (ZipInputStream zip = new ZipInputStream(is)) {
                 ZipEntry ze;
