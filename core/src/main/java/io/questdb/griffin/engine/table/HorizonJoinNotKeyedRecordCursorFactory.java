@@ -180,6 +180,14 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
         return false;
     }
 
+    /**
+     * Lets the ASOF lookup of the single SYMBOL join key read the slave's symbol index, see
+     * {@link HorizonJoinTimeFrameHelper#enableIndexedKeyLookup}.
+     */
+    public void enableIndexedKeyLookup(int masterKeyColumnIndex, int slaveKeyColumnIndex) {
+        cursor.slaveTimeFrameHelper.enableIndexedKeyLookup(masterKeyColumnIndex, slaveKeyColumnIndex);
+    }
+
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Horizon Join");
@@ -187,6 +195,9 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
         sink.setMetadata(horizonJoinMetadata);
         sink.optAttr("values", groupByFunctions);
         sink.setMetadata(null);
+        if (cursor.slaveTimeFrameHelper.isIndexedKeyLookup()) {
+            sink.attr("lookup").val("index");
+        }
         sink.child(masterFactory);
         if (slaveFilter != null) {
             sink.attr("slave filter").val(slaveFilter, slaveFactory);

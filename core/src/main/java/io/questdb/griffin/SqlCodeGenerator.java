@@ -7382,6 +7382,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 );
             }
 
+            final int indexedSlaveKeyColumnIndex = horizonIndexedSlaveKeyColumn(
+                    parentModel,
+                    asOfJoinKeyTypes,
+                    masterSymbolKeyColumnIndices,
+                    slaveSymbolKeyColumnIndices,
+                    slaveFilter,
+                    slaveMetadata
+            );
+            if (indexedSlaveKeyColumnIndex != -1 && SqlHints.hasUseIndexHint(parentModel)) {
+                // the index lookup reads the slave through the owner's table reader: serial only
+                supportsParallelism = false;
+            }
+
             if (!supportsParallelism) {
                 // Single-threaded path: verify master factory supports random access (needed to revisit rows in sorted order)
                 if (!masterFactory.recordCursorSupportsRandomAccess()) {
@@ -7416,7 +7429,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // Choose single-threaded factory based on whether there are GROUP BY keys
                 if (keyTypesCopy.getColumnCount() == 0) {
                     isFactoriesTransferred = true;
-                    return new HorizonJoinNotKeyedRecordCursorFactory(
+                    final HorizonJoinNotKeyedRecordCursorFactory notKeyedFactory = new HorizonJoinNotKeyedRecordCursorFactory(
                             configuration,
                             asm,
                             outerProjectionMetadata,
@@ -7437,10 +7450,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             columnSources,
                             columnIndices
                     );
+                    if (indexedSlaveKeyColumnIndex != -1) {
+                        notKeyedFactory.enableIndexedKeyLookup(masterSymbolKeyColumnIndices[0], indexedSlaveKeyColumnIndex);
+                    }
+                    return notKeyedFactory;
                 }
 
                 isFactoriesTransferred = true;
-                return new HorizonJoinRecordCursorFactory(
+                final HorizonJoinRecordCursorFactory keyedFactory = new HorizonJoinRecordCursorFactory(
                         configuration,
                         asm,
                         outerProjectionMetadata,
@@ -7465,6 +7482,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         columnSources,
                         columnIndices
                 );
+                if (indexedSlaveKeyColumnIndex != -1) {
+                    keyedFactory.enableIndexedKeyLookup(masterSymbolKeyColumnIndices[0], indexedSlaveKeyColumnIndex);
+                }
+                return keyedFactory;
             }
 
             perWorkerFilters = compileWorkerFiltersConditionally(
@@ -7612,6 +7633,29 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
             throw th;
         }
+    }
+
+    // The slave column of the single SYMBOL join key of a HORIZON JOIN whose ASOF lookup can read the
+    // slave's symbol index (HorizonJoinTimeFrameHelper#enableIndexedKeyLookup), or -1. The no_index
+    // hint keeps the scan.
+    private static int horizonIndexedSlaveKeyColumn(
+            IQueryModel model,
+            @Nullable ColumnTypes asOfJoinKeyTypes,
+            int @Nullable [] masterSymbolKeyColumnIndices,
+            int @Nullable [] slaveSymbolKeyColumnIndices,
+            @Nullable Function slaveFilter,
+            RecordMetadata slaveMetadata
+    ) {
+        if (asOfJoinKeyTypes == null
+                || asOfJoinKeyTypes.getColumnCount() != 1
+                || masterSymbolKeyColumnIndices == null
+                || masterSymbolKeyColumnIndices.length != 1
+                || slaveFilter != null
+                || SqlHints.hasNoIndexHint(model)) {
+            return -1;
+        }
+        final int slaveColumnIndex = slaveSymbolKeyColumnIndices[0];
+        return slaveMetadata.isColumnIndexed(slaveColumnIndex) ? slaveColumnIndex : -1;
     }
 
     private RecordCursorFactory generateHorizonJoinProjection(

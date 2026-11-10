@@ -29,13 +29,17 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.SingleColumnType;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TimeFrame;
 import io.questdb.cairo.sql.TimeFrameCursor;
 import io.questdb.std.MemoryTracker;
@@ -126,6 +130,9 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
     private TimeFrame timeFrame;
     private TimeFrameCursor timeFrameCursor;
     private int timestampIndex;
+    // Master column of the single SYMBOL join key whose slave column is indexed, or -1: see enableIndexedKeyLookup()
+    private int indexedMasterKeyColumnIndex = -1;
+    private int indexedSlaveKeyColumnIndex = -1;
 
     public HorizonJoinTimeFrameHelper(
             CairoConfiguration configuration,
@@ -421,6 +428,43 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
         return Long.MIN_VALUE;
     }
 
+    // The latest row of the slave symbol key at or below asOfRowId, from the per-frame symbol indexes,
+    // or Long.MIN_VALUE when there is none. UNRESOLVED_ROW_ID when a frame has no index reader (a lead
+    // frame), so that the caller scans instead.
+    private long findIndexedAsOfMatch(long asOfRowId, int slaveKey, SqlExecutionCircuitBreaker circuitBreaker) {
+        if (slaveKey == SymbolTable.VALUE_NOT_FOUND) {
+            return Long.MIN_VALUE;
+        }
+        final int indexKey = TableUtils.toIndexKey(slaveKey);
+        int frameIndex = Rows.toPartitionIndex(asOfRowId);
+        long rowMax = Rows.toLocalRowID(asOfRowId);
+        timeFrameCursor.jumpTo(frameIndex);
+        timeFrameCursor.open();
+        while (true) {
+            final IndexReader indexReader = timeFrameCursor.getIndexReaderForCurrentFrame(indexedSlaveKeyColumnIndex, IndexReader.DIR_BACKWARD);
+            if (indexReader == null) {
+                return UNRESOLVED_ROW_ID;
+            }
+            // the index's own row ids are offset by the frame's first row, and the cursor returns rows relative to minValue
+            final long rowLo = timeFrameCursor.getIndexRowLoForCurrentFrame();
+            try (RowCursor rowCursor = indexReader.getCursor(indexKey, rowLo, rowLo + rowMax)) {
+                if (rowCursor.hasNext()) {
+                    // backward: the first entry is the latest
+                    return Rows.toRowID(frameIndex, rowCursor.next());
+                }
+            }
+            // an empty frame has no rows to bound, so skip it
+            do {
+                if (frameIndex == 0) {
+                    return Long.MIN_VALUE;
+                }
+                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                timeFrameCursor.jumpTo(--frameIndex);
+            } while (timeFrameCursor.open() == 0);
+            rowMax = timeFrame.getRowHi() - 1;
+        }
+    }
+
     @Override
     public void close() {
         Misc.free(keyMissMap);
@@ -690,6 +734,18 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
             return Long.MIN_VALUE;
         }
 
+        if (indexedSlaveKeyColumnIndex != -1 && symbolTranslatingRecord != null) {
+            final long matchRowId = findIndexedAsOfMatch(
+                    asOfRowId,
+                    symbolTranslatingRecord.getInt(indexedMasterKeyColumnIndex),
+                    circuitBreaker
+            );
+            if (matchRowId != UNRESOLVED_ROW_ID) {
+                return matchRowId;
+            }
+            // no index reader for this frame: scan as without the index
+        }
+
         if (asOfRowId != prevAsOfRowId) {
             if (isForwardScanMode && filter != null && asOfRowId > prevAsOfRowId
                     && rowGapLowerBound(prevAsOfRowId, asOfRowId) > Math.max(backwardScanRows - bwdScanRowsAtPositionStart, bwdScanMinGap)) {
@@ -764,6 +820,27 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
                 symbolTranslatingRecord,
                 circuitBreaker
         );
+    }
+
+    /**
+     * Makes the keyed lookup of {@link #findKeyedAsOfMatch} read the slave's symbol index instead of
+     * scanning back from the ASOF position: per lookup, one index seek per frame from the ASOF
+     * position back to the key's latest row, so its cost no longer grows with the rows of other keys
+     * in between. The join key must be a single SYMBOL pair whose slave column is indexed, the master
+     * key must reach the lookup through a {@link SymbolTranslatingRecord}, and the slave must have no
+     * filter: the index row is the match only when no other condition excludes it.
+     *
+     * @param masterKeyColumnIndex the master column of the join key, as the translating record reads it
+     * @param slaveKeyColumnIndex  the slave column of the join key, as the time frame cursor reads it
+     */
+    public void enableIndexedKeyLookup(int masterKeyColumnIndex, int slaveKeyColumnIndex) {
+        assert filter == null;
+        this.indexedMasterKeyColumnIndex = masterKeyColumnIndex;
+        this.indexedSlaveKeyColumnIndex = slaveKeyColumnIndex;
+    }
+
+    public boolean isIndexedKeyLookup() {
+        return indexedSlaveKeyColumnIndex != -1;
     }
 
     public long findNotKeyedAsOfMatch(long asOfRowId, SqlExecutionCircuitBreaker circuitBreaker) {
