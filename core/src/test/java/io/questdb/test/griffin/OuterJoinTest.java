@@ -469,6 +469,61 @@ public class OuterJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testImpliedKeyEvaluatesMasterOnlyOnResidualOncePerMasterRow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE em_a (id INT, x INT, w INT)");
+            execute("CREATE TABLE em_a2 (id INT, x INT, w INT)");
+            execute("CREATE TABLE em_b (id INT, x INT, k INT)");
+            execute("CREATE TABLE em_b0 (id INT, x INT, k INT)");
+            execute("CREATE TABLE em_b2 (id INT, x INT, k INT)");
+            execute("CREATE TABLE em_c (id INT, k INT)");
+            execute("INSERT INTO em_a VALUES (1, 1, NULL), (2, 0, NULL), (3, NULL, NULL), (4, 1, 100), (5, 0, 101)");
+            // keys no row of b or c holds, so that em_a outgrows em_b and a FULL join hashes em_b
+            execute("INSERT INTO em_a SELECT x::INT + 29, 0, x::INT + 4_999 FROM long_sequence(7)");
+            execute("INSERT INTO em_a2 VALUES (6, 0, 100), (7, 0, 101), (8, NULL, 102)");
+            execute("INSERT INTO em_b SELECT x::INT + 9, 0, CASE WHEN x = 1 THEN 100 ELSE x::INT + 1_000 END FROM long_sequence(10)");
+            execute("INSERT INTO em_b2 SELECT x::INT + 9, 0, CASE WHEN x = 1 THEN 100 END FROM long_sequence(10)");
+            execute("INSERT INTO em_c VALUES (20, NULL), (21, 100)");
+            final String query = "SELECT a.id aid, b.x bx, c.id cid FROM %s a %s JOIN %s b ON test_latched_counter() OR a.x = 1 "
+                    + "JOIN em_c c ON a.w = c.k AND b.k = c.k";
+            final String header = "aid\tbx\tcid\n";
+            final String keyedRows = header + """
+                    2\tnull\t20
+                    3\tnull\t20
+                    4\t0\t21
+                    """;
+            final String emptyRightRows = header + """
+                    1\tnull\t20
+                    2\tnull\t20
+                    3\tnull\t20
+                    """;
+            final String nullKeyRows = header + "1\t0\t20\n".repeat(9) + """
+                    2\tnull\t20
+                    3\tnull\t20
+                    4\t0\t21
+                    """;
+            final String rightNullKeyRows = header + "1\t0\t20\n".repeat(9) + "4\t0\t21\n";
+            final String unmatchedRows = header + "null\t0\t20\n".repeat(9);
+            try {
+                for (boolean isFullFat : new boolean[]{false, true}) {
+                    assertOnResidualEvaluations(query.formatted("em_a", "LEFT", "em_b"), isFullFat, keyedRows, 4, 4);
+                    assertOnResidualEvaluations(query.formatted("em_a", "FULL", "em_b"), isFullFat, keyedRows, 4, 4);
+                    assertOnResidualEvaluations(query.formatted("em_a", "LEFT", "em_b0"), isFullFat, emptyRightRows, 0, 0);
+                    assertOnResidualEvaluations(query.formatted("em_a", "FULL", "em_b0"), isFullFat, emptyRightRows, 0, 0);
+                    assertOnResidualEvaluations(query.formatted("em_a", "LEFT", "em_b2"), isFullFat, nullKeyRows, 30, 30);
+                    assertOnResidualEvaluations(query.formatted("em_a", "FULL", "em_b2"), isFullFat, nullKeyRows, 31, 30);
+                    assertOnResidualEvaluations(query.formatted("em_a", "RIGHT", "em_b2"), isFullFat, rightNullKeyRows, 29, 28);
+                    assertOnResidualEvaluations(query.formatted("em_a2", "RIGHT", "em_b2"), isFullFat, unmatchedRows, 4, 4);
+                    // only the light factory hashes the smaller input, em_a2, whose answer for the ON residual a re-read keeps
+                    assertOnResidualEvaluations(query.formatted("em_a2", "FULL", "em_b2"), isFullFat, unmatchedRows, 4, isFullFat ? 4 : 1);
+                }
+            } finally {
+                TestLatchedCounterFunctionFactory.reset(null);
+            }
+        });
+    }
+
+    @Test
     public void testImpliedKeyEvaluatesSlaveOnlyOnResidualOncePerSlaveRow() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE ev_a (id INT, w INT)");
@@ -498,13 +553,144 @@ public class OuterJoinTest extends AbstractCairoTest {
                     """;
             try {
                 for (boolean isFullFat : new boolean[]{false, true}) {
-                    assertSlaveRowEvaluations(query.formatted("ev_a", "LEFT", "ev_b"), isFullFat, masterRows, 0);
-                    assertSlaveRowEvaluations(query.formatted("ev_a", "FULL", "ev_b"), isFullFat, masterRows, 0);
-                    assertSlaveRowEvaluations(query.formatted("ev_a2", "RIGHT", "ev_b2"), isFullFat, slaveRows, 4);
-                    assertSlaveRowEvaluations(query.formatted("ev_a2", "FULL", "ev_b2"), isFullFat, slaveRows, 4);
+                    assertOnResidualEvaluations(query.formatted("ev_a", "LEFT", "ev_b"), isFullFat, masterRows, 4, 0);
+                    assertOnResidualEvaluations(query.formatted("ev_a", "FULL", "ev_b"), isFullFat, masterRows, 4, 0);
+                    assertOnResidualEvaluations(query.formatted("ev_a2", "RIGHT", "ev_b2"), isFullFat, slaveRows, 4, 4);
+                    assertOnResidualEvaluations(query.formatted("ev_a2", "FULL", "ev_b2"), isFullFat, slaveRows, 4, 4);
                 }
             } finally {
                 TestLatchedCounterFunctionFactory.reset(null);
+            }
+        });
+    }
+
+    @Test
+    public void testImpliedKeyFullJoinHashesEitherInput() throws Exception {
+        assertMemoryLeak(() -> {
+            final String[][] cases = {
+                    {"b.x > 1", """
+                            null\t11\t20
+                            null\t15\t20
+                            1\t13\t20
+                            2\t10\t21
+                            2\t14\t21
+                            3\t10\t21
+                            3\t14\t21
+                            4\t13\t20
+                            """},
+                    {"a.x = 1", """
+                            1\t11\t20
+                            1\t13\t20
+                            1\t15\t20
+                            2\t10\t21
+                            2\t14\t21
+                            4\tnull\t20
+                            """},
+                    {"b.x > a.x", """
+                            null\t11\t20
+                            null\t15\t20
+                            1\t13\t20
+                            2\t10\t21
+                            2\t14\t21
+                            3\t10\t21
+                            3\t14\t21
+                            4\tnull\t20
+                            """},
+                    {"b.x > 100", """
+                            null\t11\t20
+                            null\t13\t20
+                            null\t15\t20
+                            1\tnull\t20
+                            4\tnull\t20
+                            """},
+                    {"a.x > 100", """
+                            null\t11\t20
+                            null\t13\t20
+                            null\t15\t20
+                            1\tnull\t20
+                            4\tnull\t20
+                            """}
+            };
+            final String emptyMasterRows = """
+                    null\t11\t20
+                    null\t13\t20
+                    null\t15\t20
+                    """;
+            // Every row of fh_b whose key is NULL pairs with a row of fh_n, whose keys are never NULL, or with none.
+            final String[][] nonNullMasterCases = {
+                    {"b.x > 1", """
+                            null\t11\t20
+                            null\t15\t20
+                            2\t10\t21
+                            2\t14\t21
+                            3\t10\t21
+                            3\t14\t21
+                            """},
+                    {"a.x = 1", """
+                            2\t10\t21
+                            2\t14\t21
+                            """}
+            };
+            for (String[] types : new String[][]{{"INT", "INT", "INT"}, {"SHORT", "SHORT", "SHORT"}, {"SYMBOL", "SYMBOL", "SYMBOL"}, {"SYMBOL", "VARCHAR", "STRING"}}) {
+                final String q = "INT".equals(types[0]) || "SHORT".equals(types[0]) ? "" : "'";
+                execute("CREATE TABLE fh_a (id INT, x INT, w %s)".formatted(types[0]));
+                execute("CREATE TABLE fh_e (id INT, x INT, w %s)".formatted(types[0]));
+                execute("CREATE TABLE fh_n (id INT, x INT, w %s)".formatted(types[0]));
+                execute("CREATE TABLE fh_b (id INT, x INT, k %s)".formatted(types[1]));
+                execute("CREATE TABLE fh_c (id INT, k %s)".formatted(types[2]));
+                execute("INSERT INTO fh_a VALUES (1, 1, NULL), (2, 1, %1$s5%1$s), (3, 0, %1$s5%1$s), (4, NULL, NULL), (5, 1, %1$s7%1$s)".formatted(q));
+                execute("INSERT INTO fh_b VALUES (10, 2, %1$s5%1$s), (11, 0, NULL), (12, 3, %1$s9%1$s), (13, 3, NULL), (14, 2, %1$s5%1$s), (15, NULL, NULL)".formatted(q));
+                execute("INSERT INTO fh_c VALUES (20, NULL), (21, %1$s5%1$s), (22, %1$s9%1$s), (23, %1$s7%1$s)".formatted(q));
+                execute("INSERT INTO fh_n VALUES (2, 1, %1$s5%1$s), (3, 0, %1$s5%1$s)".formatted(q));
+                // fh_a holds fewer rows than fh_b until it gains rows that pass no ON clause, so each spelling hashes
+                // each table once.
+                for (int pass = 0; pass < 2; pass++) {
+                    for (String[] testCase : cases) {
+                        assertImpliedKeyFullJoin("fh_a", testCase[0], "aid\tbid\tcid\n" + testCase[1]);
+                    }
+                    execute("INSERT INTO fh_a VALUES (100, NULL, %1$s1000%1$s), (101, NULL, %1$s1001%1$s), (102, NULL, %1$s1002%1$s)".formatted(q));
+                }
+                for (String[] testCase : cases) {
+                    assertImpliedKeyFullJoin("fh_e", testCase[0], "aid\tbid\tcid\n" + emptyMasterRows);
+                }
+                for (String[] testCase : nonNullMasterCases) {
+                    assertImpliedKeyFullJoin("fh_n", testCase[0], "aid\tbid\tcid\n" + testCase[1]);
+                }
+                // Two implied keys share the slave column b.k, which the NULL key check of the slave reads once.
+                execute("CREATE TABLE fh_d (id INT, x INT, w %1$s, v %1$s)".formatted(types[0]));
+                execute("INSERT INTO fh_d VALUES (1, 1, NULL, NULL), (2, 1, %1$s5%1$s, %1$s5%1$s), (3, 1, %1$s5%1$s, %1$s7%1$s), (4, 1, NULL, %1$s5%1$s)".formatted(q));
+                assertRows("SELECT a.id aid, b.id bid, c.id cid FROM fh_d a FULL JOIN fh_b b ON b.x > 1 JOIN fh_c c ON a.w = c.k AND a.v = c.k AND b.k = c.k ORDER BY 1, 2, 3",
+                        false, "condition: b.k=a.w and b.k=a.v", """
+                                aid\tbid\tcid
+                                null\t11\t20
+                                null\t15\t20
+                                1\t13\t20
+                                2\t10\t21
+                                2\t14\t21
+                                """);
+                // fh_m holds fewer rows than fh_d, so the join hashes fh_m and probes it with fh_d, whose NULL key check
+                // reads both slave columns of the two implied keys.
+                execute("CREATE TABLE fh_m (id INT, w %1$s, v %1$s)".formatted(types[0]));
+                execute("INSERT INTO fh_m VALUES (1, %1$s5%1$s, %1$s5%1$s), (2, NULL, NULL), (3, NULL, %1$s5%1$s)".formatted(q));
+                assertRows("""
+                                SELECT a.id aid, b.id bid, c.id cid, c2.id c2id
+                                FROM fh_m a FULL JOIN fh_d b ON b.id > 1
+                                JOIN fh_c c ON a.w = c.k AND b.w = c.k JOIN fh_c c2 ON a.v = c2.k AND b.v = c2.k
+                                ORDER BY 1, 2, 3, 4
+                                """,
+                        false, "condition: b.w=a.w and b.v=a.v", """
+                                aid\tbid\tcid\tc2id
+                                null\t1\t20\t20
+                                1\t2\t21\t21
+                                3\t4\t20\t21
+                                """);
+                execute("DROP TABLE fh_m");
+                execute("DROP TABLE fh_a");
+                execute("DROP TABLE fh_e");
+                execute("DROP TABLE fh_n");
+                execute("DROP TABLE fh_d");
+                execute("DROP TABLE fh_b");
+                execute("DROP TABLE fh_c");
             }
         });
     }
@@ -1670,6 +1856,21 @@ public class OuterJoinTest extends AbstractCairoTest {
         return "INT".equals(type) ? Integer.toString(value) : "'" + value + "'";
     }
 
+    private void assertImpliedKeyFullJoin(String a, String on, String expected) throws Exception {
+        for (boolean isFullFat : new boolean[]{false, true}) {
+            assertRows("SELECT a.id aid, b.id bid, c.id cid FROM %s a FULL JOIN fh_b b ON %s JOIN fh_c c ON a.w = c.k AND b.k = c.k ORDER BY 1, 2, 3"
+                    .formatted(a, on), isFullFat, "condition: b.k=a.w", expected);
+            assertRows("SELECT a.id aid, b.id bid, c.id cid FROM fh_b b FULL JOIN %s a ON %s JOIN fh_c c ON a.w = c.k AND b.k = c.k ORDER BY 1, 2, 3"
+                    .formatted(a, on), isFullFat, "condition: a.w=b.k", expected);
+        }
+        assertRows("""
+                SELECT ab.aid, ab.bid, c.id cid
+                FROM (SELECT a.id aid, a.w aw, b.id bid, b.k bk FROM %s a FULL JOIN fh_b b ON %s LIMIT 1_000_000) ab
+                JOIN fh_c c ON c.k = ab.aw AND c.k = ab.bk
+                ORDER BY 1, 2, 3
+                """.formatted(a, on), false, null, expected);
+    }
+
     private void assertImpliedKeyNullExtension() throws Exception {
         final String query = "SELECT a.id, b.id, c.id FROM %s a %s JOIN %s b ON b.x > %d JOIN ik_c c ON a.w = c.k AND b.k = c.k ORDER BY 1, 2, 3";
         for (boolean isFullFat : new boolean[]{false, true}) {
@@ -1788,7 +1989,7 @@ public class OuterJoinTest extends AbstractCairoTest {
         assertRows(sql, false, null, expected);
     }
 
-    private void assertSlaveRowEvaluations(String sql, boolean isFullFat, String expected, int rereadEvaluations) throws Exception {
+    private void assertOnResidualEvaluations(String sql, boolean isFullFat, String expected, int evaluations, int rereadEvaluations) throws Exception {
         TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
             @Override
             public boolean onGet(Record rec, int count) {
@@ -1800,14 +2001,14 @@ public class OuterJoinTest extends AbstractCairoTest {
             try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
                 TestUtils.assertContains(planText(factory), "condition: b.k=a.w");
                 for (int execution = 0; execution < 2; execution++) {
-                    final int executed = execution * (4 + rereadEvaluations);
+                    final int executed = execution * (evaluations + rereadEvaluations);
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                         TestUtils.assertCursor(expected, cursor, factory.getMetadata(), true, sink);
-                        Assert.assertEquals(executed + 4, TestLatchedCounterFunctionFactory.getCount());
+                        Assert.assertEquals(executed + evaluations, TestLatchedCounterFunctionFactory.getCount());
                         cursor.toTop();
                         TestUtils.assertCursor(expected, cursor, factory.getMetadata(), true, sink);
                     }
-                    Assert.assertEquals(executed + 4 + rereadEvaluations, TestLatchedCounterFunctionFactory.getCount());
+                    Assert.assertEquals(executed + evaluations + rereadEvaluations, TestLatchedCounterFunctionFactory.getCount());
                 }
             }
         }

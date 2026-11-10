@@ -42,8 +42,12 @@ import org.jetbrains.annotations.Nullable;
  * slave row passes the ON residual with it, and a slave row whose keys are all NULL when no master row does; a join
  * that NULL-extends {@link JoinNullExtension#BY_KEYS} does neither. The NULL key check of a LEFT or FULL join,
  * see {@link JoinInput#getNullKeyCheck}, tells a master row whose keys are all NULL, and the NULL key match of the
- * join, see {@link NullKeyMatch}, tells whether a master row changes which slave rows pass the ON
- * residual. The {@link SlaveChains} of the join walk the chains of slave rows its join key map refers to.
+ * join, see {@link NullKeyMatch}, tells which row of a pair decides whether the pair passes the ON residual. The
+ * {@link SlaveChains} of the join walk the chains of slave rows its join key map refers to.
+ * <p>
+ * A FULL join that hashes its master, see {@link #setMasterHashed}, probes it with the slave rows, which take the
+ * place of the master rows above: the NULL key check of the slave, see {@link JoinInput#getSlaveNullKeyCheck}, tells a
+ * probed row whose keys are all NULL, and the NULL key matches of the two inputs trade places.
  */
 final class HashOuterJoinNullKeys {
     private final SlaveChains chains;
@@ -53,10 +57,14 @@ final class HashOuterJoinNullKeys {
     private final JoinNullExtension nullExtension;
     private final @Nullable Function nullKeyCheck;
     private final @Nullable NullKeyMatch nullKeyMatch;
+    private final @Nullable Function slaveNullKeyCheck;
     private boolean hasMasterRow;
     private boolean hasNullKeyChain;
     private boolean hasPassingSlaveRow;
+    private boolean isMasterHashed;
     private boolean isPassingSlaveRowSought;
+    private boolean isPerHashedRow;
+    private boolean isPerProbedRow;
     private long nullKeyChainHead;
     private long nullKeyRowsToMatch;
 
@@ -67,6 +75,7 @@ final class HashOuterJoinNullKeys {
             RecordSink masterSink,
             JoinNullExtension nullExtension,
             @Nullable Function nullKeyCheck,
+            @Nullable Function slaveNullKeyCheck,
             @Nullable NullKeyMatch nullKeyMatch
     ) {
         this.chains = chains;
@@ -75,7 +84,9 @@ final class HashOuterJoinNullKeys {
         this.masterSink = masterSink;
         this.nullExtension = nullExtension;
         this.nullKeyCheck = nullKeyCheck;
+        this.slaveNullKeyCheck = slaveNullKeyCheck;
         this.nullKeyMatch = nullKeyMatch;
+        setMasterHashed(false);
     }
 
     /**
@@ -101,7 +112,7 @@ final class HashOuterJoinNullKeys {
             if (value != null) {
                 hasNullKeyChain = true;
                 nullKeyChainHead = chains.chainHead(value);
-                nullKeyRowsToMatch = nullKeyMatch != NullKeyMatch.PER_SLAVE_ROW ? chains.chainSize(value) : 0;
+                nullKeyRowsToMatch = isPerHashedRow ? 0 : chains.chainSize(value);
             }
         }
     }
@@ -110,18 +121,23 @@ final class HashOuterJoinNullKeys {
      * Whether the join drops {@code masterRecord}, which no slave row on its key chain passes the ON residual with,
      * instead of NULL-extending it: a key of the row is not NULL, or some slave row passes the ON residual with it on
      * {@code joined}, which pairs the master row with the slave record. Per pair of rows, see
-     * {@link NullKeyMatch#PER_PAIR}, a master row whose keys are all NULL costs one evaluation per slave row;
-     * per slave row, the first such master row of an execution does, and every later one reuses its answer.
+     * {@link NullKeyMatch#PER_PAIR}, a master row whose keys are all NULL costs one evaluation per slave row; an ON
+     * residual that reads only the probed input costs one evaluation when the hashed input has a row; one that reads
+     * only the hashed input costs them for the first such row of an execution, and every later one reuses its answer.
      */
     boolean isMasterRowDropped(Record masterRecord, Record joined) {
         if (nullExtension != JoinNullExtension.BY_ON_RESIDUAL) {
             return false;
         }
-        assert nullKeyCheck != null : "LEFT or FULL join NULL-extended by its ON residual has no NULL key check";
+        final Function nullKeyCheck = isMasterHashed ? slaveNullKeyCheck : this.nullKeyCheck;
+        assert nullKeyCheck != null : "outer join NULL-extended by its ON residual has no NULL key check of its probed rows";
         if (!nullKeyCheck.getBool(masterRecord)) {
             return true;
         }
-        if (nullKeyMatch != NullKeyMatch.PER_SLAVE_ROW) {
+        if (isPerProbedRow) {
+            return joinKeyMap.size() > 0 && filter.getBool(joined);
+        }
+        if (!isPerHashedRow) {
             return chains.hasPassingSlaveRow(filter, joined);
         }
         if (!isPassingSlaveRowSought) {
@@ -133,12 +149,16 @@ final class HashOuterJoinNullKeys {
 
     /**
      * Whether the join NULL-extends {@code slaveRecord}, a row of a chain it does not skip, see
-     * {@link #isUnmatchedChainSkipped}, when it emits the slave rows no master row matched: {@code matchIdsMap} does
-     * not record it as matched and, per slave row, see {@link NullKeyMatch#PER_SLAVE_ROW}, the master has no
-     * row or the row fails the ON residual on {@code joined}, which pairs the NULL master record with the slave record.
+     * {@link #isUnmatchedChainSkipped}, when it emits the slave rows no master row matched: when the ON residual reads
+     * only the probed input, no probed row passed it, see {@link #matchNullKeyRows}; otherwise {@code matchIdsMap} does
+     * not record it as matched and, when the ON residual reads only the hashed input, the master has no row or the row
+     * fails it on {@code joined}, which pairs the NULL master record with the slave record.
      */
     boolean isSlaveRowUnmatched(Record joined, Record slaveRecord, Map matchIdsMap) {
-        if (nullKeyMatch == NullKeyMatch.PER_SLAVE_ROW && hasMasterRow && filter.getBool(joined)) {
+        if (isPerProbedRow) {
+            return nullKeyRowsToMatch > 0;
+        }
+        if (isPerHashedRow && hasMasterRow && filter.getBool(joined)) {
             return false;
         }
         final MapKey keys = matchIdsMap.withKey();
@@ -158,12 +178,19 @@ final class HashOuterJoinNullKeys {
      * Records that the master has a row and, per pair of rows, see {@link NullKeyMatch#PER_PAIR}, records as
      * matched in {@code matchIdsMap} each slave row of the NULL key chain, see {@link #findNullKeyChain}, that passes
      * the ON residual with the current master row on {@code joined}, which pairs the master row with
-     * {@code slaveRecord}. Per slave row, {@link #isSlaveRowUnmatched} evaluates the ON residual on each row of the
+     * {@code slaveRecord}. An ON residual that reads only the probed input matches every row of the chain once a probed
+     * row passes it; {@link #isSlaveRowUnmatched} evaluates one that reads only the hashed input on each row of the
      * chain instead.
      */
     void matchNullKeyRows(Record joined, Record slaveRecord, Map matchIdsMap) {
         hasMasterRow = true;
         if (nullKeyRowsToMatch > 0) {
+            if (isPerProbedRow) {
+                if (filter.getBool(joined)) {
+                    nullKeyRowsToMatch = 0;
+                }
+                return;
+            }
             chains.toChain(nullKeyChainHead);
             while (chains.nextChainRow()) {
                 if (filter.getBool(joined)) {
@@ -175,6 +202,17 @@ final class HashOuterJoinNullKeys {
                 }
             }
         }
+    }
+
+    /**
+     * Records whether the execution hashes the master of a FULL join and probes it with the slave rows: the input an
+     * ON residual reading only one input reads then is the hashed one for {@link NullKeyMatch#PER_MASTER_ROW} and the
+     * probed one for {@link NullKeyMatch#PER_SLAVE_ROW}, and the other way round otherwise.
+     */
+    void setMasterHashed(boolean isMasterHashed) {
+        this.isMasterHashed = isMasterHashed;
+        isPerProbedRow = nullKeyMatch == (isMasterHashed ? NullKeyMatch.PER_SLAVE_ROW : NullKeyMatch.PER_MASTER_ROW);
+        isPerHashedRow = nullKeyMatch == (isMasterHashed ? NullKeyMatch.PER_MASTER_ROW : NullKeyMatch.PER_SLAVE_ROW);
     }
 
     /**

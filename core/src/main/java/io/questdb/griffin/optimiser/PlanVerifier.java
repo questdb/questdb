@@ -865,6 +865,10 @@ public final class PlanVerifier {
             timestampColumn(joinScope, step.getMarkoutTimestampColumnId());
         }
         slaveKeys(source, step.getKeys());
+        if (step.getAlgorithm() != null) {
+            site = "slave NULL key check";
+            predicate(source, step.getSlaveNullKeyCheck());
+        }
         if (step.getMarkoutSequenceColumnId() >= 0) {
             site = "markout sequence";
             readColumn(source, step.getMarkoutSequenceColumnId());

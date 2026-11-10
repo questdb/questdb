@@ -31,6 +31,14 @@ package io.questdb.griffin.plan.logical;
  */
 public enum NullKeyMatch {
     /**
+     * Evaluates the ON residual on master rows alone: the ON residual reads only the master input and takes the same
+     * value for a row on every evaluation, so no slave row changes whether a master row passes. The factory tests a
+     * master row whose keys are all NULL once, which some slave row passes with when it passes and the slave input has
+     * a row, and matches every row of the NULL key chain once a master row passes; a FULL join factory that hashes its
+     * master tests once per execution whether some master row passes instead.
+     */
+    PER_MASTER_ROW,
+    /**
      * Evaluates the ON residual on each pair of a master and a slave row the factory walks.
      */
     PER_PAIR,
@@ -38,7 +46,8 @@ public enum NullKeyMatch {
      * Evaluates the ON residual on slave rows alone: the ON residual reads only the slave input and takes the same
      * value for a row on every evaluation, so no master row changes whether a slave row passes. The factory tests
      * once per execution whether some slave row passes, and tests a row of the NULL key chain when it emits the
-     * slave rows no master row matched.
+     * slave rows no master row matched; a FULL join factory that hashes its master tests each slave row it probes
+     * the master with instead.
      */
     PER_SLAVE_ROW
 }

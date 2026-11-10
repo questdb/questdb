@@ -1095,6 +1095,23 @@ public final class LogicalPlans {
         return false;
     }
 
+    /**
+     * True when the expression reads no column of the output and no sub-query.
+     */
+    public static boolean readsNone(BoundExpression expression, OutputSchema output) {
+        if (expression instanceof ColumnExpression column) {
+            return output.getColumnIndexById(column.getColumnId()) < 0;
+        }
+        if (expression instanceof FunctionExpression call) {
+            for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
+                if (!readsNone(call.argumentAt(i), output)) {
+                    return false;
+                }
+            }
+        }
+        return !(expression instanceof CursorExpression);
+    }
+
     public static boolean readsOnly(BoundExpression expression, OutputSchema output) {
         if (expression instanceof ColumnExpression column) {
             return output.getColumnIndexById(column.getColumnId()) >= 0;

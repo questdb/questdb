@@ -69,6 +69,7 @@ public final class JoinInput implements PlanFactSource {
     private BoundExpression onResidual;
     private int position = -1;
     private BoundExpression postJoinFilter;
+    private BoundExpression slaveNullKeyCheck;
     private TimeFrameScan timeFrameScan;
     private long toleranceInterval = Numbers.LONG_NULL;
     private UnnestSpec unnest;
@@ -113,6 +114,7 @@ public final class JoinInput implements PlanFactSource {
         onResidual = null;
         position = -1;
         postJoinFilter = null;
+        slaveNullKeyCheck = null;
         timeFrameScan = null;
         toleranceInterval = Numbers.LONG_NULL;
         unnest = null;
@@ -133,8 +135,8 @@ public final class JoinInput implements PlanFactSource {
      * The input a light hash join step hashes, which operator planning records: for an INNER step once it settles the
      * input that drives it, {@link BuildSide#FIXED_MASTER} when a consumer reads the order of its master, else the input
      * proven never to hold more rows than the other, or the smaller one at execution when the master supports random
-     * access, {@link BuildSide#SMALLER}, else the slave; for a FULL step NULL-extended by its keys whose master supports
-     * random access, the smaller one at execution, else the slave. Null for a step of another algorithm or kind, and for
+     * access, {@link BuildSide#SMALLER}, else the slave; for a FULL step whose master supports random access, the
+     * smaller one at execution, else the slave. Null for a step of another algorithm or kind, and for
      * an INNER step operator planning has not settled. Read only once operator planning settled it, see
      * {@link #isAlgorithmDecided}.
      */
@@ -232,6 +234,17 @@ public final class JoinInput implements PlanFactSource {
         return postJoinFilter;
     }
 
+    /**
+     * The predicate over the slave row that the slave columns of the keys all hold the values a NULL record reads for
+     * them, see {@link JoinNullExtension#BY_ON_RESIDUAL}, which operator planning records for a FULL step that
+     * NULL-extends its rows by its ON residual and may hash its master, see {@link PlanToFactoryRules#isSlaveNullKeyChecked};
+     * null for any other step.
+     */
+    public BoundExpression getSlaveNullKeyCheck() {
+        PlanFacts.checkDecided(algorithm != null, "JoinInput.slaveNullKeyCheck");
+        return slaveNullKeyCheck;
+    }
+
     public OutputSchema getSourceOutput() {
         return unnest == null ? input.getOutput() : unnest.getOutput();
     }
@@ -275,6 +288,18 @@ public final class JoinInput implements PlanFactSource {
     public int indexOfMasterKey(int masterColumnId) {
         for (int i = 0, n = keys.size(); i < n; i++) {
             if (keys.getQuick(i).getMasterColumnId() == masterColumnId) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * The index of the first key on the slave column, or -1 when none is.
+     */
+    public int indexOfSlaveKey(int slaveColumnId) {
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            if (keys.getQuick(i).getSlaveColumnId() == slaveColumnId) {
                 return i;
             }
         }
@@ -432,6 +457,10 @@ public final class JoinInput implements PlanFactSource {
         this.postJoinFilter = postJoinFilter;
     }
 
+    public void setSlaveNullKeyCheck(BoundExpression slaveNullKeyCheck) {
+        this.slaveNullKeyCheck = slaveNullKeyCheck;
+    }
+
     public void setSubquery(boolean isSubquery) {
         this.isSubquery = isSubquery;
     }
@@ -479,6 +508,7 @@ public final class JoinInput implements PlanFactSource {
         nullKeyCheck = PlanReads.expression(nullKeyCheck, visitor);
         onResidual = PlanReads.expression(onResidual, visitor);
         postJoinFilter = PlanReads.expression(postJoinFilter, visitor);
+        slaveNullKeyCheck = PlanReads.expression(slaveNullKeyCheck, visitor);
         markoutTimestampColumnId = PlanReads.columnId(markoutTimestampColumnId, -1, visitor);
         markoutSequenceColumnId = PlanReads.columnId(markoutSequenceColumnId, -1, visitor);
     }

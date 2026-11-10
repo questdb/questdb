@@ -596,6 +596,49 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHashOuterJoinFilteredLightImpliedKeyFullJoinHashesSmallerInput() throws Exception {
+        // The later INNER join implies the key of the FULL join, which hashes its smaller input, so the
+        // 200_000-row table on either side of it never enters the hash and the query stays under the limit.
+        // ORDER BY sorts the joined rows in a row store, whose default 16 MiB page alone exceeds any limit
+        // that the 2.4 MB chain of the larger table's row ids breaches.
+        setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 128 * 1024L);
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 1024 * 1024L);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a AS (SELECT x::INT id, CASE WHEN x > 8 THEN NULL ELSE x::INT END w FROM long_sequence(10))");
+            execute("""
+                    CREATE TABLE b AS (
+                        SELECT x::INT id,
+                            CASE WHEN x >= 199_999 THEN NULL ELSE x::INT END k,
+                            CASE WHEN x <= 10 OR x = 199_999 THEN 2 ELSE 0 END v
+                        FROM long_sequence(200_000)
+                    )""");
+            execute("CREATE TABLE c AS (SELECT x::INT id, x::INT k FROM long_sequence(8))");
+            execute("INSERT INTO c VALUES (0, NULL)");
+            drainWalQueue();
+            final String expected = """
+                    aid\tbid\tcid
+                    null\t200000\t0
+                    1\t1\t1
+                    2\t2\t2
+                    3\t3\t3
+                    4\t4\t4
+                    5\t5\t5
+                    6\t6\t6
+                    7\t7\t7
+                    8\t8\t8
+                    9\t199999\t0
+                    10\t199999\t0
+                    """;
+            for (String join : new String[]{"a FULL JOIN b", "b FULL JOIN a"}) {
+                assertQuery("SELECT a.id aid, b.id bid, c.id cid FROM " + join + " ON b.v > 1 JOIN c ON a.w = c.k AND b.k = c.k ORDER BY 1, 2, 3")
+                        .noLeakCheck()
+                        .withPlanContaining("Hash Full Outer Join Light")
+                        .returns(expected);
+            }
+        });
+    }
+
+    @Test
     public void testHashOuterJoinFilteredLightOpenFailureReleasesAllocations() throws Exception {
         // A FULL OUTER JOIN with a non-equi filter routes to the filtered light factory whose
         // full-outer cursor reopens a match-ids map (region 1) before the slave chain (region 2).

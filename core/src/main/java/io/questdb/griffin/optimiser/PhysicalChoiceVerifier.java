@@ -37,7 +37,6 @@ import io.questdb.griffin.plan.logical.HorizonJoinSlave;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinKey;
 import io.questdb.griffin.plan.logical.JoinKind;
-import io.questdb.griffin.plan.logical.JoinNullExtension;
 import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LatestByPlan;
 import io.questdb.griffin.plan.logical.LimitPlan;
@@ -135,8 +134,8 @@ final class PhysicalChoiceVerifier {
     /**
      * Whether the join step records the input it hashes as operator planning settles it, see
      * {@link JoinInput#getBuildSide}: none for a step that is not a light hash join or for a LEFT or RIGHT one, and the
-     * smaller input at execution for a FULL one NULL-extended by its keys whose master supports random access, else the
-     * slave. An INNER step whose master side is undecided records none, and one whose master a consumer fixed records
+     * smaller input at execution for a FULL one whose master supports random access, else the slave. An INNER step
+     * whose master side is undecided records none, and one whose master a consumer fixed records
      * {@link BuildSide#FIXED_MASTER}. A step the smaller input drives hashes the slave when its master lacks
      * random access, and records an input to hash only where its master is one input, both inputs have a row bound, see
      * {@link PhysicalProperties#rowBoundScan}, and every LIMIT whose count only execution knows that bounds the other
@@ -155,8 +154,7 @@ final class PhysicalChoiceVerifier {
         final boolean isMasterRandomAccess = position > 0
                 && PhysicalProperties.masterSupportsRandomAccess(join, position) == PhysicalProperties.Capability.YES;
         if (step.getJoinType() == JoinKind.FULL_OUTER) {
-            return side == (step.getNullExtension() == JoinNullExtension.BY_KEYS && isMasterRandomAccess
-                    ? BuildSide.SMALLER : BuildSide.SLAVE);
+            return side == (isMasterRandomAccess ? BuildSide.SMALLER : BuildSide.SLAVE);
         }
         if (step.getJoinType() != JoinKind.INNER || side == null) {
             return side == null;
@@ -661,7 +659,8 @@ final class PhysicalChoiceVerifier {
                 joinType == JoinKind.ASOF || joinType == JoinKind.LT, step.getKeyCheck())) {
             return PlanVerifier.JOIN_KEY_LOOKUP;
         }
-        if ((step.getNullKeyCheck() != null) != PlanToFactoryRules.isMasterNullKeyChecked(step)) {
+        if ((step.getNullKeyCheck() != null) != PlanToFactoryRules.isMasterNullKeyChecked(step)
+                || (step.getSlaveNullKeyCheck() != null) != PlanToFactoryRules.isSlaveNullKeyChecked(step)) {
             return PlanVerifier.JOIN_NULL_KEY_CHECK;
         }
         if (step.getFilterAlgorithm() != OperatorPlanning.joinFilterAlgorithm(step)) {

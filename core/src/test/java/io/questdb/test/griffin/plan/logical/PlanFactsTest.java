@@ -82,6 +82,7 @@ public class PlanFactsTest extends AbstractCairoTest {
         final JoinInput step = JoinInput.FACTORY.newInstance().of(new ScanPlan().of(tableToken(), 2, 0), JoinKind.INNER, "s", 0);
         assertUndecided(step::getKeyCheck, "JoinInput.keyCheck");
         assertUndecided(step::getNullKeyCheck, "JoinInput.nullKeyCheck");
+        assertUndecided(step::getSlaveNullKeyCheck, "JoinInput.slaveNullKeyCheck");
         assertUndecided(step::getTimeFrameScan, "JoinInput.timeFrameScan");
         assertUndecided(step::getBuildSide, "JoinInput.buildSide");
         assertUndecided(step::getFilterAlgorithm, "JoinInput.filterAlgorithm");

@@ -355,6 +355,17 @@ public final class PlanToFactoryRules {
     }
 
     /**
+     * Whether the join step checks that the slave columns of its keys hold the values of a NULL record, see
+     * {@link JoinInput#getSlaveNullKeyCheck}: a FULL join NULL-extended by its ON residual that hashes the smaller input
+     * at execution, see {@link BuildSide#SMALLER}, whose factory evaluates the check on each slave row it probes the
+     * hashed master with and no master row matches.
+     */
+    public static boolean isSlaveNullKeyChecked(JoinInput step) {
+        return step.getNullExtension() == JoinNullExtension.BY_ON_RESIDUAL && step.getJoinType() == JoinKind.FULL_OUTER
+                && step.getAlgorithm() == JoinInput.Algorithm.LIGHT_HASH && step.getBuildSide() == BuildSide.SMALLER;
+    }
+
+    /**
      * True when the factory of the relational join step at {@code position} of the join's ordered inputs can keep its
      * master's designated timestamp: the join leads with its first input, see {@link LogicalPlans#isFirstInputLeading},
      * and the step neither null-extends its master nor drives the join with the smaller input. A markout step
@@ -542,17 +553,22 @@ public final class PlanToFactoryRules {
 
     /**
      * How the factory of the join step finds the rows that pass its ON residual with a row whose keys are all NULL, see
-     * {@link NullKeyMatch}: per slave row when the ON residual reads only the slave input and takes the
-     * same value for a row on every evaluation, see {@link LogicalPlans#isOrderIndependent}, and per pair of rows
-     * otherwise; null for a step its keys NULL-extend.
+     * {@link NullKeyMatch}: per slave row when the ON residual reads only the slave input, per master row when it
+     * reads only the master input, either only when it takes the same value for a row on every evaluation, see
+     * {@link LogicalPlans#isOrderIndependent}, and per pair of rows otherwise; null for a step its keys NULL-extend.
      */
     public static NullKeyMatch nullKeyMatch(JoinInput step) {
         if (step.getNullExtension() != JoinNullExtension.BY_ON_RESIDUAL) {
             return null;
         }
         final BoundExpression onResidual = step.getOnResidual();
-        return LogicalPlans.readsOnly(onResidual, step.getSourceOutput()) && LogicalPlans.isOrderIndependent(onResidual)
-                ? NullKeyMatch.PER_SLAVE_ROW : NullKeyMatch.PER_PAIR;
+        if (!LogicalPlans.isOrderIndependent(onResidual)) {
+            return NullKeyMatch.PER_PAIR;
+        }
+        if (LogicalPlans.readsOnly(onResidual, step.getSourceOutput())) {
+            return NullKeyMatch.PER_SLAVE_ROW;
+        }
+        return LogicalPlans.readsNone(onResidual, step.getSourceOutput()) ? NullKeyMatch.PER_MASTER_ROW : NullKeyMatch.PER_PAIR;
     }
 
     /**

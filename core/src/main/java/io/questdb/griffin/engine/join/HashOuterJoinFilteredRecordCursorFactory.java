@@ -242,7 +242,7 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
 
         AbstractHashOuterJoinFilteredRecordCursor(int columnSplit, Map joinKeyMap, RecordChain slaveChain) {
             super(columnSplit, joinKeyMap, slaveChain, symbolTranslatingRecord);
-            nullKeys = new HashOuterJoinNullKeys(new NullKeyChains(), filter, joinKeyMap, masterSink, nullExtension, nullKeyCheck, nullKeyMatch);
+            nullKeys = new HashOuterJoinNullKeys(new NullKeyChains(), filter, joinKeyMap, masterSink, nullExtension, nullKeyCheck, null, nullKeyMatch);
         }
 
         @Override

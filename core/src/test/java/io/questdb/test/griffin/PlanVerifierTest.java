@@ -674,6 +674,7 @@ public class PlanVerifierTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE bs_a (k INT, x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE bs_b (k INT, x INT)");
+            execute("CREATE TABLE bs_c (k INT)");
             // A consumer reads the order of the master, which then drives the join.
             try (
                     SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
@@ -692,6 +693,15 @@ public class PlanVerifierTest extends AbstractCairoTest {
                 Assert.assertEquals(BuildSide.SMALLER, step.getBuildSide());
                 step.setBuildSide(BuildSide.FIXED_MASTER);
             }, PlanVerifier.JOIN_BUILD_SIDE);
+            // So does a FULL join keyed by the equality a later INNER join implies.
+            assertAlgorithmContradicts("SELECT a.x, b.x FROM bs_a a FULL JOIN bs_b b ON b.x > 1 JOIN bs_c c ON a.k = c.k AND b.k = c.k",
+                    JoinPlan.class, join -> {
+                        final JoinInput step = join.getOrderedInputs().getQuick(1);
+                        Assert.assertEquals(JoinNullExtension.BY_ON_RESIDUAL, step.getNullExtension());
+                        Assert.assertEquals(BuildSide.SMALLER, step.getBuildSide());
+                        step.setBuildSide(BuildSide.SLAVE);
+                        step.setSlaveNullKeyCheck(null);
+                    }, PlanVerifier.JOIN_BUILD_SIDE);
             // A FULL join over a master without random access hashes its slave.
             assertAlgorithmContradicts("SELECT a.x, b.x FROM (SELECT * FROM bs_a UNION ALL SELECT * FROM bs_a) a FULL JOIN bs_b b ON a.k = b.k",
                     JoinPlan.class, join -> {
@@ -893,6 +903,23 @@ public class PlanVerifierTest extends AbstractCairoTest {
                 Assert.assertNull(step.getNullKeyCheck());
                 step.setNullKeyCheck(ConstantExpression.FACTORY.newInstance().ofBoolean(true, 0));
             }, PlanVerifier.JOIN_NULL_KEY_CHECK);
+            assertAlgorithmContradicts(query, JoinPlan.class, join -> {
+                final JoinInput step = nullExtendedStep(join);
+                Assert.assertNull(step.getSlaveNullKeyCheck());
+                step.setSlaveNullKeyCheck(ConstantExpression.FACTORY.newInstance().ofBoolean(true, 0));
+            }, PlanVerifier.JOIN_NULL_KEY_CHECK);
+            // The FULL step may hash its master and probe it with the slave rows, whose keys the slave NULL key check reads.
+            final String full = query.replace("LEFT JOIN", "FULL JOIN");
+            assertAlgorithmContradicts(full, JoinPlan.class, join -> {
+                final JoinInput step = nullExtendedStep(join);
+                Assert.assertEquals(BuildSide.SMALLER, step.getBuildSide());
+                Assert.assertNotNull(step.getSlaveNullKeyCheck());
+                step.setSlaveNullKeyCheck(null);
+            }, PlanVerifier.JOIN_NULL_KEY_CHECK);
+            assertAlgorithmContradicts(full, JoinPlan.class, join -> {
+                final JoinInput step = nullExtendedStep(join);
+                step.setSlaveNullKeyCheck(column(step.getKeys().getQuick(0).getMasterColumnId(), ColumnType.BOOLEAN));
+            }, PlanVerifier.UNRESOLVED_COLUMN);
         });
     }
 
@@ -904,6 +931,10 @@ public class PlanVerifierTest extends AbstractCairoTest {
             execute("CREATE TABLE nm_c (id INT, k INT)");
             final String query = "SELECT a.id, b.id, c.id FROM nm_a a %s JOIN nm_b b ON %s JOIN nm_c c ON a.w = c.k AND b.k = c.k";
             assertNullKeyMatch(query.formatted("LEFT", "b.x > 1"), NullKeyMatch.PER_SLAVE_ROW);
+            assertNullKeyMatch(query.formatted("LEFT", "a.x > 1"), NullKeyMatch.PER_MASTER_ROW);
+            assertNullKeyMatch(query.formatted("FULL", "a.x > 1 OR a.id = 2"), NullKeyMatch.PER_MASTER_ROW);
+            assertNullKeyMatch(query.formatted("LEFT", "a.x > rnd_int()"), NullKeyMatch.PER_PAIR);
+            assertNullKeyMatch(query.formatted("LEFT", "a.x > 1 AND b.x > 1"), NullKeyMatch.PER_PAIR);
             assertNullKeyMatch(query.formatted("RIGHT", "b.x > a.x"), NullKeyMatch.PER_PAIR);
             assertNullKeyMatch(query.formatted("FULL", "b.x > rnd_int()"), NullKeyMatch.PER_PAIR);
             try (

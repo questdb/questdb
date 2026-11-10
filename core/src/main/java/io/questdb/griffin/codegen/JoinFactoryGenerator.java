@@ -768,7 +768,7 @@ final class JoinFactoryGenerator {
         }
     }
 
-    // Consumes metadata, both inputs, the optional filter and the optional NULL key check on entry.
+    // Consumes metadata, both inputs, the optional filter and the optional NULL key checks on entry.
     RecordCursorFactory createHashJoin(
             GenerationFrame frame,
             JoinRecordMetadata metadata,
@@ -777,6 +777,7 @@ final class JoinFactoryGenerator {
             JoinInput step,
             Function filter,
             @Nullable Function nullKeyCheck,
+            @Nullable Function slaveNullKeyCheck,
             Plannable context
     ) {
         final JoinKind joinType = step.getJoinType();
@@ -843,6 +844,7 @@ final class JoinFactoryGenerator {
                             slaveSymbolKeyCols,
                             step.getNullExtension(),
                             nullKeyCheck,
+                            slaveNullKeyCheck,
                             PlanToFactoryRules.nullKeyMatch(step),
                             step.getBuildSide()
                     );
@@ -942,6 +944,7 @@ final class JoinFactoryGenerator {
             if (!isTransferred) {
                 Misc.free(filter, th);
                 Misc.free(nullKeyCheck, th);
+                Misc.free(slaveNullKeyCheck, th);
                 Misc.free(metadata, th);
                 Misc.free(master, th);
                 Misc.free(slave, th);
@@ -1092,6 +1095,7 @@ final class JoinFactoryGenerator {
         JoinRecordMetadata metadata = null;
         Function joinFilter = null;
         Function nullKeyCheck = null;
+        Function slaveNullKeyCheck = null;
         Function residualFilter = null;
         BoundExpression postJoinFilter = step.getPostJoinFilter();
         final RecordCursorFactory joined;
@@ -1141,6 +1145,9 @@ final class JoinFactoryGenerator {
                 if (step.getNullKeyCheck() != null) {
                     nullKeyCheck = functionInstantiator.instantiate(step.getNullKeyCheck(), masterOutput, masterMetadata, executionContext);
                 }
+                if (step.getSlaveNullKeyCheck() != null) {
+                    slaveNullKeyCheck = functionInstantiator.instantiate(step.getSlaveNullKeyCheck(), step.getInput().getOutput(), slaveMetadata, executionContext);
+                }
                 if (PlanToFactoryRules.isSlaveEmptied(step)) {
                     final RecordCursorFactory emptied = slave;
                     slave = null;
@@ -1152,13 +1159,14 @@ final class JoinFactoryGenerator {
                 }
                 final Plannable condition = createCondition(step);
                 isTransferred = true;
-                joined = createHashJoin(frame, metadata, master, slave, step, joinFilter, nullKeyCheck, condition);
+                joined = createHashJoin(frame, metadata, master, slave, step, joinFilter, nullKeyCheck, slaveNullKeyCheck, condition);
             }
         } catch (Throwable th) {
             Misc.free(residualFilter, th);
             if (!isTransferred) {
                 Misc.free(joinFilter, th);
                 Misc.free(nullKeyCheck, th);
+                Misc.free(slaveNullKeyCheck, th);
                 Misc.free(metadata, th);
                 Misc.free(master, th);
                 Misc.free(slave, th);

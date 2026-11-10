@@ -50,7 +50,6 @@ import io.questdb.griffin.plan.logical.HorizonJoinSlave;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinKey;
 import io.questdb.griffin.plan.logical.JoinKind;
-import io.questdb.griffin.plan.logical.JoinNullExtension;
 import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LatestByPlan;
 import io.questdb.griffin.plan.logical.LimitPlan;
@@ -543,17 +542,19 @@ final class OperatorPlanning implements Mutable {
     }
 
     /**
-     * The predicate over {@code master}, the output the master columns of the keys come from, that the master columns of
-     * the keys all hold the values a NULL record reads for them, see {@link JoinInput#getNullKeyCheck}.
+     * The predicate over {@code output}, the output the master columns of the keys come from or, unless
+     * {@code isMaster}, their slave columns, that those columns all hold the values a NULL record reads for them, see
+     * {@link JoinInput#getNullKeyCheck} and {@link JoinInput#getSlaveNullKeyCheck}.
      */
-    private BoundExpression nullKeyCheck(JoinInput step, OutputSchema master) throws SqlException {
+    private BoundExpression nullKeyCheck(JoinInput step, OutputSchema output, boolean isMaster) throws SqlException {
         final ObjList<JoinKey> keys = step.getKeys();
         BoundExpression nullKeyCheck = null;
         for (int k = 0, n = keys.size(); k < n; k++) {
             final JoinKey key = keys.getQuick(k);
-            if (step.indexOfMasterKey(key.getMasterColumnId()) == k) {
+            final int columnId = isMaster ? key.getMasterColumnId() : key.getSlaveColumnId();
+            if (isMaster ? step.indexOfMasterKey(columnId) == k : step.indexOfSlaveKey(columnId) == k) {
                 nullKeyCheck = context.getRewriter().combineConjunction(nullKeyCheck,
-                        context.bindNullValueCheck(key.getMasterColumnId(), master, key.getPosition()), key.getPosition());
+                        context.bindNullValueCheck(columnId, output, key.getPosition()), key.getPosition());
             }
         }
         return nullKeyCheck;
@@ -821,8 +822,8 @@ final class OperatorPlanning implements Mutable {
     /**
      * Records the input a light hash join step hashes, see {@link JoinInput#getBuildSide}: an INNER step over a master
      * without random access hashes the slave in the master's order, and any other INNER step waits for
-     * {@link #settleMasterSides}; a FULL step NULL-extended by its keys over a master with random access hashes the
-     * smaller input at execution, and any other FULL step the slave.
+     * {@link #settleMasterSides}; a FULL step over a master with random access hashes the smaller input at execution,
+     * and any other FULL step the slave.
      */
     private void planLightBuildSide(JoinPlan join, int inputIndex, JoinInput step) {
         final PhysicalProperties.Capability isMasterRandomAccess = PhysicalProperties.masterSupportsRandomAccess(join, inputIndex);
@@ -836,8 +837,7 @@ final class OperatorPlanning implements Mutable {
                     undecidedInputIndexes.add(inputIndex);
                 }
             }
-            case FULL_OUTER -> step.setBuildSide(step.getNullExtension() == JoinNullExtension.BY_KEYS
-                    && isMasterRandomAccess == PhysicalProperties.Capability.YES ? BuildSide.SMALLER : BuildSide.SLAVE);
+            case FULL_OUTER -> step.setBuildSide(isMasterRandomAccess == PhysicalProperties.Capability.YES ? BuildSide.SMALLER : BuildSide.SLAVE);
             default -> {
             }
         }
@@ -897,7 +897,7 @@ final class OperatorPlanning implements Mutable {
     private void planRelationalStep(JoinPlan join, int inputIndex, JoinInput step) throws SqlException {
         final LogicalPlan slave = step.getInput();
         final OutputSchema master = join.getOrderedInputs().getQuick(inputIndex - 1).getOutput();
-        step.setNullKeyCheck(PlanToFactoryRules.isMasterNullKeyChecked(step) ? nullKeyCheck(step, master) : null);
+        step.setNullKeyCheck(PlanToFactoryRules.isMasterNullKeyChecked(step) ? nullKeyCheck(step, master, true) : null);
         final int markoutIndex = master.getColumnIndexById(step.getMarkoutTimestampColumnId());
         if (markoutIndex >= 0 && markoutIndex == PhysicalProperties.masterTimestampIndex(join, inputIndex)
                 && PhysicalProperties.masterSupportsRandomAccess(join, inputIndex) == PhysicalProperties.Capability.YES
@@ -913,6 +913,7 @@ final class OperatorPlanning implements Mutable {
                 planLightBuildSide(join, inputIndex, step);
             }
         }
+        step.setSlaveNullKeyCheck(PlanToFactoryRules.isSlaveNullKeyChecked(step) ? nullKeyCheck(step, slave.getOutput(), false) : null);
     }
 
     private void planSampleBy(SampleByPlan sample) throws SqlException {
