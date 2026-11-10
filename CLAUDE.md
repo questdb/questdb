@@ -14,7 +14,7 @@ time-series SQL extensions.
 
 Java class members are grouped by kind (static vs. instance) and visibility.
 
-Use the modern Java 17 features:
+Use modern Java features:
 
 - enhanced switch
 - multiline string literal
@@ -266,8 +266,8 @@ qdbr toolchain; the script prints the command when it is missing.
 - **Never assert peer behaviour with a hand-built frame or a fake socket.** Server
   tests must drive the real `java-questdb-client` for anything that asserts how a
   client reacts to server output — close codes, NACK classification, ack watermark
-  advance, reconnect eligibility. The client is already on the test classpath (53 of
-  91 QWP tests import it). A hand-forged frame encodes the contract you *assume* the
+  advance, reconnect eligibility. The client is already on the test classpath and
+  most QWP tests import it. A hand-forged frame encodes the contract you *assume* the
   client implements, so it passes even when the pinned client disagrees; that is how
   the ROLE_CHANGE (4001) close shipped against a client that classified it as a
   poison strike. If a test names a client class in a comment to justify an assertion,
@@ -355,7 +355,7 @@ qdbr toolchain; the script prints the command when it is missing.
     configs, "Not changed" lists). The code and its tests carry those.
 - **A PR may ship with known bugs whose risk is low.** `review-pr` rates each
   bug a change introduces by what a user who hits it loses and how likely
-  users are to hit it (`.pi/agents/risk-assessor.md`); only Critical and High
+  users are to hit it (its `risk-assessor` agent); only Critical and High
   risk hold up the PR. File each Medium or Low risk bug in
   `questdb/questdb-enterprise` with the labels `bug` and `deferred`, and keep
   it out of the PR body, comments and every other public place. A tradeoff
@@ -400,7 +400,7 @@ qdbr toolchain; the script prints the command when it is missing.
 
 ### Prerequisites
 
-- Java 11+ (64-bit) with `JAVA_HOME` set
+- JDK 25+ (64-bit) with `JAVA_HOME` set
 - Maven 3
 - Rust toolchain (version pinned in `core/rust/qdbr/rust-toolchain.toml`)
 
@@ -417,7 +417,7 @@ mvn clean package -DskipTests -P build-web-console
 mvn clean package -DskipTests -P build-web-console,build-binaries
 ```
 
-When you build just the core module with `mvn -pl core`, it will fall use a
+When you build just the core module with `mvn -pl core`, it will use a
 pre-built java-questdb-client module, installed in the local Maven cache. It may
 be stale and result in build errors. Fix this issue with:
 
@@ -473,7 +473,7 @@ For repeated runs of core tests, compile through `ci/incremental_compile.py`:
 python3 ci/incremental_compile.py -- test -Dtest=ClassNameTest
 ```
 
-Maven's compiler plugin recompiles all of core's ~6,000 sources (about 40
+Maven's compiler plugin recompiles all of core's sources (about 40
 seconds) whenever any one of them changed. The script compiles the changed
 sources, then reads the class files to see whether anything other classes
 compile against changed: signatures, supertypes, non-private members, constant
@@ -494,9 +494,21 @@ looks changed on every build and makes Maven recompile the whole module.
 ```bash
 # After building with web console:
 mkdir <root_directory>
-java --add-exports=java.base/jdk.internal.vm=io.questdb -p core/target/questdb-<version>-SNAPSHOT.jar -m io.questdb/io.questdb.ServerMain -d <root_directory>
+java \
+  --sun-misc-unsafe-memory-access=allow \
+  --enable-native-access=io.questdb \
+  --add-opens=java.base/java.lang=io.questdb \
+  --add-opens=java.base/java.lang.reflect=io.questdb \
+  --add-opens=java.base/java.nio=io.questdb \
+  --add-opens=java.base/java.time.zone=io.questdb \
+  --add-exports=java.base/jdk.internal.vm=io.questdb \
+  -p core/target/questdb-<version>-SNAPSHOT.jar \
+  -m io.questdb/io.questdb.ServerMain -d <root_directory>
 # Web console at http://localhost:9000
 ```
+
+The module options are the ones `core/src/main/bin/questdb.sh` passes; when it
+changes, take them from there.
 
 ### Building and Validating Rust Code
 
@@ -548,7 +560,6 @@ cmake --build build/release --config Release
 - **benchmarks/** - JMH micro-benchmarks
 - **compat/** - Compatibility tests
 - **utils/** - Build utilities
-- **examples/** - Usage examples
 - **win64svc/** - Windows service wrapper
 - **java-questdb-client** - Java client for data ingestion (legacy ILP and
   QuestDB's QWP)
@@ -563,6 +574,7 @@ cmake --build build/release --config Release
     - `pgwire/` - PostgreSQL wire protocol
     - `http/` - REST API and web console
     - `line/` - InfluxDB Line Protocol (ILP)
+    - `qwp/` - QWP, QuestDB's own protocol for ingestion and query results
     - `text/` - CSV import
 - **std/** - Custom collections and utilities (zero-allocation data structures)
 - **mp/** - Message passing and worker queues

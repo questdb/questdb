@@ -9,9 +9,8 @@ description: Review a GitHub pull request, a local Git range, or a PR's local co
 
 **Usage:** `/review-pr [PR number or URL] [--range=<base>..<head>] [--level=0..3] [--block-at=critical|high|medium|low] [--body=<file>] [--prior=<file>,...]`
 
-Review the PR or local range identified by the invocation arguments. When this skill
-is run as `/skill:review-pr <args>`, the `<args>` are appended as a `User:` message;
-treat that text as `$ARGUMENTS`. The review target is a PR number/URL,
+Review the PR or local range identified by the invocation arguments (`$ARGUMENTS`).
+The review target is a PR number/URL,
 `--range=<base>..<head>`, or both. The range head may be omitted (`--range=<base>..`)
 to review the working tree, including uncommitted changes. Both together review a
 PR's local commits, which may not be pushed yet, as `fix-pr` does: the PR supplies
@@ -26,7 +25,8 @@ neither is supplied, ask for one.
   `high`. Findings rated below it ship as Deferred, with a private issue.
 
 > Harness note: this skill runs inside **Codex**. Use shell tools for read-only `gh`,
-> Git, `rg` and `rg --files` queries, local file reads for source inspection, and
+> Git, `rg` and `rg --files` queries (`rg --files` replaces `fd` wherever this skill
+> names it), local file reads for source inspection, and
 > fresh-context Codex subagents in the `reviewer`, `review-prober` and `risk-assessor`
 > roles. Do not edit files or push. Build and run tests only in the scratch worktree of
 > Step 2.6, never in the user's working tree.
@@ -128,13 +128,25 @@ Capture the PR identifier in `$PR` after stripping the level token, then fetch m
 
 ```bash
 PR='<PR number or URL from $ARGUMENTS, with any level token removed>'
-gh pr view "$PR" --json number,title,body,labels,state,headRefOid
+gh pr view "$PR" --json number,title,body,labels,state,headRefOid,baseRefName
 gh pr diff "$PR"
 gh pr view "$PR" --comments
 # Review-thread replies on the diff, which --comments leaves out:
 PR_API=$(gh pr view "$PR" --json url --jq .url | sed -E 's#https://github.com/([^/]+/[^/]+)/pull/#repos/\1/pulls/#')
 gh api "$PR_API/comments" --paginate --jq '.[] | "\(.user.login) on \(.path):\(.line // .original_line): \(.body)"'
 BASE=$(gh pr view "$PR" --json baseRefOid --jq .baseRefOid)
+```
+
+`gh pr diff` fails on a diff GitHub considers too large, such as one that changes
+more than 300 files (HTTP 406). Then fetch the PR, take the diff from Git, and
+continue as "PR with a local range" below, with `$BASE` as `<base>` and the PR's
+`headRefOid` as `<head>`:
+
+```bash
+git fetch --no-recurse-submodules origin "pull/<number>/head" "<baseRefName>"
+HEAD='<headRefOid>'
+git diff "$BASE...$HEAD" --stat
+git diff "$BASE...$HEAD"
 ```
 
 ### PR with a local range
@@ -200,25 +212,30 @@ Leave out a problem that a person already declined on the PR (Step 2.5f). Write 
 
 A changed submodule pointer is not automatically a change this PR makes. Before reviewing **any** content inside a submodule, classify the pointer move. This step is cheap, runs at every level including 0, and gates whether an entire repository's worth of diff is in scope. Skipping it is how a review attributes months of already-released upstream work to the PR in front of it.
 
-List the pointer moves, then for each one resolve the submodule's default branch and test whether the new commit is already on it:
+List the pointer moves in the Step 1 diff, then ask each submodule's GitHub repository whether the new commit is already on its default branch. Ask the remote rather than a local checkout: a submodule the checkout never initialized is an empty directory, and Git commands run there act on the parent repository.
 
 ```bash
-git diff "$BASE...HEAD" --submodule=short | grep -E '^(diff --git|[+-]Subproject commit)'
+# Diff from gh pr diff:
+gh pr diff "$PR" | grep -E '^(diff --git|[+-]Subproject commit)'
+# Diff from Git (--range, or the Step 1 fallback for a large PR):
+git diff --submodule=short "$BASE"${HEAD:+"...$HEAD"} | grep -E '^(diff --git|[+-]Subproject commit)'
 
-cd <submodule path>
-git fetch origin --quiet
-DEF=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||')   # e.g. main, master
-git merge-base --is-ancestor <new-sha> "origin/$DEF" && echo UPSTREAM-SYNC || echo OFF-DEFAULT
-git branch -r --contains <new-sha>
+# For each pointer move:
+SUB='<submodule path>'; NEW='<new commit>'
+NAME=$(git config -f .gitmodules --get-regexp '\.path$' | awk -v p="$SUB" '$2 == p { sub(/\.path$/, "", $1); print $1 }')
+SUB_REPO=$(git config -f .gitmodules --get "$NAME.url" | sed -E 's#^(https://github\.com/|git@github\.com:)##; s#/$##; s#\.git$##')
+DEF=$(gh api "repos/$SUB_REPO" --jq .default_branch)
+gh api "repos/$SUB_REPO/compare/$DEF...$NEW" --jq .status      # behind or identical: on the default branch
+gh api "repos/$SUB_REPO/commits/$NEW/pulls" --jq '.[].html_url'  # PRs that carry the commit
 ```
 
 Classify each pointer move as exactly one of:
 
-- **UPSTREAM-SYNC** — the new commit is an ancestor of the submodule's default branch. The work inside it **already landed upstream**; this PR only advances the pointer to pick it up. **Its contents are not in-diff and are not this PR's responsibility.** Do not review them as changes, do not attribute their behaviour changes, breaking or otherwise, to this PR, and do not build findings out of them. The only legitimate finding here is a genuine *integration* defect: the code in this diff calls the newly-synced code incorrectly. That finding lives at the callsite in this diff, not inside the submodule.
-- **OFF-DEFAULT** — the new commit exists only on a feature or PR branch. The submodule's changes **are** part of this logical change and are reviewed in-diff.
-- **UNRESOLVED** — the branch cannot be determined (no network, shallow clone, missing remote). Say so explicitly in the report, treat it as OFF-DEFAULT for safety, and state that the scope decision was made without provenance.
+- **UPSTREAM-SYNC** — the new commit is an ancestor of the submodule's default branch (`compare` reports `behind` or `identical`). The work inside it **already landed upstream**; this PR only advances the pointer to pick it up. **Its contents are not in-diff and are not this PR's responsibility.** Do not review them as changes, do not attribute their behaviour changes, breaking or otherwise, to this PR, and do not build findings out of them. The only legitimate finding here is a genuine *integration* defect: the code in this diff calls the newly-synced code incorrectly. That finding lives at the callsite in this diff, not inside the submodule.
+- **OFF-DEFAULT** — the new commit exists only on a feature or PR branch (`compare` reports `ahead` or `diverged`). The submodule's changes **are** part of this logical change and are reviewed in-diff.
+- **UNRESOLVED** — the branch cannot be determined (no network, a submodule hosted outside GitHub, or a commit GitHub does not know). Say so explicitly in the report, treat it as OFF-DEFAULT for safety, and state that the scope decision was made without provenance.
 
-Record the verdict per submodule in one line each, and repeat it in the Step 4 report so the scope decision is auditable. Nested submodules are classified independently: an OFF-DEFAULT OSS pointer says nothing about the client pointer nested inside it, which is frequently an UPSTREAM-SYNC in the same PR.
+Record the verdict per submodule in one line each, and repeat it in the Step 4 report so the scope decision is auditable. Classify every pointer move independently, nested submodules included: an OFF-DEFAULT verdict for one pointer says nothing about another.
 
 ## Step 2.5: Map the change surface
 
@@ -244,8 +261,7 @@ Produce a list grouped by file. For Java, also search for:
 - subclasses that override the method
 - interfaces that declare it
 - reflection-based callers (`getMethod`, `getDeclaredField`, `Class.forName`)
-- SQL function/operator registrations (`FunctionFactory`, `OperatorRegistry`)
-- service loader entries
+- SQL function/operator registrations (`FunctionFactory` entries in `function_list.txt`, `OperatorRegistry`)
 
 For Rust, also search for:
 - trait impls
@@ -266,7 +282,7 @@ For each changed symbol, walk this checklist and write one line per item, statin
 - Idempotency and re-entrancy
 - Lock acquisition order and which locks are held on return
 - Allocation on hot vs compile-time path
-- `Send`/`Sync`, thread-affinity, JFR/JNI thread attachment requirements
+- `Send`/`Sync`, thread-affinity, JNI thread attachment requirements
 - Whether `null` and sentinel-NULL (`Numbers.LONG_NULL`, `Numbers.INT_NULL`, etc.) are still distinguished
 - Cancellation/drop behavior (Rust) and finally/close behavior (Java)
 - SQL: does the symbol now appear in new clauses (WHERE, GROUP BY, JOIN ON, ORDER BY, window frames, partition predicates, materialized view definitions) where it didn't before? List which.
@@ -282,7 +298,7 @@ The list groups the callsites from 2.5b by execution context: hot data paths, SQ
 
 Run this only when the PR adds or changes test code. It is the test-code counterpart to 2.5b and feeds Agents 12-14. Use real `rg` / `rg --files` searches — do not reason about helpers from memory.
 
-- **Existing-infrastructure inventory:** search the changed test files' package and module for base test classes, shared `@Before`/`@After`, helper methods, fixtures, and assertion utilities the new tests could reuse (`rg` for `extends Abstract.*Test`, `class .*TestUtils`, `assertMemoryLeak`, `assertQuery`, `assertSql`, shared `protected` helpers in the base class). This list is the baseline Agent 13 uses to flag reinvented boilerplate — a "you stamped boilerplate instead of reusing helper X" finding requires X to appear in this inventory.
+- **Existing-infrastructure inventory:** search the changed test files' package and module for base test classes, shared `@Before`/`@After`, helper methods, fixtures, and assertion utilities the new tests could reuse (`rg` for `extends Abstract.*Test`, `class .*TestUtils`, `assertMemoryLeak`, `assertQuery`, shared `protected` helpers in the base class). This list is the baseline Agent 13 uses to flag reinvented boilerplate — a "you stamped boilerplate instead of reusing helper X" finding requires X to appear in this inventory.
 - **Changed shared helpers as symbols:** if the PR changes a shared test base class, helper, or fixture, run the 2.5b callsite inventory for it too — a changed test base class can silently break every subclassing test.
 - **Exercised-symbol map:** for each new or changed test, list which production symbols from 2.5a it actually exercises, so Agents 12 and 14 can check efficacy and regression value.
 
@@ -311,7 +327,7 @@ Build a coverage table with one row per behavioral change: every changed symbol 
 - **Dimensions:** applicable happy, error, NULL, boundary, concurrency, and resource-cleanup dimensions, each covered / uncovered / N-A with a reason. A change the "Crash fuzz coverage" checklist names also has a crash dimension, which that checklist grades.
 - **Disposition rationale:** why the row is `COVERED`, `CRITICAL GAP`, `MODERATE GAP`, `ACCEPTED GAP`, `EXOTIC`, or `EXEMPT`.
 
-**Measure the map.** A search shows which tests might reach a change, not which lines they run. Once the Test column is filled, run `ci/diff_coverage.py` (CLAUDE.md "Measuring coverage locally") at the reviewed revision, unless the change touches no production Java or Rust source. Build and run only in a scratch worktree, never in the user's working tree, which may hold other work and its own build. Keep dots out of the worktree's path: `Os.loadLib` splits a library path at its first dot, so tests cannot start under such a path.
+**Measure the map.** A search shows which tests might reach a change, not which lines they run. Once the Test column is filled, run `ci/diff_coverage.py` (CLAUDE.md "Measuring coverage locally") at the reviewed revision, unless the change touches no production Java or Rust source. Build and run only in a scratch worktree, never in the user's working tree, which may hold other work and its own build. Keep dots out of the worktree's path.
 
 ```bash
 REPO=$(git rev-parse --show-toplevel)
@@ -368,7 +384,7 @@ Every selected agent receives:
 2. The full change surface map from Step 2.5 (semantic deltas, callsite inventory, implicit contracts, cross-context exposure list, earlier findings, settled items)
 3. The test coverage map from Step 2.6, with the path of its coverage report
 
-The diff plus surface map can be large — write them to a shared file (e.g., under a temp/chain dir) and point each task at it via its `reads`/task text, rather than pasting the whole payload into every task. Agents 10 and 11 are deliberate exceptions and receive reduced context (see their entries).
+The diff plus surface map can be large — write them to a shared file in the review's temporary directory and name its path in each task, rather than pasting the whole payload into every task. Agents 10 and 11 are deliberate exceptions and receive reduced context (see their entries).
 
 ### Candidate-discovery directive (applies to all agents)
 
@@ -388,7 +404,7 @@ The diff plus surface map can be large — write them to a shared file (e.g., un
 
 Use the following as a role catalog. Select only the roles allowed by the chosen level and change surface; do not launch the whole catalog.
 
-**Agent 1 — Correctness & bugs:** NULL handling, edge cases, logic errors, off-by-one, operator precedence, error paths. Cross-reference every changed symbol against its callsite inventory and verify the new behavior is correct at each callsite. When the diff touches the QWP ingress / role-gating path, an in-place switch or failover, a `questdb` submodule bump that carries client or ingress changes, or the `questdb-ent/e2e` failover/switch suites, also verify the "Store-and-forward & pool startup invariants" checklist — a change that lets a running SF drainer surface transport errors to the producer, imposes a reconnect time budget on it, or hard-fails it on a transient outage is a Critical (data-loss) finding.
+**Agent 1 — Correctness & bugs:** NULL handling, edge cases, logic errors, off-by-one, operator precedence, error paths. Cross-reference every changed symbol against its callsite inventory and verify the new behavior is correct at each callsite. When the diff touches the QWP ingress / role-gating path, an in-place switch or failover, a `java-questdb-client` pointer move that carries client changes, or tests that drive a producer through a failover or switch, also verify the "Store-and-forward & pool startup invariants" checklist — a change that lets a running SF drainer surface transport errors to the producer, imposes a reconnect time budget on it, or hard-fails it on a transient outage is a Critical (data-loss) finding.
 
 **Agent 2 — Concurrency:** Race conditions, shared mutable state, missing volatile, lock ordering, thread-safety of data structures. Use the implicit contract list (lock order, thread-affinity) and check every callsite from 2.5b for violations of the new contract.
 
@@ -433,9 +449,9 @@ that amplifies an otherwise-acceptable cost.
 
 **Agent 4 — Resource management:** Leaks on all code paths (especially errors), try-with-resources, native memory, pool management. Walk every callsite from 2.5b that constructs, owns, or transfers ownership of changed types and verify cleanup on all paths. When the diff adds or changes a native allocation site, also apply the "Per-query memory tracker integration" checklist below: confirm large, unbounded, data-scaled allocators are wired into the per-query `MemoryTracker` and bounded / process-lived ones are deliberately left out, that malloc and its matching free charge the same tracker, and that newly wired sites have breach / success / leak-loop tests.
 
-**Agent 5 — Test review & coverage:** Coverage gaps, error path tests, NULL tests, boundary conditions, regression tests, test quality, `assertMemoryLeak()` usage, and the "Crash fuzz coverage" checklist for the changes it names. Cross-reference 2.5d: every cross-context exposure on the change's main path should have a test that exercises the changed symbol from that context. For each missing one, add an `UNTESTED` Step 2.6 row; do not predetermine its severity or publication. Probe an exotic context (Step 2.6) where the change may misbehave, and return it as a candidate only when the probe fails. Consume the Step 2.6 coverage map: re-verify every claimed test and failure link (read the assertion, don't trust the map), and hunt for behavioral changes the map missed. Then run a **mutation spot-check**: pick the 3-5 most dangerous changed lines on the main path that ran (boundary comparisons, error handling, null checks, off-by-one candidates; lines that never ran are gaps already) and ask, per line, "which test fails if this line is wrong — inverted condition, off-by-one, dropped null check?" When no assertion would catch a mutation, add an `UNTESTED` map row even if a test nominally executes the line; classify it under Step 2.6 and publish it only after Step 3b admission. **Enforce the "SQL test assertions (builder API — strict)" checklist on every added/modified test line: any new `assertSql(...)`/`assertPlanNoLeakCheck(...)`/`getPlan(...)`/`TestUtils.assertSql(...)` is Critical; any new `.returnsOnce(...)` on a deterministic (non-RNG, non-time-varying) query is Critical; a lone `assertQuery(...)` wrapped in `assertMemoryLeak(...)` is a finding.** Test *efficacy* (whether tests actually exercise the change and could fail) and test-*code* quality are handled by Agents 12-14 — here, focus only on whether coverage exists for each new or changed behavior on the main path.
+**Agent 5 — Test review & coverage:** Coverage gaps, error path tests, NULL tests, boundary conditions, regression tests, test quality, `assertMemoryLeak()` usage, and the "Crash fuzz coverage" checklist for the changes it names. Cross-reference 2.5d: every cross-context exposure on the change's main path should have a test that exercises the changed symbol from that context. For each missing one, add an `UNTESTED` Step 2.6 row; do not predetermine its severity or publication. Probe an exotic context (Step 2.6) where the change may misbehave, and return it as a candidate only when the probe fails. Consume the Step 2.6 coverage map: re-verify every claimed test and failure link (read the assertion, don't trust the map), and hunt for behavioral changes the map missed. Then run a **mutation spot-check**: pick the 3-5 most dangerous changed lines on the main path that ran (boundary comparisons, error handling, null checks, off-by-one candidates; lines that never ran are gaps already) and ask, per line, "which test fails if this line is wrong — inverted condition, off-by-one, dropped null check?" When no assertion would catch a mutation, add an `UNTESTED` map row even if a test nominally executes the line; classify it under Step 2.6 and publish it only after Step 3b admission. **Enforce the "SQL test assertions (builder API — strict)" checklist on every added/modified test line: any new `.returnsOnce(...)` on a deterministic (non-RNG, non-time-varying) query is Critical; a lone `assertQuery(...)` wrapped in `assertMemoryLeak(...)` is a finding.** Test *efficacy* (whether tests actually exercise the change and could fail) and test-*code* quality are handled by Agents 12-14 — here, focus only on whether coverage exists for each new or changed behavior on the main path.
 
-**Agent 6 — Code quality & standards:** Code smell, member ordering, naming conventions, modern Java features, dead code, third-party dependencies. **Also check for unclosed LOG statements**: QuestDB logging uses a builder pattern (`LOG.info().$("msg").$()`) and every chain MUST end with `.$()` or `.I$()`. A missing close holds a ring buffer slot forever, causing other log producer threads to busy-wait in `nextBully()`, and the log consumer `logging_0` thread cannot progress either. Also watch for `.put()` instead of `.$()` in LOG chains — `.put()` returns `Utf16Sink`, not `LogRecord`, breaking the chain. Also flag throw-capable expressions inside LOG chains (`LOG.info().$(func()).$()`): arguments are evaluated after the ring slot is acquired, so a throwing `func()` unwinds past the terminator and leaks the slot; the call must be hoisted into a local before the chain starts.
+**Agent 6 — Code quality & standards:** Code smell, member ordering, naming conventions, modern Java features, dead code, third-party dependencies. **Also check for unclosed LOG statements**: QuestDB logging uses a builder pattern (`LOG.info().$("msg").$()`) and every chain MUST end with `.$()` or `.I$()`. A missing close holds a ring buffer slot forever, causing other log producer threads to busy-wait in `nextBully()`, and the log consumer `logging_0` thread cannot progress either. Also watch for `.put()` instead of `.$()` in LOG chains — `.put()` returns `Utf8Sink`, not `LogRecord`, breaking the chain. Also flag throw-capable expressions inside LOG chains (`LOG.info().$(func()).$()`): arguments are evaluated after the ring slot is acquired, so a throwing `func()` unwinds past the terminator and leaks the slot; the call must be hoisted into a local before the chain starts.
 
 **Agent 7 — Conventions:** Commit messages and SQL style in tests. The parent checks the title, body and labels in Step 2.
 
@@ -716,7 +732,7 @@ of the two categories it lands in, per the magnitude rule in Step 4.
 
 ### Logging
 - Every LOG chain MUST end with `.$()` or `.I$()` — a missing close holds a ring buffer slot forever and stalls the `logging_0` consumer
-- Watch for `.put()` instead of `.$()` in LOG chains — `.put()` returns `Utf16Sink`, not `LogRecord`, breaking the chain
+- Watch for `.put()` instead of `.$()` in LOG chains — `.put()` returns `Utf8Sink`, not `LogRecord`, breaking the chain
 - No throw-capable expressions inside LOG chains: arguments are evaluated after the slot is acquired, so `LOG.info().$(func()).$()` leaks the slot if `func()` throws — hoist into a local first (`var a = func(); LOG.info().$(a).$();`)
 
 ### Resource management
@@ -735,18 +751,17 @@ QuestDB caps how much native memory a single bounded workload (user SQL query, m
 
 For each new or changed allocation site, verify:
 
-- **Same tracker for malloc and its matching free.** A site that allocates with a tracker but frees with `null` (or vice versa) desyncs the counter and trips the live `recordPerQueryMemAlloc` balance assert. Trace every free / close path — error paths and `toTop()` / `clear()` / cursor-close reuse included — and confirm the identical tracker is used on both ends.
+- **Same tracker for malloc and its matching free.** A site that allocates with a tracker but frees with `null` (or vice versa) desyncs the counter: freeing memory through a tracker that never charged it trips the tracker's underflow assert, and freeing a charged allocation without the tracker leaves the query's usage inflated. Trace every free / close path — error paths and `toTop()` / `clear()` / cursor-close reuse included — and confirm the identical tracker is used on both ends.
 - **Nested SQL inherits the outer tracker.** Subqueries, the mat-view refresh inner SELECT, and WAL apply inner SQL must inherit the tracker already bound on the context, not acquire their own. A new acquisition site that acquires unconditionally (instead of only when no outer tracker is present) double-counts — flag it.
 - **Coverage has a test.** A newly wired allocator needs a `*MemoryTrackerTest` proving (a) a breach throws the per-query out-of-memory message, (b) an under-limit run succeeds, and (c) a `getCursor()`-to-close leak loop stays balanced. Record a missing tracker test or an unpinned factory-class routing guard as an `UNTESTED` Step 2.6 row; classify and publish it only through the normal proportionality and admission gates.
 
 ### Store-and-forward & pool startup invariants (QWP client contract)
 Apply this whenever the diff touches the QWP ingress path (upgrade/role
 gating, in-place demote / lifecycle switch, connection handling on role
-change), replication failover, a `questdb` submodule bump that carries
-client (`java-questdb-client`) or ingress changes, or tests that drive a
-producer through a failover/switch window (e.g. the `questdb-ent/e2e`
-failover/switch suites). These are the CLIENT's store-and-forward
-guarantees (the client code lives in the nested `questdb/java-questdb-client`
+change), replication failover, a `java-questdb-client` pointer move that
+carries client changes, or tests that drive a producer through a
+failover/switch window. These are the CLIENT's store-and-forward
+guarantees (the client code lives in the `java-questdb-client`
 submodule); server-side changes and tests in this repo must be reviewed
 against them. A violation here is a **Critical** finding: the whole point of
 store-and-forward is that a running producer never loses data and never
@@ -844,10 +859,10 @@ hard-fails on a transient outage.
 
 QuestDB has migrated SQL test assertions to the fluent `AbstractCairoTest.assertQuery(query)` builder. These rules are blocking — treat violations as **Critical** findings, not style nits. Apply them to every test line the diff **adds or modifies** (a residual pattern that the PR merely moves or reindents is not a finding; a newly written or edited one is).
 
-- **`assertSql(...)` has been REMOVED — there is no query-result `assertSql(...)`/`TestUtils.assertSql(...)` to fall back to.** Any new or changed test code that asserts query results with `assertSql(...)` / `TestUtils.assertSql(...)` is a Critical finding (it will not even compile against the current base class); the author must use the builder instead:
+- **Assert query results and plans through the builder:**
     - data: `assertQuery(sql).returns(expected)` — chain `.timestamp(...)`, `.expectSize()`, `.noRandomAccess()`, `.sizeMayVary()`, `.ddl(...)`, `.mutateWith(...)`, `.withEngine(...)`, `.withContext(...)` as needed.
     - plans: `assertQuery(sql).assertsPlan(plan)` / `.assertsPlanContaining(...)` / `.assertsPlanNotContaining(...)`, or fold the plan into a data assertion via `.withPlan(...)` / `.withPlanContaining(...)` / `.withPlanNotContaining(...)`.
-  Do **not** accept "the surrounding file already uses `assertSql`" — there is no such helper anymore, so the diff's lines must use the new API. Flag `assertPlanNoLeakCheck(...)`, `getPlan(...)`, `assertPlanDoesNotContain(...)`, and direct `TestUtils.assertSql(...)` in new/changed test code for the same reason. The one `assertSql` that legitimately survives is the live-`ServerMain` wrapper `TestServerMain.assertSql(sql, expected)`: it is a convenience for the running-server context, internally drives the builder via `returnsOnce()` (single pass, because a live server's state mutates between reads), and is NOT the banned query-result helper — do not flag it.
+  The test base classes have no `assertSql(...)`, `TestUtils.assertSql(...)`, `assertPlanNoLeakCheck(...)` or `getPlan(...)`, so a new call to one fails to compile and blocks as a compile error (Step 3c). `TestServerMain.assertSql(sql, expected)` is a live-server wrapper around the builder; do not flag it.
 
 - **`.returnsOnce(...)` is a correctness smell — flag every newly added use.** `returnsOnce` runs the query through a SINGLE cursor pass and deliberately SKIPS the second read, the `calculateSize()` pass, the variable-column check, and the factory-property assertions (`supportsRandomAccess`, `expectSize`) that `.returns(...)` performs. Those skipped checks catch real bugs: cursors that don't reset correctly on `toTop()`, `size()` that disagrees between passes, random-access records that return wrong values via `recordAt()`. `returnsOnce` is **only** justified when the query's output is genuinely unstable across two reads with no underlying data change — e.g. an unseeded `rnd_*` in the projection, `now()`/`sysdate()`/`systimestamp()`-style time-varying output, or inherently non-deterministic row order. For a `.returnsOnce(...)` on a deterministic query this is a Critical finding: demand `.returns(...)`. Require the author to state *why* the query is unstable; "it was simpler" is not a reason — the shortcut leaves real bugs untested.
 
