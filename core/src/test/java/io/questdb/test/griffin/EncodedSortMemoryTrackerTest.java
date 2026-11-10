@@ -193,6 +193,36 @@ public class EncodedSortMemoryTrackerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEncodedSortLimitedCopyMemoryFollowsInputNotLimit() throws Exception {
+        // A LIMIT far above the input must not reserve entries for the LIMIT: eight known
+        // rows and an empty input of unknown size both fit the 256 KiB limit.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (v VARCHAR)");
+            execute("CREATE TABLE t2 (v VARCHAR)");
+            execute("INSERT INTO t1 VALUES ('z'), ('a'), ('10'), ('aa')");
+            execute("INSERT INTO t2 VALUES ('b'), ('a'), ('2'), ('ab')");
+            execute("CREATE TABLE t AS (SELECT x AS id FROM long_sequence(3))");
+            drainWalQueue();
+            final String rows = "SELECT v FROM (SELECT v FROM t1 UNION ALL SELECT v FROM t2) ORDER BY v LIMIT 1_000_000";
+            final String empty = "SELECT id FROM (SELECT id FROM t WHERE id < 0 UNION ALL SELECT id FROM t WHERE id < 0) ORDER BY id LIMIT 1_000_000";
+            assertUsesFactory(rows, EncodedSortLimitedLightRecordCursorFactory.class);
+            assertUsesFactory(empty, EncodedSortLimitedLightRecordCursorFactory.class);
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory rowsFactory = compiler.compile(rows, sqlExecutionContext).getRecordCursorFactory();
+                 RecordCursorFactory emptyFactory = compiler.compile(empty, sqlExecutionContext).getRecordCursorFactory()) {
+                for (int i = 0; i < 2; i++) {
+                    try (RecordCursor cursor = rowsFactory.getCursor(sqlExecutionContext)) {
+                        assertCursor("v\n10\n2\na\na\naa\nab\nb\nz\n", cursor, rowsFactory.getMetadata(), true);
+                    }
+                    try (RecordCursor cursor = emptyFactory.getCursor(sqlExecutionContext)) {
+                        assertCursor("id\n", cursor, emptyFactory.getMetadata(), true);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testEncodedSortLimitedCopyRepeatedCursorRunsReleaseAllocations() throws Exception {
         // A UNION ALL base makes the top-K copy the rows it keeps; 10_000 ascending rows
         // under a descending order compact the copies repeatedly on every run.
