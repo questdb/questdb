@@ -837,7 +837,8 @@ final class OperatorPlanning implements Mutable {
                     undecidedInputIndexes.add(inputIndex);
                 }
             }
-            case FULL_OUTER -> step.setBuildSide(isMasterRandomAccess == PhysicalProperties.Capability.YES ? BuildSide.SMALLER : BuildSide.SLAVE);
+            case FULL_OUTER ->
+                    step.setBuildSide(isMasterRandomAccess == PhysicalProperties.Capability.YES ? BuildSide.SMALLER : BuildSide.SLAVE);
             default -> {
             }
         }
