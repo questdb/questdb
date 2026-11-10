@@ -1299,7 +1299,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                                     sigArgTypeTag == ColumnType.STRING &&  // for both string and char, otherwise ? > 'a' matches char function even though
                                     factory.supportImplicitCastCharToStr() &&
                                     arg.isConstant() && // bind variable parameter might be a string and throw error during execution.
-                                    arg != CharTypeConstant.INSTANCE) ||   // Ignore type constant to keep cast(X as char) working
+                                    arg != CharTypeConstant.INSTANCE &&    // Ignore type constant to keep cast(X as char) working
+                                    arg.getChar(null) != Numbers.CHAR_NULL) || // NULL char is never a quoted literal, keep CHAR NULL semantics
                             (sigArgTypeTag == ColumnType.GEOHASH && ColumnType.isGeoHash(argType)) ||
                             (sigArgTypeTag == ColumnType.DECIMAL && ColumnType.isDecimal(argType))) {
                         match = mergeWithExactMatch(match);

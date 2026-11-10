@@ -42,6 +42,21 @@ public class LtCharFunctionFactoryTest extends AbstractFunctionFactoryTest {
         call(nullChar, nullChar).andAssert(false);
     }
 
+    @Test
+    public void testNullCharConstantMatchesBindVariable() throws Exception {
+        final String expected = """
+                a\tb\tc
+                false\tfalse\tfalse
+                """;
+        assertQuery("SELECT cast(0 AS CHAR) <= null a, null >= cast(0 AS CHAR) b, cast(0 AS CHAR) >= cast(0 AS CHAR) c")
+                .expectSize()
+                .returns(expected);
+        bindVariableService.setChar(0, (char) 0);
+        assertQuery("SELECT $1 <= null a, null >= $1 b, $1 >= $1 c")
+                .expectSize()
+                .returns(expected);
+    }
+
     @Override
     protected FunctionFactory getFunctionFactory() {
         return new LtCharFunctionFactory();
