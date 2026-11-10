@@ -25,6 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnPurgeJob;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.PartitionBy;
@@ -298,6 +299,55 @@ public class DropIndexTest extends AbstractCairoTest {
                 Assert.assertEquals(0, countDFiles(1L));
             }
         });
+    }
+
+    @Test
+    public void testDropIndexAtTxnZeroPartitionedKeepsColumnNameTxn() throws Exception {
+        // Guard: a partitioned table has no partition at txn 0, so DROP INDEX as its first change leaves
+        // s at the column name txn NONE, and the index added again covers the rows after the purge.
+        for (String walMode : new String[]{"WAL", "BYPASS WAL"}) {
+            assertMemoryLeak(() -> {
+                execute("CREATE TABLE pt (v INT, ts TIMESTAMP, s SYMBOL INDEX TYPE POSTING INCLUDE (d, vc), d DOUBLE, vc VARCHAR) TIMESTAMP(ts) PARTITION BY DAY " + walMode);
+                try (TableReader ignore = getReader("pt")) {
+                    execute("ALTER TABLE pt ALTER COLUMN s DROP INDEX");
+                    drainWalQueue();
+                    execute("ALTER TABLE pt ALTER COLUMN s ADD INDEX TYPE POSTING INCLUDE (d, vc)");
+                    execute("INSERT INTO pt VALUES (1, '2024-01-01T00:00:00.000000Z', 'y', 1.5, 'a1'), (2, '2024-01-01T01:00:00.000000Z', 'x', 2.5, 'a2')");
+                    execute("INSERT INTO pt VALUES (3, '2024-01-01T02:00:00.000000Z', 'y', NULL, NULL), (4, '2024-01-02T00:00:00.000000Z', 'y', 4.5, 'a4')");
+                    drainWalQueue();
+                }
+                engine.releaseInactive();
+                try (ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine)) {
+                    for (int i = 0; i < 2; i++) {
+                        setCurrentMicros(currentMicros + 1_000_000_000L);
+                        purgeJob.run();
+                    }
+                    Assert.assertEquals(walMode, 0, purgeJob.getOutstandingPurgeTasks());
+                }
+                try (TableReader reader = getReader("pt")) {
+                    final int writerIndex = reader.getMetadata().getWriterIndex(reader.getMetadata().getColumnIndex("s"));
+                    for (int i = 0; i < 2; i++) {
+                        Assert.assertEquals(walMode, TableUtils.COLUMN_NAME_TXN_NONE, reader.getColumnVersionReader().getColumnNameTxn(reader.getPartitionTimestampByIndex(i), writerIndex));
+                    }
+                }
+                final String query = "SELECT ts, s, d, vc FROM pt WHERE s = 'y'";
+                assertQuery(query)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .timestamp("ts")
+                        .withPlanContaining("CoveringIndex on: s with: ts, d, vc")
+                        .returns("""
+                                ts\ts\td\tvc
+                                2024-01-01T00:00:00.000000Z\ty\t1.5\ta1
+                                2024-01-01T02:00:00.000000Z\ty\tnull\t
+                                2024-01-02T00:00:00.000000Z\ty\t4.5\ta4
+                                """);
+                assertSqlCursors("SELECT ts, s, d, vc FROM pt WHERE s::STRING = 'y'", query);
+                execute("DROP TABLE pt");
+                drainWalQueue();
+            });
+        }
     }
 
     @Test
