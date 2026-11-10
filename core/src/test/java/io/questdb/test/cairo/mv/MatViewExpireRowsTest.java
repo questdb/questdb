@@ -2686,8 +2686,8 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
 
     @Test
     public void testExpireRowsClauseEndsAtTheGrammarsOwnPairs() throws Exception {
-        // CLEANUP and DEDUP are legal column names, and each ends an EXPIRE ROWS clause only in the pair
-        // the grammar continues with: CLEANUP EVERY, DEDUP UPSERT. One rule decides that for the WHEN
+        // CLEANUP and DEDUP are legal column names, and each ends an EXPIRE ROWS clause only in a pair
+        // the grammar continues with: CLEANUP EVERY, DEDUP UPSERT or DEDUP SKIP. One rule decides that for the WHEN
         // capture and for the KEEP key list, so such a column reads the same way in every mode, and CREATE
         // agrees with ALTER about where a clause ends.
         assertMemoryLeak(() -> {
@@ -2735,12 +2735,49 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExpireRowsClauseTailErrorPointsAtTheTailToken() throws Exception {
+        // DEDUP UPSERT, DEDUP SKIP and WITH start the tail of CREATE TABLE, so each ends an EXPIRE ROWS body in
+        // every mode. A materialized view takes neither clause, so its tail rejects the first tail token, at
+        // that token: DEDUP is a boundary only before UPSERT or SKIP, and the parser reads that next token
+        // to tell, but must not report the error there.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (k SYMBOL, cleanup BOOLEAN, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final String[] clauses = {
+                    "WHEN v > 5",
+                    // the token after cleanup is not EVERY, so the parser reads that token again, from the
+                    // tokens it put back, before it decides about it
+                    "WHEN cleanup",
+                    "WHEN v > 5 /* comment */",
+                    "KEEP LATEST PARTITION BY k",
+                    "KEEP HIGHEST ON v PARTITION BY k"
+            };
+            // the tail, and the token the error names
+            final String[][] tails = {
+                    {"DEDUP UPSERT KEYS(ts)", "DEDUP"},
+                    {"DEDUP SKIP KEYS(ts)", "DEDUP"},
+                    {"dedup skip keys(ts)", "dedup"},
+                    {"DEDUPLICATE UPSERT KEYS(ts)", "DEDUPLICATE"},
+                    {"DEDUP /* comment */ SKIP KEYS(ts)", "DEDUP"},
+                    {"WITH maxUncommittedRows = 10", "WITH"}
+            };
+            for (String clause : clauses) {
+                for (String[] tail : tails) {
+                    final String head = "CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) EXPIRE ROWS " + clause + ' ';
+                    final String sql = head + tail[0];
+                    assertExceptionNoLeakCheck(sql, head.length(), "unexpected token [" + tail[1] + ']');
+                    Assert.assertNull(sql, engine.getTableTokenIfExists("mv"));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testExpireRowsClauseHandsTheBoundaryTokenToTheTail() throws Exception {
         // The clause body ends at IN VOLUME, and the tail parses that IN VOLUME itself, so the capture has
         // to hand back the boundary token and not the one it read past it. Every mode's body reaches the
         // same tail, so all three spellings are checked. The volume is not configured, so the statement
         // fails either way; what the assertion pins is which half of the clause the parser is looking at.
-        Assume.assumeFalse(Os.isWindows());
+        // Windows rejects IN VOLUME itself, at the VOLUME keyword, as it does without an EXPIRE ROWS clause.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (k SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             final String[] clauses = {
@@ -2749,12 +2786,12 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
                     "WHEN v < 2.0"
             };
             for (String clause : clauses) {
-                try {
-                    execute("CREATE MATERIALIZED VIEW mvv AS (SELECT * FROM base) EXPIRE ROWS "
-                            + clause + " IN VOLUME 'vol1'");
-                    Assert.fail("expected a volume failure for: " + clause);
-                } catch (SqlException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "volume alias is not allowed [alias=vol1]");
+                final String sql = "CREATE MATERIALIZED VIEW mvv AS (SELECT * FROM base) EXPIRE ROWS "
+                        + clause + " IN VOLUME 'vol1'";
+                if (Os.isWindows()) {
+                    assertExceptionNoLeakCheck(sql, sql.indexOf("VOLUME"), "'in volume' is not supported on Windows");
+                } else {
+                    assertExceptionNoLeakCheck(sql, sql.indexOf("'vol1'"), "volume alias is not allowed [alias=vol1]");
                 }
             }
         });

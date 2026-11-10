@@ -466,7 +466,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                     addressCache.getColumnCount(),
                     hasTypeCasts,
                     sourceColumnTypes,
-                    parquetBuffers.columnTops
+                    parquetBuffers.columnTopRows
             );
             record.setBoundPool(this, bindGeneration);
         }
@@ -611,7 +611,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             frameMemory.auxPageAddresses = parquetBuffers.auxPageAddresses;
             frameMemory.pageSizes = parquetBuffers.pageSizes;
             frameMemory.auxPageSizes = parquetBuffers.auxPageSizes;
-            frameMemory.columnTops = parquetBuffers.columnTops;
+            frameMemory.columnTopRows = parquetBuffers.columnTopRows;
             frameMemory.columnOffset = 0; // parquet buffers use 0 offset
         }
 
@@ -685,7 +685,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             frameMemory.auxPageAddresses = parquetBuffers.auxPageAddresses;
             frameMemory.pageSizes = parquetBuffers.pageSizes;
             frameMemory.auxPageSizes = parquetBuffers.auxPageSizes;
-            frameMemory.columnTops = parquetBuffers.columnTops;
+            frameMemory.columnTopRows = parquetBuffers.columnTopRows;
             frameMemory.columnOffset = 0; // parquet buffers use 0 offset
         }
 
@@ -2103,7 +2103,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         private DirectLongList auxPageAddresses;
         private DirectLongList auxPageSizes;
         private int columnOffset;
-        private DirectLongList columnTops;
+        private DirectLongList columnTopRows;
         private ParquetBuffers currentRowGroupBuffer;
         private byte frameFormat = -1;
         private int frameIndex = -1;
@@ -2119,7 +2119,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             auxPageAddresses = null;
             pageSizes = null;
             auxPageSizes = null;
-            columnTops = null;
+            columnTopRows = null;
             currentRowGroupBuffer = null;
         }
 
@@ -2149,8 +2149,8 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         }
 
         @Override
-        public DirectLongList getColumnTops() {
-            return columnTops;
+        public DirectLongList getColumnTopRows() {
+            return columnTopRows;
         }
 
         @Override
@@ -2258,9 +2258,10 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     private class ParquetBuffers implements QuietCloseable {
         private final DirectLongList auxPageAddresses;
         private final DirectLongList auxPageSizes;
-        // Per-query-column leading column-top count, parallel to pageAddresses. Lets a lazy
-        // fixed->var conversion surface NULL for column-top rows (decoded as an in-band 0).
-        private final DirectLongList columnTops;
+        // Per query column, PageFrameMemory.COLUMN_TOP_ROWS_STRIDE longs: the address and count of
+        // the column-top runs of its decode slot and the frame row of their buffer row 0. Lets a
+        // lazy fixed->var conversion surface NULL for column-top rows (decoded as an in-band 0).
+        private final DirectLongList columnTopRows;
         private final DirectLongList decodeResources;
         private final DirectLongList pageAddresses;
         private final DirectLongList pageSizes;
@@ -2291,7 +2292,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             // never reach it.
             DirectLongList auxPageAddresses = null;
             DirectLongList auxPageSizes = null;
-            DirectLongList columnTops = null;
+            DirectLongList columnTopRows = null;
             DirectLongList pageAddresses = null;
             DirectLongList decodeResources = null;
             DirectLongList pageSizes = null;
@@ -2299,7 +2300,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             try {
                 auxPageAddresses = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
                 auxPageSizes = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
-                columnTops = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
+                columnTopRows = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
                 pageAddresses = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
                 pageSizes = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
                 // keepClosed: defer the native buffer allocation to the first
@@ -2312,7 +2313,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             } catch (Throwable th) {
                 Misc.free(auxPageAddresses);
                 Misc.free(auxPageSizes);
-                Misc.free(columnTops);
+                Misc.free(columnTopRows);
                 Misc.free(pageAddresses);
                 Misc.free(decodeResources);
                 Misc.free(pageSizes);
@@ -2320,7 +2321,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             }
             this.auxPageAddresses = auxPageAddresses;
             this.auxPageSizes = auxPageSizes;
-            this.columnTops = columnTops;
+            this.columnTopRows = columnTopRows;
             this.pageAddresses = pageAddresses;
             this.pageSizes = pageSizes;
             this.rowGroupBuffers = rowGroupBuffers;
@@ -2335,7 +2336,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             Misc.free(pageSizes);
             Misc.free(auxPageAddresses);
             Misc.free(auxPageSizes);
-            Misc.free(columnTops);
+            Misc.free(columnTopRows);
             Misc.free(rowGroupBuffers);
             slotCount = 0;
             usageFlags = 0;
@@ -2452,7 +2453,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             pageSizes.reopen();
             auxPageAddresses.reopen();
             auxPageSizes.reopen();
-            columnTops.reopen();
+            columnTopRows.reopen();
             // Bind the pool's per-query tracker before the lazy create() inside
             // reopen() captures the native allocator into the Rust struct.
             rowGroupBuffers.setMemoryTracker(memoryTracker);
@@ -2465,7 +2466,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             pageSizes.clear();
             auxPageAddresses.clear();
             auxPageSizes.clear();
-            columnTops.clear();
+            columnTopRows.clear();
         }
 
         private void ensureCapacityAndZero(DirectLongList list, int size) {
@@ -2514,7 +2515,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             ensureCapacityAndZero(pageSizes, columnCount);
             ensureCapacityAndZero(auxPageAddresses, columnCount);
             ensureCapacityAndZero(auxPageSizes, columnCount);
-            ensureCapacityAndZero(columnTops, columnCount);
+            ensureCapacityAndZero(columnTopRows, PageFrameMemory.COLUMN_TOP_ROWS_STRIDE * columnCount);
 
             if (parquetColumns.size() == 0) {
                 // No parquet column was decoded (every projected column was added
@@ -2543,7 +2544,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 final int decodeType = parquetColumns.get(2L * slot + 1);
                 long dataAddr = getSlotDataPtr(slot);
                 long dataSize = getSlotDataSize(slot);
-                columnTops.set(q, rowGroupBuffers.getChunkColumnTop(slot));
+                setColumnTopRows(q, slot, frameRowLo);
                 if (ColumnType.isVarSize(decodeType)) {
                     long auxAddr = getSlotAuxPtr(slot);
                     long auxSize = getSlotAuxSize(slot);
@@ -2581,7 +2582,8 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 final int decodeType = parquetColumns.get(2L * slot + 1);
                 pageAddresses.set(q, rowGroupBuffers.getChunkDataPtr(columnOffset + slot));
                 pageSizes.set(q, rowGroupBuffers.getChunkDataSize(columnOffset + slot));
-                columnTops.set(q, rowGroupBuffers.getChunkColumnTop(columnOffset + slot));
+                // A compacted column is read at the index of the filtered row, the row of its buffer.
+                setColumnTopRows(q, columnOffset + slot, 0);
                 if (ColumnType.isVarSize(decodeType)) {
                     auxPageAddresses.set(q, rowGroupBuffers.getChunkAuxPtr(columnOffset + slot));
                     auxPageSizes.set(q, rowGroupBuffers.getChunkAuxSize(columnOffset + slot));
@@ -2595,6 +2597,15 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             if (resource != 0) {
                 decodeResources.add(resource);
             }
+        }
+
+        // Points query column q at the column-top runs of decode slot `slot`, whose buffer row 0
+        // is frame row `frameRowLo`.
+        private void setColumnTopRows(int q, int slot, int frameRowLo) {
+            final long base = (long) PageFrameMemory.COLUMN_TOP_ROWS_STRIDE * q;
+            columnTopRows.set(base, rowGroupBuffers.getChunkTopRowsPtr(slot));
+            columnTopRows.set(base + 1, rowGroupBuffers.getChunkTopRowCount(slot));
+            columnTopRows.set(base + 2, frameRowLo);
         }
     }
 }

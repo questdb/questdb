@@ -180,12 +180,7 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
         SqlException ex = tlException.get();
         // This is to have correct stack trace in local debugging with -ea option
         assert isFlyweightReusedForTesting || (ex = new SqlException()) != null;
-        ex.message.clear();
-        ex.position = position;
-        ex.error = 0;
-        ex.isTableBusy = false;
-        ex.factoryFailure = null;
-        return ex;
+        return ex.reset(position);
     }
 
     /**
@@ -368,6 +363,15 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
         sink.putAscii('[').put(position).putAscii("]: ").put(message);
+    }
+
+    SqlException reset(int position) {
+        message.clear();
+        this.position = position;
+        error = 0;
+        isTableBusy = false;
+        factoryFailure = null;
+        return this;
     }
 
     private SqlException errorCode(int errorCode) {

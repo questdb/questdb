@@ -56,7 +56,6 @@ import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.std.DirectLongLongSortedList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.Os;
 import io.questdb.tasks.GroupByLongTopKTask;
 import org.jetbrains.annotations.NotNull;
 
@@ -281,7 +280,8 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                     ownerLoop.observeProgress();
                     long cursor = pubSeq.next();
                     if (cursor < 0) {
-                        if (workStealingStrategy.shouldSteal(processedCount)) {
+                        processedCount = -postAggregationDoneLatch.getCount();
+                        if (processedCount == queuedCount || workStealingStrategy.shouldSteal(processedCount)) {
                             ownerLoop.checkBeforeHelping();
                             final Map shard = atom.getDestShards().getQuick(shardIndex);
                             final DirectLongLongSortedList ownerList = atom.getLongTopKList(-1, destList.getOrder(), destList.getCapacity());
@@ -292,9 +292,8 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                             break;
                         }
                         if (!ownerLoop.awaitProgress()) {
-                            Os.pause();
+                            ownerLoop.pause();
                         }
-                        processedCount = -postAggregationDoneLatch.getCount();
                     } else {
                         queue.get(cursor).of(
                                 postAggregationCircuitBreaker,
@@ -342,10 +341,10 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                             }
                             reclaimed++;
                         } else {
-                            Os.pause();
+                            ownerLoop.pause();
                         }
                     } else if (!ownerLoop.awaitProgressWhileDraining(isOwnerTripped)) {
-                        Os.pause();
+                        ownerLoop.pause();
                     }
                     processedCount = -postAggregationDoneLatch.getCount();
                 }

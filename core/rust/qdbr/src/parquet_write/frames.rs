@@ -31,6 +31,7 @@ use std::io::Write;
 use parquet2::metadata::{KeyValue, SortingColumn};
 
 use crate::parquet::error::{fmt_err, ParquetErrorExt, ParquetResult};
+use crate::parquet::qdb_metadata::{QdbMeta, QDB_META_KEY};
 use crate::parquet_metadata::types::SeqTxn;
 use crate::parquet_write::file::ChunkedWriter;
 use crate::parquet_write::schema::Partition;
@@ -140,12 +141,18 @@ impl<P> FrameAccumulator<P> {
 }
 
 /// Writes a parquet file and its `_pm` sidecar a frame at a time. A frame's column top
-/// rows are written as nulls, so the file records every column top as 0.
+/// rows are written as nulls. The QuestDB metadata records as each column's top the rows
+/// from the first that hold no value, the column top a native encode of the partition
+/// records: the footer decoder skips the row groups inside it, and CONVERT TO NATIVE of a
+/// column converted to a type without a NULL sentinel keeps it as the native column top.
 pub(crate) struct PartitionFrameWriter {
     template: Partition,
     chunked_writer: ChunkedWriter<File>,
     file: File,
     additional_meta: Vec<KeyValue>,
+    // Per template column: the rows from the first that hold no value so far, and whether
+    // a frame held a value.
+    column_tops: Vec<(usize, bool)>,
     frames: FrameAccumulator<()>,
     sorting_columns: Option<Vec<SortingColumn>>,
     // Owned by Java, which keeps it open across the writer's lifetime.
@@ -168,11 +175,13 @@ impl PartitionFrameWriter {
         squash_tracker: i64,
         seq_txn: SeqTxn,
     ) -> Self {
+        let column_tops = vec![(0, false); template.columns.len()];
         Self {
             template,
             chunked_writer,
             file,
             additional_meta,
+            column_tops,
             frames: FrameAccumulator::new(row_group_size),
             sorting_columns,
             parquet_meta_fd,
@@ -194,6 +203,12 @@ impl PartitionFrameWriter {
         if self.is_finished {
             return Err(fmt_err!(InvalidLayout, "parquet frame writer is finished"));
         }
+        for ((top, has_value), column) in self.column_tops.iter_mut().zip(&frame.columns) {
+            if !*has_value {
+                *has_value = column.column_top < column.row_count;
+                *top += column.column_top.min(column.row_count);
+            }
+        }
         self.frames.push(frame, ());
         while self.frames.has_full_row_group() {
             self.frames.write_row_group(&mut self.chunked_writer)?;
@@ -207,9 +222,11 @@ impl PartitionFrameWriter {
         }
         self.is_finished = true;
         self.frames.write_remaining(&mut self.chunked_writer)?;
+        let mut additional_meta = std::mem::take(&mut self.additional_meta);
+        record_column_tops(&mut additional_meta, &self.column_tops)?;
         let parquet_file_size = self
             .chunked_writer
-            .finish(std::mem::take(&mut self.additional_meta))
+            .finish(additional_meta)
             .context("ParquetWriter::finish failed")?;
         if sync {
             self.file
@@ -285,6 +302,41 @@ impl PartitionFrameWriter {
     }
 }
 
+/// Sets the column top of each column in the QuestDB metadata of `additional_meta` to the rows
+/// `column_tops` counts.
+fn record_column_tops(
+    additional_meta: &mut [KeyValue],
+    column_tops: &[(usize, bool)],
+) -> ParquetResult<()> {
+    if column_tops.iter().all(|&(top, _)| top == 0) {
+        return Ok(());
+    }
+    let Some(value) = additional_meta
+        .iter_mut()
+        .find(|kv| kv.key == QDB_META_KEY)
+        .and_then(|kv| kv.value.as_mut())
+    else {
+        return Err(fmt_err!(
+            InvalidLayout,
+            "parquet frame writer has no QuestDB metadata"
+        ));
+    };
+    let mut qdb_meta = QdbMeta::deserialize(value)?;
+    if qdb_meta.schema.len() != column_tops.len() {
+        return Err(fmt_err!(
+            InvalidLayout,
+            "QuestDB metadata has {} columns, the frames {}",
+            qdb_meta.schema.len(),
+            column_tops.len()
+        ));
+    }
+    for (column, &(top, _)) in qdb_meta.schema.iter_mut().zip(column_tops) {
+        column.column_top = top;
+    }
+    *value = qdb_meta.serialize()?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -349,6 +401,123 @@ mod tests {
             chunked.finish(meta).unwrap();
         }
         (buf, written)
+    }
+
+    fn long_column_with_id(
+        id: i32,
+        name: &'static str,
+        values: &'static [i64],
+        column_top: usize,
+    ) -> Column {
+        let mut column = long_column(name, values, column_top);
+        column.id = id;
+        column
+    }
+
+    /// Writes `frames` of the columns `a`, `b`, `c` and `d` through a [`PartitionFrameWriter`]
+    /// and returns the column tops its QuestDB metadata records.
+    fn frame_writer_column_tops(frames: Vec<Partition>) -> Vec<usize> {
+        let template = Partition {
+            table: "t".to_string(),
+            columns: frames[0].columns.clone(),
+        };
+        let (schema, meta) = to_parquet_schema(&template, false, -1, SeqTxn::UNSET).unwrap();
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let chunked = ParquetWriter::new(tmp.reopen().unwrap())
+            .with_row_group_size(Some(4))
+            .chunked_with_compressions(schema, to_encodings(&template), to_compressions(&template))
+            .unwrap();
+        let mut writer = PartitionFrameWriter::new(
+            template,
+            tmp.reopen().unwrap(),
+            chunked,
+            meta,
+            4,
+            None,
+            -1,
+            -1,
+            SeqTxn::UNSET,
+        );
+        for frame in frames {
+            writer.write_frame(frame).unwrap();
+        }
+        writer.finish(false).unwrap();
+        let metadata = read_metadata(&mut tmp.reopen().unwrap()).unwrap();
+        let qdb_meta = metadata
+            .key_value_metadata
+            .as_ref()
+            .and_then(|kvs| kvs.iter().find(|kv| kv.key == QDB_META_KEY))
+            .and_then(|kv| kv.value.as_deref())
+            .map(|json| QdbMeta::deserialize(json).unwrap())
+            .unwrap();
+        qdb_meta.schema.iter().map(|c| c.column_top).collect()
+    }
+
+    #[test]
+    fn frame_writer_records_leading_column_tops() {
+        // a: no top; b: a top inside the first frame; c: absent from the first frame, a top
+        // inside the second; d: absent from every frame. A top after the first value - b in the
+        // second frame - is no leading top.
+        static A1: [i64; 3] = [1, 2, 3];
+        static A2: [i64; 4] = [4, 5, 6, 7];
+        static B1: [i64; 1] = [8];
+        static B2: [i64; 2] = [9, 10];
+        static C2: [i64; 3] = [11, 12, 13];
+        let frames = vec![
+            Partition {
+                table: "t".to_string(),
+                columns: vec![
+                    long_column_with_id(0, "a", &A1, 0),
+                    long_column_with_id(1, "b", &B1, 2),
+                    long_column_with_id(2, "c", &[], 3),
+                    long_column_with_id(3, "d", &[], 3),
+                ],
+            },
+            Partition {
+                table: "t".to_string(),
+                columns: vec![
+                    long_column_with_id(0, "a", &A2, 0),
+                    long_column_with_id(1, "b", &B2, 2),
+                    long_column_with_id(2, "c", &C2, 1),
+                    long_column_with_id(3, "d", &[], 4),
+                ],
+            },
+        ];
+        assert_eq!(frame_writer_column_tops(frames), vec![0, 2, 4, 7]);
+    }
+
+    #[test]
+    fn frame_writer_without_column_tops_records_none() {
+        static A: [i64; 2] = [1, 2];
+        let frames = vec![Partition {
+            table: "t".to_string(),
+            columns: vec![
+                long_column_with_id(0, "a", &A, 0),
+                long_column_with_id(1, "b", &A, 0),
+            ],
+        }];
+        assert_eq!(frame_writer_column_tops(frames), vec![0, 0]);
+    }
+
+    #[test]
+    fn record_column_tops_rejects_metadata_it_did_not_write() {
+        let template = Partition {
+            table: "t".to_string(),
+            columns: vec![long_column_with_id(0, "a", &[], 0)],
+        };
+        let (_, mut meta) = to_parquet_schema(&template, false, -1, SeqTxn::UNSET).unwrap();
+        let err = record_column_tops(&mut meta, &[(1, true), (2, true)]).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("QuestDB metadata has 1 columns, the frames 2"),
+            "{err}"
+        );
+        let err = record_column_tops(&mut [], &[(1, true)]).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("parquet frame writer has no QuestDB metadata"),
+            "{err}"
+        );
     }
 
     #[test]

@@ -84,6 +84,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     private final String sqlText;
     private long batchO3MaxLag;
     private long batchSize;
+    private int dedupMode = TableUtils.DEDUP_MODE_UPSERT;
     private int defaultSymbolCapacity = -1;
     private long expiryCleanupIntervalMicros;
     private String expiryPredicate;
@@ -182,6 +183,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             String expiryPredicate,
             long expiryCleanupIntervalMicros,
             int tableFormat,
+            int dedupMode,
             boolean walEnabled,
             boolean autoIncludeTimestamp
     ) throws SqlException {
@@ -195,6 +197,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.ignoreIfExists = ignoreIfExists;
         this.partitionByPosition = partitionByPosition;
         this.tableFormat = tableFormat;
+        this.dedupMode = dedupMode;
         for (int i = 0, n = columnNames.size(); i < n; i++) {
             CharSequence colName = columnNames.get(i);
             this.columnNames.add(Chars.toString(colName));
@@ -253,6 +256,10 @@ public class CreateTableOperationImpl implements CreateTableOperation {
      * @param timestampColumnName         designated timestamp column name
      * @param timestampColumnNamePosition designated timestamp column name in user's input
      * @param volumeAlias                 the name of the "volume" where table is created, volumes are used to create table on different physical disks
+     * @param ttlHoursOrMonths            time-to-live of the table data, positive in hours, negative in months, zero for none
+     * @param ttlPosition                 the position of the TTL clause in user's input, it is used for error reporting
+     * @param tableFormat                 default storage format of new partitions, see TableUtils.TABLE_FORMAT_* constants
+     * @param dedupMode                   dedup mode, see TableUtils.DEDUP_MODE_* constants, it applies only when DEDUP keys are given
      * @param walEnabled                  WAL flag
      * @param defaultSymbolCapacity       the default symbol capacity value, usually comes from the configuration
      * @param maxUncommittedRows          max uncommitted rows for non-WAL tables, this is written to table's metadata to be used by ingress protocols
@@ -281,6 +288,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             String expiryPredicate,
             long expiryCleanupIntervalMicros,
             int tableFormat,
+            int dedupMode,
             boolean walEnabled,
             int defaultSymbolCapacity,
             int maxUncommittedRows,
@@ -309,6 +317,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.expiryPredicate = expiryPredicate;
         this.expiryCleanupIntervalMicros = expiryCleanupIntervalMicros;
         this.tableFormat = tableFormat;
+        this.dedupMode = dedupMode;
         this.defaultSymbolCapacity = defaultSymbolCapacity;
         this.batchSize = batchSize;
         this.batchO3MaxLag = batchO3MaxLag;
@@ -380,6 +389,11 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             return coveringColumnIndicesList.getQuick(index);
         }
         return null;
+    }
+
+    @Override
+    public int getDedupMode() {
+        return dedupMode;
     }
 
     @Override
@@ -648,6 +662,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         // the read filter and cleanup job would then apply -- silently hiding and physically deleting rows on
         // a table type the feature forbids. Leave expiryPredicate/expiryCleanupIntervalMicros at their default.
         this.tableFormat = likeTableMetadata.getTableFormat();
+        this.dedupMode = likeTableMetadata.getDedupMode();
         columnNames.clear();
         columnBits.clear();
         coveringColumnIndicesList.clear();

@@ -49,6 +49,7 @@ import io.questdb.mp.SCSequence;
 import io.questdb.mp.continuation.CancellationBinding;
 import io.questdb.mp.continuation.FiberCancellationSignal;
 import io.questdb.mp.continuation.SuspensionScope;
+import io.questdb.std.FiberLocal;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
@@ -64,6 +65,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
     private static final AtomicLong ID_SEQ = new AtomicLong();
     private static final long LOCAL_TASK_CURSOR = Long.MAX_VALUE;
     private static final Log LOG = LogFactory.getLog(PageFrameSequence.class);
+    private static final FiberLocal<int[]> UNTRACKED_SCOPE_DEPTH = new FiberLocal<>(() -> new int[1]);
     private final MillisecondClock clock;
     private final LongList frameRowCounts = new LongList();
     private final PageFrameReduceTaskFactory localTaskFactory;
@@ -98,6 +100,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
     private MemoryTracker memoryTracker;
     private boolean readyToDispatch;
     private RingQueue<PageFrameReduceTask> reduceQueue;
+    private SqlExecutionContext registeredContext;
     private int shard;
     private SqlExecutionContext sqlExecutionContext;
     private long startTime;
@@ -139,6 +142,14 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
      * Waits for frame sequence completion, fetches remaining pieces of the
      * frame sequence from the queues. This method is not thread safe.
      */
+    public static void enterUntrackedScope() {
+        UNTRACKED_SCOPE_DEPTH.get()[0]++;
+    }
+
+    public static void leaveUntrackedScope() {
+        UNTRACKED_SCOPE_DEPTH.get()[0]--;
+    }
+
     public void await() {
         LOG.debug()
                 .$("awaiting completion [shard=").$(shard)
@@ -148,12 +159,13 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
 
         final MCSequence pageFrameReduceSubSeq = messageBus.getPageFrameReduceSubSeq(shard);
         final PageFrameReduceDispatcher dispatcher = messageBus.getPageFrameReduceDispatcher();
-        final boolean canPark = dispatcher != null && isFiberSuspendable();
+        final boolean isFiberSuspendable = isFiberSuspendable();
+        final boolean canPark = dispatcher != null && isFiberSuspendable;
         while (!done) {
             // Sampled before the work checks below: a producer that signals progress after the
             // checks but before the sample would otherwise be missed and this fiber would park.
             final long observedProgress = canPark ? getProgressVersion() : 0;
-            final long observedGlobalProgress = canPark ? dispatcher.getProgressVersion() : 0;
+            final long observedShardProgress = canPark ? dispatcher.getRingProgressVersion(shard) : 0;
             // First check the local task: maybe we were reducing locally and got interrupted by an exception?
             if (localTask != null && localTask.getFrameSequence() == this && dispatchStartFrameOrdinal == localTask.getFrameOrdinal() + 1) {
                 collectedFrameOrdinal = localTask.getFrameOrdinal();
@@ -200,39 +212,25 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                         task.collected(true);
                     }
                     collectSubSeq.done(cursor);
-                    if (dispatcher != null) {
-                        if (taskFrameSequence != null) {
-                            dispatcher.signalProgress(taskFrameSequence);
-                        } else {
-                            dispatcher.signalProgress();
-                        }
-                    }
                 } else if (canPark) {
-                    awaitProgress(dispatcher, observedProgress, observedGlobalProgress, true);
+                    awaitProgress(dispatcher, observedProgress, observedShardProgress, true, getBlockedShard());
                 } else {
-                    Os.pause();
+                    yieldOrPause(isFiberSuspendable);
                 }
             }
         }
 
         // It could be the case that one of the workers reduced a page frame, then marked the task as done,
         // but haven't incremented reduce counter yet. In this case, we wait for the desired counter value.
-        while (true) {
-            final long observedProgress = canPark ? getProgressVersion() : 0;
-            final long observedGlobalProgress = canPark ? dispatcher.getProgressVersion() : 0;
-            if (reduceFinishedCounter.get() == dispatchStartFrameOrdinal) {
-                break;
-            }
-            if (canPark) {
-                awaitProgress(dispatcher, observedProgress, observedGlobalProgress, true);
-            } else {
-                Os.pause();
-            }
-        }
+        awaitReduced(dispatcher, isFiberSuspendable);
 
         if (frameCount > 0) {
             suspendCollectSubSeq();
         }
+    }
+
+    public void awaitReduced() {
+        awaitReduced(messageBus.getPageFrameReduceDispatcher(), isFiberSuspendable());
     }
 
     @Override
@@ -275,11 +273,6 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         collectSubSeq.done(cursor);
         if (done) {
             suspendCollectSubSeq();
-            return;
-        }
-        final PageFrameReduceDispatcher dispatcher = messageBus.getPageFrameReduceDispatcher();
-        if (dispatcher != null) {
-            dispatcher.signalProgress(this);
         }
     }
 
@@ -403,12 +396,13 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
 
         assert collectedFrameOrdinal < dispatchFrameCount - 1;
         final PageFrameReduceDispatcher dispatcher = messageBus.getPageFrameReduceDispatcher();
-        final boolean canPark = dispatcher != null && isFiberSuspendable();
+        final boolean isFiberSuspendable = isFiberSuspendable();
+        final boolean canPark = dispatcher != null && isFiberSuspendable;
         while (true) {
             // Sampled before collectSubSeq.next() so a producer signalling progress between the
             // failed collect and the sample cannot be missed.
             final long observedProgress = canPark ? getProgressVersion() : 0;
-            final long observedGlobalProgress = canPark ? dispatcher.getProgressVersion() : 0;
+            final long observedShardProgress = canPark ? dispatcher.getRingProgressVersion(shard) : 0;
             long cursor = collectSubSeq.next();
             if (cursor > -1) {
                 PageFrameReduceTask task = reduceQueue.get(cursor);
@@ -419,13 +413,6 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                 } else {
                     // Not our task, nothing to collect. Go for another spin.
                     collectSubSeq.done(cursor);
-                    if (dispatcher != null) {
-                        if (thatFrameSequence != null) {
-                            dispatcher.signalProgress(thatFrameSequence);
-                        } else {
-                            dispatcher.signalProgress();
-                        }
-                    }
                 }
             } else if (cursor == -1) {
                 if (dispatcher != null && !isActive()) {
@@ -435,11 +422,15 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                     if (dispatchStartFrameOrdinal == collectedFrameOrdinal + 1) {
                         return -2;
                     }
-                } else if (dispatch(dispatchLimit, countOnly)) {
-                    // We have dispatched something, so let's try to collect it.
-                    continue;
-                } else if (dispatcher != null && !isActive()) {
-                    continue;
+                } else {
+                    final int previousDispatchStartFrameOrdinal = dispatchStartFrameOrdinal;
+                    if (dispatch(dispatchLimit, countOnly)
+                            && (!isFiberSuspendable || dispatchStartFrameOrdinal != previousDispatchStartFrameOrdinal)) {
+                        continue;
+                    }
+                    if (dispatcher != null && !isActive()) {
+                        continue;
+                    }
                 }
                 if (dispatchStartFrameOrdinal == collectedFrameOrdinal + 1) {
                     reduceLocally(countOnly);
@@ -447,10 +438,13 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                 }
                 if (canPark) {
                     final boolean isDraining = !isActive();
-                    awaitProgress(dispatcher, observedProgress, observedGlobalProgress, isDraining);
+                    awaitProgress(dispatcher, observedProgress, observedShardProgress, isDraining, getBlockedShard());
                     continue;
                 }
-                return -1;
+                if (!isFiberSuspendable) {
+                    return -1;
+                }
+                yieldOrPause(true);
             } else {
                 Os.pause();
             }
@@ -495,6 +489,10 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
             // It is essential to init the atom after we prepared sequence for dispatch.
             // If atom is to fail, we will be releasing whatever we prepared.
             atom.init(frameCursor, executionContext);
+            if (UNTRACKED_SCOPE_DEPTH.get()[0] == 0) {
+                executionContext.registerPageFrameSequence(this);
+                registeredContext = executionContext;
+            }
         } catch (TableReferenceOutOfDateException e) {
             frameCursor = Misc.freeIfCloseable(frameCursor);
             throw e;
@@ -521,6 +519,10 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
     public void reset() {
         // reset() must be called only if there are no tasks in progress for this page frame sequence
         assert frameCount == 0 || reduceFinishedCounter.get() == dispatchStartFrameOrdinal;
+        if (registeredContext != null) {
+            registeredContext.unregisterPageFrameSequence(this);
+            registeredContext = null;
+        }
 
         // prepare different frame sequence using the same object instance
         frameCount = 0;
@@ -575,10 +577,6 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         if (collectSubSeqToRemove != null) {
             try {
                 messageBus.getPageFrameCollectFanOut(shard).remove(collectSubSeqToRemove);
-                final PageFrameReduceDispatcher dispatcher = messageBus.getPageFrameReduceDispatcher();
-                if (dispatcher != null) {
-                    dispatcher.signalProgress();
-                }
                 LOG.debug().$("removed [seq=").$(collectSubSeqToRemove).I$();
             } catch (Throwable th) {
                 if (cleanupFailure == null) {
@@ -644,6 +642,21 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         reduceStartedCounter.set(0);
         workStealingStrategy.of(reduceStartedCounter);
         resetCancellation();
+    }
+
+    private void awaitReduced(PageFrameReduceDispatcher dispatcher, boolean isFiberSuspendable) {
+        final boolean canPark = dispatcher != null && isFiberSuspendable;
+        while (true) {
+            final long observedProgress = canPark ? getProgressVersion() : 0;
+            if (reduceFinishedCounter.get() >= dispatchStartFrameOrdinal) {
+                break;
+            }
+            if (canPark) {
+                awaitProgress(dispatcher, observedProgress, true);
+            } else {
+                yieldOrPause(isFiberSuspendable);
+            }
+        }
     }
 
     private void buildAddressCache() {
@@ -824,6 +837,10 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         }
     }
 
+    private int getBlockedShard() {
+        return reduceFinishedCounter.get() > collectedFrameOrdinal + 1 ? shard : -1;
+    }
+
     private void reduceLocally(boolean countOnly) {
         assert dispatchStartFrameOrdinal < dispatchFrameCount;
 
@@ -925,9 +942,5 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
 
     private void suspendCollectSubSeq() {
         messageBus.getPageFrameCollectFanOut(shard).suspend(collectSubSeq);
-        final PageFrameReduceDispatcher dispatcher = messageBus.getPageFrameReduceDispatcher();
-        if (dispatcher != null) {
-            dispatcher.signalProgress(this);
-        }
     }
 }
