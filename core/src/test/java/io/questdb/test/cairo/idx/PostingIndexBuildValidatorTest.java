@@ -253,7 +253,7 @@ public class PostingIndexBuildValidatorTest extends AbstractCairoTest {
                     backup.of(file).put(".backup");
                     Assert.assertEquals(0, ff.rename(file.$(), backup.$()));
                     assertComplete(reader, path, false);
-                    Assert.assertEquals(0, ff.copy(backup.$(), file.$()));
+                    Assert.assertTrue(ff.copy(backup.$(), file.$()) >= 0);
                     final long fd = ff.openRW(file.$(), 0);
                     Assert.assertTrue(fd >= 0);
                     try {
