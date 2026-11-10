@@ -60,7 +60,9 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
      * whole. It adds those columns marked, see {@link SqlUtil#addOtherReadDependencies}: the view lends them only to
      * a read that sets none of its OVERRIDABLE variables, which could otherwise read any of them through the view.
      * Nothing opens the plan of that read, so nothing checks the permission of the principal on what it reads: it
-     * adds no column that a view the SELECT reads lends to no read, see {@link SqlUtil#collectTableColumnReads}.
+     * adds no column that a view the SELECT reads lends to no read of the SELECT, such as one that view lends only
+     * to the reads that set none of its OVERRIDABLE variables when the SELECT sets one, see
+     * {@link SqlUtil#collectTableColumnReads}.
      * Call it on a compiler of its own after the SELECT of the view is optimised and before its plan is
      * generated, with what that compile recorded: this takes the values of the PIVOT IN sub-queries from it
      * rather than running them again, and finds a table out of date when it scans one of another id than that

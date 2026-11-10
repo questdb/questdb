@@ -531,7 +531,9 @@ public class SqlUtil {
      * column. The compile of the reads planned otherwise lists no such column, nor a {@code *} for a
      * wildcard of that view that view lends to no read, as nothing opens its plan and nothing checks that
      * permission, see {@link SqlCompiler#collectOtherReadDependencies}: the column stays one a reader of
-     * the view needs permission on.
+     * the view needs permission on. A SELECT that sets an {@code OVERRIDABLE} variable of that view, or of
+     * a view it reads, is itself a read that view lends none of its marked columns to, so such a column is
+     * one that view lends to no read of the SELECT, whichever read of the view runs the SELECT.
      * <p>
      * The optimiser shares a model between several places of the SELECT, as it does the left side of a
      * LATERAL join, so the number of paths to a model can double with each LATERAL join nested in the
@@ -2366,20 +2368,21 @@ public class SqlUtil {
     // Adds a column a scan reads to the columns of its table, columns. The scan of a view the SELECT reads, whose
     // dependencies list innerColumns for the table, reads the column through that view, and the column is lent to the
     // reads that view lends it to: one that view lends only to the reads that set none of its OVERRIDABLE variables
-    // comes marked, see isOtherReadOnly(). One that view lends to no read is the principal's own: the compile that plans
-    // the SELECT lists it, as opening that plan checks the principal's permission on it, and the compile of the reads
-    // planned otherwise drops it, isUnlentColumnDropped, as nothing checks that permission there, see
-    // collectTableColumnReads().
+    // comes marked, see isOtherReadOnly(), when the SELECT sets none of them either, isOtherReadLent. One that view
+    // lends to no read of the SELECT is the principal's own: the compile that plans the SELECT lists it, as opening
+    // that plan checks the principal's permission on it, and the compile of the reads planned otherwise drops it,
+    // isUnlentColumnDropped, as nothing checks that permission there, see collectTableColumnReads().
     private static void addReadColumn(
             @NotNull LowerCaseCharSequenceHashSet columns,
             @Nullable LowerCaseCharSequenceHashSet innerColumns,
+            boolean isOtherReadLent,
             @NotNull CharSequence columnName,
             @NotNull StringSink sink,
             boolean isUnlentColumnDropped
     ) {
-        if (isOtherReadOnly(innerColumns, columnName, sink)) {
+        if (isOtherReadLent && isOtherReadOnly(innerColumns, columnName, sink)) {
             columns.add(Chars.toString(sink));
-        } else if (!isUnlentColumnDropped || isLentByView(innerColumns, columnName, sink)) {
+        } else if (!isUnlentColumnDropped || isLentByView(innerColumns, isOtherReadLent, columnName, sink)) {
             columns.add(Chars.toString(columnName));
         }
     }
@@ -2460,16 +2463,17 @@ public class SqlUtil {
             final IQueryModel source = wildcardSources.sources.getQuick(i);
             // a wildcard of a view the SELECT reads lends no more than that view does, see addReadColumn()
             final LowerCaseCharSequenceHashSet innerColumns = innerViewColumns(source, tableToken.getTableName());
+            final boolean isOtherReadLent = isOtherReadLent(source);
             if (!wildcardSources.isRecordingCompile
                     && isReadThroughView(source)
-                    && !isLentByView(innerColumns, "*", wildcardSources.otherReadColumnName)) {
+                    && !isLentByView(innerColumns, isOtherReadLent, "*", wildcardSources.otherReadColumnName)) {
                 // The compile of the reads planned otherwise has listed the columns of the scan that view lends,
                 // and dropped the ones it lends to no read, see collectTableColumnReads(), which a "*" would lend.
                 continue;
             }
             assert wildcardSources.isEveryScannedColumnRead(sourceModel, source, columns)
                     : "the plan keeps a wildcard whole but does not scan every column it selects [table=" + tableToken.getTableName() + ']';
-            final boolean isOtherReadOnly = isOtherReadOnly(innerColumns, "*", wildcardSources.otherReadColumnName);
+            final boolean isOtherReadOnly = isOtherReadLent && isOtherReadOnly(innerColumns, "*", wildcardSources.otherReadColumnName);
             columns.add(isOtherReadOnly ? ViewDefinition.OTHER_READ_WILDCARD : "*");
         }
     }
@@ -2723,11 +2727,12 @@ public class SqlUtil {
         final LowerCaseCharSequenceHashSet columns = addTableDependency(depMap, tableToken.getTableName());
         // the scan of a view the SELECT reads lends no more than that view does, see addReadColumn()
         final LowerCaseCharSequenceHashSet innerColumns = innerViewColumns(model, tableToken.getTableName());
+        final boolean isOtherReadLent = isOtherReadLent(model);
         final boolean isUnlentColumnDropped = !wildcardSources.isRecordingCompile && isReadThroughView(model);
         final StringSink sink = wildcardSources.otherReadColumnName;
         final ObjList<QueryColumn> topDownColumns = model.getTopDownColumns();
         for (int i = 0, n = topDownColumns.size(); i < n; i++) {
-            addReadColumn(columns, innerColumns, topDownColumns.getQuick(i).getName(), sink, isUnlentColumnDropped);
+            addReadColumn(columns, innerColumns, isOtherReadLent, topDownColumns.getQuick(i).getName(), sink, isUnlentColumnDropped);
         }
         if (!isTimestampRequired && !SqlCodeGenerator.joinsRequiringTimestamp[model.getJoinType()]) {
             return;
@@ -2742,7 +2747,7 @@ public class SqlUtil {
             try (TableMetadata metadata = engine.getTableMetadata(tableToken)) {
                 final int timestampIndex = metadata.getTimestampIndex();
                 if (timestampIndex > -1) {
-                    addReadColumn(columns, innerColumns, metadata.getColumnName(timestampIndex), sink, isUnlentColumnDropped);
+                    addReadColumn(columns, innerColumns, isOtherReadLent, metadata.getColumnName(timestampIndex), sink, isUnlentColumnDropped);
                 }
             }
             return;
@@ -2752,7 +2757,7 @@ public class SqlUtil {
         if (dot > -1) {
             timestampName = timestampName.subSequence(dot + 1, timestampName.length());
         }
-        addReadColumn(columns, innerColumns, unquote(timestampName), sink, isUnlentColumnDropped);
+        addReadColumn(columns, innerColumns, isOtherReadLent, unquote(timestampName), sink, isUnlentColumnDropped);
     }
 
     // Adds "*" for the tables a parsed SELECT reads every column of, see collectTableAndColumnReferences().
@@ -3030,17 +3035,25 @@ public class SqlUtil {
     }
 
     // Whether the view whose dependencies list viewColumns for a table lends a column of it, or every column of it for
-    // "*", to any read: by its name, by "*", by its marked name or by ViewDefinition.OTHER_READ_WILDCARD. Uses sink for
-    // the marked name.
+    // "*", to a read of the SELECT: by its name or by "*", and, when the SELECT sets none of the view's OVERRIDABLE
+    // variables, isOtherReadLent, by its marked name or by ViewDefinition.OTHER_READ_WILDCARD. Uses sink for the marked
+    // name.
     private static boolean isLentByView(
             @Nullable LowerCaseCharSequenceHashSet viewColumns,
+            boolean isOtherReadLent,
             @NotNull CharSequence columnName,
             @NotNull StringSink sink
     ) {
         if (viewColumns == null) {
             return false;
         }
-        if (viewColumns.contains("*") || viewColumns.contains(ViewDefinition.OTHER_READ_WILDCARD) || viewColumns.contains(columnName)) {
+        if (viewColumns.contains("*") || viewColumns.contains(columnName)) {
+            return true;
+        }
+        if (!isOtherReadLent) {
+            return false;
+        }
+        if (viewColumns.contains(ViewDefinition.OTHER_READ_WILDCARD)) {
             return true;
         }
         sink.clear();
@@ -3053,6 +3066,16 @@ public class SqlUtil {
     private static boolean isModelAlias(@NotNull IQueryModel model, @NotNull CharSequence qualifiedName, int dot) {
         final ExpressionNode aliasExpr = model.getAlias() != null ? model.getAlias() : model.getTableNameExpr();
         return aliasExpr != null && Chars.equalsIgnoreCase(unquote(aliasExpr.token), unquote(qualifiedName.subSequence(0, dot)));
+    }
+
+    // Whether the view a model of a view's SELECT reads its table through lends the SELECT the columns it marks, see
+    // ViewDefinition.OTHER_READ_COLUMN_PREFIX: it lends them only to the reads that set none of its OVERRIDABLE
+    // variables, nor those of a view it reads, and the parser marks the read of the view overridden when the SELECT sets
+    // one, see SqlParser.compileViewQuery(). The SELECT then reads such a column as the principal that records the view.
+    // A model that reads its table through no view of the SELECT has no marked columns to lend.
+    private static boolean isOtherReadLent(@NotNull IQueryModel model) {
+        final ExpressionNode viewNameExpr = model.getViewNameExpr();
+        return viewNameExpr == null || viewNameExpr.tableFunctionView == null || !viewNameExpr.tableFunctionView.isReadOverridden();
     }
 
     // Whether the view whose dependencies list innerColumns for a table lends a column of it, or every column of it

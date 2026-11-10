@@ -50,9 +50,9 @@ public class ViewDefinition implements Mutable {
      * Marks a column of {@link #getDependencies()} that the view lends only to a read that sets none of its
      * OVERRIDABLE variables: a column that only a read whose plan differs from the plan of the view's own SELECT
      * scans, such as one that keeps a sub-query whole and returns none of its columns, and a column the view's own
-     * SELECT reads through another view that lends it only to such reads. A read that sets a variable can make the
-     * view read any column the variable's position sees, so it reads such a column as the reader. Column names cannot
-     * hold the marker.
+     * SELECT reads through another view that lends it only to such reads, when that SELECT sets none of the other
+     * view's variables. A read that sets a variable can make the view read any column the variable's position sees,
+     * so it reads such a column as the reader. Column names cannot hold the marker.
      */
     public static final char OTHER_READ_COLUMN_PREFIX = '?';
     // every column of the table, lent as the columns OTHER_READ_COLUMN_PREFIX marks

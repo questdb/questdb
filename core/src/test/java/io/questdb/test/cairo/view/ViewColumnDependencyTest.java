@@ -602,12 +602,26 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
                     "permission denied [table=x2, columns=ts]"
             );
 
+            // the variable holds a sub-query the view reads in its FROM clause, a read of the value outside any
+            // expression
+            final String fromVariableSql = "DECLARE OVERRIDABLE @q := (SELECT * FROM x) SELECT 'src' src, k FROM @q";
+            assertReads(fromVariableSql, "{x=[?*, k]}", "SELECT src FROM v");
+            assertOverrideDenied(
+                    fromVariableSql,
+                    "DECLARE @q := (SELECT ts, b::SYMBOL k, a, b FROM x) SELECT * FROM v",
+                    "permission denied [table=x, columns=b]"
+            );
+
             // A reader sets the variable of a view the view reads through the view, so it reads only what the plan of
-            // the view reads too. The view's own value of that variable is not a reader's.
+            // the view reads too. So does every read of a view that sets the variable in its own SELECT: v_in lends
+            // such a view none of the columns it marks, and the read that names only v, which keeps the sub-query of
+            // v_in whole, reads them as the reader.
             execute("CREATE VIEW v_in AS (DECLARE OVERRIDABLE @c := 0 SELECT k, @c AS v FROM (SELECT * FROM x JOIN y ON (k)))");
             drainWalAndViewQueues();
             assertOverrideDenied("SELECT 'o' o, k, v FROM v_in", "DECLARE @c := d SELECT * FROM v", "permission denied [table=y, columns=d]");
-            assertReads("DECLARE @c := 1 SELECT 'o' o, k, v FROM v_in", "{v_in=[], x=[?*, k], y=[?*, k]}", "SELECT o FROM v");
+            final String settingViewSql = "DECLARE @c := 1 SELECT 'o' o, k, v FROM v_in";
+            assertReads(settingViewSql, "{v_in=[], x=[k], y=[k]}", "SELECT * FROM v", "SELECT o FROM v");
+            assertReadDenied(settingViewSql, "SELECT v FROM v", "permission denied [table=y, columns=ts,c,d]");
         });
     }
 
@@ -628,6 +642,12 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
                         "permission denied [table=y, columns=d]"
                 );
             }
+            // a later branch that reads the sub-query its variable holds in its FROM clause
+            assertOverrideDenied(
+                    "SELECT 'a' src, k FROM x WHERE k = 'none' UNION ALL DECLARE OVERRIDABLE @q := (SELECT * FROM x) SELECT 'src' src, k FROM @q",
+                    "DECLARE @q := (SELECT ts, b::SYMBOL k, a, b FROM x) SELECT * FROM v",
+                    "permission denied [table=x, columns=b]"
+            );
             // the variable as an output of the third branch
             assertOverrideDenied(
                     """
@@ -1992,16 +2012,7 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
             // records the view may read it, so the view lends it to no read, as v_cols does.
             final String viewSql = "SELECT t.a, u.c FROM (SELECT k, a, ts FROM v_cols ORDER BY ts) t ASOF JOIN y u ON (k)";
             assertReads(viewSql, "{v_cols=[], x2=[a, k, ts], y=[c, k, ts]}", "SELECT * FROM v");
-            forEachViewStatement(viewSql, statement -> {
-                try (SqlExecutionContext context = denyBaseTableSelectContext()) {
-                    assertQuery("SELECT count() FROM v WHERE c = 5")
-                            .withContext(context)
-                            .noLeakCheck()
-                            .failsWith("permission denied [table=x2, columns=ts2]");
-                } catch (AssertionError e) {
-                    throw new AssertionError(statement + ": " + viewSql, e);
-                }
-            });
+            assertReadDenied(viewSql, "SELECT count() FROM v WHERE c = 5", "permission denied [table=x2, columns=ts2]");
         });
     }
 
@@ -2042,6 +2053,26 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
                         .noLeakCheck()
                         .returns(expected);
             }
+        });
+    }
+
+    @Test
+    public void testViewSettingVariableOfViewItReadsLendsNoColumnThatViewMarks() throws Exception {
+        assertMemoryLeak(() -> {
+            createTablesWithTwoTimestamps();
+            // A read that counts the rows of the view drops the ORDER BY of the sub-query, so the ASOF JOIN takes ts2,
+            // the designated timestamp of x2, and the view lends ts2 only to the reads that set none of its variables.
+            final String markingViewSql = "DECLARE OVERRIDABLE @s := 'k1' SELECT t.a, u.c FROM (SELECT k, a, ts FROM x2 WHERE k = @s ORDER BY ts) t ASOF JOIN y u ON (k)";
+            assertReads(markingViewSql, "{x2=[?ts2, a, k, ts], y=[c, k, ts]}", "SELECT count() FROM v WHERE c = 5");
+            assertOverrideDenied(markingViewSql, "DECLARE @s := 'k1' SELECT count() FROM v WHERE c = 5", "permission denied [table=x2, columns=ts2]");
+
+            // A view that sets @s in its own SELECT is a read that sets @s, whoever reads the view, so v_marked lends it
+            // no ts2. The principal that records it opens no plan that reads ts2, so the view lends ts2 to no read.
+            execute("CREATE VIEW v_marked AS (" + markingViewSql + ")");
+            drainWalAndViewQueues();
+            final String viewSql = "DECLARE @s := 'k1' SELECT a, c FROM v_marked";
+            assertReads(viewSql, "{v_marked=[], x2=[a, k, ts], y=[c, k, ts]}", "SELECT * FROM v");
+            assertReadDenied(viewSql, "SELECT count() FROM v WHERE c = 5", "permission denied [table=x2, columns=ts2]");
         });
     }
 
@@ -2509,13 +2540,7 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
     // Asserts that a principal with no permission on the columns of the base tables cannot read through
     // the view, by overriding a variable the view declares OVERRIDABLE, a column the view does not read.
     private void assertOverrideDenied(String viewSql, String readSql, String expectedFailure) throws Exception {
-        forEachViewStatement(viewSql, statement -> {
-            try (SqlExecutionContext context = denyBaseTableSelectContext()) {
-                assertQuery(readSql).withContext(context).noLeakCheck().failsWith(expectedFailure);
-            } catch (AssertionError e) {
-                throw new AssertionError(statement + ": " + viewSql, e);
-            }
-        });
+        assertReadDenied(viewSql, readSql, expectedFailure);
     }
 
     // Asserts the dependencies of the view, that a principal with no permission on the columns of the base tables
@@ -2535,6 +2560,18 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
         assertQuery(overrideReadSql).noLeakCheck().assertsPlanContaining(expectedPlanScan);
         execute("DROP VIEW v");
         drainWalAndViewQueues();
+    }
+
+    // Asserts that the read of the view fails for a principal with no permission on the columns of the base tables,
+    // whether CREATE VIEW, ALTER VIEW or CREATE OR REPLACE VIEW records the view.
+    private void assertReadDenied(String viewSql, String readSql, String expectedFailure) throws Exception {
+        forEachViewStatement(viewSql, statement -> {
+            try (SqlExecutionContext context = denyBaseTableSelectContext()) {
+                assertQuery(readSql).withContext(context).noLeakCheck().failsWith(expectedFailure);
+            } catch (AssertionError e) {
+                throw new AssertionError(statement + ": " + viewSql, e);
+            }
+        });
     }
 
     private void assertReads(String viewSql, String expectedDependencies, String... reads) throws Exception {
