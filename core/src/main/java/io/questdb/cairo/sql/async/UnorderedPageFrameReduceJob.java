@@ -149,7 +149,7 @@ public class UnorderedPageFrameReduceJob implements Job, QuietCloseable {
                 task.clear();
                 subSeq.done(cursor);
                 if (dispatcher != null) {
-                    dispatcher.signalProgress(frameSequence);
+                    dispatcher.signalRingProgress(dispatcher.getUnorderedRing());
                 }
 
                 if (taskSequenceId != frameSequence.getId()) {

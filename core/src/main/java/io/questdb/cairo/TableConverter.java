@@ -160,6 +160,16 @@ public class TableConverter {
                                 int convertedPartitionBy = PartitionBy.NONE;
                                 if (walEnabled) {
                                     txWriter.resetLagValuesUnsafe();
+                                    // Reset structure version in _meta and _txn files. Through resetMetadataVersion,
+                                    // never a raw putLong: the metadataVersion is checksummed into the meta-format
+                                    // minor-version field, so rewriting it in place otherwise switches off every
+                                    // version-gated tail field and the converted table silently loses its TTL and
+                                    // table format. The reset goes before the reload that registers the table with a
+                                    // sequencer: when this conversion repeats one that died in the middle of the
+                                    // reset, the reset completes first, and the sequencer's initial metadata, which
+                                    // replicas rebuild _meta from, gets the trusted header fields.
+                                    TableUtils.resetMetadataVersion(metaMem, 0);
+                                    txWriter.resetStructureVersionUnsafe();
                                     try (TableWriterMetadata metadata = new TableWriterMetadata(token)) {
                                         metadata.reload(metaPath, metaMem);
                                         convertedTimestampType = metadata.getTimestampIndex() < 0
@@ -168,15 +178,7 @@ public class TableConverter {
                                         convertedPartitionBy = metadata.getPartitionBy();
                                         tableSequencerAPI.registerTable(tableId, metadata, token);
                                     }
-
-                                    // Reset structure version in _meta and _txn files. Through
-                                    // resetMetadataVersion, never a raw putLong: the metadataVersion is
-                                    // checksummed into the meta-format minor-version field, so rewriting it
-                                    // in place otherwise switches off every version-gated tail field and the
-                                    // converted table silently loses its TTL and table format.
-                                    TableUtils.resetMetadataVersion(metaMem, 0);
                                     path.trimTo(rootLen).concat(dirNameSink);
-                                    txWriter.resetStructureVersionUnsafe();
                                 } else {
                                     if (!tableNameRegistry.isWalTableDropped(dirName) && tableSequencerAPI.prepareToConvertToNonWal(token)) {
                                         removeWalPersistence(path, rootLen, ff, dirNameSink);
