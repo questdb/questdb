@@ -489,6 +489,11 @@ public class MillisTimestampDriver implements TimestampDriver {
             case YEAR -> Dates::addYears;
             case HOUR -> Dates::addHours;
             case WEEK -> Dates::addWeeks;
+            case MINUTE_5 -> (timestamp, increment) -> Dates.addMinutes(timestamp, increment * 5);
+            case MINUTE_10 -> (timestamp, increment) -> Dates.addMinutes(timestamp, increment * 10);
+            case MINUTE_15 -> (timestamp, increment) -> Dates.addMinutes(timestamp, increment * 15);
+            case MINUTE_20 -> (timestamp, increment) -> Dates.addMinutes(timestamp, increment * 20);
+            case MINUTE_30 -> (timestamp, increment) -> Dates.addMinutes(timestamp, increment * 30);
             default -> null;
         };
     }
@@ -501,6 +506,11 @@ public class MillisTimestampDriver implements TimestampDriver {
             case YEAR -> MillisTimestampDriver::partitionCeilYYYY;
             case HOUR -> MillisTimestampDriver::partitionCeilHH;
             case WEEK -> MillisTimestampDriver::partitionCeilWW;
+            case MINUTE_5 -> MillisTimestampDriver::partitionCeilMI5;
+            case MINUTE_10 -> MillisTimestampDriver::partitionCeilMI10;
+            case MINUTE_15 -> MillisTimestampDriver::partitionCeilMI15;
+            case MINUTE_20 -> MillisTimestampDriver::partitionCeilMI20;
+            case MINUTE_30 -> MillisTimestampDriver::partitionCeilMI30;
             default -> null;
         };
     }
@@ -1112,6 +1122,32 @@ public class MillisTimestampDriver implements TimestampDriver {
 
     private static long partitionCeilHH(long millis) {
         return Dates.ceilHH(Math.max(millis, 0));
+    }
+
+    private static long partitionCeilMI(long millis, int minutes) {
+        final long stride = minutes * Dates.MINUTE_MILLIS;
+        final long m = Math.max(millis, 0);
+        return m - m % stride + stride;
+    }
+
+    private static long partitionCeilMI10(long millis) {
+        return partitionCeilMI(millis, 10);
+    }
+
+    private static long partitionCeilMI15(long millis) {
+        return partitionCeilMI(millis, 15);
+    }
+
+    private static long partitionCeilMI20(long millis) {
+        return partitionCeilMI(millis, 20);
+    }
+
+    private static long partitionCeilMI30(long millis) {
+        return partitionCeilMI(millis, 30);
+    }
+
+    private static long partitionCeilMI5(long millis) {
+        return partitionCeilMI(millis, 5);
     }
 
     private static long partitionCeilMM(long millis) {

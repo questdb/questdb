@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnPurgeJob;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.IndexType;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
@@ -1489,6 +1490,8 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     // runs they pin.
     private void replayPinnedSeedsWithoutVacuum() {
         fuzzer.setVacuumProbability(0);
+        // the seeds were found on DAY partitions, from before the fuzz picked the partitioning
+        fuzzer.setPartitionBy(PartitionBy.DAY);
     }
 
     private void runConvertSplitAndCompositeNoSentinelWideningFuzz(Rnd rnd) throws Exception {

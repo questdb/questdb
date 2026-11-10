@@ -33,6 +33,7 @@ import io.questdb.cairo.DebugUtils;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.O3PartitionJob;
 import io.questdb.cairo.O3PartitionPurgeJob;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.PartitionCompactionScanJob;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
@@ -127,6 +128,9 @@ public class FuzzRunner {
     private static final int MAX_COVERED_KEYS_CHECKED = 32;
     // Share of fuzz runs that use TIMESTAMP_NS designated timestamp instead of TIMESTAMP
     private static final int NANOS_TIMESTAMP_PERCENT = 40;
+    private static final int[] PARTITION_BY_MINUTES = {
+            PartitionBy.MINUTE_5, PartitionBy.MINUTE_10, PartitionBy.MINUTE_15, PartitionBy.MINUTE_20, PartitionBy.MINUTE_30
+    };
     // the table that convertNoSentinelValues() converts every value of a type without a NULL sentinel in
     private static final String NO_SENTINEL_VALUES_TABLE = "fuzz_no_sentinel_values";
     private static final long OPEN_RETRY_TIMEOUT_MILLIS = 10_000;
@@ -167,11 +171,13 @@ public class FuzzRunner {
     private boolean isNoSentinelTypeChangeEnabled;
     private boolean isNoSentinelWideningChecked;
     private boolean isO3;
+    private boolean isPartitionByPinned;
     private double notSetProb;
     private double nullSetProb;
     private int parallelWalCount;
     private long parquetConversionRequestHint = Long.MIN_VALUE;
     private double parquetConversionRequestProb;
+    private int partitionBy = PartitionBy.DAY;
     private double partitionDropProb;
     private double partitionToNativeProb;
     private double partitionToParquetProb;
@@ -684,13 +690,13 @@ public class FuzzRunner {
     }
 
     public ObjList<FuzzTransaction> generateTransactions(String tableName, Rnd rnd, long start) {
-        long end = start + partitionCount * Micros.DAY_MICROS;
+        long end = start + partitionCount * getPartitionDurationMicros();
         return generateTransactions(tableName, rnd, start, end);
     }
 
     public ObjList<FuzzTransaction> generateTransactions(String tableName, Rnd rnd) throws NumericException {
-        long start = MicrosTimestampDriver.floor("2022-02-24T17");
-        long end = start + partitionCount * Micros.DAY_MICROS;
+        long start = getTransactionStartMicros();
+        long end = start + partitionCount * getPartitionDurationMicros();
         return generateTransactions(tableName, rnd, start, end);
     }
 
@@ -709,8 +715,36 @@ public class FuzzRunner {
         return ff;
     }
 
+    public int getPartitionBy() {
+        return partitionBy;
+    }
+
+    /**
+     * Returns the length of one partition of the fuzz tables in microseconds. The fuzz generates
+     * transactions over {@code partitionCount} partitions of this length.
+     */
+    public long getPartitionDurationMicros() {
+        return MicrosTimestampDriver.INSTANCE.approxPartitionDuration(partitionBy);
+    }
+
+    /**
+     * Returns how many partitions of the fuzz tables fit in a day. The fuzz spaces the rows by it, so that
+     * the tables hold about as many partitions as with DAY partitions, whatever the partitioning.
+     */
+    public long getPartitionsPerDay() {
+        return Micros.DAY_MICROS / getPartitionDurationMicros();
+    }
+
     public int getTimestampType() {
         return timestampType;
+    }
+
+    /**
+     * Returns where the generated transactions start by default: 17:00 of the first day of the initial
+     * rows for DAY partitions, and as many partitions into the initial rows for shorter partitions.
+     */
+    public long getTransactionStartMicros() throws NumericException {
+        return MicrosTimestampDriver.floor("2022-02-24") + Micros.HOUR_MICROS * 17 / getPartitionsPerDay();
     }
 
     public int getTransactionCount() {
@@ -1067,6 +1101,17 @@ public class FuzzRunner {
     }
 
     /**
+     * Sets the partitioning of the tables the runner creates, DAY, HOUR or a sub-hour size. Without it,
+     * {@link #generateRandom(Log)} picks one from the seeds. Call it before or after generateRandom(),
+     * for example to replay pinned seeds with the partitioning they were found with.
+     */
+    public void setPartitionBy(int partitionBy) {
+        assert partitionBy == PartitionBy.DAY || partitionBy == PartitionBy.HOUR || PartitionBy.isMinutePartitioned(partitionBy);
+        this.partitionBy = partitionBy;
+        this.isPartitionByPinned = true;
+    }
+
+    /**
      * Sets designated timestamp type of the tables the runner creates. {@link #generateRandom(Log)}
      * picks it randomly, call this after it to pin the type.
      */
@@ -1113,6 +1158,20 @@ public class FuzzRunner {
             case ColumnType.INT, ColumnType.LONG, ColumnType.FLOAT, ColumnType.DOUBLE -> "null";
             default -> "";
         };
+    }
+
+    /**
+     * Picks the partitioning of the fuzz tables: DAY half the time, HOUR 15 in 100, else a sub-hour size.
+     */
+    private static int randomPartitionBy(Rnd rnd) {
+        final int pick = rnd.nextInt(100);
+        if (pick < 50) {
+            return PartitionBy.DAY;
+        }
+        if (pick < 65) {
+            return PartitionBy.HOUR;
+        }
+        return PARTITION_BY_MINUTES[rnd.nextInt(PARTITION_BY_MINUTES.length)];
     }
 
     /**
@@ -1750,7 +1809,7 @@ public class FuzzRunner {
                 if (sym2Include == null) {
                     sink.put(", index(sym2 ").put(sym2IndexType).put(")");
                 }
-                sink.put(" timestamp(ts) partition by DAY BYPASS WAL");
+                sink.put(" timestamp(ts) partition by ").put(PartitionBy.toString(partitionBy)).put(" BYPASS WAL");
                 engine.execute(sink, sqlExecutionContext);
             }
             addInitialColumns(tableName, schemaRnd, sym2IndexType, sym2Include);
@@ -1777,7 +1836,7 @@ public class FuzzRunner {
                     "create atomic table " + dataTempTableName + " as (" +
                             "select x as c1, " +
                             " rnd_symbol('AB', 'BC', 'CD') c2, " +
-                            " " + tsSequence + "('2022-02-24'::" + ColumnType.nameOf(timestampType) + ", " + driver.fromSeconds(1) + "L) ts, " +
+                            " " + tsSequence + "('2022-02-24'::" + ColumnType.nameOf(timestampType) + ", " + driver.fromSeconds(1) / getPartitionsPerDay() + "L) ts, " +
                             " rnd_symbol('DE', null, 'EF', 'FG') sym2," +
                             " cast(x as int) c3," +
                             " rnd_bin() c4," +
@@ -1805,7 +1864,7 @@ public class FuzzRunner {
                 engine.execute(
                         "create atomic table " + tableName + " as (" +
                                 "select * from " + dataTempTableName +
-                                ")" + (sym2Include == null ? ", index(sym2 " + sym2IndexType + ")" : "") + " timestamp(ts) partition by DAY " + tail,
+                                ")" + (sym2Include == null ? ", index(sym2 " + sym2IndexType + ")" : "") + " timestamp(ts) partition by " + PartitionBy.toString(partitionBy) + " " + tail,
                         sqlExecutionContext
                 );
             }
@@ -1846,7 +1905,7 @@ public class FuzzRunner {
         // with sym2Include, addInitialColumns() adds the covering index of sym2 after the rows
         engine.execute(
                 "create atomic table " + tableName + " as (select c1, c2, ts, sym2, c3, c4, c5, rnd_str, bool1 from " + dataTempTableName + " where c1 < 0)"
-                        + (sym2Include == null ? ", index(sym2 " + sym2IndexType + ")" : "") + " timestamp(ts) partition by DAY " + tail,
+                        + (sym2Include == null ? ", index(sym2 " + sym2IndexType + ")" : "") + " timestamp(ts) partition by " + PartitionBy.toString(partitionBy) + " " + tail,
                 sqlExecutionContext
         );
         engine.execute("alter table " + tableName + " add column " + TXN_ZERO_SYMBOL_COLUMN + " symbol", sqlExecutionContext);
@@ -2127,7 +2186,12 @@ public class FuzzRunner {
         applySeed0 = rnd.nextLong();
         applySeed1 = rnd.nextLong();
         hasApplySeeds = true;
-        log.info().$("fuzz designated timestamp type: ").$(ColumnType.nameOf(timestampType)).$();
+        if (!isPartitionByPinned) {
+            // a separate Rnd, so the draws of rnd that follow do not change with the partitioning
+            partitionBy = randomPartitionBy(new Rnd(applySeed1, applySeed0));
+        }
+        log.info().$("fuzz designated timestamp type: ").$(ColumnType.nameOf(timestampType))
+                .$(", partition by: ").$(PartitionBy.toString(partitionBy)).$();
     }
 
     // Every apply path (non-WAL, WAL, parallel WAL threads) gets an Rnd with the same seeds,

@@ -619,7 +619,7 @@ public class CopyImportTest extends AbstractCairoTest {
                 runAndFetchCopyID("copy dbRoot from 'test-quotes-big.csv' with partition by jiffy;", sqlExecutionContext);
                 Assert.fail();
             } catch (Exception e) {
-                TestUtils.assertContains(e.getMessage(), "'NONE', 'HOUR', 'DAY', 'WEEK', 'MONTH' or 'YEAR' expected");
+                TestUtils.assertContains(e.getMessage(), "'NONE', 'HOUR', 'DAY', 'WEEK', 'MONTH', 'YEAR' or '<n> MINUTES' expected");
             }
         });
     }

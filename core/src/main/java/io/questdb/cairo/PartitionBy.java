@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.griffin.SqlException;
+import io.questdb.std.Chars;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseUtf8SequenceIntHashMap;
 import io.questdb.std.datetime.DateFormat;
@@ -45,6 +46,16 @@ public final class PartitionBy {
 
     public static final int DAY = 0;
     public static final int HOUR = 4;
+    public static final int MINUTE_10 = 8;
+    public static final int MINUTE_15 = 9;
+    public static final int MINUTE_20 = 10;
+    public static final int MINUTE_30 = 11;
+    /**
+     * Sub-hour partitioning: partitions are aligned to UTC wall-clock multiples of the given
+     * number of minutes. Valid minute values divide an hour evenly, so partition boundaries
+     * never cross hour boundaries.
+     */
+    public static final int MINUTE_5 = 7;
     public static final int MONTH = 1;
     /**
      * Data is not partitioned at all, all data is stored in a single directory
@@ -60,12 +71,54 @@ public final class PartitionBy {
     private PartitionBy() {
     }
 
+    /**
+     * Returns the PartitionBy constant for the given minute count, or -1 when the
+     * count is not a supported sub-hour partition size (5, 10, 15, 20 or 30).
+     */
+    public static int fromMinutes(long minutes) {
+        return switch ((int) Math.min(minutes, Integer.MAX_VALUE)) {
+            case 5 -> MINUTE_5;
+            case 10 -> MINUTE_10;
+            case 15 -> MINUTE_15;
+            case 20 -> MINUTE_20;
+            case 30 -> MINUTE_30;
+            default -> -1;
+        };
+    }
+
+    /**
+     * Parses a partitioning name: NONE, HOUR, DAY, WEEK, MONTH, YEAR, or a sub-hour
+     * size written as {@code <n> MINUTE[S]}, e.g. "15 MINUTES". Case-insensitive.
+     * Returns -1 for an unknown name.
+     */
     public static int fromString(CharSequence name) {
-        return nameToIndexMap.get(name);
+        final int partitionBy = nameToIndexMap.get(name);
+        if (partitionBy != -1 || name == null) {
+            return partitionBy;
+        }
+        return parseMinutes(name);
     }
 
     public static int fromUtf8String(Utf8Sequence name) {
-        return nameToIndexMapUtf8.get(name);
+        final int partitionBy = nameToIndexMapUtf8.get(name);
+        if (partitionBy != -1 || name == null || !name.isAscii()) {
+            return partitionBy;
+        }
+        return parseMinutes(name.asAsciiCharSequence());
+    }
+
+    /**
+     * Returns the size in minutes of a sub-hour partitioning, or 0 for any other partitioning.
+     */
+    public static int getMinutes(int partitionBy) {
+        return switch (partitionBy) {
+            case MINUTE_5 -> 5;
+            case MINUTE_10 -> 10;
+            case MINUTE_15 -> 15;
+            case MINUTE_20 -> 20;
+            case MINUTE_30 -> 30;
+            default -> 0;
+        };
     }
 
     public static TimestampDriver.PartitionAddMethod getPartitionAddMethod(int timestampType, int partitionBy) {
@@ -82,6 +135,10 @@ public final class PartitionBy {
 
     public static TimestampDriver.TimestampFloorMethod getPartitionFloorMethod(int timestampType, int partitionBy) {
         return ColumnType.getTimestampDriver(timestampType).getPartitionFloorMethod(partitionBy);
+    }
+
+    public static boolean isMinutePartitioned(int partitionBy) {
+        return partitionBy >= MINUTE_5 && partitionBy <= MINUTE_30;
     }
 
     public static boolean isPartitioned(int partitionBy) {
@@ -113,12 +170,53 @@ public final class PartitionBy {
             case WEEK -> "WEEK";
             case NONE -> "NONE";
             case NOT_APPLICABLE -> "N/A";
+            case MINUTE_5 -> "5 MINUTES";
+            case MINUTE_10 -> "10 MINUTES";
+            case MINUTE_15 -> "15 MINUTES";
+            case MINUTE_20 -> "20 MINUTES";
+            case MINUTE_30 -> "30 MINUTES";
             default -> "UNKNOWN";
         };
     }
 
     public static int ttlUnitFromString(CharSequence name, int start, int limit) {
         return ttlUnitToIndexMap.valueAt(ttlUnitToIndexMap.keyIndex(name, start, limit));
+    }
+
+    /**
+     * Parses "{@code <n> MINUTE}" / "{@code <n> MINUTES}", with any whitespace, including none,
+     * between the number and the unit. Returns -1 when the text does not match or n is not a
+     * supported minute partition size.
+     */
+    private static int parseMinutes(CharSequence name) {
+        final int len = name.length();
+        int p = 0;
+        long n = 0;
+        while (p < len) {
+            final char c = name.charAt(p);
+            if (c < '0' || c > '9') {
+                break;
+            }
+            n = Math.min(n * 10 + (c - '0'), Integer.MAX_VALUE);
+            p++;
+        }
+        if (p == 0) {
+            return -1;
+        }
+        while (p < len && Character.isWhitespace(name.charAt(p))) {
+            p++;
+        }
+        final int unitLen = len - p;
+        if (unitLen != 6 && unitLen != 7) {
+            return -1;
+        }
+        if (!Chars.equalsIgnoreCase("minute", name, p, p + 6)) {
+            return -1;
+        }
+        if (unitLen == 7 && (name.charAt(len - 1) | 32) != 's') {
+            return -1;
+        }
+        return fromMinutes(n);
     }
 
     public static void validateTtlGranularity(int partitionBy, int ttlHoursOrMonths, int ttlValuePos) throws SqlException {

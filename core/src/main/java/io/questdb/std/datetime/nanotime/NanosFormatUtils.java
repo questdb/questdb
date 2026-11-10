@@ -43,6 +43,7 @@ import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_NANOS;
 public class NanosFormatUtils {
     public static final DateFormat DAY_FORMAT;
     public static final DateFormat HOUR_FORMAT;
+    public static final DateFormat MINUTE_FORMAT;
     public static final DateFormat MONTH_FORMAT;
     public static final DateFormat NSEC_UTC_FORMAT;
     public static final DateFormat PG_TIMESTAMP_FORMAT;
@@ -417,6 +418,8 @@ public class NanosFormatUtils {
         HOUR_FORMAT = dateFormats.get(CommonUtils.HOUR_PATTERN);
         DAY_FORMAT = dateFormats.get(CommonUtils.DAY_PATTERN);
         WEEK_FORMAT = dateFormats.get(CommonUtils.WEEK_PATTERN);
+        // not in FORMATS: partition directory names only, not a general timestamp input format
+        MINUTE_FORMAT = compiler.compile(CommonUtils.MINUTE_PATTERN);
         MONTH_FORMAT = dateFormats.get(CommonUtils.MONTH_PATTERN);
         YEAR_FORMAT = dateFormats.get(CommonUtils.YEAR_PATTERN);
     }

@@ -792,7 +792,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
             createTable(TABLE1);
             assertQuery("create materialized view test as (select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by 3d")
                     .noLeakCheck()
-                    .fails(92, "'HOUR', 'DAY', 'WEEK', 'MONTH' or 'YEAR' expected");
+                    .fails(92, "'HOUR', 'DAY', 'WEEK', 'MONTH', 'YEAR' or '<n> MINUTES' expected");
             assertNull(getMatViewDefinition("test"));
 
             assertQuery("create materialized view test as (select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by NONE")

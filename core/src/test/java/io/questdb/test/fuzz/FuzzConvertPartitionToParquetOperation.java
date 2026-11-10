@@ -42,9 +42,14 @@ import io.questdb.test.tools.TestUtils;
 public class FuzzConvertPartitionToParquetOperation implements FuzzTransactionOperation {
 
     private final long cutoffTimestamp;
+    private final long partitionDuration;
 
-    public FuzzConvertPartitionToParquetOperation(long cutoffTimestamp) {
+    /**
+     * Applies to the partitions starting in (cutoffTimestamp - partitionDuration, cutoffTimestamp).
+     */
+    public FuzzConvertPartitionToParquetOperation(long cutoffTimestamp, long partitionDuration) {
         this.cutoffTimestamp = cutoffTimestamp;
+        this.partitionDuration = partitionDuration;
     }
 
     @Override
@@ -58,7 +63,7 @@ public class FuzzConvertPartitionToParquetOperation implements FuzzTransactionOp
             context.with(AllowAllSecurityContext.INSTANCE);
             TableRecordMetadata metadata = wApi.getMetadata();
             String sql = "ALTER TABLE " + TestUtils.randomiseCase(tempRnd, wApi.getTableToken().getTableName())
-                    + " CONVERT PARTITION TO PARQUET WHERE " + FuzzTransactionOperation.partitionDayBeforeFilter(metadata, cutoffTimestamp);
+                    + " CONVERT PARTITION TO PARQUET WHERE " + FuzzTransactionOperation.partitionBeforeFilter(metadata, cutoffTimestamp, partitionDuration);
 
             try {
                 CompiledQuery query = sqlCompiler.compile(sql, context);
