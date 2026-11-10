@@ -41,6 +41,27 @@ import io.questdb.std.str.Utf8StringSink;
 public class LineUdpParserSupport {
     private final static Log LOG = LogFactory.getLog(LineUdpParserSupport.class);
 
+    /**
+     * The type of the column a field value creates: the type {@link #getValueType} gave the value, except that a
+     * value it typed as a float by its first and last characters, which no float column can store, such as +05:30,
+     * 10.0.0.1 or 1e400, creates a SYMBOL column that keeps the text instead of a float column holding NULL. The
+     * parser calls this only for a value that creates a column, so values sent to existing columns cost nothing more.
+     */
+    public static int getNewColumnType(CharSequence value, int valueType, short defaultFloatColumnType) {
+        if (valueType == defaultFloatColumnType && !SqlKeywords.isNanKeyword(value)) {
+            try {
+                if (defaultFloatColumnType == ColumnType.FLOAT) {
+                    Numbers.parseFloat(value);
+                } else {
+                    Numbers.parseDouble(value);
+                }
+            } catch (NumericException e) {
+                return ColumnType.SYMBOL;
+            }
+        }
+        return valueType;
+    }
+
     public static int getValueType(CharSequence value) {
         return getValueType(value, ColumnType.DOUBLE, ColumnType.LONG, true);
     }

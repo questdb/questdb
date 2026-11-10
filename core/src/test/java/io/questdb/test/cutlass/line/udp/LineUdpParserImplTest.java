@@ -1427,6 +1427,60 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTextThatLooksLikeNumberCreatesSymbolColumn() throws Exception {
+        // a bare value typed as a float by its first and last characters creates a DOUBLE column only if a DOUBLE
+        // column can store it: text such as +05:30, -05:30 or 10.0.0.1, and a number beyond the double range,
+        // create a SYMBOL column that keeps the text, while +1.5, +0530 and nan create DOUBLE columns and other
+        // values keep their type; later values of either kind go into such a SYMBOL column as text
+        AbstractCairoTest.create(new TableModel(configuration, "x", PartitionBy.NONE).col("n", ColumnType.INT).timestamp());
+        assertThat(
+                """
+                        n\ttimestamp\ta\tb\tc\td\te\tf\tg\th
+                        1\t1970-01-01T00:00:01.000000Z\t+05:30\t-05:30\t10.0.0.1\t1e400\t1.5\t530.0\tnull\t5
+                        2\t1970-01-01T00:00:02.000000Z\t+05:45\tabc\t2.5\t\tnull\tnull\tnull\tnull
+                        """,
+                """
+                        x n=1i,a=+05:30,b=-05:30,c=10.0.0.1,d=1e400,e=+1.5,f=+0530,g=nan,h=5i 1000000000
+                        x n=2i,a=+05:45,b=abc,c=2.5 2000000000
+                        """,
+                "x"
+        );
+        // the same in the line that creates a table
+        assertThat(
+                """
+                        a\tb\tc\te\tg\ti\ttimestamp
+                        +05:30\t-05:30\t10.0.0.1\t1.5\tnull\t5\t1970-01-01T00:00:01.000000Z
+                        +05:45\txyz\t\t2.5\tnull\tnull\t1970-01-01T00:00:02.000000Z
+                        """,
+                """
+                        nt a=+05:30,b=-05:30,c=10.0.0.1,e=+1.5,g=nan,i=5i 1000000000
+                        nt a=+05:45,b=xyz,e=2.5 2000000000
+                        """,
+                "nt"
+        );
+    }
+
+    @Test
+    public void testTextThatLooksLikeNumberCreatesSymbolColumnWithFloatDefault() throws Exception {
+        // with FLOAT as the type of new float columns, the value must fit a FLOAT column: 1e39 fits a DOUBLE only
+        assertThat(
+                """
+                        a\te\th\ttimestamp
+                        +05:30\t1.5\t1e39\t1970-01-01T00:00:01.000000Z
+                        """,
+                "nf a=+05:30,e=+1.5,h=1e39 1000000000\n",
+                "nf",
+                configuration,
+                new DefaultLineUdpReceiverConfiguration() {
+                    @Override
+                    public short getDefaultColumnTypeForFloat() {
+                        return ColumnType.FLOAT;
+                    }
+                }
+        );
+    }
+
+    @Test
     public void testTypeMismatch1() throws Exception {
         final String expected1 = """
                 sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1

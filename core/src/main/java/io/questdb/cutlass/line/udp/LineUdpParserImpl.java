@@ -336,6 +336,11 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     }
 
     private void createTableAndAppendRow(CharSequenceCache cache) {
+        for (int i = 0, n = columnNameType.size() / 2; i < n; i++) {
+            final int valueType = (int) columnNameType.getQuick(2 * i + 1);
+            final CharSequence value = cache.get(columnValues.getQuick(i));
+            columnNameType.setQuick(2 * i + 1, LineUdpParserSupport.getNewColumnType(value, valueType, defaultFloatColumnType));
+        }
         tableToken = engine.createTable(
                 AllowAllSecurityContext.INSTANCE,
                 ddlMem,
@@ -535,13 +540,14 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         } else {
             CharSequence colNameAsChars = cache.get(columnName);
             if (autoCreateNewColumns && TableUtils.isValidColumnName(colNameAsChars, udpConfiguration.getMaxFileNameLength())) {
+                final int newColumnType = LineUdpParserSupport.getNewColumnType(value, valueType, defaultFloatColumnType);
                 // Using AllowAllSecurityContext, currently there is no authentication on the UDP interface
-                writer.addColumn(colNameAsChars, valueType, AllowAllSecurityContext.INSTANCE);
+                writer.addColumn(colNameAsChars, newColumnType, AllowAllSecurityContext.INSTANCE);
                 // Writer index can be different from column count, it keeps deleted columns in metadata
                 int columnIndex = writer.getColumnIndex(colNameAsChars);
                 // a new column, so the line cannot have set it; this marks it for a repeat further on
                 isColumnSetByLine(columnIndex);
-                columnIndexAndType.add(Numbers.encodeLowHighInts(columnIndex, valueType));
+                columnIndexAndType.add(Numbers.encodeLowHighInts(columnIndex, newColumnType));
                 columnValues.add(value.getCacheAddress());
                 valueTypeByColIdx.add(valueType);
             } else if (!autoCreateNewColumns) {
