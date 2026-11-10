@@ -94,8 +94,10 @@ import java.util.concurrent.locks.LockSupport;
  *       {@code PARQUET_*} and {@code MIXED_PROBE} read Parquet partitions, the Parquet probe also
  *       under a selective probe filter and under an INNER lookup that most rows miss,
  *       {@code COUNT_STAR} counts
- *       the star and {@code STACK4_RESIDUAL} is a worker-bound stack of four LEFT joins with
- *       residuals.</li>
+ *       the star, {@code STACK4_RESIDUAL} is a worker-bound stack of four LEFT joins with
+ *       residuals, and {@code BUILD_ONLY_RESIDUAL} and {@code BUILD_ONLY_RESIDUAL_REGEX} are LEFT
+ *       joins of the large dimension under a selective ON residual that reads the dimension alone,
+ *       a comparison and a regular expression over a VARCHAR column.</li>
  *   <li>{@code workers}: the size of the query worker pool, and the context's worker count.</li>
  *   <li>{@code factRows}, {@code largeDimRows}: table sizes. The fact table holds a million rows
  *       per hourly partition.</li>
@@ -161,7 +163,8 @@ public class ParallelHashJoinBenchmark {
             "FANOUT_DEFERRED", "FANOUT_RESIDUAL", "FANOUT_POST_FILTER",
             "PARQUET_PROBE", "PARQUET_PROBE_FILTER", "PARQUET_PROBE_INNER_MISS", "PARQUET_BUILD", "MIXED_PROBE",
             "COUNT_STAR",
-            "STACK4_RESIDUAL"
+            "STACK4_RESIDUAL",
+            "BUILD_ONLY_RESIDUAL", "BUILD_ONLY_RESIDUAL_REGEX"
     })
     public String shape;
 
@@ -515,6 +518,9 @@ public class ParallelHashJoinBenchmark {
                     "LEFT JOIN d2 b ON f.k2 = b.k AND sqrt(b.w) > f.v " +
                     "LEFT JOIN d3 c ON f.k3 = c.k AND sqrt(c.w) > f.v " +
                     "LEFT JOIN d1 e ON f.sel = e.k AND sqrt(e.w) > f.v";
+            // ON residuals of the large dimension alone that keep a sixteenth and a tenth of its rows.
+            case "BUILD_ONLY_RESIDUAL" -> "SELECT f.id, f.v, x.w FROM fact f LEFT JOIN d3 x ON f.k3 = x.k AND x.s = 'c3'";
+            case "BUILD_ONLY_RESIDUAL_REGEX" -> "SELECT f.id, f.v, x.w FROM fact f LEFT JOIN d3 x ON f.k3 = x.k AND x.name ~ '7$'";
             default -> throw new IllegalArgumentException("unknown shape: " + shape);
         };
     }

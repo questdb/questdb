@@ -73,9 +73,19 @@ import org.jetbrains.annotations.Nullable;
  * decodes the probe columns that the filters read before it joins a Parquet frame; see
  * {@link AsyncHashJoinSpec#newProbeTaskColumns(boolean)}. A filter whose columns the planner did not
  * record reads, as far as the join knows, every column.
+ * <p>
+ * The leading conjuncts of a LEFT join's ON residual that read the build's columns alone may filter
+ * the build's rows instead of the pairs; see {@link BuildOnFilter}. EXPLAIN then prints them as
+ * {@code buildOnFilter}, against the build scan's columns, as the fused GROUP BY prints its ON
+ * condition on the build alone, while {@code onFilter} keeps printing the whole residual, as the
+ * serial join prints its filter.
  */
 public final class HashJoinStageSpec implements Plannable, QuietCloseable {
     private final HashJoinInput buildInput;
+    // The leading conjuncts of the ON residual that an execution may run over the build's rows, and
+    // the rest of the residual; null when the residual leads with no conjunct of the build alone.
+    @Nullable
+    private BuildOnFilter buildOnFilter;
     // The keys as the serial plan's EXPLAIN prints them.
     private final String condition;
     private final boolean isOuter;
@@ -237,7 +247,9 @@ public final class HashJoinStageSpec implements Plannable, QuietCloseable {
 
     @Override
     public void close() {
-        Throwable failure = Misc.freeObjListBestEffort(null, workerOnFilters);
+        Throwable failure = Misc.freeBestEffort(null, buildOnFilter);
+        buildOnFilter = null;
+        failure = Misc.freeObjListBestEffort(failure, workerOnFilters);
         workerOnFilters = null;
         failure = Misc.freeBestEffort(failure, onFilter);
         onFilter = null;
@@ -251,6 +263,16 @@ public final class HashJoinStageSpec implements Plannable, QuietCloseable {
 
     public HashJoinInput getBuildInput() {
         return buildInput;
+    }
+
+    /**
+     * The leading conjuncts of the ON residual that read the build's columns alone, compiled against
+     * the build scan's columns, which an execution may run over the build's rows; see
+     * {@link BuildOnFilter}. Null without such conjuncts.
+     */
+    @Nullable
+    public Function getBuildOnFilter() {
+        return buildOnFilter != null ? buildOnFilter.filter : null;
     }
 
     public HashJoinKeyLayout getKeyLayout() {
@@ -284,6 +306,21 @@ public final class HashJoinStageSpec implements Plannable, QuietCloseable {
     }
 
     /**
+     * The part of the ON residual that a slot runs over the pairs of an execution whose build ran
+     * {@link #getBuildOnFilter()} over its rows: the conjuncts after the leading ones of the build
+     * alone, picked per slot as {@link #getOnFilter(int)} picks the residual; null when those
+     * conjuncts make up the whole residual, or when the stage has none of them.
+     */
+    @Nullable
+    public Function getRemainingOnFilter(int slotId) {
+        if (buildOnFilter == null) {
+            return null;
+        }
+        final ObjList<Function> workerRemainders = buildOnFilter.workerRemainders;
+        return slotId < 0 || workerRemainders == null ? buildOnFilter.remainder : workerRemainders.getQuick(slotId);
+    }
+
+    /**
      * True when the stage's pairs run a filter on the workers, an ON residual or a post-join filter,
      * so that the workers walk the stage's matches rather than leaving them to the consumer.
      */
@@ -314,8 +351,28 @@ public final class HashJoinStageSpec implements Plannable, QuietCloseable {
         return swapKeySourceLayout;
     }
 
+    /**
+     * True when the leading conjuncts of the ON residual that read the build alone run over the
+     * build's rows only in an execution whose build table holds no more rows than the probe table,
+     * since one of them can cost far more on a build row than the hash insert it spares; see
+     * {@link BuildOnFilter}. False for a stage without such conjuncts.
+     */
+    public boolean isBuildOnFilterSized() {
+        return buildOnFilter != null && buildOnFilter.isSized;
+    }
+
     public boolean isOuter() {
         return isOuter;
+    }
+
+    /**
+     * Takes the leading conjuncts of the ON residual that read the build alone, with the rest of the
+     * residual and the worker copies of both, which the planner compiled; see {@link BuildOnFilter}.
+     * The stage frees them from here on, with its other filters.
+     */
+    public void ofBuildOnFilter(BuildOnFilter buildOnFilter) {
+        assert this.buildOnFilter == null && onFilter != null && isOuter;
+        this.buildOnFilter = buildOnFilter;
     }
 
     /**
@@ -387,6 +444,15 @@ public final class HashJoinStageSpec implements Plannable, QuietCloseable {
             sink.optAttr("postJoinFilter", postFilter);
             sink.setMetadata(buildFactory.getMetadata());
             sink.optAttr(buildInput.isFilterCompiled() ? "buildJitFilter" : "buildFilter", buildFilterContext.getFilter(-1));
+            // The leading conjuncts of the residual that read the build alone, against the build
+            // scan's columns, and, when an execution runs them over the build's rows only for a build
+            // table no larger than the probe table, the rule by which it decides.
+            if (buildOnFilter != null) {
+                sink.attr("buildOnFilter").val(buildOnFilter.filter);
+                if (buildOnFilter.isSized) {
+                    sink.attr("buildOnFilterPushdown").val("when the build table holds no more rows than the probe table");
+                }
+            }
         } finally {
             sink.setMetadata(callerMetadata);
         }
@@ -403,6 +469,12 @@ public final class HashJoinStageSpec implements Plannable, QuietCloseable {
         return swapStepper;
     }
 
+    // Each worker's copy of the build ON filter, null when it is thread safe or absent.
+    @Nullable
+    ObjList<Function> getWorkerBuildOnFilters() {
+        return buildOnFilter != null ? buildOnFilter.workerFilters : null;
+    }
+
     // Each worker's copy of the ON residual, null when the residual is thread safe or absent.
     @Nullable
     ObjList<Function> getWorkerOnFilters() {
@@ -413,6 +485,13 @@ public final class HashJoinStageSpec implements Plannable, QuietCloseable {
     @Nullable
     ObjList<Function> getWorkerPostFilters() {
         return workerPostFilters;
+    }
+
+    // Each worker's copy of the rest of the residual beyond the build ON filter, null when it is
+    // thread safe or absent.
+    @Nullable
+    ObjList<Function> getWorkerRemainingOnFilters() {
+        return buildOnFilter != null ? buildOnFilter.workerRemainders : null;
     }
 
     /**
@@ -430,5 +509,104 @@ public final class HashJoinStageSpec implements Plannable, QuietCloseable {
      */
     void setPayloadCopyable(boolean isPayloadCopyable) {
         this.isPayloadCopyable = isPayloadCopyable;
+    }
+
+    /**
+     * The leading conjuncts of a LEFT join's ON residual that read the build's columns alone, which
+     * an execution runs over the build's rows rather than over the pairs, so that a build row that
+     * fails them never enters the build, and the rest of the residual, which the pairs run then. A
+     * probe row whose matches the conjuncts all drop has no match left, and reads NULLs, as the
+     * serial join's row whose pairs all fail the residual.
+     * <p>
+     * The conjuncts are the residual's AND chain in the order the residual runs them, from its first
+     * conjunct to the last before the first that reads anything else, and only those: the serial join
+     * runs the chain over each pair from left to right, stops at the first conjunct that fails, and
+     * fails the query at the first that throws. So no conjunct of a pair whose build row a leading
+     * conjunct fails runs in the serial join after that one, and dropping the row spares nothing
+     * that it would have run; a conjunct of the build alone after one that reads the probe row could
+     * drop a row whose pairs throw in that earlier conjunct.
+     * <p>
+     * The serial join never runs the conjuncts over a build row without a match, though, so a build
+     * whose conjuncts throw on one of its rows gives them up for the execution: it keeps that row
+     * and every later one of its frame, and its later frames run no conjunct, while the pairs run the
+     * whole residual, which throws for exactly the pairs whose serial join throws. A row that the
+     * conjuncts dropped before failed one of them, without a throw, so its pairs fail the whole
+     * residual too.
+     * <p>
+     * The conjuncts run over every build row, where the serial join runs them over the pairs alone,
+     * at most one per probe row for a build of unique keys, so a conjunct that can cost far more on a
+     * row than the hash insert it spares, by the fused GROUP BY's rule, see
+     * {@link io.questdb.griffin.HashJoinGroupByCandidate}, sizes the pushdown: an execution runs the
+     * conjuncts over the build's rows only when the build table holds no more rows than the probe
+     * table, as the open scans' table readers count them, the same sizes that decide whether the
+     * build's key table is presized, see {@link HashJoinBuildStage#isKeyCapacityPresizedFor}, and
+     * otherwise runs the whole residual over the pairs. A scan without a table, such as
+     * {@code read_parquet()}, fails the rule. The decision never changes a result, so a factory that
+     * runs again after the tables changed size decides again, with no recompile.
+     * <p>
+     * Takes ownership of what it is given, and frees it on close.
+     */
+    public static final class BuildOnFilter implements QuietCloseable {
+        // The leading conjuncts, compiled against the build scan's columns.
+        private final Function filter;
+        private final boolean isSized;
+        // The rest of the residual, compiled against the joined rows' metadata; null when the leading
+        // conjuncts make up the whole residual.
+        @Nullable
+        private Function remainder;
+        // Each worker's copy of the leading conjuncts and of the rest; null when thread safe or absent.
+        @Nullable
+        private ObjList<Function> workerFilters;
+        @Nullable
+        private ObjList<Function> workerRemainders;
+
+        /**
+         * @param filter  the leading conjuncts of the residual that read the build alone, compiled
+         *                against the build scan's columns
+         * @param isSized true when one of the conjuncts can cost far more on a build row than the
+         *                hash insert it spares, so that an execution runs them over the build's rows
+         *                only for a build table no larger than the probe table
+         */
+        public BuildOnFilter(Function filter, boolean isSized) {
+            this.filter = filter;
+            this.isSized = isSized;
+        }
+
+        @Override
+        public void close() {
+            Throwable failure = Misc.freeObjListBestEffort(null, workerFilters);
+            workerFilters = null;
+            failure = Misc.freeBestEffort(failure, filter);
+            failure = Misc.freeObjListBestEffort(failure, workerRemainders);
+            workerRemainders = null;
+            failure = Misc.freeBestEffort(failure, remainder);
+            remainder = null;
+            CairoException.rethrowCleanupFailure(failure);
+        }
+
+        /**
+         * Takes the rest of the residual, after the leading conjuncts, compiled against the joined
+         * rows' metadata; null when the conjuncts make up the whole residual.
+         */
+        public void ofRemainder(@Nullable Function remainder) {
+            assert this.remainder == null;
+            this.remainder = remainder;
+        }
+
+        /**
+         * Takes each worker's copy of the leading conjuncts; null when they are thread safe.
+         */
+        public void ofWorkerFilters(@Nullable ObjList<Function> workerFilters) {
+            assert this.workerFilters == null;
+            this.workerFilters = workerFilters;
+        }
+
+        /**
+         * Takes each worker's copy of the rest of the residual; null when it is thread safe or absent.
+         */
+        public void ofWorkerRemainders(@Nullable ObjList<Function> workerRemainders) {
+            assert this.workerRemainders == null && (workerRemainders == null || remainder != null);
+            this.workerRemainders = workerRemainders;
+        }
     }
 }

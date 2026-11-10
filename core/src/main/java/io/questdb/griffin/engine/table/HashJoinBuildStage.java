@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.Function;
@@ -110,6 +111,14 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
  * join's stage decides it in every execution instead, from the same table sizes, so its executions
  * need no such check; see {@link #isKeyCapacityPresizedFor}.
  * <p>
+ * A parallel hash join's stage may run the leading conjuncts of a LEFT join's ON residual that read
+ * the build alone over the build's rows, as the fused GROUP BY runs its ON condition on the build
+ * alone; see {@link HashJoinStageSpec.BuildOnFilter}. Each execution decides whether it does, see
+ * {@link #isBuildOnFilterApplied()}: always, or, for conjuncts that the size rule governs, only
+ * when the presize decision holds. A build whose conjuncts throw on a row gives them up for the
+ * execution rather than fail it, since the serial join may never run them over that row; the
+ * fused GROUP BY's build fails instead.
+ * <p>
  * A parallel hash join's stage builds in its input's scan order, so that each key's rows chain as
  * the serial hash join chains them over the input's cursor, and keeps one more slot than the
  * workers and the owner: the output slot, whose probe and payload reader the join's consumer
@@ -150,6 +159,9 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
     private final long copyMaxSize;
     private final double copyMinProbeRatio;
     private final double copyParallelMinProbeRatio;
+    // True when an execution runs the build ON filter only when the key table is presized, as a
+    // parallel hash join's stage does for conjuncts that the size rule governs.
+    private final boolean isBuildOnFilterSized;
     // The fused GROUP BY's compile-time presize decision; see isKeyCapacityPresizedPerExecution.
     private final boolean isCompiledKeyCapacityPresized;
     // True when every execution decides from the open scans' table sizes whether the key table is
@@ -190,6 +202,12 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
     // frame's rows go through the filters.
     private boolean isBuildFiltered;
     private boolean isBuildFiltersInitialized;
+    // True when a parallel hash join's build gave the build ON filter up, once it threw on a row; a
+    // task that sees it runs the filter over no more frames. Any task of the build's rounds may set
+    // it, and the owner reads it once the rounds returned.
+    private volatile boolean isBuildOnFilterAbandoned;
+    // True when the open cursor's build runs the build ON filter over its rows, as init() decided.
+    private boolean isBuildOnFilterActive;
     // True when the open cursor's build has more than one partition, whose probes are a class of their own.
     private boolean isBuildPartitioned;
     // True once prepareBuild() loaded the open cursor's build frames.
@@ -260,15 +278,15 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
             boolean isKeyCapacityPresized,
             int workerCount
     ) {
-        this(configuration, buildFactory, buildFilterContext, buildOnFilter, workerBuildOnFilters, keyLayout,
+        this(configuration, buildFactory, buildFilterContext, buildOnFilter, workerBuildOnFilters, false, keyLayout,
                 payloadBuildColumns, probeColumnCount, null, 0, isKeyCapacityPresized, false, ORDER_ASC, workerCount, 0);
     }
 
     /**
-     * The stage of a parallel hash join: it builds in the build input's scan order, decides in every
-     * execution whether the key table is presized, see {@link #isKeyCapacityPresizedFor}, and keeps
-     * an output slot for the join's consumer, see {@link #getOutputSlot()}. Every build column is a
-     * payload column, and the join has no ON filter on build columns alone.
+     * The stage of a parallel hash join without an ON filter on build columns alone: it builds in the
+     * build input's scan order, decides in every execution whether the key table is presized, see
+     * {@link #isKeyCapacityPresizedFor}, and keeps an output slot for the join's consumer, see
+     * {@link #getOutputSlot()}. Every build column is a payload column.
      *
      * @param buildOrder the build input's scan order, {@code ORDER_ASC} or {@code ORDER_DESC}
      */
@@ -282,16 +300,25 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
             int buildOrder,
             int workerCount
     ) {
-        this(configuration, buildFactory, buildFilterContext, keyLayout, payloadBuildColumns, probeColumnCount,
-                null, 0, buildOrder, workerCount);
+        this(configuration, buildFactory, buildFilterContext, null, null, false, keyLayout, payloadBuildColumns,
+                probeColumnCount, null, 0, false, true, buildOrder, workerCount, 1);
     }
 
     /**
-     * The later stage of a parallel hash join whose first join may swap its inputs, as
+     * A stage of a parallel hash join, as
      * {@link #HashJoinBuildStage(CairoConfiguration, RecordCursorFactory, AsyncFilterContext, HashJoinKeyLayout, IntList, int, int, int)}
-     * takes its arguments, with the key layout of the second key source; see
-     * {@link #setKeySourceSwapped(boolean)}.
+     * takes its arguments, with the leading conjuncts of a LEFT join's ON residual that read the build
+     * alone, which an execution may run over the build's rows, see {@link #isBuildOnFilterApplied()},
+     * and, for a later stage of a join whose first join may swap its inputs, the key layout of the
+     * second key source; see {@link #setKeySourceSwapped(boolean)}.
      *
+     * @param buildOnFilter            the leading conjuncts of the ON residual that read the build
+     *                                 alone, compiled against the build scan's columns, borrowed; null
+     *                                 without them
+     * @param workerBuildOnFilters     each worker's copy of them, borrowed; null when they are thread
+     *                                 safe or absent
+     * @param isBuildOnFilterSized     true when an execution runs them over the build's rows only when
+     *                                 it presizes the key table
      * @param swapKeySourceLayout      the keys with the probe side read from the second key source:
      *                                 the same build keys, of the same types; null for a stage with
      *                                 one key source
@@ -301,6 +328,9 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
             CairoConfiguration configuration,
             RecordCursorFactory buildFactory,
             AsyncFilterContext buildFilterContext,
+            @Nullable Function buildOnFilter,
+            @Nullable ObjList<Function> workerBuildOnFilters,
+            boolean isBuildOnFilterSized,
             HashJoinKeyLayout keyLayout,
             IntList payloadBuildColumns,
             int probeColumnCount,
@@ -309,8 +339,8 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
             int buildOrder,
             int workerCount
     ) {
-        this(configuration, buildFactory, buildFilterContext, null, null, keyLayout, payloadBuildColumns,
-                probeColumnCount, swapKeySourceLayout, swapKeySourceColumnCount, false, true, buildOrder, workerCount, 1);
+        this(configuration, buildFactory, buildFilterContext, buildOnFilter, workerBuildOnFilters, isBuildOnFilterSized, keyLayout,
+                payloadBuildColumns, probeColumnCount, swapKeySourceLayout, swapKeySourceColumnCount, false, true, buildOrder, workerCount, 1);
     }
 
     private HashJoinBuildStage(
@@ -319,6 +349,7 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
             AsyncFilterContext buildFilterContext,
             @Nullable Function buildOnFilter,
             @Nullable ObjList<Function> workerBuildOnFilters,
+            boolean isBuildOnFilterSized,
             HashJoinKeyLayout keyLayout,
             IntList payloadBuildColumns,
             int probeColumnCount,
@@ -337,8 +368,11 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
         assert swapKeySourceLayout == null || swapKeySourceLayout.getSymbolKeyProbeColumns().size() == keyLayout.getSymbolKeyProbeColumns().size();
         this.buildFactory = buildFactory;
         this.buildFilterContext = buildFilterContext;
+        // Only a parallel hash join's stage decides per execution whether it runs the build ON filter.
+        assert !isBuildOnFilterSized || (buildOnFilter != null && isKeyCapacityPresizedPerExecution);
         this.buildOnFilter = buildOnFilter;
         this.workerBuildOnFilters = workerBuildOnFilters;
+        this.isBuildOnFilterSized = isBuildOnFilterSized;
         this.isKeyStaged = keyLayout.isKeyStaged();
         this.isSymbolKey = keyLayout.isSymbolKey();
         this.isCompiledKeyCapacityPresized = isKeyCapacityPresized;
@@ -545,6 +579,8 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
         failure = Misc.clearBestEffort(failure, buildFilterContext);
         frozen = null;
         isBuildFiltered = false;
+        isBuildOnFilterActive = false;
+        isBuildOnFilterAbandoned = false;
         isBuildPartitioned = false;
         isBuildUnique = false;
         isBuiltInRounds = false;
@@ -713,6 +749,7 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
         buildFrames.open(buildFactory, buildOrder, executionContext);
         isKeyCapacityPresized = isCompiledKeyCapacityPresized;
         checkTableRowCounts(probeSymbols, executionContext);
+        isBuildOnFilterActive = buildOnFilter != null;
         initBuildFilters(executionContext);
     }
 
@@ -733,7 +770,20 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
         this.probeSymbols = probeSymbols;
         buildFrames.open(buildCursor, buildFactory.getMetadata(), executionContext);
         isKeyCapacityPresized = isKeyCapacityPresizedFor(probeSymbols, buildCursor);
+        // The size rule reads the sizes that the presize decision reads.
+        isBuildOnFilterActive = buildOnFilter != null && (!isBuildOnFilterSized || isKeyCapacityPresized);
         initBuildFilters(executionContext);
+    }
+
+    /**
+     * True when the open cursor's build ran the build ON filter over its rows: the build has one, the
+     * execution runs it, as {@link #init(SymbolTableSource, SqlExecutionContext, PageFrameCursor)}
+     * decided, and, for a parallel hash join, the filter threw on none of the rows it ran over, which
+     * would have made the build give it up. The pairs of a build that ran it run the rest of the ON
+     * residual alone, and the pairs of any other build the whole residual. Read once the build ran.
+     */
+    public boolean isBuildOnFilterApplied() {
+        return isBuildOnFilterActive && !isBuildOnFilterAbandoned;
     }
 
     /**
@@ -934,6 +984,16 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
     }
 
     /**
+     * True when a failure of a parallel hash join's build ON filter on a row leaves the filter to
+     * the pairs, see {@link #applyAbandonableBuildOnFilter}: a value that the filter cannot
+     * convert, compute or compare, rather than a cancellation, a memory limit breach or a critical
+     * error, which fail the build as they fail any.
+     */
+    private static boolean isAbandonable(CairoException e) {
+        return !e.isInterruption() && !e.isOutOfMemory() && !e.isCritical();
+    }
+
+    /**
      * One task of a parallel build per build frame: filters the frame on the slot's own filters and
      * sorts the rows it keeps into the frame's hash buckets.
      */
@@ -974,6 +1034,64 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
             }
         } finally {
             host.release(slotId);
+        }
+    }
+
+    /**
+     * Runs a parallel hash join's build ON filter over the frame's rows, or over the rows its WHERE
+     * filter kept, and leaves in {@code rows} the ones it passes, ascending. Once the filter fails on
+     * a row, see {@link #isAbandonable}, the build gives it up for the execution, see
+     * {@link HashJoinStageSpec.BuildOnFilter}: it keeps that row and every later one of the frame, and
+     * marks the filter abandoned, so that later frames run it no more. The slot's copy of the filter
+     * that failed runs no more in the execution.
+     *
+     * @param isPreFiltered true when {@code rows} holds the rows that the WHERE filter kept, false
+     *                      when it is empty and the filter runs over the frame's rows
+     */
+    private void applyAbandonableBuildOnFilter(
+            Function onFilter,
+            boolean isPreFiltered,
+            DirectLongList rows,
+            PageFrameMemoryRecord record,
+            long rowCount
+    ) {
+        final long n = isPreFiltered ? rows.size() : rowCount;
+        long kept = 0;
+        long p = 0;
+        for (; p < n; p++) {
+            final long row = isPreFiltered ? rows.get(p) : p;
+            record.setRowIndex(row);
+            final boolean isPassed;
+            try {
+                isPassed = onFilter.getBool(record);
+            } catch (CairoException e) {
+                if (!isAbandonable(e)) {
+                    throw e;
+                }
+                break;
+            } catch (ImplicitCastException e) {
+                break;
+            }
+            if (isPassed) {
+                if (isPreFiltered) {
+                    rows.set(kept++, row);
+                } else {
+                    rows.add(row);
+                }
+            }
+        }
+        if (p < n) {
+            isBuildOnFilterAbandoned = true;
+            for (; p < n; p++) {
+                if (isPreFiltered) {
+                    rows.set(kept++, rows.get(p));
+                } else {
+                    rows.add(p);
+                }
+            }
+        }
+        if (isPreFiltered) {
+            rows.setPos(kept);
         }
     }
 
@@ -1206,7 +1324,9 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
      * Leaves in {@code rows} the rows of the frame that the build's WHERE filter and ON filter
      * both pass, evaluated on the slot's own copies of them. The compiled filter reads raw column
      * addresses, so column tops and Parquet type casts, which the record resolves per row, fall
-     * back to the interpreted filter.
+     * back to the interpreted filter. The ON filter runs only in an execution that runs it, see
+     * {@link #isBuildOnFilterApplied()}, and a parallel hash join's build that gave it up keeps the
+     * frame's rows that the WHERE filter kept, or all of them.
      */
     private void filterBuildFrame(int slotId, PageFrameMemory frameMemory, PageFrameMemoryRecord record, long rowCount, DirectLongList rows) {
         rows.clear();
@@ -1231,8 +1351,22 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
                 );
             }
         }
+        if (!isBuildOnFilterActive) {
+            // The WHERE filter alone filters the build, so it ran above.
+            assert filter != null;
+            return;
+        }
         final Function onFilter = slotId == -1 || workerBuildOnFilters == null ? buildOnFilter : workerBuildOnFilters.getQuick(slotId);
-        if (onFilter != null) {
+        if (isKeyCapacityPresizedPerExecution) {
+            // A parallel hash join's stage.
+            if (!isBuildOnFilterAbandoned) {
+                applyAbandonableBuildOnFilter(onFilter, filter != null, rows, record, rowCount);
+            } else if (filter == null) {
+                for (long r = 0; r < rowCount; r++) {
+                    rows.add(r);
+                }
+            }
+        } else {
             if (filter == null) {
                 AsyncFilterUtils.applyFilter(onFilter, rows, record, rowCount);
             } else {
@@ -1578,7 +1712,7 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
         buildCount++;
         buildFrames.loadFrames();
         buildFilterContext.initMemoryPools(buildFrames.getAddressCache(), memoryTracker);
-        isBuildFiltered = buildFilterContext.getFilter(-1) != null || buildOnFilter != null;
+        isBuildFiltered = buildFilterContext.getFilter(-1) != null || isBuildOnFilterActive;
         isLargeBuild = isParallelBuildCapable && buildFrames.getFrameCount() > 0 && buildFrames.getRowCount() >= parallelBuildMinRows;
         if (!isLargeBuild) {
             rowCountHint = isBuildFiltered ? -1 : buildFrames.getRowCount();

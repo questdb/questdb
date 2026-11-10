@@ -97,7 +97,10 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
  * with an ON residual or a post-join filter runs them over each pair on the slot's flat joined
  * record, with the slot's copies of the filters, and the workers walk the matches of every stage up
  * to the last such stage, whose filters may read them; the stages after it hand their chains to the
- * consumer. The task stops at a probe row's boundary once the frame's tuples reach the task's cap,
+ * consumer. The leading conjuncts of a LEFT join's ON residual that read the build alone may filter
+ * the build's rows instead, see {@link HashJoinStageSpec.BuildOnFilter}: an execution whose build
+ * ran them runs the rest of the residual over the pairs, and any other one the whole residual. The
+ * task stops at a probe row's boundary once the frame's tuples reach the task's cap,
  * {@code max(cairo.sql.parallel.hash.join.task.output.max.rows, the frame's rows)}, and records in the
  * ring where the frame's continuation resumes: the consumer, once it has read those tuples, joins the
  * rest of the frame in chunks of the same cap on the owner's slot, see {@link #continueFrame}. One
@@ -234,6 +237,9 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
                     configuration,
                     buildInput.getFactory(),
                     buildInput.getFilterContext(),
+                    stageSpec.getBuildOnFilter(),
+                    stageSpec.getWorkerBuildOnFilters(),
+                    stageSpec.isBuildOnFilterSized(),
                     keyLayout,
                     stageSpec.getPayloadColumns(),
                     probeColumnCount,
@@ -335,6 +341,7 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
             for (int k = 0, n = specs.size(); k < n; k++) {
                 final HashJoinStageSpec stageSpec = specs.getQuick(k);
                 failure = cursorClosed(failure, stageSpec.getOnFilter(-1), stageSpec.getWorkerOnFilters());
+                failure = cursorClosed(failure, stageSpec.getRemainingOnFilter(-1), stageSpec.getWorkerRemainingOnFilters());
                 failure = cursorClosed(failure, stageSpec.getPostFilter(-1), stageSpec.getWorkerPostFilters());
             }
         }
@@ -491,6 +498,7 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
         for (int k = 0, n = specs.size(); k < n; k++) {
             final HashJoinStageSpec stageSpec = specs.getQuick(k);
             initFilter(stageSpec.getOnFilter(-1), stageSpec.getWorkerOnFilters(), executionContext);
+            initFilter(stageSpec.getRemainingOnFilter(-1), stageSpec.getWorkerRemainingOnFilters(), executionContext);
             initFilter(stageSpec.getPostFilter(-1), stageSpec.getWorkerPostFilters(), executionContext);
         }
     }
@@ -540,8 +548,8 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
         for (int k = 0; k < stageCount; k++) {
             final HashJoinBuildStage stage = executionStages.getQuick(k);
             // The planner gives every input a memory pool per worker and, for a filter that is not
-            // thread safe, a copy of it per worker, and a join stage has no build ON filter, so any
-            // stage can build on a worker's slot.
+            // thread safe, a copy of it per worker, a build ON filter included, so any stage can
+            // build on a worker's slot.
             assert stage.isConcurrentBuildCapable();
             if (!stage.prepareBuild()) {
                 smallCount++;
@@ -580,6 +588,19 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
         boolean hasRows = true;
         for (int k = 0; k < stageCount; k++) {
             final HashJoinBuildStage stage = executionStages.getQuick(k);
+            final HashJoinStageSpec stageSpec = specs.getQuick(k);
+            if (stageSpec.getBuildOnFilter() != null) {
+                // A build that ran the leading conjuncts of the ON residual over its rows leaves the
+                // pairs the rest of the residual; any other build, the whole residual. A swapped
+                // execution's first stage is an INNER join's, which has no residual.
+                final boolean isApplied = stage.isBuildOnFilterApplied();
+                for (int i = -1; i < workerCount; i++) {
+                    getSlot(i).getStageProbe(k).ofFilters(
+                            isApplied ? stageSpec.getRemainingOnFilter(i) : stageSpec.getOnFilter(i),
+                            stageSpec.getPostFilter(i)
+                    );
+                }
+            }
             stage.bindSymbolKeyTranslation(circuitBreaker);
             stage.bindProbes();
             // Swapped, a later stage's keys read the left input's columns off the first stage's
@@ -766,6 +787,7 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
         for (int k = 0, n = specs.size(); k < n; k++) {
             final HashJoinStageSpec stageSpec = specs.getQuick(k);
             toTop(stageSpec.getOnFilter(-1));
+            toTop(stageSpec.getRemainingOnFilter(-1));
             toTop(stageSpec.getPostFilter(-1));
         }
     }
