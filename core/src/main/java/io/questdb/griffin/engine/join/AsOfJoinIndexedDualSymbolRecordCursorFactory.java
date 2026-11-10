@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.join;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.idx.CoveringRowCursor;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
@@ -41,6 +42,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.JoinContext;
+import io.questdb.std.IntList;
 import io.questdb.std.LongLongHashMap;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
@@ -48,17 +50,24 @@ import io.questdb.std.Numbers;
 import io.questdb.std.Rows;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.Arrays;
+
 /**
- * ASOF JOIN on two SYMBOL keys, the first of which is indexed on the right-hand table. Per master
- * row, it walks the index rows of the first key back from the ASOF position until the second key
- * matches, so a lookup costs the rows of its own first key, not the rows of every key in between as
- * the Dense join's scan does. It remembers, per key pair, the last position and its match: a later
- * position of the pair reads only the index rows above the last one. Taken on the asof_index hint.
+ * ASOF JOIN on two SYMBOL keys, the first of which is indexed on the right-hand table, taken on the
+ * asof_index hint. Per first key, it walks that key's index rows back from the ASOF position and
+ * records the latest row of every second key it meets, until the master row's second key turns up;
+ * a later position reads only the index rows above the last one. Each index row of a first key is
+ * read once per execution, however many second keys ask for it, so a join costs the rows of its
+ * master's first keys, not the rows of every key as the Dense join's scan does. The second key is
+ * read from the index's covering sidecar when the index includes it, else from its column.
  */
 public final class AsOfJoinIndexedDualSymbolRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private static final long NO_ENTRY = Long.MIN_VALUE + 1;
     private final AsOfJoinIndexedDualSymbolRecordCursor cursor;
     private final SymbolJoinKeyMapping indexedKeyMapping;
+    // The covering sidecar include index of the second key, or -1; its getCursor() argument, or null
+    private final int[] otherIncludeColumns;
+    private final int otherIncludeIndex;
     private final SymbolJoinKeyMapping otherKeyMapping;
     private final int slaveIndexedColumnIndex;
     private final int slaveOtherColumnIndex;
@@ -67,6 +76,8 @@ public final class AsOfJoinIndexedDualSymbolRecordCursorFactory extends Abstract
     /**
      * @param slaveIndexedColumnIndex the indexed slave column of the first key, which indexedKeyMapping translates to
      * @param slaveOtherColumnIndex   the slave column of the second key, which otherKeyMapping translates to
+     * @param otherIncludeIndex       the second key's include index in the covering sidecar of the first
+     *                                key's index, or -1 when the index does not include it
      */
     public AsOfJoinIndexedDualSymbolRecordCursorFactory(
             CairoConfiguration configuration,
@@ -78,6 +89,7 @@ public final class AsOfJoinIndexedDualSymbolRecordCursorFactory extends Abstract
             int slaveOtherColumnIndex,
             SymbolJoinKeyMapping indexedKeyMapping,
             SymbolJoinKeyMapping otherKeyMapping,
+            int otherIncludeIndex,
             JoinContext joinContext,
             long toleranceInterval
     ) {
@@ -87,6 +99,8 @@ public final class AsOfJoinIndexedDualSymbolRecordCursorFactory extends Abstract
         this.slaveOtherColumnIndex = slaveOtherColumnIndex;
         this.indexedKeyMapping = indexedKeyMapping;
         this.otherKeyMapping = otherKeyMapping;
+        this.otherIncludeIndex = otherIncludeIndex;
+        this.otherIncludeColumns = otherIncludeIndex >= 0 ? new int[]{otherIncludeIndex} : null;
         this.toleranceInterval = toleranceInterval;
         final RecordMetadata masterMeta = masterFactory.getMetadata();
         final RecordMetadata slaveMeta = slaveFactory.getMetadata();
@@ -139,6 +153,10 @@ public final class AsOfJoinIndexedDualSymbolRecordCursorFactory extends Abstract
     public void toPlan(PlanSink sink) {
         sink.type("AsOf Join Indexed Dual Symbol");
         sink.attr("condition").val(joinContext);
+        if (otherIncludeIndex >= 0) {
+            // the second key is read from the index's covering sidecar
+            sink.attr("covered").val(otherIncludeIndex);
+        }
         sink.child(masterFactory);
         sink.child(slaveFactory);
     }
@@ -156,9 +174,17 @@ public final class AsOfJoinIndexedDualSymbolRecordCursorFactory extends Abstract
     }
 
     private class AsOfJoinIndexedDualSymbolRecordCursor extends AbstractKeyedAsOfJoinRecordCursor {
-        // key pair -> the ASOF position of its last lookup, and the match found there (Long.MIN_VALUE: none)
-        private final LongLongHashMap lastMatches = new LongLongHashMap(64, 0.5, NO_ENTRY, NO_ENTRY);
-        private final LongLongHashMap lastPositions = new LongLongHashMap(64, 0.5, NO_ENTRY, NO_ENTRY);
+        // (first key, second key) -> its row in the catalog of the first key, see catalogPositions
+        private final LongLongHashMap catalogRows = new LongLongHashMap(64, 0.5, NO_ENTRY, NO_ENTRY);
+        // (first key, second key) -> the ASOF position of the pair's last lookup, and its match there
+        private final LongLongHashMap pairMatches = new LongLongHashMap(64, 0.5, NO_ENTRY, NO_ENTRY);
+        private final LongLongHashMap pairPositions = new LongLongHashMap(64, 0.5, NO_ENTRY, NO_ENTRY);
+        // The second keys a walk met, and the first row of each, for a catalog of the walk's first key
+        private final IntList walkOtherKeys = new IntList();
+        private final LongLongHashMap walkRows = new LongLongHashMap(64, 0.5, NO_ENTRY, NO_ENTRY);
+        // Per first key: the position of its catalog, the latest row of every second key at or below
+        // it, which a walk that read all of the key's rows at or below it recorded; NO_ENTRY: none
+        private long[] catalogPositions = new long[0];
 
         public AsOfJoinIndexedDualSymbolRecordCursor(
                 int columnSplit,
@@ -187,8 +213,7 @@ public final class AsOfJoinIndexedDualSymbolRecordCursorFactory extends Abstract
             super.of(masterCursor, slaveCursor, circuitBreaker);
             indexedKeyMapping.of(slaveCursor);
             otherKeyMapping.of(slaveCursor);
-            lastPositions.clear();
-            lastMatches.clear();
+            resetMemos();
         }
 
         @Override
@@ -200,13 +225,25 @@ public final class AsOfJoinIndexedDualSymbolRecordCursorFactory extends Abstract
         @Override
         public void toTop() {
             super.toTop();
-            lastPositions.clear();
-            lastMatches.clear();
+            resetMemos();
         }
 
-        // The latest row at or below hiRowId, and above loRowId unless that is Long.MIN_VALUE, whose
-        // indexed key is indexKey and whose other key is otherKey; Long.MIN_VALUE when there is none.
-        private long findLatest(int indexKey, int otherKey, long loRowId, long hiRowId) {
+        private long catalogPosition(int indexKey) {
+            return indexKey < catalogPositions.length ? catalogPositions[indexKey] : NO_ENTRY;
+        }
+
+        private void resetMemos() {
+            pairPositions.clear();
+            pairMatches.clear();
+            catalogRows.clear();
+            Arrays.fill(catalogPositions, NO_ENTRY);
+        }
+
+        // Walks the first key's index rows from hiRowId down, above loRowId unless that is
+        // Long.MIN_VALUE, until a row whose second key is otherKey, and returns that row; Long.MIN_VALUE
+        // when there is none. With record, it also records the first row of every second key it meets
+        // in walkOtherKeys/walkRows.
+        private long walkDown(int indexKey, long hiRowId, long loRowId, int otherKey, boolean record) {
             final int frameHi = Rows.toPartitionIndex(hiRowId);
             final int frameLo = loRowId == Long.MIN_VALUE ? 0 : Rows.toPartitionIndex(loRowId);
             for (int frameIndex = frameHi; frameIndex >= frameLo; frameIndex--) {
@@ -216,25 +253,34 @@ public final class AsOfJoinIndexedDualSymbolRecordCursorFactory extends Abstract
                 }
                 final long frameRowLo = slaveTimeFrame.getRowLo();
                 final long localHi = frameIndex == frameHi ? Rows.toLocalRowID(hiRowId) : slaveTimeFrame.getRowHi() - 1;
-                final long localLo = frameIndex == frameLo && loRowId != Long.MIN_VALUE
-                        ? Rows.toLocalRowID(loRowId) + 1
-                        : frameRowLo;
+                final long localLo = frameIndex == frameLo && loRowId != Long.MIN_VALUE ? Rows.toLocalRowID(loRowId) + 1 : frameRowLo;
                 if (localLo > localHi) {
                     continue;
                 }
-                final IndexReader indexReader = slaveTimeFrameCursor.getIndexReaderForCurrentFrame(
-                        slaveIndexedColumnIndex,
-                        IndexReader.DIR_BACKWARD
-                );
+                final IndexReader indexReader = slaveTimeFrameCursor.getIndexReaderForCurrentFrame(slaveIndexedColumnIndex, IndexReader.DIR_BACKWARD);
                 // the index numbers the frame's rows from getIndexRowLoForCurrentFrame(), and the
                 // cursor returns them relative to its minValue
                 final long indexRowLo = slaveTimeFrameCursor.getIndexRowLoForCurrentFrame();
-                try (RowCursor rowCursor = indexReader.getCursor(indexKey, indexRowLo + localLo, indexRowLo + localHi)) {
+                try (RowCursor rowCursor = otherIncludeColumns != null
+                        ? indexReader.getCursor(indexKey, indexRowLo + localLo, indexRowLo + localHi, otherIncludeColumns)
+                        : indexReader.getCursor(indexKey, indexRowLo + localLo, indexRowLo + localHi)) {
+                    final CoveringRowCursor covering = rowCursor instanceof CoveringRowCursor c && c.isCoveredAvailable(otherIncludeIndex) ? c : null;
                     while (rowCursor.hasNext()) {
                         final long rowId = Rows.toRowID(frameIndex, localLo + rowCursor.next());
-                        slaveTimeFrameCursor.recordAt(slaveRecB, rowId);
-                        if (slaveRecB.getInt(slaveOtherColumnIndex) == otherKey) {
+                        final int rowOtherKey;
+                        if (covering != null) {
+                            rowOtherKey = covering.getCoveredInt(otherIncludeIndex);
+                        } else {
+                            slaveTimeFrameCursor.recordAt(slaveRecB, rowId);
+                            rowOtherKey = slaveRecB.getInt(slaveOtherColumnIndex);
+                        }
+                        if (rowOtherKey == otherKey) {
                             return rowId;
+                        }
+                        if (record && walkRows.get(rowOtherKey) == NO_ENTRY) {
+                            // downwards: the first row met is the second key's latest
+                            walkRows.put(rowOtherKey, rowId);
+                            walkOtherKeys.add(rowOtherKey);
                         }
                     }
                 }
@@ -251,21 +297,49 @@ public final class AsOfJoinIndexedDualSymbolRecordCursorFactory extends Abstract
                 record.hasSlave(false);
                 return;
             }
+            final int indexKey = TableUtils.toIndexKey(key0);
             final long position = slaveRecB.getRowId();
             final long pair = pack(key0, key1);
-            final long lastPosition = lastPositions.get(pair);
+            final long lastPosition = pairPositions.get(pair);
             long matchRowId;
             if (lastPosition != NO_ENTRY && lastPosition <= position) {
-                // the rows at or below the last position hold the last match at best
-                matchRowId = findLatest(TableUtils.toIndexKey(key0), key1, lastPosition, position);
+                // the rows at or below the pair's last position hold its last match at best
+                matchRowId = walkDown(indexKey, position, lastPosition, key1, false);
                 if (matchRowId == Long.MIN_VALUE) {
-                    matchRowId = lastMatches.get(pair);
+                    matchRowId = pairMatches.get(pair);
                 }
             } else {
-                matchRowId = findLatest(TableUtils.toIndexKey(key0), key1, Long.MIN_VALUE, position);
+                final long catalogPosition = catalogPosition(indexKey);
+                if (catalogPosition != NO_ENTRY && catalogPosition <= position) {
+                    // the rows at or below the catalog's position hold the catalog's row at best
+                    matchRowId = walkDown(indexKey, position, catalogPosition, key1, false);
+                    if (matchRowId == Long.MIN_VALUE) {
+                        final long catalogRow = catalogRows.get(pair);
+                        matchRowId = catalogRow == NO_ENTRY ? Long.MIN_VALUE : catalogRow;
+                    }
+                } else {
+                    // A walk that reads all of the key's rows at or below the position without the
+                    // pair records the latest row of every other pair met: the key's catalog.
+                    walkOtherKeys.clear();
+                    walkRows.clear();
+                    matchRowId = walkDown(indexKey, position, Long.MIN_VALUE, key1, true);
+                    if (matchRowId == Long.MIN_VALUE) {
+                        if (indexKey >= catalogPositions.length) {
+                            final int capacity = Math.max(indexKey + 1, catalogPositions.length * 2);
+                            final int oldLength = catalogPositions.length;
+                            catalogPositions = Arrays.copyOf(catalogPositions, capacity);
+                            Arrays.fill(catalogPositions, oldLength, capacity, NO_ENTRY);
+                        }
+                        catalogPositions[indexKey] = position;
+                        for (int i = 0, n = walkOtherKeys.size(); i < n; i++) {
+                            final int otherKey = walkOtherKeys.getQuick(i);
+                            catalogRows.put(pack(key0, otherKey), walkRows.get(otherKey));
+                        }
+                    }
+                }
             }
-            lastPositions.put(pair, position);
-            lastMatches.put(pair, matchRowId);
+            pairPositions.put(pair, position);
+            pairMatches.put(pair, matchRowId);
             if (matchRowId == Long.MIN_VALUE) {
                 record.hasSlave(false);
                 return;

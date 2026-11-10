@@ -7640,6 +7640,50 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
+    // The position of column otherColumn among the columns that the index of keyColumn covers, both
+    // columns of the factory's metadata, read from the table's reader; -1 when the index does not
+    // cover it, or when the factory is not the table's, under projections only.
+    private static int coveringIncludeIndex(
+            SqlExecutionContext executionContext,
+            RecordCursorFactory factory,
+            RecordMetadata metadata,
+            int keyColumn,
+            int otherColumn
+    ) {
+        // through projections to the table's own factory, following the columns by position
+        while (factory.getTableToken() == null) {
+            if (!(factory instanceof SelectedRecordCursorFactory selected)) {
+                return -1;
+            }
+            keyColumn = selected.getColumnCrossIndex().getQuick(keyColumn);
+            otherColumn = selected.getColumnCrossIndex().getQuick(otherColumn);
+            factory = selected.getBaseFactory();
+            metadata = factory.getMetadata();
+        }
+        final TableToken tableToken = factory.getTableToken();
+        try (TableReader reader = executionContext.getReader(tableToken)) {
+            final TableReaderMetadata readerMetadata = reader.getMetadata();
+            final int readerKeyColumn = readerMetadata.getColumnIndexQuiet(metadata.getColumnName(keyColumn));
+            final int readerOtherColumn = readerMetadata.getColumnIndexQuiet(metadata.getColumnName(otherColumn));
+            if (readerKeyColumn < 0 || readerOtherColumn < 0) {
+                return -1;
+            }
+            final IntList coveringColumns = readerMetadata.getColumnMetadata(readerKeyColumn).getCoveringColumnIndices();
+            if (coveringColumns == null) {
+                return -1;
+            }
+            final int otherWriterIndex = readerMetadata.getWriterIndex(readerOtherColumn);
+            for (int c = 0, n = coveringColumns.size(); c < n; c++) {
+                if (coveringColumns.getQuick(c) == otherWriterIndex) {
+                    return c;
+                }
+            }
+            return -1;
+        } catch (CairoException e) {
+            return -1;
+        }
+    }
+
     // The slave column of the single SYMBOL join key of a HORIZON JOIN whose ASOF lookup can read the
     // slave's symbol index (HorizonJoinTimeFrameHelper#enableIndexedKeyLookup), or -1. The no_index
     // hint keeps the scan.
@@ -8544,16 +8588,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             // Two symbol keys, one of them indexed: walk its index rows back to the other key.
                             final SymbolJoinKeyMapping[] mappings = ((ChainedSymbolShortCircuit) symbolShortCircuit).mappings();
                             final int indexed = slaveMetadata.isColumnIndexed(listColumnFilterA.getColumnIndexFactored(0)) ? 0 : 1;
+                            final int slaveIndexedColumn = listColumnFilterA.getColumnIndexFactored(indexed);
+                            final int slaveOtherColumn = listColumnFilterA.getColumnIndexFactored(1 - indexed);
+                            // the other key's position among the columns the index covers, if it does
+                            final int otherIncludeIndex = coveringIncludeIndex(executionContext, slave, slaveMetadata, slaveIndexedColumn, slaveOtherColumn);
                             return new AsOfJoinIndexedDualSymbolRecordCursorFactory(
                                     configuration,
                                     joinMetadata,
                                     master,
                                     slave,
                                     joinColumnSplit,
-                                    listColumnFilterA.getColumnIndexFactored(indexed),
-                                    listColumnFilterA.getColumnIndexFactored(1 - indexed),
+                                    slaveIndexedColumn,
+                                    slaveOtherColumn,
                                     mappings[indexed],
                                     mappings[1 - indexed],
+                                    otherIncludeIndex,
                                     slaveContext,
                                     toleranceInterval
                             );

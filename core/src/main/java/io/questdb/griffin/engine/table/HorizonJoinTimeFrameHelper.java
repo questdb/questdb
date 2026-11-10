@@ -89,6 +89,8 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
     private static final int LOOKUP_MODE_INDEX = 1;
     private static final int LOOKUP_MODE_SCAN = 2;
     private static final int LOOKUP_MODE_SCAN_THEN_INDEX = 3;
+    // Forward cursors an index-only walk keeps open at most: further keys seek back at every lookup
+    private static final int MAX_MERGE_CURSORS = 1024;
     // Adaptive scan thresholds (set at construction, used by findKeyedAsOfMatch)
     private final long bwdScanAbsoluteThreshold;
     private final long bwdScanMinGap;
@@ -169,6 +171,7 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
     private long[] mergeRows = new long[0];
     private long[] mergeCursorBases = new long[0];
     private long[] mergePositions = new long[0];
+    private int mergeCursorCount;
     // While isKeyTracking, the forward scans write the rows of the tracked keys here instead of the
     // key cache map: by slave symbol key, valid where the generation matches fwdKeyGen. A clear of
     // the key cache moves to the next generation, see clearForwardKeyRows().
@@ -566,6 +569,7 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
                 mergeCursors.setQuick(i, null);
             }
         }
+        mergeCursorCount = 0;
     }
 
     // The ASOF match of slaveKey at asOfRowId in an index-only walk, whose positions ascend: a forward
@@ -609,10 +613,11 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
         if (cursor != null) {
             cursor.close();
             mergeCursors.setQuick(indexKey, null);
+            mergeCursorCount--;
         }
         final long matchRowId = findIndexedAsOfMatch(asOfRowId, slaveKey, circuitBreaker);
-        if (matchRowId == UNRESOLVED_ROW_ID) {
-            return UNRESOLVED_ROW_ID;
+        if (matchRowId == UNRESOLVED_ROW_ID || mergeCursorCount >= MAX_MERGE_CURSORS) {
+            return matchRowId;
         }
         timeFrameCursor.jumpTo(frameIndex);
         timeFrameCursor.open();
@@ -626,6 +631,7 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
             final long indexRowLo = timeFrameCursor.getIndexRowLoForCurrentFrame();
             cursor = indexReader.getCursor(indexKey, indexRowLo + firstLocalRow, indexRowLo + timeFrame.getRowHi() - 1);
             mergeCursors.setQuick(indexKey, cursor);
+            mergeCursorCount++;
             // the cursor returns rows relative to its minValue
             mergeCursorBases[indexKey] = firstLocalRow;
             nextRow = cursor.hasNext() ? firstLocalRow + cursor.next() : -1;

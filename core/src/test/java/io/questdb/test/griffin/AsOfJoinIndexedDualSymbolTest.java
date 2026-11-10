@@ -45,8 +45,10 @@ public class AsOfJoinIndexedDualSymbolTest extends AbstractCairoTest {
     @Test
     public void testMatchesLinearAndDense() throws Exception {
         final Rnd rnd = TestUtils.generateRandom(LOG);
-        for (String index : new String[]{"sym SYMBOL INDEX, ex SYMBOL", "sym SYMBOL INDEX TYPE POSTING, ex SYMBOL", "sym SYMBOL, ex SYMBOL INDEX TYPE POSTING"}) {
+        for (String index : new String[]{"sym SYMBOL INDEX, ex SYMBOL", "sym SYMBOL INDEX TYPE POSTING, ex SYMBOL", "sym SYMBOL, ex SYMBOL INDEX TYPE POSTING", "ex SYMBOL, sym SYMBOL INDEX TYPE POSTING INCLUDE (ex, bid)"}) {
             assertMemoryLeak(() -> {
+                // small frames: walks resume across frame boundaries
+                sqlExecutionContext.changePageFrameSizes(64 + rnd.nextInt(512), 64 + rnd.nextInt(512));
                 execute("CREATE TABLE quotes (ts TIMESTAMP, " + index + ", bid DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
                 final long quoteRows = 10_000 + rnd.nextInt(20_000);
                 execute(
@@ -80,6 +82,39 @@ public class AsOfJoinIndexedDualSymbolTest extends AbstractCairoTest {
                         TestUtils.assertEquals(index + ": " + plain, expected, actual);
                     }
                 }
+                execute("DROP TABLE trades");
+                execute("DROP TABLE quotes");
+            });
+        }
+    }
+
+    @Test
+    public void testCoveredOtherKey() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE quotes (ts TIMESTAMP, ex SYMBOL, sym SYMBOL INDEX TYPE POSTING INCLUDE (ex, bid), bid DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (id LONG, ts TIMESTAMP, sym SYMBOL, ex SYMBOL) TIMESTAMP(ts) PARTITION BY DAY");
+            final StringSink plan = new StringSink();
+            printSql("EXPLAIN SELECT /*+ asof_index(t q) */ t.id, q.bid FROM trades t ASOF JOIN quotes q ON (sym, ex)", plan);
+            Assert.assertTrue(plan.toString(), plan.toString().contains("covered: 0"));
+        });
+    }
+
+    @Test
+    public void testWalkResumesRightBelowItsLastStop() throws Exception {
+        // A lookup of (S, C) stops the walk at C's row; the next lookup, of (S, B), resumes right below
+        // it, where B's row is. Two-row frames, so that the resume crosses frames too.
+        for (String index : new String[]{"sym SYMBOL INDEX TYPE POSTING", "sym SYMBOL INDEX TYPE POSTING INCLUDE (ex)", "sym SYMBOL INDEX"}) {
+            assertMemoryLeak(() -> {
+                sqlExecutionContext.changePageFrameSizes(2, 2);
+                execute("CREATE TABLE quotes (ts TIMESTAMP, ex SYMBOL, " + index + ", bid DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+                execute("INSERT INTO quotes VALUES ('2024-01-01T00:00:01', 'A', 'S', 1), ('2024-01-01T00:00:02', 'B', 'S', 2), " +
+                        "('2024-01-01T00:00:03', 'C', 'S', 3), ('2024-01-01T00:00:04', 'D', 'S', 4), ('2024-01-01T00:00:05', 'C', 'T', 5)");
+                execute("CREATE TABLE trades (id LONG, ts TIMESTAMP, sym SYMBOL, ex SYMBOL) TIMESTAMP(ts) PARTITION BY DAY");
+                execute("INSERT INTO trades VALUES (1, '2024-01-01T00:00:06', 'S', 'C'), (2, '2024-01-01T00:00:06', 'S', 'B'), " +
+                        "(3, '2024-01-01T00:00:06', 'S', 'A'), (4, '2024-01-01T00:00:07', 'S', 'D'), (5, '2024-01-01T00:00:07', 'S', 'E')");
+                final StringSink actual = new StringSink();
+                printSql("SELECT /*+ asof_index(t q) */ t.id, q.bid FROM trades t ASOF JOIN quotes q ON (sym, ex) ORDER BY t.id", actual);
+                TestUtils.assertEquals(index, "id\tbid\n1\t3.0\n2\t2.0\n3\t1.0\n4\t4.0\n5\tnull\n", actual);
                 execute("DROP TABLE trades");
                 execute("DROP TABLE quotes");
             });
