@@ -391,12 +391,9 @@ public final class ParquetRowGroupFilter {
                                 Function f = valueFunctions.getQuick(j);
                                 int vType = f.getType();
                                 if (ColumnType.isTimestamp(vType) || vType == ColumnType.DATE) {
-                                    // A finer bound rounds to the column's precision on the side that
-                                    // keeps every row the predicate keeps.
                                     final long value = f.getTimestamp(null);
                                     final int valueType = ColumnType.getTimestampType(vType);
-                                    filterValues.putLong(opType == PushdownFilterExtractor.OP_LT || opType == PushdownFilterExtractor.OP_GE
-                                            ? driver.ceilFrom(value, valueType) : driver.floorFrom(value, valueType));
+                                    filterValues.putLong(isCeilBound(opType) ? driver.ceilFrom(value, valueType) : driver.floorFrom(value, valueType));
                                 } else if (vType == ColumnType.FLOAT || vType == ColumnType.DOUBLE) {
                                     // getLong() throws on a FLOAT/DOUBLE function, and the row-level filter
                                     // compares this column at double width, so the bound takes the same
@@ -649,14 +646,14 @@ public final class ParquetRowGroupFilter {
     }
 
     /**
-     * The DATE bound of a timestamp of {@code timestampType}. A finer bound rounds to the millisecond on the side that
-     * keeps every row the comparison keeps, as the TIMESTAMP arm does, before 1970 too.
+     * The DATE bound of a timestamp of {@code timestampType}, rounded to the millisecond as {@link #isCeilBound} says,
+     * before 1970 too.
      */
     private static long dateBound(long timestamp, int timestampType, int opType) {
         if (timestamp == Numbers.LONG_NULL) {
             return Numbers.LONG_NULL;
         }
-        if (opType == PushdownFilterExtractor.OP_LT || opType == PushdownFilterExtractor.OP_GE) {
+        if (isCeilBound(opType)) {
             return -Math.floorDiv(-MicrosTimestampDriver.INSTANCE.ceilFrom(timestamp, timestampType), Micros.MILLI_MICROS);
         }
         return Math.floorDiv(MicrosTimestampDriver.INSTANCE.floorFrom(timestamp, timestampType), Micros.MILLI_MICROS);
@@ -745,6 +742,14 @@ public final class ParquetRowGroupFilter {
             case PushdownFilterExtractor.OP_LE, PushdownFilterExtractor.OP_GT -> Math.floor(toleranceBound(d, opType));
             default -> d == Math.floor(d) ? d : Double.NaN;
         };
+    }
+
+    /**
+     * Whether a bound finer than its column rounds up to the column's precision: a bound rounds to the side that keeps
+     * every row the comparison keeps, up for {@code <} and {@code >=}, down otherwise.
+     */
+    private static boolean isCeilBound(int opType) {
+        return opType == PushdownFilterExtractor.OP_LT || opType == PushdownFilterExtractor.OP_GE;
     }
 
     // Whether the row-level filter calls NO double other than d itself equal to d: its neighbouring
