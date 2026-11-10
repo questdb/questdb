@@ -387,6 +387,7 @@ public class SeqTxnTracker {
             }
             wtxn = writerTxn;
         }
+        fireWaiters();
         return seqTxn > 0 && seqTxn > writerTxn;
     }
 
