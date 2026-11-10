@@ -470,8 +470,9 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         assert valueType > ColumnType.UNDEFINED;
         if (columnType > ColumnType.UNDEFINED) {
             if (columnIndex == metadata.getTimestampIndex() || isColumnSetByLine(columnIndex)) {
-                // the line names this column again, or names the designated timestamp, which the line's own
-                // timestamp sets: a row takes one value per column, the first, as with ILP over TCP
+                // a row takes one value per column, the first, as with ILP over TCP; a field named like the
+                // designated timestamp is dropped as well, since the line's own timestamp sets that column,
+                // where ILP over TCP takes the field as the row timestamp
                 return;
             }
             boolean valid;

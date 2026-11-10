@@ -110,8 +110,9 @@ public class LineUdpParserSupport {
 
     /**
      * Writes column value to table row. CharSequence value is interpreted depending on
-     * column type and written to column, identified by columnIndex. A value that cannot be
-     * cast to the column type is logged and the column is left NULL for the row.
+     * column type and written to column, identified by columnIndex. A value that does not
+     * parse as the column type is logged and leaves the column NULL for the row; an integer
+     * outside the range of a BYTE column throws a CairoException instead, which drops the row.
      *
      * @param row         table row
      * @param columnType  column type value will be cast to

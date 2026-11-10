@@ -1100,8 +1100,9 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
     @Test
     public void testRepeatedColumnKeepsFirstValue() throws Exception {
         // a line that names a column twice keeps the first value and ignores the repeat, as ILP over TCP
-        // does, for every kind of value, for a column the line adds and for a repeat of the wrong type; a
-        // column named like the designated timestamp is ignored too, the line's own timestamp sets it
+        // does, for tags and fields, for a column the line adds and for a repeat of the wrong type; a field
+        // named like the designated timestamp is ignored too, so the line's own timestamp sets the row's
+        // time, where ILP over TCP would take the field as the row timestamp
         AbstractCairoTest.create(new TableModel(configuration, "x", PartitionBy.NONE)
                 .col("s", ColumnType.SYMBOL)
                 .col("u", ColumnType.UUID)
