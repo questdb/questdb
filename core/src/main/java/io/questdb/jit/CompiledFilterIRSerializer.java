@@ -387,7 +387,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         // A SYMBOL predicate compares the column with the text of a constant, so a constant
         // arithmetic subtree is folded into one symbol constant rather than run over symbol keys.
         if (predicateContext.isActive() && predicateContext.hasSymbolColumn && node.type == ExpressionNode.OPERATION
-                && (isArithmeticOperation(node) || isUnaryMinus(node))) {
+                && isLiteralArithmetic(node)) {
             serializeConstantStub(node);
             return false;
         }
@@ -1481,6 +1481,22 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             case ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG -> true;
             default -> false;
         };
+    }
+
+    private static boolean isLiteralArithmetic(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == ExpressionNode.CONSTANT) {
+            return true;
+        }
+        if (node.type != ExpressionNode.OPERATION) {
+            return false;
+        }
+        if (isUnaryMinus(node)) {
+            return isLiteralArithmetic(node.lhs != null ? node.lhs : node.rhs);
+        }
+        return isArithmeticOperation(node) && isLiteralArithmetic(node.lhs) && isLiteralArithmetic(node.rhs);
     }
 
     private static boolean isNegatedConstant(ExpressionNode node) {

@@ -7211,6 +7211,22 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                     """);
             assertJitScalarAndVectorMatchJavaOnEmptyResult("select id from x where sy = 4 * 10", "id\n");
             assertJitMatchesJava("select id from x where sy = 1 / 0", false, "id\n6\n");
+            // sy inside a function leaves the predicate numeric, and the JIT declines the function
+            assertJitMatchesJava("select id from x where 1.5 < length(sy) * id::FLOAT", false, """
+                    id
+                    2
+                    3
+                    4
+                    5
+                    7
+                    """);
+            assertJitMatchesJava("select id from x where length(sy) * id > 1 + 1", false, """
+                    id
+                    3
+                    4
+                    5
+                    7
+                    """);
         });
     }
 
