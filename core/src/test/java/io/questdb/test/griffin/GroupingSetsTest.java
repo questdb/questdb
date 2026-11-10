@@ -3174,6 +3174,31 @@ public class GroupingSetsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRollupKeyWithGroupingSetsSubquery() throws Exception {
+        // binding the key k binds its sub-query, whose own GROUPING SETS must leave the outer key positions intact
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, b INT)");
+            execute("INSERT INTO t VALUES (1, 10), (1, 20), (2, 10)");
+            assertQuery("""
+                    SELECT a, a = (SELECT count() FROM t GROUP BY GROUPING SETS (())) AS k, b, count() AS n
+                    FROM t
+                    GROUP BY a, k, ROLLUP(b)
+                    ORDER BY a, b
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a\tk\tb\tn
+                            1\tfalse\tnull\t2
+                            1\tfalse\t10\t1
+                            1\tfalse\t20\t1
+                            2\tfalse\tnull\t1
+                            2\tfalse\t10\t1
+                            """);
+        });
+    }
+
+    @Test
     public void testRollupMultipleAggregates() throws Exception {
         assertMemoryLeak(() -> {
             execute(

@@ -77,7 +77,6 @@ final class AggregateBinder implements Mutable {
     private final IntObjHashMap<ExpressionNode> columnSpellings = new IntObjHashMap<>();
     private final CairoConfiguration configuration;
     private final BindContext ctx;
-    private final IntList groupingKeyIndexes = new IntList();
     private final StringSink groupingSetForm = new StringSink();
     private final CharSequenceHashSet groupingSetForms = new CharSequenceHashSet();
     private final IntList groupingSetKeys = new IntList();
@@ -106,7 +105,6 @@ final class AggregateBinder implements Mutable {
     @Override
     public void clear() {
         columnSpellings.clear();
-        groupingKeyIndexes.clear();
         groupingSetForm.clear();
         groupingSetForms.clear();
         groupingSetKeys.clear();
@@ -318,7 +316,8 @@ final class AggregateBinder implements Mutable {
         }
         final int position = scope.groupingNodes.getQuick(rolledKeys.getQuick(0)).position;
         if (argumentCount > 31) {
-            final int group = groupingKeyIndexes.indexOf(rolledKeys.getQuick(31), 0, groupingKeyIndexes.size());
+            final IntList keyIndexes = scope.groupingKeyIndexes;
+            final int group = keyIndexes.indexOf(rolledKeys.getQuick(31), 0, keyIndexes.size());
             throw SqlException.$(groupBy.getQuick(group).position, "SAMPLE BY FILL with grouping sets supports at most 31 rolled-up keys");
         }
         final ExpressionNode call = ctx.bindingExpressions.next().of(ExpressionNode.FUNCTION, "grouping_id", 0, position);
@@ -741,7 +740,7 @@ final class AggregateBinder implements Mutable {
             aggregate.getGroupingSets().add(ctx.planNodes.groupingSets.next());
         }
         final OutputSchema input = aggregate.getChild().getOutput();
-        final IntList keyIndexes = groupingKeyIndexes;
+        final IntList keyIndexes = ctx.scope().groupingKeyIndexes;
         keyIndexes.clear();
         for (int i = 0, n = groupBy.size(); i < n; i++) {
             final ExpressionNode group = groupBy.getQuick(i);

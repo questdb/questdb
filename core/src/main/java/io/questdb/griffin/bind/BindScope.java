@@ -78,6 +78,8 @@ final class BindScope implements Mutable {
     final IntList cursorSourceIndexes;
     final ObjList<ExpressionNode> cursorSources = new ObjList<>();
     final ObjList<BoundExpression> fillBindings = new ObjList<>();
+    // the plan key of each GROUP BY list position of a ROLLUP, CUBE or GROUPING SETS block, -1 for the SAMPLE BY bucket
+    final IntList groupingKeyIndexes = new IntList();
     final ObjList<ExpressionNode> groupingNodes;
     final ObjList<QueryModel> hintAliasModels = new ObjList<>();
     final ObjList<CharSequence> hintAliases = new ObjList<>();
@@ -202,6 +204,7 @@ final class BindScope implements Mutable {
         ambiguousTimestampColumnIds.clear();
         cursorSources.clear();
         fillBindings.clear();
+        groupingKeyIndexes.clear();
         hintAliasModels.clear();
         hintAliases.clear();
         intrinsicTimestampColumnIds.clear();
