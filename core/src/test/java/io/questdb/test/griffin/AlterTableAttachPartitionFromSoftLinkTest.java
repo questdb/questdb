@@ -385,6 +385,43 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
     }
 
     @Test
+    public void testForceReindexSkipsSoftLinkedPartition() throws Exception {
+        Assume.assumeFalse(Os.isWindows());
+        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+            final String tableName = testName.getMethodName();
+            attachPartitionFromSoftLink(tableName, "SNOW", true, tableToken -> {
+                        try {
+                            // the soft-linked partition is parquet, the active one stays native
+                            try (TableReader reader = engine.getReader(tableToken)) {
+                                Assert.assertTrue(reader.getTxFile().isPartitionParquet(0));
+                                Assert.assertFalse(reader.getTxFile().isPartitionParquet(1));
+                            }
+                            final long[] before = partitionNameTxns(tableToken);
+                            execute("ALTER TABLE " + tableName + " FORCE REINDEX PARQUET PARTITION LIST '" + readOnlyPartitionName + "'");
+                            Assert.assertArrayEquals(before, partitionNameTxns(tableToken));
+
+                            // the soft-linked partition keeps its directory, and so does the native one
+                            execute("ALTER TABLE " + tableName + " FORCE REINDEX PARQUET");
+                            Assert.assertArrayEquals(before, partitionNameTxns(tableToken));
+                            path.of(configuration.getDbRoot()).concat(tableToken).concat(readOnlyPartitionName);
+                            TestUtils.txnPartitionConditionally(path, (int) before[0]);
+                            Assert.assertTrue(ff.isSoftLink(path.$()));
+
+                            assertQuery("SELECT count() FROM " + tableName + " WHERE s = 'CPSW'")
+                                    .noLeakCheck()
+                                    .noRandomAccess()
+                                    .expectSize()
+                                    .returns("count\n1640\n");
+                        } catch (Exception ex) {
+                            throw new RuntimeException(ex);
+                        }
+                        return null;
+                    }
+            );
+        });
+    }
+
+    @Test
     public void testInsertInTransaction() throws Exception {
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
             final String tableName = testName.getMethodName();
@@ -1323,6 +1360,17 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
         }
     }
 
+    private static long[] partitionNameTxns(TableToken tableToken) {
+        engine.releaseAllReaders();
+        try (TableReader reader = engine.getReader(tableToken)) {
+            final long[] nameTxns = new long[reader.getPartitionCount()];
+            for (int i = 0; i < nameTxns.length; i++) {
+                nameTxns[i] = reader.getPartitionNameTxnByIndex(i);
+            }
+            return nameTxns;
+        }
+    }
+
     private static void runO3PartitionPurgeJob() {
         engine.releaseAllReaders();
         engine.releaseAllWriters();
@@ -1346,8 +1394,15 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
     }
 
     private void attachPartitionFromSoftLink(String tableName, String otherLocation, Function<TableToken, Void> test) throws Exception {
+        attachPartitionFromSoftLink(tableName, otherLocation, false, test);
+    }
+
+    private void attachPartitionFromSoftLink(String tableName, String otherLocation, boolean isParquet, Function<TableToken, Void> test) throws Exception {
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
             TableToken tableToken = createPopulateTable(tableName, 2);
+            if (isParquet) {
+                execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET LIST '2022-10-17', '2022-10-18'");
+            }
             assertQuery("SELECT min(ts), max(ts), count() FROM " + tableName)
                     .noLeakCheck()
                     .noRandomAccess()
@@ -1360,9 +1415,16 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
             copyToDifferentLocationAndMakeAttachableViaSoftLink(tableToken, readOnlyPartitionName, otherLocation);
             execute("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + readOnlyPartitionName + "'", sqlExecutionContext);
 
-            // verify that the link has been renamed to what we expect
+            // verify that the link has been renamed to what we expect, the parquet conversion took name txns of its own
+            final long nameTxn;
+            try (TableReader reader = engine.getReader(tableToken)) {
+                nameTxn = reader.getTxFile().getPartitionNameTxn(0);
+            }
+            if (!isParquet) {
+                Assert.assertEquals(2, nameTxn);
+            }
             path.of(configuration.getDbRoot()).concat(tableToken).concat(readOnlyPartitionName);
-            TestUtils.txnPartitionConditionally(path, 2);
+            TestUtils.txnPartitionConditionally(path, (int) nameTxn);
             Assert.assertTrue(Files.exists(path.$()));
 
             // verify RO flag

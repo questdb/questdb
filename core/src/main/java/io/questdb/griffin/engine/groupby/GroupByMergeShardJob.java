@@ -41,7 +41,6 @@ import io.questdb.mp.RingQueue;
 import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.Sequence;
 import io.questdb.std.Misc;
-import io.questdb.std.Os;
 import io.questdb.tasks.GroupByMergeShardTask;
 import org.jetbrains.annotations.NotNull;
 
@@ -110,7 +109,8 @@ public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeS
                     ownerLoop.observeProgress();
                     long cursor = pubSeq.next();
                     if (cursor < 0) {
-                        if (strategy.shouldSteal(mergedCount)) {
+                        mergedCount = -postAggregationDoneLatch.getCount();
+                        if (mergedCount == queuedCount || strategy.shouldSteal(mergedCount)) {
                             ownerLoop.checkBeforeHelping();
                             merger.mergeShard(-1, shardIndex);
                             ownCount++;
@@ -119,9 +119,8 @@ public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeS
                             break;
                         }
                         if (!ownerLoop.awaitProgress()) {
-                            Os.pause();
+                            ownerLoop.pause();
                         }
-                        mergedCount = -postAggregationDoneLatch.getCount();
                     } else {
                         queue.get(cursor).of(
                                 postAggregationCircuitBreaker,
@@ -166,10 +165,10 @@ public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeS
                             }
                             reclaimed++;
                         } else if (!ownerLoop.awaitProgressWhileDraining(isOwnerTripped)) {
-                            Os.pause();
+                            ownerLoop.pause();
                         }
                     } else if (!ownerLoop.awaitProgressWhileDraining(isOwnerTripped)) {
-                        Os.pause();
+                        ownerLoop.pause();
                     }
                     mergedCount = -postAggregationDoneLatch.getCount();
                 }
@@ -225,11 +224,6 @@ public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeS
             subSeq.done(cursor);
         } catch (Throwable th) {
             failure = th;
-        }
-        try {
-            dispatcher.signalQueueProgress();
-        } catch (Throwable th) {
-            failure = Misc.foldCleanupFailure(failure, th);
         }
         try {
             runDetached(carrierId, circuitBreaker, startedCounter, doneLatch, merger, shardIndex, isOwner);

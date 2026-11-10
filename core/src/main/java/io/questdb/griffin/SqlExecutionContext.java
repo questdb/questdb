@@ -38,6 +38,7 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.sql.VirtualRecord;
+import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.window.WindowContext;
@@ -72,6 +73,9 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     // Returns true when the context doesn't require all SQL functions to be deterministic.
     // Deterministic-only functions are enforced e.g. when compiling a mat view.
     boolean allowNonDeterministicFunctions();
+
+    default void awaitPageFrameSequences() {
+    }
 
     void changePageFrameSizes(int minRows, int maxRows);
 
@@ -531,6 +535,9 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
      */
     void pushWindowContext();
 
+    default void registerPageFrameSequence(PageFrameSequence<?> frameSequence) {
+    }
+
     void reset();
 
     default void restoreCancelledFlag(
@@ -680,6 +687,9 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     }
 
     default void toSink(@NotNull CharSink<?> sink) {
+    }
+
+    default void unregisterPageFrameSequence(PageFrameSequence<?> frameSequence) {
     }
 
     // the view definition, as of the compile, that a table-name function or SHOW statement reads through
