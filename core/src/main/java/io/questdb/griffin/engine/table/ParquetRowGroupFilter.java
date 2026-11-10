@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.MillisTimestampDriver;
 import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
@@ -388,7 +389,14 @@ public final class ParquetRowGroupFilter {
                                     if (columnType == vType) {
                                         filterValues.putLong(f.getTimestamp(null));
                                     } else {
-                                        filterValues.putLong(driver.from(f.getTimestamp(null), ColumnType.getTimestampType(vType)));
+                                        final long timestamp = f.getTimestamp(null);
+                                        final int timestampType = ColumnType.getTimestampType(vType);
+                                        if (timestamp != Numbers.LONG_NULL && !driver.isExactFrom(timestamp, timestampType)) {
+                                            // a bound between two values of the column; the row filter compares it exactly
+                                            supported = false;
+                                            break;
+                                        }
+                                        filterValues.putLong(driver.from(timestamp, timestampType));
                                     }
                                 } else if (vType == ColumnType.FLOAT || vType == ColumnType.DOUBLE) {
                                     // getLong() throws on a FLOAT/DOUBLE function, and the row-level filter
@@ -422,6 +430,12 @@ public final class ParquetRowGroupFilter {
                                 Function f = valueFunctions.getQuick(j);
                                 int vType = f.getType();
                                 if (ColumnType.isTimestamp(vType)) {
+                                    final long timestamp = f.getTimestamp(null);
+                                    if (timestamp != Numbers.LONG_NULL && !MillisTimestampDriver.INSTANCE.isExactFrom(timestamp, vType)) {
+                                        // a bound between two values of the column; the row filter compares it exactly
+                                        supported = false;
+                                        break;
+                                    }
                                     filterValues.putLong(f.getDate(null));
                                 } else if (vType == ColumnType.FLOAT || vType == ColumnType.DOUBLE) {
                                     // Same as the TIMESTAMP arm: getLong() throws on a FLOAT/DOUBLE
