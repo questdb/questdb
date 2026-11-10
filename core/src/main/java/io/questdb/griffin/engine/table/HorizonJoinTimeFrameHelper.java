@@ -78,6 +78,8 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
     // Key cache slots per entry that a drop of the key cache clears at most, see dropKeyCache()
     private static final int MAX_CLEARED_SLOTS_PER_KEY = 8;
     private static final long UNRESOLVED_ROW_ID = -1;
+    // backwardScanForKeyMatch() stopped at scanRowBudget without resolving the key
+    private static final long SCAN_BUDGET_EXHAUSTED = -2;
     // Adaptive scan thresholds (set at construction, used by findKeyedAsOfMatch)
     private final long bwdScanAbsoluteThreshold;
     private final long bwdScanMinGap;
@@ -133,6 +135,12 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
     // Master column of the single SYMBOL join key whose slave column is indexed, or -1: see enableIndexedKeyLookup()
     private int indexedMasterKeyColumnIndex = -1;
     private int indexedSlaveKeyColumnIndex = -1;
+    // Rows a keyed lookup scans back before it reads the index instead, see enableIndexedKeyLookup()
+    private long indexScanRowBudget;
+    // Keyed lookups that read the index since of(), for tests and plans
+    private long indexLookups;
+    // Rows the current backward scan may still read; Long.MAX_VALUE outside an indexed lookup
+    private long scanRowBudget = Long.MAX_VALUE;
 
     public HorizonJoinTimeFrameHelper(
             CairoConfiguration configuration,
@@ -345,6 +353,10 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
                 if (currentRowId <= missRowId) {
                     break;
                 }
+            }
+            if (--scanRowBudget < 0) {
+                // the rows above currentRowId are scanned and cached, the watermark is their lowest
+                return SCAN_BUDGET_EXHAUSTED;
             }
             backwardScanRows++;
 
@@ -734,18 +746,6 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
             return Long.MIN_VALUE;
         }
 
-        if (indexedSlaveKeyColumnIndex != -1 && symbolTranslatingRecord != null) {
-            final long matchRowId = findIndexedAsOfMatch(
-                    asOfRowId,
-                    symbolTranslatingRecord.getInt(indexedMasterKeyColumnIndex),
-                    circuitBreaker
-            );
-            if (matchRowId != UNRESOLVED_ROW_ID) {
-                return matchRowId;
-            }
-            // no index reader for this frame: scan as without the index
-        }
-
         if (asOfRowId != prevAsOfRowId) {
             if (isForwardScanMode && filter != null && asOfRowId > prevAsOfRowId
                     && rowGapLowerBound(prevAsOfRowId, asOfRowId) > Math.max(backwardScanRows - bwdScanRowsAtPositionStart, bwdScanMinGap)) {
@@ -811,6 +811,44 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
             prevAsOfRowId = asOfRowId;
         }
 
+        if (indexedSlaveKeyColumnIndex == -1 || symbolTranslatingRecord == null) {
+            return backwardScanForKeyMatch(
+                    asOfRowId,
+                    masterKeyRecord,
+                    masterAsOfJoinMapSink,
+                    slaveAsOfJoinMapSink,
+                    keyToRowIdMap,
+                    symbolTranslatingRecord,
+                    circuitBreaker
+            );
+        }
+        // A key that the scan does not reach within the budget is looked up in the index: the scan
+        // costs the rows of all keys in between, the index one seek per frame. Stopping the scan
+        // early keeps its state valid, see backwardScanForKeyMatch().
+        scanRowBudget = indexScanRowBudget;
+        long matchRowId;
+        try {
+            matchRowId = backwardScanForKeyMatch(
+                    asOfRowId,
+                    masterKeyRecord,
+                    masterAsOfJoinMapSink,
+                    slaveAsOfJoinMapSink,
+                    keyToRowIdMap,
+                    symbolTranslatingRecord,
+                    circuitBreaker
+            );
+        } finally {
+            scanRowBudget = Long.MAX_VALUE;
+        }
+        if (matchRowId != SCAN_BUDGET_EXHAUSTED) {
+            return matchRowId;
+        }
+        indexLookups++;
+        matchRowId = findIndexedAsOfMatch(asOfRowId, symbolTranslatingRecord.getInt(indexedMasterKeyColumnIndex), circuitBreaker);
+        if (matchRowId != UNRESOLVED_ROW_ID) {
+            return matchRowId;
+        }
+        // no index reader: finish the scan
         return backwardScanForKeyMatch(
                 asOfRowId,
                 masterKeyRecord,
@@ -823,20 +861,27 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
     }
 
     /**
-     * Makes the keyed lookup of {@link #findKeyedAsOfMatch} read the slave's symbol index instead of
-     * scanning back from the ASOF position: per lookup, one index seek per frame from the ASOF
-     * position back to the key's latest row, so its cost no longer grows with the rows of other keys
-     * in between. The join key must be a single SYMBOL pair whose slave column is indexed, the master
+     * Lets the keyed lookup of {@link #findKeyedAsOfMatch} read the slave's symbol index when the scan
+     * back from the ASOF position does not reach the key within {@code scanRowBudget} rows: one index
+     * seek per frame from the ASOF position back to the key's latest row, so the cost of a rare key no
+     * longer grows with the rows of other keys in between, while frequent keys keep the cached scan. The join key must be a single SYMBOL pair whose slave column is indexed, the master
      * key must reach the lookup through a {@link SymbolTranslatingRecord}, and the slave must have no
      * filter: the index row is the match only when no other condition excludes it.
      *
      * @param masterKeyColumnIndex the master column of the join key, as the translating record reads it
      * @param slaveKeyColumnIndex  the slave column of the join key, as the time frame cursor reads it
+     * @param scanRowBudget        rows a lookup scans back before it reads the index
      */
-    public void enableIndexedKeyLookup(int masterKeyColumnIndex, int slaveKeyColumnIndex) {
+    public void enableIndexedKeyLookup(int masterKeyColumnIndex, int slaveKeyColumnIndex, long scanRowBudget) {
         assert filter == null;
         this.indexedMasterKeyColumnIndex = masterKeyColumnIndex;
         this.indexedSlaveKeyColumnIndex = slaveKeyColumnIndex;
+        this.indexScanRowBudget = scanRowBudget;
+    }
+
+    @TestOnly
+    public long getIndexLookupCount() {
+        return indexLookups;
     }
 
     public boolean isIndexedKeyLookup() {
@@ -1003,6 +1048,7 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
     }
 
     public void of(TimeFrameCursor timeFrameCursor, @Nullable MemoryTracker memoryTracker) {
+        indexLookups = 0;
         if (keyMissMap != null) {
             keyMissMap.close();
             keyMissMap.setMemoryTracker(memoryTracker);

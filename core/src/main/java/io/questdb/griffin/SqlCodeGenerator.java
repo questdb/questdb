@@ -7390,11 +7390,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     slaveFilter,
                     slaveMetadata
             );
-            if (indexedSlaveKeyColumnIndex != -1 && SqlHints.hasUseIndexHint(parentModel)) {
-                // the index lookup reads the slave through the owner's table reader: serial only
-                supportsParallelism = false;
-            }
-
             if (!supportsParallelism) {
                 // Single-threaded path: verify master factory supports random access (needed to revisit rows in sorted order)
                 if (!masterFactory.recordCursorSupportsRandomAccess()) {
@@ -7451,7 +7446,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             columnIndices
                     );
                     if (indexedSlaveKeyColumnIndex != -1) {
-                        notKeyedFactory.enableIndexedKeyLookup(masterSymbolKeyColumnIndices[0], indexedSlaveKeyColumnIndex);
+                        notKeyedFactory.enableIndexedKeyLookup(masterSymbolKeyColumnIndices[0], indexedSlaveKeyColumnIndex, configuration.getSqlHorizonJoinIndexScanRows());
                     }
                     return notKeyedFactory;
                 }
@@ -7483,7 +7478,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         columnIndices
                 );
                 if (indexedSlaveKeyColumnIndex != -1) {
-                    keyedFactory.enableIndexedKeyLookup(masterSymbolKeyColumnIndices[0], indexedSlaveKeyColumnIndex);
+                    keyedFactory.enableIndexedKeyLookup(masterSymbolKeyColumnIndices[0], indexedSlaveKeyColumnIndex, configuration.getSqlHorizonJoinIndexScanRows());
                 }
                 return keyedFactory;
             }
@@ -7538,7 +7533,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (keyTypesCopy.getColumnCount() == 0) {
                 // Non-keyed GROUP BY: produces a single output row
                 isFactoriesTransferred = true;
-                return new AsyncHorizonJoinNotKeyedRecordCursorFactory(
+                final AsyncHorizonJoinNotKeyedRecordCursorFactory asyncNotKeyedFactory = new AsyncHorizonJoinNotKeyedRecordCursorFactory(
                         configuration,
                         asm,
                         executionContext.getCairoEngine(),
@@ -7562,12 +7557,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         resources,
                         workerCount
                 );
+                if (indexedSlaveKeyColumnIndex != -1) {
+                    asyncNotKeyedFactory.enableIndexedKeyLookup(executionContext.getCairoEngine(), masterSymbolKeyColumnIndices[0], indexedSlaveKeyColumnIndex, configuration.getSqlHorizonJoinIndexScanRows());
+                }
+                return asyncNotKeyedFactory;
             }
 
             // Keyed GROUP BY: create keyCopier for GROUP BY key population
             // Pass keyFunctions to handle expression keys (virtual columns)
             isFactoriesTransferred = true;
-            return new AsyncHorizonJoinRecordCursorFactory(
+            final AsyncHorizonJoinRecordCursorFactory asyncFactory = new AsyncHorizonJoinRecordCursorFactory(
                     configuration,
                     asm,
                     executionContext.getCairoEngine(),
@@ -7595,6 +7594,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     resources,
                     workerCount
             );
+            if (indexedSlaveKeyColumnIndex != -1) {
+                asyncFactory.enableIndexedKeyLookup(executionContext.getCairoEngine(), masterSymbolKeyColumnIndices[0], indexedSlaveKeyColumnIndex, configuration.getSqlHorizonJoinIndexScanRows());
+            }
+            return asyncFactory;
         } catch (Throwable th) {
             Misc.free(innerMetadata, th);
             Misc.freeObjList(groupByFunctions, th);
@@ -7638,7 +7641,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     // The slave column of the single SYMBOL join key of a HORIZON JOIN whose ASOF lookup can read the
     // slave's symbol index (HorizonJoinTimeFrameHelper#enableIndexedKeyLookup), or -1. The no_index
     // hint keeps the scan.
-    private static int horizonIndexedSlaveKeyColumn(
+    private int horizonIndexedSlaveKeyColumn(
             IQueryModel model,
             @Nullable ColumnTypes asOfJoinKeyTypes,
             int @Nullable [] masterSymbolKeyColumnIndices,
@@ -7651,6 +7654,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 || masterSymbolKeyColumnIndices == null
                 || masterSymbolKeyColumnIndices.length != 1
                 || slaveFilter != null
+                || configuration.getSqlHorizonJoinIndexScanRows() < 0
                 || SqlHints.hasNoIndexHint(model)) {
             return -1;
         }

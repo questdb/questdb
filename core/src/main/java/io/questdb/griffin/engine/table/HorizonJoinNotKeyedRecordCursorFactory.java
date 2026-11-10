@@ -184,8 +184,8 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
      * Lets the ASOF lookup of the single SYMBOL join key read the slave's symbol index, see
      * {@link HorizonJoinTimeFrameHelper#enableIndexedKeyLookup}.
      */
-    public void enableIndexedKeyLookup(int masterKeyColumnIndex, int slaveKeyColumnIndex) {
-        cursor.slaveTimeFrameHelper.enableIndexedKeyLookup(masterKeyColumnIndex, slaveKeyColumnIndex);
+    public void enableIndexedKeyLookup(int masterKeyColumnIndex, int slaveKeyColumnIndex, long scanRowBudget) {
+        cursor.slaveTimeFrameHelper.enableIndexedKeyLookup(masterKeyColumnIndex, slaveKeyColumnIndex, scanRowBudget);
     }
 
     @Override

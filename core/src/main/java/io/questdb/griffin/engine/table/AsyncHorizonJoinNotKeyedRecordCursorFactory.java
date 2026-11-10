@@ -210,6 +210,10 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
         return false;
     }
 
+    public void enableIndexedKeyLookup(CairoEngine engine, int masterKeyColumnIndex, int slaveKeyColumnIndex, long scanRowBudget) {
+        frameSequence.getAtom().enableIndexedKeyLookup(engine, masterKeyColumnIndex, slaveKeyColumnIndex, scanRowBudget);
+    }
+
     @Override
     public void toPlan(PlanSink sink) {
         if (usesCompiledFilter()) {
@@ -223,6 +227,9 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
         sink.setMetadata(horizonJoinMetadata);
         sink.optAttr("values", frameSequence.getAtom().getOwnerGroupByFunctions());
         sink.setMetadata(null);
+        if (frameSequence.getAtom().isIndexedKeyLookup()) {
+            sink.attr("lookup").val("index");
+        }
         sink.child(masterFactory);
         final Function slaveFilter = frameSequence.getAtom().getSlaveFilter();
         if (slaveFilter != null) {
